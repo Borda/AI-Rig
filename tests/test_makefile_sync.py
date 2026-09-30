@@ -13,6 +13,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import NamedTuple
 
@@ -349,6 +350,7 @@ class TestSyncCodexHomePolicy:
         "refresh-ext-marketplace",
         "update-ext-plugins",
         "register-marketplace",
+        "prune-claude-cache",
         "clear-claude",
         "clear-codex",
     ],
@@ -369,3 +371,63 @@ def test_target_dry_runs_without_a_make_parse_error(target: str) -> None:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def _orphan(cache: Path, plugin: str, version: str, stamp: str | None) -> Path:
+    """Create one cached plugin version dir, with an `.orphaned_at` marker when `stamp` is given."""
+    root = cache / "borda-ai-rig" / plugin / version
+    root.mkdir(parents=True)
+    if stamp is not None:
+        (root / ".orphaned_at").write_text(stamp, encoding="utf-8")
+    return root
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(GNU_MAKE is None or JQ is None, reason="GNU make and jq are required on this host")
+def test_prune_claude_cache_removes_only_aged_uninstalled_orphans(tmp_path: Path) -> None:
+    """Only orphaned version dirs past the age floor and absent from the install record are deleted.
+
+    `claude plugin uninstall` marks a replaced version with `.orphaned_at` but never deletes it, so old versions pile
+    up across syncs. A session started before the replacement may still read skill files from that dir, which is why
+    a young marker, a still-installed dir, an unreadable marker, and an unmarked dir must all survive.
+    """
+    cache = tmp_path / "cache"
+    day_ago_ms = str(int((time.time() - 2 * 86400) * 1000))
+    hour_ago_ms = str(int((time.time() - 3600) * 1000))
+    aged = _orphan(cache, "oss", "0.40.3", day_ago_ms)
+    aged_seconds = _orphan(cache, "oss", "0.41.0", str(int(time.time() - 2 * 86400)))
+    young = _orphan(cache, "foundry", "0.62.0", hour_ago_ms)
+    still_installed = _orphan(cache, "research", "0.26.0", day_ago_ms)
+    unreadable = _orphan(cache, "develop", "0.34.0", "not-a-stamp")
+    current = _orphan(cache, "oss", "0.41.1", None)
+    installed_plugins = tmp_path / "installed_plugins.json"
+    installed_plugins.write_text(
+        json.dumps(
+            {
+                "plugins": {
+                    "oss@borda-ai-rig": [{"installPath": current.as_posix()}],
+                    "research@borda-ai-rig": [{"installPath": still_installed.as_posix()}],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_make(
+        "prune-claude-cache",
+        env=os.environ.copy(),
+        extra_vars={
+            "CACHE_DIR": cache.as_posix(),
+            "INSTALLED_PLUGINS": installed_plugins.as_posix(),
+            "MARKETPLACE": "borda-ai-rig",
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not aged.exists()
+    assert not aged_seconds.exists()
+    assert young.is_dir()
+    assert still_installed.is_dir()
+    assert unreadable.is_dir()
+    assert current.is_dir()
+    assert "2 orphaned version dir(s) removed" in result.stdout

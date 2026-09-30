@@ -198,8 +198,10 @@ done
 echo "$PLAN_FILE" > "$PLAN_NS/plan-file"
 ```
 
+> In the saved plan, use one paragraph under `Goal` to state concrete changes and exclusions, explain each affected file, list material risks, and order the suggested implementation steps.
+
 ```markdown
-# Plan: <goal>
+# Plan: [goal]
 
 ## Brief
 
@@ -211,11 +213,11 @@ echo "$PLAN_FILE" > "$PLAN_NS/plan-file"
 
 **Classification**: feature | fix | refactor
 **Complexity**: small | medium | large
-**Date**: <YYYY-MM-DD>
+**Date**: [YYYY-MM-DD]
 
 ### Goal
 
-<One-paragraph restatement of goal in concrete terms — what changes, what doesn't.>
+[goal restatement]
 
 ### Affected files
 
@@ -224,14 +226,14 @@ echo "$PLAN_FILE" > "$PLAN_NS/plan-file"
 
 ### Risks
 
-- <risk 1>
-- <risk 2>
+- [risk 1]
+- [risk 2]
 
 ### Suggested approach
 
-1. <Step 1>
-2. <Step 2>
-3. <Step 3>
+1. [step 1]
+2. [step 2]
+3. [step 3]
 ...
 ```
 
@@ -347,31 +349,30 @@ Parse result:
 
 Compose brief — compact human-readable plan summary after all agent input incorporated:
 
+> Write the plan summary in one sentence, describing its main approach and outcome. Select the steps table that fits the plan: simple, staged/large, or fix. Omit the advisory notes and co-review corrections tables when they have no rows.
+
 ```markdown
-<One-sentence summary of what plan achieves and main approach.>
+[plan summary]
 
-Classification : <feature|fix|refactor|debug>
-Complexity     : <small|medium|large>
-Affected files : N files across M modules
-Key risks      : <one-liner or "none">
-Agent review   : ✓ agents ready (<N> corrections incorporated)  |  ⚠ see below
+Classification : [feature | fix | refactor | debug]
+Complexity     : [small | medium | large]
+Affected files : [file count] files across [module count] modules
+Key risks      : [key risk or none]
+Agent review   : ✓ agents ready ([correction count] corrections incorporated)  |  ⚠ see below
 
-<Steps table — use format that best fits complexity:>
-- Simple: | # | Step |
-- Staged/large: | # | Stage | What changes | Stop condition |
-- Fix: | # | Action | Target | Verification |
+[Steps table — columns `# | Step` for simple plans, `# | Stage | What changes | Stop condition` for staged or large plans, `# | Action | Target | Verification` for fixes]
 
 Advisory notes from agents (omit table if none):
 
 | Agent | Note |
 |-------|------|
-| <role> | <concern> |
+| [role] | [concern] |
 
-Co-review corrections applied (<N> agents, omit table if none):
+Co-review corrections applied ([agent count] agents, omit table if none):
 
 | Agent | Location | Change |
 |-------|----------|--------|
-| <agent> | <file or step> | <what changed> |
+| [agent] | [file or step] | [correction] |
 ```
 
 **Write brief into `<PLAN_FILE>`**: replace `*[Generated after agent review — see below]*` placeholder in `## Brief` with composed brief. File now contains both brief and full plan.
@@ -381,7 +382,7 @@ Co-review corrections applied (<N> agents, omit table if none):
 ```text
 Plan -> <PLAN_FILE>
 
-<brief content exactly as written to the file>
+[brief content exactly as written to the file]
 
 -> /develop:<classification> <goal> --plan <PLAN_FILE> when ready  [debug: -> /develop:debug <goal> first — it hands off to /develop:fix --diagnosis <path>]
 ```
@@ -389,9 +390,9 @@ Plan -> <PLAN_FILE>
 If unresolved items escalated, print each after brief:
 
 ```text
-⚠ Issue: <one sentence>
-  Alternatives: (a) ... (b) ... (c) ...
-  Recommendation: <option> — <reason>
+⚠ Issue: [one-sentence issue]
+  Alternatives: (a) [first option] (b) [second option] (c) [third option]
+  Recommendation: [recommended option] — [reason]
 ```
 
 Invoke `AskUserQuestion` before printing `-> /develop:<classification> ...`. Options: (a) Proceed — print handoff line, continue · (b) Revise plan — return to Step 2 with user edits. Don't print handoff line until user selects (a).

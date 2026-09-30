@@ -121,16 +121,16 @@ branch: <git branch>
 ---
 
 ## Goal
-<the task/plan in 1–3 lines>
+[goal or plan]
 
 ## Decisions
-- <decision> — why: <reason>
+- [decision] — why: [reason]
 
 ## Lessons / corrections
-- <correction received> — rule going forward: <rule>
+- [correction received] — rule going forward: [rule]
 
 ## Standing instructions
-- <programmatic-level directive that must keep applying>
+- [standing directive]
 
 ## Files touched
 
@@ -140,7 +140,7 @@ branch: <git branch>
 | `path/to/b.md` | README sync | wip | +8/-0 |
 
 ## Outstanding
-- **<slug>** — <one-line summary>. Why: <one sentence>. Next: <what to ask or do>.
+- **[slug]** — [summary]. Why: [reason]. Next: [next action].
 
 ## Artifacts
 
@@ -150,11 +150,18 @@ branch: <git branch>
 | `.temp/<skill>/<ts>/` | run-dir | agent handover files |
 
 ## Next step
-<single concrete next action>
+[next action]
 
 ## Dropped deliberately
 implementation detail, tool output, exploration transcript
 ```
+
+> Section rules:
+>
+> - Keep `## Goal` to 1–3 lines.
+> - Under `## Standing instructions`, include only programmatic-level directives that must keep applying.
+> - Each `## Outstanding` item has a one-line summary, a one-sentence reason, and the next ask or action.
+> - Keep `## Next step` to one concrete action.
 
 **Written in ultra-caveman tier** (`plugins/CLAUDE.md` §Writing Style) — this doc is re-injected into a fresh context on every restore, so every word is a recurring cost. Explicit exclusions: no diffs, no code bodies, no command output, no per-file reasoning, no history of abandoned approaches — only the decision that settled them.
 
@@ -216,7 +223,7 @@ find .claude/state/session -maxdepth 1 -name '*.md' ! -name 'PARKED.md' -mtime +
 Glob `.claude/state/session/*.md` **excluding `PARKED.md`** (it holds bullets, not frontmatter), Read each one's frontmatter for `slug`, `created`, `consumed`, `branch`. Age comes from `created`, not file mtime — marking a doc consumed rewrites the file, would reset mtime. Read `PARKED.md` separately for items table; its ages come from each bullet's `Raised:` date.
 
 ```markdown
-## Session store — <today's date>
+## Session store — [date]
 
 ### Handovers
 
@@ -225,7 +232,7 @@ Glob `.claude/state/session/*.md` **excluding `PARKED.md`** (it holds bullets, n
 | `plan-x` | 12 min | main | no |
 | `⚠ stale refactor-auth` | 16 d | feat/auth | yes |
 
-### Parked (<N> open)
+### Parked ([open item count])
 
 - [ ] **retry-backoff** — revisit exponential vs linear. Raised: 2026-08-10.
 - [ ] ⚠ stale **split-ratio** — 80/20 vs 70/30 never settled. Raised: 2026-07-20.
@@ -247,12 +254,14 @@ Derive a short kebab slug from payload, then Read `.claude/state/session/PARKED.
 ```markdown
 # Parked items
 
-- **<short slug>** — <one-line summary>. Raised: <YYYY-MM-DD>. Why: <one sentence>. Next: <what to ask or do when revisiting>.
+- **[slug]** — [summary]. Raised: [date]. Why: [reason]. Next: [next action].
 ```
+
+> Keep each summary to one line and each Why to one sentence. Next states what to ask or do when revisiting.
 
 Date from `date -u +%Y-%m-%d` (fold into any bash call this step already makes). Slug already present: update that bullet rather than adding a near-duplicate, say so.
 
-Print one line: `Parked: <slug>` plus current open count. Terminal only.
+Print one line: `Parked: [slug]` plus current open count. Terminal only.
 
 ## Step 5 / Mode: sweep
 
@@ -271,7 +280,7 @@ Call `TaskList` for fourth row. Detection stays **behavioural** — a new top-le
 Render:
 
 ```markdown
-## Unlanded — <N> items
+## Unlanded — [item count] items
 
 | # | Item | Type | Why it did not land |
 | --- | --- | --- | --- |
@@ -303,7 +312,7 @@ jq -n --arg ts "$TS" --arg item "<matched slug>" '{"ts":$ts,"item":$item,"action
 
 > jq escapes the slug — a bullet holding quotes or braces can never break the log line.
 
-Print `Dropped: <slug>` plus remaining open count. Terminal only.
+Print `Dropped: [slug]` plus remaining open count. Terminal only.
 
 End with a `## Confidence` block per `quality-gates.md` — score on: match unambiguous, only the matched bullet removed, audit line appended.
 

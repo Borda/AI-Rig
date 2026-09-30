@@ -4,7 +4,7 @@
 
 > **Documentation, not contract.** The skill never loads this file; `SKILL.md` and `modes/*.md` are the only normative sources. It exists so the shape — what fans out, what joins, what blocks — can be read without walking the mode files one by one.
 >
-> **Keep it current.** Any change to block order, gate placement, fan-out width or what runs beside what lands here in the same commit. A schema that disagrees with `SKILL.md` is worse than none — `SKILL.md` wins every time.
+> **Keep it current.** Any change to block order, gate placement, fan-out width or what runs beside what lands here in the same commit. Every schema block carries a `(step N)` tag naming its step; renumbering a step updates the tag and the index at the end. A schema that disagrees with `SKILL.md` is worse than none — `SKILL.md` wins every time.
 
 ## Legend
 
@@ -17,15 +17,15 @@ JOIN   lanes collected; nothing past it starts until all land
 ## Schema
 
 ```
-SETUP
+SETUP  (§ Agent Resolution, step 1)
   flag parse · agent resolution
   |
-  ◆ unknown flag?                              [conditional]
+  ◆ unknown flag?  (step 1)                    [conditional]
   |
-MODE DISPATCH
-  number    → THREAD MODE
-  vitality  → VITALITY MODE
-  ecosystem → ECOSYSTEM MODE
+MODE DISPATCH  (step 5)
+  number    → THREAD MODE     (modes/thread.md)
+  vitality  → VITALITY MODE   (modes/vitality.md)
+  ecosystem → ECOSYSTEM MODE  (modes/ecosystem.md)
 ```
 
 Full detail for each branch — they diverge too far past this point to share one schema — lives under **Mode branches** below.
@@ -54,39 +54,39 @@ Reply mode (`--reply`, thread only) never reaches the follow-up gate: SHEPHERD R
 ### Thread mode (no `--reply`)
 
 ```
-CACHE CHECK
+CACHE CHECK  (step 3)
   numeric args only; hit skips primary fetch (wide-net still live)
   |
-DETECT TYPE
+DETECT TYPE  (step 4)
   TYPE=unknown → hard stop (exit 1, not a gate)
   |
-FETCH  ‖ parallel gh calls, width by type
+FETCH  (thread.md)  ‖ parallel gh calls, width by type
   issue 2 · PR 4 · discussion 1
   |
-WIDE-NET DUP SEARCH
+WIDE-NET DUP SEARCH  (thread.md)
   sequential, re-fetches title independently
   |
-REPRO CHECK  ▣ 1 agent                    [HAS_REPRO=true only]
+REPRO CHECK  (thread.md steps R1–R4)  ▣ 1 agent (step R3)  [HAS_REPRO=true only]
   sw-engineer default, qa-specialist on pytest patterns
   |
-STALE-SYMBOL CHECK
+STALE-SYMBOL CHECK  (thread.md § Stale-symbol check)
   optional, codemap
   |
-WRITE REPORT
+WRITE REPORT  (thread.md)
   |
-◆ FOLLOW-UP GATE                                        always
+◆ FOLLOW-UP GATE  (step 6a)                             always
   |
-CONFIDENCE BLOCK
+CONFIDENCE BLOCK  (step 6b)
 ```
 
 ### Thread mode (`--reply`)
 
 ```
-DIRECT REPORT PATH?
+DIRECT REPORT PATH?  (step 2)
   bad combo (path, no --reply) → hard exit 1, not a gate
   path + --reply + file exists → SHEPHERD REPLY (skip below)
   |
-FRESH REPORT CHECK
+FRESH REPORT CHECK  (step 2)
   no drift → SHEPHERD REPLY (skip fetch chain)
   drift or report missing
   |
@@ -94,65 +94,67 @@ FRESH REPORT CHECK
   REPRO CHECK → STALE-SYMBOL CHECK → WRITE REPORT — identical
   chain to THREAD MODE (no --reply) above ]
   |
-SHEPHERD REPLY  ▣ oss:shepherd
+SHEPHERD REPLY  (step 7)  ▣ oss:shepherd
   |
-CONFIDENCE BLOCK
+CONFIDENCE BLOCK  (step 7)
   (no AskUserQuestion anywhere in this path)
 ```
 
 ### Vitality mode
 
 ```
-DATA FETCH  ▣ oss:gh-scraper
+DATA FETCH  (vitality.md step 1)  ▣ oss:gh-scraper
   |
   +--------------------- FAN 3 -----------------------+
   |
-AXIS SCORE  ▣▣▣ repo-warden × 3 (Groups A / B / C)
+AXIS SCORE  (vitality.md step 2)  ▣▣▣ repo-warden × 3 (Groups A / B / C)
   each reads DATA_FILE independently, no shared state
   |
   +--------------------- JOIN -------------------------+
   |
-ASSEMBLE SCORES
+ASSEMBLE SCORES  (vitality.md step 3)
   |
-REPORT GENERATION
+REPORT GENERATION  (vitality.md step 4)
   scaffold + optional codemap structural signals
   |
   QUICK_MODE=true → skip to TERMINAL SCORECARD
   (Codex + Adversarial Review become "skipped (--quick)")
   |
-CODEX INDEPENDENT REVIEW  ▣ bridge:review    [CODEX_AVAILABLE=1 only]
+CODEX INDEPENDENT REVIEW  (vitality.md step 5)  ▣ bridge:review
+                                                 [CODEX_AVAILABLE=1 only]
   |
-  +--------------------- FAN 2 -----------------------+
+  +------------ FAN 2  (vitality.md step 6a) ----------+
   |                                                    |
 CHALLENGER  ▣ 1 agent                    CODEX REVIEW  ▣ bridge:review
   stress-tests scoring, evidence           same report, no shared input
   |                                                    |
   +--------------------- JOIN --------------------------+
   |
-  needs_rework → ▣ sw-engineer per flagged section,
+  needs_rework → ▣ sw-engineer per flagged section  (step 6b),
   fresh spawn, loop ≤ REWORK_MAX (2) back to CHALLENGER/CODEX REVIEW
+  merge adversarial findings into report  (step 6c)
   |
-TERMINAL SCORECARD
+TERMINAL SCORECARD  (vitality.md step 7)
   |
-◆ FOLLOW-UP GATE                                             always
+◆ FOLLOW-UP GATE  (SKILL.md step 6a)                         always
   |
-CONFIDENCE BLOCK
+CONFIDENCE BLOCK  (SKILL.md step 6b)
 ```
 
 ### Ecosystem mode
 
 ```
-SEARCH PYPI REVERSE-DEPS
+SEARCH PYPI REVERSE-DEPS  (ecosystem.md)
   gh api search/code — from mypackage import
   |
-SEARCH CONDA-FORGE
+SEARCH CONDA-FORGE  (ecosystem.md)
   gh api search/code — feedstock meta.yaml
   |
-WRITE REPORT
+WRITE REPORT  (ecosystem.md)
   |
-◆ FOLLOW-UP GATE                                        always
+◆ FOLLOW-UP GATE  (step 6a)                             always
   |
-CONFIDENCE BLOCK
+CONFIDENCE BLOCK  (step 6b)
 ```
 
 Sequential throughout, zero spawns — no `FAN` belongs on this mode's schema.
@@ -170,7 +172,7 @@ Sequential throughout, zero spawns — no `FAN` belongs on this mode's schema.
 
 ## Where this lives in `SKILL.md`
 
-Navigation only; the step numbers carry no meaning at this level.
+Index of the schema tags above, one row per block. A bare `step N` is a `SKILL.md` step; a mode file's own numbering is prefixed with its name (`vitality.md step 2`, `thread.md step R3`); a mode file with no numbered steps is tagged by file name.
 
 | Block | Steps |
 | -- | -- |
@@ -180,8 +182,8 @@ Navigation only; the step numbers carry no meaning at this level.
 | DETECT TYPE | Step 4 |
 | MODE DISPATCH | Step 5 |
 | THREAD FETCH … WRITE REPORT | `modes/thread.md` |
-| VITALITY DATA FETCH … TERMINAL SCORECARD | `modes/vitality.md` Steps 1–7 |
+| VITALITY DATA FETCH … TERMINAL SCORECARD | `modes/vitality.md` Steps 1–7 (6a–6c in `modes/vitality-adversarial-rework.md`) |
 | ECOSYSTEM SEARCH … WRITE REPORT | `modes/ecosystem.md` |
 | FOLLOW-UP GATE | Step 6a |
-| CONFIDENCE BLOCK | Step 6b, Step 7 |
+| CONFIDENCE BLOCK | Step 6b (no `--reply`), Step 7 (`--reply`) |
 | SHEPHERD REPLY | Step 7 |

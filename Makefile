@@ -32,6 +32,9 @@ SETTINGS := $(HOME)/.claude/settings.json
 KNOWN_MARKETPLACES := $(HOME)/.claude/plugins/known_marketplaces.json
 INSTALLED_PLUGINS := $(HOME)/.claude/plugins/installed_plugins.json
 CACHE_DIR := $(HOME)/.claude/plugins/cache
+# Orphaned plugin versions (Claude Code writes .orphaned_at, epoch ms, when an install replaces them) are removed
+# by sync-claude once the marker is at least this old; younger ones may still back a running session.
+ORPHAN_MIN_AGE_HOURS ?= 24
 PROJECT_DIR := $(shell pwd)
 MARKETPLACE_REMOTE := $(shell git -C $(PROJECT_DIR) remote get-url origin 2>/dev/null | sed 's/\.git$$//')
 CODEX_SYNC_SCRIPT := $(PROJECT_DIR)/plugins/codex-rig/scripts/sync_codex.py
@@ -62,7 +65,7 @@ endef
 
 .PHONY: sync-all sync-claude sync-codex clear-all clear-claude clear-codex \
         migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace \
-        update-ext-plugins register-marketplace install-claude-plugins \
+        update-ext-plugins register-marketplace install-claude-plugins prune-claude-cache \
         install-codex-plugins sync-codex-home-policy \
         banner-claude banner-codex \
         prune-benchmarks prune-benchmarks-apply
@@ -98,7 +101,7 @@ sync-all:
 	fi; \
 	exit $$status
 
-sync-claude: banner-claude migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace update-ext-plugins register-marketplace install-claude-plugins
+sync-claude: banner-claude migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace update-ext-plugins register-marketplace install-claude-plugins prune-claude-cache
 	@echo "✓ Claude sync complete"
 
 sync-codex: banner-codex install-codex-plugins sync-codex-home-policy
@@ -212,6 +215,30 @@ register-marketplace:
 	fi; \
 	claude plugin marketplace remove "$(MARKETPLACE)" 2>/dev/null || true; \
 	claude plugin marketplace add "$(MARKETPLACE_REMOTE)"
+
+# `claude plugin uninstall` only marks a replaced version dir with `.orphaned_at`; nothing ever deletes it. A session
+# started before the replacement still reads its skill files from that dir, so only markers older than
+# ORPHAN_MIN_AGE_HOURS are pruned, and a dir any install record still names is always kept.
+prune-claude-cache:
+	@$(call stage,Prune orphaned plugin cache versions); \
+	now_ms=$$(( $$(date +%s) * 1000 )); \
+	min_age_ms=$$(( $(ORPHAN_MIN_AGE_HOURS) * 3600 * 1000 )); \
+	installed=$$(jq -r '.plugins // {} | to_entries[] | .value[]? | .installPath // empty' "$(INSTALLED_PLUGINS)" 2>/dev/null || true); \
+	pruned=0; \
+	for marker in "$(CACHE_DIR)/$(MARKETPLACE)"/*/*/.orphaned_at; do \
+		[[ -f "$$marker" ]] || continue; \
+		dir="$${marker%/.orphaned_at}"; \
+		label="$${dir#$(CACHE_DIR)/}"; \
+		if grep -Fxq -- "$$dir" <<<"$$installed"; then echo "  – kept $$label (still installed)"; continue; fi; \
+		stamp=$$(tr -cd '0-9' < "$$marker"); \
+		if [[ -z "$$stamp" ]]; then echo "  – kept $$label (unreadable marker)"; continue; fi; \
+		if (( $${#stamp} <= 10 )); then stamp=$$(( stamp * 1000 )); fi; \
+		if (( now_ms - stamp < min_age_ms )); then echo "  – kept $$label (orphaned under $(ORPHAN_MIN_AGE_HOURS)h ago)"; continue; fi; \
+		rm -rf -- "$$dir"; \
+		pruned=$$(( pruned + 1 )); \
+		echo "  ✓ removed $$label"; \
+	done; \
+	echo "  $$pruned orphaned version dir(s) removed"
 
 # Folds install + purge + setup-skills into one target (blueprint constraint 4) — one
 # shell invocation, so the bridge-purge guard (constraint 6) and the try-all-6-then-report

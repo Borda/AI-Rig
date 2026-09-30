@@ -29,7 +29,10 @@ entry.
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import subprocess
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -667,3 +670,72 @@ class TestPreCompactContract:
         assert "## Files Modified This Session" in written
         assert "- /proj/src/bar.py" in written
         assert "## Skill Compaction Contract" not in written
+
+
+_requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="git executable not available")
+
+_GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+
+
+def _git(cwd: Path, *args: str) -> str:
+    """Run one git command in ``cwd`` isolated from user/system config, failing the test on error."""
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", *args],
+        cwd=cwd,
+        env=_GIT_ENV,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def _age_worktree(tree: Path, seconds: float) -> None:
+    """Backdate a worktree dir and its git admin files, which the sweep reads as last activity."""
+    stamp = time.time() - seconds
+    gitdir = Path(_git(tree, "rev-parse", "--absolute-git-dir").strip())
+    for p in (tree, gitdir / "index", gitdir / "HEAD", gitdir / "logs" / "HEAD"):
+        if p.exists():
+            os.utime(p, (stamp, stamp))
+
+
+@pytest.mark.integration
+@_requires_git
+class TestSessionEndWorktreeCleanup:
+    """task-log.js SessionEnd: stale-worktree sweep never destroys user deliverables or pending work."""
+
+    def test_sweep_removes_only_idle_clean_managed_trees(
+        self, sid: str, tmp_home: Path, tmp_path: Path, run_hook
+    ) -> None:
+        """Only an idle, clean, registered agent-*/oss-* tree is removed; every other kind survives."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        _git(proj, "init", "-q")
+        (proj / ".gitignore").write_text(".temp/\n", encoding="utf-8")
+        (proj / "a.txt").write_text("a\n", encoding="utf-8")
+        _git(proj, "add", ".gitignore", "a.txt")
+        _git(proj, "commit", "-q", "-m", "init")
+        wt_root = proj / ".claude" / "worktrees"
+        registered = ["agent-old", "oss-old", "dev-old", "manual-old", "agent-dirty", "agent-output", "agent-fresh"]
+        for name in registered:
+            _git(proj, "worktree", "add", "-q", "-b", name, str(wt_root / name), "HEAD")
+        (wt_root / "agent-dirty" / "a.txt").write_text("edited\n", encoding="utf-8")
+        (wt_root / "agent-output" / ".temp").mkdir()
+        (wt_root / "agent-output" / ".temp" / "extract.md").write_text("result\n", encoding="utf-8")
+        (wt_root / "agent-orphan").mkdir()
+        for name in registered:
+            if name != "agent-fresh":
+                _age_worktree(wt_root / name, 3 * 60 * 60)
+        stamp = time.time() - 3 * 60 * 60
+        os.utime(wt_root / "agent-orphan", (stamp, stamp))
+
+        result = run_hook("task-log.js", {"hook_event_name": "SessionEnd", "session_id": sid}, home=tmp_home, cwd=proj)
+
+        assert result.returncode == 0, result.stderr
+        assert not (wt_root / "agent-old").exists()
+        assert not (wt_root / "oss-old").exists()
+        assert (wt_root / "dev-old").is_dir()
+        assert (wt_root / "manual-old").is_dir()
+        assert (wt_root / "agent-dirty" / "a.txt").read_text(encoding="utf-8") == "edited\n"
+        assert (wt_root / "agent-output" / ".temp" / "extract.md").is_file()
+        assert (wt_root / "agent-fresh").is_dir()
+        assert (wt_root / "agent-orphan").is_dir()

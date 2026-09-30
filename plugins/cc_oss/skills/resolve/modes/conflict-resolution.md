@@ -18,20 +18,35 @@ MERGE_HEAD_FILE="$(git rev-parse --git-dir)/MERGE_HEAD" # timeout: 3000
 test -f "$MERGE_HEAD_FILE" && echo "MERGING" || echo "clean"
 ```
 
-**Case A — MERGING** (`MERGE_HEAD` present — prior `git merge` left markers): work with existing markers. Skip to Step 7a.
+**Case A — MERGING** (`MERGE_HEAD` present — prior `git merge` left markers): work with existing markers, but first check the target branch has not moved since that merge started:
+
+```bash
+git fetch origin "$BASE_REF" || echo "⚠ fetch origin/$BASE_REF failed — cannot tell whether the target moved"  # timeout: 6000
+[ "$(git rev-parse MERGE_HEAD)" = "$(git rev-parse "origin/$BASE_REF" 2>/dev/null)" ] \
+    || echo "⚠ origin/$BASE_REF moved since this merge started — finish it, then re-run /oss:resolve to merge the newer target"  # timeout: 3000
+```
+
+Skip to Step 7a.
 
 **Case B — not MERGING**:
 
-Pull latest state, both branches, before merging:
+Pull latest state, both branches, before merging — the source (PR) branch **and** the target branch:
 
 ```bash
 # 1. update source branch (ff-only; non-ff = force-pushed, use local)
 git pull "${FORK_REMOTE:-origin}" "$HEAD_REF" --ff-only 2>/dev/null \
     || echo "⚠ PR branch not fast-forwardable — proceeding with local state"  # timeout: 6000
+# 2. update target branch — remote-tracking ref (required), then the local branch (ff-only, best effort)
 git fetch origin "$BASE_REF" || { echo "⛔ fetch origin/$BASE_REF failed — cannot guarantee base is current; check network/auth and retry"; exit 1; }  # timeout: 6000
+if git show-ref --verify --quiet "refs/heads/$BASE_REF"; then
+    git fetch . "origin/$BASE_REF:$BASE_REF" 2>/dev/null \
+        || echo "⚠ local $BASE_REF not updated (diverged, or checked out in another worktree) — merging origin/$BASE_REF, which is current"
+fi  # timeout: 3000
 # 3. merge — no-commit to inspect conflicts before finalizing
 git merge "origin/$BASE_REF" --no-commit --no-ff # timeout: 6000
 ```
+
+The merge always uses the freshly fetched `origin/$BASE_REF`, never the local `$BASE_REF`, so a stale or diverged local target branch never leaks into the PR. The local update keeps the maintainer's own target branch in step with what was merged; `git fetch .` is fast-forward only and never touches a branch that is checked out, so it cannot rewrite local work.
 
 Check conflicted files:
 

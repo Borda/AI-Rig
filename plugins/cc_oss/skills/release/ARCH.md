@@ -4,7 +4,7 @@
 
 > **Documentation, not contract.** The skill never loads this file; `SKILL.md`, `modes/*.md`, and `templates/*.md` are the only normative sources. It exists so the run/gate/fan-out shape can be read without walking an 870-line `SKILL.md` plus seven mode/template files.
 >
-> **Keep it current.** Any change to block order, gate placement, agent fan-out, or what runs beside what must land here in the same commit. A schema that disagrees with `SKILL.md`/`modes/*.md` is worse than none — those files win every time.
+> **Keep it current.** Any change to block order, gate placement, agent fan-out, or what runs beside what must land here in the same commit. Every schema block carries a tag naming its section or phase; renaming or renumbering one updates the tag and the index at the end. A schema that disagrees with `SKILL.md`/`modes/*.md` is worse than none — those files win every time.
 
 ## Legend
 
@@ -21,45 +21,49 @@ JOIN   lanes collected; nothing past it starts until all land
 ## Schema — `notes` (default; no mode token, or explicit `notes`)
 
 ```
-SETUP
+SETUP  (§ Mode Detection, § Shared setup)
   task hygiene · mode detection · flags/range · shared setup
   |
-GATHER  ▣ foundry:sw-engineer
+GATHER  (§ Gather changes)  ▣ foundry:sw-engineer
   git log/diff · gh pr list · PR-association loop
   revert-pair detection + cross-cycle revert/pivot detection
   |
-EXPLORE + VALIDATE DOCS
+EXPLORE + VALIDATE DOCS  (§ Explore codebase, § Validate docs)
   explore codebase · doc-weight proportionality check
   |
-CLASSIFY
+CLASSIFY  (§ Classify each change, § Truth check,
+           § Breaking-change classification)
   classify each change · truth check (loop ≤3)
   breaking-change classification
   |
-VALIDATE MIGRATION DOCS
+VALIDATE MIGRATION DOCS  (§ Validate migration docs)
   |
-CHANGELOG + CONTRIBUTORS
+CHANGELOG + CONTRIBUTORS  (§ Audit changelog, § Extract contributors)
   audit changelog · extract contributors — inline, sequential
   |
-HIGHLIGHTS + MIGRATION GUIDE
+HIGHLIGHTS + MIGRATION GUIDE  (§ Identify highlights, § Draft migration guide)
   identify highlights · draft migration guide
   |
-DEMO
+DEMO  (§ Generate release demo)
   generate release demo script
   |
-SUMMARY
+SUMMARY  (§ Draft executive summary)
   draft executive summary
   |
-DRAFT  ▣ foundry:sw-engineer adversarial review (loop ≤3)
+DRAFT  (§ Write release draft, § Adversarial review)
+  ▣ foundry:sw-engineer adversarial review (loop ≤3)
   write release draft — agent re-spawns each iteration
   |
-POLISH  ▣ oss:shepherd voice review
+POLISH  (release-draft-template.md § Semantic consistency review,
+        § Polish and write to disk)
+  ▣ oss:shepherd voice review
   Skill(foundry:humanizer) pass
   |
-PUBLISH
+PUBLISH  (release-draft-template.md § Candidate validation and publication)
   final cross-artifact truth gate → provenance record
   marker refresh → publish
   |
-◆ HUMAN GATE
+◆ HUMAN GATE  (release-draft-template.md § Human gate)
   stop, hand off — `gh release create` is user-run
 ```
 
@@ -95,13 +99,13 @@ No gate is always-on in any mode.
 ### audit `[version]`
 
 ```
-SETUP
+SETUP  (phase 0)
   release-model guardrail (stable-branch vs linear)
   |
-GATHER + EXPLORE  ▣ foundry:sw-engineer
-  deprecation-removal check · upstream review verdict check
+GATHER + EXPLORE  (phases 1, 1a, 1b)  ▣ foundry:sw-engineer
+  deprecation-removal check (1a) · upstream review verdict check (1b)
   |
-READINESS CHECKS
+READINESS CHECKS  (phase 2)
   templates/audit-checks.md
     +------------------- FAN 2 -------------------+
     |                                              |
@@ -110,10 +114,10 @@ READINESS CHECKS
     |                                              |
     +--------------------- JOIN --------------------+
   |
-ADVERSARIAL AUDIT
+ADVERSARIAL AUDIT  (phase 2a)
   Skill(bridge:review) — independent Codex pass, if bridge available
   |
-OUTPUT
+OUTPUT  (§ Output routing, § Verdict line)
   .reports/release/$BRANCH-$DATE.md (not .temp/)
   verdict line + confidence block
 ```
@@ -123,29 +127,29 @@ OUTPUT
 ### prepare `<version>`
 
 ```
-READINESS AUDIT   = audit schema above, embedded, scoped to $VERSION
+READINESS AUDIT  (phase 1)  = audit schema above, embedded, scoped to $VERSION
   ▣ foundry:sw-engineer gather (audit's own Phase 1)
   verdict BLOCKED → stop, no artifacts written
   |
-GATHER + CHANGELOG  ▣ foundry:sw-engineer gather (re-run, full $RANGE)
+GATHER + CHANGELOG  (phase 2)  ▣ foundry:sw-engineer gather (re-run, full $RANGE)
   audit changelog — second FAN 2 occurrence, see footnote
   |
-HIGHLIGHTS + MIGRATION
+HIGHLIGHTS + MIGRATION  (phase 3)
   identify highlights → HIGHLIGHTS.md
   draft migration guide → MIGRATION.md
   |
-DEMO + SUMMARY
+DEMO + SUMMARY  (phase 4)
   generate demo script — runs directly, no "ready to run" ask
   draft executive summary → SUMMARY.md
   |
-DRAFT  ▣ foundry:sw-engineer adversarial review (loop ≤3)
+DRAFT  (phase 5)  ▣ foundry:sw-engineer adversarial review (loop ≤3)
   write release draft → DRAFT.md
   ▣ oss:shepherd voice review · Skill(foundry:humanizer) pass
   |
-CONSOLIDATE
+CONSOLIDATE  (phase 6)
   waived changes → releases/$VERSION/waived-changes.md
   |
-OUTPUT
+OUTPUT  (§ Output)
   confidence block
 ```
 
@@ -154,19 +158,19 @@ OUTPUT
 ### demo `[range]`
 
 ```
-SETUP
+SETUP  (SKILL.md § Mode: demo)
   range from token, else $LAST_TAG..HEAD
   |
-GATHER + EXPLORE  ▣ foundry:sw-engineer
+GATHER + EXPLORE  (phase 1)  ▣ foundry:sw-engineer
   pick 2–3 headline features
   classify / truth check / breaking-change classification never run here
   |
-GENERATE SCRIPT
+GENERATE SCRIPT  (phase 2)
   real-world data only by default
   fallback: document attempts → Skill(bridge:advise)
   → ◆ approve synthetic
   |
-WRITE OUTPUT
+WRITE OUTPUT  (phase 3)
   $DEMO_OUT — never executed here; user runs `jupytext --to notebook`
 ```
 
@@ -175,24 +179,25 @@ GATHER delegates only past the same 50-commit size guard as `notes`. The fallbac
 ### `--append` (flag on `notes`, not a separate mode)
 
 ```
-SETUP
+SETUP  (§ Shared setup)
   $RANGE resolves from the per-branch marker, not $LAST_TAG..HEAD
   zero new commits since marker → stop, exit 0
   |
-GATHER … DRAFT   = notes schema above, unchanged
+GATHER … DRAFT   = notes schema above, unchanged (same § tags)
   |
-MERGE  (Read+Edit against $APPEND_STAGE, never a parser)
+MERGE  (release-draft-template.md § Append merge)
+  Read+Edit against $APPEND_STAGE, never a parser
   apply add/remove plan → $APPEND_ITEMS_FILE
   ▣ oss:shepherd reviews the JSON plan, not the full draft
   |
-POST-MERGE RE-VALIDATION
+POST-MERGE RE-VALIDATION  (release-draft-template.md § Post-merge re-validation)
   truth check · highlights re-rank · migration re-check · docs re-check
   re-run against the merged candidate, inline, no extra spawn
   |
-PUBLISH
+PUBLISH  (release-draft-template.md § Candidate validation and publication)
   seal → truth gate repeats on the sealed candidate → publish
   |
-◆ HUMAN GATE
+◆ HUMAN GATE  (release-draft-template.md § Human gate)
   stop, hand off
 ```
 
@@ -213,7 +218,7 @@ Every write from CHANGELOG + CONTRIBUTORS onward targets the staged candidate (`
 
 ## Where this lives in `SKILL.md`
 
-Navigation only; block names carry the meaning, not this table.
+Index of the schema tags above, one row per block. `SKILL.md` has no numbered steps, so a tag names its section (`§ Gather changes`); mode files use their own phase numbers (`phase 2`).
 
 | Block | `SKILL.md` / mode file section |
 | -- | -- |
@@ -227,7 +232,7 @@ Navigation only; block names carry the meaning, not this table.
 | DEMO | Generate release demo |
 | SUMMARY | Draft executive summary |
 | DRAFT | Write release draft, `modes/adversarial-review.md` |
-| POLISH | `modes/release-draft-template.md` — Semantic consistency review, Polish |
+| POLISH | `modes/release-draft-template.md` — Semantic consistency review, Polish and write to disk |
 | PUBLISH | `modes/release-draft-template.md` — Candidate validation and publication |
 | HUMAN GATE | `modes/release-draft-template.md` — Human gate |
 | READINESS AUDIT / CONSOLIDATE (`prepare`) | `modes/prepare.md` Phase 1 (= `modes/audit.md`), Phase 6 |

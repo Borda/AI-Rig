@@ -39,6 +39,7 @@ from shutil import which
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import check_bridge  # noqa: E402 — sibling script in this plugin's bin/, not an installed module
+import get_plugin_install_path  # noqa: E402 — sibling script in this plugin's bin/, not an installed module
 
 _PREFLIGHT_TTL = 14400  # 4 hours in seconds
 _PREFLIGHT_DIR = Path(".temp/state/preflight")
@@ -255,6 +256,10 @@ def main(argv: list[str] | None = None) -> int:
     ).parse_args(argv)
 
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
+
+    stale = get_plugin_install_path.stale_root_warning(Path(__file__).resolve().parents[1])
+    if stale:
+        print(stale, file=sys.stderr)
 
     codex_available = _check_bridge()
 

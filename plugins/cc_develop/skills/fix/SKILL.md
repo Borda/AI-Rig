@@ -591,15 +591,17 @@ Execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review L
 
 ## Final Report
 
+> Template note, not part of the report: summarize the root cause in one or two sentences.
+
 ```markdown
-## Fix Report: <bug summary>
+## Fix Report: [bug summary]
 
 ### Root Cause
-[1-2 sentence explanation of what was wrong and why]
+[root cause explanation]
 
 ### Regression Test
-- File: <test_file>
-- Test: <test_name>
+- File: [test file]
+- Test: [test name]
 - Confirms: [what behavior the test locks in]
 - Disposition: keep if a test runner auto-discovers this file; otherwise add to Follow-up as a cleanup candidate
 

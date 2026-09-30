@@ -4,7 +4,7 @@
 
 > **Documentation, not contract.** The skill never loads this file; `SKILL.md` and `modes/*.md` are the only normative sources. It exists so the shape — what fans out, what joins, what blocks — can be read without walking a 1000-line skill.
 >
-> **Keep it current.** Any change to block order, gate placement, fan-out width or what runs beside what lands here in the same commit. A schema that disagrees with `SKILL.md` is worse than none — `SKILL.md` wins every time.
+> **Keep it current.** Any change to block order, gate placement, fan-out width or what runs beside what lands here in the same commit. Every schema block carries a `(step N)` tag naming its `SKILL.md` step; renumbering a step updates the tag and the index at the end. A schema that disagrees with `SKILL.md` is worse than none — `SKILL.md` wins every time.
 
 ## Legend
 
@@ -17,13 +17,13 @@ JOIN   lanes collected; nothing past it starts until all land
 ## Schema
 
 ```
-SETUP
+SETUP  (step 0)
   flags · gh PR snapshot (view/diff/checks) · PR_TYPE classify
   |
-◆ EXISTING REPORT GATE                                [conditional]
+◆ EXISTING REPORT GATE  (step 0 — existing-report guard)  [conditional]
   (a) reuse, stop · (b) re-run · (c) reply-draft → REPLY
   |
-PRE-FLIGHT
+PRE-FLIGHT  (step 1)
   ◆ report path, no --reply?                          [conditional]
       → redirect to REPLY, or stop
   codemap gates (build/stale prompt)                   [conditional]
@@ -31,40 +31,42 @@ PRE-FLIGHT
   worktree entry (EnterWorktree)                    [WT_ENABLED only]
   file-scope detect → CICD_ONLY / DOCS_ONLY / DOCS_CICD / Python
   |
-ACCEPTANCE GATE
+ACCEPTANCE GATE  (step 1 — acceptance gate)
   Stage 1 REJECT  ▣ foundry:challenger (conduct/license only)
       confirmed → write report, skip to REPORT HEADER + FOLLOW-UP GATE
   Stage 2 BLOCK (CI red) — not terminal, fan-out still runs
   |
   +--------------------- FAN 2 ----------------------+
   |                                                  |
-AGENT LAUNCH  ▣ 1 batch                 ECOSYSTEM + OSS CHECKS
-  Agent 0 blind-solve [FEATURE/MIXED]     ecosystem impact
-  bridge:review (Codex)                     (gh code search, ~10-30s)
-  issue agent (all linked issues)         OSS signal checks (script)
+AGENT LAUNCH  (step 2)                  ECOSYSTEM + OSS CHECKS  (step 3)
+  ▣ 1 batch                               ecosystem impact  (step 3a)
+  Agent 0 blind-solve [FEATURE/MIXED]       (gh code search, ~10-30s)
+    (step 1 — Agent 0)                    OSS signal checks  (step 3b)
+  bridge:review (Codex)                     (script)
+  issue agent (all linked issues)
   ≤3 ranked dimension agents
   + qa-specialist (pinned)
   |                                                  |
   +--------------------- JOIN -----------------------+
   |
-CROSS-VALIDATE
+CROSS-VALIDATE  (step 4)
   ▣ ≤3 verifiers, one per critical/blocking finding
   |
-CONSOLIDATE  ▣ sw-engineer / doc-scribe / qa-specialist, by PR_TYPE
-  REPORT HEADER  print (hook-enforced)
+CONSOLIDATE  (step 5)  ▣ sw-engineer / doc-scribe / qa-specialist, by PR_TYPE
+  REPORT HEADER  (step 5b)  print (hook-enforced)
   |
-CODEX DELEGATION  optional, no gate
+CODEX DELEGATION  (step 6)  optional, no gate
   |
-WORKTREE EXIT  (if entered)
+WORKTREE EXIT  (step 7)  (if entered)
   REPLY_MODE=true  → REPLY
   REPLY_MODE=false → below
   |
-◆ FOLLOW-UP GATE  /oss:resolve suggestion
+◆ FOLLOW-UP GATE  (step 7a)  /oss:resolve suggestion
   [skipped: resolve already running for this PR]
   |
-CONFIDENCE BLOCK · stop
+CONFIDENCE BLOCK  (step 7b) · stop
 
-REPLY  (--reply, or an existing-report/direct-path redirect)
+REPLY  (step 8)  (--reply, or an existing-report/direct-path redirect)
   ▣ oss:shepherd — draft contributor reply
   Confidence block · stop
 ```
@@ -120,7 +122,7 @@ All collapse to a shorter path with no special handling beyond what is described
 
 ## Where this lives in `SKILL.md`
 
-Navigation only; the step numbers carry no meaning at this level.
+Index of the `(step N)` tags in the schema above, one row per block.
 
 | Block | Steps |
 | -- | -- |

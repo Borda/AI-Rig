@@ -70,6 +70,15 @@ echo "$AUDIT_OUT" | grep -q '^pip-audit-status: not-installed' && PIP_AUDIT_MISS
 
 Print readiness report:
 
+> Template notes, not part of the report:
+>
+> - Release mode detail gives the pending cherry-pick subject count, or “—” for a linear release; this detail is informational and never blocks release by itself.
+> - Changelog scope detail names the commit SHA and non-PR merge SHA, or says “already released in” followed by the section name.
+> - Changelog evidence lists Unreleased bullets with no PR number and no commit sha in any form (`(#N)`, `([#N](url))`, `(sha7)`), taken from the changelog audit's "unsourced entry" rows.
+> - Doc proportionality names features lacking a dedicated section or example, or having thin coverage.
+> - Upstream review detail includes the report path and outcome from Phase 1b; Codex audit detail summarizes Phase 2a findings.
+> - Next steps gives concrete ordered actions, such as resolving open PRs, rerunning the audit, and preparing the release.
+
 ```markdown
 ---
 repo: [repo-name]
@@ -86,20 +95,21 @@ Date: [date] | Range: [last-tag]..HEAD ([N] commits)
 
 | Check            | Status | Detail |
 |------------------|--------|--------|
-| Release mode     | Linear / Stable-branch (cherry-pick) | [N pending cherry-pick subjects, or "—" if linear — informational only, never blocking by itself] |
+| Release mode     | Linear / Stable-branch (cherry-pick) | [pending subject count or —] |
 | Working tree     | ✓ Clean / ⚠ N files | [filenames if dirty] |
 | CI (last 5 runs) | ✓ Passing / ✗ N failing | [failing job names] |
 | Blocking issues  | ✓ None / ✗ N open | [#N title] |
 | Open PRs (main)  | ✓ None / ⚠ N open | [PR titles] |
 | README aligned   | ✓ / ⚠ Review needed | [reason if flagged] |
 | CHANGELOG entry  | ✓ Present / ✗ Missing | [section name or "add [Unreleased]"] |
-| Changelog scope  | ✓ Clean / ✗ N flagged | [sha + non-PR merge sha, or "already released in <section>"] |
+| Changelog scope  | ✓ Clean / ✗ N flagged | [scope evidence] |
+| Changelog evidence | ✓ All sourced / ⚠ N unsourced | [unsourced bullets] |
 | Version consistent  | ✓ / ⚠ Mismatch | [files and values] |
 | Dependency CVEs     | ✓ Clean / ⚠ N vulns | [package names] |
 | Scheduled removals  | ✓ All removed / ✗ N still present | [symbol names with `remove_in` version] |
-| Doc proportionality | ✓ / ⚠ N features undertreated | [feature names — no dedicated section / no example / thin coverage] |
-| Upstream review verdict | ✓ None blocking / ✗ Blocking | [review report path + outcome, Phase 1b] |
-| Codex adversarial audit | ✓ Clean / ⚠ N findings / — skipped (codex unavailable) | [finding summary, Phase 2a] |
+| Doc proportionality | ✓ / ⚠ N features undertreated | [undertreated features] |
+| Upstream review verdict | ✓ None blocking / ✗ Blocking | [review result] |
+| Codex adversarial audit | ✓ Clean / ⚠ N findings / — skipped (codex unavailable) | [audit findings] |
 
 ### Verdict
 **READY** — no blockers. Run `/release prepare <version>` to write artifacts.
@@ -109,7 +119,7 @@ Date: [date] | Range: [last-tag]..HEAD ([N] commits)
 - ⚠ [recommended item]
 
 ### Next steps
-[e.g., "resolve open PRs → re-run `/release audit v1.3.0` to verify → `/release prepare v1.3.0`"]
+[next actions]
 ```
 
 **Terminal output** — after writing report file, print readiness check table (`| Check | Status | Detail |` rows only, no YAML header, no verdict prose) directly to terminal, inline in Claude response. Mandatory even when audit runs as sub-phase of `/release prepare` — never treat table as intermediate pipeline output or route only to report file; must appear in terminal before prepare proceeds to Phase 2.

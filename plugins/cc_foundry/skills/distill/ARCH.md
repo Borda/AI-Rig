@@ -4,7 +4,7 @@
 
 > **Documentation, not contract.** The skill never loads this file; `SKILL.md` and `modes/*.md` are the only normative sources. It exists so the shape — what fans out, what joins, what blocks — can be read without walking a 5-mode dispatcher across five separate files.
 >
-> **Keep it current.** Any change to block order, gate placement, fan-out width or what runs beside what lands here in the same commit. A schema that disagrees with `SKILL.md`/`modes/*.md` is worse than none — those files win every time.
+> **Keep it current.** Any change to block order, gate placement, fan-out width or what runs beside what lands here in the same commit. Every schema block carries a `(step N)` tag naming its step; renumbering a step updates the tag and the index at the end. A schema that disagrees with `SKILL.md`/`modes/*.md` is worse than none — those files win every time.
 
 ## Legend
 
@@ -19,15 +19,15 @@ JOIN   lanes collected; nothing past it starts until all land
 Distill is not one pipeline — it is a dispatcher. A common prefix always runs, then the first whitespace token of `$ARGUMENTS` routes to exactly one of five mutually-exclusive modes, each schema'd on its own below.
 
 ```
-SETUP
+SETUP  (flag-parsing blocks, before step 1)
   parse --keep · --eager · --project (3 sequential bash blocks — state
   doesn't persist across Bash calls, output re-read as context each time)
   |
-INVENTORY
+INVENTORY  (step 1)
   Glob agents/skills — project-local + plugin-source + installed-cache
   (runs unconditionally, even for modes that never consult it)
   |
-ROUTE
+ROUTE  (step 2 — mode-token checks)
   first token of $ARGUMENTS → default | prune | memory | external
                                        | executables
 ```
@@ -68,7 +68,7 @@ Default mode reaches no gate at all. Every other mode reaches exactly one always
 ### Mode: default (no mode token matched)
 
 ```
-FREQUENCY SCAN
+FREQUENCY SCAN  (step 2)
   +----------------- FAN 3 -----------------+
   |              |              |           |
   git log        name-freq      author-freq
@@ -80,13 +80,13 @@ FREQUENCY SCAN
   read .notes/lessons.md
   write skill contract (compaction boundary)
   |
-GAP ANALYSIS
+GAP ANALYSIS  (step 3)
   compare patterns against INVENTORY roster
   |
-DUPLICATION CHECK
+DUPLICATION CHECK  (step 4)
   overlap + anti-pattern checklist
   |
-REPORT
+REPORT  (step 5)
   Agent/Skill Suggestions + Confidence block
 ```
 
@@ -95,29 +95,29 @@ Fully sequential except the one marked FAN. No gate, no agent spawn — the only
 ### Mode: prune (`prune [--eager]`)
 
 ```
-FIND MEMORY FILES
+FIND MEMORY FILES  (§ Find memory file, § Short-circuit)
   find MEMORY.md under ~/.claude/projects
   none found → PRUNE_ABORT, stop (no gate, no spawn)
   |
-◆ PROJECT PICKER                              [--project only]
+◆ PROJECT PICKER  (§ If PROJECT_FLAG)        [--project only]
   |
-CLASSIFY  ▣ 1 per project — Drop/Trim/Keep
+CLASSIFY  (§ Parallel analysis across projects)  ▣ 1 per project — Drop/Trim/Keep
   width = working-set size; single-file set runs inline instead
   |
   branch on --eager — the two tracks below are mutually exclusive
   |
 -- eager ----------------------------------------------------------
-SCORE  ▣ 1 per project — 2-axis Usage×Impact
+SCORE  (step P-eager-1)  ▣ 1 per project — 2-axis Usage×Impact
   width = working-set size; single-file set runs inline instead
   print consolidated scored table
-◆ WHICH ENTRIES TO PRUNE (tier or item numbers)
-APPLY  ▣ foundry:curator per project — selected items only
+◆ WHICH ENTRIES TO PRUNE  (step P-eager-2)  tier or item numbers
+APPLY  (step P-eager-3)  ▣ foundry:curator per project — selected items only
   print summary
 
 -- default (standard) ----------------------------------------------
-ADVISORY REPORT  read all memory files, print proposal
-◆ APPLY PRUNE EDITS?
-APPLY  Edit tool per project (native, parallel) — only on approval
+ADVISORY REPORT  (steps P1, P2)  read all memory files, print proposal
+◆ APPLY PRUNE EDITS?  (step P3)
+APPLY  (step P3, on approval)  Edit tool per project (native, parallel) — only on approval
   print summary
 ```
 
@@ -126,34 +126,34 @@ Only one track runs per invocation, selected by `--eager` at CLASSIFY's join. Bo
 ### Mode: memory (`memory [--eager]`)
 
 ```
-COLLECT
+COLLECT  (step L1)
   read .notes/lessons.md
   enumerate memory dirs + feedback-file counts
   |
-◆ PROJECT PICKER                              [--project only]
+◆ PROJECT PICKER  (step L1)                   [--project only]
   |
   read feedback_*.md per project · read .claude/rules/*.md
   |
   +--------------------- FAN n -----------------------+
   |   n = selected project count (or all, no --project)|
-ENRICH
+ENRICH  (step L1b)
   per-project root resolution + CLAUDE.md/git-log/plans read
   |
   +--------------------- JOIN -------------------------+
   |
-CLUSTER + CLASSIFY
+CLUSTER + CLASSIFY  (step L2)
   group lessons by domain · disposition · dup/contradiction check
   |
-PROPOSALS
+PROPOSALS  (step L3)
   print proposal table (no writes yet)
   make run dir → conflict pre-check (parallel Grep across proposals)
   |
-◆ APPLY PROPOSALS?
+◆ APPLY PROPOSALS?  (step L4)
   |
-APPLY
+APPLY  (step L4)
   native Write/Edit → cross-reference check → git diff gate
   |
-REVIEW  ▣ foundry:curator — single call, all changed files
+REVIEW  (step L5)  ▣ foundry:curator — single call, all changed files
   |
 Confidence block
 ```
@@ -163,38 +163,38 @@ One always-on gate. Everything after ENRICH's join is a single thread — the co
 ### Mode: external (`external <source> [--eager]`)
 
 ```
-SOURCE READ
+SOURCE READ  (steps E1–E6)
   classify source (URL/path/dir) → fast read → slow read
   → mental model → source report
   |
   +--------------------- FAN 2 ------------------------+
   |                                                     |
-READ LOCAL ROSTER                    READ INSTALLED PLUGINS
+READ LOCAL ROSTER  (step E7)          READ INSTALLED PLUGINS  (step E7)
   Glob+Read agents/skills/rules        Glob plugins/*/
   |                                                     |
   +--------------------- JOIN --------------------------+
   |
-CAPABILITY MAP
+CAPABILITY MAP  (steps E8–E11)
   build local map → compare → split Group A/B → score
   |
-ADOPTION TABLE
+ADOPTION TABLE  (step E12)
   install-as-is judgement
   |
-CHALLENGE  ▣ foundry:challenger — adversarial review of adoption table
+CHALLENGE  (step E12a)  ▣ foundry:challenger — adversarial review of adoption table
   fallback: report/JSON missing or agent absent → proceed unannotated,
   print ⚠, don't block
   |
-◆ APPLY EXTERNAL SOURCE CANDIDATES?
+◆ APPLY EXTERNAL SOURCE CANDIDATES?  (step E13)
   |
-APPLY
+APPLY  (step E14)
   Group A (native Edit, reuses memory mode's conflict-check + gate)
   or print install command (standalone-plugin option)
   |
-VERIFY
+VERIFY  (step E15)
   git diff, report Group B as open questions
   |
   +--------------------- FAN 2 ------------------------+
-  |     only when both file-type groups are non-empty  |
+  |  step E16 — only when both file-type groups exist  |
 REVIEW .md  ▣ foundry:curator      REVIEW code  ▣ foundry:sw-engineer
   |                                                     |
   +--------------------- JOIN --------------------------+
@@ -207,7 +207,7 @@ No second token after `external` → `! MISSING`, stop before any of the above r
 ### Mode: executables (`executables [--eager] [<path>]`)
 
 ```
-LOCATE
+LOCATE  (step E1)
   find latest Check 33 report (or path argument)
   |
   no report found
@@ -217,26 +217,26 @@ LOCATE
     runs Check 33 Phase B2 protocol inline
   +----------------- JOIN --------------------+
   |
-PARSE CANDIDATES
+PARSE CANDIDATES  (step E2)
   HIGH/MEDIUM default; +LOW with --eager; PROSE-verdict candidates
   no qualifying candidates → stop (✓ report, Confidence)
   |
-CANDIDATE TABLE
+CANDIDATE TABLE  (step E3)
   print table · capture before-numbers (blocks-before.jsonl)
   |
-◆ EXTRACT CANDIDATES TO bin/?
+◆ EXTRACT CANDIDATES TO bin/?  (step E3)
   |
-EXTRACT  ▣ foundry:sw-engineer per selected cluster
+EXTRACT  (step E4)  ▣ foundry:sw-engineer per selected cluster
   isolation: worktree, surgical-edit constraint
   |
-RE-AUDIT  ▣ foundry:curator per modified file
+RE-AUDIT  (step E5)  ▣ foundry:curator per modified file
   |
-MEASURE + CONVERGE
+MEASURE + CONVERGE  (step E6)
   capture after-numbers
   Adversarial Convergence Loop (up to 3 rounds, ▣ foundry:challenger)
   ◆ AskUserQuestion      [only on stop — plateau/non-convergence/cap]
   |
-COMMIT
+COMMIT  (step E6)
   two commits: (1) scripts + tests + call-site edits, (2) rule changes
 ```
 
@@ -254,7 +254,7 @@ SCAN only fires when LOCATE finds no prior report — with one on disk, LOCATE i
 
 ## Where this lives in `SKILL.md`
 
-Navigation only; the step numbers carry no meaning at this level.
+Index of the schema tags above, one row per block. A bare `step N` is a `SKILL.md` step; mode files use their own labels (`step L2` in `memory.md`, `step E4` in `external.md` or `executables.md` — the mode heading says which file), and `prune.md`, which has few numbered steps, is tagged by section name.
 
 | Block | Where |
 | -- | -- |
@@ -262,7 +262,7 @@ Navigation only; the step numbers carry no meaning at this level.
 | INVENTORY | `SKILL.md` Step 1 |
 | ROUTE | `SKILL.md` Step 2 — mode-token checks |
 | Mode: default | `SKILL.md` Steps 2–5 |
-| Mode: prune | `modes/prune.md` |
-| Mode: memory | `modes/memory.md` — L1–L5 |
+| Mode: prune | `modes/prune.md` — named sections, P1–P3, P-eager-1–3 |
+| Mode: memory | `modes/memory.md` — L1, L1b, L2–L5 |
 | Mode: external | `modes/external.md` — E1–E16 |
 | Mode: executables | `modes/executables.md` — E1–E6 |

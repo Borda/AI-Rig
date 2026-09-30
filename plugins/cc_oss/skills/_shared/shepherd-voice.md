@@ -4,7 +4,7 @@ Scope: GitHub issue/PR comments, release notes, CHANGELOG entries, contributor-f
 
 ### GitHub Reference Scoping — mandatory before any draft is shown as ready-to-post
 
-<!-- policy-sibling: plugins/CLAUDE.md (canonical), plugins/cc_foundry/rules/git-commit.md, plugins/cc_foundry/rules/_full/git-commit.md — same GH #/@ scoping policy restated for this consumer's context. Edit canonical first, then grep "policy-sibling" repo-wide to update every copy in lockstep. -->
+<!-- policy-sibling: plugins/CLAUDE.md (canonical), plugins/cc_foundry/rules/git-commit.md, plugins/cc_foundry/rules/_full/git-commit.md, plugins/cc_oss/skills/release/guidelines/writing-rules.md — same GH #/@ scoping policy restated for this consumer's context. Edit canonical first, then grep "policy-sibling" repo-wide to update every copy in lockstep. -->
 
 `#N` in this draft = **only** a real GitHub issue/PR/discussion number already confirmed in context (e.g. the PR under review, an issue actually linked from the thread). `@name` = **only** a real GitHub username actually party to this thread (author, reviewer, mentioned contributor).
 

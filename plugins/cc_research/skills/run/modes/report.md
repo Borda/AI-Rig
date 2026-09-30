@@ -4,13 +4,20 @@ Loaded by Step R6 at end of campaign run. Report structure and terminal summary 
 
 ## Report structure
 
+> Report guidance:
+>
+> - Replace descriptive fields with observed run values and omit these writing notes from the completed report.
+> - Agents lists agents actually dispatched this run, from the R3 strategy resolution and any R0/team spawns; never emit the placeholder verbatim.
+> - Summarize successful strategies, failed strategies, and next experiments in two to three sentences.
+> - Omit the Codex co-pilot line when `--codex` was not used. Say “active (ran every iteration)” only when the recorded passes support it.
+
 ```markdown
 ---
-Run — [goal]
+Title:       Run — [Goal]
 Date:        [YYYY-MM-DD]
 Scope:       [program.md path] / [N] iterations planned
 Focus:       ML optimization run
-Agents:      [agents actually dispatched this run — from the R3 strategy resolution + any R0/team spawns, never this placeholder verbatim]
+Agents:      [Agents used]
 Outcome:     GOAL_ACHIEVED | IMPROVED | STALLED | DIVERGED
 Best:        [metric_key] = [best] ([delta]% improvement)
 Confidence:  [score] — [key gaps]
@@ -18,17 +25,17 @@ Next steps:  /research:retro | /research:fortify | /research:run --resume
 Path:        → .reports/research/run-<branch>-<date>.md
 ---
 
-## Run: <goal>
+## Run: [Goal]
 
-**Run ID**: <run-id>
-**Date**: <date>
-**Iterations**: <total> (<kept> kept, <reverted> reverted, <other> other)
-**Baseline**: <metric> = <baseline value>
-**Best**: <metric> = <best value> (<delta>% improvement)
-**Best commit**: <sha>
+**Run ID**: [Run ID]
+**Date**: [Date]
+**Iterations**: [Total iterations] ([Kept count] kept, [Reverted count] reverted, [Other count] other)
+**Baseline**: [Metric] = [Baseline value]
+**Best**: [Metric] = [Best value] ([Delta]% improvement)
+**Best commit**: [Commit SHA]
 **Diary**: ".experiments/state/<run-id>/diary.md"
-**Codex co-pilot**: active (ran every iteration) — <N> Codex passes run (omit line if --codex not used)
-**Codex wins**: <N> Codex proposals kept vs <N> Claude proposals kept
+**Codex co-pilot**: [Co-pilot status] — [Codex pass count] Codex passes run
+**Codex wins**: [Codex kept count] Codex proposals kept vs [Claude kept count] Claude proposals kept
 
 ### Experiment History
 
@@ -37,7 +44,7 @@ Path:        → .reports/research/run-<branch>-<date>.md
 | N   | value  | +X.X%  | status   | desc        | agent | 0.N        |
 
 ### Summary
-[2-3 sentences on what strategies worked, what didn't, what to try next]
+[Strategy summary]
 
 ### Recommended Follow-ups
 - [next action]
@@ -47,11 +54,11 @@ Path:        → .reports/research/run-<branch>-<date>.md
 
 ```text
 ---
-Run — <goal>
-Iterations: <total>  Kept: <kept>  Reverted: <reverted>
-Baseline:   <metric_key> = <baseline>
-Best:       <metric_key> = <best> (<delta>% improvement, commit <sha>)
-Agent:      <agent type used>
+Run — [Goal]
+Iterations: [Total iterations]  Kept: [Kept count]  Reverted: [Reverted count]
+Baseline:   [Metric key] = [Baseline value]
+Best:       [Metric key] = [Best value] ([Delta]% improvement, commit [Commit SHA])
+Agent:      [Agent used]
 → saved to .reports/research/run-<branch>-<date>.md
 → diary: .experiments/state/<run-id>/diary.md
 ---

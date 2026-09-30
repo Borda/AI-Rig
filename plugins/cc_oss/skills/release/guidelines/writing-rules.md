@@ -1,12 +1,17 @@
+<!-- policy-sibling: plugins/CLAUDE.md §GitHub Reference Scoping — `#N` and `@name` (canonical) -->
+
 Write for reader, not commit author.
 
 | Element | Rule |
 | -- | -- |
+| Summary (DRAFT.md) | Elevator pitch in shepherd voice: hook line → 1–5 short win bullets (one per real win, never padded) → one-line upgrade call carrying any breaking/removed items (deprecations only as an optional heads-up clause). Contractions, "you", no hedging. No paragraph over 2 sentences; a long line gets split in two or distilled to its core. No PR refs, no count dumps ("12 bugs, 2 refinements") — name the wins instead. Bold at most one feature/API name per bullet |
 | Feature heading | Bold title, period, then plain-English description — no jargon |
 | PR numbers (CHANGELOG) | Full Markdown link — `([#947](https://github.com/owner/repo/pull/947))` |
-| PR numbers (DRAFT.md) | Short inline ref — `(#947)` — never `[#947](url)`; strip full links when sourcing from intermediate files |
+| PR numbers (DRAFT.md) | Short inline ref — `(#947)` (every section except Summary, which carries none) — never `[#947](url)`; strip full links when sourcing from intermediate files |
 | PR ref + fenced code block | Place `(#N)` at end of description text **before** opening fence — never after closing fence; trailing refs after fenced blocks invisible in rendered output |
 | Issue refs | Never include `closes #N` / `fixes #N` in CHANGELOG or DRAFT.md |
+| Bare `@name` scope | `@handle` only for a real GitHub user/org mention (Contributors line). Decorator or annotation name → backticks (`` `@cached` ``); role handle or other non-GitHub word → drop the `@` |
+| Bare `#N` scope | `#N` only for a real PR/issue number. Ordinal or step ref → plain number or word (`1st`, `step 7`); code-shaped token (C macro, hex color) → backticks |
 | Code examples | Real usage showing new surface; not pseudocode |
 | Tables | Use for option/preset comparisons; skip for single-item features |
 | Breaking changes | Rare — use sparingly; false alarms scare users more than change itself |

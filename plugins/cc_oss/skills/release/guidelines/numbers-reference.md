@@ -73,6 +73,16 @@ Design choices — adjust when release output feels too sparse or dense.
 | Rationale | Fits credits line without wrapping; specific enough to mean something; short enough to scan |
 | If wrong | Expand to phrase if contribution spans multiple areas |
 
+### Release Summary pitch — DRAFT.md
+
+| Limit | Value | Rationale |
+| -- | -- | -- |
+| Hook line | ≤25 words, one line | Says what the release is before a reader scrolls |
+| Win bullets | 1–5, one per real win, ≤20 words each | Readable at a glance; never padded, so a one-fix patch gets one bullet |
+| Paragraph length | ≤2 sentences; split or distill longer lines | Keeps the Summary scannable, not a wall of text |
+| Upgrade call | One line | Carries breaking/removed items and upgrade cost in one place |
+| `--append` fold | Top 5 wins over the whole release; one `New since last draft` pointer line | Stops increments piling up across cycles |
+
 ## Performance Claims — Fact-Check Gate
 
 Quantitative claims ("2× faster", "50% memory reduction", "latency −30 ms") in commit messages or PR bodies need evidence before inclusion in release notes. Two tiers:

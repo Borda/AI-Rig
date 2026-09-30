@@ -422,10 +422,10 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "
 
 ## Step 3: Hypothesis and gate
 
-State root cause hypothesis explicitly before writing any code:
+State the root cause hypothesis in one sentence before writing any code:
 
 ```text
-Root cause: <one sentence — what is wrong and why>
+Root cause: [root cause]
 Evidence for: [signals that support this]
 Evidence against: [anything that contradicts or remains unexplained]
 Confidence: high / medium / low
@@ -477,9 +477,9 @@ fi
 Emit handoff block:
 
 ```text
-Root cause: <confirmed hypothesis from Step 3>
-Suspect file(s): <files identified in Steps 1-2>
-Evidence: <key signals that confirmed the hypothesis>
+Root cause: [confirmed hypothesis from Step 3]
+Suspect file(s): [files identified in Steps 1–2]
+Evidence: [key signals that confirmed the hypothesis]
 ```
 
 **Write diagnosis to file** before handing off — enables `/develop:fix` to skip Step 1 analysis via `--diagnosis <path>`:
@@ -498,21 +498,23 @@ mkdir -p "$_DIAG_BASE/.plans/active"
 
 Write `$DIAG_FILE` with this structure:
 
+> Use one sentence for the confirmed root cause, and list the signals that confirm it under `Evidence`.
+
 ```markdown
-# Debug Diagnosis: <symptom>
+# Debug Diagnosis: [symptom]
 
 ## Root Cause
-<one sentence — confirmed hypothesis>
+[confirmed root cause]
 
 ## Suspect Files
-- path/to/file.py — <reason>
+- path/to/file.py — [reason]
 
 ## Evidence
-- <signal 1 that confirmed hypothesis>
-- <signal 2>
+- [signal 1 that confirmed hypothesis]
+- [signal 2]
 
 ## Confidence
-<high|medium|low>
+[high | medium | low]
 ```
 
 **Append Test Impact section** — only when Step 3 captured a non-empty, non-error result (`${TMPDIR:-/tmp}/dev-debug-test-impact-${CSID}` present). fix reads this to skip re-querying. Records raw JSON plus index `scanned_at` so fix can verify handoff is not older than current index (freshness guard):
@@ -546,10 +548,12 @@ Hand off: `-> /develop:fix --diagnosis $DIAG_FILE`. Root cause already known —
 
 After root cause confirmed and handoff to `/develop:fix` complete, emit terminal summary:
 
+> Keep `Root Cause` to one sentence; list the suspect files and key confirming signals.
+
 ```markdown
-Root Cause: <one sentence>
-File(s): <suspect files>
-Evidence: <key signals>
+Root Cause: [confirmed root cause]
+File(s): [suspect files]
+Evidence: [key signals]
 → Handed off to /develop:fix --diagnosis $DIAG_FILE
 
 ## Confidence

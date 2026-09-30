@@ -353,11 +353,11 @@ Print: `Baseline: <metric_cmd key> = <value>`.
 Write initial diary header to `.experiments/state/<run-id>/diary.md`:
 
 ```markdown
-# Research Diary — <goal>
+# Research Diary — [Goal]
 
-**Run**: <run-id>
-**Started**: <ISO timestamp>
-**Baseline**: <metric_key> = <baseline value>
+**Run**: [Run ID]
+**Started**: [Start timestamp]
+**Baseline**: [Metric key] = [Baseline value]
 
 ---
 ```

@@ -1,23 +1,23 @@
 ---
-develop-review:  [target — file / dir / working-tree diff]
-Title:        develop-review — [target]
+develop-review:  [review target]
+Title:        develop-review — [review target]
 Date:         [YYYY-MM-DD]
-Change Type:  [fix | feat | refactor | perf | docs | ci | chore | test | mixed — from change intent, not file count or commit message]
-Scope:        [key changed files, comma-separated]
-Focus:        [SCOPE-LABEL — one-line description of what the change does]
-Agents:       [comma-separated agent names that ran]
-Reviewers:    [readable role (rating), readable role (rating).]
+Change Type:  [fix | feat | refactor | perf | docs | ci | chore | test | mixed]
+Scope:        [key changed files]
+Focus:        [scope label — change summary]
+Agents:       [agents that ran]
+Reviewers:    [Role (rating), Role (rating)]
 CI:           N/A (develop:review is read-only — runs no tests)
 Outcome:      [APPROVE | NEEDS_WORK | REQUEST_CHANGES]
-Summary:      [1–2 sentence overview of key findings]
+Summary:      [review summary]
 Confidence:   [aggregate score] — [key gaps]
-Next steps:   [comma-separated actionable items — blockers first]
-Path:         → .reports/review/<YYYY-MM-DDTHH-MM-SSZ>/review-report.md
+Next steps:   [actions, blockers first]
+Path:         → .reports/review/[YYYY-MM-DDTHH-MM-SSZ]/review-report.md
 ---
 
 Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject.
 
-## Code Review: [target]
+## Code Review: [review target]
 
 [Preserve the aggregate review summary here as prose, including overall verdict and material limits.]
 
@@ -89,3 +89,12 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insuffic
 | -- | -- | -- | -- |
 
 **Aggregate**: min 0.N / median 0.N
+
+> Template notes, not part of the report:
+>
+> - Use a file, directory, or working-tree diff as the review target.
+> - Classify `Change Type` by intent using `fix`, `feat`, `refactor`, `perf`, `docs`, `ci`, `chore`, `test`, or `mixed`; never classify by file count or commit message.
+> - List key changed files in `Scope`, comma-separated, and keep `Focus` to one line.
+> - List agent names that ran, comma-separated; list actual reviewers as readable `Role (rating)` entries.
+> - Use `APPROVE`, `NEEDS_WORK`, or `REQUEST_CHANGES` for `Outcome`; summarize key findings in 1–2 sentences.
+> - Put blockers first in `Next steps` and list no more than five, as specified in `consolidator-prompt.md`.

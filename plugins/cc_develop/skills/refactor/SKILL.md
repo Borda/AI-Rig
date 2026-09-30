@@ -519,7 +519,7 @@ Not found → skip quality stack entirely, note the message above in Final Repor
 ## Final Report
 
 ```markdown
-## Refactor Report: <target>
+## Refactor Report: [target]
 
 ### Goal
 [stated goal or "general quality pass"]

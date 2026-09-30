@@ -108,15 +108,25 @@ Each entry:
 ```markdown
 ## Iteration N — YYYY-MM-DD
 
-**Approach**: <agent's description from Phase 2 JSON — the proposed change>
-**Outcome**: <kept | reverted | rework | no-op | hook-blocked | timeout>
-**Metric delta**: <metric_before> → <metric_after> (<+/->X.X%) — or "n/a" if no metric was measured
-**Why kept / why reverted**: <one sentence — e.g. "Metric improved 1.2% with guard passing" or "Reverted: guard failed after 2 rework attempts; test_model.py broke" or "No files changed">
-**Avoid repeating**: <yes | no> — yes if outcome was reverted/blocked/no-op AND approach was not a transient failure (e.g. hook issue); no if kept or if the failure was infrastructure (timeout, hook), not the approach itself
-**Pattern**: <cross-iteration observation if ≥3 journal entries exist, otherwise "n/a">
+**Approach**: [Proposed change]
+**Outcome**: [kept | reverted | rework | no-op | hook-blocked | timeout]
+**Metric delta**: [Metric before] → [Metric after] ([Signed percentage change])
+**Why kept / why reverted**: [Decision reason]
+**Avoid repeating**: [yes | no]
+**Pattern**: [Cross-iteration pattern, or n/a]
 
 ---
 ```
+
+> Journal field guidance:
+>
+> - Approach uses the agent's proposed change from the Phase 2 JSON description.
+> - Outcome is one of `kept`, `reverted`, `rework`, `no-op`, `hook-blocked`, or `timeout`.
+> - Metric delta shows before/after values and a signed percentage; use “n/a” when no metric was measured.
+> - Decision reason is one sentence explaining why the change was kept or reverted, such as a metric improvement with passing guards, a failed guard after two rework attempts, or no files changed.
+> - Avoid repeating is `yes` when the outcome was reverted, blocked, or no-op and the approach failed for a non-transient reason. Use `no` when kept or when infrastructure, such as a timeout or hook, caused the failure.
+> - Pattern records a cross-iteration observation after at least three journal entries; before then use “n/a.” Follow the existing Rules below when three or more entries show no consistent pattern.
+> - Replace every descriptive field and omit these writing notes from journal entries.
 
 Rules:
 

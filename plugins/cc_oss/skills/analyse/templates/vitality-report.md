@@ -1,7 +1,18 @@
 <!-- vitality-report.md — output template for oss:analyse vitality mode
      Read this file in Step 4 to structure the $REPORT_FILE Write call.
-     All {VARIABLE} placeholders are substituted from bash variables set in Steps 1–4.
+     Named {VARIABLE} placeholders are substituted from values set in Steps 1–4.
      Do not modify section order — downstream tools (Step 5 aggregation, Step 6 rework) locate sections by heading. -->
+
+> - Replace square-bracket placeholders with this run's findings and values; omit conditional sections and bullets when inapplicable.
+> - Front matter: list REPORT_AGENTS_YAML agents as a comma-joined line in the body.
+> - Summary: write 2–3 sentences covering overall health, top strength, top risk, health score badge, and axis tally.
+> - Findings: use fetched data as evidence, explain project impact, and give concrete actions. Critical/high entries include score and confidence.
+> - Duplicate groups: identify the shared root; mark canonical and duplicate items; label related items with distinct problems as RELATED; recommend closing duplicates against the canonical item.
+> - Data Sources: counts are actual response sizes, not estimates. Open issues truncate at 500; closed issues truncate at 1,000. Note truncation and report any 403 or 202 endpoint in Gaps & Limitations.
+> - Overall confidence below 0.7 requires: "⚠ Health Score reliability is LOW — findings are directional only. Re-run with improved data access before acting on this score." List only axes below 1.0 in the per-axis table; when all are at least 0.9, state "All axes scored with high-confidence data."
+> - Structural signals and per-run recommendations: include only applicable items. For the low-volume Axis 4 condition, set the recheck date 30 days ahead.
+> - Independent Codex Review: include Step 5's read-only bridge assessment and aggregation; when unavailable, state "bridge unavailable — single-pass analysis only."
+> - Adversarial Review: always include challenger findings. Include bridge findings when bridge@borda-ai-rig is installed and enabled; otherwise state "bridge unavailable — single adversarial pass only". Add " and bridge:review" to the sign-off line when CODEX_AVAILABLE=1.
 
 ```markdown
 ---
@@ -22,15 +33,15 @@ agents:
 **Generated:** {REPORT_TIMESTAMP}
 **Skill:** oss:analyse · mode: vitality · v{SKILL_VERSION}
 **Commit:** {REPORT_COMMIT}
-**Agents:** {comma-joined agent list from REPORT_AGENTS_YAML}
+**Agents:** [agent list]
 
 ---
 
 ## Summary
 
-{2–3 sentence verdict: overall health, top strength, top risk. Include health score badge and axis tally.}
+[summary]
 
-**Health Score:** {XX}% · {🟢|🟡|🔴} · {N} healthy · {N} warning · {N} critical · {N} unavailable (⚪)
+**Health Score:** [score]% · [status: 🟢/🟡/🔴] · [N] healthy · [N] warning · [N] critical · [N] unavailable (⚪)
 
 ---
 
@@ -38,16 +49,16 @@ agents:
 
 | Axis | Weight | Score | Status | Conf | Key Signal |
 |------|--------|-------|--------|------|------------|
-| 1 Responsiveness | {WEIGHT_1}% | N.N | 🟢/🟡/🔴 | 0.00 | median issue Xd, PR Xd; X% ≤7d |
-| 2 Maintenance activity | {WEIGHT_2}% | N.N | 🟢/🟡/🔴 | 0.00 | last commit Xd, X commits/30d |
-| 3 Contributor health | {WEIGHT_3}% | N.N | 🟢/🟡/🔴 | 0.00 | bus factor N, retention X% |
-| 4 Issue & PR health | {WEIGHT_4}% | N.N | 🟢/🟡/🔴 | 0.00 | stale X%, close rate X, review cov X% |
-| 5 CI/CD & code quality | {WEIGHT_5}% | N.N | 🟢/🟡/🔴 | 0.00 | N/5 checks, CI pass rate X% |
-| 6 Documentation | {WEIGHT_6}% | N.N | 🟢/🟡/🔴 | 0.00 | N/9 checkpoints |
-| 7 Governance | {WEIGHT_7}% | N.N | 🟢/🟡/🔴 | 0.00 | N/7 files, active maintainers X/Y |
-| 8 Security posture | {WEIGHT_8}% | N.N | 🟢/🟡/🔴 | 0.00 | dep-config: yes/no, alerts: N or "403" |
-| 9 Trajectory | {WEIGHT_9}% | N.N | 🟢/🟡/🔴 | 0.00 | pool drift: ±N%, TTM 30d: Xd vs 90d: Yd, P90 queue: Zd, dep-bump: X% |
-| **Total Score** | 71%* | **XX%** | 🟢/🟡/🔴 | — | — |
+| 1 Responsiveness | {WEIGHT_1}% | [score] | [🟢/🟡/🔴] | [confidence] | median issue Xd, PR Xd; X% ≤7d |
+| 2 Maintenance activity | {WEIGHT_2}% | [score] | [🟢/🟡/🔴] | [confidence] | last commit Xd, X commits/30d |
+| 3 Contributor health | {WEIGHT_3}% | [score] | [🟢/🟡/🔴] | [confidence] | bus factor N, retention X% |
+| 4 Issue & PR health | {WEIGHT_4}% | [score] | [🟢/🟡/🔴] | [confidence] | stale X%, close rate X, review cov X% |
+| 5 CI/CD & code quality | {WEIGHT_5}% | [score] | [🟢/🟡/🔴] | [confidence] | N/5 checks, CI pass rate X% |
+| 6 Documentation | {WEIGHT_6}% | [score] | [🟢/🟡/🔴] | [confidence] | N/9 checkpoints |
+| 7 Governance | {WEIGHT_7}% | [score] | [🟢/🟡/🔴] | [confidence] | N/7 files, active maintainers X/Y |
+| 8 Security posture | {WEIGHT_8}% | [score] | [🟢/🟡/🔴] | [confidence] | dep-config: yes/no, alerts: N or "403" |
+| 9 Trajectory | {WEIGHT_9}% | [score] | [🟢/🟡/🔴] | [confidence] | pool drift: ±N%, TTM 30d: Xd vs 90d: Yd, P90 queue: Zd, dep-bump: X% |
+| **Total Score** | 71%* | **[score]%** | [🟢/🟡/🔴] | — | — |
 
 _(Conf: per-axis confidence 0.00–1.00; ⚠ = below 0.9. *Axes 1–9 weight 71% of the full 13-axis rubric; axes 10–13 (29%) not yet implemented. ⚪ axes excluded from score; weight renormalized over available axes.)_
 
@@ -82,21 +93,21 @@ Ordered by severity. Each finding includes evidence from fetched data, impact as
 
 _(Only emitted when axis scores 🔴 with high-impact evidence. If none: "No critical findings.")_
 
-#### [Axis N] {Finding title}
-**Axis:** {name} · **Score:** {N.N} · **Conf:** {0.00}
-**Evidence:** {specific numbers and data points from API fetch — not assertions}
-**Impact:** {why this matters for the project and its contributors}
-**Action:** {concrete, specific next step with ownership hint}
+#### [Axis N] [finding title]
+**Axis:** [axis name] · **Score:** [score] · **Conf:** [confidence]
+**Evidence:** [evidence]
+**Impact:** [impact]
+**Action:** [action]
 
 ### 🟡 High
 
 _(🟡 axes with strong signal. If none: "No high-severity findings.")_
 
-#### [Axis N] {Finding title}
-**Axis:** {name} · **Score:** {N.N} · **Conf:** {0.00}
-**Evidence:** {specific numbers}
-**Impact:** {impact}
-**Action:** {action}
+#### [Axis N] [finding title]
+**Axis:** [axis name] · **Score:** [score] · **Conf:** [confidence]
+**Evidence:** [evidence]
+**Impact:** [impact]
+**Action:** [action]
 
 ### 🟠 Medium
 
@@ -116,7 +127,7 @@ feature ask, or identical root cause even if symptoms differ. Flag as RELATED (n
 when items share component/area but have distinct problems.
 
 #### Group 1
-**Root**: [the shared key — e.g. exact error message, exact feature request, exact failure mode]
+**Root**: [shared root]
 - Issue #N: [title] ([open/closed]) — created [date]  ← CANONICAL
 - Issue #N: [title] ([open/closed]) ← DUPLICATE
 - PR #N: [title] ([state]) ← related fix
@@ -131,7 +142,7 @@ Merge-conflict / duplicate-effort candidates among open PRs (Signal B). Direct =
 - **PRs #A and #B** — direct: both touch `path/to/file` → conflict/duplicate candidate.
 - **PRs #A and #C** — structural: touch coupled modules `m1`/`m2` (no shared files) → review together.
 
-_(No candidates: "No overlapping open PRs detected." Skipped on high-traffic repos: "PR-set overlap skipped — {N} open PRs exceeds cap {PR_FILES_CAP}.")_
+_(No candidates: "No overlapping open PRs detected." When skipped: "PR-set overlap skipped — {N} open PRs exceeds cap {PR_FILES_CAP}.")_
 
 ---
 
@@ -139,14 +150,14 @@ _(No candidates: "No overlapping open PRs detected." Skipped on high-traffic rep
 
 Ordered by priority (highest impact first):
 
-1. {action} — addresses {axis}, expected impact: {outcome}
+1. [action] — addresses [axis], expected impact: [outcome]
 2. ...
 
 ---
 
 ## Independent Codex Review
 
-{Populated by Step 5 — bridge read-only independent assessment and aggregation. When unavailable: "bridge unavailable — single-pass analysis only."}
+[Codex review or availability status]
 
 ---
 
@@ -156,23 +167,23 @@ All data fetched from GitHub API at {REPORT_TIMESTAMP}. Record counts confirm an
 
 | Source | API Endpoint | Records Fetched | Window | Notes |
 |--------|-------------|-----------------|--------|-------|
-| Open issues | `GET /repos/{repo}/issues?state=open` | N | all open | {truncated at 500 if >500} |
-| Closed issues | `GET /repos/{repo}/issues?state=closed` | N | last 3 years | time-bounded; {truncated at 1000 if >1000} |
+| Open issues | `GET /repos/{repo}/issues?state=open` | N | all open | [truncation status] |
+| Closed issues | `GET /repos/{repo}/issues?state=closed` | N | last 3 years | time-bounded; [truncation status] |
 | Open PRs | `GET /repos/{repo}/pulls?state=open` | N | all open | |
 | Closed PRs | `GET /repos/{repo}/pulls?state=closed` | N | recent 200 | merge rate window |
-| Commits | `GET /repos/{repo}/commits` | N | last 100 | date range: {earliest}–{latest} |
+| Commits | `GET /repos/{repo}/commits` | N | last 100 | date range: [earliest]–[latest] |
 | Releases | `GET /repos/{repo}/releases` | N | last 10 | cadence + downloads |
-| Contributor stats | `GET /repos/{repo}/stats/contributors` | N contributors | all-time | {202-fallback if applicable} |
+| Contributor stats | `GET /repos/{repo}/stats/contributors` | N contributors | all-time | [202 fallback status] |
 | Responsiveness sample | GraphQL issues + PRs | 20 + 20 | most recent | time-to-first-response |
 | CI workflows | `GET /repos/{repo}/actions/workflows` | N workflows | — | |
 | CI runs | `GET /repos/{repo}/actions/runs` | N | last 20 | pass rate |
-| README | `GET /repos/{repo}/readme` | {size} bytes | — | |
-| Dependabot alerts | `GET /repos/{repo}/dependabot/alerts` | N or 403 | open | 403 = no push access |
+| README | `GET /repos/{repo}/readme` | [size] bytes | — | |
+| Dependabot alerts | `GET /repos/{repo}/dependabot/alerts` | [N or 403] | open | 403 = no push access |
 | Star history | `GET /repos/{repo}/stargazers` | N | last 180d | advisory only |
 | Merged PRs 90d | `GET /repos/{repo}/pulls` (closed, merged:≥90d) | N | last 90d | Axis 9 TTM trend + reviewer pool |
 | Commit messages | `GET /repos/{repo}/commits?per_page=50` | N | last 50 | Axis 9 substance ratio |
 
-_{Any endpoint returning 403 or 202 is noted in Gaps & Limitations. All counts are actual response sizes, not estimates.}_
+_[Data completeness note]_
 
 ---
 
@@ -198,15 +209,15 @@ Axes 1–9 weights sum to 0.71 (71% of the full 13-axis rubric); axes 10–13 (2
 
 ## Gaps & Limitations
 
-**Overall confidence:** {overall_confidence:.2f} {🟢 ≥0.9 | 🟡 0.7–0.9 | 🔴 <0.7}
+**Overall confidence:** {overall_confidence:.2f} [🟢 ≥0.9 / 🟡 0.7–0.9 / 🔴 <0.7]
 
-{If overall_confidence < 0.7: "⚠ Health Score reliability is LOW — findings are directional only. Re-run with improved data access before acting on this score."}
+[low-confidence warning, if applicable]
 
 ### Per-Axis Confidence
 
 | Axis | Confidence | Gap | Score Impact |
 |------|------------|-----|--------------|
-| {axes with conf < 1.0, sorted ascending} | | | |
+| [axes below 1.0 confidence, sorted ascending] | | | |
 
 _(Only axes with confidence < 1.0 appear. If all ≥ 0.9: "All axes scored with high-confidence data.")_
 
@@ -220,8 +231,8 @@ Permanent limitations — will not resolve by re-running. Emit only when applica
 
 **Structural (codemap-py)** — populated from `central --top 5` + index coverage when codemap-py available; single "unavailable" bullet otherwise:
 
-- **Highest blast radius**: `{module}` ({N} reverse-deps) — changes here ripple widest; weight review effort accordingly. _(top 1–5 modules)_
-- **Symbol collisions**: {N} name collisions in the index — rename/find-symbol precision reduced for those names. _(omit when 0)_
+- **Highest blast radius**: `[module]` ([N] reverse-deps) — changes here ripple widest; weight review effort accordingly. _(top 1–5 modules)_
+- **Symbol collisions**: [N] name collisions in the index — rename/find-symbol precision reduced for those names. _(omit when 0)_
 - **Index degraded**: built in degraded mode — some structural signals approximate. _(omit unless degraded)_
 - **Index stale**: lags recent commits — structural figures may miss latest changes. _(omit unless stale)_
 - **Structural index unavailable**: blast-radius / collision signals not computed — codemap plugin absent or no index (build via `/codemap-py:scan-codebase`, requires codemap plugin). _(this bullet only, when codemap disabled)_
@@ -234,7 +245,7 @@ Limitations that may resolve on re-run:
 
 - **Axis 8 full data**: re-run with push access — Dependabot alert counts then available
 - **Axis 3**: re-run in 5–10 min — contributor stats computing (202); retry when complete
-- **Axis 4 merge rate**: re-run after {date+30d} — low-volume repo; <3 PRs this month makes rate unstable
+- **Axis 4 merge rate**: re-run after [recheck date] — low-volume repo; <3 PRs this month makes rate unstable
 
 _(Omit bullets that do not apply to this run.)_
 
@@ -242,9 +253,9 @@ _(Omit bullets that do not apply to this run.)_
 
 ## Adversarial Review
 
-**Challenger:** {findings written by foundry:challenger — always present}
+**Challenger:** [challenger findings]
 
-**Codex:** {findings written by bridge review — present when bridge@borda-ai-rig installed and enabled; "bridge unavailable — single adversarial pass only" when absent}
+**Codex:** [Codex findings/status]
 
 ---
 
@@ -253,5 +264,5 @@ _(Omit bullets that do not apply to this run.)_
 Report generated by **oss:analyse v{SKILL_VERSION}** on commit `{REPORT_COMMIT}` at `{REPORT_TIMESTAMP}`.
 Data sourced exclusively from GitHub API — no manual input or cached external data.
 Scores reflect repository state at time of generation. Re-run for current state.
-Adversarial review performed by foundry:challenger{bridge line: " and bridge:review" when CODEX_AVAILABLE=1}.
+Adversarial review performed by foundry:challenger[bridge attribution].
 ```

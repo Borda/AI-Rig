@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from get_plugin_install_path import main  # noqa: E402
+from get_plugin_install_path import main, stale_root_warning  # noqa: E402
 
 
 def _write_registry(path: Path, payload: dict) -> None:
@@ -164,3 +164,55 @@ class TestMain:
         assert rc == 0
         # Latest-with-installPath wins — the newer entry without installPath was skipped.
         assert capsys.readouterr().out.strip() == "/old/0.10.0"
+
+
+def _cached_root(config: Path, version: str, *, orphaned: bool = False) -> Path:
+    """Create one cached foundry version dir, optionally carrying the orphan marker."""
+    root = config / "plugins" / "cache" / "borda-ai-rig" / "foundry" / version
+    root.mkdir(parents=True)
+    if orphaned:
+        (root / ".orphaned_at").write_text("1790681924819", encoding="utf-8")
+    return root
+
+
+class TestStaleRootWarning:
+    """stale_root_warning: flag a loaded plugin root that is not the installed copy."""
+
+    @pytest.mark.parametrize(
+        ("loaded", "orphaned", "expected"),
+        [
+            pytest.param("0.63.0", False, "", id="installed-root-silent"),
+            pytest.param("0.62.1", False, "running foundry 0.62.1, installed 0.63.0", id="older-root-warns"),
+            pytest.param("0.62.1", True, "foundry 0.62.1 (replaced — marked orphaned)", id="orphaned-root-warns"),
+            pytest.param("0.63.0", True, "foundry 0.63.0 (replaced — marked orphaned)", id="orphan-marker-alone-warns"),
+        ],
+    )
+    def test_compares_loaded_root_with_registry(
+        self, tmp_path: Path, loaded: str, orphaned: bool, expected: str
+    ) -> None:
+        """The loaded root warns exactly when it is marked orphaned or is not the registry's install path.
+
+        A long-running session keeps executing the version it loaded at start; this is the check that makes that
+        visible instead of silently running old skill steps.
+        """
+        installed = _cached_root(tmp_path, "0.63.0", orphaned=orphaned and loaded == "0.63.0")
+        root = installed if loaded == "0.63.0" else _cached_root(tmp_path, loaded, orphaned=orphaned)
+        _write_registry(
+            tmp_path / "plugins" / "installed_plugins.json",
+            {"plugins": {"foundry@borda-ai-rig": [{"installPath": str(installed), "version": "0.63.0"}]}},
+        )
+
+        warning = stale_root_warning(root, tmp_path)
+
+        assert (expected in warning) if expected else warning == ""
+
+    def test_silent_outside_the_plugin_cache(self, tmp_path: Path) -> None:
+        """A source-tree root has no install record to compare against."""
+        source = tmp_path / "workspace" / "plugins" / "cc_foundry"
+        source.mkdir(parents=True)
+
+        assert stale_root_warning(source, tmp_path) == ""
+
+    def test_silent_without_registry(self, tmp_path: Path) -> None:
+        """A missing registry cannot prove staleness."""
+        assert stale_root_warning(_cached_root(tmp_path, "0.62.1"), tmp_path) == ""

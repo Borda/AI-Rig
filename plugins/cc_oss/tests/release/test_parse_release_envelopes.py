@@ -32,7 +32,7 @@ def _envelopes(tmp_path: Path, **overrides: object) -> tuple[str, str]:
     contributors = tmp_path / "contributors.md"
     audit.write_text("audit", encoding="utf-8")
     contributors.write_text("contributors", encoding="utf-8")
-    envelope_a = {"status": "done", "file": str(audit), "added": 3, "flagged": 1, "scope_flagged": 0}
+    envelope_a = {"status": "done", "file": str(audit), "added": 3, "flagged": 1, "scope_flagged": 0, "unsourced": 2}
     envelope_a.update(overrides)
     envelope_b = {"status": "done", "file": str(contributors), "count": 7}
     return json.dumps(envelope_a), json.dumps(envelope_b)
@@ -69,6 +69,7 @@ def test_main_accepts_valid_envelopes(
     assert _sentinel(tmp_sentinels, "release-contributors").endswith("contributors.md")
     out = capsys.readouterr().out
     assert "3 changelog entries added, 1 flagged, 0 scope-flagged" in out
+    assert "2 unsourced" in out
     assert "7 contributors extracted" in out
 
 

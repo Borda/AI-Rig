@@ -2,47 +2,61 @@
 Title:       oss-review — [PR #N title]
 PR:          #[N]
 Date:        [YYYY-MM-DD]
-PR Type:     [fix | feat | refactor | perf | docs | ci | chore | test | mixed — from change intent, not file count or PR title]
+PR Type:     [type]
 Scope:       [key changed files, comma-separated]
-Focus:       [SCOPE-LABEL — one-line description of what the change does]
+Focus:       [SCOPE-LABEL]
 Agents:      [comma-separated agent names that ran]
-Reviewers:   [readable role (rating), readable role (rating).]
-CI:          [passing (N/N) / failing — check-name, check-name / pending]
-Gate:        [PASS | BLOCK | REJECT_<GROUND> @<sha> — GROUND one of GOAL/CONDUCT/SCOPE/LICENSE/DUPLICATE/REVERTED/SPAM/PHILOSOPHY, see review SKILL.md Stage 1; PASS/BLOCK reach full review, REJECT_* carries reviewed commit SHA so /oss:resolve can detect whether PR has since changed]
-Outcome:     [APPROVE | NEEDS_WORK | REQUEST_CHANGES | N/A — rejected at gate]
-Summary:     [1–2 sentence overview of key findings]
+Reviewers:   [Role (rating), Role (rating)]
+CI:          [CI status]
+Gate:        [gate result]
+Outcome:     [review outcome]
+Summary:     [summary]
 Confidence:  [aggregate score] — [key gaps]
-Next steps:  [comma-separated actionable items — blockers first]
+Next steps:  [next steps]
 Path:        → .reports/review/pr-<N>/run-<NNN>/review-report.md
 ---
 
 Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject.
 
+> - PR Type: `fix`, `feat`, `refactor`, `perf`, `docs`, `ci`, `chore`, `test`, or `mixed`, chosen by change intent rather than file count or title.
+> - Focus: one-line description of the change, labeled with its scope.
+> - Reviewers: readable role names with scoped integer ratings, such as `Software engineer (3), QA specialist (2)` or `sw-engineer: 3, qa-specialist: 2`; never a bare `sw-engineer 3`.
+> - CI: `passing (N/N)`, `failing — check-name, check-name`, or `pending`.
+> - Gate: `PASS`, `BLOCK`, or `REJECT_<GROUND> @<sha>`, where GROUND is `GOAL`, `CONDUCT`, `SCOPE`, `LICENSE`, `DUPLICATE`, `REVERTED`, `SPAM`, or `PHILOSOPHY` (review SKILL.md Stage 1). PASS/BLOCK continue to full review. The `@<sha>` suffix on a `REJECT_<GROUND>` gate carries the reviewed commit SHA so `/oss:resolve` can detect whether the PR changed.
+> - Outcome: `APPROVE`, `NEEDS_WORK`, `REQUEST_CHANGES`, or `N/A` when rejected at the gate.
+> - Summary: 1–2 sentences describing key findings. Next steps are comma-separated actionable items, blockers first.
+
 ## Code Review: [target]
 
-[Preserve the aggregate review summary here as prose, including overall verdict and material limits.]
+[aggregate summary]
+
+> Keep the aggregate summary as prose, including the overall verdict and material limits.
 
 ### Findings overview
 
 | ID | Author | Finding | Resolution proposal | Status |
 | -- | -- | -- | -- | -- |
-| [stable finding ID] | [all contributing reviewer roles] | [short problem] | [concrete proposal] | [required / minor / verify] |
+| [finding ID] | [reviewer roles] | [finding] | [proposal] | [status] |
 
-> Keep existing sections below. Reference the same finding IDs; this overview adds attribution without removing detail.
+> Use stable finding IDs across this overview and the detailed sections. Author lists all contributing reviewer roles; Resolution proposal is concrete. Status is `required`, `minor`, or `verify`.
 
 ### [blocking] Critical (must fix before merge)
 
-- [bugs, security issues, data corruption risks]
-- Every finding carries explicit severity: `[cosmetic]` `[low]` `[medium]` `[high]` `[critical]`
+- [critical findings]
+- Every finding carries one severity label: `[cosmetic]`, `[low]`, `[medium]`, `[high]`, or `[critical]`.
+
+> Include bugs, security issues, and data corruption risks.
 
 ### Issue Root Cause Alignment
 
 (omit if no linked issues)
 
-- Issue #N: [title] — [root cause hypothesis from analysis]
-- Root cause addressed: [yes / partially / no — explanation]
-- PR/issue scope alignment: [aligned / diverged — what differs]
-- Reproduction tested: [yes / no — what's missing]
+- Issue #N: [issue title] — [root cause]
+- Root cause addressed: [yes / partially / no]
+- PR/issue scope alignment: [aligned / diverged]
+- Reproduction tested: [yes / no]
+
+> State the root-cause hypothesis from analysis. Explain what differs when scope is diverged; explain partial/no answers and missing reproduction evidence.
 
 ### Architecture & Quality
 
@@ -50,36 +64,50 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insuffic
 - [blocking] issues marked explicitly
 - [nit] suggestions marked explicitly
 
+> Cover architecture and quality findings.
+
 ### Test Coverage Gaps
 
-- [qa-specialist findings — top 5 missing tests]
+- [QA findings]
 - ML code: non-determinism or missing seed issues
+
+> List the top 5 missing tests.
 
 ### Performance Concerns
 
-- [perf-optimizer findings — ranked by impact]
+- [performance findings]
 - Include: current behavior vs expected improvement
+
+> Rank performance concerns by impact.
 
 ### Documentation Gaps
 
 - [doc-scribe findings]
 - Public API without docstrings listed explicitly
 
+> List public APIs lacking docstrings explicitly.
+
 ### Static Analysis
 
-- [linting-expert findings — ruff violations, mypy errors, annotation gaps]
+- [static analysis findings]
+
+> Include Ruff violations, mypy errors, and annotation gaps.
 
 ### Cosmetic / Style
 
 (omit if none)
 
-- [cosmetic findings — pure style/whitespace/formatting, no behaviour change]
+- [cosmetic findings]
+
+> Include only pure style, whitespace, or formatting changes with no behavior change.
 
 ### API Design (if applicable)
 
-- [solution-architect findings — coupling, API surface, backward compat]
+- [API design findings]
 - Public API changes: [intentional / accidental leak]
 - Deprecation path: [provided / missing]
+
+> Cover coupling, API surface, and backward compatibility.
 
 ### OSS Checks
 
@@ -92,14 +120,16 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insuffic
 
 (omit if Codex unavailable or no unique findings)
 
-- [unique findings from codex.md not in agent sections above]
+- [unique Codex findings]
 - Duplicate findings (same location as agent finding): omitted — see agent section
+
+> Include only unique findings from `codex.md` that are absent from the agent sections.
 
 ### Recommended Next Steps
 
-1. [most important action]
-2. [second most important]
-3. [third]
+1. [highest-priority action]
+2. [next action]
+3. [next action]
 
 ### Review Confidence
 

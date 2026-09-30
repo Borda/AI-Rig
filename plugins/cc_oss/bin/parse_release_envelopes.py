@@ -272,10 +272,11 @@ def main(argv: list[str] | None = None) -> int:
     added = field(envelope_a, "added", "0")
     flagged = field(envelope_a, "flagged", "0")
     scope_flagged = field(envelope_a, "scope_flagged", "0")
+    unsourced = field(envelope_a, "unsourced", "0")
     count = field(envelope_b, "count", "0")
     print(
         f"Phases 5–6 delegated: {added} changelog entries added, {flagged} flagged, "
-        f"{scope_flagged} scope-flagged (non-PR branch merge); {count} contributors extracted."
+        f"{scope_flagged} scope-flagged (non-PR branch merge), {unsourced} unsourced; {count} contributors extracted."
     )
     return 0
 

@@ -4,7 +4,7 @@
 
 > **Documentation, not contract.** The skill never loads this file; `SKILL.md` and `modes/*.md` are the only normative sources. It exists so the shape — what fans out, what joins, what blocks — can be read without walking a 1200-line skill.
 >
-> **Keep it current.** Any change to block order, gate placement, fan-out width or what runs beside what lands here in the same commit. A schema that disagrees with `SKILL.md` is worse than none — `SKILL.md` wins every time.
+> **Keep it current.** Any change to block order, gate placement, fan-out width or what runs beside what lands here in the same commit. Every schema block carries a `(step N)` tag naming its `SKILL.md` step; renumbering a step updates the tag and the index at the end. A schema that disagrees with `SKILL.md` is worse than none — `SKILL.md` wins every time.
 
 ## Legend
 
@@ -17,45 +17,46 @@ JOIN   lanes collected; nothing past it starts until all land
 ## Schema
 
 ```
-SETUP
+SETUP  (steps 1, 2)
   flags · gh auth · codemap detect · workflow tasks
   |
   +--------------------- FAN 2 ----------------------+
   |                                                  |
-INTEL  ▣ 1 agent                        BRANCH + TRIAL MERGE
-  fetch PR thread                         checkout PR branch
-  classify every comment                  merge base --no-commit
-  synthesize motivation                   detect conflicted files
-  |                  |                    create per-conflict tasks
+INTEL  (steps 3a, 3b)                   BRANCH + TRIAL MERGE  (steps 4, 5)
+  ▣ 1 agent                               checkout PR branch  (step 4)
+  fetch PR thread                         merge base --no-commit
+  classify every comment                  detect conflicted files  (step 5)
+  synthesize motivation                   create per-conflict tasks  (step 5a)
+  |                  |                               |
   |          needed by conflict resolve              |
   +--------------------- JOIN -----------------------+
   |
-MERGE FINDINGS
+MERGE FINDINGS  (step 3c)
   dedup report against GitHub · print ACTION_ITEMS table
   |
   +--------------------- FAN 2 ----------------------+
   |                                                  |
-CONFLICT RESOLVE  ▣ 1 per file            ◆ SELECTION GATE
-  distill intent + base drift               which items
-  resolve markers, stage                    commit mode
-                                            topic group
+CONFLICT RESOLVE  (steps 6, 7)            ◆ SELECTION GATE  (step 3d)
+  ▣ 1 per file  (step 7a)                   which items
+  distill intent + base drift  (step 6)     commit mode
+  resolve markers, stage                    topic group
                                             dispatch width
   |                                                  |
   +--------------------- JOIN -----------------------+
   |
-COMMIT MERGE
-  verify nothing unmerged · commit · create per-item tasks
+COMMIT MERGE  (step 7b join, step 3e)
+  verify nothing unmerged · commit · create per-item tasks  (step 3e)
   |
-IMPLEMENT
-  ▣ challenge      parallel by domain, read-only
-  ▣ specialists    parallel, one git worktree each
-    merge-back     sequential cherry-pick, most-central first
+IMPLEMENT  (step 8)
+  ▣ challenge      parallel by domain, read-only  (step 8 phase 1)
+  ▣ specialists    parallel, one git worktree each  (step 8 phase 2)
+    merge-back     sequential cherry-pick, most-central first  (step 8 phase 3)
   |
-VERIFY  ▣ qa-specialist ‖ ▣ linting-expert
+VERIFY  (step 9)  ▣ qa-specialist ‖ ▣ linting-expert
   |
-◆ PUSH GATE  authorize push + post-PR action
+◆ PUSH GATE  (step 10)  authorize push + post-PR action
   |
-SHIP  push · final report · ▣ comment dispatch
+SHIP  push (step 10) · final report (step 11) · ▣ comment dispatch (step 12)
 ```
 
 ## Fan and join points
@@ -109,15 +110,15 @@ All collapse to a straight line with no special handling:
 
 ## Where this lives in `SKILL.md`
 
-Navigation only; the step numbers carry no meaning at this level.
+Index of the `(step N)` tags in the schema above, one row per block. Text order in `SKILL.md` is not execution order — its "Run structure" table maps steps to runs.
 
 | Block | Steps |
 | -- | -- |
 | SETUP | 1, 2 |
 | INTEL | 3a, 3b |
-| BRANCH + TRIAL MERGE | 4, 5 |
+| BRANCH + TRIAL MERGE | 4, 5 (5a per-conflict tasks) |
 | MERGE FINDINGS | 3c |
-| CONFLICT RESOLVE | 6, 7a |
+| CONFLICT RESOLVE | 6, 7 (7a spawn) |
 | SELECTION GATE | 3d |
 | COMMIT MERGE | 7b join, 3e |
 | IMPLEMENT | 8 |

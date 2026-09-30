@@ -503,7 +503,7 @@ def test_dispatch_granularity_question_offers_every_width_and_a_group_preview() 
         assert f'echo {mode} > "${{TMPDIR:-/tmp}}/resolve-dispatch-mode-${{CSID}}"' in skill, mode
     assert 'echo auto > "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}"  # timeout: 3000' in skill
     assert "| ≤3 | Q1 items · Q2 bulk · Q3 commit-mode · Q4 dispatch |" in skill
-    assert "| 4-6 | Q1-Q2 items (≤3 each) · Q3 bulk · Q4 commit-mode | Q1 dispatch · Q2 topic-group |" in skill
+    assert "| 4-6 | Q1-Q2 items (≤3 each) · Q3 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch |" in skill
     assert "Q1 commit-mode · Q2 topic-group · Q3 dispatch |" in skill
     assert "Q4 dispatch (all four slots; no item checkboxes exist in this mode)" in skill
     assert "discard the commit-mode, topic-group, **and dispatch** answers from the same call" in skill
@@ -512,6 +512,22 @@ def test_dispatch_granularity_question_offers_every_width_and_a_group_preview() 
     assert "`per-specialist` skips only the ≤5 split" in dispatch
     assert "**Group-preview gate — `DISPATCH_MODE=preview` only" in dispatch
     assert "so the sentinel holds a width, never `preview`" in dispatch
+
+
+@pytest.mark.parametrize("band", ["≤3", "4-6", "7-9", "10-18"])
+def test_dispatch_question_shares_a_call_with_commit_mode(band: str) -> None:
+    """Each Step 3d slot-table band asks how to parallelize in the same call that asks how to commit."""
+    skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
+    row = next(line for line in skill.splitlines() if line.startswith(f"| {band} |"))
+    calls = [cell for cell in row.strip("|").split("|")[1:] if "commit-mode" in cell]
+    assert len(calls) == 1, row
+    assert "dispatch" in calls[0], row
+
+
+def test_context_budget_mode_asks_commit_mode_and_dispatch_together() -> None:
+    """The ≥19-item single call carries commit mode and dispatch granularity side by side."""
+    skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
+    assert "Q1 bulk action · Q2 commit-mode · Q3 topic-group · Q4 dispatch" in skill
 
 
 @pytest.mark.skipif(_BASH is None, reason="The Step 8 prelude is Bash")

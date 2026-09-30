@@ -119,8 +119,9 @@
 //     • Scans /tmp and removes claude-state-* dirs from OTHER sessions older than 24h
 //       (orphaned by crashed sessions that never fired their own SessionEnd).
 //     • Runs `git worktree prune` to remove stale worktree refs.
-//     • Removes any worktrees under .claude/worktrees/ older than 2 hours
-//       (orphaned by crashed agents or interrupted sessions).
+//     • Removes registered agent-*/oss-* worktrees under .claude/worktrees/ idle for
+//       2 hours (last git activity); keeps dirty trees, trees with ignored run output
+//       (.temp/.reports/.plans/.env*), other names such as dev-*, and orphan dirs.
 //
 // STATE FILES
 //   ~/.claude/logs/invocations.jsonl    — append-only audit log (agents + skills); global across all projects; includes project field
@@ -151,6 +152,87 @@ const { execFileSync, execSync } = require("child_process");
 
 function getSentinelDir() {
   return process.platform === "win32" ? os.tmpdir() : "/tmp";
+}
+
+// SessionEnd stale-worktree sweep. Retention mirrors heal_git_artifacts.py: only managed
+// agent-*/oss-* names that git still registers. `--force` discards uncommitted and gitignored
+// run output, so a dirty tree, ignored output under KEEP_IGNORED, or any failed check keeps it.
+// Every git call shares one deadline so the sweep fits the SessionEnd timeout in hooks.json.
+const MANAGED_WORKTREE = /^(agent|oss)-/;
+const KEEP_IGNORED = /^(\.temp|\.reports|\.plans|\.env)(\/|\.|$)/;
+const WORKTREE_IDLE_MS = 2 * 60 * 60 * 1000;
+const WORKTREE_SWEEP_BUDGET_MS = 5000;
+
+function canonicalPath(p) {
+  try {
+    return fs.realpathSync.native(p);
+  } catch (_) {
+    return path.resolve(p);
+  }
+}
+
+function gitOut(args, cwd, deadline) {
+  const timeout = deadline - Date.now();
+  if (timeout < 200) throw new Error("worktree sweep budget spent");
+  return execFileSync("git", args, { cwd, timeout, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+}
+
+function worktreeLastActivityMs(p) {
+  let latest = fs.statSync(p).mtimeMs;
+  try {
+    const m = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(path.join(p, ".git"), "utf8"));
+    if (m) {
+      const gitdir = path.resolve(p, m[1].trim());
+      for (const f of ["index", "HEAD", path.join("logs", "HEAD")]) {
+        try {
+          latest = Math.max(latest, fs.statSync(path.join(gitdir, f)).mtimeMs);
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+  return latest;
+}
+
+function worktreeHoldsWork(p, deadline) {
+  try {
+    const out = gitOut(["status", "--porcelain", "--ignored=matching"], p, deadline);
+    return out.split(/\r?\n/).some((line) => {
+      if (!line.trim()) return false;
+      if (!line.startsWith("!! ")) return true;
+      return KEEP_IGNORED.test(line.slice(3).replace(/^"|"$/g, ""));
+    });
+  } catch (_) {
+    return true;
+  }
+}
+
+function sweepStaleWorktrees(root) {
+  const deadline = Date.now() + WORKTREE_SWEEP_BUDGET_MS;
+  const worktreesDir = path.join(root, ".claude", "worktrees");
+  let entries;
+  let registered;
+  try {
+    entries = fs.readdirSync(worktreesDir).filter((e) => MANAGED_WORKTREE.test(e));
+    if (!entries.length) return;
+    registered = new Set(
+      gitOut(["worktree", "list", "--porcelain"], root, deadline)
+        .split(/\r?\n/)
+        .filter((l) => l.startsWith("worktree "))
+        .map((l) => canonicalPath(l.slice("worktree ".length))),
+    );
+  } catch (_) {
+    return;
+  }
+  const cutoff = Date.now() - WORKTREE_IDLE_MS;
+  for (const entry of entries) {
+    if (Date.now() >= deadline) return;
+    try {
+      const p = path.join(worktreesDir, entry);
+      if (!fs.statSync(p).isDirectory() || !registered.has(canonicalPath(p))) continue;
+      if (worktreeLastActivityMs(p) >= cutoff || worktreeHoldsWork(p, deadline)) continue;
+      gitOut(["worktree", "remove", "--force", p], root, deadline);
+    } catch (_) {}
+  }
 }
 
 let raw = "";
@@ -699,27 +781,6 @@ process.stdin.on("end", () => {
           } catch (_) {}
         }
       } catch (_) {}
-      // Prune stale worktrees (orphaned by crashed agents or interrupted sessions)
-      try {
-        execFileSync("git", ["worktree", "prune"], { cwd: root, timeout: 5000, stdio: "ignore" });
-      } catch (_) {}
-      // Clean stale worktrees from .claude/worktrees/ (older than 2h)
-      const worktreesDir = path.join(root, ".claude", "worktrees");
-      try {
-        const entries = fs.readdirSync(worktreesDir);
-        const cutoff = Date.now() - 2 * 60 * 60 * 1000;
-        for (const entry of entries) {
-          const p = path.join(worktreesDir, entry);
-          const stat = fs.statSync(p);
-          if (stat.isDirectory() && stat.mtimeMs < cutoff) {
-            execFileSync("git", ["worktree", "remove", "--force", p], {
-              cwd: root,
-              timeout: 10000,
-              stdio: "ignore",
-            });
-          }
-        }
-      } catch (_) {}
       // Artifact TTL: prune skill run dirs / temp files older than 30 days (rules/foundry-config.md
       // §Cleanup Hook). Best-effort shell find; portable BSD/GNU flags. Completed runs are keyed on
       // result.jsonl mtime (incomplete runs lack it and are preserved for post-mortem); loose
@@ -738,9 +799,16 @@ process.stdin.on("end", () => {
             "find .plans/blueprint .cache .temp -type f -mtime +30 2>/dev/null | xargs -r rm -f 2>/dev/null",
             "find .temp -mindepth 2 -maxdepth 2 -type d -empty -delete 2>/dev/null",
           ].join("; "),
-          { cwd: root, timeout: 15000, stdio: "ignore", shell: "/bin/sh" },
+          { cwd: root, timeout: 6000, stdio: "ignore", shell: "/bin/sh" },
         );
       } catch (_) {}
+      // Prune registrations of worktrees whose directory is gone, then sweep stale ones.
+      // Runs after TTL cleanup and stays within 3 s + WORKTREE_SWEEP_BUDGET_MS so the whole
+      // SessionEnd hook fits its 15 s cap (hooks.json).
+      try {
+        execFileSync("git", ["worktree", "prune"], { cwd: root, timeout: 3000, stdio: "ignore" });
+      } catch (_) {}
+      sweepStaleWorktrees(root);
     }
   } catch (err) {
     // Hook must never crash or block Claude — but a fully silent catch here means a

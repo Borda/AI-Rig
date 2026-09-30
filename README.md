@@ -365,6 +365,8 @@ make sync-codex       # Codex scope only
 
 The `Makefile` installs from the pushed GitHub remote, not uncommitted local files. Commit and push first if you intentionally want a checkout change to become installable; never use sync as a preview of a dirty worktree.
 
+A Claude Code session keeps the plugin versions it loaded at start, so restart open sessions after a sync; Foundry warns at session start when it detects an older copy. `sync-claude` ends by deleting replaced plugin versions (cache dirs Claude Code marked `.orphaned_at`) once their marker is at least 24 hours old — override with `make sync-claude ORPHAN_MIN_AGE_HOURS=<n>`. A session still running such a version loses its skill files after that point.
+
 Each external Claude marketplace and plugin add, update, uninstall, or install command has a 120-second timeout. Use the `EXTERNAL_PLUGIN_TIMEOUT_SECONDS` environment variable to select another positive-integer deadline; managed AI-Rig plugin and setup commands retain their existing behavior.
 
 <details>

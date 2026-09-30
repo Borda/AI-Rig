@@ -10,6 +10,8 @@ Each round challenges and collects findings, reports the cumulative old/new tabl
 
 Optional Codemap index-gate guidance ships with research, so loading it does not depend on another plugin's private shared directory. The host-provided active installation takes precedence over other cached versions. Structural queries still require the `codemap-py` plugin; an unavailable CLI or local contract retains the file-read fallback.
 
+Research-topic and run reports and experiment journals use short descriptive fields, with writing rules kept outside the output shape. Completed artifacts replace those fields with observed values and omit template instructions.
+
 Codemap context distinguishes static test links from measured line coverage: missing measurements are unknown, not zero, and package queries select exact modules. Failed queries report unavailable context rather than successful empty results. Run, verify and scientist prompts reuse only matching fresh answers while preserving source, formula and test-quality verification.
 
 > Value at a glance: research connects literature, code, metrics, guards, commits, ablations, and retrospective evidence in one namespaced plugin while leaving datasets, compute, credentials, and scientific judgment with the project owner.

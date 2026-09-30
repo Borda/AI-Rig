@@ -1,16 +1,20 @@
 <!-- oss:resolve final report template — read by Step 11 for output format reference -->
 
-<!-- Placeholders: $PR_NUMBER, $PR_URL, $BRANCH, $REPO, $ACTION_ITEMS count, per-item status -->
+> Replace square-bracket placeholders with observed values before delivery. Preserve status flags and evidence labels; those are report notation, not placeholders. Omit template instructions from the finished report.
 
-## Resolve Report — PR #<number>
+## Resolve Report — PR #[PR number]
 
 ### Contribution
 
-\<2–3 sentence motivation summary from Step 3b>
+[Contribution summary]
+
+> Use the two- to three-sentence motivation summary from Step 3b.
 
 ### Conflicts
 
-\<conflict table from Step 7, or "No conflicts detected">
+[Conflict table]
+
+> Use the conflict table from Step 7, or “No conflicts detected.”
 
 ### Action Items
 
@@ -43,11 +47,13 @@
 
 ### Lint + QA
 
-\<linting-expert summary: N fixes applied | or "no violations"> / \<foundry:qa-specialist summary: N blocking fixed, N warnings | or "clean">
+[Lint summary] / [QA summary]
+
+> Report the linting-expert fix count or “no violations,” and the foundry:qa-specialist blocking-fix and warning counts or “clean.”
 
 ### Push
 
-✓ Pushed to <remote>/\<HEAD_REF> — N new commits
+✓ Pushed to [Remote]/[Branch] — N new commits
 
 **Next**:
 

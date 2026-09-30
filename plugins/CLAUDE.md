@@ -38,7 +38,7 @@ In `.md` plugin files, prose annotations, notes, and load directives use `>` blo
 
 ## GitHub Reference Scoping — `#N` and `@name`
 
-<!-- policy-sibling: plugins/cc_foundry/rules/git-commit.md, plugins/cc_foundry/rules/_full/git-commit.md, plugins/cc_oss/skills/_shared/shepherd-voice.md — same GH #/@ scoping policy restated for each consumer's own context. Editing this section → grep repo for `policy-sibling` to find every copy, update in lockstep (rationale + precedent: §Policy Duplication Marker below). -->
+<!-- policy-sibling: plugins/cc_foundry/rules/git-commit.md, plugins/cc_foundry/rules/_full/git-commit.md, plugins/cc_oss/skills/_shared/shepherd-voice.md, plugins/cc_oss/skills/release/guidelines/writing-rules.md — same GH #/@ scoping policy restated for each consumer's own context. Editing this section → grep repo for `policy-sibling` to find every copy, update in lockstep (rationale + precedent: §Policy Duplication Marker below). -->
 
 - `#N` bare in prose = GitHub issue/PR/discussion number only; `@name` bare in prose = a real GitHub username mention only. Both become live link/notify tokens in a GH comment, PR body, issue, or commit message.
 - Never use bare `#N` for local ordinals (list items, step indices, ranks, internal check IDs) or bare `@word` for non-GitHub tokens (decorators, role handles). Use plain numbers/words, or backticks for code-shaped tokens only; never backticks to defang a real person's handle.

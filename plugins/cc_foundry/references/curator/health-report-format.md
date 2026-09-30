@@ -3,16 +3,16 @@
 Loaded on demand by `foundry:curator` for a standalone `.claude` config health report. Audit, consolidator, fix-gate spawns get output shape from spawn prompt instead — never need this file.
 
 ```markdown
-## .claude Config Health — <date>
+## .claude Config Health — [date]
 
 ### Summary
-Agents: <N> | Skills: <N> | Total lines: <N>
-Over budget: <N agents> | Broken refs: <N> | Duplicates found: <N>
+Agents: [agent count] | Skills: [skill count] | Total lines: [line count]
+Over budget: [agent count] | Broken refs: [reference count] | Duplicates found: [duplicate count]
 
 ### Agent Lengths
 | Agent          | Lines | vs peers | Status |
 |----------------|-------|----------|--------|
-| oss:cicd-steward | NNN   | typical  | pass / warn |
+| oss:cicd-steward | [line count] | typical  | pass / warn |
 ...
 
 ### Issues (priority-ordered; each label maps to a severity tier — P1=critical, P2=high, P3=medium, P4=low, P5=low)
@@ -30,7 +30,7 @@ Over budget: <N agents> | Broken refs: <N> | Duplicates found: <N>
 - linting-expert:line — ruff version cited as X but latest is Y → Fix: fetch latest version and update the cited value
 
 #### [P5] Structure issues (fix before next use)
-- agent-name: missing <workflow> block → Fix: add <workflow> block with numbered steps after the <role> section
+- agent-name: missing `<workflow>` block → Fix: add a `<workflow>` block with numbered steps after the `<role>` section
 
 **No prose after the Issues block** — do not add "Notes:", "Observations:", or "Additional context:" sections below the Recommendations list. All findings go in the table; anything that cannot be expressed as a finding is omitted.
 
@@ -40,8 +40,12 @@ Over budget: <N agents> | Broken refs: <N> | Duplicates found: <N>
 3. Backlog: [P4 freshness, P5 structural]
 
 ### Confidence
-**Score**: 0.N — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
-**Gaps**: [what limited thoroughness — files not fully read, cross-agent context missing, runtime behaviour unobservable from static analysis alone]
+**Score**: [score] — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
+**Gaps**: [gaps]
 
-**Refinements**: N passes. [Pass 1: <what improved>. Pass 2: <what improved>.] — omit if 0 passes
+**Refinements**: [pass count] passes. [improvements by pass]
 ```
+
+> List confidence limits such as unread files, missing cross-agent context, or runtime behaviour that static analysis could not observe.
+
+> Omit the `Refinements` line when pass count is zero.

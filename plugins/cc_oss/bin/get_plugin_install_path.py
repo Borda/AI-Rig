@@ -134,6 +134,56 @@ def resolve_install_path(registry_path: Path, marketplace: str, plugin_name: str
     return pick_latest_install_path(entries)
 
 
+def stale_root_warning(root: Path, config_dir: Path | None = None) -> str:
+    """Return a warning when a loaded plugin root is not the installed copy, else an empty string.
+
+    A root under ``<config>/plugins/cache/<marketplace>/<plugin>/<version>/`` is stale when it carries the
+    ``.orphaned_at`` marker Claude Code writes on a replaced version, or when the registry's latest ``installPath``
+    for that plugin is a different directory. Roots outside the cache (source tree) and a missing registry stay
+    silent — nothing proves staleness there.
+
+    Args:
+        root: Plugin root the caller runs from, usually ``Path(__file__).resolve().parents[1]``.
+        config_dir: Claude config dir; defaults to ``$CLAUDE_CONFIG_DIR`` or ``~/.claude``.
+
+    Returns:
+        One warning line naming the loaded and installed versions, or ``""``.
+
+    Examples:
+        >>> import json, tempfile
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     cfg = Path(d)
+        ...     old = cfg / "plugins/cache/m/p/1.0.0"
+        ...     new = cfg / "plugins/cache/m/p/1.1.0"
+        ...     old.mkdir(parents=True)
+        ...     new.mkdir(parents=True)
+        ...     _ = (cfg / "plugins/installed_plugins.json").write_text(json.dumps({"plugins": {"p@m": [
+        ...         {"installedAt": "2026-01-01T00:00:00Z", "installPath": str(new), "version": "1.1.0"}]}}))
+        ...     "running p 1.0.0" in stale_root_warning(old, cfg), stale_root_warning(new, cfg)
+        (True, '')
+    """
+    config = config_dir or Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    root = Path(root).resolve()
+    try:
+        parts = root.relative_to((config / "plugins" / "cache").resolve()).parts
+    except ValueError:
+        return ""
+    if len(parts) != 3:
+        return ""
+    marketplace, plugin, version = parts
+    installed = resolve_install_path(config / "plugins" / "installed_plugins.json", marketplace, plugin)
+    if installed is None:
+        return ""
+    orphaned = (root / ".orphaned_at").exists()
+    if not orphaned and Path(installed).resolve() == root:
+        return ""
+    return (
+        f"⚠ stale plugin session: running {plugin} {version}"
+        f"{' (replaced — marked orphaned)' if orphaned else ''}, installed {Path(installed).name}"
+        " — restart Claude Code to load the installed version"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     """Resolve and print an installed plugin path."""
     parser = argparse.ArgumentParser(

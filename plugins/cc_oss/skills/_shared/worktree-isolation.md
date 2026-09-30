@@ -24,34 +24,31 @@ IFS= read -r WT_ENABLED < "${TMPDIR:-/tmp}/oss-<skill>-worktree-${CSID}" 2>/dev/
 3. Create off HEAD + persist main-tree root (for §Deliverable / restore), then enter:
 
 ```bash
+# timeout: 15000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+git rev-parse --show-toplevel > "${TMPDIR:-/tmp}/oss-<skill>-orig-root-${CSID}"
+WT=".claude/worktrees/oss-<skill>-<slug>"      # slug: PR number, or report basename
+git worktree add -b "oss-<skill>-<slug>" "$WT" HEAD   # branch off HEAD, not origin/default
+echo "$WT" > "${TMPDIR:-/tmp}/oss-<skill>-wt-${CSID}"   # final path, read by EnterWorktree below
+```
+
+> `add` fails `already exists` → append a disambiguator to `<slug>` (changes branch **and** path), retry once. Never check or ask about other worktrees up front — they don't block this run. **Only if the retry still fails**, run the report (deletes nothing):
+
+```bash
 # timeout: 30000
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/heal_git_artifacts.py" worktrees
 ```
 
-> Heal before creating, not after — the run that leaks a worktree is by definition the one that never reaches its own cleanup. This call is **report-only**; it deletes nothing.
->
-> Exit 0 (nothing reclaimable) → say nothing, continue. Exit 1 → print the tool's list verbatim, then `AskUserQuestion`: (a) **Skip** — leave them, continue the run · (b) **Remove them** — run the block below in this turn, then continue · (c) **Abort**. Removing a worktree deletes a directory tree, so it never happens without this answer — never run the `--apply` form unprompted.
+> Exit 0 (nothing reclaimable) or exit 2 (environment error) → leftovers aren't the cause; print the `git worktree add` error, stop. Exit 1 but the `add` error names none of the listed paths or branches → leftovers aren't the cause; print the error, stop. Exit 1 and the error names a listed path or branch → print the list and the `add` error, then `AskUserQuestion`: (a) **Stop** — keep everything, end the run · (b) **Remove them and retry** — run the block below in this turn, retry the create once. That retry fails too → print the error, stop; never loop back to the report. Removing a worktree deletes a directory tree, so never run the `--apply` form without that answer.
 
 ```bash
 # timeout: 30000
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/heal_git_artifacts.py" worktrees --apply
 ```
 
-> Candidates are only clean, registered-or-orphaned, ≥14-day-old `agent-*`/`oss-*` trees. Uncommitted work is reported and kept at any age; `dev-*` and hand-made names are never candidates. Never abort the review because healing was skipped.
->
-> Scope note: this whole file is gated on `--worktree`, so worktree healing runs only on isolated runs. Lock healing (`oss:resolve` Step 8) is unconditional.
+> Candidates are only clean, registered-or-orphaned, ≥14-day-old `agent-*`/`oss-*` trees. Uncommitted work is reported and kept at any age; `dev-*` and hand-made names are never candidates. Lock healing (`oss:resolve` Step 8) is unconditional and unaffected.
 
-```bash
-# timeout: 15000
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-git rev-parse --show-toplevel > "${TMPDIR:-/tmp}/oss-<skill>-orig-root-${CSID}"
-WT=".claude/worktrees/oss-<skill>-<slug>"      # slug: PR number, or report basename
-git worktree add -b "oss-<skill>-<slug>" "$WT" HEAD   # branch off HEAD, not origin/default
-```
-
-> `add` fails `already exists` → append a disambiguator, retry once.
-
-4. `EnterWorktree(path=".claude/worktrees/oss-<skill>-<slug>")` — session CWD now the worktree.
+4. `EnterWorktree(path=<final $WT from `${TMPDIR:-/tmp}/oss-<skill>-wt-${CSID}`>)` — the possibly disambiguated path, never the original slug — session CWD now the worktree.
 
 ## §review — read-only, report to main tree
 

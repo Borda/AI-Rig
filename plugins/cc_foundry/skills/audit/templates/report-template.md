@@ -2,16 +2,16 @@ Output complete audit summary. List each audited file by name in `### Files Audi
 
 ```markdown
 ---
-Audit — .claude/ config
+Title:    Audit — .claude/ config
 Date:     [YYYY-MM-DD]
 Scope:    [N agents, N skills, N rules, N hooks]
 Focus:    [config quality audit — agents / skills / routing / all]
 Agents:   foundry:curator, foundry:challenger (adversarial mode only)
 Outcome:  CLEAN | NEEDS_ATTENTION | BLOCKED
 Findings: [N] security · [N] critical · [N] high · [N] medium · [N] low
-Confidence: [aggregate score from agent Confidence blocks]
+Confidence: [aggregate of agent Confidence-block scores]
 Next steps: /foundry:setup (sync clean config) | fix findings → re-run /foundry:audit
-Path:       → .reports/audit/<timestamp>/report.md
+Path:       → .reports/audit/[report timestamp]/report.md
 ---
 
 ## Audit Complete — .claude/ config
@@ -82,9 +82,11 @@ Include when `$RUN_DIR/similarity-check33.md` exists (`--efficiency` mode only).
 
 ```markdown
 #### Purpose-based similarity clusters — Check 33 / --efficiency only
-<Table 1 from similarity-check33.md verbatim>
-<Table 2 from similarity-check33.md verbatim>
+[table 1]
+[table 2]
 ```
+
+> Replace each placeholder with the corresponding table from `similarity-check33.md`, verbatim and in order.
 
 Omit section if `similarity-check33.md` absent (efficiency not active or no clusters found).
 

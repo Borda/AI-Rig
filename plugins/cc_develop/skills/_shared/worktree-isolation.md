@@ -26,35 +26,32 @@ IFS= read -r WORKTREE_ENABLED < "${TMPDIR:-/tmp}/dev-<skill>-worktree-${CSID}" 2
 2. Create + enter (deterministic HEAD base). Slug = first ~4 words of goal, lowercased, non-`[A-Za-z0-9._-]`→`-`, ≤48 chars; empty goal → `dev-<skill>`. Persist `_ORIG_ROOT` (main tree) for §Deliverable + §Exit — capture **before** entering:
 
 ```bash
-# timeout: 30000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/heal_git_artifacts.py" worktrees
-```
-
-> Heal before creating, not after — the run that leaks a worktree is by definition the one that never reaches its own cleanup. This call is **report-only**; deletes nothing.
->
-> Exit 0 (nothing reclaimable) → say nothing, continue. Exit 1 → print the tool's list verbatim, then `AskUserQuestion`: (a) **Skip** — leave them, continue the run · (b) **Remove them** — run the block below in this turn, continue · (c) **Abort**. Removing a worktree deletes a directory tree, so it never happens without this answer — never run the `--apply` form unprompted.
-
-```bash
-# timeout: 30000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/heal_git_artifacts.py" worktrees --apply
-```
-
-> Candidates are only clean, registered-or-orphaned, ≥14-day-old `agent-*`/`oss-*` trees — subagent-isolation and oss-skill trees, not yours. **`dev-*` is never a candidate** — §Exit contracts those as deliverables you review and merge yourself. Uncommitted work is reported, kept at any age. Never abort the run because healing was skipped.
->
-> Scope note: this whole file is gated on `--worktree`, so worktree healing runs only on isolated runs.
-
-```bash
 # timeout: 15000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 git rev-parse --show-toplevel > "${TMPDIR:-/tmp}/dev-<skill>-orig-root-${CSID}"   # main-tree root, read later
 git status --porcelain 2>/dev/null | head -1 | grep -q . && echo "⚠ uncommitted changes will NOT appear in the worktree — commit/stash first if needed"
 WT=".claude/worktrees/dev-<skill>-<slug>"
 git worktree add -b "dev-<skill>-<slug>" "$WT" HEAD   # branch off current HEAD, not origin/default
+echo "$WT" > "${TMPDIR:-/tmp}/dev-<skill>-wt-${CSID}"   # final path, read by EnterWorktree below
 ```
 
-> Branch/path name collision (`add` fails `already exists`) → append a short disambiguator and retry once.
+> Branch/path name collision (`add` fails `already exists`) → append a short disambiguator to `<slug>` (changes branch **and** path) and retry once. Never check or ask about other worktrees up front — they don't block this run. **Only if the retry still fails**, run the report (deletes nothing):
 
-3. `EnterWorktree(path=".claude/worktrees/dev-<skill>-<slug>")` — switches session CWD into the worktree. All later edits, tests, codemap scans land there.
+```bash
+# timeout: 30000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/heal_git_artifacts.py" worktrees
+```
+
+> Exit 0 (nothing reclaimable) or exit 2 (environment error) → leftovers aren't the cause; print the `git worktree add` error, stop. Exit 1 but the `add` error names none of the listed paths or branches → leftovers aren't the cause; print the error, stop. Exit 1 and the error names a listed path or branch → print the list and the `add` error, then `AskUserQuestion`: (a) **Stop** — keep everything, end the run · (b) **Remove them and retry** — run the block below in this turn, retry the create once. That retry fails too → print the error, stop; never loop back to the report. Removing a worktree deletes a directory tree, so never run the `--apply` form without that answer.
+
+```bash
+# timeout: 30000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/heal_git_artifacts.py" worktrees --apply
+```
+
+> Candidates are only clean, registered-or-orphaned, ≥14-day-old `agent-*`/`oss-*` trees — subagent-isolation and oss-skill trees, not yours. **`dev-*` is never a candidate** — §Exit contracts those as deliverables you review and merge yourself. Uncommitted work is reported, kept at any age.
+
+3. `EnterWorktree(path=<final $WT from `${TMPDIR:-/tmp}/dev-<skill>-wt-${CSID}`>)` — the possibly disambiguated path, never the original slug — switches session CWD into the worktree. All later edits, tests, codemap scans land there.
 4. Warm-start codemap (optional, cheap) — copy main index in so first query is `current`, not cold scan:
 
 ```bash
@@ -95,7 +92,7 @@ After quality/review gates, before final summary:
 
 ```
 Worktree — isolated run (base: HEAD)
-  path:   .claude/worktrees/dev-<skill>-<slug>/
+  path:   <final $WT from ${TMPDIR:-/tmp}/dev-<skill>-wt-${CSID}>/
   branch: <branch>
   merge:  review, then `git merge <branch>` (or open PR from it)
 ```

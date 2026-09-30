@@ -4,7 +4,7 @@
 
 > **Documentation, not contract.** The skill never loads this file; `SKILL.md` and `modes/*.md` are the only normative sources. It exists so the shape — what fans out, what joins, what blocks — can be read without walking the full skill plus its two mode files.
 >
-> **Keep it current.** Any change to block order, gate placement, fan-out width or what runs beside what lands here in the same commit. A schema that disagrees with `SKILL.md` is worse than none — `SKILL.md` wins every time.
+> **Keep it current.** Any change to block order, gate placement, fan-out width or what runs beside what lands here in the same commit. Every schema block carries a `(step N)` tag naming its step; renumbering a step updates the tag and the index at the end. A schema that disagrees with `SKILL.md` is worse than none — `SKILL.md` wins every time.
 
 ## Legend
 
@@ -19,23 +19,23 @@ JOIN   lanes collected; nothing past it starts until all land
 Branches once, at mode dispatch, into three mutually exclusive paths; every path converges on the same terminal gate (own rail schema each, under Mode branches below).
 
 ```
-SETUP
+SETUP  (step 1)
   codebase context · flag case-fold · unsupported-flag check
   · --keep extraction · per-phase tasks created upfront
   ◆ unknown flag?                                [conditional]
   |
-MODE DISPATCH
+MODE DISPATCH  (step 1 — early dispatch)
   first non-flag word: `plan` / `--team` / neither (default)
   |
   +---- plan ----------> PLAN PATH     [modes/plan.md]
   |
   +---- --team --------> TEAM PATH     [modes/team.md]
   |
-  +---- neither -------> DEFAULT PATH  [Steps 2-3]
+  +---- neither -------> DEFAULT PATH  [steps 2–3]
   |
   (exactly one path runs; all three converge below)
   |
-◆ FOLLOW-UP GATE                                     (always)
+◆ FOLLOW-UP GATE  (§ Follow-up gate)                 (always)
 ```
 
 ## Fan and join points
@@ -63,47 +63,52 @@ Every path costs at most 2 `AskUserQuestion` calls (unknown-flag + terminal), an
 ### Default path — neither `plan` nor `--team`
 
 ```
-DEFAULT PATH  [Steps 2-3]
+DEFAULT PATH  (steps 2–3)
   |
   +--------------------- FAN 2 ----------------------+
   |                                                  |
-LITERATURE SEARCH  ▣ web-explorer         CODEBASE CHECK
+LITERATURE SEARCH  (step 2a)             CODEBASE CHECK  (step 2b)
+  ▣ web-explorer
   SOTA search → AGENT_OUT                   Grep existing impls
   |                                                  |
   +--------------------- JOIN -----------------------+
   |
-REPORT
+REPORT  (step 3)
   synthesize findings → REPORT_OUT, print header table,
   Confidence block
 ```
 
-### `--team` path — `modes/team.md`, skips Steps 2-3
+### `--team` path — `modes/team.md`, skips steps 2–3
 
 ```
-TEAM PATH  [modes/team.md]
+TEAM PATH  (modes/team.md, after step 1)
   |
-  FAN 2-3  ▣▣ / ▣▣▣ researcher teammates, one per method
+  FAN 2-3  (team.md workflow item 2)  ▣▣ / ▣▣▣ researcher teammates, one per method
     cluster — each researches independently, lead routes
     findings across teammates for cross-challenge
   |
+  cross-challenge routing  (team.md workflow items 3–5)
   JOIN — only when 3 teammates spawned
   |
-CONSOLIDATE  ▣ consolidator (3 teammates) · lead direct (2)
+CONSOLIDATE  (team.md workflow item 6)  ▣ consolidator (3 teammates) · lead direct (2)
   synthesize → REPORT_OUT, print header table
 ```
 
-### `plan` path — `modes/plan.md`, skips Steps 2-3
+### `plan` path — `modes/plan.md`, skips steps 2–3
 
 ```
-PLAN PATH  [modes/plan.md]
+PLAN PATH  (modes/plan.md, after step 1)
   |
-P1  read prior research report
-      auto-detect latest under .reports/research/, or path
-      given after `plan`
+READ RESEARCH  (step P1)
+  read prior research report
+  auto-detect latest under .reports/research/, or path
+  given after `plan`
   |
-P2  ▣ solution-architect — map method onto codebase
+CODEBASE ANALYSIS  (step P2)
+  ▣ solution-architect — map method onto codebase
   |
-P3  synthesize phased plan → PLAN_OUT, print header table
+SYNTHESIZE PLAN  (step P3)
+  phased plan → PLAN_OUT, print header table
 ```
 
 ## Degenerate cases
@@ -121,7 +126,7 @@ All collapse to inline work with no special handling:
 
 ## Where this lives in `SKILL.md`
 
-Navigation only; the step numbers carry no meaning at this level.
+Index of the schema tags above, one row per block. A bare `step N` is a `SKILL.md` step; `plan.md` uses its own `P1`–`P3`; `team.md` has a numbered workflow list instead of step headings, so its tags name the list item.
 
 | Block | Steps |
 | -- | -- |
@@ -132,10 +137,10 @@ Navigation only; the step numbers carry no meaning at this level.
 | CODEBASE CHECK | Step 2b |
 | REPORT | Step 3 |
 | TEAM PATH | modes/team.md |
-| RESEARCHER teammates | team.md Step 2 |
-| CONSOLIDATE | team.md Step 6 |
+| RESEARCHER teammates | team.md workflow item 2 |
+| CONSOLIDATE | team.md workflow item 6 |
 | PLAN PATH | modes/plan.md |
-| P1 read research | plan.md Step P1 |
-| P2 codebase analysis | plan.md Step P2 |
-| P3 synthesize plan | plan.md Step P3 |
+| READ RESEARCH | plan.md Step P1 |
+| CODEBASE ANALYSIS | plan.md Step P2 |
+| SYNTHESIZE PLAN | plan.md Step P3 |
 | FOLLOW-UP GATE | Follow-up gate section |

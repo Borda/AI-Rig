@@ -94,7 +94,7 @@ Fix and re-run until exits 0 with expected output — **max 3 attempts total**. 
 
 ### Phase 5: Write release draft
 
-`releases/$VERSION/DRAFT.md` — final assembly. Source: `releases/$VERSION/HIGHLIGHTS.md` (spotlights), `releases/$VERSION/MIGRATION.md`, `releases/$VERSION/SUMMARY.md`. Apply **Write release draft** logic (release-draft.md format). Adversarial review applies (use `$GATHER_FILE` from Phase 2a as gather context). Shepherd voice review applies.
+`releases/$VERSION/DRAFT.md` — final assembly. Source: `releases/$VERSION/HIGHLIGHTS.md` (spotlights), `releases/$VERSION/MIGRATION.md`, `releases/$VERSION/SUMMARY.md`. Apply **Write release draft** logic (release-draft.md format). `SUMMARY.md` is the fact source for DRAFT.md's Summary only: render the pitch shape from `templates/release-draft.md`, never paste its paragraphs. Adversarial review applies (use `$GATHER_FILE` from Phase 2a as gather context). Shepherd voice review applies.
 
 ### Phase 6: Consolidate waived changes
 

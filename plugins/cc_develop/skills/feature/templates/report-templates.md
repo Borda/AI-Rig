@@ -2,13 +2,17 @@
 
 # Feature Report Templates
 
+> Template notes, not part of the report:
+>
+> - In `Purpose`, write one or two sentences explaining what was built and why.
+
 ## Standard Final Report
 
 ```markdown
-## Feature Report: <feature name>
+## Feature Report: [feature name]
 
 ### Purpose
-[1-2 sentences: what built, why]
+[purpose]
 
 ### Codebase Analysis
 - Reused: [existing utilities/patterns leveraged]
@@ -16,7 +20,7 @@
 - New files: [list]
 
 ### Demo Use-Case
-- Location: <file>::<test or doctest>
+- Location: [file]::[test or doctest name]
 - API: [exposed function/class signature]
 
 ### TDD Cycle
@@ -46,7 +50,7 @@
 Use when stopping after 3 review cycles with unresolved substantive issues:
 
 ```markdown
-## Feature Report: <feature name> [INCOMPLETE]
+## Feature Report: [feature name] [INCOMPLETE]
 
 ### Status
 Implementation incomplete -- stopped after 3 review cycles.

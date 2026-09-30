@@ -91,7 +91,7 @@ REVIEW_FILE=$(ls -t .reports/review/*/review-report.md .reports/review/*/*/revie
 
 ### Phase 2: Readiness checks
 
-Execute all checks from `templates/audit-checks.md`. Checks cover: version consistency across manifests, docs/CHANGELOG alignment, open blocking issues, dependency CVE scan, unreleased commits since last tag, changelog scope (commits landed via a non-PR branch merge inside `$RANGE` — catches an unrelated already-released commit re-appearing in this release's section by accident, see Audit changelog's Scope check in `SKILL.md`).
+Execute all checks from `templates/audit-checks.md`. Checks cover: version consistency across manifests, docs/CHANGELOG alignment, open blocking issues, dependency CVE scan, unreleased commits since last tag, changelog scope (commits landed via a non-PR branch merge inside `$RANGE` — catches an unrelated already-released commit re-appearing in this release's section by accident, see Audit changelog's Scope check in `SKILL.md`), changelog evidence (reuse the changelog audit's "unsourced entry" rows when that audit ran this session; otherwise Read the changelog's Unreleased section and count every bullet with no `#N` PR number and no parenthesised 7+ character hex commit sha).
 
 Every `critical` row from the Scope check (already-released commit landed a second time) → add to the Findings summary table below, `severity: critical` — this is the check that must be visible to the reviewer before the PR merges, not something the audit file alone carries.
 

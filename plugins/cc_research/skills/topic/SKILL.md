@@ -166,13 +166,20 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" 
 
 ## Step 3: Report
 
+> Report guidance:
+>
+> - List only agents actually dispatched this run, such as `foundry:web-explorer` when it ran Step 2a. Include `solution-architect` only in plan-mode runs; never copy the full agent menu.
+> - When web-explorer declined or redirected, the Agents field records `web-explorer (declined) + orchestrator (inline fallback)`, never just `orchestrator (inline)`. Preserve the actual Agent Confidence row rules below.
+> - Summarize the current state of the field in two to three sentences. Use the actual dispatched agent name in each confidence row.
+> - Replace descriptive fields with observed values and omit these writing notes from the report.
+
 ```markdown
 ---
 Title:       Research — [topic]
 Date:        [YYYY-MM-DD]
 Scope:       [topic / research question]
 Focus:       SOTA literature research
-Agents:      [agents actually dispatched this run — e.g. foundry:web-explorer when it ran Step 2a; solution-architect only on plan-mode runs; never the full menu; web-explorer declined/redirected → `web-explorer (declined) + orchestrator (inline fallback)`, never just `orchestrator (inline)`]
+Agents:      [Agents used]
 Outcome:     EXPLORATORY | PROMISING | CONSENSUS
 Best method: [recommended approach / architecture]
 Papers:      [N papers analyzed]
@@ -184,7 +191,7 @@ Path:        → .reports/research/topic-<branch>-<date>.md
 ## Research: $ARGUMENTS
 
 ### SOTA Overview
-[2-3 sentence summary of the current state of the field]
+[Field summary]
 
 ### Method Comparison
 | Method | Key Idea | SOTA Result | Compute | Code Available |
@@ -221,7 +228,7 @@ Path:        → .reports/research/topic-<branch>-<date>.md
 <!-- The rows below are shape examples, never emitted verbatim — a fixed researcher-1/2/3 lineup reports agents that never ran. -->
 | Agent | Score | Gaps |
 |---|---|---|
-| [agent as dispatched, e.g. foundry:web-explorer] | [score] | [gaps] |
+| [Dispatched agent] | [score] | [gaps] |
 ```
 
 ```bash

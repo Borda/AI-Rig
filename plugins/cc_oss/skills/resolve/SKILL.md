@@ -426,7 +426,7 @@ Summary ≤60 chars. Notes = `—` when empty; carries commit SHA for `[done]` r
 
 ## Step 3d: User item selection
 
-<!-- branch: main-path — item-selection (always fires in step 3d; ≤3 items = one merged call incl. commit-mode + topic-group; 4-6 = one call, +1 topic-group follow-up only when commit mode = (b); 7-9 = two calls; 10-18 = three: two checkbox pages + commit-mode follow-up) -->
+<!-- branch: main-path — item-selection (always fires in step 3d; ≤3 items = one merged call incl. commit-mode + dispatch, +1 topic-group follow-up only when commit mode = (b); 4-6 and 7-9 = two calls: checkboxes + bulk, then commit-mode + topic-group + dispatch follow-up; 10-18 = three: two checkbox pages + the same follow-up) -->
 
 ! IMPORTANT — invoke `AskUserQuestion` tool directly. Never write options as plain text.
 
@@ -467,14 +467,14 @@ Immediately before the first `AskUserQuestion`, ensure the latest assistant user
 | Pending | Call 1 slots | Follow-up call |
 | -- | -- | -- |
 | ≤3 | Q1 items · Q2 bulk · Q3 commit-mode · Q4 dispatch | topic-group, only when commit mode = (b) |
-| 4-6 | Q1-Q2 items (≤3 each) · Q3 bulk · Q4 commit-mode | Q1 dispatch · Q2 topic-group |
+| 4-6 | Q1-Q2 items (≤3 each) · Q3 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch |
 | 7-9 | Q1-Q3 items (≤3 each) · Q4 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch |
 | 10-18 | Q1-Q3 items (first 9) · Q4 bulk → Call 2: Q1-Q3 items (remainder, ≤3 each) · Q4 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch |
 | ≥19 | context-budget mode below — no item checkboxes exist | — |
 
 Checkbox mode holds at most 18 items (2 calls × 3 questions × 3 items). Decide the mode from the pending count **before** building Call 1; never widen a question past 3 items and never open a Call 3 to stretch checkbox mode further.
 
-The dispatch question is asked in **every** run, so the ≤3 row spends its last slot on it and topic-group falls back to the conditional follow-up the 4-6 row already used. Only the 4-6 band gains a round-trip it did not always pay: its follow-up now fires unconditionally, carrying dispatch plus a topic-group answer discarded unless commit mode = (b).
+The dispatch question is asked in **every** run and always shares a call with the commit-mode question, so the user sets how to commit and how to parallelize together. The ≤3 row spends its last slot on it, and topic-group falls back to a follow-up asked only when commit mode = (b). Every band from 4 pending items up asks commit-mode, topic-group, and dispatch together in one follow-up call; the topic-group answer is discarded unless commit mode = (b).
 
 Bulk action resolving to (d) Skip all → discard the commit-mode, topic-group, **and dispatch** answers from the same call (nothing will be committed and no specialist will be dispatched). This satisfies the distinct-menus rule below — menus stay separate questions; only the round-trips merge.
 
@@ -508,9 +508,9 @@ Bulk-action question — multiSelect: FALSE (single-select only — user picks o
 
 **≥19 pending items — context-budget mode**: no per-item checkboxes in this branch. **MANDATORY, in this order — print first, ask second:** (1) print the compressed table (type · id · summary ≤40 chars · file) with every row in an assistant user-facing reply, not Bash/tool stdout, immediately before AskUserQuestion; same non-decorative/no-compression-substitute rule as Step 3c (Output-Routing exemption applies — never divert to `.temp`); (2) then issue ONE call: Q1 bulk action · Q2 commit-mode · Q3 topic-group · Q4 dispatch (all four slots; no item checkboxes exist in this mode). Threshold is 19 because checkbox mode tops out at 18 — this branch takes the whole layout, never a partial checkbox pass.
 
-<!-- branch: main-path — commit-mode (same call in the ≤6-item merged layout; separate call 2 only in the >6-item flow; skipped only when bulk action = (d) skip) -->
+<!-- branch: main-path — commit-mode (same call in the ≤3-item merged layout; follow-up call with topic-group and dispatch from 4 items up; skipped only when bulk action = (d) skip) -->
 
-**Commit mode** — placed per the slot table above: same call for ≤6 pending items, follow-up call (paired with topic-group) for >6. In the follow-up flow ask it immediately after the bulk action resolves to (a), (b), (c), or unanswered (skip only when (d) skip-all). Commit mode is always the user's choice; item scope ((c) = all items) never implies a commit mode:
+**Commit mode** — placed per the slot table above: same call for ≤3 pending items, follow-up call (paired with topic-group and dispatch) from 4 up, one shared call in context-budget mode. In the follow-up flow ask it immediately after the bulk action resolves to (a), (b), (c), or unanswered (skip only when (d) skip-all). Commit mode is always the user's choice; item scope ((c) = all items) never implies a commit mode:
 
 ```text
 AskUserQuestion: "Commit mode for selected items:"
@@ -530,7 +530,7 @@ Set `COMMIT_MODE`:
 - (d) → `stage`
 - unanswered → `each` (default)
 
-**Topic-group question** — always present in the SAME call as the commit-mode menu wherever the slot table leaves room (`≤3` items, and every `>6` follow-up call): the commit-mode answer is unknown when that call is built, so the question is asked unconditionally there and its answer discarded silently unless commit mode resolves to (b) — same pattern as the skip-all discard. For `4-6` items the call is already full, so ask it as a separate follow-up call, and only when commit mode = (b). Options are grouping strategies, not free-text labels: the orchestrator already knows each item's `change` category and `file`, so it proposes concrete groupings and only falls back to typing.
+**Topic-group question** — always present in the SAME call as the commit-mode menu wherever the slot table leaves room (every follow-up call from 4 pending items up, and the ≥19 single call): the commit-mode answer is unknown when that call is built, so the question is asked unconditionally there and its answer discarded silently unless commit mode resolves to (b) — same pattern as the skip-all discard. For `≤3` items the call is already full, so ask it as a separate follow-up call, and only when commit mode = (b). Options are grouping strategies, not free-text labels: the orchestrator already knows each item's `change` category and `file`, so it proposes concrete groupings and only falls back to typing.
 
 ```text
 Topic-group question — multiSelect: FALSE
@@ -1196,7 +1196,7 @@ Non-calibratable — `disable-model-invocation: true` means skill dispatches to 
 
 <notes>
 
-- **Pre-flight git fetch** — Step 1 always runs `git fetch origin` (unconditional) so all remote tracking refs — including `origin/$BASE_REF` — current before Step 5 merges. Then pulls current branch if upstream tracking ref exists and remote ahead. `git pull` conflicts → exit with message to resolve manually — prevents `git merge --continue` with no in-progress merge
+- **Pre-flight git fetch** — Step 1 always runs `git fetch origin` (unconditional) so all remote tracking refs — including `origin/$BASE_REF` — current before Step 5 merges. Step 5 fetches the target again right before merging and fast-forwards the local `$BASE_REF` branch to it when that branch exists (best effort: skipped with a warning when diverged or checked out in another worktree); the merge itself always uses `origin/$BASE_REF`. Then pulls current branch if upstream tracking ref exists and remote ahead. `git pull` conflicts → exit with message to resolve manually — prevents `git merge --continue` with no in-progress merge
 - **Branch safety** — `gh pr checkout <PR#>` always lands on PR's HEAD, never `main`/`master`. Never push to default branch — if PR branch = default branch, abort, surface.
 - **Same-repo branch rule** — for non-fork PRs (`isCrossRepository=false`), local branch name MUST equal `headRefName` at all times. Never create `pr<N>` alias or other branch name substitute. Enforced by `--branch "$PR_HEAD_REF"` at checkout + hard assertion post-checkout. Rationale: `git push HEAD:$HEAD_REF` on `pr<N>` alias creates new remote branch instead of pushing to PR head — silent data-loss class bug.
 - **OSS fork support** — `gh pr checkout <PR#>` works same for branches + forks; forks get contributor remote + tracking; plain `git push` targets fork branch automatically.
@@ -1210,7 +1210,7 @@ Non-calibratable — `disable-model-invocation: true` means skill dispatches to 
 - **COMMIT_MODE**: `each` (default); `all`; `stage` (⚠ branch restore skipped); `grouped` (falls back to `each` when labels skipped). Set via the commit-mode menu (Step 3d) — placement per the Step 3d slot table — skipped/discarded only when the bulk action = (d) skip-all. Distinct MENU from the bulk action (item scope vs commit strategy); item scope never implies commit mode; menus may share a call, never options.
 - **GROUP_STRATEGY**: `domain` (default) · `file` · `specialist` · `labels`. Set via the topic-group question (Step 3d), asked beside the commit-mode menu. Read only when `COMMIT_MODE=grouped`; only `labels` triggers the Step 8 free-text label prompt, the rest group without another user round-trip.
 - **DISPATCH_MODE**: `auto` (default) · `sequential` · `per-specialist` · `preview` (the "Custom" label). Set via the dispatch-granularity question (Step 3d), asked in every run beside the commit-mode or topic-group menu. Read by Phase 2 for sub-group splitting and wave width only — specialist routing, the file-ownership tiebreak and the import-coupling merge never change; `per-specialist` drops the ≤5 split, the one width guard a width answer may touch. Distinct from `GROUP_STRATEGY=specialist`, which is a commit-grouping strategy on its own sentinel. `preview` defers the width to one extra gate at the Phase 1 → Phase 2 boundary, where the formed groups are printed first; that gate resolves it to one of the other three.
-- **AskUserQuestion usage**: the normal action-item path, after successful source resolution and without diagnostic or conflict recovery, takes at most 5 calls (10-18 pending: two checkbox pages + commit-mode follow-up + labels question + push-auth/post-pr). The dispatch-granularity question rides an existing call in every band, so it adds no round-trip there; only 4-6 pending pays one, because its follow-up now fires unconditionally instead of only on grouped commits, and only `DISPATCH_MODE=preview` adds a call outside this count. The same path is 4 calls without the optional grouped-labels question. Other paths can add questions for unsupported flags, missing reports, conflicts, or unresolved item status; they are outside this normal-path count. Push authorization and the post-PR browser action share one call at Step 10 (two questions); Step 11 reads the stored answer and asks nothing.
+- **AskUserQuestion usage**: the normal action-item path, after successful source resolution and without diagnostic or conflict recovery, takes at most 5 calls (10-18 pending: two checkbox pages + commit-mode follow-up + labels question + push-auth/post-pr). The dispatch-granularity question rides the call that carries commit-mode in every band, so it adds no round-trip there; only 4-6 pending pays one, because its follow-up now fires unconditionally instead of only on grouped commits, and only `DISPATCH_MODE=preview` adds a call outside this count. The same path is 4 calls without the optional grouped-labels question. Other paths can add questions for unsupported flags, missing reports, conflicts, or unresolved item status; they are outside this normal-path count. Push authorization and the post-PR browser action share one call at Step 10 (two questions); Step 11 reads the stored answer and asks nothing.
 - **`--agent <name>`**: bare name auto-prefixed `foundry:`; must be an implementation agent (not curator); omit the bridge trailer when another agent is selected.
 - **Thread resolution via GraphQL** — `isResolved` on `PullRequestReviewThread` (GraphQL only); REST doesn't expose it. `RESOLVED_THREAD_IDS` = root comment `databaseId`; GraphQL failure → `[]`.
 - **Discussion vs inline**: `gh pr view --comments` = discussion (`location: discussion`; no Resolve button); `gh api .../pulls/<N>/comments` = inline (`location: inline`; resolvable). `location: discussion` + `[report]` items: implement-only, no GitHub close action. Surface unresolvable rows through the Status suffix `· thread (no GH resolve)`, not a separate column.

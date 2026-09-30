@@ -258,34 +258,36 @@ Stop when one hypothesis confirmed with clear evidence, or top-3 all ruled out (
 Re-resolve `$INVESTIGATE_RUN` from persisted path file (`cat "${TMPDIR:-/tmp}/investigate-run-path-${CSID}"`). Guard each read with `[ -f <path> ]`: `$INVESTIGATE_RUN/codex-review.md` exists, read it; `$INVESTIGATE_RUN/challenger-review.md` exists, read it. Either or both may be absent (Step 4 skipped via `--fast`, or spawned agent failed silently). Incorporate new hypotheses or blindspots from existing files into Evidence section below; skip read entirely if neither file present — do NOT block on missing review files.
 
 ```markdown
-## Investigation: <symptom>
+## Investigation: [symptom]
 
-**Root cause**: <confirmed cause, or "inconclusive — suspects narrowed to X, Y">
+**Root cause**: [cause or inconclusive result]
 
 **Evidence**:
-- <key finding that confirmed the diagnosis>
-- <secondary supporting evidence>
+- [supporting finding]
+- [additional evidence]
 
-**Ruled out**: <hypotheses eliminated and why>
+**Ruled out**: [ruled-out hypotheses]
 
-**Recommended next action**: <one of:>
+**Recommended next action**: [recommended action]
   - `/develop:fix` — code regression confirmed (application code only — NOT for `.claude/` changes) (requires `develop` plugin — check plugin availability before following this recommendation)
   - `/foundry:manage update <name> "<change directive>"` — `.claude/` agent/skill content needs adding or updating (NOT for structural/quality sweeps — use `/foundry:audit` for that)
   - `/foundry:audit` — structural/quality issue in `.claude/` config confirmed (e.g. broken cross-refs, missing blocks, tag imbalance); NOT for content additions — use `/manage update` for those
   - `/foundry:setup` — propagate project `.claude/` to `~/.claude/` (foundry plugin is the distribution path)
-  - Manual step: <exact command to run>
-  - Further investigation needed: <what additional info would resolve it>
+  - Manual step: [command to run]
+  - Further investigation needed: [missing information]
 ```
+
+> Include why each hypothesis was ruled out. When no cause is confirmed, mark the result inconclusive, name the narrowed suspects, and include the ruled-out explanations. Choose the recommended action from the options above.
 
 End with a `## Confidence` block:
 
 ```markdown
 ## Confidence
-**Score**: 0.N — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
+**Score**: [score] — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
 **Gaps**:
-- [e.g., root cause unconfirmed — probe was inconclusive; external service logs inaccessible]
+- [confidence gaps]
 
-**Refinements**: N passes.
+**Refinements**: [pass count] passes.
 - Pass 1: [gap addressed]
 ```
 

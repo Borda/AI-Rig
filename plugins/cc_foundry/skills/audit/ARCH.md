@@ -4,7 +4,7 @@
 
 > **Documentation, not contract.** The skill never loads this file; `SKILL.md` and `modes/*.md` are the only normative sources. It exists so the shape — what fans out, what joins, what blocks — can be read without walking a 500-line skill plus five mode files.
 >
-> **Keep it current.** Any change to block order, gate placement, fan-out width or what runs beside what lands here in the same commit. A schema that disagrees with `SKILL.md` is worse than none — `SKILL.md` wins every time.
+> **Keep it current.** Any change to block order, gate placement, fan-out width or what runs beside what lands here in the same commit. Every schema block carries a `(step N)` tag naming its step; renumbering a step updates the tag and the index at the end. A schema that disagrees with `SKILL.md` is worse than none — `SKILL.md` wins every time.
 
 ## Legend
 
@@ -17,49 +17,50 @@ JOIN   lanes collected; nothing past it starts until all land
 ## Schema
 
 ```
-SETUP
-  flags · LOCAL_MODE
-  ◆ unknown flag?                                     [conditional]
-  pre-commit (4h cache) · Layer-1 static pass (authoritative) · churn
-  collect inventory (Glob · plugin-layout resolve · coverage check)
+SETUP  (pre-flight, steps 1, 1b, 1c, 2)
+  flags · LOCAL_MODE  (pre-flight)
+  ◆ unknown flag?  (pre-flight)                       [conditional]
+  pre-commit (4h cache) (step 1) · Layer-1 static pass (step 1b,
+    authoritative) · churn (step 1c)
+  collect inventory (Glob · plugin-layout resolve · coverage check) (step 2)
   |
   +--------------------- FAN 2 ----------------------+
   |                                                  |
-PER-FILE AUDIT  ▣ curator          SYSTEM-WIDE CHECKS
-  batches of EFFECTIVE_BATCH         full sweep: ▣ curator ×5, one per
-  files, cap CAP_OPUS                  scope group (agents · skills ·
-                                       shared · setup · security)
+PER-FILE AUDIT  (step 3)           SYSTEM-WIDE CHECKS  (step 4)
+  ▣ curator                          full sweep: ▣ curator ×5, one per
+  batches of EFFECTIVE_BATCH           scope group (agents · skills ·
+  files, cap CAP_OPUS                  shared · setup · security)
                                      scoped run: native tools/bash inline
                                      ▣ web-explorer — docs freshness
                                       ◆ ! BREAKING finding?  [conditional]
   |                                                  |
   +--------------------- JOIN -----------------------+
   |
-AGGREGATE  ▣ curator consolidator
+AGGREGATE  (step 5)  ▣ curator consolidator
   classify by severity → aggregate.md, summary.jsonl
   |
-LOW-CONF REMEDIATION  FAN 3         [conditional, any slug scores <0.80]
+LOW-CONF REMEDIATION  (step 5b)  FAN 3   [conditional, any slug scores <0.80]
   ▣ curator re-run           double-reasoning pass, targets prior gaps
   ▣ web-explorer docs-check  verify findings against current schema
   Codex review                adversarial pass (bridge, outside both pools)
   JOIN → ▣ curator mini-consolidator merges the three into aggregate.md
   |
-CROSS-VALIDATE CRITICAL  ▣ curator × ≤3     [conditional, critical >0]
+CROSS-VALIDATE CRITICAL  (step 6)  ▣ curator × ≤3  [conditional, critical >0]
   |
-◆ FOLLOW-UP GATE  fix option (a–d), always fires unless --skip-gate
+◆ FOLLOW-UP GATE  (step 7)  fix option (a–d), always fires unless --skip-gate
   |                            (fix option picked only, below)
-FIX DISPATCH
+FIX DISPATCH  (step 8)
   ◆ Fix-ALL category decisions, ≤4 calls    [conditional, option (c) only]
   ▣ challenger ‖ ▣ curator — adversarial pre-apply gate, per finding
   Phase 1  ▣ parallel-safe fixes, one agent per file, single response
   Phase 2  ▣ curator mini-agent re-reads → sequential dependency-ordered
   |
-CODEX CROSS-CHECK              [conditional: bridge, >1 file changed]
+CODEX CROSS-CHECK  (step 9)    [conditional: bridge, >1 file changed]
   |
-RE-AUDIT  ▣ curator per changed file
+RE-AUDIT  (step 10)  ▣ curator per changed file
   new fixable findings → loop to FIX DISPATCH, 5-pass hard limit
   |
-FINAL REPORT  Write $RUN_DIR/report.md + terminal print   [not a gate]
+FINAL REPORT  (step 11)  Write $RUN_DIR/report.md + terminal print  [not a gate]
 ```
 
 ## Fan and join points
@@ -97,12 +98,12 @@ Clean scoped run with no breaking findings and no fix pick costs exactly 1 `AskU
 `--upgrade`, `--adversarial`, `--efficiency` are mutually exclusive with `--upgrade` (not with each other). Each replaces or stacks onto the SETUP → FOLLOW-UP GATE span above; all three rejoin the same FOLLOW-UP GATE once their own findings exist, then FIX DISPATCH → CODEX CROSS-CHECK → RE-AUDIT proceed identically.
 
 ```
-ADVERSARIAL  FAN 4         runs alongside PER-FILE AUDIT by default
-  ▣ curator challenger      batches of 2 — NOT-for gaps, contradictions
-  ▣ curator unconstrained   batches of 2 — beyond-checklist judgment
-  Codex bridge               cross-file inconsistencies (no Agent() pool)
-  ▣ qa-specialist            per plugin with bin/ — OWASP Top 10
-  JOIN → ▣ curator consolidator
+ADVERSARIAL  (adversarial.md)  FAN 4   runs alongside PER-FILE AUDIT by default
+  ▣ curator challenger  (phase A)          batches of 2 — NOT-for gaps, contradictions
+  ▣ curator unconstrained  (phase A-prime) batches of 2 — beyond-checklist judgment
+  Codex bridge  (phase B)                  cross-file inconsistencies (no Agent() pool)
+  ▣ qa-specialist  (phase D)               per plugin with bin/ — OWASP Top 10
+  JOIN → ▣ curator consolidator  (phase C)
     dedup vs same-run summary.jsonl → FOLLOW-UP GATE
 ```
 
@@ -115,11 +116,11 @@ ADVERSARIAL  FAN 4         runs alongside PER-FILE AUDIT by default
 Alone (no prior audit in RUN_DIR) skips PER-FILE AUDIT through CROSS-VALIDATE CRITICAL entirely and reports unfiltered.
 
 ```
-EFFICIENCY  FAN 3            replaces PER-FILE AUDIT..CROSS-VALIDATE CRITICAL
-  ▣ curator per file          model tier · effort · bloat · E8/E9/E10
-  bash scan                    spawn-pattern + duplication (no Agent())
-  ▣ curator per plugin        Check 33 code-block clusters
-  JOIN → ▣ curator consolidator
+EFFICIENCY  (efficiency.md)  FAN 3   replaces PER-FILE AUDIT..CROSS-VALIDATE CRITICAL
+  ▣ curator per file  (phase A)      model tier · effort · bloat · E8/E9/E10
+  bash scan  (phase B)               spawn-pattern + duplication (no Agent())
+  ▣ curator per plugin  (phase B2)   Check 33 code-block clusters
+  JOIN → ▣ curator consolidator  (phase C)
     cost-reduction report → FOLLOW-UP GATE
 ```
 
@@ -132,7 +133,7 @@ EFFICIENCY  FAN 3            replaces PER-FILE AUDIT..CROSS-VALIDATE CRITICAL
 Skips PER-FILE AUDIT through CROSS-VALIDATE CRITICAL outright — never runs the standard per-file quality audit. `--adversarial --efficiency` combined: both run, each to its own `$RUN_DIR` subdir (`adversarial/`, `efficiency/`); FOLLOW-UP GATE fires once, merged counts.
 
 ```
-UPGRADE                          entirely sequential, no fan-out
+UPGRADE  (upgrade.md)            entirely sequential, no fan-out
   Phase 1  gate check — abort on open critical/high
   |
   Phase 2  ▣ web-explorer — docs + RTK check
@@ -145,7 +146,7 @@ UPGRADE                          entirely sequential, no fan-out
   |
   Phase 5  report
   |
-◆ FOLLOW-UP GATE  Step-7-style, per SKILL.md "## Follow-up gate"
+◆ FOLLOW-UP GATE  (step 7 style)  per SKILL.md "## Follow-up gate"
 ```
 
 | Phase | Width | Bound by | Joins at |
@@ -168,7 +169,7 @@ Entirely sequential — no PER-FILE AUDIT fan-out, no FIX DISPATCH/RE-AUDIT loop
 
 ## Where this lives in `SKILL.md`
 
-Navigation only; the step numbers carry no meaning at this level.
+Index of the schema tags above, one row per block. A bare `step N` is a `SKILL.md` step (steps 4–5b and 7 live in `modes/steps-4-5-7.md`, steps 8–10 in `modes/fix.md`); mode files use their own phase labels (`phase A`).
 
 | Block | Steps |
 | -- | -- |
