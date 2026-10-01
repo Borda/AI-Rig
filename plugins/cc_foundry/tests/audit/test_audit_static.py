@@ -67,6 +67,13 @@ def _seed_defective_plugin(root: Path) -> Path:
     return plugins
 
 
+@pytest.fixture(scope="module")
+def seeded_results(tmp_path_factory: pytest.TempPathFactory) -> dict[str, dict]:
+    """Run all native checkers once against the shared, immutable seeded plugin."""
+    plugins = _seed_defective_plugin(tmp_path_factory.mktemp("seeded-audit"))
+    return {result["check"]: result for result in aud.run_checks(plugins)}
+
+
 @pytest.mark.parametrize(
     ("check", "expected_file", "expected_text"),
     [
@@ -78,12 +85,11 @@ def _seed_defective_plugin(root: Path) -> Path:
         pytest.param("plugin-module-docs", "bin/missing_docs.py", "missing module docstring", id="plugin-module-docs"),
     ],
 )
-def test_layer1_catches_seeded_defect(tmp_path: Path, check: str, expected_file: str, expected_text: str) -> None:
+def test_layer1_catches_seeded_defect(
+    seeded_results: dict[str, dict], check: str, expected_file: str, expected_text: str
+) -> None:
     """Each scope-aware checker flags its own planted defect."""
-    plugins = _seed_defective_plugin(tmp_path)
-    results = {r["check"]: r for r in aud.run_checks(plugins)}
-
-    result = results[check]
+    result = seeded_results[check]
     lines = "\n".join(result["lines"])
     normalized_lines = lines.replace("\\", "/")
     assert result["status"] == "fail", f"{check} missed its seeded defect: {result}"

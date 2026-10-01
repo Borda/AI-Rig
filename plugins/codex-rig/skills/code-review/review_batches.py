@@ -492,10 +492,18 @@ def assemble_wave(out: Path, codex_home: Path) -> dict[str, Any]:
     selection = validator._load_json(out / "review-routing.json").get("sol_selection")
     if selection is not None:
         manifest["sol_selection"] = selection
+    summary: dict[str, Any] = {}
     validator._validate_manifest_entries(
-        out, manifest, passes, roles, codex_home, plan["parent_thread_id"], Path.cwd(), require_role_card_receipts=True
+        out,
+        manifest,
+        passes,
+        roles,
+        codex_home,
+        plan["parent_thread_id"],
+        Path.cwd(),
+        require_role_card_receipts=True,
+        runtime_summary=summary,
     )
-    summary = validator._validate_review_runtime(out, manifest, passes, codex_home, plan["parent_thread_id"])
     if len(roles) > 1 and summary["actual_mode"] != "parallel" and not summary.get("capacity_limited"):
         raise ValueError("review-wave-not-parallel")
     producer._freeze(
@@ -1008,6 +1016,7 @@ def validate_aggregate(
         } or None
         if wave.get("sol_selection") != selection:
             raise ValueError("review-batch-wave-selection-mismatch")
+        summary = {}
         validator._validate_manifest_entries(
             directory,
             wave,
@@ -1018,14 +1027,7 @@ def validate_aggregate(
             Path.cwd(),
             require_role_card_receipts=True,
             retained_role_cards=retained_role_cards,
-        )
-        summary = validator._validate_review_runtime(
-            directory,
-            wave,
-            passes,
-            codex_home,
-            parent_thread_id,
-            roles_dir=directory / "role-cards" if retained_role_cards else validator.PLUGIN_ROOT / "roles",
+            runtime_summary=summary,
         )
         if len(passes) > 1 and summary["actual_mode"] != "parallel" and not summary.get("capacity_limited"):
             raise ValueError("review-batch-wave-not-parallel")

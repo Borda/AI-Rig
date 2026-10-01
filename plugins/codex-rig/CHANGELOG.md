@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.30.1
+
+- Validate native review evidence once per admission request, reducing repeated source and receipt checks while preserving fresh validation for later consumers.
+
 ## 0.30.0
 
 - Retain every required native reviewer in a largest-context-first frozen queue with at most four allocated child slots; bind real launches, task completion, joins and parent wait/results to refill decisions, recover proved no-child capacity refusals after actual state change, and admit complete smaller-pool native reviews without falsely claiming parallelism. Preserve dependent-wave barriers and strict historical reader gates.

@@ -911,29 +911,73 @@ def test_output_limit_returns_a_terminal_envelope_and_classified_incident(
     assert incident["fault"] == "output-limit"
 
 
-def test_normal_leader_exit_with_an_inherited_pipe_cannot_block_output_drain(tmp_path: Path) -> None:
-    """Prevent a completed leader's descendant from deadlocking the bounded output-drain cleanup."""
+def _inherited_pipe_fixture(
+    tmp_path: Path, startup_delay: float, publication_failure: bool = False
+) -> tuple[Path, Path, str]:
+    """Construct real parent/descendant sources with bounded PID-publication readiness."""
     child_pid_path = tmp_path / "inherited-pipe-child.pid"
     result_path = tmp_path / "inherited-pipe-result.txt"
     # The pid path is embedded in the child source rather than passed through the
     # environment: _run_child filters the child environment down to an allowlist, so a
     # test-only variable would not survive to be read here.
     parent = (
-        "import subprocess, sys\n"
+        "import subprocess, sys, time\n"
         "from pathlib import Path\n"
         "child = subprocess.Popen([sys.executable, '-c', "
         '\'import sys, time; time.sleep(0.1); sys.stdout.buffer.write(b\\"x\\" * 400000); '
         "sys.stdout.flush(); time.sleep(60)'])\n"
-        f"Path({str(child_pid_path)!r}).write_text(str(child.pid), encoding='utf-8')\n"
+        f"path = Path({str(child_pid_path)!r})\n"
+        "pending = path.with_suffix('.tmp')\n"
+        "try:\n"
+        "    pending.write_text(str(child.pid), encoding='utf-8')\n"
+        f"    time.sleep({startup_delay})\n"
+        f"    if {publication_failure}:\n"
+        "        raise OSError('injected PID publication failure')\n"
+        "    pending.replace(path)\n"
+        "except BaseException:\n"
+        "    child.kill()\n"
+        "    child.wait(timeout=3.0)\n"
+        "    raise\n"
     )
     runner = (
-        "import sys\n"
+        "import sys, time\n"
         f"sys.path.insert(0, {str(BIN_ROOT)!r})\n"
         "import bridge_call\n"
         "from pathlib import Path\n"
+        "real_popen = bridge_call.subprocess.Popen\n"
+        "def start_ready_process(command, **kwargs):\n"
+        "    '''Keep real fixture startup outside the supervision deadline under test.'''\n"
+        "    process = real_popen(command, **kwargs)\n"
+        f"    if command[-1] != {parent!r}:\n"
+        "        return process\n"
+        "    deadline = time.monotonic() + 10.0\n"
+        "    try:\n"
+        f"        while not Path({str(child_pid_path)!r}).is_file():\n"
+        "            if process.poll() is not None or time.monotonic() >= deadline:\n"
+        "                raise RuntimeError('fixture leader exited or PID publication timed out')\n"
+        "            time.sleep(0.01)\n"
+        "        process.wait(timeout=max(0.01, deadline - time.monotonic()))\n"
+        "        return process\n"
+        "    except BaseException:\n"
+        "        bridge_call._terminate_process_group(process)\n"
+        "        for stream in (process.stdout, process.stderr):\n"
+        "            if stream is not None:\n"
+        "                stream.close()\n"
+        "        raise\n"
+        "bridge_call.subprocess.Popen = start_ready_process\n"
         f"outcome = bridge_call._run_child([sys.executable, '-c', {parent!r}], Path({str(tmp_path)!r}), 1.0)\n"
         f"Path({str(result_path)!r}).write_text(str(outcome.output_limited), encoding='utf-8')\n"
     )
+    return child_pid_path, result_path, runner
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("startup_delay", [0.0, 1.2])
+def test_normal_leader_exit_with_an_inherited_pipe_cannot_block_output_drain(
+    tmp_path: Path, startup_delay: float
+) -> None:
+    """Prevent completed-leader output draining from racing fixture PID publication."""
+    child_pid_path, result_path, runner = _inherited_pipe_fixture(tmp_path, startup_delay)
     environment = dict(os.environ)
     child_pid: int | None = None
     runner_process: subprocess.Popen[bytes] | None = None
@@ -942,16 +986,15 @@ def test_normal_leader_exit_with_an_inherited_pipe_cannot_block_output_drain(tmp
             [sys.executable, "-c", runner],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             env=environment,
         )
-        # Margin covers the bounded worst case, not just the happy path: the internal
-        # 1.0s _run_child timeout, the taskkill bound, and its cleanup wait can stack
-        # to several seconds before three nested Windows process launches even start.
-        runner_process.wait(timeout=20)
-        child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+        # Fixture readiness has its own 10s bound; the original 20s margin still
+        # covers native supervision, tree termination, and inherited-pipe cleanup.
+        _, stderr = runner_process.communicate(timeout=30)
 
-        assert runner_process.returncode == 0
+        assert runner_process.returncode == 0, stderr.decode("utf-8", errors="replace")
+        child_pid = int(child_pid_path.read_text(encoding="utf-8"))
         assert result_path.read_text(encoding="utf-8") == "True"
     finally:
         if runner_process is not None and runner_process.poll() is None:
@@ -960,6 +1003,39 @@ def test_normal_leader_exit_with_an_inherited_pipe_cannot_block_output_drain(tmp
         if child_pid is None and child_pid_path.is_file():
             child_pid = int(child_pid_path.read_text(encoding="utf-8"))
         if child_pid is not None and _process_exists(child_pid):
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(child_pid), "/T", "/F"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+            else:
+                os.kill(child_pid, bridge_call.signal.SIGKILL)
+
+
+@pytest.mark.integration
+def test_inherited_pipe_fixture_reclaims_descendant_when_pid_publication_fails(tmp_path: Path) -> None:
+    """Prevent fixture startup errors from orphaning an unpublished descendant."""
+    child_pid_path, result_path, runner = _inherited_pipe_fixture(tmp_path, 0.0, publication_failure=True)
+    completed = subprocess.run(
+        [sys.executable, "-c", runner],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        timeout=30,
+        check=False,
+    )
+    child_pid = int(child_pid_path.with_suffix(".tmp").read_text(encoding="utf-8"))
+    try:
+        assert completed.returncode != 0
+        assert b"fixture leader exited or PID publication timed out" in completed.stderr
+        assert not child_pid_path.exists()
+        assert not result_path.exists()
+        assert not _process_exists(child_pid)
+    finally:
+        if _process_exists(child_pid):
             if os.name == "nt":
                 subprocess.run(
                     ["taskkill", "/PID", str(child_pid), "/T", "/F"],

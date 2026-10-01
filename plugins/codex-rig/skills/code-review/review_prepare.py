@@ -607,10 +607,18 @@ def assemble(out: Path, codex_home: Path) -> dict[str, Any]:
     }
     if "sol_selection" in routing:
         manifest["sol_selection"] = routing["sol_selection"]
+    summary: dict[str, Any] = {}
     validator._validate_manifest_entries(
-        out, manifest, passes, roles, codex_home, plan["parent_thread_id"], Path.cwd(), require_role_card_receipts=True
+        out,
+        manifest,
+        passes,
+        roles,
+        codex_home,
+        plan["parent_thread_id"],
+        Path.cwd(),
+        require_role_card_receipts=True,
+        runtime_summary=summary,
     )
-    summary = validator._validate_review_runtime(out, manifest, passes, codex_home, plan["parent_thread_id"])
     if len(roles) > 1 and summary["actual_mode"] != "parallel" and not summary.get("capacity_limited"):
         raise ValueError("review-wave-not-parallel")
     _freeze(
@@ -697,6 +705,7 @@ def recover_native_provenance(
             files[out / path] = raw
     _freeze(files)
     roles = {item["role"] for item in candidate["passes"]}
+    summary: dict[str, Any] = {}
     validator._validate_manifest_entries(
         out,
         candidate,
@@ -707,9 +716,7 @@ def recover_native_provenance(
         Path.cwd(),
         retained_role_cards=True,
         require_role_card_receipts=True,
-    )
-    summary = validator._validate_review_runtime(
-        out, candidate, candidate["passes"], codex_home, candidate["parent_thread_id"], roles_dir=out / "role-cards"
+        runtime_summary=summary,
     )
     candidate_path = out / "specialist-manifest.native-recovery.candidate.json"
     _freeze(

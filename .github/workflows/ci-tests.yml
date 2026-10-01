@@ -41,8 +41,8 @@ jobs:
       - name: 🐧 Verify Codex Rig entrypoints
         if: runner.os != 'Windows'
         run: |
-          uv run --only-group test python plugins/codex-rig/scripts/validate_package.py
-          uv run --only-group test python plugins/codex-rig/shared/collect_pr.py --help
+          uv run --no-project python plugins/codex-rig/scripts/validate_package.py
+          uv run --no-project python plugins/codex-rig/shared/collect_pr.py --help
 
       # Native pwsh, not the Git Bash the job default supplies: it is the shell a Windows user
       # actually invokes these entrypoints from, and the one that surfaced the path defects.
@@ -50,8 +50,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          uv run --only-group test python plugins/codex-rig/scripts/validate_package.py
-          uv run --only-group test python plugins/codex-rig/shared/collect_pr.py --help
+          uv run --no-project python plugins/codex-rig/scripts/validate_package.py
+          uv run --no-project python plugins/codex-rig/shared/collect_pr.py --help
 
   tests:
     runs-on: ${{ matrix.os }}
@@ -86,9 +86,9 @@ jobs:
             python plugins/cc_foundry/bin/build_blueprint_manifest.py \
             --scan-dir plugins --check
 
-      # Two workers fit private standard Linux/Windows runners and leave capacity for Node, coverage, and subprocess tests.
+      # Four workers run the complete suite, including Node, coverage, and subprocess tests.
       # pytest-randomly is installed with the test group and records a seed for reproducing order-dependent failures.
       - name: 🧪 Run plugin tests (Python bin/ + JS hooks)
         run: |
-          uv run --only-group test pytest -n 3 \
+          uv run --only-group test pytest -n 4 \
             -W error::DeprecationWarning --durations=500

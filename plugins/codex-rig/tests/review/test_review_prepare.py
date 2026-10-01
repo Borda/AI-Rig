@@ -1097,6 +1097,62 @@ def test_assemble_binds_native_wave_and_preserves_child_outputs(tmp_path: Path, 
         assert item["attempts"][0]["agent_thread_id"] == rows[0]["payload"]["id"]
 
 
+@pytest.mark.parametrize("operation", ["assemble", "recover"])
+def test_native_producer_admits_runtime_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str) -> None:
+    """Count full runtime admission in the ordinary and recovery producers."""
+    run, home, children = _assembly_evidence(tmp_path)
+    import review_prepare
+
+    if operation == "recover":
+        # Model the retained schema-six recipe before asking the recovery path to verify its original receipts.
+        dispatch_path = run / "dispatch.json"
+        dispatch = json.loads(dispatch_path.read_text(encoding="utf-8"))
+        parent_path = home / "sessions/rollout-parent.jsonl"
+        parent_rows = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
+        for call in dispatch["calls"]:
+            arguments = call["arguments"]
+            role = arguments["task_name"].removeprefix("review_").rsplit("_", 2)[0].replace("_", "-")
+            message = review_prepare.review_context.dispatch_message(
+                run / "inspection-plan.json", role, 1, dispatch["context_reader_python"]
+            )
+            arguments["message"] = message
+            for row in parent_rows:
+                payload = row.get("payload", {})
+                if payload.get("type") == "function_call" and payload.get("name") == "spawn_agent":
+                    sent = json.loads(payload["arguments"])
+                    if sent["task_name"] == arguments["task_name"]:
+                        sent["message"] = message
+                        payload["arguments"] = json.dumps(sent)
+            child_rows = [json.loads(line) for line in children[role].read_text(encoding="utf-8").splitlines()]
+            for row in child_rows:
+                payload = row.get("payload", {})
+                if payload.get("type") == "agent_message":
+                    payload["content"][0]["encrypted_content"] = message
+            _write_jsonl(children[role], child_rows)
+        dispatch_path.write_text(json.dumps(dispatch), encoding="utf-8", newline="\n")
+        _write_jsonl(parent_path, parent_rows)
+
+    validator = review_prepare.validator
+    original = validator._validate_review_runtime
+    calls = []
+
+    def counted_runtime(*args: object, **kwargs: object) -> dict[str, object]:
+        """Preserve actual native validation while counting requests."""
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(validator, "_validate_review_runtime", counted_runtime)
+    if operation == "assemble":
+        summary = review_prepare.assemble(run, home)
+        assert summary == json.loads((run / "inspection-summary.json").read_text(encoding="utf-8"))
+    else:
+        recovered = review_prepare.recover_native_provenance(run, home, SKILL / "review_context.py")
+        summary = recovered["summary"]
+        assert summary == json.loads((run / "native-recovery/inspection-summary.json").read_text(encoding="utf-8"))
+    assert summary["actual_mode"] == "parallel"
+    assert len(calls) == 1
+
+
 def test_assembly_fixture_rejects_malformed_compact_continuation(tmp_path: Path) -> None:
     """Make synthetic child calls depend on the actual compact dispatch instruction."""
     with pytest.raises(AssertionError, match="compact-review-continuation-invalid"):

@@ -345,6 +345,114 @@ def test_aggregate_admits_every_native_wave_and_interaction_output(tmp_path: Pat
     assert summary["batch_count"] > 1
 
 
+def test_aggregate_admits_each_native_wave_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Preserve each wave's full admission without rescanning it in the same aggregate request."""
+    run, home = _completed_batches(tmp_path)
+    assert _batch_command(run, "assemble-batches", home).returncode == 0
+    manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
+    import review_batches
+    import validate_artifacts
+
+    original = validate_artifacts._validate_review_runtime
+    calls = []
+
+    def counted_runtime(*args: object, **kwargs: object) -> dict[str, object]:
+        """Count actual per-wave checks while keeping receipt validation active."""
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(validate_artifacts, "_validate_review_runtime", counted_runtime)
+    summary = review_batches.validate_aggregate(run, manifest, {"challenger", "qa-specialist"}, home, "parent")
+    assert summary == json.loads((run / "inspection-summary.json").read_text(encoding="utf-8"))
+    assert len(calls) == len(manifest["batch_execution"]["waves"])
+
+
+def test_ordinary_consumers_admit_batched_runtime_once_each(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep full native admission while avoiding a second aggregate scan in each consumer."""
+    run, home = _completed_batches(tmp_path)
+    assert _batch_command(run, "assemble-batches", home).returncode == 0
+    result_path = _canonical_report(run, [], {}, "accept-as-is")
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    spec = importlib.util.spec_from_file_location(
+        "single_aggregate_validator", preparation.SKILL / "validate_artifacts.py"
+    )
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
+    import review_batches
+
+    original = review_batches.validate_aggregate
+    calls = []
+
+    def counted_aggregate(*args: object, **kwargs: object) -> dict[str, object]:
+        """Count complete admission calls while retaining native receipt and source checks."""
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(review_batches, "validate_aggregate", counted_aggregate)
+    validator._validate_manifest_preflight(run, home, "parent", tmp_path)
+    assert len(calls) == 1
+    evidence = validator._validate_specialist_manifest(
+        run,
+        result,
+        result_path,
+        result["metadata"],
+        "HIGH_RISK",
+        validator._ReviewEnvironment(home, "parent", tmp_path),
+    )
+    assert len(calls) == 2
+    assert evidence.runtime_summary == json.loads((run / "inspection-summary.json").read_text(encoding="utf-8"))
+    assert (
+        validator._validate_review_runtime(run, evidence.manifest, evidence.passes, home, "parent")
+        == evidence.runtime_summary
+    )
+    assert len(calls) == 3
+
+
+def test_ordinary_consumers_admit_native_runtime_once_each(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Retain native wave evidence checks without repeating them inside one admission."""
+    run, home, _ = preparation._assembly_evidence(tmp_path)
+    assert preparation._assemble(run, home).returncode == 0
+    manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
+    summary = json.loads((run / "inspection-summary.json").read_text(encoding="utf-8"))
+    metadata = {
+        "specialist_manifest": "specialist-manifest.json",
+        "execution_mode": summary["actual_mode"],
+        "execution_evidence_level": summary["evidence_level"],
+        "write_parallel_eligible": False,
+        "execution_observed_controls": summary["observed_controls"],
+        "review_run_id": manifest["review_run_id"],
+        "review_input_sha256": manifest["review_input_sha256"],
+    }
+    spec = importlib.util.spec_from_file_location(
+        "single_native_validator", preparation.SKILL / "validate_artifacts.py"
+    )
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
+    original = validator._validate_review_runtime
+    calls = []
+
+    def counted_runtime(*args: object, **kwargs: object) -> dict[str, object]:
+        """Count real runtime validation in both ordinary admission routes."""
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(validator, "_validate_review_runtime", counted_runtime)
+    validator._validate_manifest_preflight(run, home, "parent", tmp_path)
+    assert len(calls) == 1
+    evidence = validator._validate_specialist_manifest(
+        run,
+        {"schema_version": 3},
+        run / "result-candidate.json",
+        metadata,
+        "HIGH_RISK",
+        validator._ReviewEnvironment(home, "parent", tmp_path),
+    )
+    assert len(calls) == 2
+    assert evidence.runtime_summary == summary
+    assert validator._validate_review_runtime(run, manifest, manifest["passes"], home, "parent") == summary
+    assert len(calls) == 3
+
+
 @pytest.mark.parametrize(
     "problem", ["missing-wave", "segment-drift", "source-drift", "missing-interactions", "lost-output"]
 )
@@ -532,6 +640,30 @@ def test_batch_wave_preserves_explicit_advisor_selection(tmp_path: Path, role: s
     assert (
         json.loads((directory / "specialist-manifest.json").read_text(encoding="utf-8"))["sol_selection"] == selection
     )
+
+
+def test_batch_wave_producer_admits_runtime_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Count complete runtime admission in the native batch wave producer."""
+    run = _batch_inputs(tmp_path)
+    assert _batch_command(run, "prepare").returncode == 0
+    directory = run / "batches/source-001"
+    home = tmp_path / "codex-home"
+    preparation._assembly_evidence(tmp_path, prepared_run=directory, home=home, wave_index=1, final_header="missing")
+    import review_batches
+    import validate_artifacts
+
+    original = validate_artifacts._validate_review_runtime
+    calls = []
+
+    def counted_runtime(*args: object, **kwargs: object) -> dict[str, object]:
+        """Count native validation while preserving the real checks."""
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(validate_artifacts, "_validate_review_runtime", counted_runtime)
+    summary = review_batches.assemble_wave(directory, home)
+    assert summary == json.loads((directory / "inspection-summary.json").read_text(encoding="utf-8"))
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize("gap", ["unchanged-caller", "split-file"])

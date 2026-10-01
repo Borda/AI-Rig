@@ -3082,8 +3082,9 @@ def _validate_manifest_entries(
     require_assessment: bool = True,
     retained_role_cards: bool = False,
     require_role_card_receipts: bool = False,
+    runtime_summary: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Bind every triggered pass to unique, role-specific evidence for its declared route."""
+    """Bind every triggered pass to its evidence and expose schema-seven runtime summary when requested."""
     schema_version = manifest.get("schema_version")
     if schema_version not in {2, 3, 4, 5, 6, 7}:
         raise SystemExit("manifest-schema-version")
@@ -3096,7 +3097,7 @@ def _validate_manifest_entries(
 
             if passes != manifest.get("passes"):
                 raise SystemExit("review-batch-pass-input-mismatch")
-            review_batches.validate_aggregate(
+            summary = review_batches.validate_aggregate(
                 out_dir,
                 manifest,
                 triggered_roles,
@@ -3104,6 +3105,8 @@ def _validate_manifest_entries(
                 parent_thread_id,
                 retained_role_cards=retained_role_cards,
             )
+            if runtime_summary is not None:
+                runtime_summary.update(summary)
             return {item["role"]: item for item in passes}
         if manifest.get("dispatch_protocol") not in {"paged-context-v6", "paged-context-v7"}:
             raise SystemExit("manifest-dispatch-protocol-invalid")
@@ -3226,11 +3229,13 @@ def _validate_manifest_entries(
     if set(by_role) != triggered_roles:
         raise SystemExit("manifest-triggered-role-set-mismatch")
     if schema_version == 7:
-        _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id, roles_dir=roles_dir)
+        summary = _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id, roles_dir=roles_dir)
         if "reviewer_findings_version" in manifest:
             import review_batches  # Reuse the existing circular batch boundary after native provenance admission.
 
             review_batches.validate_wave_findings(out_dir, manifest, passes)
+        if runtime_summary is not None:
+            runtime_summary.update(summary)
     return by_role
 
 
@@ -3261,7 +3266,7 @@ def _validate_manifest_preflight(
         project_root,
         require_role_card_receipts=True,
     )
-    if manifest.get("schema_version") in {3, 4, 5, 6, 7}:
+    if manifest.get("schema_version") in {3, 4, 5, 6}:
         _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id)
 
 
@@ -3290,7 +3295,8 @@ def _validate_challenge_manifest_preflight(
         parent_thread_id,
         project_root,
     )
-    _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id)
+    if manifest.get("schema_version") != 7:
+        _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id)
 
 
 # ``NamedTuple``, not ``@dataclass``: callers load this validator by file path without registering it in
@@ -3579,6 +3585,7 @@ def _validate_specialist_manifest(
         raise SystemExit("manifest-sol-selection-routing-mismatch")
     passes = _manifest_passes(manifest)
     retained_role_cards = result.get("schema_version") == 3 and result_path.name == "result.json"
+    runtime_summary: dict[str, Any] = {}
     by_role = _validate_manifest_entries(
         out_dir,
         manifest,
@@ -3590,9 +3597,12 @@ def _validate_specialist_manifest(
         require_assessment=result.get("schema_version") != 2,
         retained_role_cards=retained_role_cards,
         require_role_card_receipts=result.get("schema_version") == 3,
+        runtime_summary=runtime_summary,
     )
     runtime_summary = (
-        _validate_review_runtime(
+        runtime_summary
+        if manifest.get("schema_version") == 7
+        else _validate_review_runtime(
             out_dir,
             manifest,
             passes,
