@@ -48,6 +48,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -750,6 +751,59 @@ def _fetch_exact_ref(run: RunCommand, timeout: int, remote_name: str, source_ref
     return _run(run, ["git", "rev-parse", "FETCH_HEAD"], timeout, f"{label}-rev-parse").decode().strip()
 
 
+def _filesystem_path_parts(path: str, root: Path, directories: dict[Path, dict[str, Path]]) -> tuple[str, ...]:
+    """Match existing namespace spellings without conflating distinct links to one target."""
+    parts = path.split("/")
+    parent = root
+    canonical: list[str] = []
+    for index, component in enumerate(parts):
+        try:
+            if parent not in directories:
+                try:
+                    directories[parent] = {entry.name: entry for entry in parent.iterdir()}
+                except NotADirectoryError:
+                    return tuple(canonical + parts[index:])
+            entries = directories[parent]
+            # Exact names keep distinct links separate; missing suffixes stay literal for ancestor collisions.
+            if component in entries:
+                selected = entries[component]
+            else:
+                try:
+                    requested = (parent / component).lstat()
+                except (FileNotFoundError, NotADirectoryError):
+                    return tuple(canonical + parts[index:])
+                aliases = [entry for entry in entries.values() if os.path.samestat(requested, entry.lstat())]
+                if len(aliases) != 1:
+                    raise CollectionError("worktree-path-alias-ambiguous")
+                selected = aliases[0]
+        except OSError as error:
+            raise CollectionError("worktree-path-preservation-unavailable") from error
+        canonical.append(selected.name)
+        parent = selected
+    return tuple(canonical)
+
+
+def _overlapping_dirty_paths(
+    dirty_paths: list[str], changed_paths: list[str], root: Path | None, directories: dict[Path, dict[str, Path]]
+) -> list[str]:
+    """Find namespace collisions, retaining original Git strings in preservation evidence."""
+    if not changed_paths:
+        return []
+    changed_parts = [
+        _filesystem_path_parts(path, root, directories) if root is not None else tuple(path.split("/"))
+        for path in changed_paths
+    ]
+    overlaps = []
+    for dirty in dirty_paths:
+        dirty_parts = _filesystem_path_parts(dirty, root, directories) if root is not None else tuple(dirty.split("/"))
+        if any(
+            dirty_parts[: len(changed)] == changed or changed[: len(dirty_parts)] == dirty_parts
+            for changed in changed_parts
+        ):
+            overlaps.append(dirty)
+    return sorted(overlaps)
+
+
 def _worktree_preflight(
     run: RunCommand,
     timeout: int,
@@ -774,10 +828,11 @@ def _worktree_preflight(
             f"{phase}-staged-index-paths",
         )
     )
+    # Git checkout can overwrite ignored files, so exclusion rules cannot hide local user data.
     untracked_paths = _git_path_list(
         _run(
             run,
-            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+            ["git", "ls-files", "--others", "-z"],
             timeout,
             f"{phase}-untracked-worktree-paths",
         )
@@ -809,8 +864,17 @@ def _worktree_preflight(
                 "checkout-paths",
             )
         )
-    overlapping_paths = sorted(set(dirty_paths).intersection(checkout_paths))
-    overlapping_pr_paths = sorted(set(dirty_paths).intersection(pr_paths))
+    root = None
+    if dirty_paths and (checkout_paths or pr_paths) and not preserve_main:
+        root = Path(
+            _run(run, ["git", "rev-parse", "--show-toplevel"], timeout, "preservation-worktree-root").decode().strip()
+        )
+        if not root.is_absolute() or not root.is_dir():
+            raise CollectionError("worktree-path-preservation-root-invalid")
+    # The isolated review path never checks out the invoking main tree; attached checkout needs filesystem aliases.
+    directories: dict[Path, dict[str, Path]] = {}
+    overlapping_paths = _overlapping_dirty_paths(dirty_paths, checkout_paths, root, directories)
+    overlapping_pr_paths = _overlapping_dirty_paths(dirty_paths, pr_paths, root, directories)
     status = "clean"
     if unmerged_paths:
         status = "blocked-unmerged-index"

@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import ssl
 import subprocess
 import sys
@@ -163,9 +164,39 @@ def require_read_only_gh_command(argv: list[str], label: str) -> None:
     )
 
 
+def _diagnostic_message_text(stderr: bytes) -> str:
+    """Exclude Git object payloads from diagnostic category matching."""
+    text = stderr.decode("utf-8", errors="replace").casefold()
+    messages: list[str] = []
+    in_file_list = False
+    for line in text.splitlines():
+        # Complete Git messages delimit payloads even when names contain apostrophes.
+        if re.fullmatch(r"fatal: a branch named '[^\n]+' already exists", line) or re.fullmatch(
+            r"fatal: '[^\n]+' is already checked out at '[^\n]+'", line
+        ):
+            in_file_list = False
+            continue
+        # Git prints overwrite paths as tab-indented data after these exact headers.
+        if in_file_list and line.startswith("\t"):
+            continue
+        in_file_list = bool(
+            re.fullmatch(
+                r"error: (?:your local changes to the following files|the following untracked working tree files) "
+                r"would be overwritten by (?:checkout|merge):",
+                line,
+            )
+        )
+        if re.fullmatch(r"\s*! \[rejected\]\s+\S+ -> \S+ \(non-fast-forward\)", line):
+            continue
+        # A valid ref cannot contain a colon; retain the suffix explaining lock failure.
+        line = re.sub(r"^(?:fatal|error): cannot lock ref '[^:\n]+':", "", line, count=1)
+        messages.append(re.sub(r"'[^'\n]*'|\"[^\"\n]*\"", "", line))
+    return "\n".join(messages)
+
+
 def github_failure_class(stderr: bytes) -> str:
     """Classify a GitHub CLI failure without persisting its output."""
-    text = stderr.decode("utf-8", errors="replace").casefold()
+    text = _diagnostic_message_text(stderr)
     if "graphql:" in text and "could not resolve to a " in text:
         return "github-not-found"
     if any(
@@ -216,6 +247,7 @@ def github_failure_reason(stderr: bytes, failure_class: str) -> str:
     """Return a safe actionable subtype without retaining GitHub CLI stderr."""
     text = stderr.decode("utf-8", errors="replace").casefold()
     if failure_class == "github-network":
+        text = _diagnostic_message_text(stderr)
         if any(token in text for token in ("could not resolve host", "name resolution", "no such host")):
             return "dns"
         if "connection refused" in text:
@@ -235,6 +267,26 @@ def github_failure_reason(stderr: bytes, failure_class: str) -> str:
         return "permission"
     if failure_class == "github-not-found":
         return "not-found"
+    if failure_class == "github-command-failed":
+        # Match Git's local diagnostic grammar, never branch names or arbitrary prose alone.
+        local_reasons = (
+            (r"^fatal: a branch named '[^\n]+' already exists$", "local-branch-exists"),
+            (r"^fatal: '[^\n]+' is already checked out at '[^\n]+'$", "local-branch-in-other-worktree"),
+            (
+                r"^error: your local changes to the following files would be overwritten by (?:checkout|merge):$",
+                "local-changes-overwritten",
+            ),
+            (
+                r"^error: the following untracked working tree files would be overwritten by (?:checkout|merge):$",
+                "local-untracked-files-overwritten",
+            ),
+            (r"^fatal: not possible to fast-forward, aborting\.$", "local-fast-forward-unavailable"),
+            (r"^\s*! \[rejected\]\s+\S+ -> \S+ \(non-fast-forward\)$", "local-fetch-non-fast-forward"),
+            (r"^(?:fatal|error): cannot lock ref '[^\n]+':", "local-ref-lock-failed"),
+        )
+        for pattern, reason in local_reasons:
+            if re.search(pattern, text, flags=re.MULTILINE):
+                return reason
     return "unclassified"
 
 

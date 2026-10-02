@@ -86,6 +86,12 @@ REQUIRED_SECTIONS = (
 REQUIRED_ROLES = {"qa-specialist", "challenger"}
 VALID_RECOMMENDATIONS = {"accept-as-is", "minor-changes", "needs-more-work", "reject", "not-aligned"}
 FINDING_SEVERITIES = ("critical", "high", "medium", "low")
+LEGACY_PROTOCOL_V6_READER_SHA256 = "bf0025b22283b98a95e6a77a08b600e090f417e10bb0c90f3371bf0d19198132"
+LEGACY_SINGLE_CALL_READER_SHA256 = "47024ba02c7dec6927356dca33ec44e9710de325fcc1fbb8ec56f66ad0a9c772"
+LEGACY_ALL_PAGE_READER_SHA256 = "c185dc007a261a2d9c0e449e5a888a7a771cd99336ebe8c7085432bc2b0d43c8"
+LEGACY_WORKDIR_READER_SHA256S = frozenset(
+    {LEGACY_PROTOCOL_V6_READER_SHA256, LEGACY_SINGLE_CALL_READER_SHA256, LEGACY_ALL_PAGE_READER_SHA256}
+)
 CLOSE_CODES = {
     "FALSE_GOAL",
     "BREAKING_CONDUCT",
@@ -1278,23 +1284,36 @@ def _unavailable_preflight_diagnostic(out_dir: Path) -> str | None:
         )
     ):
         raise SystemExit("unavailable-review-worktree-preflight-invalid")
-    if preflight["status"] == "blocked-overlapping-dirty-paths" and not preflight["overlapping_paths"]:
-        raise SystemExit("unavailable-review-worktree-preflight-invalid")
-    if preflight["status"] == "blocked-pr-dirty-paths" and not preflight["overlapping_pr_paths"]:
-        raise SystemExit("unavailable-review-worktree-preflight-invalid")
-    if preflight["status"] == "blocked-unmerged-index" and not preflight["unmerged_paths"]:
-        raise SystemExit("unavailable-review-worktree-preflight-invalid")
     dirty_paths = set(preflight["dirty_paths"])
-    if (
-        set(preflight["overlapping_paths"]) != dirty_paths.intersection(preflight["checkout_paths"])
-        or set(preflight["overlapping_pr_paths"]) != dirty_paths.intersection(preflight["pr_paths"])
-        or (preflight["status"] == "clean" and (preflight["dirty_paths"] or preflight["unmerged_paths"]))
-        or (
-            preflight["status"] == "safe-unrelated-dirty-paths"
-            and (not preflight["dirty_paths"] or preflight["unmerged_paths"])
-        )
-        or (preflight["status"] == "already-at-pr-head" and preflight["current_head"] != preflight["expected_head"])
+    # Filesystem aliases can add collisions beyond lexical ancestry; do not re-read mutable caller state here.
+    for overlaps_field, changed_field in (
+        ("overlapping_paths", "checkout_paths"),
+        ("overlapping_pr_paths", "pr_paths"),
     ):
+        recorded = set(preflight[overlaps_field])
+        lexical = {
+            dirty
+            for dirty in dirty_paths
+            if any(
+                dirty == changed or dirty.startswith(f"{changed}/") or changed.startswith(f"{dirty}/")
+                for changed in preflight[changed_field]
+            )
+        }
+        if not lexical <= recorded <= dirty_paths:
+            raise SystemExit("unavailable-review-worktree-preflight-invalid")
+    if preflight["unmerged_paths"]:
+        expected_status = "blocked-unmerged-index"
+    elif preflight["overlapping_pr_paths"]:
+        expected_status = "blocked-pr-dirty-paths"
+    elif preflight["overlapping_paths"]:
+        expected_status = "blocked-overlapping-dirty-paths"
+    elif dirty_paths:
+        expected_status = "safe-unrelated-dirty-paths"
+    elif preflight["current_head"] == preflight["expected_head"]:
+        expected_status = "already-at-pr-head"
+    else:
+        expected_status = "clean"
+    if preflight["status"] != expected_status:
         raise SystemExit("unavailable-review-worktree-preflight-invalid")
     return f"Worktree preflight: local head `{preflight['current_head']}`; expected PR head `{preflight['expected_head']}`."
 
@@ -1822,6 +1841,11 @@ def _native_dispatch_message(manifest: dict[str, Any], plan_path: Path, role: st
         manifest["context_reader_python"],
         provenance_header=manifest.get("dispatch_protocol", "paged-context-v6") == "paged-context-v6",
         reader_path=Path(manifest["context_reader_path"]) if manifest.get("schema_version") in {7, 8} else None,
+        _all_page_calls=manifest.get("schema_version") != 6
+        and manifest.get("context_reader_sha256")
+        not in {LEGACY_PROTOCOL_V6_READER_SHA256, LEGACY_SINGLE_CALL_READER_SHA256},
+        _include_workdir=manifest.get("schema_version") == 6
+        or manifest.get("context_reader_sha256") in LEGACY_WORKDIR_READER_SHA256S,
     )
 
 
@@ -2101,6 +2125,8 @@ def _validate_context_read(
             manifest["context_reader_python"],
             page,
             reader_path=Path(manifest["context_reader_path"]) if manifest.get("schema_version") in {7, 8} else None,
+            _include_workdir=manifest.get("schema_version") == 6
+            or manifest.get("context_reader_sha256") in LEGACY_WORKDIR_READER_SHA256S,
         )
         expected_command = json.loads(expected_call.split("tools.exec_command(", 1)[1].split("); text", 1)[0])["cmd"]
         expected_output = render_read_output(
@@ -2283,7 +2309,25 @@ def _validate_native_schedule(
                 expected = _recovery_arguments(out_dir, manifest, recovered, parent_rows, codex_home)
             elif recovered.get("recovery") == {"kind": "incomplete-dispatch"}:
                 expected["message"] = _original_dispatch_message(manifest, plan_path, role, attempt, parent_rows)
-            if arguments != expected or receipt != {"task_name": attempt["agent_path"]}:
+            arguments_match = arguments == expected
+            if not arguments_match and _paged_native_manifest(manifest) and isinstance(arguments, dict):
+                # Opaque host transport preserves exact child delivery; audited page reads bind the source separately.
+                arguments_match = (
+                    set(arguments) == set(expected)
+                    and {key: value for key, value in arguments.items() if key != "message"}
+                    == {key: value for key, value in expected.items() if key != "message"}
+                    and _receipt_binds_child(
+                        parent_rows,
+                        codex_home,
+                        parent_thread_id,
+                        attempt,
+                        expected["message"],
+                        schema_version=6,
+                        model=card["model"],
+                        effort=card["model_reasoning_effort"],
+                    )
+                )
+            if not arguments_match or receipt != {"task_name": attempt["agent_path"]}:
                 raise SystemExit(f"review-inspection-launch-arguments-invalid:{role}:{number}")
             launched_at = _parent_timestamp(calls[0])
             received_at = _parent_timestamp(outputs[0])
@@ -2310,7 +2354,6 @@ def _validate_native_schedule(
                 or terminal_start >= terminal_end
             ):
                 raise SystemExit(f"review-inspection-attempt-timing-invalid:{role}:{number}")
-            terminal_started_at = datetime.fromtimestamp(terminal_start, timezone.utc)
             terminal_at = datetime.fromtimestamp(terminal_end, timezone.utc)
             if attempt.get("status") == "completed":
                 message = _resolve_path(out_dir, attempt["output_path"]).read_text(encoding="utf-8").strip()
@@ -2319,7 +2362,13 @@ def _validate_native_schedule(
             if not isinstance(message, str):
                 raise SystemExit(f"review-inspection-parent-join-missing:{role}")
             joined_at = _joined_terminal_timestamp(parent_rows, attempt["agent_path"], message.strip())
-            if terminal_started_at < launched_at or joined_at is None or received_at > joined_at:
+            # Integer host starts identify a whole-second bucket; precise child creation remains receipt-bound.
+            start_predates_launch = (
+                terminal_start + 1 <= launched_at.timestamp()
+                if type(terminal_start) is int
+                else terminal_start < launched_at.timestamp()
+            )
+            if start_predates_launch or joined_at is None or received_at > joined_at:
                 raise SystemExit(f"review-inspection-parent-join-missing:{role}")
             successful_call_ids.add(call_id)
             expected_task_names[expected["task_name"]] = (role, number)
@@ -2493,7 +2542,7 @@ def _validate_native_schedule(
             raise SystemExit(f"review-inspection-capacity-refusal-invalid:{role}")
         capacity_limited = capacity_limited or active < 4
 
-    wait_events: list[tuple[datetime, datetime]] = []
+    wait_events: list[tuple[datetime, datetime, int]] = []
     for row in parent_rows:
         payload = row.get("payload")
         if (
@@ -2525,15 +2574,16 @@ def _validate_native_schedule(
         started, returned = _parent_timestamp(row), _parent_timestamp(matching[0])
         if started >= returned:
             raise SystemExit("review-inspection-schedule-wait-invalid")
-        wait_events.append((started, returned))
         call_index = parent_rows.index(row)
+        wait_events.append((started, returned, call_index))
         output_index = parent_rows.index(matching[0])
         if any(call_index < allocation["launch_index"] < output_index for allocation in allocations):
             raise SystemExit("review-inspection-schedule-wait-invalid")
 
     first_roles = set(first_launches)
     repaired_roles = {item["role"] for item in passes if item.get("recovery") is not None}
-    for started, _returned in wait_events:
+    first_current_launch = min((allocation["launch_index"] for allocation in allocations), default=len(parent_rows))
+    for started, _returned, call_index in wait_events:
         pending = any(
             (allocation["attempt"] == 1 or allocation["role"] not in repaired_roles) and allocation["start"] > started
             for allocation in allocations
@@ -2541,7 +2591,8 @@ def _validate_native_schedule(
         active = sum(allocation["start"] <= started < allocation["end"] for allocation in allocations)
         refusals = [entry for entry in capacity_refusals if entry["called_at"] <= started]
         observed_full_pool = max(refusals, key=lambda entry: entry["called_at"])["active"] if refusals else 4
-        if pending and active < observed_full_pool:
+        # Earlier dependent-wave waits remain validated but are not this wave's refill opportunities.
+        if call_index >= first_current_launch and pending and active < observed_full_pool:
             raise SystemExit("review-inspection-refill-opportunity-missed")
         if any(started <= allocation["start"] < _returned for allocation in allocations):
             raise SystemExit("review-inspection-schedule-wait-invalid")
@@ -3052,7 +3103,13 @@ def _recovery_arguments(
             and row.get("payload", {}).get("type") in {"custom_tool_call", "function_call"}
         ]
         expected_call = render_read_call(
-            plan_path, role, 1, manifest["context_reader_python"], reader_path=Path(manifest["context_reader_path"])
+            plan_path,
+            role,
+            1,
+            manifest["context_reader_python"],
+            reader_path=Path(manifest["context_reader_path"]),
+            _include_workdir=manifest.get("schema_version") == 6
+            or manifest.get("context_reader_sha256") in LEGACY_WORKDIR_READER_SHA256S,
         )
         if not calls or any(
             call.get("name") != "exec" or call.get("input") in {expected_call, expected_call + "\n"} for call in calls
@@ -3233,7 +3290,7 @@ def _validate_spawn_attempts(
                 model=role_card["model"],
                 effort=role_card["model_reasoning_effort"],
             )
-            if manifest.get("schema_version") in {7, 8}:
+            if manifest.get("schema_version") in {7, 8} and not _paged_native_manifest(manifest):
                 sent_calls = [
                     row["payload"]
                     for row in parent_rows
@@ -3380,17 +3437,16 @@ def _validate_manifest_entries(
         if manifest.get("dispatch_protocol") not in {"paged-context-v6", "paged-context-v7"}:
             raise SystemExit("manifest-dispatch-protocol-invalid")
         reader_path = Path(str(manifest.get("context_reader_path", "")))
-        # Historical protocol-v6 readers are byte-identical to the committed pre-migration implementation.
-        legacy_reader = "bf0025b22283b98a95e6a77a08b600e090f417e10bb0c90f3371bf0d19198132"
+        # Historical readers retain their issued dispatch recipe while exact page calls and outputs remain checked.
         current_reader = Path(__file__).with_name("review_context.py")
         if (
             not reader_path.is_absolute()
             or not reader_path.is_file()
             or reader_path.name != "review_context.py"
             or _sha256(reader_path) != manifest.get("context_reader_sha256")
-            or manifest["context_reader_sha256"] not in {legacy_reader, _sha256(current_reader)}
+            or manifest["context_reader_sha256"] not in {*LEGACY_WORKDIR_READER_SHA256S, _sha256(current_reader)}
             or manifest["dispatch_protocol"] == "paged-context-v7"
-            and _sha256(reader_path) != _sha256(current_reader)
+            and manifest["context_reader_sha256"] == LEGACY_PROTOCOL_V6_READER_SHA256
         ):
             raise SystemExit("manifest-context-reader-identity-invalid")
     if _paged_native_manifest(manifest):
@@ -3457,7 +3513,7 @@ def _validate_manifest_entries(
             raise SystemExit(f"manifest-missing-trigger:{role}")
         if not isinstance(confidence, int | float) or not 0.0 <= float(confidence) <= 1.0:
             raise SystemExit(f"manifest-invalid-confidence:{role}")
-        if not isinstance(blocking_findings, int) or blocking_findings < 0:
+        if type(blocking_findings) is not int or blocking_findings < 0:
             raise SystemExit(f"manifest-invalid-blocking-findings:{role}")
         output_path = _resolve_path(out_dir, item.get("output_path"))
         if not output_path.exists():

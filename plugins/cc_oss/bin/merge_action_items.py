@@ -71,6 +71,8 @@ SEVERITY_SCORE: Final = {"critical": 5, "high": 4, "medium": 3, "low": 2, "cosme
 REQ_MEDIUM_SECTIONS: Final = frozenset({"critical", "architecture-quality", "performance-concerns", "api-design"})
 FINDING_FIELDS: Final = ("id", "section", "severity", "title", "change", "author")
 PENDING_TYPE_MARKERS: Final = ("[req]", "[suggest]", "[question]")
+#: Item ``status`` values that keep an item open; a missing status counts as open.
+OPEN_STATUSES: Final = ("", "pending")
 CONFIRMED: Final = "CONFIRMED"
 THIN_TEXT_CHARS: Final = 80
 SUMMARY_CHARS: Final = 60
@@ -114,8 +116,18 @@ def _line_key(value: object) -> str:
 
 
 def _is_pending(item: dict) -> bool:
-    """Only open GitHub items can absorb a finding; ``[done]``/``[info]`` rows are history."""
-    return any(marker in str(item.get("type", "")) for marker in PENDING_TYPE_MARKERS)
+    """Only open GitHub items can absorb a finding; resolved, addressed, and ``[info]`` rows are history.
+
+    The ``status`` field closes an item whatever its type: a resolved GitHub thread keeps its
+    ``[gh][req]``/``[gh][suggest]`` type and carries ``status: resolved`` instead. Older items files marked closed items
+    with ``[done]`` or ``[info]``; those markers close an item even when pending markers remain in its type.
+    """
+    if str(item.get("status") or "").strip() not in OPEN_STATUSES:
+        return False
+    item_type = str(item.get("type", ""))
+    if "[done]" in item_type or "[info]" in item_type:
+        return False
+    return any(marker in item_type for marker in PENDING_TYPE_MARKERS)
 
 
 def _location(record: dict) -> tuple[str, str]:

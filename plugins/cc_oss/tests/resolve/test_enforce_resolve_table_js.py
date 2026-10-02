@@ -134,8 +134,14 @@ class TestPassThrough:
         assert _run(tmp_path, [_BULK], _transcript(tmp_path, "no table")) is None
 
     def test_no_pending_items_passes(self, tmp_path: Path) -> None:
-        """With only done or info items there is nothing to select, so nothing to show."""
-        _items(tmp_path, {"id": 1, "type": "[done]"}, {"id": 2, "type": "[gh][info]"})
+        """With only resolved, addressed, legacy done, or info items there is nothing to select, so nothing to show."""
+        _items(
+            tmp_path,
+            {"id": 1, "type": "[done]"},
+            {"id": 2, "type": "[gh][info]"},
+            {"id": 3, "type": "[gh][req]", "status": "resolved"},
+            {"id": 4, "type": "[gh][suggest]", "status": "addressed"},
+        )
         assert _run(tmp_path, [_BULK], _transcript(tmp_path, "no table")) is None
 
     def test_malformed_items_file_passes(self, tmp_path: Path) -> None:

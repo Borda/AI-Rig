@@ -6,6 +6,7 @@ import importlib.util
 import hashlib
 import io
 import json
+import math
 import re
 import runpy
 import subprocess
@@ -537,7 +538,7 @@ def _assembly_evidence(
     dispatch = json.loads((run / "dispatch.json").read_text(encoding="utf-8"))
     if malformed_continuation:
         message = dispatch["calls"][0]["arguments"]["message"]
-        dispatch["calls"][0]["arguments"]["message"] = message.replace(" --page N", " --page WRONG")
+        dispatch["calls"][0]["arguments"]["message"] = message.replace(" --page 2", " --page WRONG", 1)
     home = home if home is not None else tmp_path / "codex-home"
     sessions = home / "sessions"
     sessions.mkdir(parents=True, exist_ok=True)
@@ -567,25 +568,12 @@ def _assembly_evidence(
         page_count = int(page_match.group(1))
         if prepared_run is None:
             assert page_count > 1
-        instruction = (
-            f"For pages 2 through {page_count}, copy the same JavaScript source once per page in order. "
-            "In each copied source, append ` --page N` to the end of the `cmd` string, replacing N with that page's "
-            "actual number. Keep every other byte of the JavaScript source unchanged."
-        )
-        if page_count > 1:
-            assert instruction in message, "compact-review-continuation-invalid"
-        templates = re.findall(r"```javascript\n(.*?)\n```", message, flags=re.DOTALL)
-        assert len(templates) == 1, "compact-review-template-count-invalid"
-        first_call = templates[0]
-        prefix, command_tail = first_call.split("tools.exec_command(", 1)
-        args_json, suffix = command_tail.split("); text(r.output);", 1)
-        command_args = json.loads(args_json)
-        assert command_args["cmd"].endswith("--attempt 1"), "compact-review-template-command-invalid"
-        read_calls = [first_call]
-        for page in range(2, page_count + 1):
-            paged_args = {**command_args, "cmd": f"{command_args['cmd']} --page {page}"}
-            read_calls.append(
-                f"{prefix}tools.exec_command({json.dumps(paged_args, ensure_ascii=False)}); text(r.output);{suffix}"
+        read_calls = re.findall(r"```javascript\n(.*?)\n```", message, flags=re.DOTALL)
+        assert len(read_calls) == page_count, "review-dispatch-page-count-invalid"
+        for page, read_call in enumerate(read_calls, 1):
+            read_arguments = json.loads(read_call.split("tools.exec_command(", 1)[1].split("); text", 1)[0])
+            assert read_arguments["cmd"].endswith("--attempt 1" if page == 1 else f"--page {page}"), (
+                "review-dispatch-page-command-invalid"
             )
         tool_rows = []
         header = ""
@@ -723,7 +711,6 @@ def _assembly_evidence(
                     )
                     if run.parent.name == "batches" and findings and role in findings and "```json\n" in findings[role]
                     else 0,
-                    **({"axis": role} if prepared_run is not None else {}),
                 }
                 for role in children
             }
@@ -800,7 +787,8 @@ def test_same_wave_dispatch_repair_requires_observed_preassessment_failure(tmp_p
             if payload.get("type") == "function_call" and payload.get("name") == "spawn_agent":
                 args = json.loads(payload["arguments"])
                 if args["task_name"] == child_name:
-                    args["message"] = args["message"].replace("review_context.py", "review_prepare.py")
+                    # Only the first supplied block is malformed; later page commands remain canonical.
+                    args["message"] = args["message"].replace("review_context.py", "review_prepare.py", 1)
                     payload["arguments"] = json.dumps(args)
                     for child_row in rows:
                         if child_row["type"] == "response_item" and child_row["payload"].get("type") == "agent_message":
@@ -932,8 +920,13 @@ def test_prepare_freezes_complete_wave_and_keeps_source_out_of_dispatch(tmp_path
         assert call["arguments"]["fork_turns"] == "none"
         assert call["arguments"]["agent_type"] == "default"
         assert call["arguments"]["task_name"] == (f"review_{role.replace('-', '_')}_{entry['context_sha256'][:12]}_a1")
-        assert len(re.findall(r"```javascript\n", call["arguments"]["message"])) == 1
-        assert "append ` --page N`" in call["arguments"]["message"]
+        page_count = len(runpy.run_path(str(SKILL / "review_context.py"))["context_pages"](context.decode("utf-8")))
+        sources = re.findall(r"```javascript\n(.*?)\n```", call["arguments"]["message"], re.DOTALL)
+        assert len(sources) == page_count
+        for page, source in enumerate(sources, 1):
+            command = json.loads(source.split("tools.exec_command(", 1)[1].split("); text", 1)[0])["cmd"]
+            assert command.endswith("--attempt 1" if page == 1 else f"--page {page}")
+        assert "append ` --page N`" not in call["arguments"]["message"]
     assert dispatch["context_bytes"] > dispatch["dispatch_bytes"]
 
 
@@ -1256,6 +1249,351 @@ def test_assemble_binds_native_wave_and_preserves_child_outputs(tmp_path: Path, 
         assert item["attempts"][0]["agent_thread_id"] == rows[0]["payload"]["id"]
 
 
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "none",
+        "missing-delivery",
+        "different-delivery",
+        "duplicate-delivery",
+        "extra-argument",
+        "missing-argument",
+        "changed-model",
+        "page",
+        "later-page",
+        "boolean-blockers",
+    ],
+)
+def test_native_assembly_binds_opaque_delivery_to_exact_audited_execution(tmp_path: Path, damage: str) -> None:
+    """Admit transported messages only with intact child delivery, exact controls, and source reads."""
+    run, home, children = _assembly_evidence(tmp_path)
+    parent_path = home / "sessions/rollout-parent.jsonl"
+    parent_rows = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
+    for row in parent_rows:
+        payload = row.get("payload", {})
+        if payload.get("type") != "function_call" or payload.get("name") != "spawn_agent":
+            continue
+        arguments = json.loads(payload["arguments"])
+        role = arguments["task_name"].removeprefix("review_").rsplit("_", 2)[0].replace("_", "-")
+        opaque = arguments["message"] if damage == "boolean-blockers" else "opaque-host-transport:" + role
+        arguments["message"] = opaque
+        if role == "challenger" and damage == "extra-argument":
+            arguments["unsupported"] = True
+        if role == "challenger" and damage == "missing-argument":
+            del arguments["fork_turns"]
+        if role == "challenger" and damage == "changed-model":
+            arguments["model"] = "unselected-model"
+        payload["arguments"] = json.dumps(arguments)
+        child_rows = [json.loads(line) for line in children[role].read_text(encoding="utf-8").splitlines()]
+        delivery = next(row for row in child_rows if row.get("payload", {}).get("type") == "agent_message")
+        delivery["payload"]["content"] = [{"type": "encrypted_content", "encrypted_content": opaque}]
+        if role == "challenger":
+            if damage == "missing-delivery":
+                child_rows.remove(delivery)
+            elif damage == "different-delivery":
+                delivery["payload"]["content"][0]["encrypted_content"] = "another-transport"
+            elif damage == "duplicate-delivery":
+                child_rows.insert(child_rows.index(delivery), delivery)
+            elif damage in {"page", "later-page"}:
+                page_calls = [row for row in child_rows if row.get("payload", {}).get("type") == "custom_tool_call"]
+                call = page_calls[0 if damage == "page" else 1]
+                call["payload"]["input"] += "\nUnexpected execution."
+        _write_jsonl(children[role], child_rows)
+    _write_jsonl(parent_path, parent_rows)
+    if damage == "boolean-blockers":
+        path = run / "specialist-assessments.json"
+        assessments = json.loads(path.read_bytes())
+        assessments["challenger"]["blocking_findings"] = False
+        path.write_text(json.dumps(assessments), encoding="utf-8", newline="\n")
+    before = {path: path.read_bytes() for path in (parent_path, *children.values(), run / "dispatch.json")}
+    result = _assemble(run, home)
+    if damage == "none":
+        assert result.returncode == 0, result.stderr
+        manifest = json.loads((run / "specialist-manifest.json").read_bytes())
+        for item in manifest["passes"]:
+            terminal = json.loads(before[children[item["role"]]].splitlines()[-1])["payload"]["last_agent_message"]
+            assert (run / item["attempts"][0]["raw_output_path"]).read_bytes() == terminal.encode("utf-8")
+    else:
+        assert result.returncode != 0
+        assert not (run / "specialist-manifest.json").exists()
+        if damage == "boolean-blockers":
+            assert "manifest-invalid-blocking-findings:challenger" in result.stderr
+        elif damage in {"page", "later-page"}:
+            page = 1 if damage == "page" else 2
+            assert f"review-inspection-context-read-call-mismatch:challenger:{page}" in result.stderr
+        elif damage in {
+            "missing-delivery",
+            "different-delivery",
+            "duplicate-delivery",
+            "missing-argument",
+            "changed-model",
+        }:
+            assert "provenance-parent-spawn-mismatch:challenger:1" in result.stderr
+        else:
+            assert "review-inspection-launch-arguments-invalid:challenger:1" in result.stderr
+    assert {path: path.read_bytes() for path in before} == before
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "start", ["same-second-integer", "previous-second-integer", "prior-fractional-float", "prior-adjacent-float"]
+)
+def test_native_assembly_respects_observed_start_timestamp_precision(tmp_path: Path, start: str) -> None:
+    """Admit overlapping integer-second start buckets while rejecting provably earlier starts."""
+    run, home, children = _assembly_evidence(tmp_path)
+    parent_path = home / "sessions/rollout-parent.jsonl"
+    parent_rows = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
+    child_path = children["challenger"]
+    child_rows = [json.loads(line) for line in child_path.read_text(encoding="utf-8").splitlines()]
+    agent_path = child_rows[0]["payload"]["agent_path"]
+    launch = next(
+        row
+        for row in parent_rows
+        if row.get("payload", {}).get("name") == "spawn_agent"
+        and json.loads(row["payload"]["arguments"])["task_name"] == agent_path.rsplit("/", 1)[-1]
+    )
+    launched_at = datetime.fromisoformat(launch["timestamp"].replace("Z", "+00:00")).timestamp()
+    assert launched_at != int(launched_at)
+    terminal = next(row["payload"] for row in child_rows if row.get("payload", {}).get("type") == "task_complete")
+    terminal["started_at"] = {
+        "same-second-integer": int(launched_at),
+        "previous-second-integer": int(launched_at) - 1,
+        "prior-fractional-float": launched_at - 0.001,
+        "prior-adjacent-float": math.nextafter(launched_at, -math.inf),
+    }[start]
+    if start == "prior-adjacent-float":
+        assert datetime.fromtimestamp(terminal["started_at"], timezone.utc) == datetime.fromtimestamp(
+            launched_at, timezone.utc
+        )
+    _write_jsonl(child_path, child_rows)
+    original = child_path.read_bytes()
+    result = _assemble(run, home)
+    if start == "same-second-integer":
+        assert result.returncode == 0, result.stderr
+        manifest = json.loads((run / "specialist-manifest.json").read_bytes())
+        assert {item["role"] for item in manifest["passes"]} == set(children)
+    else:
+        assert result.returncode != 0
+        assert "review-inspection-parent-join-missing:challenger" in result.stderr
+        assert not (run / "specialist-manifest.json").exists()
+    assert child_path.read_bytes() == original
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("wait", ["prior-wave", "spanning-first-launch"])
+def test_native_assembly_scopes_refill_checks_to_current_wave_dispatch(tmp_path: Path, wait: str) -> None:
+    """Preserve earlier wave waits without admitting a wait that spans the next wave's launch."""
+    run, home, _children = _assembly_evidence(tmp_path)
+    parent_path = home / "sessions/rollout-parent.jsonl"
+    rows = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
+    returned = "2026-01-01T09:59:59Z" if wait == "prior-wave" else "2026-01-01T10:00:00.200Z"
+    historical = [
+        {
+            "type": "response_item",
+            "timestamp": "2026-01-01T09:59:58Z",
+            "payload": {
+                "type": "function_call",
+                "name": "wait_agent",
+                "call_id": "earlier-wave-wait",
+                "arguments": json.dumps({"timeout_ms": 10000}),
+            },
+        },
+        {
+            "type": "response_item",
+            "timestamp": returned,
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "earlier-wave-wait",
+                "output": json.dumps({"timed_out": False}),
+            },
+        },
+    ]
+    rows[1:1] = historical
+    _write_jsonl(parent_path, rows)
+    original = parent_path.read_bytes()
+    result = _assemble(run, home)
+    if wait == "prior-wave":
+        assert result.returncode == 0, result.stderr
+    else:
+        assert result.returncode != 0
+        assert "review-inspection-schedule-wait-invalid" in result.stderr
+        assert not (run / "specialist-manifest.json").exists()
+    assert parent_path.read_bytes() == original
+
+
+def _retain_legacy_native_recipe(
+    run: Path,
+    home: Path,
+    children: dict[str, Path],
+    *,
+    provenance_header: bool,
+    reader_fixture: str = "legacy-context-reader",
+) -> Path:
+    """Retain the known historical reader and its issued messages with exact page call coordinates."""
+    reader_path = Path(__file__).with_name("fixtures") / reader_fixture / "review_context.py"
+    expected_digest = {
+        "legacy-context-reader": "47024ba02c7dec6927356dca33ec44e9710de325fcc1fbb8ec56f66ad0a9c772",
+        "legacy-all-page-context-reader": "c185dc007a261a2d9c0e449e5a888a7a771cd99336ebe8c7085432bc2b0d43c8",
+    }[reader_fixture]
+    assert hashlib.sha256(reader_path.read_bytes()).hexdigest() == expected_digest
+    legacy = runpy.run_path(str(reader_path))
+    dispatch_path = run / "dispatch.json"
+    dispatch = json.loads(dispatch_path.read_text(encoding="utf-8"))
+    parent_path = home / "sessions/rollout-parent.jsonl"
+    parent_rows = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
+    for call in dispatch["calls"]:
+        arguments = call["arguments"]
+        role = arguments["task_name"].removeprefix("review_").rsplit("_", 2)[0].replace("_", "-")
+        message = legacy["dispatch_message"](
+            run / "inspection-plan.json",
+            role,
+            1,
+            dispatch["context_reader_python"],
+            provenance_header=provenance_header,
+            reader_path=reader_path,
+        )
+        arguments["message"] = message
+        for row in parent_rows:
+            payload = row.get("payload", {})
+            if payload.get("type") == "function_call" and payload.get("name") == "spawn_agent":
+                sent = json.loads(payload["arguments"])
+                if sent["task_name"] == arguments["task_name"]:
+                    sent["message"] = message
+                    payload["arguments"] = json.dumps(sent)
+        child_rows = [json.loads(line) for line in children[role].read_text(encoding="utf-8").splitlines()]
+        page = 0
+        for row in child_rows:
+            payload = row.get("payload", {})
+            if payload.get("type") == "agent_message":
+                payload["content"][0]["encrypted_content"] = message
+            if payload.get("type") == "custom_tool_call":
+                page += 1
+                payload["input"] = legacy["render_read_call"](
+                    run / "inspection-plan.json",
+                    role,
+                    1,
+                    dispatch["context_reader_python"],
+                    page,
+                    reader_path,
+                )
+        _write_jsonl(children[role], child_rows)
+    dispatch_path.write_text(json.dumps(dispatch), encoding="utf-8", newline="\n")
+    _write_jsonl(parent_path, parent_rows)
+    return reader_path
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("protocol", ["paged-context-v6", "paged-context-v7"])
+@pytest.mark.parametrize("reader_fixture", ["legacy-context-reader", "legacy-all-page-context-reader"])
+@pytest.mark.parametrize("tampered_reader", [False, True])
+def test_manifest_consumer_preserves_known_historical_reader_recipe(
+    tmp_path: Path, protocol: str, reader_fixture: str, tampered_reader: bool
+) -> None:
+    """Admit issued historical page recipes while rejecting unknown reader bytes at consumer intake."""
+    run, home, children = _assembly_evidence(tmp_path)
+    assembled = _assemble(run, home)
+    assert assembled.returncode == 0, assembled.stderr
+    reader_path = _retain_legacy_native_recipe(
+        run, home, children, provenance_header=protocol == "paged-context-v6", reader_fixture=reader_fixture
+    )
+    manifest_path = run / "specialist-manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    manifest.update(
+        dispatch_protocol=protocol,
+        context_reader_path=str(reader_path.resolve()),
+        context_reader_sha256=hashlib.sha256(reader_path.read_bytes()).hexdigest(),
+    )
+    if tampered_reader:
+        reader_path = tmp_path / "unknown-reader" / "review_context.py"
+        reader_path.parent.mkdir()
+        reader_path.write_bytes(Path(manifest["context_reader_path"]).read_bytes() + b"\n# altered reader\n")
+        manifest.update(
+            context_reader_path=str(reader_path),
+            context_reader_sha256=hashlib.sha256(reader_path.read_bytes()).hexdigest(),
+        )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8", newline="\n")
+    retained = {path: path.read_bytes() for path in [manifest_path, *children.values(), *run.glob("*.raw.md")]}
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SKILL / "validate_artifacts.py"),
+            "--out",
+            str(run),
+            "--manifest-only",
+            "--codex-home",
+            str(home),
+            "--parent-thread-id",
+            "parent",
+            "--project-root",
+            str(PLUGIN_ROOT.parents[1]),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == int(tampered_reader), result.stderr
+    if tampered_reader:
+        assert "manifest-context-reader-identity-invalid" in result.stderr
+    assert {path: path.read_bytes() for path in retained} == retained
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("reader_fixture", ["current", "legacy-all-page-context-reader"])
+def test_manifest_consumer_rejects_workdir_from_different_reader_recipe(tmp_path: Path, reader_fixture: str) -> None:
+    """Keep current cwd-free calls and historical cwd-bearing calls distinct at consumer intake."""
+    run, home, children = _assembly_evidence(tmp_path)
+    assembled = _assemble(run, home)
+    assert assembled.returncode == 0, assembled.stderr
+    manifest_path = run / "specialist-manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    if reader_fixture != "current":
+        reader_path = _retain_legacy_native_recipe(
+            run, home, children, provenance_header=False, reader_fixture=reader_fixture
+        )
+        manifest.update(
+            context_reader_path=str(reader_path.resolve()),
+            context_reader_sha256=hashlib.sha256(reader_path.read_bytes()).hexdigest(),
+        )
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8", newline="\n")
+    child_path = children["qa-specialist"]
+    rows = [json.loads(line) for line in child_path.read_text(encoding="utf-8").splitlines()]
+    call = next(row["payload"] for row in rows if row.get("payload", {}).get("type") == "custom_tool_call")
+    arguments = json.loads(call["input"].split("tools.exec_command(", 1)[1].split("); text", 1)[0])
+    if reader_fixture == "current":
+        assert "workdir" not in arguments
+        arguments["workdir"] = str(run)
+    else:
+        assert arguments.pop("workdir") == str(run.resolve())
+    call["input"] = (
+        '// @exec: {"max_output_tokens": 10000}\n'
+        f"const r = await tools.exec_command({json.dumps(arguments, ensure_ascii=False)}); text(r.output);"
+    )
+    _write_jsonl(child_path, rows)
+    retained = {path: path.read_bytes() for path in [manifest_path, *children.values()]}
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SKILL / "validate_artifacts.py"),
+            "--out",
+            str(run),
+            "--manifest-only",
+            "--codex-home",
+            str(home),
+            "--parent-thread-id",
+            "parent",
+            "--project-root",
+            str(PLUGIN_ROOT.parents[1]),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stderr
+    assert "review-inspection-context-read-call-mismatch:qa-specialist:1" in result.stderr
+    assert {path: path.read_bytes() for path in retained} == retained
+
+
 @pytest.mark.parametrize("operation", ["assemble", "recover"])
 def test_native_producer_admits_runtime_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str) -> None:
     """Count full runtime admission in the ordinary and recovery producers."""
@@ -1263,33 +1601,7 @@ def test_native_producer_admits_runtime_once(tmp_path: Path, monkeypatch: pytest
     import review_prepare
 
     if operation == "recover":
-        # Model the retained schema-six recipe before asking the recovery path to verify its original receipts.
-        dispatch_path = run / "dispatch.json"
-        dispatch = json.loads(dispatch_path.read_text(encoding="utf-8"))
-        parent_path = home / "sessions/rollout-parent.jsonl"
-        parent_rows = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
-        for call in dispatch["calls"]:
-            arguments = call["arguments"]
-            role = arguments["task_name"].removeprefix("review_").rsplit("_", 2)[0].replace("_", "-")
-            message = review_prepare.review_context.dispatch_message(
-                run / "inspection-plan.json", role, 1, dispatch["context_reader_python"]
-            )
-            arguments["message"] = message
-            for row in parent_rows:
-                payload = row.get("payload", {})
-                if payload.get("type") == "function_call" and payload.get("name") == "spawn_agent":
-                    sent = json.loads(payload["arguments"])
-                    if sent["task_name"] == arguments["task_name"]:
-                        sent["message"] = message
-                        payload["arguments"] = json.dumps(sent)
-            child_rows = [json.loads(line) for line in children[role].read_text(encoding="utf-8").splitlines()]
-            for row in child_rows:
-                payload = row.get("payload", {})
-                if payload.get("type") == "agent_message":
-                    payload["content"][0]["encrypted_content"] = message
-            _write_jsonl(children[role], child_rows)
-        dispatch_path.write_text(json.dumps(dispatch), encoding="utf-8", newline="\n")
-        _write_jsonl(parent_path, parent_rows)
+        reader_path = _retain_legacy_native_recipe(run, home, children, provenance_header=True)
 
     validator = review_prepare.validator
     original = validator._validate_review_runtime
@@ -1305,7 +1617,7 @@ def test_native_producer_admits_runtime_once(tmp_path: Path, monkeypatch: pytest
         summary = review_prepare.assemble(run, home)
         assert summary == json.loads((run / "inspection-summary.json").read_text(encoding="utf-8"))
     else:
-        recovered = review_prepare.recover_native_provenance(run, home, SKILL / "review_context.py")
+        recovered = review_prepare.recover_native_provenance(run, home, reader_path)
         summary = recovered["summary"]
         assert summary == json.loads((run / "native-recovery/inspection-summary.json").read_text(encoding="utf-8"))
     assert summary["actual_mode"] == "parallel"
@@ -1313,8 +1625,8 @@ def test_native_producer_admits_runtime_once(tmp_path: Path, monkeypatch: pytest
 
 
 def test_assembly_fixture_rejects_malformed_compact_continuation(tmp_path: Path) -> None:
-    """Make synthetic child calls depend on the actual compact dispatch instruction."""
-    with pytest.raises(AssertionError, match="compact-review-continuation-invalid"):
+    """Reject a malformed supplied page command instead of synthesizing a correct continuation."""
+    with pytest.raises(AssertionError, match="review-dispatch-page-command-invalid"):
         _assembly_evidence(tmp_path, malformed_continuation=True)
 
 

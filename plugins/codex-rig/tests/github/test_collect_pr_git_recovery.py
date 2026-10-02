@@ -18,6 +18,26 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 COLLECTOR = PLUGIN_ROOT / "shared" / "collect_pr.py"
 
 
+def _case_insensitive_filesystem() -> bool | None:
+    """Probe native filename case identity on the temporary-file filesystem."""
+    try:
+        with tempfile.TemporaryDirectory() as temporary:
+            lower = Path(temporary) / "collector-case-probe"
+            lower.write_bytes(b"probe")
+            return (Path(temporary) / "COLLECTOR-CASE-PROBE").exists()
+    except OSError:
+        return None
+
+
+_CASE_INSENSITIVE_FILESYSTEM = _case_insensitive_filesystem()
+_skip_without_case_aliases = pytest.mark.skipif(
+    _CASE_INSENSITIVE_FILESYSTEM is not True, reason="temporary filesystem does not alias filename case"
+)
+_skip_without_distinct_case_names = pytest.mark.skipif(
+    _CASE_INSENSITIVE_FILESYSTEM is not False, reason="temporary filesystem does not preserve distinct case names"
+)
+
+
 def _directory_symlinks_available() -> bool:
     """Probe whether this host can create a directory symlink."""
     with tempfile.TemporaryDirectory() as temporary:
@@ -25,6 +45,22 @@ def _directory_symlinks_available() -> bool:
         destination.mkdir()
         try:
             (Path(temporary) / "link").symlink_to(destination, target_is_directory=True)
+        except OSError:
+            return False
+    return True
+
+
+def _file_links_available(kind: str) -> bool:
+    """Probe whether this host can create the requested kind of file link."""
+    with tempfile.TemporaryDirectory() as temporary:
+        target = Path(temporary) / "target"
+        target.write_bytes(b"probe")
+        link = Path(temporary) / "link"
+        try:
+            if kind == "hardlink":
+                link.hardlink_to(target)
+            else:
+                link.symlink_to(target)
         except OSError:
             return False
     return True
@@ -51,22 +87,23 @@ def _setup_repositories(tmp_path: Path) -> tuple[Path, Path, str, str, str]:
     source = tmp_path / "source"
     source.mkdir()
     _git(source, "init", "-b", "main")
+    _git(source, "config", "core.autocrlf", "false")
     _git(source, "config", "user.name", "Collector fixture")
     _git(source, "config", "user.email", "collector@example.invalid")
-    (source / "module.py").write_text("value = 'base'\n", encoding="utf-8")
-    (source / "notes.txt").write_text("keep me\n", encoding="utf-8")
+    (source / "module.py").write_text("value = 'base'\n", encoding="utf-8", newline="\n")
+    (source / "notes.txt").write_text("keep me\n", encoding="utf-8", newline="\n")
     removed_directory = source / "removed"
     removed_directory.mkdir()
-    (removed_directory / "nested.py").write_text("value = 'removed'\n", encoding="utf-8")
+    (removed_directory / "nested.py").write_text("value = 'removed'\n", encoding="utf-8", newline="\n")
     _git(source, "add", "module.py", "notes.txt", "removed/nested.py")
     _git(source, "commit", "-m", "base")
     base = _git(source, "rev-parse", "HEAD")
     _git(source, "checkout", "-b", "old-topic")
-    (source / "module.py").write_text("value = 'old'\n", encoding="utf-8")
+    (source / "module.py").write_text("value = 'old'\n", encoding="utf-8", newline="\n")
     _git(source, "commit", "-am", "old topic")
     old = _git(source, "rev-parse", "HEAD")
     _git(source, "checkout", "-b", "topic", base)
-    (source / "module.py").write_text("value = 'new'\n", encoding="utf-8")
+    (source / "module.py").write_text("value = 'new'\n", encoding="utf-8", newline="\n")
     _git(source, "commit", "-am", "new topic")
     head = _git(source, "rev-parse", "HEAD")
     _git(source, "update-ref", "refs/pull/17/head", head)
@@ -74,6 +111,7 @@ def _setup_repositories(tmp_path: Path) -> tuple[Path, Path, str, str, str]:
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     _git(worktree, "init", "-b", "main")
+    _git(worktree, "config", "core.autocrlf", "false")
     _git(worktree, "config", "user.name", "Collector fixture")
     _git(worktree, "config", "user.email", "collector@example.invalid")
     _git(worktree, "fetch", "--no-tags", str(source), "refs/heads/topic:refs/heads/topic")
@@ -566,6 +604,199 @@ def test_collect_pr_remediation_keeps_github_attached_branch(tmp_path: Path) -> 
     assert _git(worktree, "config", "--get", "branch.topic.merge") == "refs/heads/topic"
     checkout = json.loads((tmp_path / "collected" / "local-checkout.json").read_text(encoding="utf-8"))
     assert checkout["checkout_mode"] == "remediate"
+
+
+@pytest.mark.parametrize(
+    ("local_path", "pr_path"),
+    [
+        pytest.param("private.local", "private.local", id="same-file"),
+        pytest.param("cache/private.local", "cache", id="pr-file-replaces-ignored-directory"),
+        pytest.param("private.local", "private.local/nested.py", id="pr-directory-replaces-ignored-file"),
+        pytest.param("PRIVATE.local", "private.local", id="native-case-file-alias", marks=_skip_without_case_aliases),
+        pytest.param(
+            "CACHE/private.local",
+            "cache",
+            id="native-case-directory-replacement",
+            marks=_skip_without_case_aliases,
+        ),
+        pytest.param(
+            "PRIVATE.local",
+            "private.local/nested.py",
+            id="native-case-file-ancestor",
+            marks=_skip_without_case_aliases,
+        ),
+    ],
+)
+def test_collect_pr_remediation_blocks_ignored_checkout_collision(
+    tmp_path: Path, local_path: str, pr_path: str
+) -> None:
+    """Block checkout before Git can overwrite ignored user files or their parent directory."""
+    module = _load_collector()
+    source, worktree, base, _old, _head = _setup_repositories(tmp_path)
+    incoming = source / pr_path
+    incoming.parent.mkdir(parents=True, exist_ok=True)
+    incoming.write_bytes(b"PR BYTES\n")
+    _git(source, "add", "--", pr_path)
+    _git(source, "commit", "-m", "add colliding PR path")
+    head = _git(source, "rev-parse", "HEAD")
+    _git(source, "update-ref", "refs/pull/17/head", head)
+    _git(worktree, "checkout", "-b", "local-diverged", base)
+    _git(worktree, "fetch", "--no-tags", str(source), "refs/heads/topic:refs/heads/topic")
+    (worktree / ".git" / "info" / "exclude").write_text("*.local\ncache/\n", encoding="utf-8")
+    local = worktree / local_path
+    local.parent.mkdir(parents=True, exist_ok=True)
+    local.write_bytes(b"USER BYTES\n")
+    assert _git(worktree, "check-ignore", "--", local_path) == local_path
+    original_index = (worktree / ".git" / "index").read_bytes()
+    output = tmp_path / "collected"
+
+    code, calls = _collect(
+        module,
+        source,
+        worktree,
+        output,
+        base,
+        head,
+        cross_repository=False,
+        checkout_mode="remediate",
+        gh_checkout_fails=False,
+    )
+
+    assert code == 2
+    assert not any(call[:3] == ["gh", "pr", "checkout"] for call in calls)
+    assert not any(call[:2] == ["git", "checkout"] for call in calls)
+    assert local.read_bytes() == b"USER BYTES\n"
+    assert _git(worktree, "branch", "--show-current") == "local-diverged"
+    assert _git(worktree, "rev-parse", "HEAD") == base
+    assert (worktree / ".git" / "index").read_bytes() == original_index
+    assert not (output / "local-checkout.json").exists()
+    preflight = json.loads((output / "worktree-preflight.json").read_text(encoding="utf-8"))
+    assert local_path in preflight["dirty_paths"]
+    assert preflight["status"].startswith("blocked-")
+
+
+@pytest.mark.parametrize(
+    ("local_path", "pr_path"),
+    [
+        pytest.param("private.local", "incoming.py", id="unrelated-file"),
+        pytest.param("private.local", "private.locality/nested.py", id="distinct-prefix"),
+        pytest.param(
+            "PRIVATE.local", "private.local", id="distinct-case-files", marks=_skip_without_distinct_case_names
+        ),
+        pytest.param(
+            "CACHE/private.local",
+            "cache",
+            id="distinct-case-directory",
+            marks=_skip_without_distinct_case_names,
+        ),
+        pytest.param(
+            "PRIVATE.local",
+            "private.local/nested.py",
+            id="distinct-case-ancestor",
+            marks=_skip_without_distinct_case_names,
+        ),
+    ],
+)
+def test_collect_pr_remediation_preserves_unrelated_ignored_file(tmp_path: Path, local_path: str, pr_path: str) -> None:
+    """Allow checkout while retaining ignored user bytes outside the changed paths."""
+    module = _load_collector()
+    source, worktree, base, _old, _head = _setup_repositories(tmp_path)
+    incoming = source / pr_path
+    incoming.parent.mkdir(parents=True, exist_ok=True)
+    incoming.write_bytes(b"PR BYTES\n")
+    _git(source, "add", "--", pr_path)
+    _git(source, "commit", "-m", "add unrelated PR path")
+    head = _git(source, "rev-parse", "HEAD")
+    _git(source, "update-ref", "refs/pull/17/head", head)
+    _git(worktree, "checkout", "-b", "local-diverged", base)
+    _git(worktree, "fetch", "--no-tags", str(source), "refs/heads/topic:refs/heads/topic")
+    (worktree / ".git" / "info" / "exclude").write_text("*.local\nCACHE/\n", encoding="utf-8")
+    local = worktree / local_path
+    local.parent.mkdir(parents=True, exist_ok=True)
+    local.write_bytes(b"USER BYTES\n")
+    assert _git(worktree, "check-ignore", "--", local_path) == local_path
+    output = tmp_path / "collected"
+
+    code, calls = _collect(
+        module,
+        source,
+        worktree,
+        output,
+        base,
+        head,
+        cross_repository=False,
+        checkout_mode="remediate",
+        gh_checkout_fails=False,
+    )
+
+    assert code == 0
+    assert ["gh", "pr", "checkout", "https://github.com/example/project/pull/17"] in calls
+    assert local.read_bytes() == b"USER BYTES\n"
+    assert (worktree / pr_path).read_bytes() == b"PR BYTES\n"
+    assert _git(worktree, "branch", "--show-current") == "topic"
+    assert _git(worktree, "rev-parse", "HEAD") == head
+    receipt = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
+    assert receipt["checkout_mode"] == "remediate"
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        pytest.param(
+            "hardlink",
+            id="distinct-hardlink-name",
+            marks=pytest.mark.skipif(not _file_links_available("hardlink"), reason="file hardlinks unavailable"),
+        ),
+        pytest.param(
+            "symlink",
+            id="distinct-symlink-name",
+            marks=pytest.mark.skipif(not _file_links_available("symlink"), reason="file symlinks unavailable"),
+        ),
+    ],
+)
+def test_collect_pr_remediation_preserves_distinct_ignored_link_name(tmp_path: Path, kind: str) -> None:
+    """Allow replacing a tracked path while preserving a distinct ignored link entry."""
+    module = _load_collector()
+    source, worktree, base, _old, _head = _setup_repositories(tmp_path)
+    (source / "notes.txt").write_bytes(b"PR BYTES\n")
+    _git(source, "commit", "-am", "replace tracked link target")
+    head = _git(source, "rev-parse", "HEAD")
+    _git(source, "update-ref", "refs/pull/17/head", head)
+    _git(worktree, "checkout", "-b", "local-diverged", base)
+    _git(worktree, "fetch", "--no-tags", str(source), "refs/heads/topic:refs/heads/topic")
+    (worktree / ".git" / "info" / "exclude").write_text("*.local\n", encoding="utf-8")
+    local = worktree / "private.local"
+    if kind == "hardlink":
+        local.hardlink_to(worktree / "notes.txt")
+    else:
+        local.symlink_to("notes.txt")
+    assert _git(worktree, "check-ignore", "--", "private.local") == "private.local"
+    output = tmp_path / "collected"
+
+    code, calls = _collect(
+        module,
+        source,
+        worktree,
+        output,
+        base,
+        head,
+        cross_repository=False,
+        checkout_mode="remediate",
+        gh_checkout_fails=False,
+    )
+
+    assert code == 0
+    assert ["gh", "pr", "checkout", "https://github.com/example/project/pull/17"] in calls
+    if kind == "hardlink":
+        assert local.read_bytes() == b"keep me\n"
+    else:
+        assert local.is_symlink()
+        assert str(local.readlink()) == "notes.txt"
+    assert (worktree / "notes.txt").read_bytes() == b"PR BYTES\n"
+    assert _git(worktree, "branch", "--show-current") == "topic"
+    assert _git(worktree, "rev-parse", "HEAD") == head
+    receipt = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
+    assert receipt["checkout_mode"] == "remediate"
 
 
 def test_collect_pr_remediation_records_fork_tracking_destination(tmp_path: Path) -> None:

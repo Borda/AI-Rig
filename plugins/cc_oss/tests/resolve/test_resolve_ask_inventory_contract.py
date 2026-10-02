@@ -124,6 +124,42 @@ def test_codemap_gate_still_asks() -> None:
 
 
 @pytest.mark.parametrize(
+    ("band", "questions", "follow_up"),
+    [
+        pytest.param(
+            "0, closed items present",
+            "Q1 bulk · Q2 commit-mode · Q3 topic-group · Q4 dispatch",
+            "Q1 push · Q2 over-20, only when more than 20 IDs are selected",
+            id="closed-only-keeps-explicit-selection-and-implementation-decisions",
+        ),
+        pytest.param(
+            "0, no closed items",
+            "Q1 push, only when a PR number exists; otherwise no call",
+            "None",
+            id="empty-list-keeps-push-only-without-item-questions",
+        ),
+    ],
+)
+def test_zero_pending_routes_preserve_the_available_decisions(band: str, questions: str, follow_up: str) -> None:
+    """Closed-only lists retain an ID-entry gate; truly empty lists retain the merge push decision.
+
+    This checks the shipped slot contract, not whether a model follows it in a live session. A generic zero-pending
+    bypass or item-checkbox slot would lose the closed-ID entry route or silently reopen history.
+    """
+    skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
+    table = skill[skill.index("| Pending | Call 1 slots |") : skill.index("Checkbox mode holds")]
+    rows = {
+        cells[0]: cells[1:]
+        for line in table.splitlines()
+        if line.startswith("|")
+        for cells in [[cell.strip() for cell in line.strip("|").split("|")]]
+    }
+    assert rows[band] == [questions, follow_up]
+    assert "\n\n- **Zero pending, closed items present**" in skill
+    assert "\n- **Zero pending, no closed items**" in skill
+
+
+@pytest.mark.parametrize(
     ("fallback", "forbidden"),
     [
         pytest.param(

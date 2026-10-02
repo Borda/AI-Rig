@@ -443,6 +443,218 @@ def test_run_gh_read_persists_safe_network_reason_without_stderr(stderr: bytes, 
     assert stderr.decode() not in str(error.value)
 
 
+@pytest.mark.parametrize(
+    ("stderr", "expected_class", "expected_reason"),
+    [
+        pytest.param(
+            b"fatal: a branch named 'feature' already exists",
+            "github-command-failed",
+            "local-branch-exists",
+            id="branch-exists",
+        ),
+        pytest.param(
+            b"fatal: a branch named 'feature-tls' already exists",
+            "github-command-failed",
+            "local-branch-exists",
+            id="branch-tls-data",
+        ),
+        pytest.param(
+            b"fatal: a branch named 'feature'tls' already exists",
+            "github-command-failed",
+            "local-branch-exists",
+            id="branch-apostrophe-data",
+        ),
+        pytest.param(
+            b"fatal: 'feature'tls' is already checked out at '/private/permission'checkout'",
+            "github-command-failed",
+            "local-branch-in-other-worktree",
+            id="worktree-apostrophe-data",
+        ),
+        pytest.param(
+            b"fatal: cannot lock ref 'refs/heads/feature'tls': is at abc but expected def",
+            "github-command-failed",
+            "local-ref-lock-failed",
+            id="ref-apostrophe-data",
+        ),
+        pytest.param(
+            b"fatal: a branch named 'feature'tls' already exists\nHTTP 401: authentication required",
+            "github-auth",
+            "auth",
+            id="branch-apostrophe-auth-precedence",
+        ),
+        pytest.param(
+            b"fatal: 'feature'permission' is already checked out at '/private/checkout'\ncould not resolve host: github.com",
+            "github-network",
+            "dns",
+            id="worktree-apostrophe-network-precedence",
+        ),
+        pytest.param(
+            b"fatal: cannot lock ref 'refs/heads/feature'tls': Permission denied",
+            "github-permission",
+            "permission",
+            id="ref-apostrophe-permission-suffix",
+        ),
+        pytest.param(
+            b"fatal: cannot lock ref 'refs/heads/feature'tls': HTTP 401: authentication required",
+            "github-auth",
+            "auth",
+            id="ref-apostrophe-auth-suffix",
+        ),
+        pytest.param(
+            b"fatal: cannot lock ref 'refs/heads/feature'permission': TLS handshake timeout",
+            "github-network",
+            "tls",
+            id="ref-apostrophe-network-suffix",
+        ),
+        pytest.param(
+            b"fatal: a branch named 'permission-fix' already exists",
+            "github-command-failed",
+            "local-branch-exists",
+            id="branch-permission-data",
+        ),
+        pytest.param(
+            b"fatal: unknown diagnostic for 'tls permission HTTP 401 connection refused'",
+            "github-command-failed",
+            "unclassified",
+            id="unknown-quoted-data",
+        ),
+        pytest.param(
+            b'error: unknown diagnostic for "tls permission HTTP 401 connection refused"',
+            "github-command-failed",
+            "unclassified",
+            id="unknown-double-quoted-data",
+        ),
+        pytest.param(
+            b"fatal: a branch named 'feature-tls' already exists\nHTTP 401: authentication required",
+            "github-auth",
+            "auth",
+            id="quoted-data-auth-precedence",
+        ),
+        pytest.param(
+            b"fatal: a branch named 'connection refused' already exists\nTLS handshake timeout",
+            "github-network",
+            "tls",
+            id="quoted-data-network-reason",
+        ),
+        pytest.param(
+            b"fatal: 'feature' is already checked out at '/private/checkout'",
+            "github-command-failed",
+            "local-branch-in-other-worktree",
+            id="other-worktree",
+        ),
+        pytest.param(
+            b"error: Your local changes to the following files would be overwritten by checkout:\n\tfile.py",
+            "github-command-failed",
+            "local-changes-overwritten",
+            id="tracked-changes",
+        ),
+        pytest.param(
+            b"error: The following untracked working tree files would be overwritten by checkout:\n\tfile.py",
+            "github-command-failed",
+            "local-untracked-files-overwritten",
+            id="untracked-files",
+        ),
+        pytest.param(
+            b"fatal: Not possible to fast-forward, aborting.",
+            "github-command-failed",
+            "local-fast-forward-unavailable",
+            id="fast-forward",
+        ),
+        pytest.param(
+            b" ! [rejected]        feature -> feature (non-fast-forward)",
+            "github-command-failed",
+            "local-fetch-non-fast-forward",
+            id="fetch-rejected",
+        ),
+        pytest.param(
+            b"   ! [rejected] feature-tls -> origin/feature-tls (non-fast-forward)\n",
+            "github-command-failed",
+            "local-fetch-non-fast-forward",
+            id="fetch-ref-tls-data",
+        ),
+        pytest.param(
+            b"error: Your local changes to the following files would be overwritten by checkout:\n\tpermission_notes.txt",
+            "github-command-failed",
+            "local-changes-overwritten",
+            id="tracked-path-permission-data",
+        ),
+        pytest.param(
+            b"error: The following untracked working tree files would be overwritten by checkout:\n\ttls_notes.txt",
+            "github-command-failed",
+            "local-untracked-files-overwritten",
+            id="untracked-path-tls-data",
+        ),
+        pytest.param(
+            b"   ! [rejected] feature-tls -> origin/feature-tls (non-fast-forward)\nHTTP 401: authentication required",
+            "github-auth",
+            "auth",
+            id="fetch-ref-data-auth-precedence",
+        ),
+        pytest.param(
+            b"error: Your local changes to the following files would be overwritten by checkout:\n\tpermission_notes.txt\ncould not resolve host: github.com",
+            "github-network",
+            "dns",
+            id="tracked-path-data-network-precedence",
+        ),
+        pytest.param(
+            b"fatal: cannot lock ref 'refs/heads/feature': is at abc but expected def",
+            "github-command-failed",
+            "local-ref-lock-failed",
+            id="ref-lock",
+        ),
+        pytest.param(b"checkout failed for an unknown reason", "github-command-failed", "unclassified", id="unknown"),
+        pytest.param(
+            b"note: a branch already exists somewhere",
+            "github-command-failed",
+            "unclassified",
+            id="unrelated-branch-text",
+        ),
+        pytest.param(
+            b"fatal: a branch named 'feature' already exists\nHTTP 401: authentication required",
+            "github-auth",
+            "auth",
+            id="auth-precedence",
+        ),
+        pytest.param(
+            b"fatal: cannot lock ref 'refs/heads/feature'\ncould not resolve host: github.com",
+            "github-network",
+            "dns",
+            id="network-precedence",
+        ),
+    ],
+)
+def test_run_gh_read_preserves_safe_local_checkout_failure(
+    stderr: bytes, expected_class: str, expected_reason: str
+) -> None:
+    """Expose actionable checkout causes while discarding sensitive CLI output."""
+    module = _load_reader()
+    command = ["gh", "pr", "checkout", "https://github.com/example/project/pull/17"]
+    calls: list[list[str]] = []
+    secret = b"ghp_sensitive_sentinel_do_not_persist"
+    raw_stderr = stderr + b"\nprivate diagnostic: " + secret
+
+    def _runner(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Return a synthetic failure at the external CLI boundary."""
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 128, stdout=secret, stderr=raw_stderr)
+
+    with pytest.raises(module.GitHubReadError) as error:
+        module.run_gh_read(_runner, command, timeout=5, label="local-pr-checkout")
+
+    assert calls == [command]
+    assert str(error.value) == f"{expected_class}:local-pr-checkout"
+    assert error.value.diagnostics == {
+        "exit_code": 128,
+        "failure_class": expected_class,
+        "failure_reason": expected_reason,
+        "label": "local-pr-checkout",
+    }
+    retained = str(error.value) + repr(vars(error.value))
+    assert secret.decode() not in retained
+    assert stderr.decode() not in retained
+    assert raw_stderr.decode() not in retained
+
+
 def test_read_with_fallback_preserves_gh_permission_failure() -> None:
     """Do not bypass an authenticated GitHub permission decision with public HTTPS."""
     module = _load_reader()

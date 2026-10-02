@@ -598,7 +598,12 @@ def test_push_question_lives_in_step_3d_with_fixed_blocks() -> None:
     assert [block in push_step for block in blocks] == [False] * 4
     assert "Push question — multiSelect: FALSE" in selection
     assert "# substitute" not in selection
-    assert "**Over-20 selection gate** — rides the ≥19 band's follow-up call" in selection
+    cap = selection[selection.index("**Over-20 selection gate**") :]
+    assert "final selected IDs in every pending-count band" in cap
+    assert "report mode without a PR number" in cap
+    assert "only that band can select more than 20" not in cap
+    assert cap.index("count `SELECTED_ITEMS`") < cap.index("More than 20 items were selected")
+    assert "otherwise ask it alone in another call" in cap
 
 
 @pytest.mark.skipif(_BASH is None, reason="The Step 10 push read-back is Bash")

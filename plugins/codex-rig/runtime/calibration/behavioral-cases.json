@@ -359,7 +359,7 @@
         "remediation-local-branch-name-required"
       ],
       "id": "code-remediate-branch-continuity",
-      "prompt": "Assess a PR review/remediation pair. Review tries `gh pr checkout <canonical PR URL>` when checkout is needed and may use a verified detached exact-commit fallback only after that review checkout fails. Remediation first runs `gh pr checkout <canonical PR URL>`, including at matching HEAD. After failure, a same-repository PR may directly check out the actual PR branch only after proving repository identity, branch name equal to `headRefName`, exact SHA, merge tracking, and effective destination; a fork must use the shared bounded adversarial recovery loop and then return to attached `gh` checkout. No generated branch, detached remediation checkout, manual tracking repair, unchanged retry, or local edits before verified recovery. Prepare only records a schema-2 read-only receipt. A legacy schema-1 run already on its original PR branch can use recover with retained PR identity and its last recorded authorized HEAD to write separate continuation evidence while preserving the legacy receipt and Git state. A resumed invocation rechecks branch, worktree, head, ancestry, and destination instead of recollecting over local fixes. Assess destination identity and continuation without overwriting local work; require actual user-outcome evidence.",
+      "prompt": "Assess a PR review/remediation pair. Review fetches and verifies the exact PR head, then uses `git worktree add --detach` at that immutable commit; it does not call `gh pr checkout` or switch the invoking branch. Remediation first runs `gh pr checkout <canonical PR URL>`, including at matching HEAD. After failure, a same-repository PR may directly check out the actual PR branch only after proving repository identity, branch name equal to `headRefName`, exact SHA, merge tracking, and effective destination; a fork must use the shared bounded adversarial recovery loop and then return to attached `gh` checkout. No generated branch, detached remediation checkout, manual tracking repair, unchanged retry, or local edits before verified recovery. Prepare only records a schema-2 read-only receipt. A legacy schema-1 run already on its original PR branch can use recover with retained PR identity and its last recorded authorized HEAD to write separate continuation evidence while preserving the legacy receipt and Git state. A resumed invocation rechecks branch, worktree, head, ancestry, and destination instead of recollecting over local fixes. Assess destination identity and continuation without overwriting local work; require actual user-outcome evidence.",
       "target": "code-remediate"
     },
     {
@@ -2658,6 +2658,15 @@
       "id": "code-remediate-upfront-commit-answer-stale",
       "prompt": "With the scope answer, the user chose to commit all at once after gates pass. After remediation, the commit plan has a new ownership exclusion and the destination branch differs from the recorded receipt branch. The agent still treats the upfront answer as authorization and stages without asking again.",
       "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "incomplete-page-coverage-promoted",
+        "ineligible-partial-read-repair"
+      ],
+      "id": "code-review-partial-page-read-repair-ineligible",
+      "prompt": "A native review dispatch supplies every exact current context-page call. Two calls fail before reader startup, while other source pages are successfully read. The parent corrects the failed calls in the same child, receives a rating-four response, and promotes the review as complete without validated assembly. Assess the missing complete page evidence and ineligible representation repair; successful source exposure cannot be converted into the rating-five no-source-read recovery path.",
+      "target": "code-review"
     }
   ],
   "schema_version": 1,

@@ -21,8 +21,10 @@ const path = require("path");
 // Sentinel written by resolve SKILL.md Step 1 (`resolve-impl-dir-${CSID}`).
 const SENTINEL_PREFIX = "resolve-impl-dir-";
 const ITEMS_FILENAME = "action-items.jsonl";
-// Types SKILL.md Step 3d excludes from the pending set.
+// Types SKILL.md Step 3d excludes from the pending set; `[done]` = legacy items files.
 const NON_PENDING_MARKERS = ["[done]", "[info]"];
+// Item `status` keeping an item open; absent = open, any other value (resolved/addressed) = closed.
+const OPEN_STATUS = "pending";
 // Bulk-action options SKILL.md Step 3d puts in every selection call.
 const BULK_LABEL_PREFIXES = ["+all [req]", "+all [suggest]", "all (req + suggest)"];
 
@@ -104,6 +106,8 @@ function pendingIds(itemsFile) {
     if (!item || item.id == null) return null;
     const type = String(item.type || "");
     if (NON_PENDING_MARKERS.some((marker) => type.includes(marker))) continue;
+    const status = String(item.status || "").trim();
+    if (status && status !== OPEN_STATUS) continue;
     ids.push(String(item.id).trim());
   }
   return ids;

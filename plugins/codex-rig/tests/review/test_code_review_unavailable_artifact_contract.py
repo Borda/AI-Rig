@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -394,3 +396,178 @@ def test_unavailable_pr_artifact_rejects_process_diagnostic_table(tmp_path: Path
 
     with pytest.raises(SystemExit, match="unavailable-review-process-table-forbidden"):
         review_validator._validate_result(tmp_path, result_path, tmp_path, "thread", tmp_path)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "dirty,changed,recorded,status,admissible",
+    [
+        pytest.param(["pkg/item.py"], ["pkg/item.py"], ["pkg/item.py"], "blocked-pr-dirty-paths", True, id="exact"),
+        pytest.param(["pkg"], ["pkg/item.py"], ["pkg"], "blocked-pr-dirty-paths", True, id="dirty-ancestor"),
+        pytest.param(["pkg/item.py"], ["pkg"], ["pkg/item.py"], "blocked-pr-dirty-paths", True, id="dirty-descendant"),
+        pytest.param(
+            ["Widget.py"], ["widget.py"], ["Widget.py"], "blocked-pr-dirty-paths", True, id="collector-case-alias"
+        ),
+        pytest.param(
+            ["pkg/item.py"],
+            ["pkg/item.py"],
+            ["pkg/item.py", "unknown.py"],
+            "blocked-pr-dirty-paths",
+            False,
+            id="overlap-not-dirty",
+        ),
+        pytest.param(
+            ["pkg/item.py", "other.py"],
+            ["pkg/item.py", "other.py"],
+            ["other.py"],
+            "blocked-pr-dirty-paths",
+            False,
+            id="missing-exact-collision",
+        ),
+        pytest.param(
+            ["pkg", "other.py"],
+            ["pkg/item.py", "other.py"],
+            ["other.py"],
+            "blocked-pr-dirty-paths",
+            False,
+            id="missing-ancestor-collision",
+        ),
+        pytest.param(
+            ["pkg/item.py"],
+            ["pkg/item.py"],
+            ["pkg/item.py"],
+            "safe-unrelated-dirty-paths",
+            False,
+            id="safe-status-hides-overlap",
+        ),
+    ],
+)
+def test_blocked_preflight_receipt_reaches_actionable_unavailable_finalization(
+    tmp_path: Path, dirty: list[str], changed: list[str], recorded: list[str], status: str, admissible: bool
+) -> None:
+    """Consume bounded collector overlap evidence without reassessing source or consulting mutable original paths."""
+    result_path = _write_unavailable_artifact(tmp_path)
+    result = json.loads(result_path.read_bytes())
+    result_path.unlink()
+    code = "collector:dirty-pr-worktree-before-pr-checkout"
+    action = "Preserve or move the local changes that overlap PR files, then start a fresh collector run."
+    (tmp_path / "pr-error.txt").write_text(code + "\n", encoding="utf-8", newline="\n")
+    notes_path = tmp_path / "review-notes.md"
+    notes = notes_path.read_text(encoding="utf-8").replace("github-network:gh-pr-view", code)
+    notes = notes.replace("Retry the unchanged collector later; no review or merge decision was made.", action)
+    notes_path.write_text(notes, encoding="utf-8", newline="\n")
+    metadata = result["metadata"]
+    metadata["collection_failure"]["code"] = code
+    current_head, expected_head = "a" * 40, "b" * 40
+    preflight_path = tmp_path / "worktree-preflight.json"
+    preflight = {
+        "status": status,
+        "current_head": current_head,
+        "expected_head": expected_head,
+        "dirty_paths": dirty,
+        "checkout_paths": changed,
+        "overlapping_paths": recorded,
+        "pr_paths": changed,
+        "overlapping_pr_paths": recorded,
+        "unmerged_paths": [],
+        "phase": "before-checkout",
+    }
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8", newline="\n")
+    head_diagnostic = f"Worktree preflight: local head `{current_head}`; expected PR head `{expected_head}`."
+    handoff = {
+        "schema_version": 1,
+        "presentation_version": 3,
+        "skill": "code-review",
+        "branch": "unavailable",
+        "outcome": {
+            "title": "PR Review Availability",
+            "summary": (
+                "I stopped before checkout because local changes overlap PR files, so the review has not started. "
+                f"Reason: `{code}`. {head_diagnostic} The collector did not retain a more specific cause."
+            ),
+        },
+        "tables": [],
+        "source_records": [],
+        "source_coverage": {
+            "source_records_total": 0,
+            "represented_source_records_total": 0,
+            "omitted_source_records_total": 0,
+        },
+        "remaining": [
+            {
+                "row_id": "collection-recovery",
+                "owner": "code-review",
+                "item": f"PR collection stopped at `{code}`.",
+                "next_action": f"Inspect the `dirty-pr-worktree-before-pr-checkout` receipt. {action} Resume only after a fresh collector run produces and validates the PR source bundle.",
+            }
+        ],
+        "next_steps": ["collection-recovery"],
+        "artifacts": [
+            {"label": "Collection failure", "path": "pr-error.txt"},
+            {"label": "Worktree preflight", "path": "worktree-preflight.json"},
+        ],
+        "caller_contract": None,
+    }
+    metadata_path, handoff_path = tmp_path / "metadata-draft.json", tmp_path / "handoff-draft.json"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8", newline="\n")
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8", newline="\n")
+    retained = {path: path.read_bytes() for path in (preflight_path, tmp_path / "pr-error.txt", notes_path)}
+    finalized = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/remediation_finalize.py"),
+            "finalize",
+            "--skill",
+            "code-review",
+            "--parent-thread-id",
+            "thread",
+            "--run",
+            str(tmp_path),
+            "--metadata",
+            str(metadata_path),
+            "--handoff",
+            str(handoff_path),
+            "--status",
+            "fail",
+            "--confidence",
+            "0.9",
+            "--artifact-path",
+            str(result_path),
+            "--promote",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    outcome = json.loads(finalized.stdout)
+    assert {path: path.read_bytes() for path in retained} == retained
+    if not admissible:
+        assert finalized.returncode == 1 and outcome["promoted"] is False, outcome
+        assert "unavailable-review-worktree-preflight-invalid" in json.dumps(outcome), outcome
+        assert not result_path.exists()
+        return
+    assert finalized.returncode == 0 and outcome["promoted"] is True, outcome
+    promoted = json.loads(result_path.read_bytes())
+    assert promoted["status"] == "fail"
+    assert promoted["metadata"]["review_status"] == "unavailable"
+    assert promoted["findings"] == dict.fromkeys(("critical", "high", "medium", "low"), 0)
+    assert "review_decision" not in promoted["metadata"]
+    assert "Source findings: not assessed" in notes_path.read_text(encoding="utf-8")
+    final_bytes = (tmp_path / "final.md").read_bytes()
+    assert head_diagnostic.encode("utf-8") in final_bytes
+    assert action.encode("utf-8") in final_bytes
+    assert all(path.encode("utf-8") not in final_bytes for path in dirty)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/find-review-report.py"),
+            "--complete-run",
+            str(tmp_path),
+            "--parent-thread-id",
+            "thread",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr.decode()
+    assert completed.stdout == final_bytes

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,48 @@ import pytest
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REVIEW_SKILL = PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md"
 CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
+
+
+@pytest.mark.installed_plugin
+def test_review_and_remediation_routes_remain_distinct_during_incomplete_handoff() -> None:
+    """Keep calibrated checkout routes and incomplete-report continuation aligned with skills."""
+    review = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    remediation = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
+    cases = json.loads((PLUGIN_ROOT / "runtime" / "calibration" / "behavioral-cases.json").read_text(encoding="utf-8"))[
+        "cases"
+    ]
+    case = next(case for case in cases if case["id"] == "code-remediate-branch-continuity")
+    prompt = case["prompt"]
+    incomplete_handoff = remediation.split("matching-review-incomplete:", 1)[1].split("\n- ", 1)[0].lower()
+
+    assert "uses `git worktree add --detach`" in review
+    assert "It does not call `gh pr checkout`" in review
+    assert "Remediation first invokes `gh pr checkout <canonical PR URL>`" in remediation
+    assert "uses `git worktree add --detach`" in prompt
+    assert "it does not call `gh pr checkout`" in prompt
+    assert "continue current-online/user findings" in incomplete_handoff
+    assert "requested report obligation open" in incomplete_handoff
+    assert "continue independently authorized current-online/user findings" in readme.lower()
+    assert "requested report obligation open" in readme.lower()
+    assert "silently switch to online-only remediation" not in readme.lower()
+
+
+@pytest.mark.installed_plugin
+def test_new_native_review_context_files_are_owned_by_the_preparation_producer() -> None:
+    """Prevent parent-authored context files from colliding with frozen producer output."""
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
+    preparation = skill.split("#### Prepare and dispatch the complete wave", 1)[1].split("#### ", 1)[0]
+    generic_passes = skill.split("For every triggered pass:", 1)[1].split("\n\nParent owns", 1)[0]
+
+    assert "write only the focused Markdown briefs referenced by `review-briefs.json`" in preparation
+    assert "`review_prepare.py prepare` owns `specialists/<role>-context.md`" in preparation
+    assert "Do not create or overwrite those producer-owned context paths" in preparation
+    assert "legacy or non-producer routes" in generic_passes
+    assert "`review_prepare.py` owns generated" in readme
+    assert "`specialists/<role>-context.md` files" in readme
+    assert "`review_batches.py`" in readme
 
 
 @pytest.mark.installed_plugin

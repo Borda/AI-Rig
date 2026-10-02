@@ -156,6 +156,44 @@ def test_semantic_link_inherits_detail_but_not_verdict(tmp_path: Path) -> None:
     assert "verify_verdict" not in row
 
 
+@pytest.mark.parametrize(
+    ("closed_type", "status"),
+    [
+        pytest.param("[done][gh][req]", None, id="done-without-status"),
+        pytest.param("[done][gh][req]", "pending", id="done-with-pending-status"),
+        pytest.param("[info][gh][req]", None, id="info-without-status"),
+        pytest.param("[info][gh][req]", "pending", id="info-with-pending-status"),
+    ],
+)
+@pytest.mark.parametrize("route", ["exact", "semantic"])
+def test_closed_type_preserves_history_and_appends_finding(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], closed_type: str, status: str | None, route: str
+) -> None:
+    """Closed type markers protect history even when request markers and an open status remain."""
+    history = _gh(1, type=closed_type, line=12 if route == "exact" else 30)
+    if status is not None:
+        history["status"] = status
+    items = _write_jsonl(tmp_path / "action-items.jsonl", [history])
+    before = items.read_bytes()
+    findings = _findings_file(tmp_path, [_finding()])
+    finding_id = mfi.read_jsonl(findings)[0]["id"]
+    argv = ["--items", str(items), "--findings", str(findings)]
+    if route == "semantic":
+        assert mai.main([*argv, "--candidates"]) == 0
+        assert json.loads(capsys.readouterr().out) == []
+        assert items.read_bytes() == before
+        links = _write_jsonl(tmp_path / "links.jsonl", [{"finding_id": finding_id, "item_id": 1}])
+        argv.extend(["--links", str(links)])
+    assert mai.main(argv) == 0
+    history_row, finding_row = mfi.read_jsonl(items)
+    assert history_row == history
+    assert items.read_bytes().startswith(before)
+    assert finding_row["id"] == 2
+    assert finding_row["type"] == "[report][req]"
+    assert finding_row["finding_id"] == finding_id
+    assert finding_row["full_comment_text"] == _finding()["full_text"]
+
+
 def test_unmatched_findings_append_after_highest_github_id(tmp_path: Path) -> None:
     """Report items take ids above the existing maximum, gaps included; the file is only appended to."""
     items = _write_jsonl(
@@ -278,7 +316,9 @@ def test_findings_parsed_by_resolve_carry_no_verdict(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("items", "link_to"),
     [
-        pytest.param([_gh(1, line=30, type="[done]")], 1, id="closed-item"),
+        pytest.param([_gh(1, line=30, type="[done]")], 1, id="legacy-done-item"),
+        pytest.param([_gh(1, line=30, status="resolved")], 1, id="resolved-item"),
+        pytest.param([_gh(1, line=30, status="addressed")], 1, id="addressed-item"),
         pytest.param([_gh(1, line=30, finding_id="api-design-00000000")], 1, id="item-already-holds-a-finding"),
     ],
 )

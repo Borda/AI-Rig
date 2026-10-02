@@ -21,10 +21,12 @@ review-routing.json and review-briefs.json. Briefs map each role to axis, contai
 Local path reviews declare ``--scope-path``; otherwise the complete local patch and untracked inventory are required.
 Committed reviews also require immutable ``--expected-head`` and ``--expected-diff-base`` object IDs. Preparation binds
 actual selected bytes and diff to the collected local/PR source or exact committed comparison. Dispatch every generated
-call before joining. Then write specialist-assessments.json, mapping each role to confidence and blocking_findings, and
-run ``review_prepare.py assemble --out RUN --codex-home HOME`` after all child final answers have been received. For a
-diagnosed internal failure, ``prepare-repair --out RUN --codex-home HOME --role ROLE --kind KIND`` freezes one distinct
-correction dispatch. Assembly retains the original response and validates that correction in the same wave.
+call before joining. Then write specialist-assessments.json, mapping each role to the unchanged numeric confidence and
+blocking_findings, a nonnegative integer count of canonical non-low findings, never a list. Assembly derives axis from
+the frozen review-briefs.json; do not copy it into assessments or raise low reviewer confidence. Run ``review_prepare.py
+assemble --out RUN --codex-home HOME`` after all child final answers have been received. For a diagnosed internal
+failure, ``prepare-repair --out RUN --codex-home HOME --role ROLE --kind KIND`` freezes one distinct correction
+dispatch. Assembly retains the original response and validates that correction in the same wave.
 
 ## Outputs
 

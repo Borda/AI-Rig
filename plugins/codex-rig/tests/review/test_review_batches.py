@@ -858,6 +858,53 @@ def test_batch_wave_preserves_explicit_advisor_selection(tmp_path: Path, role: s
     )
 
 
+@pytest.mark.integration
+def test_batch_assembly_accepts_documented_assessment_shape_and_retains_source_axis(tmp_path: Path) -> None:
+    """Derive immutable routing axes without adding undocumented fields to reviewer assessments."""
+    run = _batch_inputs(tmp_path)
+    briefs_path = run / "review-briefs.json"
+    briefs = json.loads(briefs_path.read_bytes())
+    for role, brief in briefs.items():
+        brief["axis"] = f"Frozen contract boundary for {role}"
+    briefs_path.write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
+    prepared = _batch_command(run, "prepare")
+    assert prepared.returncode == 0, prepared.stderr
+    wave = run / "batches/source-001"
+    home = tmp_path / "codex-home"
+    _, _, children = preparation._assembly_evidence(
+        tmp_path,
+        prepared_run=wave,
+        home=home,
+        wave_index=1,
+        final_header="missing",
+        findings={
+            "challenger": _batch_output([], 4).replace('"score": 0.95', '"score": 0.78'),
+            "qa-specialist": _batch_output([], 1),
+        },
+    )
+    assessments_path = wave / "specialist-assessments.json"
+    assessments = json.loads(assessments_path.read_bytes())
+    assessments["challenger"]["confidence"] = 0.78
+    assessments_path.write_text(json.dumps(assessments), encoding="utf-8", newline="\n")
+    assessments_bytes = assessments_path.read_bytes()
+    assessments = json.loads(assessments_bytes)
+    assert all(set(assessment) == {"confidence", "blocking_findings"} for assessment in assessments.values())
+    child_bytes = {role: path.read_bytes() for role, path in children.items()}
+    assembled = _batch_command(wave, "assemble-wave", home)
+    assert assembled.returncode == 0, assembled.stderr
+    manifest = json.loads((wave / "specialist-manifest.json").read_bytes())
+    briefs = json.loads((run / "review-briefs.json").read_bytes())
+    for item in manifest["passes"]:
+        role = item["role"]
+        assert item["axis"] == briefs[role]["axis"]
+        assert item["confidence"] == assessments[role]["confidence"]
+        assert item["blocking_findings"] == assessments[role]["blocking_findings"]
+        terminal = json.loads(child_bytes[role].splitlines()[-1])["payload"]["last_agent_message"]
+        assert (wave / item["attempts"][0]["raw_output_path"]).read_bytes() == terminal.encode("utf-8")
+    assert assessments_path.read_bytes() == assessments_bytes
+    assert {role: path.read_bytes() for role, path in children.items()} == child_bytes
+
+
 def test_batch_wave_producer_admits_runtime_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Count complete runtime admission in the native batch wave producer."""
     run = _batch_inputs(tmp_path)

@@ -264,7 +264,7 @@ class FakeRunner:
             stdout = b"".join(f"{path}\0".encode() for path in self.dirty_paths)
         elif argv == ["git", "diff", "--cached", "--name-only", "-z", "HEAD", "--"]:
             stdout = b"".join(f"{path}\0".encode() for path in self.staged_paths)
-        elif argv == ["git", "ls-files", "--others", "--exclude-standard", "-z"]:
+        elif argv == ["git", "ls-files", "--others", "-z"]:
             stdout = b"".join(f"{path}\0".encode() for path in self.untracked_paths)
         elif argv == ["git", "diff", "--name-only", "-z", "--diff-filter=U", "--"]:
             stdout = b"".join(f"{path}\0".encode() for path in self.unmerged_paths)

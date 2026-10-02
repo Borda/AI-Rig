@@ -340,7 +340,7 @@ def _use_frozen_read_receipts(fixture: dict[str, object]) -> None:
                         "type": "custom_tool_call",
                         "name": "exec",
                         "call_id": f"read-{role}",
-                        "input": validator.render_read_call(plan_path, role, 1, sys.executable),
+                        "input": validator.render_read_call(plan_path, role, 1, sys.executable, _include_workdir=True),
                     },
                 },
                 {

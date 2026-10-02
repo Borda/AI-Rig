@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.32.1
+
+- Block PR checkout when ignored local files overlap incoming paths, including filesystem aliases and file/directory replacements; preserve unrelated ignored files and distinct link names.
+- Retain actionable unavailable-review handoffs for blocked checkout receipts, including ancestor and filesystem-alias collisions.
+- Classify known local Git checkout failures into safe diagnostic reasons without retaining raw stderr.
+- Align calibration and README with detached review isolation and independently authorized remediation when assessed reports remain incomplete.
+- Keep native specialist context files producer-owned; parent-authored focused briefs use separate input paths.
+- Derive batched reviewer axes from frozen briefs, matching single-wave assembly; specify integer blocker counts.
+- Validate opaque native launch delivery without redundant plaintext comparison, retain host timestamp precision, and reject boolean blocker counts.
+- Evaluate native refill opportunities within the active wave while retaining historical wait and spanning-launch validation.
+- Supply every literal context-page call in native dispatch; retain known historical reader recipes and reject altered readers or extra page reads.
+- Execute current context-page reads independently of the caller's working directory; preserve exact historical working-directory recipes and verify actual generated commands.
+- Add executable review completion-to-report-intake checks, documented batch-assessment inputs, and real-Git preservation regressions.
+
 ## 0.32.0
 
 - Code-remediate reads each finding's review evidence (specialist sections and review notes named by the finding) before asking the user, and writes per-finding outcomes to `resolution.jsonl` in the review run; a later code-review reads the prior run's outcomes.

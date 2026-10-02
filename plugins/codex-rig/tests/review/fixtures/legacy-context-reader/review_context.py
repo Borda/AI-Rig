@@ -102,10 +102,8 @@ def render_read_call(
     python_executable: str = sys.executable,
     page: int = 1,
     reader_path: Path | None = None,
-    *,
-    _include_workdir: bool = False,
 ) -> str:
-    """Render an absolute page-reader call, retaining cwd only for issued historical recipes."""
+    """Render one exact native tool call for the selected context page."""
     argv = [
         python_executable,
         str((reader_path or Path(__file__)).resolve()),
@@ -119,10 +117,7 @@ def render_read_call(
     if page != 1:
         argv.extend(["--page", str(page)])
     command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
-    args = {"cmd": command}
-    if _include_workdir:
-        args["workdir"] = str(plan_path.resolve().parent)
-    args["max_output_tokens"] = 10000
+    args = {"cmd": command, "workdir": str(plan_path.resolve().parent), "max_output_tokens": 10000}
     return (
         '// @exec: {"max_output_tokens": 10000}\n'
         f"const r = await tools.exec_command({json.dumps(args, ensure_ascii=False)}); text(r.output);"
@@ -137,19 +132,15 @@ def dispatch_message(
     *,
     provenance_header: bool = True,
     reader_path: Path | None = None,
-    _all_page_calls: bool = True,
-    _include_workdir: bool = False,
 ) -> str:
-    """Render exact page calls or the issued recipe for a known historical reader."""
+    """Tell a child to read every frozen page in order before reviewing."""
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     entries = [entry for entry in plan["contexts"] if entry.get("role_id") == role]
     if len(entries) != 1:
         raise ValueError("review-context-role-count")
     context = (plan_path.parent / entries[0]["context_path"]).read_bytes().decode("utf-8")
     count = len(context_pages(context))
-    first_call = render_read_call(
-        plan_path, role, attempt, python_executable, reader_path=reader_path, _include_workdir=_include_workdir
-    )
+    first_call = render_read_call(plan_path, role, attempt, python_executable, reader_path=reader_path)
     later_pages = (
         f"For pages 2 through {count}, copy the same JavaScript source once per page in order. "
         "In each copied source, append ` --page N` to the end of the `cmd` string, replacing N with that page's "
@@ -164,21 +155,6 @@ def dispatch_message(
         else "all pages. Return your findings and Reviewer Assessment; provenance is derived from the audited reads. "
         "Do not include the context body in the final answer."
     )
-    if _all_page_calls:
-        calls = "\n\n".join(
-            "```javascript\n"
-            + render_read_call(
-                plan_path, role, attempt, python_executable, page, reader_path, _include_workdir=_include_workdir
-            )
-            + "\n```"
-            for page in range(1, count + 1)
-        )
-        return (
-            f"Read all {count} frozen review context pages in order with exactly one functions.exec call per page. "
-            "Copy each complete JavaScript block below exactly once, in order, without editing its command or path. "
-            "Use no other tools. Read each full output before the next call and review only after "
-            f"{final_instruction}\n\n{calls}"
-        )
     return (
         f"Read all {count} frozen review context pages in order with exactly one functions.exec call per page, "
         "starting with the exact source below. Use no other tools. Read each full output before the next call and review only after "

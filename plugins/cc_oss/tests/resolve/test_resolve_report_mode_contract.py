@@ -13,6 +13,19 @@ _RESOLVE = Path(__file__).resolve().parents[2] / "skills" / "resolve"
 _BASH = shutil.which("bash")
 
 
+def test_report_dispatch_uses_selected_ids_instead_of_pending_count() -> None:
+    """The report consumer must preserve explicit closed IDs selected in the common picker.
+
+    This guards the declarative producer/consumer boundary; live model adherence remains a separate acceptance gate.
+    Both PR-header and local reports share this consumer after Step 3d.
+    """
+    report = (_RESOLVE / "modes" / "report-intelligence.md").read_text(encoding="utf-8")
+    section = report[report.index("**Report mode — Step 8 behavior**") : report.index("**Challenge Log")]
+    assert "zero pending" not in section
+    assert "`SELECTED_ITEMS` is empty" in section
+    assert "explicitly selected resolved/addressed IDs" in section
+
+
 def _bash_path(path: Path) -> str:
     """Return the fixture path in Git Bash syntax on native Windows."""
     if sys.platform != "win32":

@@ -457,6 +457,11 @@ def assemble_wave(out: Path, codex_home: Path) -> dict[str, Any]:
     if dispatch.get("routing_sha256") != validator._sha256(out / "review-routing.json"):
         raise ValueError("review-wave-selection-changed")
     assessments = validator._load_json(out / "specialist-assessments.json")
+    inventory = validator._load_json(out.parent.parent / "batch-inventory.json")
+    briefs_path = out.parent.parent / "review-briefs.json"
+    if validator._sha256(briefs_path) != inventory["briefs_sha256"]:
+        raise ValueError("review-batch-briefs-changed")
+    briefs = validator._load_json(briefs_path)
     roles = {entry["role_id"] for entry in plan["contexts"]}
     if set(assessments) != roles:
         raise ValueError("review-assessment-role-set-mismatch")
@@ -468,12 +473,11 @@ def assemble_wave(out: Path, codex_home: Path) -> dict[str, Any]:
             entry,
             rows,
             children,
-            assessments[entry["role_id"]],
+            {**assessments[entry["role_id"]], "axis": briefs[entry["role_id"]]["axis"]},
             ["Complete source batch or final interaction review."],
         )
         for entry in plan["contexts"]
     ]
-    inventory = validator._load_json(out.parent.parent / "batch-inventory.json")
     for item in passes:
         attempt = item["attempts"][item["selected_attempt"] - 1]
         item["reviewer_findings"] = validator._batch_reviewer_findings(

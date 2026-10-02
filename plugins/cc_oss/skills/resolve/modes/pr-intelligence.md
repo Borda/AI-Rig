@@ -108,7 +108,7 @@ Assign location field per source (determines GitHub resolvability):
     expansion FIRST: each nested finding inside a `<details>` block becomes its own item, not
     the review body as one unit. Every expanded (or bare, no-block) Source 2 item →
     location: discussion (review-body text, its `url` is the review's, never a real comment
-    thread — no resolve button, and the resolved-thread `[done]` check below can never apply
+    thread — no resolve button, and the resolved-thread status check below can never apply
     to it). Never promote a Source 2 item to location: inline even when it names the same
     file+line as a Source 3 comment — the cross-round dedup pass below already merges that
     pair and keeps Source 3's inline occurrence; promoting here preempts that pass and is
@@ -126,13 +126,15 @@ Classify EVERY comment using these codes:
   [gh][req]      change required before merge (reviewer with write access / maintainer)
   [gh][suggest]  improvement, non-blocking
   [gh][question] open question — needs answer before deciding what code to write
-  [done]         location:inline thread isResolved=true OR subsequent commit/reply addressed it; location:discussion — no isResolved signal; mark [done] only if a subsequent reply clearly addresses it (discussion items will otherwise remain pending — GitHub has no resolve button for them)
   [info]         praise / acknowledgement / emoji-only — skip
   [self-review]  /oss:review finding — not a GitHub commenter
+Type = origin + kind only, never resolution state. No `[done]` type: a resolved comment keeps its [gh][req]/[gh][suggest]/[gh][question] type — classify it from content like any other.
 
-Per location:inline comment: if its REST 'id' (= GraphQL databaseId) appears in resolved-thread
-list → mark [done] without reading content. All others: apply codes above.
-Per location:discussion comment: skip resolved-thread list entirely — PR discussion comments have no resolvable PullRequestReviewThread; apply classification codes directly.
+Resolution goes in `status` ∈ {pending, resolved, addressed}, set after classification:
+  resolved   location:inline and its REST 'id' (= GraphQL databaseId) appears in resolved-thread list
+  addressed  thread not resolved on GitHub, but a later commit/reply clearly addresses it
+  pending    everything else (default)
+Per location:discussion comment: skip resolved-thread list entirely — PR discussion comments have no resolvable PullRequestReviewThread; `status` is `addressed` only when a later reply clearly addresses it, else `pending`.
 
 **Deprecation false-positive filter**: Before finalising any action item whose `full_comment_text` requests adding a deprecation warning (keywords: "deprecate", "deprecation", "DeprecationWarning", "deprecated") for a removed argument, parameter, or function:
 1. Determine the removed symbol name from comment context or diff.
@@ -144,7 +146,7 @@ Per location:discussion comment: skip resolved-thread list entirely — PR discu
 
 ACTION_ITEM fields: id (sequential int starting at 1), type, change, severity, author,
 summary (≤60 chars, truncated at word boundary with …), file, line, url (html_url from
-API, blank for report items), full_comment_text, location, origin.
+API, blank for report items), full_comment_text, location, origin, status.
   - change ∈ {code,test,docs,config,ci,style,refactor,perf,architecture}; default=code when ambiguous. `perf` = latency/memory/throughput/allocation-focused comment; `architecture` = API design, module boundary, coupling, interface-shape comment. Keep in sync with `_shared/review-section-taxonomy.md`'s resolve `change` column and `action-item-dispatch.md`'s `change` → `IMPL_AGENT` table.
   - severity ∈ 1..5 (5=highest); [req] floor=3
   - location ∈ {inline, discussion, report}; inline = code-review comment (GitHub "Resolve conversation" button available); discussion = PR main-thread comment (no resolve button — cannot be marked resolved in GitHub UI); report = /review finding (no GitHub source)
@@ -156,8 +158,7 @@ close/near-identical match, AND position consistent with recurrence (exact line 
 lines differ by an amount explainable by an intervening push, OR either item has no line).
 Wording match never optional: same file + same/nearby line + unrelated wording never groups
 — two unrelated findings can legitimately share or sit near a line. Collapse each group to ONE
-ACTION_ITEM — keep most-resolvable occurrence's location/url (inline over discussion over
-report), highest severity seen in group, union of classification codes if they differ. Number
+ACTION_ITEM. If any occurrence is pending, retain a pending occurrence and keep `status: pending`; closed history cannot close a repeated open finding. Choose the most-resolvable occurrence only among those pending occurrences (inline over discussion over report). If all occurrences are closed, choose the most-resolvable closed occurrence. In either case, keep that same occurrence's `status`, `location`, and `url` together: never borrow a resolved thread's URL/status for an open inline or discussion occurrence. Preserve highest severity and the union of origin/kind codes across the group, but never union legacy `[done]` or `[info]` into a pending item's type; closure stays in `status`. Number
 of groups collapsed (group size > 1) is the `<N> recurring findings merged` count in the
 Sources block below — no separate variable needed, already literal text in the file this
 step writes.
@@ -170,15 +171,17 @@ Write THREE files using the Write tool (expand <IMPL_DIR> to the literal path ab
    Motivation paragraph (2–3 sentences).
    Table header: ### Action Items — PR #<PR_NUMBER>
    Columns: # | Type | Change | Severity | Author | Status | Summary | Notes
-   Truncation: Summary ≤60 chars, Notes ≤45 chars (use — when empty). Notes carries commit SHA for [done] rows and classification verdicts — never file:line, already held by the file/line fields.
-   Status: every row starts pending. Write `pending` for `location: inline` and `location: report` rows; write `pending · thread (no GH resolve)` verbatim for `location: discussion` rows — GitHub has no Resolve button for PR main-thread comments, and this suffix is the only place that distinction is visible now that there is no Loc column. The location field itself stays in action-items.jsonl for resolve routing and gets no column.
-   MUST render as markdown table. Example rows (inline, then discussion):
+   Truncation: Summary ≤60 chars, Notes ≤45 chars (use — when empty). Notes carries commit SHA for `addressed` rows and classification verdicts — never file:line, already held by the file/line fields.
+   Status column = item `status` verbatim (`pending` / `resolved` / `addressed`) — the only place resolution shows; Type never carries it, Notes never restates it.
+   `location: discussion` rows: append ` · thread (no GH resolve)` verbatim to Status (`pending · thread (no GH resolve)`) — GitHub has no Resolve button for PR main-thread comments, and this suffix is the only place that distinction is visible now that there is no Loc column. The location field itself stays in action-items.jsonl for resolve routing and gets no column.
+   MUST render as markdown table. Example rows (inline pending, discussion pending, inline resolved thread):
    | 1 | [gh][req] | code | 4 | @reviewer | pending | rename param x to count | — |
    | 2 | [gh][suggest] | docs | 2 | @reviewer | pending · thread (no GH resolve) | clarify README setup step | — |
+   | 3 | [gh][suggest] | style | 2 | @reviewer | resolved | drop unused import | 2 merged |
 
 2. <IMPL_DIR>/action-items.jsonl
    One compact JSON object per line, one ACTION_ITEM each.
-   Fields: id, type, change, severity, author, summary, file, line, url, full_comment_text, location, origin.
+   Fields: id, type, change, severity, author, summary, file, line, url, full_comment_text, location, origin, status.
 
 3. <IMPL_DIR>/pr-vars.sh
    ONLY these assignments, one per line, each value single-quoted, no shell metacharacters:
@@ -186,7 +189,7 @@ Write THREE files using the Write tool (expand <IMPL_DIR> to the literal path ab
      ACTION_ITEMS_TOTAL='<int>'
      ACTION_ITEMS_REQ='<int>'
      ACTION_ITEMS_SUGGEST='<int>'
-     ACTION_ITEMS_DONE='<int>'
+     ACTION_ITEMS_DONE='<int>'   (items with status resolved or addressed)
      ACTION_ITEMS_INLINE='<int>'
      ACTION_ITEMS_DISCUSSION='<int>'
      PR_MOTIVATION='<motivation text; replace any literal single-quotes in text with spaces>'
