@@ -59,6 +59,7 @@ SHARED_DIRECTORY = Path(__file__).resolve().parent
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
+from adversarial_loop import SCHEMA_VERSION as LOOP_LEDGER_SCHEMA_VERSION, load_ledger  # noqa: E402
 from collect_pr import _github_remote_identity, _head_repository  # noqa: E402
 from release_evidence import validate_release_evidence  # noqa: E402
 
@@ -3110,6 +3111,10 @@ def _validate_adversarial_loop(
     )
     if completed.returncode:
         raise SystemExit("adversarial-loop-invalid-ledger:" + completed.stderr.strip())
+    # Historical schema-1 ledgers rewrote every round inline; a current result keeps rounds in the append-only log.
+    ledger = load_ledger(ledger_path)
+    if ledger["schema_version"] != LOOP_LEDGER_SCHEMA_VERSION:
+        raise SystemExit("adversarial-loop-ledger-schema-v2-required")
     action_contract = result.get("metadata", {}).get("action_contract_version")
     if type(action_contract) is not int or action_contract != 2:
         raise SystemExit("adversarial-loop-action-contract-required")
@@ -3139,7 +3144,6 @@ def _validate_adversarial_loop(
     review_gate = next(check for check in gates["checks"] if check["id"] == "review")
     if summary["reason"] != "clean" and (review_gate["status"] != "fail" or "review" not in result["checks_failed"]):
         raise SystemExit("adversarial-loop-nonclean-review-gate")
-    ledger = _load_json(ledger_path)
     snapshots = [("current.diff", ledger["current_snapshot"])]
     snapshots.extend((f"round-{item['index']}.diff", item["snapshot"]) for item in ledger["rounds"])
     for filename, snapshot in snapshots:

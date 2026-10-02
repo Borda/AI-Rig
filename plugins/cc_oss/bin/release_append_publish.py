@@ -62,7 +62,7 @@ def _expected_paths(branch_ref: str, changelog: str, extra_outputs: tuple[str, .
         *ARTIFACTS,
         changelog,
         *extra_outputs,
-        state_relative(branch_ref, "provenance.json"),
+        state_relative(branch_ref, "provenance.jsonl"),
         state_relative(branch_ref, "marker"),
     )
     if len(set(paths)) != len(paths):

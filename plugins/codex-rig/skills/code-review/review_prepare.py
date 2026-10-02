@@ -22,7 +22,9 @@ Local path reviews declare ``--scope-path``; otherwise the complete local patch 
 Committed reviews also require immutable ``--expected-head`` and ``--expected-diff-base`` object IDs. Preparation binds
 actual selected bytes and diff to the collected local/PR source or exact committed comparison. Dispatch every generated
 call before joining. Then write specialist-assessments.json, mapping each role to confidence and blocking_findings, and
-run ``review_prepare.py assemble --out RUN --codex-home HOME`` after all child final answers have been received.
+run ``review_prepare.py assemble --out RUN --codex-home HOME`` after all child final answers have been received. For a
+diagnosed internal failure, ``prepare-repair --out RUN --codex-home HOME --role ROLE --kind KIND`` freezes one distinct
+correction dispatch. Assembly retains the original response and validates that correction in the same wave.
 
 ## Outputs
 
@@ -458,10 +460,13 @@ def _observed_pass(
     children: dict[str, list[Path]],
     assessment: dict[str, Any],
     trigger: list[str],
+    *,
+    attempt_number: int = 1,
+    retain_rejected: bool = False,
 ) -> dict[str, Any]:
     """Extract one completed child without inventing IDs, model choices, outputs, or joins."""
     role = context["role_id"]
-    task_name = f"review_{role.replace('-', '_')}_{context['context_sha256'][:12]}_a1"
+    task_name = f"review_{role.replace('-', '_')}_{context['context_sha256'][:12]}_a{attempt_number}"
     paths = children.get(task_name, [])
     if len(paths) != 1:
         raise ValueError(f"review-child-session-not-unique:{role}")
@@ -511,14 +516,16 @@ def _observed_pass(
     message = terminal["last_agent_message"].strip()
     if any(pattern.search(message) for pattern in validator._SECRET_PATTERNS):
         raise ValueError(f"review-output-sensitive-material:{role}")
-    output_path = f"specialists/{role}.md"
+    suffix = f".a{attempt_number}" if retain_rejected or attempt_number > 1 else ""
+    output_path = f"specialists/{role}{suffix}.md"
     _freeze({out / output_path: (message + "\n").encode("utf-8")})
-    raw_output_path = f"specialists/{role}.raw.md"
+    raw_output_path = f"specialists/{role}{suffix}.raw.md"
     _freeze({out / raw_output_path: terminal["last_agent_message"].encode("utf-8")})
-    validator._retained_reviewer_rating(out / output_path, local_reviewer_wave=False, main=False, role=role)
+    if not retain_rejected:
+        validator._retained_reviewer_rating(out / output_path, local_reviewer_wave=False, main=False, role=role)
     agent_path = session.get("agent_path") or session["source"]["subagent"]["thread_spawn"]["agent_path"]
     attempt = {
-        "attempt": 1,
+        "attempt": attempt_number,
         "status": "completed",
         "agent_thread_id": session["id"],
         "agent_path": agent_path,
@@ -552,14 +559,68 @@ def _observed_pass(
         "output_path": output_path,
         "role_card_sha256": validator._sha256(out / "role-cards" / role / "ROLE.md"),
         "attempts": [attempt],
-        "selected_attempt": 1,
+        "selected_attempt": attempt_number,
     }
+
+
+def observed_pass(
+    out: Path,
+    context: dict[str, str],
+    parent_rows: list[dict[str, Any]],
+    children: dict[str, list[Path]],
+    assessment: dict[str, Any],
+    trigger: list[str],
+) -> dict[str, Any]:
+    """Retain one original response and its single diagnosed replacement when explicitly prepared."""
+    repair_path = out / f"repair-dispatch.{context['role_id']}.json"
+    if not repair_path.exists():
+        return _observed_pass(out, context, parent_rows, children, assessment, trigger)
+    repair = validator._load_json(repair_path)
+    original = _observed_pass(out, context, parent_rows, children, assessment, trigger, retain_rejected=True)
+    selected = _observed_pass(out, context, parent_rows, children, assessment, trigger, attempt_number=2)
+    selected["attempts"] = original["attempts"] + selected["attempts"]
+    selected["recovery"] = {"kind": repair["kind"]}
+    return selected
+
+
+def prepare_repair(out: Path, codex_home: Path, role: str, kind: str) -> dict[str, Any]:
+    """Freeze exact replacement arguments only after validating the retained original failure."""
+    out = out.resolve()
+    plan = validator._load_json(out / "inspection-plan.json")
+    dispatch = validator._load_json(out / "dispatch.json")
+    contexts = [entry for entry in plan["contexts"] if entry["role_id"] == role]
+    if len(contexts) != 1 or dispatch["plan_sha256"] != validator._sha256(out / "inspection-plan.json"):
+        raise ValueError("review-repair-frozen-plan-mismatch")
+    rows = validator._read_jsonl(validator._find_rollout(codex_home, plan["parent_thread_id"]))
+    original = _observed_pass(
+        out,
+        contexts[0],
+        rows,
+        _child_sessions(codex_home, plan["parent_thread_id"]),
+        {"axis": role, "confidence": 0.95, "blocking_findings": 0},
+        ["Diagnosed internal failure."],
+        retain_rejected=True,
+    )
+    manifest = {
+        **manifest_header(plan),
+        "manifest_kind": "native-wave",
+        "dispatch_protocol": "paged-context-v7",
+        "context_reader_python": dispatch["context_reader_python"],
+        "context_reader_path": str(Path(review_context.__file__).resolve()),
+        "context_reader_sha256": validator._sha256(Path(review_context.__file__)),
+        "inspection_execution": {"plan_path": "inspection-plan.json", "plan_sha256": dispatch["plan_sha256"]},
+    }
+    original["recovery"] = {"kind": kind}
+    arguments = validator._recovery_arguments(out, manifest, original, rows, codex_home)
+    result = {"kind": kind, "arguments": arguments}
+    _freeze({out / f"repair-dispatch.{role}.json": _json_bytes(result)})
+    return result
 
 
 def manifest_header(plan: dict[str, Any]) -> dict[str, Any]:
     """Return the established specialist-manifest version and frozen run identity."""
     return {
-        "schema_version": 7,
+        "schema_version": 8,
         **{key: plan[key] for key in ("review_run_id", "parent_thread_id", "review_input_sha256")},
     }
 
@@ -584,7 +645,7 @@ def assemble(out: Path, codex_home: Path) -> dict[str, Any]:
     parent_rows = validator._read_jsonl(validator._find_rollout(codex_home, plan["parent_thread_id"]))
     children = _child_sessions(codex_home, plan["parent_thread_id"])
     passes = [
-        _observed_pass(
+        observed_pass(
             out,
             context,
             parent_rows,
@@ -595,7 +656,7 @@ def assemble(out: Path, codex_home: Path) -> dict[str, Any]:
         for context in plan["contexts"]
     ]
     manifest = {
-        "schema_version": 7,
+        "schema_version": 8,
         "manifest_kind": "native-wave",
         "dispatch_protocol": "paged-context-v7",
         "context_reader_path": str(Path(review_context.__file__).resolve()),
@@ -633,7 +694,7 @@ def recover_native_provenance(
     reader_path: Path,
     original_plan_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Validate historical native receipts under schema seven without changing retained child output."""
+    """Migrate historical native receipts into the current manifest without changing retained child output."""
     out = out.resolve()
     manifest_path = out / "specialist-manifest.json"
     if manifest_path.exists():
@@ -678,7 +739,7 @@ def recover_native_provenance(
             old["sol_selection"] = routing["sol_selection"]
     candidate = json.loads(json.dumps(old))
     candidate.update(
-        schema_version=7,
+        schema_version=8,
         manifest_kind="native-wave",
         dispatch_protocol="paged-context-v6",
         context_reader_path=reader_path.resolve().as_posix(),
@@ -751,6 +812,11 @@ def main() -> int:
     recovery_parser.add_argument("--codex-home", required=True, type=Path)
     recovery_parser.add_argument("--reader-path", required=True, type=Path)
     recovery_parser.add_argument("--original-plan-path", type=Path)
+    repair_parser = commands.add_parser("prepare-repair")
+    repair_parser.add_argument("--out", required=True, type=Path)
+    repair_parser.add_argument("--codex-home", required=True, type=Path)
+    repair_parser.add_argument("--role", required=True)
+    repair_parser.add_argument("--kind", required=True, choices=("closure-evidence-shape", "incomplete-dispatch"))
     assemble_parser = commands.add_parser("assemble", help="Bind received child results to actual runtime records.")
     assemble_parser.add_argument("--out", required=True, type=Path)
     assemble_parser.add_argument(
@@ -781,6 +847,8 @@ def main() -> int:
             )
         elif args.command == "assemble":
             print(json.dumps(assemble(args.out, args.codex_home)))
+        elif args.command == "prepare-repair":
+            print(json.dumps(prepare_repair(args.out, args.codex_home, args.role, args.kind)))
         elif args.command == "recover-native-provenance":
             print(
                 json.dumps(

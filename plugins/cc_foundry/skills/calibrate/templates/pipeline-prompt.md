@@ -385,7 +385,7 @@ Verdict: `significant` (delta_recall or delta_f1 > 0.10) / `marginal` (0.05–0.
 ...
 ```
 
-Write single-line JSONL result to `.reports/calibrate/<TIMESTAMP>/<TARGET>/result.jsonl`: (one line per pipeline run — orchestrating skill concatenates these across runs into `.notes/logs/calibrations.jsonl`)
+Write single-line JSONL result to `.reports/calibrate/<TIMESTAMP>/<TARGET>/result.jsonl`: (one line per pipeline run — orchestrating skill appends these across runs to `.notes/logs/calibrations.jsonl`)
 
 `{"ts":"<TIMESTAMP>","target":"<TARGET>","mode":"<MODE>","mean_recall":0.N,"extreme_recall":0.N_or_null,"mean_confidence":0.N,"calibration_bias":0.N,"mean_f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"problems":<N>,"scope_fp":N,"verdict":"...","gaps":["..."],"source_mode":"dual|claude-only","scoring":"dual|single","scorer_agreement":0.N_or_null,"recall_trivial":0.N_or_null,"recall_low":0.N_or_null,"recall_medium":0.N_or_null,"recall_high":0.N_or_null,"recall_extreme":0.N_or_null,"recall_claude_problems":0.N_or_null,"recall_codex_problems":0.N_or_null,"generator_recall_delta":0.N_or_null,"severity_disputed_count":N,"codex_generation_failed":false}`
 

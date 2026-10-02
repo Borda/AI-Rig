@@ -274,13 +274,13 @@ Tripped → restore `$ARTIFACT` to the exact content read via the Read tool at t
   IFS= read -r APPEND_STAGE < "${TMPDIR:-/tmp}/release-append-stage-${CSID}" 2>/dev/null || APPEND_STAGE=""
   [ "$RELEASE_MODE" != notes ] || { [ -n "$APPEND_STAGE" ] && [ -f "$APPEND_STAGE/candidate.json" ]; } || { echo "Error: notes candidate missing before provenance write" >&2; exit 1; }
   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/release_append_marker.py" guard --branch "$BRANCH_REF" || exit 1
-  PROVENANCE_FILE=".temp/release-state-v2/$BRANCH_KEY/provenance.json"
+  PROVENANCE_FILE=".temp/release-state-v2/$BRANCH_KEY/provenance.jsonl"
   [ "$RELEASE_MODE" != notes ] || PROVENANCE_FILE="$APPEND_STAGE/$PROVENANCE_FILE"
   mkdir -p "$(dirname "$PROVENANCE_FILE")" || exit 1
-  [ -f "$PROVENANCE_FILE" ] || echo "[]" > "$PROVENANCE_FILE"  # timeout: 3000
+  echo "PROVENANCE_REC=$PROVENANCE_FILE.rec"  # timeout: 3000
   ```
 
-  Read `$PROVENANCE_FILE` (Read tool). For each qualifying bullet/block, build one record per contributing commit sha (from Classify each change's sha tracking — see `modes/classify-truth-check.md` "PR accumulation") sharing that bullet's `anchor_text`. Compute each sha's content-stable identity first — this, not the sha, is the record's matching key:
+  `$PROVENANCE_FILE` is an append-only record log: never Read it back or rewrite it. For each qualifying bullet/block, build one record per contributing commit sha (from Classify each change's sha tracking — see `modes/classify-truth-check.md` "PR accumulation") sharing that bullet's `anchor_text`. Compute each sha's content-stable identity first — this, not the sha, is the record's matching key:
 
   ```bash
   PATCH_ID=$(git show "<full-40-char-sha>" | git patch-id --stable | awk '{print $1}')  # timeout: 3000
@@ -289,7 +289,17 @@ Tripped → restore `$ARTIFACT` to the exact content read via the Read tool at t
   # the entry then can only ever be struck via the semantic path (documented gap, not a bug)
   ```
 
-  `{"patch_id": "<40-hex patch-id, or null>", "sha": "<full 40-char sha — debug metadata only, never a matching key>", "subject": "<original commit subject — human debugging only, never a matching key>", "artifact": "DRAFT.md"|"CHANGELOG.md"|"MIGRATION.md", "anchor_text": "<exact text just written, verbatim>", "written_at": "$DATE"}`. Append every new record to the array just read; write the complete updated array back to `$PROVENANCE_FILE` (Write tool). A `CROSS_CYCLE_MATCH`-struck bullet from THIS cycle is never re-recorded — it was removed, not written.
+  `{"schema_version": 1, "patch_id": "<40-hex patch-id, or null>", "sha": "<full 40-char sha — debug metadata only, never a matching key>", "subject": "<original commit subject — human debugging only, never a matching key>", "artifact": "DRAFT.md"|"CHANGELOG.md"|"MIGRATION.md", "anchor_text": "<exact text just written, verbatim>", "written_at": "$DATE"}`. Write every new record of this cycle, one compact JSON object per line, to the `PROVENANCE_REC` path printed above with the Write tool, then append the staged `.rec` file with the fixed block below; it adds the trailing newline and deletes the `.rec`. A `CROSS_CYCLE_MATCH`-struck bullet from THIS cycle is never re-recorded — it was removed, not written.
+
+  ```bash
+  export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+  IFS= read -r BRANCH_KEY < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH_KEY" 2>/dev/null || BRANCH_KEY=""
+  IFS= read -r RELEASE_MODE < "${TMPDIR:-/tmp}/release-mode-${CSID}" 2>/dev/null || RELEASE_MODE="notes"
+  IFS= read -r APPEND_STAGE < "${TMPDIR:-/tmp}/release-append-stage-${CSID}" 2>/dev/null || APPEND_STAGE=""
+  PROVENANCE_FILE=".temp/release-state-v2/$BRANCH_KEY/provenance.jsonl"
+  [ "$RELEASE_MODE" != notes ] || PROVENANCE_FILE="$APPEND_STAGE/$PROVENANCE_FILE"
+  python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/append_ledger.py" "$PROVENANCE_FILE"  # timeout: 5000
+  ```
 
 - **Marker refresh**: persists the baseline for future `--append` runs.
 

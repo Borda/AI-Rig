@@ -215,7 +215,7 @@ Session continuation is also limited to Claude Code → Codex `implement`:
 
 ## 📦 Install for Codex
 
-> Codex questions use a [short shared guide](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/rules/codex-user-questions.md), shipped locally by this plugin. The root uses a permitted question route with meaningful presets and built-in custom input; children hand decisions back to the root. Detailed approval/recovery rules load only when needed. Host restrictions still apply; this does not override a plain-text-only host.
+> Codex questions use a [short shared guide](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/rules/codex-user-questions.md), shipped locally by this plugin. The root uses a permitted question route with meaningful presets and built-in custom input; children hand decisions back to the root. Detailed approval/recovery rules load only when needed. Host restrictions still apply; this does not override a plain-text-only host. Before fallback, discover deferred native question tools through the current catalog or tool search, including `functions.exec` `ALL_TOOLS` when exposed, and record route eligibility. Unknown async usability is unsuitable. A text-delivered async question stays pending without a second control or repeated menu.
 
 Register the repository marketplace and add the Codex plugin:
 

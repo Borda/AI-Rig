@@ -10,6 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -95,6 +96,33 @@ def _repository(tmp_path: Path) -> Path:
 def _write_json(path: Path, value: object) -> None:
     """Write one fixture JSON artifact using portable text bytes."""
     path.write_text(json.dumps(value), encoding="utf-8", newline="\n")
+
+
+def _loop_module() -> ModuleType:
+    """Load the shared convergence-ledger helper that owns the on-disk ledger layout."""
+    return _module(PLUGIN_ROOT / "shared" / "adversarial_loop.py")
+
+
+def _write_ledger(path: Path, ledger: dict[str, object]) -> None:
+    """Write a schema-2 loop ledger as its header JSON plus one round per line in the sibling round log."""
+    _write_json(path, {key: value for key, value in ledger.items() if key != "rounds"})
+    rounds = ledger["rounds"]
+    assert isinstance(rounds, list)
+    _loop_module().rounds_path(path).write_text(
+        "".join(json.dumps(item) + "\n" for item in rounds), encoding="utf-8", newline="\n"
+    )
+
+
+def _read_ledger(path: Path) -> dict[str, Any]:
+    """Read a loop ledger header and its round log back as the assembled object validators check."""
+    ledger = _loop_module().load_ledger(path)
+    assert isinstance(ledger, dict)
+    return ledger
+
+
+def _ledger_digest(path: Path) -> str:
+    """Return the identity a continuation records for one ledger on disk."""
+    return _loop_module().ledger_digest(path)
 
 
 @pytest.mark.parametrize(
@@ -364,7 +392,6 @@ def test_preflight_requires_exact_context_and_supporting_records(
             prior = _loop_evidence_run(prior_root, findings=[prior_finding])
             prior_run = prior["run"]
             assert isinstance(prior_run, Path)
-            prior_bytes = (prior_run / "loop-ledger.json").read_bytes()
             prior_block = "Prior findings to reassess:\n" + json.dumps(
                 [prior_finding], sort_keys=True, ensure_ascii=True
             )
@@ -372,7 +399,7 @@ def test_preflight_requires_exact_context_and_supporting_records(
             evidence["origin"] = {
                 "kind": "continuation",
                 "caller_run": prior_run.resolve().as_posix(),
-                "prior_ledger_sha256": hashlib.sha256(prior_bytes).hexdigest(),
+                "prior_ledger_sha256": _ledger_digest(prior_run / "loop-ledger.json"),
             }
             evidence["request"] = continuation_request
             _write_json(plan_dir / "request.json", evidence)
@@ -564,7 +591,7 @@ def _loop_evidence_run(
     report_path.write_bytes((run / "review" / selected["output_path"]).read_bytes())
     digest = hashlib.sha256(diff_bytes).hexdigest()
     ledger = {
-        "schema_version": 1,
+        "schema_version": 2,
         "implementation_author": "parent-thread",
         "current_snapshot": {"revision": source["revision"], "diff_digest": digest},
         "rounds": [
@@ -577,7 +604,7 @@ def _loop_evidence_run(
             }
         ],
     }
-    _write_json(run / "loop-ledger.json", ledger)
+    _write_ledger(run / "loop-ledger.json", ledger)
     _write_json(
         run / "loop-evidence.json",
         {
@@ -712,10 +739,10 @@ def _local_reviewer_loop(
     report_path = run / "review-1.md"
     report_path.write_bytes((evidence_path.parent / selected["output_path"]).read_bytes())
     digest = hashlib.sha256(diff_bytes).hexdigest()
-    _write_json(
+    _write_ledger(
         run / "loop-ledger.json",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "implementation_author": "thread",
             "current_snapshot": {"revision": source["revision"], "diff_digest": digest},
             "rounds": [
@@ -1206,9 +1233,9 @@ def test_large_context_dispatch_through_loop_validation(
     evidence_path = output_root / "evidence.json"
     evidence = json.loads(evidence_path.read_bytes())
     ledger_path = run / "loop-ledger.json"
-    ledger = json.loads(ledger_path.read_bytes())
+    ledger = _read_ledger(ledger_path)
     ledger["rounds"][0]["reviewer"]["identity"] = evidence["nodes"][0]["thread_id"]
-    _write_json(ledger_path, ledger)
+    _write_ledger(ledger_path, ledger)
     manifest["app_server_execution"]["evidence_path"] = str(evidence_path)
     for item in manifest["passes"]:
         item["output_path"] = str(output_root / f"{item['role']}.md")
@@ -1327,9 +1354,9 @@ def test_rejects_authenticated_finding_omitted_from_loop_ledger(tmp_path: Path) 
     evidence = _loop_evidence_run(tmp_path, findings=[finding])
     run = evidence["run"]
     assert isinstance(run, Path)
-    ledger = json.loads((run / "loop-ledger.json").read_text(encoding="utf-8"))
+    ledger = _read_ledger(run / "loop-ledger.json")
     ledger["rounds"][0]["findings"] = []
-    _write_json(run / "loop-ledger.json", ledger)
+    _write_ledger(run / "loop-ledger.json", ledger)
 
     with pytest.raises(ValueError, match="loop-evidence-report-findings-ledger-mismatch"):
         evidence["validator"].validate_loop_evidence(run, evidence["codex_home"])
@@ -1360,7 +1387,7 @@ def test_continuation_cannot_omit_prior_open_signature(tmp_path: Path) -> None:
     payload["origin"] = {
         "kind": "continuation",
         "caller_run": prior_run.resolve().as_posix(),
-        "prior_ledger_sha256": hashlib.sha256(prior_ledger).hexdigest(),
+        "prior_ledger_sha256": _ledger_digest(prior_run / "loop-ledger.json"),
     }
     _write_json(evidence_path, payload)
 
@@ -1389,18 +1416,17 @@ def test_unreviewed_continuation_retains_prior_without_claiming_clean(tmp_path: 
     prior_run = prior["run"]
     run = current["run"]
     assert isinstance(prior_run, Path) and isinstance(run, Path)
-    prior_bytes = (prior_run / "loop-ledger.json").read_bytes()
     ledger_path = run / "loop-ledger.json"
-    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    ledger = _read_ledger(ledger_path)
     ledger["rounds"] = []
-    _write_json(ledger_path, ledger)
+    _write_ledger(ledger_path, ledger)
     evidence_path = run / "loop-evidence.json"
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     evidence["rounds"] = []
     evidence["origin"] = {
         "kind": "continuation",
         "caller_run": prior_run.resolve().as_posix(),
-        "prior_ledger_sha256": hashlib.sha256(prior_bytes).hexdigest(),
+        "prior_ledger_sha256": _ledger_digest(prior_run / "loop-ledger.json"),
     }
     prior_block = "Prior findings to reassess:\n" + json.dumps([prior_finding], sort_keys=True, ensure_ascii=True)
     evidence["request"] = REQUEST | {"specification": REQUEST["specification"] + "\n" + prior_block}
@@ -1431,7 +1457,6 @@ def test_continuation_accepts_authenticated_prior_verdict(tmp_path: Path) -> Non
     run = current["run"]
     fixture = current["fixture"]
     assert isinstance(prior_run, Path) and isinstance(run, Path) and isinstance(fixture, dict)
-    prior_bytes = (prior_run / "loop-ledger.json").read_bytes()
     prior_block = "Prior findings to reassess:\n" + json.dumps([prior_finding], sort_keys=True, ensure_ascii=True)
     request = REQUEST | {"specification": REQUEST["specification"] + "\n" + prior_block}
     source_bytes = (run / "source-1.json").read_bytes()
@@ -1447,7 +1472,7 @@ def test_continuation_accepts_authenticated_prior_verdict(tmp_path: Path) -> Non
     evidence["origin"] = {
         "kind": "continuation",
         "caller_run": prior_run.resolve().as_posix(),
-        "prior_ledger_sha256": hashlib.sha256(prior_bytes).hexdigest(),
+        "prior_ledger_sha256": _ledger_digest(prior_run / "loop-ledger.json"),
     }
     _write_json(evidence_path, evidence)
 
@@ -1473,7 +1498,6 @@ def test_reviewed_stopped_continuation_retains_prior_open_signature(tmp_path: Pa
     run = current["run"]
     fixture = current["fixture"]
     assert isinstance(prior_run, Path) and isinstance(run, Path) and isinstance(fixture, dict)
-    prior_bytes = (prior_run / "loop-ledger.json").read_bytes()
     prior_block = "Prior findings to reassess:\n" + json.dumps([prior_finding], sort_keys=True, ensure_ascii=True)
     request = REQUEST | {"specification": REQUEST["specification"] + "\n" + prior_block}
     source_bytes = (run / "source-1.json").read_bytes()
@@ -1488,18 +1512,18 @@ def test_reviewed_stopped_continuation_retains_prior_open_signature(tmp_path: Pa
     (run / "source-2.json").write_bytes(source_bytes)
     (run / "round-2.diff").write_bytes(diff_bytes)
     ledger_path = run / "loop-ledger.json"
-    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    ledger = _read_ledger(ledger_path)
     second_round = json.loads(json.dumps(ledger["rounds"][0]))
     second_round.update(index=2, report_path="review-2.md")
     ledger["rounds"].append(second_round)
-    _write_json(ledger_path, ledger)
+    _write_ledger(ledger_path, ledger)
     evidence_path = run / "loop-evidence.json"
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     evidence["request"] = request
     evidence["origin"] = {
         "kind": "continuation",
         "caller_run": prior_run.resolve().as_posix(),
-        "prior_ledger_sha256": hashlib.sha256(prior_bytes).hexdigest(),
+        "prior_ledger_sha256": _ledger_digest(prior_run / "loop-ledger.json"),
     }
     second_entry = dict(evidence["rounds"][0], index=2, source_path="source-2.json")
     evidence["rounds"].append(second_entry)
@@ -1522,9 +1546,9 @@ def test_parent_triage_corrects_signature_and_tier_without_changing_raw_report(t
     evidence = _loop_evidence_run(tmp_path, findings=[raw])
     run = evidence["run"]
     report_bytes = (run / "review-1.md").read_bytes()
-    ledger = json.loads((run / "loop-ledger.json").read_bytes())
+    ledger = _read_ledger(run / "loop-ledger.json")
     ledger["rounds"][0]["findings"] = [{**raw, "signature": "missing-widget-guard", "tier": "medium"}]
-    _write_json(run / "loop-ledger.json", ledger)
+    _write_ledger(run / "loop-ledger.json", ledger)
     loop_evidence = json.loads((run / "loop-evidence.json").read_bytes())
     loop_evidence["rounds"][0]["triage"] = [
         {
@@ -1587,7 +1611,7 @@ def test_parent_triage_rejects_omission_collision_or_unsupported_change(
         }
         for item in raw
     ]
-    ledger = json.loads((run / "loop-ledger.json").read_bytes())
+    ledger = _read_ledger(run / "loop-ledger.json")
     if mutation == "omitted":
         triage.pop()
         ledger["rounds"][0]["findings"] = [raw[0]]
@@ -1609,7 +1633,7 @@ def test_parent_triage_rejects_omission_collision_or_unsupported_change(
         ledger["rounds"][0]["findings"][0]["evidence"] = ["Forged parent proof."]
     loop_evidence["rounds"][0]["triage"] = triage
     _write_json(run / "loop-evidence.json", loop_evidence)
-    _write_json(run / "loop-ledger.json", ledger)
+    _write_ledger(run / "loop-ledger.json", ledger)
 
     with pytest.raises(ValueError, match=error):
         evidence["validator"].validate_loop_evidence(run, evidence["codex_home"])
@@ -1677,7 +1701,7 @@ def test_single_challenger_findings_match_ledger_without_dropping_proof(tmp_path
     )
     selected = fixture["manifest"]["passes"][0]["attempts"][0]
     (run / "review-1.md").write_bytes((run / "review" / selected["output_path"]).read_bytes())
-    ledger = json.loads((run / "loop-ledger.json").read_bytes())
+    ledger = _read_ledger(run / "loop-ledger.json")
     ledger["rounds"][0]["findings"] = [
         {
             **first,
@@ -1686,7 +1710,7 @@ def test_single_challenger_findings_match_ledger_without_dropping_proof(tmp_path
             else ["QA source counterexample.", "Challenger consumer counterexample."],
         }
     ]
-    _write_json(run / "loop-ledger.json", ledger)
+    _write_ledger(run / "loop-ledger.json", ledger)
     output_paths = [run / "review" / item["attempts"][0]["output_path"] for item in fixture["manifest"]["passes"]]
     original_outputs = [path.read_bytes() for path in output_paths]
     if variation == "matching":
@@ -1712,10 +1736,10 @@ def test_rejects_implementation_author_not_observed_review_parent(
     evidence = _loop_evidence_run(tmp_path)
     run = evidence["run"]
     assert isinstance(run, Path)
-    ledger = json.loads((run / "loop-ledger.json").read_text(encoding="utf-8"))
+    ledger = _read_ledger(run / "loop-ledger.json")
     ledger["implementation_author"] = "forged-parent"
     monkeypatch.setenv("CODEX_THREAD_ID", "forged-parent")
-    _write_json(run / "loop-ledger.json", ledger)
+    _write_ledger(run / "loop-ledger.json", ledger)
 
     with pytest.raises(ValueError, match="loop-evidence-implementation-author-mismatch"):
         evidence["validator"].validate_loop_evidence(run, evidence["codex_home"])
@@ -1728,7 +1752,7 @@ def test_rejects_borrowed_review_without_matching_active_owner(
     """Reject genuine prior review evidence when it is reused by a different executing loop owner."""
     evidence = _loop_evidence_run(tmp_path)
     run = evidence["run"]
-    ledger = json.loads((run / "loop-ledger.json").read_text(encoding="utf-8"))
+    ledger = _read_ledger(run / "loop-ledger.json")
     if owner == "missing":
         monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
     elif owner == "blank":
@@ -1787,9 +1811,9 @@ def test_rejects_forged_or_incomplete_loop_evidence(tmp_path: Path, mutation: st
     """Reject forged reviewer identity, returned output, worktree source, and frozen-context coverage."""
     validator, run, fixture = _bound_loop(tmp_path)
     if mutation == "forged-identity":
-        ledger = json.loads((run / "loop-ledger.json").read_text(encoding="utf-8"))
+        ledger = _read_ledger(run / "loop-ledger.json")
         ledger["rounds"][0]["reviewer"]["identity"] = "forged-thread"
-        _write_json(run / "loop-ledger.json", ledger)
+        _write_ledger(run / "loop-ledger.json", ledger)
         expected = "loop-evidence-reviewer-identity-mismatch"
     elif mutation == "changed-report":
         (run / "review-1.md").write_text("forged report\n", encoding="utf-8", newline="\n")

@@ -22,6 +22,7 @@ SETUP  (step 0)
   |
 ◆ EXISTING REPORT GATE  (step 0 — existing-report guard)  [conditional]
   (a) reuse, stop · (b) re-run · (c) reply-draft → REPLY
+  prior resolution.jsonl (from /oss:resolve) → carried into (b) agent prompts
   |
 PRE-FLIGHT  (step 1)
   ◆ report path, no --reply?                          [conditional]
@@ -53,9 +54,10 @@ CROSS-VALIDATE  (step 4)
   ▣ ≤3 verifiers, one per critical/blocking finding
   |
 CONSOLIDATE  (step 5)  ▣ sw-engineer / doc-scribe / qa-specialist, by PR_TYPE
+  findings.jsonl (stable ids minted) → review-report.md
   REPORT HEADER  (step 5b)  print (hook-enforced)
   |
-CODEX DELEGATION  (step 6)  optional, no gate
+CODEX-ELIGIBLE LIST  (step 6)  tag only, no gate — resolve implements
   |
 WORKTREE EXIT  (step 7)  (if entered)
   REPLY_MODE=true  → REPLY
@@ -79,7 +81,7 @@ REPLY  (step 8)  (--reply, or an existing-report/direct-path redirect)
 | AGENT LAUNCH: Agent 0 blind-solve | 0–1 | FEATURE/MIXED scope only | before JOIN |
 | AGENT LAUNCH: bridge:review (Codex) | 0–1 | bridge availability | before JOIN |
 | AGENT LAUNCH: issue agent | 0–1 | PR body links issues (one spawn covers all, cap 3) | before JOIN |
-| AGENT LAUNCH: dimension agents | ≤`FANOUT_MAX` (3) ranked + qa-specialist pinned outside cap | scope preselection, then relevance ranking; `--full` = no cap, every survivor | before JOIN |
+| AGENT LAUNCH: dimension agents | ≤`FANOUT_MAX` (3) ranked + qa-specialist pinned outside cap | scope preselection (FIX drops perf+arch only at codemap impact tier `LIGHT`; unknown impact = `FULL`), then relevance ranking; never zero on a code PR; `--full` = no cap, every survivor | before JOIN |
 | CROSS-VALIDATE | ≤3 | critical/blocking finding count (batched ≤2/verifier beyond 3) | CONSOLIDATE |
 
 The top fan is free — it rides an idle window AGENT LAUNCH already had. ECOSYSTEM + OSS CHECKS is issued on an AGENT LAUNCH wake-up rather than a dedicated turn, once `PR_BASE` is bound; neither lane waits on the other's output.
@@ -134,7 +136,7 @@ Index of the `(step N)` tags in the schema above, one row per block.
 | ECOSYSTEM + OSS CHECKS | 3a, 3b |
 | CROSS-VALIDATE | 4 |
 | CONSOLIDATE | 5, 5b |
-| CODEX DELEGATION | 6 |
+| CODEX-ELIGIBLE LIST | 6 |
 | WORKTREE EXIT | 7 |
 | FOLLOW-UP GATE | 7a |
 | CONFIDENCE BLOCK | 7b |

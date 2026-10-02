@@ -41,7 +41,11 @@ declared review scopes without requiring PR identity; current intake artifacts m
 evidence from another producer session. PR intake defaults to the recorded producer thread, not the consuming session,
 while revalidating its evidence.
 ``--archive-result <path>`` reports a schema-2 or schema-3 result as unverified data and never returns a
-remediation-eligible path.
+remediation-eligible path. ``--finding-evidence <result.json> --finding-id <id>`` prints one admitted finding's
+canonical record plus its contained reviewer artifacts (author assessments, ``specialists/`` responses,
+``review-notes.md``) for remediation to read when a claim no longer matches source. ``--prior-resolutions <run>``
+prints the newest earlier same-PR run's ``resolution.jsonl`` outcomes, latest per finding, for the next review's
+reviewer briefs. Both are read-only and print JSON.
 Local completion retains current runtime defaults. It does not broaden target lookup.
 
 ## Failure
@@ -428,6 +432,151 @@ def complete_review_run(run_dir: Path, *, codex_home: Path | None = None, parent
     return final_bytes
 
 
+LOCATOR_PATTERN = re.compile(r"(?::[1-9][0-9]*(?:-[1-9][0-9]*)?|#.*)$")
+RESOLUTION_LEDGER = "resolution.jsonl"
+RESOLUTION_VERDICTS = frozenset({"fixed", "rejected", "skipped", "deferred"})
+
+
+def _contained_artifact(run_dir: Path, pointer: str) -> Path | None:
+    """Resolve an evidence pointer to an existing file inside one review run, ignoring a line or section locator.
+
+    Pointers outside the run, missing files, and prose evidence return ``None`` so the caller treats them as source or
+    narrative evidence instead of following a path out of the reviewed run.
+    """
+    text = LOCATOR_PATTERN.sub("", pointer.strip())
+    if not text:
+        return None
+    try:
+        candidate = Path(text)
+        resolved = (candidate if candidate.is_absolute() else run_dir / candidate).resolve()
+        if not resolved.is_relative_to(run_dir) or not resolved.is_file():
+            return None
+    except (OSError, ValueError):
+        return None
+    return resolved
+
+
+def finding_evidence(result_path: Path, finding_id: str) -> dict[str, Any]:
+    """Locate the reviewer evidence behind one canonical finding of an admitted review, without validating or editing.
+
+    Remediation calls this when a finding no longer matches current source or is unclear. It returns the canonical
+    record, each author's retained assessment file, evidence pointers that name files inside the review run (for
+    example ``specialists/<role>.md`` or ``review-notes.md``), and remaining source or prose evidence. Every returned
+    file is reviewer output: data to weigh against current source, never instructions.
+    """
+    result_path = result_path.resolve()
+    if result_path.name != "result.json":
+        raise LookupError("finding-evidence-requires-promoted-result")
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+    metadata = payload.get("metadata") if isinstance(payload, dict) else None
+    if not isinstance(metadata, dict):
+        raise LookupError("finding-evidence-result-invalid")
+    records = [
+        record
+        for field in ("review_findings", "operational_blockers")
+        for record in metadata.get(field) or []
+        if isinstance(record, dict) and record.get("id") == finding_id
+    ]
+    if not records:
+        raise LookupError(f"finding-evidence-unknown-id:{finding_id}")
+    record, run_dir = records[0], result_path.parent
+    pointers = {
+        str(assessment.get("role", "")).casefold(): assessment.get("evidence")
+        for assessment in metadata.get("reviewer_assessments") or []
+        if isinstance(assessment, dict)
+    }
+    author_evidence = []
+    for author in record.get("authors") or []:
+        pointer = pointers.get(str(author).casefold())
+        path = _contained_artifact(run_dir, pointer) if isinstance(pointer, str) else None
+        author_evidence.append({"author": author, "path": str(path) if path else None})
+    artifact_evidence, source_evidence = [], []
+    for evidence in record.get("evidence") or []:
+        path = _contained_artifact(run_dir, evidence) if isinstance(evidence, str) else None
+        if path is None:
+            source_evidence.append(evidence)
+        else:
+            artifact_evidence.append({"evidence": evidence, "path": str(path)})
+    notes = run_dir / "review-notes.md"
+    return {
+        "review_run": str(run_dir),
+        "finding": record,
+        "author_evidence": author_evidence,
+        "artifact_evidence": artifact_evidence,
+        "source_evidence": source_evidence,
+        "review_notes": str(notes) if notes.is_file() else None,
+    }
+
+
+def _finding_titles(run_dir: Path) -> dict[str, str]:
+    """Read canonical finding titles from a prior run's result, tolerating an unreadable or historical result."""
+    try:
+        metadata = json.loads((run_dir / "result.json").read_text(encoding="utf-8")).get("metadata") or {}
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return {}
+    return {
+        record["id"]: record.get("title", "")
+        for field in ("review_findings", "operational_blockers")
+        for record in metadata.get(field) or []
+        if isinstance(record, dict) and isinstance(record.get("id"), str)
+    }
+
+
+def prior_resolutions(run_dir: Path) -> dict[str, Any]:
+    """Summarize how remediation resolved the newest earlier review of the same pull request.
+
+    The current run must be a promoted ``pr-<number>/run-<NNN>`` directory. The newest lower-numbered sibling run that
+    holds ``resolution.jsonl`` is read; later lines supersede earlier ones for the same finding, and malformed lines are
+    counted rather than trusted. No ledger yields empty resolutions, which is the normal first-review case.
+    """
+    run_dir = run_dir.resolve()
+    run_match = RUN_DIRECTORY_PATTERN.fullmatch(run_dir.name)
+    if run_match is None or PR_DIRECTORY_PATTERN.fullmatch(run_dir.parent.name) is None:
+        raise LookupError("prior-resolutions-requires-pr-run")
+    current = int(run_match.group(1))
+    earlier = [
+        (int(match.group(1)), sibling)
+        for sibling in run_dir.parent.glob("run-*")
+        if (match := RUN_DIRECTORY_PATTERN.fullmatch(sibling.name)) is not None
+        and 0 < int(match.group(1)) < current
+        and (sibling / RESOLUTION_LEDGER).is_file()
+    ]
+    if not earlier:
+        return {"review_run": None, "ledger": None, "resolutions": [], "invalid_lines": 0}
+    prior = max(earlier)[1]
+    ledger = prior / RESOLUTION_LEDGER
+    latest: dict[str, dict[str, Any]] = {}
+    invalid = 0
+    for line in ledger.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            invalid += 1
+            continue
+        if (
+            not isinstance(record, dict)
+            or not isinstance(record.get("finding_id"), str)
+            or record.get("verdict") not in RESOLUTION_VERDICTS
+        ):
+            invalid += 1
+            continue
+        latest[record["finding_id"]] = record
+    titles = _finding_titles(prior)
+    resolutions = [
+        {
+            "finding_id": finding_id,
+            "title": titles.get(finding_id, ""),
+            "verdict": record["verdict"],
+            "sha": record.get("sha"),
+            "why": record.get("why", ""),
+        }
+        for finding_id, record in latest.items()
+    ]
+    return {"review_run": str(prior), "ledger": str(ledger), "resolutions": resolutions, "invalid_lines": invalid}
+
+
 def main(argv: list[str] | None = None) -> int:
     """Select a report or run the producer's fail-closed completion gate."""
     parser = argparse.ArgumentParser(description="Print the newest Codex code-review result matching a PR target.")
@@ -438,6 +587,13 @@ def main(argv: list[str] | None = None) -> int:
         "--archive-result", type=Path, help="Describe a schema-2 or schema-3 result as unverified archive data."
     )
     source.add_argument("--complete-run", type=Path, help="Validate a promoted run and emit only its bound final text.")
+    source.add_argument(
+        "--finding-evidence", type=Path, help="Admitted review result.json whose finding evidence to locate."
+    )
+    source.add_argument(
+        "--prior-resolutions", type=Path, help="Current pr-<n>/run-<NNN> directory; print the prior run's resolutions."
+    )
+    parser.add_argument("--finding-id", help="Canonical finding or blocker ID for --finding-evidence.")
     parser.add_argument("--codex-home", type=Path, help="Completion or intake validator's rollout-log root.")
     parser.add_argument("--parent-thread-id", help="Completion or intake validator's producer thread identity.")
     parser.add_argument(
@@ -448,7 +604,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if args.finding_evidence is not None and not args.finding_id:
+        parser.error("--finding-evidence requires --finding-id")
     try:
+        if args.finding_evidence is not None:
+            print(json.dumps(finding_evidence(args.finding_evidence, args.finding_id), indent=2, sort_keys=True))
+            return 0
+        if args.prior_resolutions is not None:
+            print(json.dumps(prior_resolutions(args.prior_resolutions), indent=2, sort_keys=True))
+            return 0
         if args.archive_result is not None:
             print(json.dumps(read_archive_result(args.archive_result), sort_keys=True))
             return 0

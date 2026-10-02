@@ -106,12 +106,14 @@ def state_relative(branch_ref: str, filename: str) -> str:
 
     Args:
         branch_ref: Exact Git branch ref.
-        filename: One of the three persistent release-state filenames.
+        filename: One of the three persistent release-state filenames. Provenance is the append-only
+            ``provenance.jsonl`` record log; the historical ``provenance.json`` array is read-only data that no
+            release step stages or publishes.
 
     Returns:
         Repository-relative path safe on POSIX and Windows.
     """
-    if filename not in ("marker", "provenance.json", "journal.json"):
+    if filename not in ("marker", "provenance.jsonl", "journal.json"):
         raise ValueError("invalid release state filename")
     return f".temp/release-state-v2/{branch_state_key(branch_ref)}/{filename}"
 

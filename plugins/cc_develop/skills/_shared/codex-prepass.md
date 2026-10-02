@@ -20,7 +20,7 @@ git diff HEAD --stat
 **Skip** if:
 
 - `bridge@borda-ai-rig` absent or disabled (`CODEX_AVAILABLE` resolved `false` above)
-- `git diff HEAD --stat` shows only 1–3 lines changed, or changes are formatting/comments/whitespace/variable-rename only
+- changes are formatting/comments/whitespace only — never skip on line count: a 1-line logic change on the main path is as risky as a large one
 
 **Run** when changes include new logic, functions, conditionals, error paths, or restructured code (requires `bridge@borda-ai-rig`):
 

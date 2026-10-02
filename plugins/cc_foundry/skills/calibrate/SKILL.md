@@ -65,7 +65,7 @@ NOT for: static routing overlap analysis (use /foundry:audit); manually reviewin
 - RECALL_THRESHOLD: 0.70 (below → agent needs instruction improvement)
 - CALIBRATION_BORDERLINE: ±0.10 (|bias| within this → calibrated; between 0.10 and 0.15 → borderline)
 - CALIBRATION_WARN: ±0.15 (bias beyond this → confidence decoupled from quality)
-- CALIBRATE_LOG: `.notes/logs/calibrations.jsonl` (legacy `.claude/logs/calibrations.jsonl` read-only fallback for historical entries)
+- CALIBRATE_LOG: `.notes/logs/calibrations.jsonl` — append-only (Step 4); legacy `.claude/logs/calibrations.jsonl` is read-only, migrated once behind the `.notes/logs/.calibrations-legacy-migrated` marker
 - AB_ADVANTAGE_THRESHOLD: 0.10 (delta recall or F1 above this → meaningful advantage; below → marginal or none)
 - PHASE_TIMEOUT_MIN: 5 (per-phase budget — if spawned subagents haven't all returned, collect partial results and continue)
 - PIPELINE_TIMEOUT_MIN: 10 (per-pipeline deadline, armed in the spawn response as `600` in `agent-watch-*.tsv` — no extension: the orchestrator has no clock to grant one) # tighter than global 15-min cutoff from CLAUDE.md §6 — intentional for calibrate
@@ -345,14 +345,26 @@ Call `AskUserQuestion` — do NOT write options as plain text. Map options direc
 
 Targets with verdict `calibrated` and no proposed changes get single line: `✓ <target> — no instruction changes needed`.
 
-## Step 4: Concatenate JSONL logs
+## Step 4: Append JSONL logs
 
-Append each target's result line to `.notes/logs/calibrations.jsonl` using native tools (no Bash needed):
+`.notes/logs/calibrations.jsonl` is append-only history: this run's per-target `result.jsonl` files are appended to it by `append_ledger.py --from`, never by reading the log and writing it back. One fixed block, two parts:
 
-1. Use Glob (pattern `*/result.jsonl`, path `.reports/calibrate/<TIMESTAMP>/`) to find all result files
-2. Read each result file with Read tool
-3. Read `.claude/logs/calibrations.jsonl` (legacy, if exists; use empty string if missing) and `.notes/logs/calibrations.jsonl` (if exists; use empty string if missing); concat both for historical context
-4. Append new lines and Write combined content back to `.notes/logs/calibrations.jsonl` only — never write to `.claude/logs/calibrations.jsonl`
+- **One-time legacy migration**, guarded by the marker `.notes/logs/.calibrations-legacy-migrated`. Marker absent and the `.notes` log empty or missing → append the legacy `.claude/logs/calibrations.jsonl` once. Marker absent but the `.notes` log already holds lines → an earlier run's read-concat-write already merged legacy history, so only set the marker; copying again would duplicate it. `.claude/logs/calibrations.jsonl` is never written.
+- **This run's results** — every `.reports/calibrate/<TIMESTAMP>/*/result.jsonl`, appended in target order; a missing glob match is reported and skipped.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r TIMESTAMP < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/timestamp" 2>/dev/null || TIMESTAMP=""
+[ -z "$TIMESTAMP" ] && { echo "! TIMESTAMP state lost — re-invoke /foundry:calibrate"; exit 1; }
+mkdir -p .notes/logs  # timeout: 3000
+if [ ! -f .notes/logs/.calibrations-legacy-migrated ]; then
+    if [ -f .claude/logs/calibrations.jsonl ] && [ ! -s .notes/logs/calibrations.jsonl ]; then
+        python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/append_ledger.py" .notes/logs/calibrations.jsonl --from .claude/logs/calibrations.jsonl  # timeout: 5000
+    fi
+    touch .notes/logs/.calibrations-legacy-migrated
+fi
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/append_ledger.py" .notes/logs/calibrations.jsonl --from .reports/calibrate/"$TIMESTAMP"/*/result.jsonl  # timeout: 5000
+```
 
 ## Step 5: Surface improvement signals
 

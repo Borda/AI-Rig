@@ -1,5 +1,5 @@
 {
-  "description": "oss plugin hooks: agent routing fallback + Bash auto-allow dispatch with audit records + oss:review and oss:analyse report-header gates",
+  "description": "oss plugin hooks: agent routing fallback + Bash auto-allow dispatch with audit records + oss:review and oss:analyse report-header gates + oss:resolve item-table gate",
   "hooks": {
     "PostToolUse": [
       {
@@ -37,6 +37,15 @@
         "hooks": [
           {
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/enforce-analyse-header.js\"",
+            "type": "command"
+          }
+        ],
+        "matcher": "AskUserQuestion"
+      },
+      {
+        "hooks": [
+          {
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/enforce-resolve-table.js\"",
             "type": "command"
           }
         ],

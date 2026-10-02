@@ -32,7 +32,8 @@ INTEL  (steps 3a, 3b)                   BRANCH + TRIAL MERGE  (steps 4, 5)
   +--------------------- JOIN -----------------------+
   |
 MERGE FINDINGS  (step 3c)
-  dedup report against GitHub · print ACTION_ITEMS table
+  review findings.jsonl folded in by merge_action_items.py
+  GitHub ids kept · report items appended · print ACTION_ITEMS table
   |
   +--------------------- FAN 2 ----------------------+
   |                                                  |
@@ -49,7 +50,10 @@ COMMIT MERGE  (step 7b join, step 3e)
   verify nothing unmerged · commit · create per-item tasks  (step 3e)
   |
 IMPLEMENT  (step 8)
+  verdict re-check  stale head or missing verifier file → confirmation dropped
   ▣ challenge      parallel by domain, read-only  (step 8 phase 1)
+                   reviewer evidence first · verifier-confirmed → fix check only
+                   ▣ caucus: origin agent type, one item, after a failed retry
   ▣ specialists    parallel, one git worktree each  (step 8 phase 2)
     merge-back     sequential cherry-pick, most-central first  (step 8 phase 3)
   |
@@ -58,7 +62,7 @@ VERIFY  (step 9)  ▣ qa-specialist ‖ ▣ linting-expert  (targeted tests)
   |
 ◆ PUSH CONFIRMATION  (step 10)  diff stat + commit count — skipped on an explicit "don't push" intent
   |
-SHIP  push (step 10) · final report (step 11) · ▣ comment dispatch (step 12)
+SHIP  push (step 10) · final report + resolution.jsonl → review dir (step 11) · ▣ comment dispatch (step 12)
 ```
 
 Between the selection gate and the push confirmation the run is unattended on the normal path: every decision that can be made with the same information is answered at the selection gate and persisted. Push authorization needs the diff stat, which exists only after implementation, so it stays at Step 10.
@@ -88,7 +92,7 @@ Both top-level fans are free — each rides an idle window the orchestrator alre
 | -- | -- | -- |
 | unknown flag · missing report source · codemap index | conditional | SETUP |
 | more than 20 conflicted files | conditional | trial merge, and aborts it |
-| **SELECTION** (items, commit mode, grouping + labels, dispatch width, over-20 cap, push intent + post-PR action) | **always** | everything past the second join |
+| **SELECTION** (items, commit mode, grouping + labels, dispatch width, over-20 cap, push intent + post-PR action; `enforce-resolve-table.js` denies it until every pending item has a table row in the reply) | **always** | everything past the second join |
 | group preview (`DISPATCH_MODE=preview`, elected at SELECTION) | conditional | challenge → specialists |
 | challenge timed out twice (batched per wave) | conditional, error recovery | challenge → specialists |
 | unresolved item status | conditional, error recovery | final report |

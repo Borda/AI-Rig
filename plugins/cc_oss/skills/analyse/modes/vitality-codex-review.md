@@ -51,7 +51,7 @@ After codex review completes (sentinel verified), compute per-axis delta:
 # aggregate health score = mean(main_health_score, codex_health_score)
 ```
 
-Update report's `## Independent Codex Review` section (append via Edit tool) with:
+Fill the report's `## Independent Codex Review` section in place: replace its `[Codex review or availability status]` placeholder (from `templates/vitality-report.md`) via the Edit tool with the content below. The section sits mid-report, before Data Sources and the Adversarial Review that Step 6 edits, so this is an in-place fill of the artifact being refined, not a ledger append — a `>>` would land it after Sign-off beside a stale placeholder heading. Content:
 
 - Codex scorecard table (from `$CODEX_REVIEW_OUT`)
 - Aggregate health score

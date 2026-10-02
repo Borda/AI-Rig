@@ -238,7 +238,7 @@ ______________________________________________________________________
 | `--codemap`           | Require Codemap and an index; stop when unavailable                                                                                                                                                                                     |
 | `--accept-no-plan`    | Skip inline plan generation for medium/large scope (trust own scoping)                                                                                                                                                                  |
 | `--no-challenge`      | Skip challenger adversarial gate                                                                                                                                                                                                        |
-| `--challenge`         | Force challenger gate even on small change auto-skip would otherwise skip                                                                                                                                                               |
+| `--challenge`         | Accepted for compatibility; no effect, since the challenger runs at every size unless `--no-challenge`                                                                                                                                  |
 | `--keep "<items>"`    | Append items to compaction contract preserve field — keeps key context if auto-compaction fires mid-skill                                                                                                                               |
 
 **Workflow**:
@@ -293,7 +293,7 @@ ______________________________________________________________________
 | `--team`              | Spawn 2-3 `foundry:sw-engineer` teammates, each investigating distinct root-cause hypothesis independently                                                                                                                     |
 | `--worktree`          | Run the whole skill in an isolated git worktree (`.claude/worktrees/`) on a new branch — you review + merge (never auto-merged). Codemap index is per-worktree, so parallel runs never race one index. Composes with `--team`. |
 | `--no-challenge`      | Skip challenger adversarial gate entirely                                                                                                                                                                                      |
-| `--challenge`         | Force challenger gate even on small change auto-skip would otherwise skip                                                                                                                                                      |
+| `--challenge`         | Accepted for compatibility; no effect, since the challenger runs at every size unless `--no-challenge`                                                                                                                         |
 | `--keep "<items>"`    | Append items to compaction contract preserve field — keeps key context if auto-compaction fires mid-skill                                                                                                                      |
 
 **Workflow**:
@@ -353,7 +353,7 @@ ______________________________________________________________________
 | `--codemap`           | Require Codemap and an index; stop when unavailable                                                                                                                                                                            |
 | `--accept-no-plan`    | Skip inline plan generation for medium/large scope                                                                                                                                                                             |
 | `--no-challenge`      | Skip challenger adversarial gate                                                                                                                                                                                               |
-| `--challenge`         | Force challenger gate even on small change auto-skip would otherwise skip                                                                                                                                                      |
+| `--challenge`         | Accepted for compatibility; no effect, since the challenger runs at every size unless `--no-challenge`                                                                                                                         |
 | `--keep "<items>"`    | Append items to compaction contract preserve field — keeps key context if auto-compaction fires mid-skill                                                                                                                      |
 
 **Workflow**:
@@ -413,7 +413,7 @@ ______________________________________________________________________
 | `--codemap`            | Require Codemap and an index; stop when unavailable                                                                                                                                                                                             |
 | `--no-codemap`         | Disable codemap even if available                                                                                                                                                                                                               |
 | `--no-challenge`       | Skip challenger adversarial gate entirely                                                                                                                                                                                                       |
-| `--challenge`          | Force challenger gate even on small change auto-skip would otherwise skip                                                                                                                                                                       |
+| `--challenge`          | Accepted for compatibility; no effect, since the challenger runs at every size unless `--no-challenge`                                                                                                                                          |
 | `--keep "<items>"`     | Append items to compaction contract preserve field — keeps key context if auto-compaction fires mid-skill                                                                                                                                       |
 
 **Workflow**:
@@ -463,7 +463,7 @@ Review output preserves its aggregate prose summary, verdict, confidence and det
 | Flag               | Description                                                                                                                                                                                    |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--no-challenge`   | Skip challenger adversarial gate                                                                                                                                                               |
-| `--challenge`      | Force challenger gate even on small change auto-skip would otherwise skip                                                                                                                      |
+| `--challenge`      | Accepted for compatibility; no effect, since the challenger runs at every diff size unless `--no-challenge` is passed                                                                          |
 | `--codemap`        | Require Codemap and an index; stop when unavailable                                                                                                                                            |
 | `--no-codemap`     | Disable codemap even if available                                                                                                                                                              |
 | `--worktree`       | Run the review in an isolated git worktree (base: HEAD) so no agent can mutate main sources. Report is written to the **main tree**; reviews committed HEAD (uncommitted changes not visible). |
@@ -472,7 +472,7 @@ Review output preserves its aggregate prose summary, verdict, confidence and det
 
 **Workflow**:
 
-1. **Identify scope**: collects Python files from path or `git diff HEAD`. Classifies diff FIX / REFACTOR / FEATURE / CHORE / MIXED — skips optional agents for smaller diffs (FIX skips `foundry:perf-optimizer` + `foundry:solution-architect`; CHORE skips `foundry:qa-specialist`, `foundry:perf-optimizer`, `foundry:solution-architect`). Small diff (single file, \<50 lines, no new public API) also auto-skips `foundry:challenger` gate unless `--challenge` passed.
+1. **Identify scope**: collects Python files from path or `git diff HEAD`. Classifies diff FIX / REFACTOR / FEATURE / CHORE / MIXED. Review depth follows the code path, not the diff size: with Codemap, every changed function's transitive callers set an `Impact:` tier. `FULL` means the change reaches a public function outside tests and leaf modules (visualization, plotting, examples, docs); `LIGHT` means it stays off that path; untraceable impact counts as `FULL`. A FIX skips `foundry:perf-optimizer` + `foundry:solution-architect` only at `LIGHT`; CHORE skips `foundry:qa-specialist`, `foundry:perf-optimizer`, `foundry:solution-architect`. `foundry:challenger` runs at every diff size, and the review never collapses to the orchestrator alone.
 2. **Codex co-review** (if `bridge@borda-ai-rig` is installed and enabled): adversarial diff review seeds pre-flagged issues list for specialist agents.
 3. **Selected parallel agents** (file-based handoff — each writes handover files to `.temp/review/<timestamp>/`; the default cap is three spawn units, `--full` removes that cap; merged units write one findings file per dimension):
    - `foundry:sw-engineer`: architecture, SOLID, type safety, error handling, Python anti-patterns, security for touched auth/input/data paths
@@ -483,7 +483,7 @@ Review output preserves its aggregate prose summary, verdict, confidence and det
    - `foundry:solution-architect`: API design quality, coupling, backward compatibility (only for public API boundary changes; skipped for REFACTOR and FIX)
 4. **Cross-validate** critical + blocking findings using same agent type that raised each finding.
 5. **Consolidate** (`foundry:sw-engineer`): reads all findings, deduplicates, ranks by impact, writes full report to `.reports/review/<timestamp>/review-report.md`. Signal-to-noise gate: small modules not padded with low-severity findings.
-6. **Codex delegation** (optional): mechanical tasks — docstrings, missing tests for concrete scenarios, consistent renames — delegated to Codex when precise brief writable.
+6. **Codex-eligible findings** (optional): mechanical tasks — docstrings, missing tests for concrete scenarios, consistent renames — are listed under Recommended Next Steps as Codex candidates. The review names them and never edits code itself; implementation stays with the fix workflow or the user.
 
 **Report structure**:
 
@@ -800,37 +800,38 @@ Both files are merged into `~/.claude/settings.json` by `/develop:setup` (Step 5
 
 These helpers are installed workflow support and maintainer surfaces, not additional slash-command skills. The skills own the development workflow; the helpers handle bounded flag parsing, Codemap context, test execution, worktree setup, path resolution, and state extraction.
 
-| Helper                       | Purpose                                                                      |
-| ---------------------------- | ---------------------------------------------------------------------------- |
-| `agent_watch.py`             | Report each spawned agent's deliverable and deadline in one call.            |
-| `build_codemap_batch.py`     | Build one Codemap pre-flight batch for changed modules.                      |
-| `codemap_resolve.py`         | Resolve Codemap auto, strict, or disabled mode.                              |
-| `codemap_scan.py`            | Derive affected modules and emit structural Codemap queries.                 |
-| `derive_codemap_target.py`   | Derive TARGET_MODULE/TARGET_FN from a skill goal.                            |
-| `dev_codemap_gate.py`        | Normalize and persist Codemap mode for all six workflows.                    |
-| `dev_issue_fetch_wrap.py`    | Fetch and persist upstream issue context for development skills.             |
-| `dev_parse_args.py`          | Parse development-skill arguments into shell-safe assignments.               |
-| `dev_run_dir.py`             | Create a timestamped `.developments/` run directory and optional sentinel.   |
-| `dev_setup_worktree_wrap.py` | Set up team-mode worktree run directories and state.                         |
-| `dev_shared_resolve.py`      | Resolve develop's own shared directory portably.                             |
-| `dev_test_targets.py`        | Select the tests a change touches; `--run` runs them in one call.            |
-| `diagnosis_parse.py`         | Parse and validate a `--diagnosis` path from arguments.                      |
-| `extract-keep-flag.py`       | Parse `--keep "<items>"` and clear a stale compaction contract.              |
-| `extract_json_field.py`      | Recover a JSON object from text and print a selected field.                  |
-| `find-polluter.py`           | Binary-search test isolation contamination.                                  |
-| `get_plugin_install_path.py` | Resolve the active plugin path from Claude's registry.                       |
-| `heal_git_artifacts.py`      | Reclaim stale skill locks and orphaned git worktrees.                        |
-| `issue_fetch.py`             | Validate an issue argument and fetch it through `gh`.                        |
-| `parse-skill-flags.py`       | Parse boolean and value skill flags into shell assignments.                  |
-| `parse_target_qname.py`      | Split a `module::function` suspect out of a skill's arguments.               |
-| `pytest_gate.py`             | Run an allow-listed pytest command with full output.                         |
-| `resolve_review_target.py`   | Resolve a review target and its changed Python files.                        |
-| `resolve_shared_path.py`     | Resolve the active `codemap-py` install for its shared contracts.            |
-| `run_pytest_short.py`        | Run an allow-listed pytest command on one or more targets; show final lines. |
-| `setup_worktree.py`          | Create a team-mode `.temp/develop/` run directory and optional sentinel.     |
-| `sync_rules.py`              | Install namespaced rule symlinks into `~/.claude/rules/`.                    |
-| `verify_blueprint_audit.py`  | Verify and prune the auto-allow audit log.                                   |
-| `write_skill_contract.py`    | Write the compaction-boundary contract the PreCompact hook appends verbatim. |
+| Helper                       | Purpose                                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------ |
+| `agent_watch.py`             | Report each spawned agent's deliverable and deadline in one call.                          |
+| `append_ledger.py`           | Append staged `.rec` records (or `--from` files) to a growing ledger without rewriting it. |
+| `build_codemap_batch.py`     | Build one Codemap pre-flight batch for changed modules.                                    |
+| `codemap_resolve.py`         | Resolve Codemap auto, strict, or disabled mode.                                            |
+| `codemap_scan.py`            | Derive affected modules and emit structural Codemap queries.                               |
+| `derive_codemap_target.py`   | Derive TARGET_MODULE/TARGET_FN from a skill goal.                                          |
+| `dev_codemap_gate.py`        | Normalize and persist Codemap mode for all six workflows.                                  |
+| `dev_issue_fetch_wrap.py`    | Fetch and persist upstream issue context for development skills.                           |
+| `dev_parse_args.py`          | Parse development-skill arguments into shell-safe assignments.                             |
+| `dev_run_dir.py`             | Create a timestamped `.developments/` run directory and optional sentinel.                 |
+| `dev_setup_worktree_wrap.py` | Set up team-mode worktree run directories and state.                                       |
+| `dev_shared_resolve.py`      | Resolve develop's own shared directory portably.                                           |
+| `dev_test_targets.py`        | Select the tests a change touches; `--run` runs them in one call.                          |
+| `diagnosis_parse.py`         | Parse and validate a `--diagnosis` path from arguments.                                    |
+| `extract-keep-flag.py`       | Parse `--keep "<items>"` and clear a stale compaction contract.                            |
+| `extract_json_field.py`      | Recover a JSON object from text and print a selected field.                                |
+| `find-polluter.py`           | Binary-search test isolation contamination.                                                |
+| `get_plugin_install_path.py` | Resolve the active plugin path from Claude's registry.                                     |
+| `heal_git_artifacts.py`      | Reclaim stale skill locks and orphaned git worktrees.                                      |
+| `issue_fetch.py`             | Validate an issue argument and fetch it through `gh`.                                      |
+| `parse-skill-flags.py`       | Parse boolean and value skill flags into shell assignments.                                |
+| `parse_target_qname.py`      | Split a `module::function` suspect out of a skill's arguments.                             |
+| `pytest_gate.py`             | Run an allow-listed pytest command with full output.                                       |
+| `resolve_review_target.py`   | Resolve a review target and its changed Python files.                                      |
+| `resolve_shared_path.py`     | Resolve the active `codemap-py` install for its shared contracts.                          |
+| `run_pytest_short.py`        | Run an allow-listed pytest command on one or more targets; show final lines.               |
+| `setup_worktree.py`          | Create a team-mode `.temp/develop/` run directory and optional sentinel.                   |
+| `sync_rules.py`              | Install namespaced rule symlinks into `~/.claude/rules/`.                                  |
+| `verify_blueprint_audit.py`  | Verify and prune the auto-allow audit log.                                                 |
+| `write_skill_contract.py`    | Write the compaction-boundary contract the PreCompact hook appends verbatim.               |
 
 #### Auto-allow audit log
 

@@ -317,16 +317,20 @@ def test_report_mode_persists_items_and_reaches_shared_selection_before_dispatch
     assert "`report` mode skips Step 3e" in tasks
 
 
-def test_merged_report_items_replace_pr_jsonl_before_selection() -> None:
-    """A merged table must not leave Step 8 reading Step 3b's unmerged item IDs."""
+def test_merged_report_items_fold_into_pr_jsonl_before_selection() -> None:
+    """Step 3c merges review findings into Step 3b's jsonl through the helper, keeping GitHub ids, before Step 3d."""
     skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
     merge = skill[skill.index("## Step 3c") : skill.index("## Step 3d")]
     dispatch = (_RESOLVE / "modes" / "action-item-dispatch.md").read_text(encoding="utf-8")
     assert "action-items.jsonl" in merge
-    assert "rewrite" in merge
-    assert "before Step 3d" in merge
-    assert "full_comment_text" in merge
-    assert "location" in merge
+    assert "merge_action_items.py" in merge
+    assert "--candidates" in merge and "report-links.jsonl" in merge
+    assert "no renumbering" in merge
+    assert "never inherits `verify_verdict`" in merge
+    assert "One finding per item" in merge
+    assert "thin: true" in merge
+    assert "Step 3d" in merge
+    assert "Renumber every merged record" not in merge
     assert '"$IMPL_DIR/action-items.jsonl"' in dispatch
 
 
@@ -488,3 +492,66 @@ def test_failed_c1_each_commit_leaves_no_item_ledger(tmp_path: Path) -> None:
     assert not (impl_dir / "c1-item-summary.tsv").exists()
     assert not (impl_dir / "c1-item-files.tsv").exists()
     assert source.read_text(encoding="utf-8") == "after\n"
+
+
+def test_handoff_wiring_reaches_each_consumer() -> None:
+    """The verdict re-check runs before Phase 1 item lines, Step 11 writes the ledger, and the review reads it back.
+
+    Script-level tests cannot see these call sites; a dropped block would silently disable the re-check or the ledger.
+    """
+    dispatch = (_RESOLVE / "modes" / "action-item-dispatch.md").read_text(encoding="utf-8")
+    skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
+    review = (_RESOLVE.parent / "review" / "SKILL.md").read_text(encoding="utf-8")
+    consolidator = (_RESOLVE.parent / "review" / "templates" / "consolidator-prompt.md").read_text(encoding="utf-8")
+    assert dispatch.index("--recheck-verdicts") < dispatch.index("Build each item line")
+    step11 = skill[skill.index("## Step 11") :]
+    assert "append_resolution.py" in step11 and '--base-sha "$BASE_SHA"' in step11
+    assert '[ -z "$_PRIOR_RES" ] || echo' in review and "Prior resolution ledger:" in review
+    assert "Prior resolution ledger" in consolidator and "mint_finding_ids.py" in consolidator
+
+
+@pytest.mark.skipif(_BASH is None, reason="Resolve route uses Bash")
+@pytest.mark.parametrize(
+    ("push_status", "expected_branch"),
+    [
+        pytest.param("pushed", "main", id="pushed-returns-to-saved-branch"),
+        pytest.param("skipped-by-user", "pr-7", id="declined-push-stays"),
+        pytest.param("blocked-guard", "pr-7", id="blocked-push-stays"),
+    ],
+)
+def test_final_branch_restore_only_after_push(tmp_path: Path, push_status: str, expected_branch: str) -> None:
+    """Step 11 returns to the saved branch only when the commits were pushed.
+
+    Switching away from unpushed commits hides them from the user who chose not to push and wants to review or push by
+    hand; the block must leave the session on the PR branch instead.
+    """
+    skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "base",
+        ],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(repo), "switch", "-q", "-c", "pr-7"], check=True)
+    session = "final-branch-restore-test"
+    for name, value in (("saved-branch", "main"), ("commit-mode", "each"), ("push-status", push_status)):
+        (tmp_path / f"resolve-{name}-{session}").write_text(f"{value}\n", encoding="utf-8", newline="\n")
+    block = _bash_block_after(skill, "Omit section when `--no-challenge`.")
+    env = os.environ | {"CLAUDE_CODE_SESSION_ID": session, "TMPDIR": str(tmp_path)}
+    result = subprocess.run([_BASH, "-c", block], cwd=repo, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    branch = subprocess.check_output(["git", "-C", str(repo), "branch", "--show-current"], text=True).strip()
+    assert branch == expected_branch

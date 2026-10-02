@@ -346,13 +346,10 @@ Skip if feature calls no external library APIs — no new framework features, no
 
 ## Challenger gate
 
-**Decision — three states** (default is NOT "skip": it runs on substantial features and auto-skips only small ones):
+**Decision** (default runs at any size — a small feature on the main path is as risky as a large one; size never skips the gate):
 
-1. `--no-challenge` (`CHALLENGE_ENABLED=false`) → **skip gate entirely**, any size.
-2. else `--challenge` (`IFS= read -r CHALLENGE_FORCED < "${TMPDIR:-/tmp}/dev-challenge-forced-${CSID}" 2>/dev/null || CHALLENGE_FORCED=false` = `true`) → **always run**, even on a small feature.
-3. else **default** → **run when feature is substantial** (multi-file, ≳50 lines, or adds any new public API — common case for a feature); **auto-skip when small** (single file, ≲50 lines, no new public API).
-
-Both flags cover opposite regimes: `--no-challenge` suppresses gate on substantial features that would otherwise fire; `--challenge` forces it on small features that would otherwise auto-skip.
+1. `--no-challenge` (`CHALLENGE_ENABLED=false`) → **skip gate entirely**.
+2. else → **always run**. `--challenge` (`CHALLENGE_FORCED`) is accepted for compatibility and changes nothing.
 
 Spawn `foundry:challenger` with scope analysis from Step 1 (purpose, scope, risks, approach):
 

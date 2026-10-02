@@ -143,3 +143,30 @@ def test_step_2_prelude_is_one_call() -> None:
     prelude = skill[skill.index("**Step 2 prelude — one call**") :]
     block = prelude[prelude.index("```bash") : prelude.index("```", prelude.index("```bash") + 7)]
     assert all(part in block for part in ("file-handoff-protocol.md", "check_bridge.py", "templates/agent-prompts.md"))
+
+
+def test_small_diff_never_reviewed_inline() -> None:
+    """The spawn-count gate never lets diff size replace the specialist fan-out with an inline orchestrator review.
+
+    A 158-line fix PR was once reviewed by the orchestrator alone because the gate said work under ~73 calls should be
+    done inline. That skipped the pinned qa-specialist and the challenger. A small change can carry the highest risk, so
+    the gate must keep its "never zero" floor and must not bring back the inline escape.
+    """
+    skill = _skill()
+    gate = skill[skill.index("**Spawn-count gate") : skill.index("**Dimension-gated codemap supplement**")]
+    assert "do it inline, spawn nothing" not in gate
+    assert "**never zero**" in gate
+    assert "**Diff size never licenses inline review.**" in gate
+
+
+def test_fix_scope_trim_is_gated_on_impact_tier() -> None:
+    """A FIX drops perf and architecture review only when the change stays off the main code path.
+
+    Diff size alone once decided depth, so a small fix inside a public entry point got the lighter lineup. The skip must
+    stay tied to the codemap impact tier, with unknown impact defaulting to FULL.
+    """
+    skill = _skill()
+    assert "skip Agent 3 (perf-optimizer), Agent 6 (solution-architect) **only when `IMPACT_TIER=LIGHT`**" in skill
+    assert 'echo "FULL · impact unknown: codemap unavailable"' in skill
+    assert 'IFS= read -r IMPACT_LINE < "${TMPDIR:-/tmp}/oss-review-impact-' in skill
+    assert "review_impact_tier.py" in (_REVIEW / "modes" / "codemap-context.md").read_text(encoding="utf-8")

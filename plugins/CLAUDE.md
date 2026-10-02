@@ -126,6 +126,20 @@ Single-line sentinel read-back: `IFS= read -r VAR < "${TMPDIR:-/tmp}/<name>-${CS
 - **Isolate any command carrying a multi-line quote or heredoc into its own fenced block.** The generator bails out of per-command extraction for such a block; every *other* command silently loses its entry and prompts individually. One GraphQL query cost 8 sibling commands theirs.
 - **Never ask prose for a derived value without shipping the producing command.** "parse `gh pr checks` output → extract failing names", with no block, yields an improvised pipeline: text differs each run, always prompts, and remains unreviewed. The observed one used `grep -P`, absent on BSD/macOS.
 
+## Growing Ledgers — Append, Never Rewrite
+
+A file that only grows — `.jsonl` record logs, `.tsv` rows, `.log` files, diaries, journals, results ledgers — is appended to, never re-written. A read-modify-Write round trip re-emits every earlier record through the model: one dropped or reworded line silently rewrites history, and the cost grows with the ledger.
+
+- **Name the mechanism in every instruction that adds to a ledger.** "Append", or "append with the Write/Edit tool", is not a mechanism.
+- **Model-valued record** (metric, verdict, prose the model decides): Write exactly one record to `<ledger>.rec` with the Write tool, then run the fixed-text block `python "${CLAUDE_PLUGIN_ROOT:-plugins/<plugin>}/bin/append_ledger.py" "$LEDGER"`, with `LEDGER` resolved from a sentinel or state file via `IFS= read -r` (§Sentinel Reads). The script appends the staged file, supplies a trailing newline the Write tool may have omitted, and deletes the `.rec` so the next Write creates it fresh. Every `cc_*` plugin ships a byte-identical copy (`propagate_shared.py` MANIFEST).
+- **Never the shell form `cat "$L.rec" >> "$L" && rm -f "$L.rec"`.** `rm` has no allow entry beyond `.temp/state/*`, and the blueprint manifest drops every block that runs it, so that form prompts on every append. A bare `cat` also glues the next record onto a record saved without a trailing newline.
+- **Parallel writers** each stage their own `<ledger>.<writer>.rec`; one `append_ledger.py` call after every writer has returned appends them all, sorted by name. Two writers never share one `.rec`.
+- **Values already in the shell or on disk**: `printf '…\n' … >> "$LEDGER"`, `jq -c … >> "$LEDGER"`, or `append_ledger.py "$LEDGER" --from <files>` (appends and keeps the sources).
+- **Corrections are new records, not edits.** A later verdict on an earlier entry is appended as an event line, and readers take the last record per key. Values derived after the fact go to a sidecar file (e.g. `results-deltas.jsonl`), never back into the ledger.
+- **Exempt — editing or rewriting is correct here:** single-value state (`state.json`, sentinels); mtime-clock `agent-watch-*.tsv` batch files; compaction contracts; digest- or validator-bound rendered artifacts; dedup and merge reconciliation; the artifact being refined (a report section, a release draft, a placeholder filled in place); frozen plans.
+- Guard: `tests/test_append_only_ledgers.py` fails on a skill, agent, or mode sentence that pairs "append" with the Write or Edit tool without naming the `.rec` staging.
+- Codex Rig counterpart: same `.rec` staging, no `append_ledger.py` — the helper owning each ledger's schema appends and validates the staged record (`codex-rig/shared/native-skill-contract.md` §Append-Only Ledgers). Intentional: Codex has no permission matcher or blueprint manifest, and per-schema validation refuses a bad record before it lands.
+
 ## Installability
 
 - Every file installable via `claude plugin install <name>@borda-ai-rig`; no dependency on source tree — installed path only; no hardcoded paths to sibling plugins or `plugins/<name>/` dirs

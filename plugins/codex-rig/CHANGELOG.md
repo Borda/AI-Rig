@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.32.0
+
+- Code-remediate reads each finding's review evidence (specialist sections and review notes named by the finding) before asking the user, and writes per-finding outcomes to `resolution.jsonl` in the review run; a later code-review reads the prior run's outcomes.
+- Keep roles apart: a review-only run hands an in-progress merge to remediation instead of finishing it, and remediation validates the review result read-only and stops with a re-run message instead of rewriting it. Review reports are keyed by run, not by file path.
+- Closure log and action-item/workplan status are appended as events (`resolution-events.jsonl`, schema 1) and the tables are rendered from them.
+- Adversarial-loop ledger rounds move to an append-only `loop-rounds.jsonl` beside a small header (ledger schema 2; schema-1 ledgers stay readable), and reasoning-progress cycles move to `reasoning-cycles.jsonl` (schema 3; schema 2 validated with `--historical`).
+- Growing ledgers are appended through the helper that owns their schema, never rewritten (`native-skill-contract.md` §Append-Only Ledgers).
+- Discover deferred native question tools before fallback; treat unverified async rendering as unsuitable and preserve text-delivered questions without duplicate submission.
+- Recover one evidence-bound native review dispatch or lossless closure-evidence representation failure within the retained run; preserve rejected attempts and frozen source, then resume remaining review gates.
+
 ## 0.31.0
 
 - Run targeted tests inside remediation, challenge and implementation fix loops: the new `test_targets.py` selects tests from codemap-py test impact when its index is fresh and complete, falls back to name and import heuristics, and records each selection in the run directory. The full suite runs once at the final gate with the repository's own settings; the code-review gate always runs the full selection.

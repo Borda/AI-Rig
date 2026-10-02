@@ -9,23 +9,36 @@ exact evidence needed for a human to choose a next step.
 
 ## Scope
 
-This helper validates one JSON ledger for one closure condition. It does not select a model, execute an advisory
-request, modify project files, or decide whether the workstream should be accepted. Callers retain those decisions and
-record only their observed outcome here. Current schema two retains the user's primary goal and distinguishes primary
-work from auxiliary setup/report repairs; auxiliary success cannot count as primary material progress. The CLI rejects
-old schema-one active ledgers rather than letting them bypass the current contract. It validates declared dependencies
-and state consistency, not the truth of a claimed user goal or the host's adherence to instructions.
+This helper validates one ledger for one closure condition. It does not select a model, execute an advisory request,
+modify project files, or decide whether the workstream should be accepted. Callers retain those decisions and record
+only their observed outcome here. The ledger retains the user's primary goal and distinguishes primary work from
+auxiliary setup/report repairs; auxiliary success cannot count as primary material progress. It validates declared
+dependencies and state consistency, not the truth of a claimed user goal or the host's adherence to instructions.
+
+Current schema three keeps work cycles append-only. `reasoning-progress.json` is a header holding every field except
+`cycles` (goal, workstream, closure condition, outcome, advisory, recovery, handoff), rewritten in place as that state
+changes. The sibling `reasoning-cycles.jsonl` holds one cycle object per line in index order and is only appended: a
+header named `<prefix>progress.json` pairs with `<prefix>cycles.jsonl`. Historical schema two kept `cycles` inline in
+one rewritten file; `--historical` validates such an archive as data under the same rules, while the default CLI rejects
+it as an active ledger, as it rejects schema one, so an old shape cannot bypass the current contract.
 
 ## Usage
 
-Run `python PLUGIN_ROOT/shared/escalation_ledger.py --ledger <run-directory>/reasoning-progress.json` after recording
-each triggered escalation state and before another work cycle. A zero exit means the bounded state is internally
-consistent; a non-zero exit means the caller must stop and repair the record or hand off.
+Record each work cycle by writing it as one JSON object to `<run-directory>/reasoning-cycles.jsonl.rec`, then running
+`python PLUGIN_ROOT/shared/escalation_ledger.py --ledger <run-directory>/reasoning-progress.json --append`. The staged
+cycle must continue the index sequence and satisfy the cycle rules; it is appended as one line and the staged file is
+deleted. Run the same command without `--append` after recording each triggered escalation state in the header and
+before another work cycle. A zero exit means the bounded state is internally consistent; a non-zero exit means the
+caller must stop and repair the record or hand off.
 
 ## Outputs
 
-The command prints `escalation-ledger-valid` on success. On malformed, incomplete, unsafe, or unbounded state it prints
-`escalation-ledger-invalid:<reason>` and exits with status 2, leaving the ledger unchanged for inspection.
+The command prints `escalation-ledger-valid` on success, or `escalation-ledger-historical-valid` for a valid archive
+read with `--historical`. On malformed, incomplete, unsafe, or unbounded state it prints
+`escalation-ledger-invalid:<reason>` and exits with status 2. Validation never modifies files. `--append` adds exactly
+one line to the cycle log and deletes the staged record; a rejected record is kept for inspection and nothing is
+appended. A cycle that is appended is an observed fact even when the extended ledger then fails validation: the exit
+status still requires escalation or repair of the header before another cycle.
 
 ## Failure
 
@@ -48,7 +61,9 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+#: Historical single-file schema with every cycle inline; validated only as an archive, never as an active ledger.
+HISTORICAL_SCHEMA_VERSION = 2
 _OUTCOMES = {"working", "advisory", "recovery", "human_handoff", "closed"}
 
 
@@ -64,6 +79,84 @@ def _require_mapping(value: object, field: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{field}-object-required")
     return value
+
+
+def cycles_path(ledger_path: Path) -> Path:
+    """Return the append-only work-cycle log that belongs to one ledger header.
+
+    Examples:
+        >>> cycles_path(Path("run") / "reasoning-progress.json").name
+        'reasoning-cycles.jsonl'
+        >>> cycles_path(Path("ledger.json")).name
+        'ledger-cycles.jsonl'
+    """
+    name = ledger_path.name
+    prefix = name[: -len("progress.json")] if name.endswith("progress.json") else f"{ledger_path.stem}-"
+    return ledger_path.with_name(f"{prefix}cycles.jsonl")
+
+
+def _read_cycles(path: Path) -> list[object]:
+    """Read one JSON value per line from a cycle log; an absent log has no recorded cycle."""
+    if not path.is_file():
+        return []
+    cycles: list[object] = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            raise ValueError(f"cycles-line-blank:{number}")
+        try:
+            cycles.append(json.loads(line))
+        except json.JSONDecodeError as error:
+            raise ValueError(f"cycles-line-invalid-json:{number}") from error
+    return cycles
+
+
+def load_ledger(path: Path) -> dict[str, Any]:
+    """Assemble the ledger object that validation checks from its on-disk files.
+
+    A schema-3 header gains the ``cycles`` list read from its sibling cycle log; a header that also carries inline
+    cycles is rejected, because two copies of history could disagree. Any other JSON object, including a historical
+    schema-2 file with inline cycles, is returned unchanged for validation to accept or reject.
+
+    Raises:
+        OSError: When the header or cycle log cannot be read.
+        ValueError: When either file is not valid JSON, the header is not an object, or it duplicates its cycle log.
+    """
+    payload = json.loads(path.read_bytes())
+    if not isinstance(payload, dict):
+        raise ValueError("ledger-object-required")
+    if payload.get("schema_version") != SCHEMA_VERSION:
+        return payload
+    if "cycles" in payload:
+        raise ValueError("ledger-header-inline-cycles-forbidden")
+    return {**payload, "cycles": _read_cycles(cycles_path(path))}
+
+
+def append_cycle(ledger_path: Path) -> None:
+    """Append the staged cycle record to the ledger's cycle log after validating the extended cycle sequence.
+
+    Only the cycle sequence is checked here, so an observed stall can always be recorded; escalation state is checked
+    by the following full validation, which then requires the owner to escalate before another cycle.
+
+    Raises:
+        ValueError: With a stable reason when the staged record or the extended sequence is invalid.
+    """
+    log = cycles_path(ledger_path)
+    staged = log.with_name(f"{log.name}.rec")
+    try:
+        record = json.loads(staged.read_bytes())
+    except OSError as error:
+        raise ValueError(f"append-record-missing:{staged.name}") from error
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("append-record-invalid-json") from error
+    if not isinstance(record, dict):
+        raise ValueError("append-record-object-required")
+    ledger = load_ledger(ledger_path)
+    if ledger.get("schema_version") != SCHEMA_VERSION:
+        raise ValueError("append-requires-current-schema")
+    _validate_cycles([*ledger["cycles"], record])
+    with log.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
+    staged.unlink()
 
 
 def _validate_cycles(value: object) -> list[dict[str, Any]]:
@@ -129,9 +222,15 @@ def _validate_handoff(value: object) -> None:
         raise ValueError("human-handoff-alternatives-invalid")
 
 
-def validate_ledger(ledger: dict[str, Any]) -> None:
-    """Validate bounded retries, counting observed primary attempts independently of progress."""
-    if ledger.get("schema_version") != SCHEMA_VERSION:
+def validate_ledger(ledger: dict[str, Any], *, historical: bool = False) -> None:
+    """Validate bounded retries, counting observed primary attempts independently of progress.
+
+    Args:
+        ledger: Assembled ledger object, as returned by ``load_ledger``.
+        historical: Accept a schema-2 archive with inline cycles instead of a current schema-3 ledger.
+    """
+    expected_version = HISTORICAL_SCHEMA_VERSION if historical else SCHEMA_VERSION
+    if ledger.get("schema_version") != expected_version:
         raise ValueError("unsupported-schema-version")
     _require_text(ledger.get("primary_goal"), "primary-goal")
     _require_text(ledger.get("workstream_id"), "workstream-id")
@@ -203,18 +302,19 @@ def validate_ledger(ledger: dict[str, Any]) -> None:
 def main() -> int:
     """Run the escalation-ledger validator as a portable helper CLI."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ledger", required=True, type=Path, help="Escalation ledger JSON path.")
+    parser.add_argument("--ledger", required=True, type=Path, help="Escalation ledger header JSON path.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--append", action="store_true", help="First append the staged cycle from <cycle log>.rec.")
+    mode.add_argument("--historical", action="store_true", help="Validate a schema-2 archive with inline cycles.")
     args = parser.parse_args()
     try:
-        with args.ledger.open(encoding="utf-8") as handle:
-            payload = json.load(handle)
-        if not isinstance(payload, dict):
-            raise ValueError("ledger-object-required")
-        validate_ledger(payload)
-    except (OSError, json.JSONDecodeError, ValueError) as error:
+        if args.append:
+            append_cycle(args.ledger)
+        validate_ledger(load_ledger(args.ledger), historical=args.historical)
+    except (OSError, ValueError) as error:
         print(f"escalation-ledger-invalid:{error}")
         return 2
-    print("escalation-ledger-valid")
+    print("escalation-ledger-historical-valid" if args.historical else "escalation-ledger-valid")
     return 0
 
 

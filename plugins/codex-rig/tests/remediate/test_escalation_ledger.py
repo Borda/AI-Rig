@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
+import sys
 from copy import deepcopy
 from pathlib import Path
 from types import ModuleType
@@ -51,7 +54,7 @@ def _ledger(*cycles: dict[str, Any]) -> dict[str, Any]:
         'open'
     """
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "primary_goal": "Fix the observed runtime defect.",
         "workstream_id": "fixture-workstream",
         "closure_condition": {"id": "acceptance-check", "status": "open"},
@@ -143,14 +146,143 @@ def test_current_progress_ledger_requires_primary_goal() -> None:
         module.validate_ledger(active)
 
 
-def test_old_schema_cannot_bypass_primary_progress_contract() -> None:
+@pytest.mark.parametrize("version", [1, 2])
+def test_old_schema_cannot_bypass_primary_progress_contract(version: int) -> None:
     """Require active owners to upgrade old ledgers rather than weaken current stall checks."""
     module = _load_ledger_module()
     active = _ledger(_cycle(1, True))
-    active["schema_version"] = 1
+    active["schema_version"] = version
 
     with pytest.raises(ValueError, match="unsupported-schema-version"):
         module.validate_ledger(active)
+
+
+def test_historical_inline_ledger_is_read_as_an_archive_under_current_rules() -> None:
+    """Validate a schema-2 archive with inline cycles only when explicitly read as history.
+
+    The archive still meets every stall rule, so a stalled historical ledger stays invalid and a historical read never
+    relaxes the contract; it only accepts the old single-file shape.
+    """
+    module = _load_ledger_module()
+    archive = _ledger(_cycle(1, True)) | {"schema_version": 2}
+    stalled = _ledger(_cycle(1, False), _cycle(2, False)) | {"schema_version": 2}
+
+    module.validate_ledger(archive, historical=True)
+    with pytest.raises(ValueError, match="escalation-required-after-stall-trigger"):
+        module.validate_ledger(stalled, historical=True)
+    with pytest.raises(ValueError, match="unsupported-schema-version"):
+        module.validate_ledger(_ledger(_cycle(1, True)), historical=True)
+
+
+def _run_cli(ledger_path: Path, *flags: str) -> subprocess.CompletedProcess[str]:
+    """Run the standalone escalation-ledger CLI as a lifecycle owner does."""
+    command = [sys.executable, str(LEDGER_PATH), "--ledger", str(ledger_path), *flags]
+    return subprocess.run(command, capture_output=True, text=True, check=False)
+
+
+def _stage(run: Path, cycle: dict[str, Any]) -> None:
+    """Stage one work cycle beside the header with the file tool."""
+    (run / "reasoning-cycles.jsonl.rec").write_text(json.dumps(cycle, indent=2), encoding="utf-8")
+
+
+def _write_header(path: Path) -> None:
+    """Write a current schema-3 header holding every field except the appended cycles."""
+    header = {key: value for key, value in _ledger().items() if key != "cycles"}
+    path.write_text(json.dumps(header), encoding="utf-8", newline="\n")
+
+
+def test_append_records_cycles_without_rewriting_earlier_lines(tmp_path: Path) -> None:
+    """Grow the cycle log one staged cycle at a time and validate the assembled ledger.
+
+    The second cycle stalls the workstream: it is still appended as an observed fact, the CLI then fails until the
+    header records the escalation, and the first cycle's line stays byte-identical throughout.
+    """
+    module = _load_ledger_module()
+    ledger_path = tmp_path / "reasoning-progress.json"
+    _write_header(ledger_path)
+    _stage(tmp_path, _cycle(1, False))
+    first = _run_cli(ledger_path, "--append")
+    first_line = (tmp_path / "reasoning-cycles.jsonl").read_bytes()
+    _stage(tmp_path, _cycle(2, False))
+    stalled = _run_cli(ledger_path, "--append")
+    header = json.loads(ledger_path.read_text(encoding="utf-8")) | {"outcome": "advisory", "advisory": _advisory()}
+    ledger_path.write_text(json.dumps(header), encoding="utf-8", newline="\n")
+    escalated = _run_cli(ledger_path)
+
+    log = (tmp_path / "reasoning-cycles.jsonl").read_bytes()
+    assert (first.returncode, first.stdout.strip()) == (0, "escalation-ledger-valid")
+    assert (stalled.returncode, stalled.stdout.strip()) == (
+        2,
+        "escalation-ledger-invalid:escalation-required-after-stall-trigger",
+    )
+    assert (escalated.returncode, escalated.stdout.strip()) == (0, "escalation-ledger-valid")
+    assert log.startswith(first_line) and len(log.splitlines()) == 2
+    assert not (tmp_path / "reasoning-cycles.jsonl.rec").exists()
+    assert module.load_ledger(ledger_path)["cycles"] == [_cycle(1, False), _cycle(2, False)]
+
+
+@pytest.mark.parametrize(
+    "staged, error",
+    [
+        pytest.param(_cycle(3, True), "cycle-index-must-be-contiguous", id="skipped-index"),
+        pytest.param({**_cycle(2, True), "evidence": []}, "material-progress-evidence-required", id="unproven"),
+    ],
+)
+def test_append_refuses_invalid_cycle_and_keeps_staged_record(
+    tmp_path: Path, staged: dict[str, Any], error: str
+) -> None:
+    """Reject a staged cycle that breaks the sequence or cycle rules, appending nothing."""
+    ledger_path = tmp_path / "reasoning-progress.json"
+    _write_header(ledger_path)
+    _stage(tmp_path, _cycle(1, True))
+    assert _run_cli(ledger_path, "--append").returncode == 0
+    before = (tmp_path / "reasoning-cycles.jsonl").read_bytes()
+    _stage(tmp_path, staged)
+
+    rejected = _run_cli(ledger_path, "--append")
+
+    assert (rejected.returncode, rejected.stdout.strip()) == (2, f"escalation-ledger-invalid:{error}")
+    assert (tmp_path / "reasoning-cycles.jsonl").read_bytes() == before
+    assert (tmp_path / "reasoning-cycles.jsonl.rec").is_file()
+
+
+@pytest.mark.parametrize(
+    "payload, flags, expected",
+    [
+        pytest.param(
+            _ledger(_cycle(1, True)), (), "escalation-ledger-invalid:ledger-header-inline-cycles-forbidden", id="dup"
+        ),
+        pytest.param(
+            _ledger(_cycle(1, True)) | {"schema_version": 2},
+            (),
+            "escalation-ledger-invalid:unsupported-schema-version",
+            id="historical-as-active",
+        ),
+        pytest.param(
+            _ledger(_cycle(1, True)) | {"schema_version": 2},
+            ("--historical",),
+            "escalation-ledger-historical-valid",
+            id="historical-archive",
+        ),
+        pytest.param(
+            _ledger(_cycle(1, True)) | {"schema_version": 2},
+            ("--append",),
+            "escalation-ledger-invalid:append-requires-current-schema",
+            id="historical-append",
+        ),
+    ],
+)
+def test_cli_reads_only_the_declared_ledger_shape(
+    tmp_path: Path, payload: dict[str, Any], flags: tuple[str, ...], expected: str
+) -> None:
+    """Keep one ledger shape per schema: inline cycles are an archive, never a current or growing ledger."""
+    ledger_path = tmp_path / "reasoning-progress.json"
+    ledger_path.write_text(json.dumps(payload), encoding="utf-8", newline="\n")
+    _stage(tmp_path, _cycle(2, True))
+
+    result = _run_cli(ledger_path, *flags)
+
+    assert result.stdout.strip() == expected
 
 
 def test_user_directed_progress_does_not_count_as_evidence_free() -> None:

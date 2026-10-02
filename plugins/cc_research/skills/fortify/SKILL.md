@@ -210,7 +210,7 @@ Gather two inputs for scientist:
 1. **Git diff**: run `git diff <baseline_commit>...<best_commit> --stat` (summary) and full `git diff <baseline_commit>...<best_commit>`. If full diff exceeds ~200 lines, write to `$FORTIFY_DIR/diff.txt` via Write tool; otherwise inline in prompt.
 2. **Experiment history**: paths to `experiments.jsonl` and `diary.md` from source run directory.
 
-> **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
+> **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing — work-displacement only; an isolation-motivated spawn (adversarial reviewer, distinct specialist role, model tier, worktree) runs regardless of size. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
 Spawn `research:scientist` via `Agent(subagent_type="research:scientist", prompt="...")` with the post-hoc timeout of the Spawn note below (15-min deadline; `agent-resolution.md` §Agent waits — no polling).
 
@@ -388,7 +388,7 @@ git revert $(cat "${TMPDIR:-/tmp}/fortify-revert-sorted-${CLAUDE_CODE_SESSION_ID
 
 `FORTIFY_SKIP_VARIANT=1` printed by the block above → the worktree exists and must still be removed: jump to 4f (cleanup), skipping 4d/4e. The block already wrote this variant's `results.jsonl` line, so 4g has nothing to add — but still run 4g-advance, or the loop re-runs this variant forever.
 
-If revert produces merge conflicts: append `{"variant":"<name>","status":"revert-conflict",...}` to `results.jsonl`, jump to 4f (cleanup), then 4g-advance.
+If revert produces merge conflicts: Write `{"variant":"<name>","status":"revert-conflict",...}` to `$FORTIFY_DIR/results.jsonl.rec` with the Write tool and run 4g's append block, then jump to 4f (cleanup), then 4g-advance.
 
 **4d. Run metric_cmd in worktree:**
 
@@ -430,15 +430,22 @@ git worktree remove --force "$(cat "${TMPDIR:-/tmp}/fortify-dir-${CLAUDE_CODE_SE
 
 > **These two stay separate, and the cursor advance stays out of both — deliberate.** Chaining `git worktree remove --force` behind the `cd` puts navigation and a command in one call (`claude-config.md` §Directory Navigation Commands) and lets a `cd` allow-rule carry a force-remove. Advancing the cursor here would move it *before* 4g writes the result: an interrupt in that window leaves a variant with an advanced cursor and no `results.jsonl` line, so the resume guard has nothing to match on and 4a-init skips the ablation entirely — a silently dropped variant, which is worse than the re-run that the un-advanced cursor produces today.
 
-**4g. Record result** — append one JSON line to `$FORTIFY_DIR/results.jsonl`:
+**4g. Record result** — stage one JSON line for `$FORTIFY_DIR/results.jsonl`: Write it alone to `$FORTIFY_DIR/results.jsonl.rec` with the Write tool, then run the fixed append block below. The line carries model-decided values (metric, guard, status), so an `echo`/`printf` with those values inline would differ every variant and never match a blueprint digest; staging the values in `.rec` keeps the bash text fixed, and `append_ledger.py` (allowed via `python`) appends it without rewriting earlier lines:
 
 ```json
-{"variant":"<name>","component_removed":"<name or null>","metric":0.0,"delta_from_full":0.0,"delta_pct":0.0,"guard":"pass|fail","status":"completed|revert-conflict|metric-failed|timeout","timestamp":"<ISO>"}
+{"variant":"<name>","component_removed":"<name or null>","metric":0.0,"guard":"pass|fail","status":"completed|revert-conflict|metric-failed|timeout","timestamp":"<ISO>"}
 ```
 
-`delta_from_full` and `delta_pct` are placeholders — computed in post-loop step below. Written with the Write/Edit tool, not a Bash block: the line carries model-decided values (metric, guard, status), so its text differs every iteration and would never match a blueprint digest — a bash append would prompt on every variant.
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _FDIR < "${TMPDIR:-/tmp}/fortify-dir-${CSID}" 2>/dev/null || _FDIR=""
+[ -n "$_FDIR" ] || { echo "! fortify: BLOCKED — FORTIFY_DIR sentinel missing; results.jsonl.rec left in place"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/append_ledger.py" "$_FDIR/results.jsonl"  # timeout: 5000
+```
 
-**4g-advance. Move the cursor to the next variant** — runs only after 4g's line is on disk, so cursor and record advance together:
+Deltas are not part of this record — the post-loop step writes them to the `results-deltas.jsonl` sidecar once the `full` baseline is known.
+
+**4g-advance. Move the cursor to the next variant** — runs only after 4g's append block put the line in `results.jsonl`, so cursor and record advance together:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -480,7 +487,7 @@ IFS= read -r _RUN_ID < "${TMPDIR:-/tmp}/fortify-run-id-${CSID}" 2>/dev/null || _
 IFS= read -r _FORTIFY_DIR < "${TMPDIR:-/tmp}/fortify-dir-${CSID}" 2>/dev/null || _FORTIFY_DIR=""
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/fortify-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _KEEP_APPEND=""; [ -n "$_KEEP" ] && _KEEP_APPEND="; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:fortify" "post-ablation (after F4 worktrees complete)" "${_FORTIFY_DIR}" "run-id=${_RUN_ID}, fortify-dir=${_FORTIFY_DIR}, results=${_FORTIFY_DIR}/results.jsonl${_KEEP_APPEND}" "F5 rank importance → F6 reviewer Q&A → F7 report"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:fortify" "post-ablation (after F4 worktrees complete)" "${_FORTIFY_DIR}" "run-id=${_RUN_ID}, fortify-dir=${_FORTIFY_DIR}, results=${_FORTIFY_DIR}/results.jsonl, deltas=${_FORTIFY_DIR}/results-deltas.jsonl (post-loop)${_KEEP_APPEND}" "F5 rank importance → F6 reviewer Q&A → F7 report"  # timeout: 5000
 ```
 
 > `--managed-prefix '*'` is safe **only** because `--root` is fortify's own variant directory — every child there is fortify's. Never widen it to a shared root. Variants holding uncommitted work are reported, not deleted. `--apply` is unattended here for parity with the `git worktree remove --force` above (same trees, same run) — but print the output verbatim whenever it removed anything, so the sweep is never silent.
@@ -500,7 +507,7 @@ If the guard passes: read `results.jsonl`, find `full` variant metric. For each 
 - `delta_from_full = ablated_metric - full_metric`
 - `delta_pct = (delta_from_full / abs(full_metric)) * 100` (signed — negative means removing component hurt). If `full_metric == 0`: set `delta_pct = 0` (avoid division by zero).
 
-Update `results.jsonl` with computed deltas via Write tool (rewrite full file).
+Write the computed deltas to the sidecar `$FORTIFY_DIR/results-deltas.jsonl` with the Write tool — one line per completed `no-<component>` variant, `{"variant":"<name>","metric":0.0,"full_metric":0.0,"delta_from_full":0.0,"delta_pct":0.0}`. This is a one-shot derived file; `results.jsonl` is never rewritten, so every per-variant record stays exactly as 4g appended it.
 
 ## Step F5: Rank component importance
 
@@ -571,6 +578,7 @@ F6_PROMPT="Act as a peer reviewer for ${VENUE}.
 
 Read:
 - ablation results at ${FORTIFY_DIR}/results.jsonl
+- per-variant deltas from the full baseline at ${FORTIFY_DIR}/results-deltas.jsonl
 - importance ranking at ${FORTIFY_DIR}/importance-ranking.json
 - original program.md at ${PROGRAM_FILE}
 
@@ -648,6 +656,8 @@ Components that either:
 (Omit section entirely if no harmful or borderline components found.)
 
 ### Ablation Matrix
+
+Metric, Guard, Status from `results.jsonl`; Delta from Full = `delta_pct` from `results-deltas.jsonl` (`n/a` for variants absent there).
 
 | Variant       | Metric | Guard | Status           | Delta from Full |
 |---------------|--------|-------|------------------|-----------------|

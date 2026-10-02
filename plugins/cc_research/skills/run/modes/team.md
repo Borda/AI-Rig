@@ -176,7 +176,7 @@ For each hypothesis in `<RUN_DIR>/team-queue.jsonl` (sorted order, 1-indexed as 
 
 3. **Run R5 Phases 3–7a identically** (verify changed files → commit → run metric → run guard → keep/rework/rollback → write diary entry). Phase 8 writes to `experiments.jsonl` and `state.json` as in standard mode; Phase 9 progress checks apply as in standard mode (stuck detection, diminishing returns, context compaction). Phase C does not duplicate this logic — uses same per-phase steps with hypothesis-driven ideation output from step 2.
 
-4. **Log outcome** to `<RUN_DIR>/team-results.jsonl` (append, one line per hypothesis):
+4. **Log outcome** to `<RUN_DIR>/team-results.jsonl` — one line per hypothesis, never a rewrite of the file: Write the single line below to `<RUN_DIR>/team-results.jsonl.rec` with the Write tool, then run the append block after it:
 
    ```json
    {
@@ -192,6 +192,14 @@ For each hypothesis in `<RUN_DIR>/team-queue.jsonl` (sorted order, 1-indexed as 
      "commit": "<sha or null>",
      "timestamp": "<ISO>"
    }
+   ```
+
+   ```bash
+   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   IFS= read -r _RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || _RUN_ID=""
+   _TEAM_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/read_state_field.py" ".experiments/state/$_RUN_ID/state.json" team_mode.run_dir 2>/dev/null)
+   [ -n "$_TEAM_DIR" ] || { echo "! BLOCKED — team_mode.run_dir missing from state.json; team-results.jsonl.rec left in place"; exit 1; }
+   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/append_ledger.py" "$_TEAM_DIR/team-results.jsonl"  # timeout: 5000
    ```
 
 5. **If kept**: update running current metric value for next hypothesis. Each subsequent hypothesis sees cumulative state of all prior kept changes.

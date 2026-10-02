@@ -9,14 +9,26 @@ rather than trusting a supplied total.
 
 ## Scope
 
-Validate one JSON ledger with at most three independent review rounds. It checks record shape and consistency, but does
-not establish that a named reviewer, revision, digest, or report really exists; those fields are traceability evidence
-for an external owner to inspect.
+Validate one ledger with at most three independent review rounds. It checks record shape and consistency, but does not
+establish that a named reviewer, revision, digest, or report really exists; those fields are traceability evidence for
+an external owner to inspect.
+
+The current schema 2 splits the ledger in two files so completed rounds are only ever appended. ``loop-ledger.json`` is
+a small header (``schema_version``, ``implementation_author``, ``current_snapshot``) that the owner rewrites as the
+current snapshot moves. The sibling ``loop-rounds.jsonl`` holds one round object per line in index order. A header
+named ``<prefix>ledger.json`` pairs with ``<prefix>rounds.jsonl``, so a copied ``prior-loop-ledger.json`` keeps its own
+round log. An absent round log means no completed round. Historical schema 1 kept every round inline in one rewritten
+JSON file; those archives stay readable through the same loader, but a current result requires schema 2.
 
 ## Usage
 
-Run ``python shared/adversarial_loop.py --ledger path/to/ledger.json``. Import ``validate_ledger`` for a list of stable
-validation errors, or ``summarize_ledger`` for the inferred status, reason, and open-finding scores.
+Run ``python shared/adversarial_loop.py --ledger path/to/loop-ledger.json``. Import ``load_ledger`` to assemble the
+header and round log into the object ``validate_ledger`` checks, ``summarize_ledger`` for the inferred status, reason,
+and open-finding scores, and ``ledger_digest`` for the identity a continuation records for a ledger on disk.
+
+Record each completed round by writing it as one JSON object to ``loop-rounds.jsonl.rec`` beside the header, then
+running the CLI with ``--append``: the staged round is validated against the earlier rounds, appended as one line, and
+the staged file is deleted. Earlier rounds are never re-emitted, so a dropped or reworded round cannot slip in.
 
 Use ``--require-clean`` when an acceptance gate must reject every valid non-clean outcome. Add ``--progress`` after each
 completed round to print its cumulative severity table on stderr, leaving machine-readable stdout unchanged. Add
@@ -24,11 +36,13 @@ completed round to print its cumulative severity table on stderr, leaving machin
 
 ## Outputs
 
-The read-only CLI prints one JSON object. A valid ledger yields its deterministic summary and exit status zero; an
-invalid ledger yields ``status=invalid``, error names, and exit status one. ``--require-clean`` preserves the valid JSON
-summary but exits one unless its reason is ``clean``. Optional progress cells split old and new open findings, grouping
-security with critical for display while retaining their distinct weights; no table is printed before a completed round.
-Action validation checks record consistency, not whether a claimed fix or cause is true. No input files are modified.
+The CLI prints one JSON object. A valid ledger yields its deterministic summary and exit status zero; an invalid ledger
+yields ``status=invalid``, error names, and exit status one. ``--require-clean`` preserves the valid JSON summary but
+exits one unless its reason is ``clean``. Optional progress cells split old and new open findings, grouping security
+with critical for display while retaining their distinct weights; no table is printed before a completed round. Action
+validation checks record consistency, not whether a claimed fix or cause is true. Only ``--append`` modifies files: it
+adds one line to the round log and removes the staged record; a rejected record is kept for inspection and nothing is
+appended.
 
 ## Failure
 
@@ -46,6 +60,7 @@ separately scoped review run. It deliberately contains no resume override, dispa
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -53,7 +68,9 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+#: Historical single-file schema with every round inline; readable archives, never a current result.
+HISTORICAL_SCHEMA_VERSION = 1
 MAX_ROUNDS = 3
 _DISPOSITIONS = {"open", "fixed-pending-verification", "verified-fixed", "rejected"}
 _TIERS = {"security": 20, "critical": 10, "high": 6, "medium": 4, "low": 2, "nit": 1}
@@ -75,6 +92,105 @@ _FIX_EVIDENCE_PREFIXES = ("invariant:", "original:", "consumer:", "sibling:", "s
 def _text(value: object) -> bool:
     """Return whether a value is a non-empty text field."""
     return isinstance(value, str) and bool(value.strip())
+
+
+def rounds_path(ledger_path: Path) -> Path:
+    """Return the append-only round log that belongs to one ledger header.
+
+    Examples:
+        >>> rounds_path(Path("run") / "loop-ledger.json").name
+        'loop-rounds.jsonl'
+        >>> rounds_path(Path("prior-loop-ledger.json")).name
+        'prior-loop-rounds.jsonl'
+    """
+    name = ledger_path.name
+    prefix = name[: -len("ledger.json")] if name.endswith("ledger.json") else f"{ledger_path.stem}-"
+    return ledger_path.with_name(f"{prefix}rounds.jsonl")
+
+
+def _read_rounds(path: Path) -> list[object]:
+    """Read one JSON value per line from a round log; an absent log has no completed round."""
+    if not path.is_file():
+        return []
+    rounds: list[object] = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            raise ValueError(f"rounds-line-blank:{number}")
+        try:
+            rounds.append(json.loads(line))
+        except json.JSONDecodeError as error:
+            raise ValueError(f"rounds-line-invalid-json:{number}") from error
+    return rounds
+
+
+def load_ledger(path: Path) -> object:
+    """Assemble the ledger object that validation checks from its on-disk files.
+
+    A schema-2 header gains the ``rounds`` list read from its sibling round log; a header that also carries inline
+    rounds is rejected, because two copies of history could disagree. Any other JSON value, including a historical
+    schema-1 file with inline rounds, is returned unchanged for validation to accept or reject.
+
+    Raises:
+        OSError: When the header or round log cannot be read.
+        ValueError: When either file is not valid JSON or the header duplicates its round log.
+    """
+    payload = json.loads(path.read_bytes())
+    if not isinstance(payload, dict) or payload.get("schema_version") != SCHEMA_VERSION:
+        return payload
+    if "rounds" in payload:
+        raise ValueError("ledger-header-inline-rounds-forbidden")
+    return {**payload, "rounds": _read_rounds(rounds_path(path))}
+
+
+def ledger_digest(path: Path) -> str:
+    """Return the identity digest a continuation records for one ledger on disk.
+
+    A historical single-file ledger keeps the digest of its exact bytes, so archived continuation records still verify.
+    A schema-2 ledger digests the length-framed header bytes followed by its round-log bytes, so any change to either
+    file, including whitespace, changes the identity. An absent round log contributes no bytes.
+    """
+    header = path.read_bytes()
+    try:
+        payload = json.loads(header)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        payload = None
+    if not isinstance(payload, dict) or payload.get("schema_version") != SCHEMA_VERSION:
+        return hashlib.sha256(header).hexdigest()
+    log = rounds_path(path)
+    log_bytes = log.read_bytes() if log.is_file() else b""
+    return hashlib.sha256(len(header).to_bytes(8, "big") + header + log_bytes).hexdigest()
+
+
+def append_round(ledger_path: Path) -> list[str]:
+    """Append the staged round record to the ledger's round log after validating the extended ledger.
+
+    The owner writes one round object to ``<round log>.rec``; this action re-serializes it as one line, appends it, and
+    deletes the staged file. Validation covers the whole extended ledger, so a non-contiguous index, a dropped earlier
+    signature, or a round after a terminal stop is refused and nothing is appended.
+    """
+    log = rounds_path(ledger_path)
+    staged = log.with_name(f"{log.name}.rec")
+    try:
+        record = json.loads(staged.read_bytes())
+    except OSError:
+        return [f"append-record-missing:{staged.name}"]
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return ["append-record-invalid-json"]
+    if not isinstance(record, dict):
+        return ["append-record-object-required"]
+    try:
+        ledger = load_ledger(ledger_path)
+    except (OSError, ValueError) as error:
+        return [f"ledger-read-failed:{error}"]
+    if not isinstance(ledger, dict) or ledger.get("schema_version") != SCHEMA_VERSION:
+        return ["append-requires-current-schema"]
+    errors = validate_ledger({**ledger, "rounds": [*ledger["rounds"], record]})
+    if errors:
+        return errors
+    with log.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
+    staged.unlink()
+    return []
 
 
 def _exact_keys(value: object, expected: set[str], name: str, errors: list[str]) -> dict[str, Any] | None:
@@ -189,7 +305,11 @@ def validate_ledger(payload: object) -> list[str]:
     if root is None:
         return errors
     version = root.get("schema_version")
-    if not isinstance(version, int) or isinstance(version, bool) or version != SCHEMA_VERSION:
+    if (
+        not isinstance(version, int)
+        or isinstance(version, bool)
+        or version not in {SCHEMA_VERSION, HISTORICAL_SCHEMA_VERSION}
+    ):
         errors.append("unsupported-schema-version")
     if not _text(root.get("implementation_author")):
         errors.append("implementation-author-required")
@@ -409,15 +529,27 @@ def _render_progress(payload: dict[str, Any], completed_rounds: int) -> str:
 def main() -> int:
     """Emit JSON validation and optionally a cumulative human-readable progress table."""
     parser = argparse.ArgumentParser(description="Validate an adversarial-review convergence ledger.")
-    parser.add_argument("--ledger", required=True, type=Path, help="Ledger JSON path.")
+    parser.add_argument("--ledger", required=True, type=Path, help="Ledger header JSON path; rounds sit beside it.")
     parser.add_argument("--require-clean", action="store_true", help="Exit nonzero unless the valid summary is clean.")
     parser.add_argument("--progress", action="store_true", help="Repeat the cumulative progress table on stderr.")
     parser.add_argument("--actions", type=Path, help="Validate per-finding parent actions against the ledger.")
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="First append the staged round from <round log>.rec, refusing it unless the extended ledger is valid.",
+    )
     args = parser.parse_args()
+    if args.append:
+        append_errors = append_round(args.ledger)
+        if append_errors:
+            print(
+                json.dumps({"status": "invalid", "reason": "append-rejected", "errors": append_errors}, sort_keys=True),
+                file=sys.stderr,
+            )
+            return 1
     try:
-        with args.ledger.open(encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (OSError, json.JSONDecodeError) as error:
+        payload = load_ledger(args.ledger)
+    except (OSError, ValueError) as error:
         print(
             json.dumps({"status": "invalid", "reason": "ledger-read-failed", "errors": [str(error)]}, sort_keys=True),
             file=sys.stderr,

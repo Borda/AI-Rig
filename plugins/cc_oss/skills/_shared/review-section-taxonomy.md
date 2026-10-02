@@ -38,7 +38,7 @@ All severities:
 
 ## LOW Grouping Rule
 
-Never omit LOW items **present in the report** — this rule binds the resolve parser (extraction + AskUserQuestion clustering), not what the review consolidator chooses to write. Report-side pruning governed by review/checklist.md §Consolidation Rules. When total pending items > 18 (AskUserQuestion checkbox ceiling: 2 calls × 3 item questions × 3 items — the 4th slot of every call is the mandatory bulk page, never items), cluster LOW items into composite `[suggest]` rows by **topic or logical theme**. Cluster by semantic similarity, not by section or file. Each composite row:
+Never omit LOW items **present in the report** — this rule binds the resolve parser (extraction + AskUserQuestion clustering), not what the review consolidator chooses to write. Report-side pruning governed by review/checklist.md §Consolidation Rules. When total pending items > 18 (AskUserQuestion checkbox ceiling: 2 calls × 3 item questions × 3 items — the 4th slot of every call is the mandatory bulk page, never items), cluster LOW items into composite `[suggest]` display rows by **topic or logical theme** (display only — `action-items.jsonl` keeps one item per finding so each keeps its stable `finding_id`). Cluster by semantic similarity, not by section or file. Each composite row:
 
 - `summary`: cluster theme (≤55 chars)
 - `change`: bullet list of every member finding with `file:line`

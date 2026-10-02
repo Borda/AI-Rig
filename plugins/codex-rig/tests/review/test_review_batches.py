@@ -13,6 +13,222 @@ import pytest
 import test_review_prepare as preparation
 
 
+def test_batch_response_declares_scalar_closure_evidence() -> None:
+    """Prevent the dispatch prompt from inviting array-valued closure obligations."""
+    helpers = preparation.runpy.run_path(str(preparation.SKILL / "review_batches.py"))
+    instruction = helpers["BATCH_FINDINGS_INSTRUCTION"].decode()
+    assert "closure_evidence (one nonempty string, never an array)" in instruction
+
+
+@pytest.mark.parametrize("mutation", ["none", "claim", "severity", "evidence", "second-repair"])
+def test_same_wave_schema_repair_preserves_original_claims(tmp_path: Path, mutation: str) -> None:
+    """Accept one independently observed shape correction and reject substantive substitutions."""
+    run = _batch_inputs(tmp_path)
+    assert _batch_command(run, "prepare").returncode == 0
+    wave = run / "batches/source-001"
+    record = _batch_finding("A", "medium", "Preserve every original obligation.")
+    record["closure_evidence"] = ["Check the first invariant.", "Check the second invariant."]
+    original = _batch_output([record], 3)
+    _, home, children = preparation._assembly_evidence(
+        tmp_path, prepared_run=wave, findings={"challenger": original}, blocking_counts={"challenger": 1}
+    )
+    initial = _batch_command(wave, "assemble-wave", home)
+    assert initial.returncode != 0
+    assert "review-batch-individual-findings-record:challenger" in initial.stderr
+    command = [
+        sys.executable,
+        str(preparation.HELPER),
+        "prepare-repair",
+        "--out",
+        str(wave),
+        "--codex-home",
+        str(home),
+        "--role",
+        "challenger",
+        "--kind",
+        "closure-evidence-shape",
+    ]
+    repaired = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert repaired.returncode == 0, repaired.stderr
+    arguments = json.loads(repaired.stdout)["arguments"]
+    expected = arguments["message"].split("Return exactly this validated correction:\n", 1)[1]
+    corrected = json.loads(json.dumps(record))
+    corrected["closure_evidence"] = "Check the first invariant.\nCheck the second invariant."
+    assert expected == _batch_output([corrected], 3)
+    if mutation == "claim":
+        expected = expected.replace("Preserve every original obligation.", "No obligation remains.")
+    elif mutation == "severity":
+        expected = expected.replace('"medium"', '"low"')
+    elif mutation == "evidence":
+        expected = expected.replace('"start_line": 1', '"start_line": 2')
+    rows = [json.loads(line) for line in children["challenger"].read_text().splitlines()]
+    session = rows[0]["payload"]
+    old_path = session["agent_path"]
+    new_path = old_path.removesuffix("_a1") + "_a2"
+    old_thread = session["id"]
+    new_thread = "repair-thread"
+    rows = json.loads(json.dumps(rows).replace(old_path, new_path).replace(old_thread, new_thread))
+    rows = [row for row in rows if row["type"] != "response_item"]
+    rows.insert(
+        2,
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "agent_message",
+                "content": [{"type": "encrypted_content", "encrypted_content": arguments["message"]}],
+            },
+        },
+    )
+    rows[0]["payload"]["timestamp"] = "2026-01-01T10:01:00.050Z"
+    terminal = rows[-1]["payload"]
+    terminal.update(started_at=1767261660.2, completed_at=1767261661.0, last_agent_message=expected)
+    preparation._write_jsonl(home / f"sessions/rollout-{new_thread}.jsonl", rows)
+    parent_path = home / "sessions/rollout-parent.jsonl"
+    parent = [json.loads(line) for line in parent_path.read_text().splitlines()]
+    parent.extend(
+        [
+            {
+                "timestamp": "2026-01-01T10:01:00.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "spawn_agent",
+                    "call_id": "spawn-repair",
+                    "arguments": json.dumps(arguments),
+                },
+            },
+            {
+                "timestamp": "2026-01-01T10:01:00.100Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "spawn-repair",
+                    "output": json.dumps({"task_name": new_path}),
+                },
+            },
+            {
+                "timestamp": "2026-01-01T10:01:01.100Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "agent_message",
+                    "author": new_path,
+                    "content": [{"type": "input_text", "text": f"Message Type: FINAL_ANSWER\nPayload:\n{expected}"}],
+                },
+            },
+        ]
+    )
+    preparation._write_jsonl(parent_path, parent)
+    if mutation == "second-repair":
+        duplicate = home / f"sessions/rollout-duplicate-{new_thread}.jsonl"
+        preparation._write_jsonl(duplicate, rows)
+    assembled = _batch_command(wave, "assemble-wave", home)
+    if mutation != "none":
+        assert assembled.returncode != 0, assembled.stdout
+        diagnostic = (
+            "review-child-session-not-unique"
+            if mutation == "second-repair"
+            else "review-batch-individual-findings-evidence"
+            if mutation == "evidence"
+            else "review-repair-claims-changed"
+        )
+        assert diagnostic in assembled.stderr
+        return
+    assert assembled.returncode == 0, assembled.stderr
+    manifest = json.loads((wave / "specialist-manifest.json").read_text())
+    item = next(item for item in manifest["passes"] if item["role"] == "challenger")
+    assert manifest["schema_version"] == 8
+    assert item["selected_attempt"] == 2
+    assert len(item["attempts"]) == 2
+    assert (wave / item["attempts"][0]["raw_output_path"]).read_text() == original
+    assert item["reviewer_findings"][0]["summary"] == record["summary"]
+    assert item["reviewer_findings"][0]["closure_evidence"] == corrected["closure_evidence"]
+    assert json.loads((wave / "inspection-summary.json").read_text())["actual_mode"] == "parallel"
+    historical = {**manifest, "schema_version": 7}
+    validator = preparation.runpy.run_path(str(preparation.SKILL / "validate_artifacts.py"))
+    with pytest.raises(SystemExit, match="manifest-invalid-internal-recovery:challenger"):
+        validator["_validate_manifest_entries"](
+            wave, historical, manifest["passes"], {"challenger", "qa-specialist"}, home, "parent", tmp_path
+        )
+
+
+@pytest.mark.parametrize(
+    "closure",
+    [
+        pytest.param([], id="empty-array"),
+        pytest.param([""], id="empty-member"),
+        pytest.param(["Check", 1], id="numeric-member"),
+        "Already scalar",
+    ],
+)
+def test_schema_repair_rejects_other_closure_shapes(closure: object) -> None:
+    """Reject unrelated invalid shapes and valid source findings that need no correction."""
+    validator = preparation.runpy.run_path(str(preparation.SKILL / "validate_artifacts.py"))
+    record = _batch_finding("A", "medium", "Retained obligation.")
+    record["closure_evidence"] = closure
+    snapshot = {"files": [{"path": "widget.py", "kind": "text", "content": "value = 2\n", "sha256": "a" * 64}]}
+    with pytest.raises(SystemExit, match="review-repair-(ineligible-closure|no-shape-error):challenger"):
+        validator["_closure_shape_repair"](_batch_output([record], 3), snapshot, "challenger")
+
+
+@pytest.mark.parametrize("redirect", ["> unauthorized-file", "< unrelated-input"])
+def test_dispatch_repair_rejects_shell_redirection(tmp_path: Path, redirect: str) -> None:
+    """Reject a failed dispatch that accesses unrelated files through shell redirection."""
+    run = _batch_inputs(tmp_path)
+    assert _batch_command(run, "prepare").returncode == 0
+    wave = run / "batches/source-001"
+    _, home, children = preparation._assembly_evidence(
+        tmp_path,
+        prepared_run=wave,
+        findings={"challenger": _batch_output([], 5)},
+        blocking_counts={"challenger": 0},
+    )
+    child = children["challenger"]
+    rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
+    tools = [
+        row
+        for row in rows
+        if row["type"] == "response_item"
+        and row["payload"].get("type") in {"custom_tool_call", "custom_tool_call_output"}
+    ]
+    call, output = tools[:2]
+    source = call["payload"]["input"]
+    arguments = json.loads(source.split("tools.exec_command(", 1)[1].split("); text", 1)[0])
+    malformed = {
+        **arguments,
+        "cmd": arguments["cmd"].replace("review_context.py", "review_prepare.py") + " " + redirect,
+    }
+    call["payload"]["input"] = source.replace(
+        json.dumps(arguments, ensure_ascii=False), json.dumps(malformed, ensure_ascii=False)
+    )
+    output["payload"]["output"] = [
+        {"type": "input_text", "text": "Script completed\n"},
+        {"type": "input_text", "text": "usage: review_prepare.py\nerror: unsupported arguments"},
+    ]
+    preparation._write_jsonl(child, [row for row in rows if row not in tools] + [call, output])
+    repaired = subprocess.run(
+        [
+            sys.executable,
+            str(preparation.HELPER),
+            "prepare-repair",
+            "--out",
+            str(wave),
+            "--codex-home",
+            str(home),
+            "--role",
+            "challenger",
+            "--kind",
+            "incomplete-dispatch",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert repaired.returncode != 0, repaired.stdout
+    assert "review-repair-dispatch-cause-unproven:challenger" in repaired.stderr
+    assert not (wave / "repair-dispatch.challenger.json").exists()
+
+
 def _batch_command(run: Path, operation: str, home: Path | None = None) -> subprocess.CompletedProcess[str]:
     """Run the installed-path batch command with synthetic native receipts."""
     args = [sys.executable, str(preparation.HELPER), operation, "--out", str(run)]
@@ -309,7 +525,7 @@ def test_aggregate_admits_every_native_wave_and_interaction_output(tmp_path: Pat
     result = _batch_command(run, "assemble-batches", home)
     assert result.returncode == 0, result.stderr
     manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == 7
+    assert manifest["schema_version"] == 8
     assert manifest["manifest_kind"] == "batched-review"
     spec = importlib.util.spec_from_file_location(
         "batch_acceptance_validator", preparation.SKILL / "validate_artifacts.py"

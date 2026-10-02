@@ -219,3 +219,40 @@ class TestAgentWatchDeadlines:
     def test_each_run_gets_a_fresh_watch_dir(self, skill: str) -> None:
         """Agent Resolution starts every run with a fresh watch dir, so a prior run's batches never report as stale."""
         assert '> "${TMPDIR:-/tmp}/dev-agent-watch-dir-${CSID}"  # fresh per run' in _read(f"{skill}/SKILL.md")
+
+
+def test_review_small_diff_never_reviewed_inline() -> None:
+    """The review spawn-count gate never lets diff size replace the specialist fan-out with an inline review.
+
+    The ~73-call inline rule is for work-displacement spawns. Review specialists are role-isolated, and a small change
+    can carry the highest risk, so the gate keeps a "never zero" floor instead of an inline escape.
+    """
+    gate = _section("review/SKILL.md", "**Spawn-count gate", "Dimensions dropped by the cap")
+    assert "do it inline, spawn nothing" not in gate
+    assert "**never zero**" in gate
+    assert "**Diff size never licenses inline review.**" in gate
+
+
+def test_review_depth_follows_impact_not_diff_size() -> None:
+    """The challenger runs at any diff size and the FIX trim waits for a LIGHT impact tier.
+
+    A small diff on the main user story is the riskiest case, so neither the challenger nor the perf and architecture
+    dimensions may be dropped on line count alone.
+    """
+    skill = _read("review/SKILL.md")
+    assert "Small-diff challenger skip" not in skill
+    assert "**Challenger at any diff size**" in skill
+    assert "FIX → **only when `IMPACT_TIER=LIGHT`**" in skill
+    assert "review_impact_tier.py" in skill
+
+
+@pytest.mark.parametrize("skill", ["feature", "fix", "refactor", "debug"])
+def test_challenger_gate_ignores_change_size(skill: str) -> None:
+    """The pre-implementation challenger runs at any change size unless the user passes --no-challenge.
+
+    Each gate once auto-skipped single-file changes under ~50 lines, which are exactly the small main-path edits that
+    carry the most hidden risk.
+    """
+    text = _read(f"{skill}/SKILL.md")
+    assert "size never skips the gate" in text
+    assert "auto-skip when" not in text

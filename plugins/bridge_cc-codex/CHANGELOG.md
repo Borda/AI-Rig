@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2
+
+- Discover deferred native question tools before fallback; treat unverified async rendering as unsuitable and preserve text-delivered questions without duplicate submission.
+
 ## 0.6.1
 
 - Wait for a detached Codex job without polling it in a loop: any state other than queued or running ends the wait, and the job's hard cutoff is its deadline. Status, result and cancel commands are unchanged, and implement still returns the job identifier.

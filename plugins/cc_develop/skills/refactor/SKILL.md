@@ -253,13 +253,10 @@ cat "$_DEV_SHARED/plan-inline.md"
 
 ## Challenger gate
 
-**Decision — three states** (default is NOT "skip": runs on substantial refactors, auto-skips only small contained ones):
+**Decision** (default runs at any size — a small refactor of a main-path helper can still change behaviour; size never skips the gate):
 
-1. `--no-challenge` (`CHALLENGE_ENABLED=false`) → **skip gate entirely**, any size.
-2. else `--challenge` (`IFS= read -r CHALLENGE_FORCED < "${TMPDIR:-/tmp}/dev-challenge-forced-${CSID}" 2>/dev/null || CHALLENGE_FORCED=false` = `true`) → **always run**, even on a small change.
-3. else **default** → **run when refactor is substantial** (spans multiple files, ≳50 lines, or changes public API / an exported symbol); **auto-skip when small** (single file, ≲50 lines, no API change) — a contained refactor has little design surface to challenge.
-
-Two flags are opposites for two regimes, why both exist: `--no-challenge` suppresses gate on *substantial* changes where it would otherwise fire; `--challenge` forces it on *small* changes where it would otherwise auto-skip.
+1. `--no-challenge` (`CHALLENGE_ENABLED=false`) → **skip gate entirely**.
+2. else → **always run**. `--challenge` (`CHALLENGE_FORCED`) is accepted for compatibility and changes nothing.
 
 Arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits). Spawn `foundry:challenger` with scope analysis from Step 1 (affected files, dependencies, coupling, risks):
 

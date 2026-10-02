@@ -744,6 +744,165 @@ def _assemble(run: Path, home: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+@pytest.mark.parametrize("case", ["repair", "parent-miscopy", "source-read", "no-diagnostic", "wrong-parent"])
+def test_same_wave_dispatch_repair_requires_observed_preassessment_failure(tmp_path: Path, case: str) -> None:
+    """Recover a failed reader dispatch without dropping original allocation or valid sibling evidence."""
+    run = _five_role_review_inputs(tmp_path)
+    assert _prepare(run).returncode == 0
+    run, home, children = _assembly_evidence(tmp_path, prepared_run=run, active_limit=4)
+    role = "sw-engineer"
+    child = children[role]
+    original_rows = [json.loads(line) for line in child.read_text().splitlines()]
+    rows = json.loads(json.dumps(original_rows))
+    tool_rows = [
+        row
+        for row in rows
+        if row["type"] == "response_item"
+        and row["payload"].get("type") in {"custom_tool_call", "custom_tool_call_output"}
+    ]
+    first_call = tool_rows[0]
+    first_call["payload"]["input"] = first_call["payload"]["input"].replace("review_context.py", "review_prepare.py")
+    output = tool_rows[1]
+    if case != "source-read":
+        output["payload"]["output"] = [
+            {"type": "input_text", "text": "Script completed\n"},
+            {
+                "type": "input_text",
+                "text": "usage: review_prepare.py\nerror: unsupported arguments"
+                if case != "no-diagnostic"
+                else "Unknown failure",
+            },
+        ]
+    rows = [row for row in rows if row not in tool_rows] + [first_call, output]
+    terminal = next(
+        row["payload"] for row in rows if row["type"] == "event_msg" and row["payload"].get("type") == "task_complete"
+    )
+    blocked_message = "Reader dispatch failed before source inspection.\n\n## Reviewer Assessment\nRating: 5\nRationale: No frozen source pages were available."
+    terminal["last_agent_message"] = blocked_message
+    parent_path = home / "sessions/rollout-parent.jsonl"
+    parent = [json.loads(line) for line in parent_path.read_text().splitlines()]
+    for row in parent:
+        payload = row.get("payload", {})
+        if payload.get("type") == "agent_message" and payload.get("author") == rows[0]["payload"]["agent_path"]:
+            payload["content"] = [
+                {"type": "input_text", "text": f"Message Type: FINAL_ANSWER\nPayload:\n{blocked_message}"}
+            ]
+    _write_jsonl(parent_path, parent)
+    if case == "wrong-parent":
+        rows[0]["payload"]["source"]["subagent"]["thread_spawn"]["parent_thread_id"] = "unrelated"
+    _write_jsonl(child, rows)
+    if case == "parent-miscopy":
+        parent_path = home / "sessions/rollout-parent.jsonl"
+        parent = [json.loads(line) for line in parent_path.read_text().splitlines()]
+        child_name = rows[0]["payload"]["agent_path"].rsplit("/", 1)[1]
+        for row in parent:
+            payload = row.get("payload", {})
+            if payload.get("type") == "function_call" and payload.get("name") == "spawn_agent":
+                args = json.loads(payload["arguments"])
+                if args["task_name"] == child_name:
+                    args["message"] = args["message"].replace("review_context.py", "review_prepare.py")
+                    payload["arguments"] = json.dumps(args)
+                    for child_row in rows:
+                        if child_row["type"] == "response_item" and child_row["payload"].get("type") == "agent_message":
+                            child_row["payload"]["content"] = [
+                                {"type": "encrypted_content", "encrypted_content": args["message"]}
+                            ]
+        _write_jsonl(parent_path, parent)
+        _write_jsonl(child, rows)
+    command = [
+        sys.executable,
+        str(HELPER),
+        "prepare-repair",
+        "--out",
+        str(run),
+        "--codex-home",
+        str(home),
+        "--role",
+        role,
+        "--kind",
+        "incomplete-dispatch",
+    ]
+    prepared = subprocess.run(command, capture_output=True, text=True, check=False)
+    if case not in {"repair", "parent-miscopy"}:
+        assert prepared.returncode != 0
+        assert (
+            "source-already-read"
+            if case == "source-read"
+            else "failure-unproven"
+            if case == "no-diagnostic"
+            else "review-child-session-not-unique"
+        ) in prepared.stderr
+        return
+    assert prepared.returncode == 0, prepared.stderr
+    arguments = json.loads(prepared.stdout)["arguments"]
+    original_path = original_rows[0]["payload"]["agent_path"]
+    new_path = original_path.removesuffix("_a1") + "_a2"
+    thread = "dispatch-repair-thread"
+    original_thread = original_rows[0]["payload"]["id"]
+    replacement = json.loads(
+        json.dumps(original_rows)
+        .replace(original_path, new_path)
+        .replace(original_thread, thread)
+        .replace("--attempt 1", "--attempt 2")
+        .replace("attempt=1", "attempt=2")
+    )
+    replacement[0]["payload"]["timestamp"] = "2026-01-01T10:01:00.050Z"
+    for row in replacement:
+        if row["type"] == "response_item" and row["payload"].get("type") == "agent_message":
+            row["payload"]["content"] = [{"type": "encrypted_content", "encrypted_content": arguments["message"]}]
+    terminal = replacement[-1]["payload"]
+    terminal.update(started_at=1767261660.2, completed_at=1767261661.0)
+    _write_jsonl(home / f"sessions/rollout-{thread}.jsonl", replacement)
+    parent_path = home / "sessions/rollout-parent.jsonl"
+    parent = [json.loads(line) for line in parent_path.read_text().splitlines()]
+    parent.extend(
+        [
+            {
+                "timestamp": "2026-01-01T10:01:00.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "spawn_agent",
+                    "call_id": "repair-spawn",
+                    "arguments": json.dumps(arguments),
+                },
+            },
+            {
+                "timestamp": "2026-01-01T10:01:00.100Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "repair-spawn",
+                    "output": json.dumps({"task_name": new_path}),
+                },
+            },
+            {
+                "timestamp": "2026-01-01T10:01:01.100Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "agent_message",
+                    "author": new_path,
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": f"Message Type: FINAL_ANSWER\nPayload:\n{terminal['last_agent_message']}",
+                        }
+                    ],
+                },
+            },
+        ]
+    )
+    _write_jsonl(parent_path, parent)
+    assembled = _assemble(run, home)
+    assert assembled.returncode == 0, assembled.stderr
+    manifest = json.loads((run / "specialist-manifest.json").read_text())
+    repaired = next(item for item in manifest["passes"] if item["role"] == role)
+    assert repaired["selected_attempt"] == 2
+    assert len(repaired["attempts"]) == 2
+    assert all(item["selected_attempt"] == 1 for item in manifest["passes"] if item["role"] != role)
+    assert json.loads((run / "inspection-summary.json").read_text())["actual_mode"] == "parallel"
+
+
 def test_prepare_freezes_complete_wave_and_keeps_source_out_of_dispatch(tmp_path: Path) -> None:
     """Bind each canonical role to its size-ordered call without embedding source in dispatch."""
     run = _review_inputs(tmp_path)
@@ -1085,7 +1244,7 @@ def test_assemble_binds_native_wave_and_preserves_child_outputs(tmp_path: Path, 
     assert result.returncode == 0, result.stderr
     manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
     summary = json.loads((run / "inspection-summary.json").read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == 7
+    assert manifest["schema_version"] == 8
     assert manifest["manifest_kind"] == "native-wave"
     assert summary["actual_mode"] == "parallel"
     assert {item["role"] for item in manifest["passes"]} == set(children)
@@ -1488,7 +1647,7 @@ def test_five_role_native_admission_limits_active_children(tmp_path: Path, peak:
         return
     assert assembled.returncode == 0, assembled.stderr
     manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == 7
+    assert manifest["schema_version"] == 8
     assert {item["role"] for item in manifest["passes"]} == set(children)
     assert len(children) == 5
     for item in manifest["passes"]:

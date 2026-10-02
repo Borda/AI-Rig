@@ -96,7 +96,7 @@ Then call `AskUserQuestion` — do NOT write options as plain text first. Map op
 
 For each selected cluster, resolve `$_FS` path, spawn **foundry:sw-engineer** (one per cluster, all parallel — issue all in a single response). Substitute absolute `$RUN_DIR` value into prompt before spawning (resolve via `$(git rev-parse --show-toplevel)/$RUN_DIR`):
 
-> **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
+> **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing — work-displacement only; an isolation-motivated spawn (adversarial reviewer, distinct specialist role, model tier, worktree) runs regardless of size. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
 ```text
 Agent(subagent_type="foundry:sw-engineer", prompt="

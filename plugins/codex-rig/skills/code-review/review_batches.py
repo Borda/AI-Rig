@@ -9,8 +9,8 @@ parts, never transient retries or replacements for another part's output.
 ## Scope
 
 Code Review's explicit batch route. Each constituent wave retains the existing inspection plan, ordered page reader,
-model policy, and observed spawn/read/join evidence. The aggregate and each native wave use schema 7, the existing
-specialist-manifest family. The individual reviewer-findings profile is a distinct schema family at 1.
+model policy, and observed spawn/read/join evidence. New aggregates and native waves use specialist-manifest schema 8;
+schema 7 remains a historical reader. The individual reviewer-findings profile is a distinct schema family at 1.
 
 ## Usage
 
@@ -55,7 +55,8 @@ BATCH_FINDINGS_INSTRUCTION = (
     "\n## Required batch response profile 1\nReturn only ## Reviewer Findings, one fenced json array, optional "
     "## Finding Dispositions, then ## Reviewer Confidence (one fenced json object), then ## Reviewer Assessment with Rating: <1-5> and Rationale: <one line>. "
     "Each finding object has exactly id (unique reviewer-local identifier), severity (critical|high|medium|low), "
-    "title, summary (exact claim), required_change, closure_evidence (nonempty strings), and evidence "
+    "title, summary (exact claim), required_change (one nonempty string), "
+    "closure_evidence (one nonempty string, never an array), and evidence "
     "(array of {path,start_line,end_line} frozen project coordinates; empty only when evidence is unavailable). "
     "Declare every distinct obligation, including minor findings, in the array; use [] only for no findings. "
     "Do not place findings in prose or invent hashes/global IDs. Keep missing evidence honest. "
@@ -462,7 +463,7 @@ def assemble_wave(out: Path, codex_home: Path) -> dict[str, Any]:
     rows = validator._read_jsonl(validator._find_rollout(codex_home, plan["parent_thread_id"]))
     children = producer._child_sessions(codex_home, plan["parent_thread_id"])
     passes = [
-        producer._observed_pass(
+        producer.observed_pass(
             out,
             entry,
             rows,
@@ -992,7 +993,7 @@ def validate_aggregate(
         ) != reference.get("manifest_sha256"):
             raise ValueError("review-batch-wave-hash")
         wave = validator._load_json(directory / "specialist-manifest.json")
-        if wave.get("schema_version") != 7 or wave.get("manifest_kind") != "native-wave":
+        if wave.get("schema_version") not in {7, 8} or wave.get("manifest_kind") != "native-wave":
             raise ValueError("review-batch-wave-schema")
         for key in ("review_run_id", "parent_thread_id", "review_input_sha256"):
             if wave[key] != manifest[key]:

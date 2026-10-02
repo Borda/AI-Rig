@@ -234,14 +234,17 @@ if [ -n "$_PRIOR" ]; then
     IFS= read -r _PRIOR_SHA < "$(dirname "$_PRIOR")/head-sha.txt" 2>/dev/null || _PRIOR_SHA=""
     [ -n "$_PRIOR_SHA" ] || _PRIOR_SHA=$(grep -m1 '^Gate:' "$_PRIOR" 2>/dev/null | grep -oE '@[0-9a-f]{7,40}' | tr -d @)
     _HEAD_SHA=$(jq -r '.headRefOid // empty' "$SNAP_DIR/pr-meta.json" 2>/dev/null)
-    echo "PRIOR_REPORT=$_PRIOR"
     echo "PRIOR_DATE=$(grep -m1 '^Date:' "$_PRIOR" 2>/dev/null | cut -d: -f2- | tr -d ' ')"
     echo "PRIOR_SHA=${_PRIOR_SHA:-unknown} HEAD_SHA=${_HEAD_SHA:-unknown}"
     # a Gate: line may carry a short SHA — prefix match, never string equality
     case "${_HEAD_SHA:-x}" in "${_PRIOR_SHA:-y}"*) echo "SHA_MATCH=true" ;; *) echo "SHA_MATCH=false" ;; esac
-else
-    echo "PRIOR_REPORT="
 fi
+# /oss:resolve appends what it fixed/rejected to resolution.jsonl beside the report it consumed; a re-run carries it forward
+_PRIOR_RES=""
+[ -n "$_PRIOR" ] && [ -s "$(dirname "$_PRIOR")/resolution.jsonl" ] && _PRIOR_RES="$(dirname "$_PRIOR")/resolution.jsonl"
+printf '%s\n' "$_PRIOR_RES" > "${TMPDIR:-/tmp}/oss-review-prior-resolution-${CSID}"
+echo "PRIOR_REPORT=$_PRIOR"
+[ -z "$_PRIOR_RES" ] || echo "PRIOR_RESOLUTION=$_PRIOR_RES ($(grep -c . "$_PRIOR_RES") records)"
 ```
 
 Empty `PRIOR_REPORT` → proceed, no gate. Non-empty → invoke `AskUserQuestion` (actual tool call) before anything else runs:
@@ -434,7 +437,7 @@ Follow above and execute its bash blocks inside the `DIRECT_PATH_MODE = "false"`
 Before spawning agents (Python mode only — all three mode flags false), classify diff:
 
 - Count files changed, lines added/removed, new classes/modules
-- Classify: **FIX** (\<3 files, \<50 lines), **REFACTOR** (internal restructure, no new public API), **FEATURE** (new public API or module), **CHORE** (deps, config, tooling — no logic changes), or **MIXED**
+- Classify: **FIX** (\<3 files, \<50 lines — a label only; review depth comes from `IMPACT_TIER`, never size), **REFACTOR** (internal restructure, no new public API), **FEATURE** (new public API or module), **CHORE** (deps, config, tooling — no logic changes), or **MIXED**
 - **Short-diff multi-concern refactors**: FIX heuristic classifies by diff size, not intent. Override FIX → REFACTOR when PR labels include `perf`, `performance`, `optimization`, `refactor`, `architecture`, `cleanup` OR commit message keywords `refactor:`, `perf:`, `rewrite` OR diff touches different modules. Detect via `gh pr view --json labels,title`. Small-diff perf refactors are exactly the case FIX would silently mishandle.
 - **Complexity smell**: 8+ files changed OR `PY_LOC_DELTA >400` → note in report header
 
@@ -468,11 +471,20 @@ _REVIEW_SCOPE_FILE="${TMPDIR:-/tmp}/oss-review-scope-${CLEAN_ARGS}-${CSID}"
     echo "SCOPE=$SCOPE"
     echo "CHORE_DEPS=$CHORE_DEPS"
 } > "$_REVIEW_SCOPE_FILE"
+# fail-safe default — codemap block overrides with review_impact_tier.py verdict; skipped/absent codemap keeps FULL
+echo "FULL · impact unknown: codemap unavailable" > "${TMPDIR:-/tmp}/oss-review-impact-${CLEAN_ARGS}-${CSID}"
 ```
+
+**Impact tier** — review depth follows the code path the change sits on, never its line or file count. A few-line change to a private helper on the main feature path can break the main user story; a larger tweak to a plotting helper reaches nobody. `review_impact_tier.py` (codemap `diff-impact` + `fn-blast`) prints `FULL` or `LIGHT` plus reason:
+
+- `FULL` — any changed symbol, public or private, reaches a public function outside tests/leaf modules (main path), or a changed main-path module has ≥5 importers, or a module-level main-path change. **Unknown impact (codemap off, query failed, unmapped file) = `FULL`.**
+- `LIGHT` — every change and every transitive caller stays in tests, leaf modules (`viz`, `plot`, `examples`, `docs`, `scripts`, `notebooks`), or uncalled private code.
+
+Step 2's codemap-propagation block prints `IMPACT_TIER=` — apply the skips below from that value (codemap runs after this block). `IMPACT_TIER` gates only perf+arch for FIX; challenger, Codex and pinned qa-specialist run at either tier.
 
 Skip optional agents by classification:
 
-- FIX scope → skip Agent 3 (perf-optimizer), Agent 6 (solution-architect)
+- FIX scope → skip Agent 3 (perf-optimizer), Agent 6 (solution-architect) **only when `IMPACT_TIER=LIGHT`**; `FULL` → keep both (they enter relevance ranking)
 - REFACTOR scope → keep all agents; perf-optimizer runs to verify new structure isn't slower
 - FEATURE/MIXED → spawn all agents, plus Agent 0 (blind-solve) — see §Agent 0 below
 - CHORE scope → spawn Agents 1, 4, 5, 7 (challenger, if `CHALLENGE_ENABLED=true`), Codex (if available); skip Agents 2, 3, 6
@@ -687,6 +699,8 @@ Follow the handoff protocol above. File absent → warn and continue without it.
 
 Template (loaded above). Substitute `<REVIEW_SKILL_DIR>` → `$REVIEW_SKILL_DIR` before using content in spawn prompts. Leave `$RUN_DIR` literal in the prompt text — agents resolve it themselves via the run-dir preamble (`cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"`); the orchestrator must NOT retype the run-dir path.
 
+**Prior resolution propagation**: when the existing-report guard recorded a prior `resolution.jsonl` (`IFS= read -r PRIOR_RESOLUTION < "${TMPDIR:-/tmp}/oss-review-prior-resolution-${CSID}"` non-empty — a re-run after `/oss:resolve` acted on the earlier report), add one line to every dimension-agent prompt and the consolidator prompt: `Prior resolution ledger: <literal path> — one record per earlier finding and resolve run, the last record per finding_id winning (finding_id, title, section, file, line, verdict fixed/rejected/skipped/self-resolved/pending, sha, why). Match a ledger record to your finding by file and claim, never by id alone: ids hash the earlier run's wording. Confirm "fixed" and "self-resolved" findings are actually fixed at the current head; a record with "shared_with_github": true was folded into a GitHub item, so its verdict covers that combined item, not the finding alone. A "rejected" record means /oss:resolve's challenger rejected it, sometimes only because it could not verify it: re-check it at the current head, report it again when the code still shows the problem, and say what the earlier rejection missed.` The consolidator template turns that line into a `Review Confidence` entry for every prior `rejected` finding it leaves out, so no omission is silent. No ledger → add nothing.
+
 **Codemap context propagation**: rehydrate `codemap_available` from Step 1 persist file, copy staged context into `$RUN_DIR/codemap-context.md`, substitute into every dimension-agent spawn prompt per the rules in the Structural-context block above. Block omitted when `codemap_available=false`.
 
 ```bash
@@ -695,6 +709,10 @@ IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null 
 [ -n "$RUN_DIR" ] || { echo "! BLOCKED — run-dir sentinel empty; refusing to copy codemap context to a root-relative path"; exit 1; }
 IFS= read -r _PR_TAG < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || _PR_TAG="$CLEAN_ARGS"
 IFS= read -r codemap_available < "${TMPDIR:-/tmp}/oss-review-codemap-available-${_PR_TAG}-${CSID}" 2>/dev/null || codemap_available="false"
+# review depth by code path — gates FIX perf+arch skip before ranking; missing sentinel = FULL
+IFS= read -r IMPACT_LINE < "${TMPDIR:-/tmp}/oss-review-impact-${_PR_TAG}-${CSID}" 2>/dev/null || IMPACT_LINE="FULL · impact unknown"
+echo "IMPACT_TIER=${IMPACT_LINE%% *}"
+echo "IMPACT=$IMPACT_LINE"
 IFS= read -r CODEMAP_CONTEXT_STAGE < "${TMPDIR:-/tmp}/oss-review-codemap-context-stage-${_PR_TAG}-${CSID}" 2>/dev/null || CODEMAP_CONTEXT_STAGE=""
 if [ "$codemap_available" = "true" ] && [ -n "$CODEMAP_CONTEXT_STAGE" ] && [ -f "$CODEMAP_CONTEXT_STAGE" ]; then
     cp "$CODEMAP_CONTEXT_STAGE" "$RUN_DIR/codemap-context.md"
@@ -711,7 +729,8 @@ Two stages, in order — never collapse them:
 2. **Relevance ranking** (default only): rank surviving units by evidence — changed files/lines in each unit's territory, what Step 1 pre-classification found, what structural context flagged — spawn top `FANOUT_MAX` (3). **qa-specialist pinned outside cap** — spawns on every CODE PR its scope rules allow (security-scan-every-PR contract), never occupies ranked slot. With `--full` (`FANOUT_CAP=0`) skip this stage, spawn every survivor of stage 1.
 
 - More work → give each agent more, never add agents.
-- **Spawn fewest that keep each near `AGENT_CALL_BUDGET`** — not the most the cap allows. Total work under ~73 calls → do it inline, spawn nothing.
+- **Spawn fewest that keep each near `AGENT_CALL_BUDGET`** — not the most the cap allows. Small diff → merge surviving units into fewer spawns, **never zero**.
+- **Diff size never licenses inline review.** ~73-call inline rule covers work-displacement spawns only; review specialists are role-isolated (own system prompt, independent eyes), so it does not apply here. Small diff ≠ low risk: few-line change on hot path often riskiest. Orchestrator never substitutes itself for a ranked unit, pinned qa-specialist, challenger (`CHALLENGE_ENABLED=true`), or Codex (`CODEX_AVAILABLE=1`).
 - **Merge before you split**: two dimensions whose files overlap go to one agent, not two.
 - Every spawn prompt states budget, requires an envelope even on exhaustion — `partial: true` plus what was finished. An agent stalling past ~60 calls without an envelope forces full disk reconstruction.
 - Dimensions dropped by cap listed in report; never silently skipped.
@@ -840,6 +859,9 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/oss-review-gate-${CSID}" ] && . "${TMPDIR:-/tmp}/oss-review-gate-${CSID}"
 GATE="${GATE:-PASS}"; GATE_REASON="${GATE_REASON:-}"
 echo "Gate: $GATE ${GATE_REASON:+($GATE_REASON)}"
+IFS= read -r _PR_TAG < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || _PR_TAG=""
+IFS= read -r IMPACT_LINE < "${TMPDIR:-/tmp}/oss-review-impact-${_PR_TAG}-${CSID}" 2>/dev/null || IMPACT_LINE="FULL · impact unknown"
+echo "IMPACT=$IMPACT_LINE"
 ```
 
 A reject-gate run never reaches this point (Step 5 is skipped entirely) — `GATE` here is always `PASS` or `BLOCK`.
@@ -869,7 +891,7 @@ IFS= read -r REVIEW_SKILL_DIR < "${TMPDIR:-/tmp}/review-skill-dir-${CSID}" 2>/de
 cat "$REVIEW_SKILL_DIR/templates/consolidator-prompt.md"  # timeout: 5000
 ```
 
-Template (loaded above). Prepend the run-dir resolution preamble from `agent-prompts.md` so the consolidator self-resolves `$RUN_DIR` (`cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"`). Substitute `<REPORT_DIR>`, `<REVIEW_SKILL_DIR>`, `<_OSS_SHARED>`, `<DATE>`, `<CHANGED_FILES>`, `<SCOPE>`, `<CI_FAILING_CHECKS>`, `<CI_COUNTS>`, `<GATE>` with literal expanded values (`<GATE>` = `$GATE` reloaded above, `PASS` or `BLOCK`); leave `$RUN_DIR` literal (agent self-resolves). Spawn: `Agent(subagent_type="$CONSOLIDATOR_AGENT", prompt=<substituted consolidator-prompt.md content>)`
+Template (loaded above). Prepend the run-dir resolution preamble from `agent-prompts.md` so the consolidator self-resolves `$RUN_DIR` (`cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"`). Substitute `<REPORT_DIR>`, `<REVIEW_SKILL_DIR>`, `<_OSS_SHARED>`, `<DATE>`, `<CHANGED_FILES>`, `<SCOPE>`, `<IMPACT>` (the `IMPACT=` line the gate-reload block above prints), `<CI_FAILING_CHECKS>`, `<CI_COUNTS>`, `<GATE>` with literal expanded values (`<GATE>` = `$GATE` reloaded above, `PASS` or `BLOCK`); leave `$RUN_DIR` literal (agent self-resolves). When the `oss-review-prior-resolution-${CSID}` sentinel is non-empty, append the same `Prior resolution ledger:` line Step 2 gave the dimension agents. Spawn: `Agent(subagent_type="$CONSOLIDATOR_AGENT", prompt=<substituted consolidator-prompt.md content>)`
 
 Main context receives only the one-liner verdict. **Consolidator unavailable fallback** — `Agent` tool deferred/not loaded: Print: `⛔ BLOCKED — Agent tool not loaded; consolidator cannot run. Re-invoke /oss:review to retry. If persistent, run /foundry:setup (requires foundry plugin) to verify session config.` Do NOT read agent finding files inline — floods main context (~16–32K tokens per run), produces unreliable synthesis.
 
@@ -892,11 +914,9 @@ Render all fields verbatim as table rows; use the `·`-separated one-line fallba
 
 **Hook-enforced**: `hooks/enforce-review-header.js` blocks only this workflow's follow-up question until the current report exists and every `---` header field appears in one matching two-column table in the parent reply since the last human turn. Missing/unreadable transcript evidence blocks this transition; reprint the header, then retry. Diagnostic/recovery questions remain available; use their own question header, not `oss-review`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
 
-## Step 6: Delegate implementation follow-up (optional)
+## Step 6: Codex-eligible findings (tag only — review never implements)
 
-Identify tasks Codex can implement — meaningful code/doc work grounded in actual implementation.
-
-**Delegate**: public functions with no docstrings (read impl first, describe so Codex writes real 6-section docstring) · missing test coverage for concrete well-defined behavior · consistent rename across files. **Do not delegate**: architectural issues, logic errors, security vulns, or any task requiring human judgment.
+The review is the spotter: it calls targets, `/oss:resolve` fires. A fix applied here would land outside resolve's item tracking, challenge, commit attribution and push gate, and could collide with resolve's own edits to the same file. So this step only reports which findings the consolidator tagged `codex_eligible: true` in `findings.jsonl` (criteria: `codex-delegation.md`); resolve routes those items to its Codex path (C1) when the bridge is available.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -905,14 +925,10 @@ IFS= read -r _PR_TAG < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null |
 IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
 IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:review" "reply (after consolidation)" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md, pr=$_PR_TAG" "draft contributor reply (--reply) or stop at Step 7"  # timeout: 5000
-# Reload _OSS_SHARED (Check 41: fresh shell)
-IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/review-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""
-cat "$_OSS_SHARED/codex-delegation.md"  # timeout: 5000
+[ -s "$_REPORT_DIR/findings.jsonl" ] && jq -r 'select(.codex_eligible == true) | "\(.id)\t\(.title)"' "$_REPORT_DIR/findings.jsonl"  # timeout: 5000
 ```
 
-Follow above. File absent → warn: "codex-delegation criteria not found — verify foundry plugin installed (`claude plugin list`); skipping Step 6 delegation." Then skip Step 6.
-
-Print `### Codex Delegation` only when tasks delegated — omit otherwise. Don't rewrite output file.
+Any rows printed → add a `### Codex-eligible findings` line to the reply: the ids and titles, plus "`/oss:resolve` routes these to Codex when the bridge is available". No rows → omit the section. Never call `bridge:implement` here and never rewrite the report.
 
 ## Step 7: Reply gate — STOP CHECK
 
@@ -1032,7 +1048,7 @@ rm -f .temp/state/skill-contract.md  # skill complete (compaction-contract.md §
 
 Scenarios:
 
-1. FIX scope: single bug-fix PR with 1 changed file → scope=FIX drops the perf+arch unit entirely (both members out of scope). Surviving units: sw-engineer, docs+lint (merged), challenger (unless `--no-challenge`) = 3 units ≤ FANOUT_MAX, all spawn; + pinned qa-specialist = 4 spawns (+ Codex bridge if installed).
+1. FIX scope, `IMPACT_TIER=LIGHT`: single bug-fix PR touching only a plotting helper no main-path function calls → scope=FIX drops the perf+arch unit entirely (both members out of scope). Surviving units: sw-engineer, docs+lint (merged), challenger (unless `--no-challenge`) = 3 units ≤ FANOUT_MAX, all spawn; + pinned qa-specialist = 4 spawns (+ Codex bridge if installed). Same small FIX with `IMPACT_TIER=FULL` (private helper called by a public entry point) → perf+arch unit stays in; 4 units rank for 3 slots + pinned qa-specialist = 4 spawns (+ Codex). Never inline — small diff on the main user story is the riskiest case.
 2. FEATURE scope: new feature PR with API changes → units sw-engineer, perf+arch, docs+lint, challenger = 4 survive preselection; default cap spawns top 3 ranked (dropped unit listed in report) + pinned qa-specialist = 4 spawns; `--full` spawns all 4 units + qa-specialist = 5 spawns.
 3. --reply mode: existing review report + --reply flag → skip to Step 8, no agents spawned
 4. DOCS_TYPING scope: PR with only annotation-type .py changes (no logic) → Step 0 sets PR_TYPE=DOCS_TYPING, CHALLENGE_ENABLED=false, CONSOLIDATOR_AGENT=foundry:doc-scribe; only doc-scribe spawned; Step 5 uses doc-scribe consolidator.

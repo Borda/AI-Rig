@@ -5,6 +5,7 @@ Date:        [YYYY-MM-DD]
 PR Type:     [type]
 Scope:       [key changed files, comma-separated]
 Focus:       [SCOPE-LABEL]
+Impact:      [FULL|LIGHT] · [reason]
 Agents:      [comma-separated agent names that ran]
 Reviewers:   [Role (rating), Role (rating)]
 CI:          [CI status]
@@ -38,7 +39,7 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insuffic
 | -- | -- | -- | -- | -- |
 | [finding ID] | [reviewer roles] | [finding] | [proposal] | [status] |
 
-> Use stable finding IDs across this overview and the detailed sections. Author lists all contributing reviewer roles; Resolution proposal is concrete. Status is `required`, `minor`, or `verify`.
+> Use the stable finding IDs minted into `findings.jsonl` (section slug plus a hash of file and title) across this overview and the detailed sections. Author lists all contributing reviewer roles; Resolution proposal is concrete. Status is `required`, `minor`, or `verify`.
 
 ### [blocking] Critical (must fix before merge)
 

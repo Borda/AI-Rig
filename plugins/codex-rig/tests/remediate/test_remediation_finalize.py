@@ -205,8 +205,15 @@ def test_workplan_render_keeps_agent_sections_and_passes_document_checks(
 def test_workplan_render_requires_reason_for_default_parent_only_plan(
     valid_run: tuple[Path, dict[str, object]],
 ) -> None:
-    """Refuse to render a default parent-only plan without a concrete ineligibility reason."""
+    """Refuse to render a default parent-only plan without a concrete ineligibility reason.
+
+    A refresh may reuse the reason already rendered in the workplan, so this case removes it first: with no argument and
+    no recorded reason, nothing can justify the parent-only route.
+    """
     run, result = valid_run
+    workplan = run / "resolution-workplan.md"
+    text = workplan.read_text(encoding="utf-8")
+    workplan.write_text("\n".join(line for line in text.splitlines() if not line.startswith("Ineligibility reason:")))
 
     with pytest.raises(HELPER.DeriveError, match="ineligibility-reason-required"):
         HELPER.render_workplan(run, copy.deepcopy(result["metadata"]), None)

@@ -905,26 +905,27 @@ These Python helpers are installed workflow support and maintainer surfaces, not
 
 #### Session, install, and state helpers
 
-| Helper                         | Purpose                                                                                 |
-| ------------------------------ | --------------------------------------------------------------------------------------- |
-| `find-polluter.py`             | Binary-search a test suite for test-isolation contamination.                            |
-| `agent_watch.py`               | Report each spawned agent's deliverable and deadline in one call — no polling.          |
-| `get_plugin_install_path.py`   | Resolve the active plugin path from Claude's registry.                                  |
-| `heal_git_artifacts.py`        | Reclaim stale skill locks and orphaned git worktrees.                                   |
-| `jq_write.py`                  | Apply an atomic `jq` JSON edit through temp-file replacement.                           |
-| `load_mode.py`                 | Resolve a skill mode/template directory and emit one file.                              |
-| `load_shared_doc.py`           | Resolve the plugin shared-doc directory and emit one file.                              |
-| `make_run_dir.py`              | Create a UTC-timestamped run directory.                                                 |
-| `purge_plugin_cache.py`        | Remove orphaned versions from the plugin cache.                                         |
-| `remove_hook_from_registry.py` | Remove matching hook commands from a JSON registry.                                     |
-| `resolve_agent_file.py`        | Locate the source file for a calibration target.                                        |
-| `resolve_memory_dir.py`        | Resolve the project-scoped Claude memory directory.                                     |
-| `resolve_plugin_root.py`       | Resolve and validate the current installed plugin root.                                 |
-| `resolve_shared_path.py`       | Resolve a plugin's shared directory portably (own, or the active `codemap-py` install). |
-| `resolve_skill_subdir.py`      | Resolve a skill `modes/` or `templates/` subdirectory.                                  |
-| `state.py`                     | Persist small shell values across Bash tool-call boundaries.                            |
-| `symlink_with_guard.py`        | Scan and safely manage foundry-init symlink conflicts.                                  |
-| `write_skill_contract.py`      | Write the compaction-boundary contract the PreCompact hook appends verbatim.            |
+| Helper                         | Purpose                                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------------------ |
+| `find-polluter.py`             | Binary-search a test suite for test-isolation contamination.                               |
+| `agent_watch.py`               | Report each spawned agent's deliverable and deadline in one call — no polling.             |
+| `append_ledger.py`             | Append staged `.rec` records (or `--from` files) to a growing ledger without rewriting it. |
+| `get_plugin_install_path.py`   | Resolve the active plugin path from Claude's registry.                                     |
+| `heal_git_artifacts.py`        | Reclaim stale skill locks and orphaned git worktrees.                                      |
+| `jq_write.py`                  | Apply an atomic `jq` JSON edit through temp-file replacement.                              |
+| `load_mode.py`                 | Resolve a skill mode/template directory and emit one file.                                 |
+| `load_shared_doc.py`           | Resolve the plugin shared-doc directory and emit one file.                                 |
+| `make_run_dir.py`              | Create a UTC-timestamped run directory.                                                    |
+| `purge_plugin_cache.py`        | Remove orphaned versions from the plugin cache.                                            |
+| `remove_hook_from_registry.py` | Remove matching hook commands from a JSON registry.                                        |
+| `resolve_agent_file.py`        | Locate the source file for a calibration target.                                           |
+| `resolve_memory_dir.py`        | Resolve the project-scoped Claude memory directory.                                        |
+| `resolve_plugin_root.py`       | Resolve and validate the current installed plugin root.                                    |
+| `resolve_shared_path.py`       | Resolve a plugin's shared directory portably (own, or the active `codemap-py` install).    |
+| `resolve_skill_subdir.py`      | Resolve a skill `modes/` or `templates/` subdirectory.                                     |
+| `state.py`                     | Persist small shell values across Bash tool-call boundaries.                               |
+| `symlink_with_guard.py`        | Scan and safely manage foundry-init symlink conflicts.                                     |
+| `write_skill_contract.py`      | Write the compaction-boundary contract the PreCompact hook appends verbatim.               |
 
 #### Reporting, synchronization, and transforms
 
@@ -1092,6 +1093,7 @@ Each test spawns `node <hook>.js` with JSON payload on stdin, asserts filesystem
 | `test_measure_config_size.py`      | `measure_config_size.py`                    | 17    | Empty-dir header-only output, agent/skill/rules size thresholds (warn/fail), skill path labelling, tighter rules budget, global CLAUDE.md counted once, delivered `~/.claude/rules/` counted and per-file flagged, symlinked rule counted once, `--mode` required and inventory/overhead dispatch                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `test_resolve_agent_file.py`       | `resolve_agent_file.py`                     | 12    | Bare/plugin-prefixed agent and skill resolution, leading-slash skill selection, cc-prefixed vs bare plugin directory precedence, single/ambiguous/no-match glob resolution, resolved vs unresolved CLI output, `--local` failure labelling                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `test_scan_efficiency_signals.py`  | `scan_efficiency_signals.py`                | 18    | Frontmatter block extraction, Agent-in-loop detection (for/while) with batch-guard/head-limit exemption, declared-model presence, file-type inclusion (SKILL.md/agent files, modes excluded), report section ordering, boilerplate file counting, missing-model reporting, CLI exit code                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `test_append_ledger.py`            | `append_ledger.py`                          | 9     | Staged record appended after existing lines, staged file consumed, missing trailing newline supplied, parallel `<ledger>.<writer>.rec` swept in name order, absent ledger created, empty flush no-op, `--from` sources appended and kept, missing source skipped, `--from` leaves staged records alone                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `test_write_skill_contract.py`     | `write_skill_contract.py`                   | 14    | Five-field contract write, optional seven-field form appending a labelled ledger list (empty items omit the block, blank lines dropped), parent-dir creation, overwrite of previous contract, cwd-relative path, verbatim placeholder survival, wrong-arity/empty-skill exit codes, `--help` usage, no file written on usage error                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 CI runs full test suite on every push to `main` and on PRs touching `plugins/` (see `.github/workflows/ci-tests.yml`).

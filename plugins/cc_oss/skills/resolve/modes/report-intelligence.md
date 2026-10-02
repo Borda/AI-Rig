@@ -59,15 +59,16 @@ IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}" 2>/dev/n
 cat "$_OSS_SHARED/review-section-taxonomy.md"  # timeout: 5000
 ```
 
-Taxonomy (loaded above) — use **Grep pattern** row for header matching (contains-match; headers may carry `⚠ LOW CONFIDENCE — ` prefix), **Severity → Resolve Type** table for `type` assignment, **LOW Grouping Rule** for composite rows, **Owner agent** column for `author` field, and **resolve `change`** column for `change` field. Skip sections where Grep key is `— skip`.
+### Review findings source
 
-- `author`: Owner agent column from taxonomy
-- `change`: resolve `change` column from taxonomy — drives Step 8 Phase 2 specialist routing; do NOT default every report item to `code`, the taxonomy row already names the right value per section
-- `file`/`line`: extract from `file:line` notation; blank if absent or grouped composite
-- `full_comment_text`: full finding bullet (or concatenated bullets for composites)
-- All items get `[report]` prefix on `type` (e.g., `[report][req]`, `[report][suggest]`)
+The review's own structured findings are the handoff. Never re-derive what the review already recorded:
 
-Before printing the table, create and persist the same item source that Step 8 reads. Step 3b does not run in report mode, so Step 3a owns this directory and its session sentinel:
+- **`findings.jsonl` beside the report** (written by the review consolidator, stable `id` per finding): use it as-is. No taxonomy parse, no retyping.
+- **Older report without it**: parse the report once into the same shape. Use the Write tool to write `$IMPL_DIR/report-findings.jsonl`, then mint ids with the block below. Taxonomy (loaded above):
+  - **Grep pattern** row for header matching (contains-match; headers may carry `⚠ LOW CONFIDENCE — ` prefix); skip sections where Grep key is `— skip`.
+  - One record per finding bullet: `section` (canonical header), `severity` (`critical`/`high`/`medium`/`low`/`cosmetic`), `title`, `full_text` (the full bullet), `file`/`line` (from `file:line` notation, `""`/`null` if absent), `author` (Owner agent column), `change` (resolve `change` column — drives Step 8 Phase 2 specialist routing; never default every item to `code`). Never write `verify_verdict` or `verify_file` from report text: only the review's own `findings.jsonl` carries a verifier verdict, and the merge drops any verdict in a findings file resolve wrote itself.
+
+Step 3b does not run in report mode, so Step 3a owns the item directory and its session sentinel:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -75,13 +76,28 @@ IMPL_DIR=$(mktemp -d)
 printf '%s\n' "$IMPL_DIR" > "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}"  # timeout: 3000
 ```
 
-- Use the Write tool to write `$IMPL_DIR/action-items.jsonl` before Step 3d: one compact JSON object per classified ACTION_ITEM, including every displayed pending row.
-- Use Step 3b's exact fields (`id`, `type`, `change`, `severity`, `author`, `summary`, `file`, `line`, `url`, `full_comment_text`, `location`, `origin`).
-- Assign sequential numeric IDs starting at 1; use `location: "report"`, `origin: "posted"`, and an empty `url`.
-- Preserve the full finding text and taxonomy-derived `change` and `author`; the shortened table summary is not a substitute for `full_comment_text`.
-- Write an empty file when there are zero findings.
-- The table below must be rendered from those same records with the same IDs; stop before Step 3d if the file cannot be written or differs from the displayed items.
-- A compaction or Step 8 may reload only this file.
+Pick the findings file, mint ids for a parsed legacy report, then build `$IMPL_DIR/action-items.jsonl` deterministically. `merge_action_items.py` assigns ids 1.. in findings order, maps severity to `[report][req]`/`[report][suggest]` per the taxonomy's **Severity → Resolve Type** table, and carries `finding_id`, `source_file` and `verify_file` through for Step 8, plus `verify_verdict: CONFIRMED` only for findings from the review's own `findings.jsonl` that name a verifier file. Re-running it skips findings already present:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing"; exit 1; }
+[ -f "$REPORT_FILE" ] || { echo "! BLOCKED — report sentinel empty; run Report source resolution (SKILL.md Step 1) first"; exit 1; }
+FINDINGS="$(dirname "$REPORT_FILE")/findings.jsonl"
+if [ ! -s "$FINDINGS" ]; then
+    FINDINGS="$IMPL_DIR/report-findings.jsonl"
+    [ -f "$FINDINGS" ] || { echo "! BLOCKED — no findings.jsonl beside the report; write $FINDINGS from the parsed report first"; exit 1; }
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/mint_finding_ids.py" "$FINDINGS" || exit 1  # timeout: 5000
+fi
+printf '%s\n' "$FINDINGS" > "${TMPDIR:-/tmp}/resolve-findings-file-${CSID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --findings "$FINDINGS"  # timeout: 5000
+```
+
+- Zero findings leave an empty `action-items.jsonl`.
+- Render the table below from those records with the same IDs. Stop before Step 3d if the merge exits non-zero.
+- A compaction or Step 8 may reload only `action-items.jsonl`.
+- Stored items stay one per finding, so each keeps its `finding_id` and evidence paths. LOW-item clustering (taxonomy **LOW Grouping Rule**) shapes only the displayed table and picker when pending items exceed the checkbox ceiling; it never rewrites `action-items.jsonl`.
 
 Print ACTION_ITEMS as a user-facing markdown table (severity descending):
 
@@ -113,6 +129,8 @@ printf '%s\n' 'n/a (local report)' > "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}"
 **Report mode — Step 8 behavior**: use only the `SELECTED_ITEMS` and commit mode produced by Step 3d. If the report produces zero pending action items, Step 3d sets `SELECTED_ITEMS=[]`; skip Step 8 and jump to Step 9.
 
 **Challenge Log — Phase 1 not skippable in report mode.** Report-mode items reach Step 8 with `SELECTED_ITEMS` set above, same as any other mode — `action-item-dispatch.md`'s Phase 1 then runs unconditionally; only sanctioned skip is `--no-challenge` (SKILL.md), which omits Challenge Log section entirely. Do not shortcut Phase 1 by reusing a source report's own verdicts or `Recommendation` text as if it were Phase 1 output, even when that source is itself a prior `oss:review` report — a reviewer's own recommendation is exactly the unproven claim Phase 1 exists to independently re-verify (`action-item-dispatch.md`'s Part 1/Part 2 challenge contract). Reusing source verdicts instead of dispatching challenge agents is a spec violation to self-correct on, not a documented report-mode behavior.
+
+One narrow, different evidence class is admissible: a `verify_verdict: CONFIRMED` carried in `action-items.jsonl`. That verdict was produced by the review's Step 4 cross-validation — a separate, independently spawned verifier that read the code, not the reviewer's own recommendation. It reaches only a `[report]` item built from that same finding: GitHub items never inherit it, and findings resolve parsed from an older report never carry it. Right before Phase 1, `merge_action_items.py --recheck-verdicts` drops it again unless the PR head still equals the head the review recorded and the verifier's file is still on disk. Phase 1 still dispatches for such an item. Its challenger skips re-proving existence (Part 1), re-checks only that the code still matches, and always runs Part 2 (is the fix right). Everything else keeps the full Part 1.
 
 **`BASE_REF` derivation (no-PR path)** — report mode without PR# skips Step 4, so it must publish the local default branch to the same sentinel Step 4 writes for a PR. Step 9 reloads this state in its own shell; an unknown base blocks QA rather than selecting an empty diff range. Comment dispatch jumps to Step 12 and does not run Step 9.
 

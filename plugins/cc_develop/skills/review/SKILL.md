@@ -22,8 +22,8 @@ NOT for: GitHub PR review (use `/oss:review <PR#>` (requires oss plugin)); GitHu
   - Omitted: review current git diff (`git diff HEAD` — staged + unstaged vs HEAD)
   - **Scope**: Python source only. Non-Python file (YAML, JSON, shell script, etc.) → state out of scope, suggest appropriate tool. No findings.
   - `--no-challenge`: skip adversarial review (challenger runs by default)
-  - `--challenge`: force challenger (Agent 7) even on small diff that small-diff auto-skip would otherwise skip
-  - `--full`: run **every** dimension classification preselected, instead of only the `FANOUT_MAX` most relevant. Never widens preselection — a dimension the FIX/CHORE/small-diff rules ruled out stays out. **Not free**: each extra agent costs ~120,851 tok fixed overhead however little work it does. Default stays capped; pass this when depth matters more than cost.
+  - `--challenge`: accepted for compatibility, no effect — challenger runs on every diff size unless `--no-challenge`
+  - `--full`: run **every** dimension classification preselected, instead of only the `FANOUT_MAX` most relevant. Never widens preselection — a dimension the FIX/CHORE/impact-tier rules ruled out stays out. **Not free**: each extra agent costs ~120,851 tok fixed overhead however little work it does. Default stays capped; pass this when depth matters more than cost.
   - `--codemap`: strict mode — stop and report if codemap not installed (on by default when installed; use `--no-codemap` to opt out)
 
 **PR#/filename disambiguation gate** (execute BEFORE Step 1): tighten classification — valid PR# is positive integer with no extension and no existing file at that path. Filenames that look like numbers (e.g. `42.py`) must NOT trigger PR mode.
@@ -61,7 +61,7 @@ FANOUT_MAX=3            # default: top-N spawn UNITS among classification-presel
                         # --full runs ALL preselected units instead — no numeric cap
 AGENT_CALL_BUDGET=55    # target tool-calls per agent; past ~60 they stall without returning an envelope
 CHALLENGE_ENABLED=true  # set to false via --no-challenge
-CHALLENGE_FORCED=false  # set to true via --challenge — forces Agent 7 even on small diffs (overrides small-diff auto-skip)
+CHALLENGE_FORCED=false  # set to true via --challenge — no-op kept for saved invocations; challenger runs at any diff size
 CODEMAP_ENABLED=auto    # on by default if codemap installed + index found; --no-codemap = off; --codemap = strict (stop if not installed)
 ```
 
@@ -139,7 +139,9 @@ IFS= read -r REVIEW_ARGS < "${TMPDIR:-/tmp}/dev-review-clean-args-${CSID}" 2>/de
 # strip --keep so it doesn't leak into find/git diff target path
 REVIEW_ARGS=$(echo "$REVIEW_ARGS" | sed -E 's/ *--keep +"[^"]+"//' | xargs 2>/dev/null || echo "$REVIEW_ARGS")
 IFS= read -r CHALLENGE_ENABLED < "${TMPDIR:-/tmp}/dev-review-challenge-enabled-${CSID}" 2>/dev/null || CHALLENGE_ENABLED="true"
-IFS= read -r CHALLENGE_FORCED < "${TMPDIR:-/tmp}/dev-review-challenge-forced-${CSID}" 2>/dev/null || CHALLENGE_FORCED="false"  # --challenge: force Agent 7 even on small diffs
+IFS= read -r CHALLENGE_FORCED < "${TMPDIR:-/tmp}/dev-review-challenge-forced-${CSID}" 2>/dev/null || CHALLENGE_FORCED="false"  # --challenge: no-op, challenger always runs
+# fail-safe impact default — codemap block overrides with review_impact_tier.py verdict; codemap off keeps FULL
+echo "FULL · impact unknown: codemap unavailable" > "${TMPDIR:-/tmp}/dev-review-impact-${CSID}"
 IFS= read -r CODEMAP_RAW < "${TMPDIR:-/tmp}/dev-review-codemap-enabled-${CSID}" 2>/dev/null || CODEMAP_RAW="auto"
 IFS= read -r FANOUT_FULL < "${TMPDIR:-/tmp}/dev-review-fanout-full-${CSID}" 2>/dev/null || FANOUT_FULL="false"
 FANOUT_CAP=3  # runtime form of FANOUT_MAX (<constants> line ~57) — keep both in sync manually if either changes
@@ -240,11 +242,18 @@ echo "MIXED" > "${TMPDIR:-/tmp}/dev-review-classification-${CSID}"
 
 Skip optional agents by classification:
 
-- FIX → skip Agent 3 (perf-optimizer) and Agent 6 (solution-architect), unless diff changes an already-exported public function's signature (added/removed/renamed params, new flags) — then Agent 6 still runs per its own trigger (Agent 1's "API-consistency audit" subsection already checks the surface; Agent 6 adds design-quality/backward-compat judgment)
+- FIX → **only when `IMPACT_TIER=LIGHT`** (see Impact tier below; `FULL` keeps both): skip Agent 3 (perf-optimizer) and Agent 6 (solution-architect), unless diff changes an already-exported public function's signature (added/removed/renamed params, new flags) — then Agent 6 still runs per its own trigger (Agent 1's "API-consistency audit" subsection already checks the surface; Agent 6 adds design-quality/backward-compat judgment)
 - REFACTOR → skip Agent 6 (solution-architect), same exception — an already-exported public function's signature change still fires Agent 6
 - CHORE (config/deps, no logic) → skip Agent 2 (qa-specialist), Agent 3 (perf-optimizer), Agent 6 (solution-architect); keep Agent 1 (sw-engineer), Agent 4 (doc-scribe), Agent 5 (linting-expert). No logic = no test-gap, perf, or architecture surface — same saving pattern as `oss:review`'s DOCS_TYPING/TESTS_CI pre-classification (cc_oss/skills/review/SKILL.md:182,198).
 - FEATURE/MIXED → spawn all agents, plus Agent 0 (blind-solve) when a matching `.plans/active/*.md` exists — see §Agent 0 below
-- **Small-diff challenger skip** (any classification) — unless `--challenge` passed (`CHALLENGE_FORCED=true`): diff is single file, \<50 lines changed, introduces no new public API / exported symbol → also skip Agent 7 (challenger). Multi-file, ≥50 lines, or any new public API → challenger runs. `--no-challenge` (`CHALLENGE_ENABLED=false`) disables Agent 7 entirely regardless.
+- **Challenger at any diff size** — Agent 7 runs on every classification and every diff size; only `--no-challenge` (`CHALLENGE_ENABLED=false`) disables it. Small diff ≠ low risk: few lines in a private helper on the main path can break the main user story.
+
+**Impact tier** — review depth follows the code path a change sits on, never line or file count. `review_impact_tier.py` (codemap `diff-impact` + `fn-blast`, run in the codemap block below) prints `FULL` or `LIGHT` plus reason:
+
+- `FULL` — any changed symbol, public or private, reaches a public function outside tests/leaf modules (main path), or a changed main-path module has ≥5 importers, or a module-level main-path change. **Unknown impact (codemap off, query failed, unmapped file) = `FULL`.**
+- `LIGHT` — every change and every transitive caller stays in tests, leaf modules (`viz`, `plot`, `examples`, `docs`, `scripts`, `notebooks`), or uncalled private code.
+
+The Step 3 codemap-copy block prints `IMPACT_TIER=` and `IMPACT=` — apply the FIX skip above from that value (codemap runs after classification). Report the `IMPACT=` line in the review header as `Impact:`.
 
 ### Structural context + review pre-flight (codemap-py — only if `CODEMAP_ENABLED=true`)
 
@@ -271,7 +280,10 @@ if [ "$CODEMAP_ENABLED" = "true" ]; then
         echo
         echo "### Change-set blast radius (diff-impact)"
         # fn-level context batch can't give: fn-rdeps per symbol (line-range, methods), unioned test-impact, risk tiers
-        codemap-py query --timeout 15 diff-impact 2>/dev/null
+        _DIFF_IMPACT_JSON=$(codemap-py query --timeout 15 diff-impact 2>/dev/null)
+        printf '%s\n' "$_DIFF_IMPACT_JSON"
+        # review depth from code path, not diff size — overrides Step 0's fail-safe FULL default; stdout to sentinel, not stage
+        printf '%s\n' "$_DIFF_IMPACT_JSON" | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/review_impact_tier.py" > "${TMPDIR:-/tmp}/dev-review-impact-${CSID}" 2>/dev/null  # timeout: 300000 — batch + diff-impact + ≤12 tier fn-blast queries
     } > "$CODEMAP_CONTEXT_STAGE"
 fi
 echo "$codemap_available" > "${TMPDIR:-/tmp}/dev-review-codemap-available-${CSID}"
@@ -339,6 +351,10 @@ IFS= read -r codemap_available < "${TMPDIR:-/tmp}/dev-review-codemap-available-$
 if [ "$codemap_available" = "true" ] && [ -f "${TMPDIR:-/tmp}/dev-review-codemap-context.md-${CSID}" ]; then
     cp "${TMPDIR:-/tmp}/dev-review-codemap-context.md-${CSID}" "$RUN_DIR/codemap-context.md"
 fi
+# review depth by code path — gates FIX perf+arch skip; missing sentinel = FULL
+IFS= read -r IMPACT_LINE < "${TMPDIR:-/tmp}/dev-review-impact-${CSID}" 2>/dev/null || IMPACT_LINE="FULL · impact unknown"
+echo "IMPACT_TIER=${IMPACT_LINE%% *}"
+echo "IMPACT=$IMPACT_LINE"
 ```
 
 If Codex available:
@@ -351,7 +367,7 @@ CODEX_OUT="$RUN_DIR/codex.md"
 echo "$CODEX_OUT" > "${TMPDIR:-/tmp}/dev-review-codex-out-${CSID}"  # Step 6 re-reads — bash state lost
 ```
 
-Read `$_DEV_SHARED/codex-prepass.md` for the **skip/run criteria only** (small-diff skip, availability check) — do NOT use its dispatch line as the spawn prompt: its args name no output path, so Step 2's watch on `$RUN_DIR/codex.md` would idle ~2 min on a file that never appears and Step 6 would silently skip.
+Read `$_DEV_SHARED/codex-prepass.md` for the **skip/run criteria only** (formatting-only skip, availability check) — do NOT use its dispatch line as the spawn prompt: its args name no output path, so Step 2's watch on `$RUN_DIR/codex.md` would idle ~2 min on a file that never appears and Step 6 would silently skip.
 
 Dispatch — substitute `<TARGET>` with its resolved literal value before the call: `Skill(skill="bridge:review", args="Read-only adversarial review of <TARGET>. Look for bugs, missed edge cases, incorrect logic, and inconsistencies with existing code patterns. Report findings with file:line locations; do not apply fixes.")` (requires `bridge@borda-ai-rig`).
 
@@ -401,12 +417,13 @@ Skip when classification is FIX/REFACTOR/CHORE (no fresh problem to solve blind)
 
 Two stages, in order — never collapse them:
 
-1. **Classification preselection** (always): the FIX / CHORE / small-diff-challenger skips above decide which dimensions are *relevant at all*. A dimension with no changed file in its territory is out here and never comes back, at any flag.
+1. **Classification preselection** (always): the FIX (at `IMPACT_TIER=LIGHT`) / CHORE skips above decide which dimensions are *relevant at all*. A dimension with no changed file in its territory is out here and never comes back, at any flag.
 2. **Unit grouping** (always): fold the survivors into spawn units per §Merged spawn units below — Agents 3+6 share one spawn, Agents 4+5 share one spawn, Agents 1 and 2 stay standalone. A unit exists when at least one of its dimensions survived stage 1; its prompt carries only the surviving dimensions' instructions.
 3. **Relevance ranking** (default only): rank the units by evidence — changed files and lines in their dimensions' territory, what the classification implies, what the structural context flagged (a merged unit ranks by its strongest surviving dimension) — and spawn the top `FANOUT_MAX` (3) units. With `--full` (`FANOUT_CAP=0`) skip this stage and spawn every unit of stage 2.
 
 - More work → give each agent more, never add agents.
-- **Spawn the fewest that keep each near `AGENT_CALL_BUDGET`** — not the most the cap allows. Total work under ~73 calls → do it inline, spawn nothing.
+- **Spawn the fewest that keep each near `AGENT_CALL_BUDGET`** — not the most the cap allows. Small diff → merge surviving units into fewer spawns, **never zero**.
+- **Diff size never licenses inline review.** ~73-call inline rule covers work-displacement spawns only; review specialists are role-isolated (own system prompt, independent eyes), so it does not apply here. Small diff ≠ low risk: few-line change on hot path often riskiest. Orchestrator never substitutes itself for a unit that survived stages 1–3.
 - **Merge before you split**: two dimensions whose files overlap go to one agent, not two — the fixed pairs below are the floor, not the ceiling.
 - Every spawn prompt states the budget, requires an envelope even on exhaustion — `partial: true` plus what was finished.
 - Dimensions dropped by the cap are listed in the report; never silently skipped.
@@ -530,7 +547,7 @@ Read review checklist (Read tool → `$REVIEW_CHECKLIST`) — apply CRITICAL/HIG
 
 Skip for purely internal (non-exported) implementation changes.
 
-**Agent 7 — foundry:challenger (skip if `CHALLENGE_ENABLED=false`, or per Small-diff challenger skip in Scope pre-check when `CHALLENGE_FORCED=false`)**: Adversarial review of design decisions in diff. Attacks assumptions, missing edge cases, security risks, architectural concerns, complexity creep with mandatory refutation step. File-handoff: write full findings to `$RUN_DIR/challenger.md`. Return JSON: `{"status":"done","findings":N,"severity":{"critical":0,"high":0,"medium":0,"low":0},"file":"$RUN_DIR/challenger.md","confidence":0.88}`. Severity mapping: blockers → `high`; concerns → `medium`.
+**Agent 7 — foundry:challenger (skip only if `CHALLENGE_ENABLED=false`; runs at any diff size)**: Adversarial review of design decisions in diff. Attacks assumptions, missing edge cases, security risks, architectural concerns, complexity creep with mandatory refutation step. File-handoff: write full findings to `$RUN_DIR/challenger.md`. Return JSON: `{"status":"done","findings":N,"severity":{"critical":0,"high":0,"medium":0,"low":0},"file":"$RUN_DIR/challenger.md","confidence":0.88}`. Severity mapping: blockers → `high`; concerns → `medium`.
 
 **Challenger severity propagation**: consolidator (Step 5) reads `challenger.md` → map its findings by section before merging — Blockers (`[CRITICAL]`) → `critical` or `high` (promote to `critical` only when independently corroborated, e.g. a Step 4 CONFIRMED verdict or matching evidence from another agent; otherwise `high`), Concerns (`[HIGH]`) → `medium`, Nitpicks (`[LOW]`) → `low`. Never drop challenger findings.
 
@@ -613,25 +630,14 @@ Report file already contains the fields — no separate prepend needed. Omit `�
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
 IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/dev-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:review" "follow-up (after consolidation)" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md" "optional Codex delegation → follow-up gate"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:review" "follow-up (after consolidation)" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md" "Codex-eligible findings list → follow-up gate"  # timeout: 5000
 ```
 
 ## Step 6: Delegate implementation follow-up (optional)
 
 Re-hydrate `CODEX_OUT` from persisted temp file (Bash() state doesn't survive between calls): `IFS= read -r CODEX_OUT < "${TMPDIR:-/tmp}/dev-review-codex-out-${CSID}" 2>/dev/null || CODEX_OUT=""`. Skip Step 6 if `$CODEX_OUT` empty or file at that path doesn't exist.
 
-After consolidating, identify tasks Codex can implement directly — not style violations (pre-commit handles those), but work requiring meaningful code or documentation grounded in actual implementation.
-
-**Delegate to Codex when you can write accurate, specific brief:**
-
-- Public functions with no docstrings — read implementation first, describe what each does so Codex writes real 6-section docstring, not placeholder
-- Missing test coverage for concrete, well-defined behaviour — describe exact scenario to test
-- Consistent rename across multiple files — name old and new symbol and why flagged
-
-**Do not delegate — require human judgment:**
-
-- Architectural issues, logic errors, security vulnerabilities, behavioural changes
-- Any task where accurate description requires guessing
+After consolidating, identify findings Codex could implement — not style violations (pre-commit handles those), but bounded code or documentation work grounded in the actual implementation. The review only names them; it never edits code. A fix applied inside review would land outside the fix skills' reproduce-test-verify loop and could collide with their later edits to the same file.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -640,15 +646,13 @@ IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _
 cat "$_DEV_SHARED/codex-delegation.md"
 ```
 
-Apply delegation criteria defined there (when found).
-
-Print `### Codex Delegation` section to terminal only when tasks actually delegated — omit entirely if nothing delegated.
+Apply the "good fit" and "don't delegate" criteria defined there (when found) — criteria only; never invoke `bridge:implement` from this step. Qualifying findings → print a `### Codex-eligible findings` section listing each finding's location and a one-line brief, and add them to the report's **Recommended Next Steps** as candidates for a `bridge:implement` call by the fix workflow or the user. None qualify → omit the section.
 
 **Hard gate**: check "Step 5b: Print report header" task status before anything below. Not `completed` → header table hasn't actually been printed yet — go back and do it now (see Step 5), mark the task `completed`, before calling `AskUserQuestion` below.
 
 **Hook-enforced**: `hooks/enforce-review-header.js` blocks only this workflow's follow-up question until the current report exists and every `---` header field appears in one matching two-column table in the parent reply since the last human turn. Missing/unreadable transcript evidence blocks this transition; reprint the header, then retry. Diagnostic/recovery questions remain available; use their own question header, not `dev-review`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
 
-**Worktree exit** — if `WORKTREE_ENABLED=true`: the report already lives in the main tree (§Deliverable). Follow `worktree-isolation.md` §Exit — capture branch, call `ExitWorktree(action="keep")`, append the `Worktree` block to the report/output. Any Step 6 Codex edits stay on the worktree branch for you to merge. Exit **before** the follow-up gate so the `/develop:fix`/`/develop:refactor` next-step suggestions below point at the main tree. Never auto-merge.
+**Worktree exit** — if `WORKTREE_ENABLED=true`: the report already lives in the main tree (§Deliverable). Follow `worktree-isolation.md` §Exit — capture branch, call `ExitWorktree(action="keep")`, append the `Worktree` block to the report/output. Exit **before** the follow-up gate so the `/develop:fix`/`/develop:refactor` next-step suggestions below point at the main tree. Never auto-merge.
 
 **Suggested next steps** (plain text, not selectable — `/develop:fix` and `/develop:refactor` both carry `disable-model-invocation: true`, so `Skill()` dispatch is impossible for either): blocking issues found → `Run: /develop:fix` to reproduce with a test, apply a targeted fix; structural/quality issues found → `Run: /develop:refactor` for test-first improvements.
 

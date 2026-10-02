@@ -40,6 +40,8 @@ if [ "$CODEMAP_ENABLED" = "true" ] && command -v codemap-py >/dev/null 2>&1 && [
         IFS= read -r _SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" 2>/dev/null || _SNAP_DIR=""
         _DIFF_IMPACT_JSON=$(codemap-py query --timeout 15 diff-impact --diff-file "$_SNAP_DIR/pr.diff" 2>/dev/null)
         printf '%s\n' "$_DIFF_IMPACT_JSON"
+        # review depth from code path, not diff size — overrides Step 1's fail-safe FULL default; stdout to sentinel, not stage
+        printf '%s\n' "$_DIFF_IMPACT_JSON" | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/review_impact_tier.py" > "${TMPDIR:-/tmp}/oss-review-impact-${CLEAN_ARGS}-${CSID}" 2>/dev/null  # timeout: 300000 — whole battery: fn-rdeps/fn-blast loop + ≤12 tier fn-blast queries
         echo
         echo "### Changed-function callers (fn-rdeps/fn-blast)"
         # fn-rdeps/fn-blast need module::fn qnames — bare-module calls failed 100% in prod. diff-impact derives qnames but only exposes caller_count not list (0.177x tokens, e.g. enumerate subclass overrides pre-signature-edit).

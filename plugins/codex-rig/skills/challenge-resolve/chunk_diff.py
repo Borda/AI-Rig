@@ -20,7 +20,8 @@ Run ``chunk_diff.py plan --repository <root> --out <new-directory> --goal <goal>
 ``--budget-bytes`` from the selected review route after reserving room for its role card and instructions.
 For a continuation, pass ``--caller-run``, that run's ``loop-ledger.json`` via ``--prior-ledger``, and
 ``--prior-coverage`` with one source-path and assigned-review entry per final-round signature. The planner pins a copy
-of the ledger and checks those bytes against the declared caller run on each check. This does not authenticate the
+of the ledger header and its ``loop-rounds.jsonl`` round log, records their ``ledger_digest``, and checks that digest
+against the declared caller run on each check. This does not authenticate the
 historical reviewer after the original source changes. It appends the block
 to the specification so every reviewer receives the earlier counterexamples.
 Run ``chunk_diff.py check --manifest <out>/chunks.json`` before dispatch and final acceptance; replan after edits.
@@ -56,7 +57,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 from collect_diff import capture_source_snapshot  # noqa: E402
-from adversarial_loop import validate_ledger  # noqa: E402
+from adversarial_loop import ledger_digest, load_ledger, rounds_path, validate_ledger  # noqa: E402
 
 
 DEFAULT_BUDGET_BYTES = 1_000_000
@@ -124,6 +125,14 @@ def _artifact(root: Path, raw: object) -> Path:
     if not path.is_relative_to(root.resolve()):
         raise ValueError("chunk-artifact-path-invalid")
     return path
+
+
+def _prior_ledger_artifact(root: Path, raw: object) -> Path:
+    """Resolve a pinned prior ledger header whose sibling round log must also stay inside the run."""
+    header = _artifact(root, raw)
+    assert isinstance(raw, str)
+    _artifact(root, rounds_path(Path(raw)).as_posix())
+    return header
 
 
 def _literal_source_path(value: object) -> bool:
@@ -198,8 +207,7 @@ def plan(
         caller_run = caller_run.resolve()
     if caller_run is not None and prior_ledger.resolve() != (caller_run / "loop-ledger.json").resolve():
         raise ValueError("prior-ledger-caller-run-mismatch")
-    prior_bytes = prior_ledger.read_bytes() if prior_ledger is not None else None
-    prior = json.loads(prior_bytes) if prior_bytes is not None else None
+    prior = load_ledger(prior_ledger) if prior_ledger is not None else None
     if prior is not None and (validate_ledger(prior) or not prior["rounds"]):
         raise ValueError("prior-ledger-invalid")
     coverage = json.loads(prior_coverage.read_bytes()) if prior_coverage is not None else []
@@ -254,8 +262,15 @@ def plan(
             request = request | {"specification": specification + block}
 
     output.mkdir(parents=True, exist_ok=True)
-    if prior_bytes is not None:
-        (output / "prior-loop-ledger.json").write_bytes(prior_bytes)
+    prior_digest = None
+    if prior_ledger is not None:
+        pinned = output / "prior-loop-ledger.json"
+        pinned.write_bytes(prior_ledger.read_bytes())
+        if rounds_path(prior_ledger).is_file():
+            rounds_path(pinned).write_bytes(rounds_path(prior_ledger).read_bytes())
+        prior_digest = ledger_digest(pinned)
+        if prior_digest != ledger_digest(prior_ledger):
+            raise ValueError("prior-ledger-changed")
     chunks = []
     for index, paths in enumerate(groups, 1):
         source, diff = _material(repository, paths)
@@ -291,8 +306,8 @@ def plan(
         "revision": _git(repository, "rev-parse", "HEAD").decode("ascii").strip(),
         "chunks": chunks,
         "prior_findings": {
-            "ledger_path": "prior-loop-ledger.json" if prior_bytes is not None else None,
-            "ledger_sha256": hashlib.sha256(prior_bytes).hexdigest() if prior_bytes is not None else None,
+            "ledger_path": "prior-loop-ledger.json" if prior_digest is not None else None,
+            "ledger_sha256": prior_digest,
             "coverage": coverage,
         },
     }
@@ -413,13 +428,13 @@ def check(manifest_path: Path, results_path: Path | None = None) -> dict[str, ob
     if manifest["origin"]["kind"] == "continuation":
         caller_ledger = Path(manifest["origin"]["caller_run"]) / "loop-ledger.json"
         try:
-            if caller_ledger.is_symlink() or not caller_ledger.is_file():
+            if caller_ledger.is_symlink() or not caller_ledger.is_file() or rounds_path(caller_ledger).is_symlink():
                 raise ValueError("caller-ledger-unavailable")
-            caller_bytes = caller_ledger.read_bytes()
+            caller_digest = ledger_digest(caller_ledger)
         except (OSError, ValueError) as error:
             raise ValueError("caller-ledger-unavailable") from error
-        copied_bytes = _artifact(root, manifest["prior_findings"]["ledger_path"]).read_bytes()
-        if caller_bytes != copied_bytes:
+        copied = _prior_ledger_artifact(root, manifest["prior_findings"]["ledger_path"])
+        if caller_digest != ledger_digest(copied):
             raise ValueError("caller-ledger-changed")
     if results_path is not None:
         runs, results_digest = _check_results(root, manifest, results_path)
@@ -444,10 +459,10 @@ def _check_prior_manifest(root: Path, manifest: dict[str, object]) -> None:
         if prior["ledger_sha256"] is not None or coverage != []:
             raise ValueError("prior-coverage-invalid")
         return
-    ledger_bytes = _artifact(root, ledger_path).read_bytes()
-    if hashlib.sha256(ledger_bytes).hexdigest() != prior["ledger_sha256"]:
+    ledger_file = _prior_ledger_artifact(root, ledger_path)
+    if ledger_digest(ledger_file) != prior["ledger_sha256"]:
         raise ValueError("prior-ledger-changed")
-    ledger = json.loads(ledger_bytes)
+    ledger = load_ledger(ledger_file)
     if validate_ledger(ledger) or not ledger["rounds"]:
         raise ValueError("prior-ledger-invalid")
     signatures = {finding["signature"] for finding in ledger["rounds"][-1]["findings"]}
@@ -490,7 +505,7 @@ def _check_prior_results(root: Path, manifest: dict[str, object], results_path: 
     prior_path = manifest["prior_findings"]["ledger_path"]
     if prior_path is None:
         return
-    prior = json.loads(_artifact(root, prior_path).read_bytes())
+    prior = load_ledger(_prior_ledger_artifact(root, prior_path))
     expected = {finding["signature"]: finding for finding in prior["rounds"][-1]["findings"]}
     for item in manifest["prior_findings"]["coverage"]:
         issue = _prior_result_issue(root, results, item, expected[item["signature"]])
@@ -529,7 +544,7 @@ def _prior_result_issue(
     ledger_path = run / "loop-ledger.json"
     if not ledger_path.is_file():
         return "prior-finding-not-resolved"
-    ledger = json.loads(ledger_path.read_bytes())
+    ledger = load_ledger(ledger_path)
     if not ledger["rounds"]:
         return "prior-finding-not-resolved"
     if require_current_review:
@@ -711,7 +726,7 @@ def check_stopped(manifest_path: Path, results_path: Path) -> dict[str, object]:
     prior_path = manifest["prior_findings"]["ledger_path"]
     expected = {}
     if prior_path is not None:
-        prior = json.loads(_artifact(root, prior_path).read_bytes())
+        prior = load_ledger(_prior_ledger_artifact(root, prior_path))
         expected = {finding["signature"]: finding for finding in prior["rounds"][-1]["findings"]}
     pending_prior_signatures = [
         item["signature"]

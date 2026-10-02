@@ -22,7 +22,7 @@ assert _SPEC and _SPEC.loader
 publisher = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(publisher)
 _MAIN_MARKER = marker_api.state_relative("main", "marker")
-_MAIN_PROVENANCE = marker_api.state_relative("main", "provenance.json")
+_MAIN_PROVENANCE = marker_api.state_relative("main", "provenance.jsonl")
 
 
 def _bash_path(path: Path) -> str:
@@ -129,7 +129,7 @@ def _start(tmp_path: Path) -> Path:
     (tmp_path / ".temp").mkdir()
     (tmp_path / "DRAFT.md").write_text("## Summary\nOriginal\n", encoding="utf-8", newline="\n")
     (tmp_path / "CHANGELOG.md").write_text("# Changelog\n", encoding="utf-8", newline="\n")
-    _write_state(tmp_path, _MAIN_PROVENANCE, "[]\n", encoding="utf-8")
+    _write_state(tmp_path, _MAIN_PROVENANCE, '{"schema_version":1,"patch_id":"old"}\n', encoding="utf-8")
     _write_state(tmp_path, _MAIN_MARKER, "old\n", encoding="utf-8")
     return publisher.begin(tmp_path, "main", "CHANGELOG.md", range_start="HEAD")
 
@@ -169,11 +169,16 @@ def test_truth_abort_leaves_all_live_artifacts_unchanged(tmp_path: Path) -> None
         "## Summary\nOriginal\n### Since last draft\nIncrement\n", encoding="utf-8", newline="\n"
     )
     (stage / "CHANGELOG.md").write_text("# Changelog\nIncrement\n", encoding="utf-8", newline="\n")
-    _write_state(stage, _MAIN_PROVENANCE, '[{"patch_id":"new"}]\n', encoding="utf-8")
+    _write_state(
+        stage,
+        _MAIN_PROVENANCE,
+        '{"schema_version":1,"patch_id":"old"}\n{"schema_version":1,"patch_id":"new"}\n',
+        encoding="utf-8",
+    )
     assert (tmp_path / "DRAFT.md").read_text(encoding="utf-8") == "## Summary\nOriginal\n"
     assert (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8") == "# Changelog\n"
     assert (tmp_path / _MAIN_MARKER).read_text(encoding="utf-8") == "old\n"
-    assert (tmp_path / _MAIN_PROVENANCE).read_text(encoding="utf-8") == "[]\n"
+    assert (tmp_path / _MAIN_PROVENANCE).read_text(encoding="utf-8") == '{"schema_version":1,"patch_id":"old"}\n'
     assert not publisher.journal_path(tmp_path, "main").exists()
 
 

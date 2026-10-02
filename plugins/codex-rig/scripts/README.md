@@ -235,12 +235,12 @@ python3 plugins/codex-rig/scripts/verify_role_link.py --plugin-root /path/to/cod
 <details>
 <summary><strong>Ledger validation and in-turn progress transcript</strong></summary>
 
-**Purpose:** Validates one bounded adversarial-review ledger and emits its deterministic JSON summary without modifying the ledger. The optional `--progress` flag writes the complete cumulative progress table and legend to stderr while keeping JSON stdout unchanged. The optional `--actions` flag binds parent triage and resolution records to every open finding; it checks completeness, not the truth of a claimed fix.
+**Purpose:** Validates one bounded adversarial-review ledger and emits its deterministic JSON summary. Current schema 2 keeps a small `loop-ledger.json` header and an append-only `loop-rounds.jsonl` round log; historical schema-1 files with inline rounds stay readable, but current results require schema 2. Only `--append` writes: it validates the round staged in `loop-rounds.jsonl.rec` against the earlier rounds, appends it as one line, and deletes the staged file, or exits nonzero and appends nothing. The optional `--progress` flag writes the complete cumulative progress table and legend to stderr while keeping JSON stdout unchanged. The optional `--actions` flag binds parent triage and resolution records to every open finding; it checks completeness, not the truth of a claimed fix.
 
 **Usage** (contract; the progress rendering is exercised by the adversarial-loop test suite):
 
 ```bash
-python3 plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --progress
+python3 plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --append --progress
 python3 plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --actions <run-directory>/loop-actions.json
 ```
 

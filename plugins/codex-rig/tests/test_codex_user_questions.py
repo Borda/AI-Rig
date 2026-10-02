@@ -13,6 +13,34 @@ SKILLS = sorted((PLUGIN_ROOT / "skills").glob("*/SKILL.md"))
 
 
 @pytest.mark.installed_plugin
+def test_question_checkpoint_discovers_deferred_native_tools_before_async() -> None:
+    """Prevent visible async input from bypassing a deferred native provider in Default mode."""
+    compact = (PLUGIN_ROOT / QUESTION_REFERENCE).read_text(encoding="utf-8")
+    details = (PLUGIN_ROOT / "shared/codex-user-questions-details.md").read_text(encoding="utf-8")
+    routing = compact.split("3. ", 1)[1].split("\n4. ", 1)[0]
+
+    assert "ALL_TOOLS" in routing
+    assert "before async" in routing
+    assert "unknown means unsuitable" in routing
+    assert "functions.exec" in details
+    assert "matching metadata, including its complete description" in details
+    assert "Do not guess a callable name" in details
+    assert "Record the selected tool and the evidence allowing its use before invocation" in details
+
+
+@pytest.mark.installed_plugin
+def test_text_agent_message_disqualifies_async_without_resubmitting() -> None:
+    """Keep one text-delivered async question pending rather than opening a duplicate control."""
+    details = (PLUGIN_ROOT / "shared/codex-user-questions-details.md").read_text(encoding="utf-8")
+
+    assert "AgentMessage" in details
+    assert "both text content and structured `questions`" in details
+    assert "does not prove two tool calls" in details
+    assert "Keep the original question pending for a typed reply" in details
+    assert "Do not submit it again through another control or repeat its menu" in details
+
+
+@pytest.mark.installed_plugin
 def test_native_form_is_declared_and_precedes_unverified_async() -> None:
     """Prevent reinstall from retaining the broken async-only Default-mode question route."""
     manifest = json.loads((PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))

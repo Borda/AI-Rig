@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -586,3 +587,122 @@ def test_cli_progress_separates_legend_from_markdown_table(tmp_path: Path, compl
         assert all(line.startswith("| ") and line.endswith(" |") for line in table.splitlines())
         assert legend.startswith("Cells: old + new open findings")
         assert "Cells:" not in table
+
+
+def _write_header(path: Path, digest: str = _DIGEST_A) -> None:
+    """Write a current schema-2 ledger header with no completed round."""
+    header = {key: value for key, value in _ledger(digest=digest).items() if key != "rounds"} | {"schema_version": 2}
+    path.write_text(json.dumps(header), encoding="utf-8", newline="\n")
+
+
+def _append(ledger_path: Path, round_record: dict[str, Any]) -> subprocess.CompletedProcess[str]:
+    """Stage one round beside the header and append it through the CLI, as the lifecycle owner does."""
+    (ledger_path.parent / "loop-rounds.jsonl.rec").write_text(json.dumps(round_record, indent=2), encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, str(LEDGER_PATH), "--ledger", str(ledger_path), "--append", "--progress"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_append_round_trips_rounds_without_rewriting_earlier_lines(tmp_path: Path) -> None:
+    """Grow the round log one staged round at a time and read it back as the assembled ledger.
+
+    The second append must leave the first round's line byte-identical: the log is only appended, so a dropped or
+    reworded earlier round can never be introduced by recording a later one.
+    """
+    module = _load_module()
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    first = _round(1, [_finding("finding-a")])
+    second = _round(2, [_finding("finding-a", disposition="verified-fixed")])
+
+    baseline = _append(ledger_path, first)
+    first_line = (tmp_path / "loop-rounds.jsonl").read_bytes()
+    final = _append(ledger_path, second)
+
+    log = (tmp_path / "loop-rounds.jsonl").read_bytes()
+    assert baseline.returncode == 0, baseline.stderr
+    assert final.returncode == 0, final.stderr
+    assert log.startswith(first_line)
+    assert len(log.splitlines()) == 2
+    assert not (tmp_path / "loop-rounds.jsonl.rec").exists()
+    assert module.load_ledger(ledger_path) == _ledger(first, second) | {"schema_version": 2}
+    assert json.loads(final.stdout) == module.summarize_ledger(_ledger(first, second))
+    assert "| 2 | 0 + 0 |" in final.stderr
+
+
+@pytest.mark.parametrize(
+    "staged, expected_error",
+    [
+        pytest.param(_round(3, [_finding("finding-a")]), "round-index-must-be-contiguous-integer", id="skipped-index"),
+        pytest.param(_round(1, []), "round-index-must-be-contiguous-integer", id="repeated-index"),
+        pytest.param(_round(2, []), "round-2-finding-dropped:finding-a", id="dropped-signature"),
+    ],
+)
+def test_append_refuses_invalid_round_and_keeps_staged_record(
+    tmp_path: Path, staged: dict[str, Any], expected_error: str
+) -> None:
+    """Reject a staged round that would break history, appending nothing and keeping the record for repair."""
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    assert _append(ledger_path, _round(1, [_finding("finding-a")])).returncode == 0
+    before = (tmp_path / "loop-rounds.jsonl").read_bytes()
+    rejected = _append(ledger_path, staged)
+
+    assert rejected.returncode == 1
+    assert rejected.stdout == ""
+    assert json.loads(rejected.stderr)["reason"] == "append-rejected"
+    assert expected_error in json.loads(rejected.stderr)["errors"]
+    assert (tmp_path / "loop-rounds.jsonl").read_bytes() == before
+    assert (tmp_path / "loop-rounds.jsonl.rec").is_file()
+
+
+def test_historical_inline_ledger_stays_readable_but_cannot_grow(tmp_path: Path) -> None:
+    """Read a schema-1 archive unchanged, while refusing to append rounds to the rewritten single-file shape."""
+    module = _load_module()
+    ledger_path = tmp_path / "loop-ledger.json"
+    historical = _ledger(_round(1, [_finding("finding-a")]))
+    ledger_path.write_text(json.dumps(historical), encoding="utf-8", newline="\n")
+
+    appended = _append(ledger_path, _round(2, [_finding("finding-a")]))
+
+    assert module.load_ledger(ledger_path) == historical
+    assert module.validate_ledger(module.load_ledger(ledger_path)) == []
+    assert appended.returncode == 1
+    assert "append-requires-current-schema" in json.loads(appended.stderr)["errors"]
+    assert json.loads(ledger_path.read_text(encoding="utf-8")) == historical
+
+
+def test_current_header_with_inline_rounds_is_unreadable(tmp_path: Path) -> None:
+    """Reject a schema-2 header that also carries rounds, because two copies of history could disagree."""
+    ledger_path = tmp_path / "loop-ledger.json"
+    ledger_path.write_text(json.dumps(_ledger() | {"schema_version": 2}), encoding="utf-8", newline="\n")
+
+    result = subprocess.run(
+        [sys.executable, str(LEDGER_PATH), "--ledger", str(ledger_path)], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 1
+    assert json.loads(result.stderr)["reason"] == "ledger-read-failed"
+    assert "ledger-header-inline-rounds-forbidden" in result.stderr
+
+
+def test_ledger_digest_binds_historical_bytes_and_current_round_log(tmp_path: Path) -> None:
+    """Keep archived continuation digests valid and make any round-log change visible in the current digest."""
+    module = _load_module()
+    historical = tmp_path / "historical" / "loop-ledger.json"
+    historical.parent.mkdir()
+    historical.write_bytes(json.dumps(_ledger(_round(1, [_finding("finding-a")]))).encode())
+    current = tmp_path / "current" / "loop-ledger.json"
+    current.parent.mkdir()
+    _write_header(current)
+    empty_digest = module.ledger_digest(current)
+    assert _append(current, _round(1, [_finding("finding-a")])).returncode == 0
+    one_round_digest = module.ledger_digest(current)
+    rounds_log = current.with_name("loop-rounds.jsonl")
+    rounds_log.write_bytes(rounds_log.read_bytes() + b" ")
+
+    assert module.ledger_digest(historical) == hashlib.sha256(historical.read_bytes()).hexdigest()
+    assert len({empty_digest, one_round_digest, module.ledger_digest(current)}) == 3

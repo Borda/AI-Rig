@@ -11,7 +11,8 @@ from pathlib import Path
 import pytest
 
 from test_final_handoff import _load_finalizer, _load_shared_validator, _write_schema_v2_assess
-from test_loop_review_evidence import _loop_evidence_run, _rewrite_native_outputs, _validator as _load_loop_validator
+from test_loop_review_evidence import _loop_evidence_run, _read_ledger, _rewrite_native_outputs, _write_ledger
+from test_loop_review_evidence import _validator as _load_loop_validator
 
 
 def _write_loop(
@@ -119,6 +120,21 @@ def _write_loop(
     result["metadata"]["final_handoff"].update({key: validation[key] for key in ("handoff_sha256", "rendered_sha256")})
     result_path.write_text(json.dumps(result), encoding="utf-8")
     return result_path
+
+
+def test_current_result_rejects_historical_inline_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refuse a current challenge result whose ledger still keeps every round inline in one rewritten file.
+
+    The same rounds that validate in the current header-plus-round-log layout are rewritten as a schema-1 file: the
+    standalone checker still reads that archive shape, but a current result must record rounds append-only.
+    """
+    result_path = _write_loop(tmp_path, monkeypatch)
+    historical = _read_ledger(tmp_path / "loop-ledger.json") | {"schema_version": 1}
+    (tmp_path / "loop-rounds.jsonl").unlink()
+    (tmp_path / "loop-ledger.json").write_text(json.dumps(historical), encoding="utf-8", newline="\n")
+
+    with pytest.raises(SystemExit, match="adversarial-loop-ledger-schema-v2-required"):
+        _load_shared_validator().validate("challenge-resolve", tmp_path, result_path)
 
 
 @pytest.mark.parametrize("filename", ["result.candidate.json", "result.json"])
@@ -477,6 +493,7 @@ def test_chunked_coordinator_reports_children_without_a_combined_score(
     result["metadata"]["final_handoff"].update({key: validation[key] for key in ("handoff_sha256", "rendered_sha256")})
     candidate.write_text(json.dumps(result), encoding="utf-8")
     (tmp_path / "loop-ledger.json").unlink()
+    (tmp_path / "loop-rounds.jsonl").unlink()
     validator = _load_shared_validator()
     real_run = subprocess.run
 
@@ -592,10 +609,10 @@ def _bind_real_chunk_run(
         (run / name).write_bytes(diff)
     snapshot = json.loads(source)
     ledger_path = run / "loop-ledger.json"
-    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    ledger = _read_ledger(ledger_path)
     ledger["current_snapshot"] = {"revision": snapshot["revision"], "diff_digest": hashlib.sha256(diff).hexdigest()}
     ledger["rounds"][0]["snapshot"] = ledger["current_snapshot"]
-    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+    _write_ledger(ledger_path, ledger)
     loop_path = run / "loop-evidence.json"
     loop = json.loads(loop_path.read_text(encoding="utf-8"))
     loop.update(repository=repository.as_posix(), scope_paths=paths, request=request)
@@ -617,9 +634,9 @@ def _bind_real_chunk_run(
         (review / "inspection-plan.json").read_bytes()
     ).hexdigest()
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    ledger = _read_ledger(ledger_path)
     ledger["rounds"][0]["reviewer"]["identity"] = f"{identity}-child-2"
-    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+    _write_ledger(ledger_path, ledger)
 
 
 def _collect_chunk_sessions(evidence: dict[str, object], sessions: Path) -> None:
@@ -789,6 +806,7 @@ def test_chunked_coordinator_validates_real_children_and_interaction(
     result["metadata"]["final_handoff"].update({key: validation[key] for key in ("handoff_sha256", "rendered_sha256")})
     coordinator.write_text(json.dumps(result), encoding="utf-8")
     (tmp_path / "loop-ledger.json").unlink()
+    (tmp_path / "loop-rounds.jsonl").unlink()
     monkeypatch.setenv("CODEX_HOME", str(session_home))
     validator = _load_shared_validator()
     validator.validate("challenge-resolve", tmp_path, coordinator)
@@ -1280,7 +1298,7 @@ def test_public_validator_accepts_verified_structural_carryover(
     result_path = _write_loop(tmp_path, monkeypatch, findings=findings)
 
     _load_shared_validator().validate("challenge-resolve", tmp_path, result_path)
-    ledger = json.loads((tmp_path / "loop-ledger.json").read_text(encoding="utf-8"))
+    ledger = _read_ledger(tmp_path / "loop-ledger.json")
     assert ledger["rounds"][0]["findings"] == findings
 
 
@@ -1326,9 +1344,9 @@ def test_public_validator_rejects_unbound_review_evidence(
     result_path = _write_loop(tmp_path, monkeypatch)
     if mutation == "forged-reviewer":
         ledger_path = tmp_path / "loop-ledger.json"
-        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        ledger = _read_ledger(ledger_path)
         ledger["rounds"][0]["reviewer"]["identity"] = "invented-reviewer"
-        ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+        _write_ledger(ledger_path, ledger)
     elif mutation == "changed-source":
         evidence = json.loads((tmp_path / "loop-evidence.json").read_text(encoding="utf-8"))
         (Path(evidence["repository"]) / "widget.py").write_text("VALUE = 2\n", encoding="utf-8")
@@ -1347,7 +1365,7 @@ def test_public_validator_rejects_false_loop_closure(
     """Keep actual ledger, local reports, and visible decisions bound to completion."""
     result_path = _write_loop(tmp_path, monkeypatch)
     ledger_path = tmp_path / "loop-ledger.json"
-    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    ledger = _read_ledger(ledger_path)
     if mutation == "drop-review":
         (tmp_path / "review-1.md").unlink()
     elif mutation == "claim-clean":
@@ -1367,7 +1385,7 @@ def test_public_validator_rejects_false_loop_closure(
             {key: validation[key] for key in ("handoff_sha256", "rendered_sha256")}
         )
         result_path.write_text(json.dumps(result), encoding="utf-8")
-    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+    _write_ledger(ledger_path, ledger)
     with pytest.raises(SystemExit, match="adversarial-loop-"):
         _load_shared_validator().validate("challenge-resolve", tmp_path, result_path)
 
@@ -1503,9 +1521,9 @@ def test_public_validator_accepts_unavailable_loop_with_not_run_row(
     recovery decision.
     """
     result_path = _write_loop(tmp_path, monkeypatch)
-    ledger = json.loads((tmp_path / "loop-ledger.json").read_text(encoding="utf-8"))
+    ledger = _read_ledger(tmp_path / "loop-ledger.json")
     ledger["rounds"] = []
-    (tmp_path / "loop-ledger.json").write_text(json.dumps(ledger), encoding="utf-8")
+    _write_ledger(tmp_path / "loop-ledger.json", ledger)
     (tmp_path / "loop-actions.json").write_text(json.dumps({"schema_version": 2, "rounds": []}), encoding="utf-8")
     evidence_path = tmp_path / "loop-evidence.json"
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))

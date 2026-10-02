@@ -1184,7 +1184,7 @@ def test_specialist_wave_joins_before_acceptance_without_expanding_fanout() -> N
     assert "immutable packs" in policy
     assert "joins all handoffs before acceptance" in policy
     assert "Adding a second unplanned wave is forbidden" in policy
-    assert "Code Review schema-seven native waves follow these rules" in policy
+    assert "Code Review schema-eight native waves follow these rules" in policy
     assert "Retain the complete frozen roster and bind actual parent spawn-call order" in policy
     assert "descending frozen context bytes with stable role-ID ties" in policy
     assert "Keep at most four allocated review slots" in policy
@@ -1193,7 +1193,7 @@ def test_specialist_wave_joins_before_acceptance_without_expanding_fanout() -> N
     assert (
         "An explicit observed full-pool refusal that proves no child was created retains the same queued role" in policy
     )
-    assert "including one slot, to finish native schema-seven review as `independent-spawned`" in policy
+    assert "including one slot, to finish native schema-eight review as `independent-spawned`" in policy
     assert "Historical overlap gates remain strict" in policy
     assert "Replenishing the same frozen roster is part of that wave, not new fan-out" in policy
     assert (

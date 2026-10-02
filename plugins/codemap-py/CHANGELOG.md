@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.40.2
+
+- Discover deferred native question tools before fallback; treat unverified async rendering as unsuitable and preserve text-delivered questions without duplicate submission.
+
 ## 0.40.1
 
 - Correct the GitHub repository API allow rule to use wildcard syntax without mixing it with legacy prefix syntax; migrate the exact obsolete entry in the documented manual merge.

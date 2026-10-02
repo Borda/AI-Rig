@@ -434,13 +434,32 @@ def test_prior_finding_missing_in_assigned_review_blocks_clean(changed_repositor
         assert "prior-coverage-invalid" in invalid.stderr
 
 
+def _write_prior(path: Path, ledger: dict[str, object], *, split: bool) -> None:
+    """Write a caller ledger as a historical inline file or a current header plus append-only round log."""
+    if not split:
+        path.write_text(json.dumps(ledger), encoding="utf-8", newline="\n")
+        return
+    header = {key: value for key, value in ledger.items() if key != "rounds"} | {"schema_version": 2}
+    path.write_text(json.dumps(header), encoding="utf-8", newline="\n")
+    rounds = ledger["rounds"]
+    assert isinstance(rounds, list)
+    path.with_name("loop-rounds.jsonl").write_text(
+        "".join(json.dumps(item) + "\n" for item in rounds), encoding="utf-8", newline="\n"
+    )
+
+
 @pytest.mark.packaging
-def test_continuation_check_rechecks_caller_ledger_bytes(changed_repository: Path, tmp_path: Path) -> None:
-    """A copied prior ledger cannot certify a caller ledger changed after planning."""
+@pytest.mark.parametrize("split", [pytest.param(False, id="historical-inline"), pytest.param(True, id="current-split")])
+def test_continuation_check_rechecks_caller_ledger_bytes(changed_repository: Path, tmp_path: Path, split: bool) -> None:
+    """A copied prior ledger cannot certify a caller ledger changed after planning.
+
+    Both ledger layouts are pinned: a historical inline file by its bytes, and a current header with its round log by
+    the framed digest of both files, so editing a recorded round after planning is caught like editing the header.
+    """
     caller_run = tmp_path / "caller-run"
     caller_run.mkdir()
     prior = caller_run / "loop-ledger.json"
-    prior.write_text(json.dumps(_prior_ledger()), encoding="utf-8", newline="\n")
+    _write_prior(prior, _prior_ledger(), split=split)
     coverage = tmp_path / "coverage.json"
     coverage.write_text(
         json.dumps(
@@ -476,9 +495,11 @@ def test_continuation_check_rechecks_caller_ledger_bytes(changed_repository: Pat
     assert planned.returncode == 0, planned.stderr
     manifest_path = out / "chunks.json"
     assert _run("check", "--manifest", str(manifest_path)).returncode == 0
+    assert (out / "loop-rounds.jsonl").exists() is False
+    assert (out / "prior-loop-rounds.jsonl").is_file() is split
     changed = _prior_ledger()
     changed["rounds"][0]["findings"][0]["evidence"] = ["Caller record still absent"]
-    prior.write_text(json.dumps(changed), encoding="utf-8", newline="\n")
+    _write_prior(prior, changed, split=split)
     checked = _run("check", "--manifest", str(manifest_path))
     assert checked.returncode != 0
     assert "caller-ledger-changed" in checked.stderr

@@ -1,5 +1,5 @@
 ---
-description: JSONL schema for hypotheses.jsonl, checkpoint.json, and journal.md entry format used by research:run --researcher and --architect
+description: JSONL schema for hypotheses.jsonl, checkpoint.jsonl, and journal.md entry format used by research:run --researcher and --architect
 paths:
   - .experiments/**
   - plugins/cc_research/skills/run/**
@@ -17,7 +17,7 @@ Canonical layout — other run/mode files point here rather than re-explaining i
 
 .experiments/<run-id>/           ← hypothesis-pipeline artifacts (--researcher / --architect / --journal)
   hypotheses.jsonl   ← annotated hypothesis queue (oracle + feasibility)
-  checkpoint.json    ← per-iteration state for --resume
+  checkpoint.jsonl   ← per-iteration state for --resume (legacy name: checkpoint.json)
   journal.md         ← structured learning log, appended after every iteration (when --journal is set)
 ```
 
@@ -73,9 +73,9 @@ Entries missing the feasibility fields (retro output, older queue files) are tre
 - `blocker` required when `feasible: false` — blank/null blocker on false entry = schema violation
 - `source: "architect"` and `source: "retro"` entries may omit `feasible`/`blocker`/`codebase_mapping`; absent fields treated as `feasible: true` by all consumers
 
-## checkpoint.json Schema
+## checkpoint.jsonl Schema
 
-Written after every iteration; `--resume` uses to skip completed:
+One line per iteration, staged in `checkpoint.jsonl.rec` and appended by `append_ledger.py` (SKILL.md Phase 8 flush) — never rewritten. `--resume` uses it to skip completed iterations; runs started before the rename wrote the same lines to `checkpoint.json`, which `--resume` reads when `checkpoint.jsonl` is absent:
 
 ```json
 {
@@ -95,13 +95,13 @@ Written after every iteration; `--resume` uses to skip completed:
 | `metric_after` | `float` | Metric value after applying hypothesis |
 | `status` | `str` | `"passed"` or `"rolled_back"` |
 
-- Completed iteration in `checkpoint.json` = idempotent — skip, don't re-run
+- Completed iteration in `checkpoint.jsonl` = idempotent — skip, don't re-run
 - `status: "rolled_back"` must still write — partial results = audit data
 - `status: "rolled_back"` = idempotent on `--resume` same as `passed`; only hypotheses with no checkpoint entry execute
 
 ## journal.md Entry Format
 
-Active with `--journal`. Appended after EVERY iteration (kept and reverted). Location: `<RUN_DIR>/journal.md`. Never overwrite — always append.
+Active with `--journal`. Appended after EVERY iteration (kept and reverted). Location: `<RUN_DIR>/journal.md`. Never overwrite — stage each entry in `journal.md.rec` with the Write tool; SKILL.md Phase 8's flush block appends it via `append_ledger.py`.
 
 Each entry:
 

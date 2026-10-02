@@ -660,6 +660,30 @@ def _render_grouped_table(table: dict[str, Any], *, suppress_heading: bool = Fal
     return lines
 
 
+def _report_identity(report_path: str) -> str:
+    """Name the review run a report path belongs to, so all views of one run share finding identity.
+
+    Code-review runs live at ``<root>/pr-<number>/run-<NNN>/``. Every artifact under one such directory (the JSON
+    result, ``review-notes.md``) describes the same review, while two runs of one pull request may legitimately reuse a
+    finding ID. The identity therefore keeps the path up to and including the ``run-<NNN>`` segment; the report root
+    stays in the key because each root allocates run numbers independently. Paths outside that topology keep their full
+    file path.
+
+    Examples:
+        >>> _report_identity(".reports/codex/code-review/pr-12/run-003/result.json")
+        '.reports/codex/code-review/pr-12/run-003'
+        >>> _report_identity("C:\\\\work\\\\.reports\\\\codex\\\\code-review\\\\pr-12\\\\run-003\\\\review-notes.md")
+        'C:/work/.reports/codex/code-review/pr-12/run-003'
+        >>> _report_identity("first.json")
+        'first.json'
+    """
+    parts = PurePosixPath(report_path.replace("\\", "/")).parts
+    for index in range(len(parts) - 1, 0, -1):
+        if re.fullmatch(r"run-[0-9]{3,}", parts[index]) and re.fullmatch(r"pr-[1-9][0-9]*", parts[index - 1]):
+            return PurePosixPath(*parts[: index + 1]).as_posix()
+    return PurePosixPath(*parts).as_posix() if parts else report_path
+
+
 def _validate_selection(payload: object) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, int]]:
     """Validate source ownership, counts and choice before rendering any selection context.
 
@@ -735,7 +759,7 @@ def _validate_selection(payload: object) -> tuple[dict[str, Any], list[dict[str,
                     _require_string(finding_id, "selection-source-finding-id")
                     if match[2] is not None and match[2] != finding_id:
                         raise HandoffError("selection-source-finding-id-mismatch")
-                    report_id = source.get("report_id", PurePosixPath(match[1].replace("\\", "/")).as_posix())
+                    report_id = source.get("report_id", _report_identity(match[1]))
                     _require_string(report_id, "selection-source-report-id")
                     key = (report_id, finding_id)
                     if key in canonical:

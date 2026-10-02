@@ -2,7 +2,7 @@
 
 Loaded by Step R0 when `--researcher` or `--architect` active. Contains oracle agent orchestration, feasibility annotation, queue filtering, checkpoint resume.
 
-> **Research run directory**: outputs (`hypotheses.jsonl`, `checkpoint.json`, `journal.md`) go to `.experiments/<run-id>/` — timestamped dir created at R0 start, distinct from `.experiments/state/<run-id>/`. Called `<RUN_DIR>` throughout. See `protocol.md` (companion file, same skill dir) for layout.
+> **Research run directory**: outputs (`hypotheses.jsonl`, `checkpoint.jsonl`, `journal.md`) go to `.experiments/<run-id>/` — timestamped dir created at R0 start, distinct from `.experiments/state/<run-id>/`. Called `<RUN_DIR>` throughout. See `protocol.md` (companion file, same skill dir) for layout.
 
 **Spawn note**: oracle agents run in the background — issue the batch, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). On completion notifications, check each oracle's output (e.g. `<RUN_DIR>/oracle-researcher.md`); missing or empty → surface with ⏱, continue with partial hypotheses or empty queue if none written.
 
@@ -28,7 +28,7 @@ Loaded by Step R0 when `--researcher` or `--architect` active. Contains oracle a
 
 2. **Filter and sort** — load annotated queue. Infeasible (`feasible: false`) stay for audit, excluded from execution. Sort by `priority` ascending (1 = first).
 
-3. **Resume skip** — if `<RUN_DIR>/checkpoint.json` exists (resuming crashed run), read it. Skip any hypothesis whose 0-indexed position matches `hypothesis_id` in checkpoint.
+3. **Resume skip** — if `<RUN_DIR>/checkpoint.jsonl` exists (resuming crashed run), read it; absent, read legacy `<RUN_DIR>/checkpoint.json` (same JSONL lines, written by runs before the rename) when present. Skip any hypothesis whose 0-indexed position matches `hypothesis_id` in checkpoint.
 
 4. Store active queue in memory as `RESEARCH_QUEUE`.
 

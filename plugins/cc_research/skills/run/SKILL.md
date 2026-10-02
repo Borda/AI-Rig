@@ -36,7 +36,7 @@ SENTINEL_SLUG_FORMULA: |
 ```
 
 <!-- Note: STATE_DIR (.experiments/state/) holds per-iteration artifacts (diary, experiments.jsonl).
-     Hypothesis pipeline outputs (hypotheses.jsonl, checkpoint.json, journal.md) go to .experiments/<run-id>/ (RUN_DIR).
+     Hypothesis pipeline outputs (hypotheses.jsonl, checkpoint.jsonl, journal.md) go to .experiments/<run-id>/ (RUN_DIR).
      These are two separate directories by design — see protocol.md for layout. -->
 
 <!-- policy-sibling: run/modes/colab-setup.md, plan/SKILL.md, sweep/SKILL.md:4, judge/SKILL.md — COLAB_KNOWN_HW set restated in each; keep in sync (plugins/CLAUDE.md §Policy Duplication Marker). -->
@@ -96,7 +96,7 @@ Bare tokens `eval`, `train`, `val` (without compound suffix) do NOT trigger `ml`
 
 <compaction>
 
-- Key boundary: end of each Phase 8 in R5 iteration loop — JSONL record appended and `state.json` updated. Overwrite each iteration; contract always reflects latest in-progress state. Long metric-improvement loops are the primary auto-compact risk.
+- Key boundary: end of each Phase 8 in R5 iteration loop — staged records appended by the flush block and `state.json` updated. Overwrite each iteration; contract always reflects latest in-progress state. Long metric-improvement loops are the primary auto-compact risk.
 - Preserve at each boundary: RUN_ID (TMPDIR key), STATE_DIR path, program.md path, current iteration#, best metric, best-commit SHA, experiments.jsonl path.
 - Clear at R1 start (stale prior run) and after R6/R7 campaign completion.
 
@@ -150,9 +150,9 @@ cat "$CLAUDE_SKILL_DIR/modes/hypothesis-pipeline.md"  # timeout: 5000
 
 **Per-iteration hypothesis selection** (when `--researcher`/`--architect` set, inside R5 loop): pop next from `RESEARCH_QUEUE`. Append to Phase 2 prompt: "Focus this iteration on testing this hypothesis: `<hypothesis text>`."
 
-**Per-iteration journal hook** (inside R5, after Phase 7): if `--journal` active, append entry to `<RUN_DIR>/journal.md` after EVERY iteration — regardless of outcome. Entry format: `protocol.md` (companion file, same skill dir). # loads: protocol.md Journals record kept and reverted iterations so ideation agent learns failed approaches.
+**Per-iteration journal hook** (inside R5, after Phase 7): if `--journal` active, stage one entry for `<RUN_DIR>/journal.md` after EVERY iteration — regardless of outcome: Write the entry alone to `<RUN_DIR>/journal.md.rec` with the Write tool; Phase 8's flush block appends it (never Read-and-rewrite `journal.md`). Entry format: `protocol.md` (companion file, same skill dir). # loads: protocol.md Journals record kept and reverted iterations so ideation agent learns failed approaches.
 
-**Per-iteration checkpoint write** (after Phase 7): if `--researcher`/`--architect` active, append one line to `<RUN_DIR>/checkpoint.json` per schema in `protocol.md` (companion file, same skill dir): `{iteration, hypothesis_id, metric_before, metric_after, status: "passed"|"rolled_back"}`.
+**Per-iteration checkpoint write** (after Phase 7): if `--researcher`/`--architect` active, stage one line for `<RUN_DIR>/checkpoint.jsonl` per schema in `protocol.md` (companion file, same skill dir): `{iteration, hypothesis_id, metric_before, metric_after, status: "passed"|"rolled_back"}` — Write that single line to `<RUN_DIR>/checkpoint.jsonl.rec` with the Write tool; Phase 8's flush block appends it. Runs started before the rename keep a legacy `checkpoint.json` (same JSONL lines); `--resume` reads it when `checkpoint.jsonl` is absent, and new lines go to `checkpoint.jsonl`.
 
 ### Step R1: Load / build config
 
@@ -328,7 +328,7 @@ Apply `agent_strategy` mapping from `<constants>`. If `auto`, apply keyword heur
 
 ### Step R4: Establish baseline (iteration 0)
 
-Run `metric_cmd` and `guard_cmd`. Parse metric value. Append to `experiments.jsonl`:
+Run `metric_cmd` and `guard_cmd`. Parse metric value. Create `experiments.jsonl` with the Write tool holding this baseline record as its only line — the file does not exist yet. Every later record goes through Phase 8's `.rec` staging and flush block; this file is never rewritten:
 
 ```json
 {
@@ -405,8 +405,8 @@ For each iteration `i` from 1 to `max_iterations`:
 | 5 | Verify metric | Always — run `metric_cmd` via `compute` mode (local/colab/docker); revert on timeout |
 | 6 | Run guard | Always — run `guard_cmd` via `compute` mode; record pass or fail |
 | 7 | Evaluate outcome | Always — keep, rework, or revert based on metric + guard result |
-| 7a | Write diary | Always — append one structured entry to `diary.md` recording hypothesis, outcome, decision rationale |
-| 8 | Write log | Always — append JSONL record, update `state.json`, print iteration summary, TaskUpdate R5 with result |
+| 7a | Write diary | Always — stage one structured entry in `diary.md.rec` recording hypothesis, outcome, decision rationale |
+| 8 | Write log | Always — append JSONL record, update `state.json`, print iteration summary, TaskUpdate R5 with result (record staged in `experiments.jsonl.rec`; the flush block appends it with every other staged record) |
 | 9 | Progress checks | Always — summary every SUMMARY_INTERVAL, stuck detection, diminishing-returns warn, early-stop check |
 
 **Command execution rules** (apply to ALL phases running external commands):
@@ -597,7 +597,7 @@ The guard fires on `metric improved AND guard fail` (after `GUARD_REWORK_MAX` at
 
 #### Phase 7a — Write diary
 
-After Phase 7 decision, append one entry to `diary.md`:
+After Phase 7 decision, stage one entry for `diary.md`: Write the entry alone to `.experiments/state/<run-id>/diary.md.rec` with the Write tool. Phase 8's flush block appends it — never Read-and-rewrite `diary.md`:
 
 ```markdown
 ## Iteration N — <ISO timestamp>
@@ -627,7 +627,7 @@ For `no-op` iterations (no file changes):
 
 #### Phase 8 — Write log
 
-Append one JSONL record to `experiments.jsonl` (same schema as baseline record in Step R4, plus `ideation_source`):
+Stage one JSONL record for `experiments.jsonl` (same schema as baseline record in Step R4, plus `ideation_source`): Write that single line to `.experiments/state/<run-id>/experiments.jsonl.rec` with the Write tool:
 
 ```json
 {
@@ -647,6 +647,17 @@ Append one JSONL record to `experiments.jsonl` (same schema as baseline record i
 ```
 
 `ideation_source`: `"claude"` = Claude specialist proposed; `"codex"` = Phase 2c proposed.
+
+Flush every staged record — this iteration's `experiments.jsonl`, `diary.md`, and, when their flags are active, `checkpoint.jsonl` and `journal.md` — in one fixed block. `append_ledger.py` appends each staged `.rec`, supplies a trailing newline the Write tool may have omitted, and deletes the `.rec`; a ledger with nothing staged is a no-op:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || _RUN_ID=""
+[ -n "$_RUN_ID" ] || { echo "! BLOCKED — research run-id sentinel missing; staged iteration records left in place"; exit 1; }
+for _LEDGER in ".experiments/state/$_RUN_ID/experiments.jsonl" ".experiments/state/$_RUN_ID/diary.md" ".experiments/$_RUN_ID/checkpoint.jsonl" ".experiments/$_RUN_ID/journal.md"; do
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/append_ledger.py" "$_LEDGER"  # timeout: 5000
+done
+```
 
 Update `state.json`: `iteration = i`, `status = running`.
 

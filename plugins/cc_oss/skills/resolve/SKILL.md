@@ -435,29 +435,57 @@ A `>20 conflicted files` abort inside Step 5 now fires while `INTEL_AGENT` is st
 
 When mode == **pr + report**:
 
-Read the report already resolved by **Report source resolution** (Step 1) — `IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}"`. Never re-glob here: a second newest-of-any-PR lookup can hand this step another PR's findings. Empty sentinel means that block never ran — run it now and honour its gate. Parse findings same as Step 3a.
+Use the report already resolved by **Report source resolution** (Step 1) — `IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}"`. Never re-glob here: a second newest-of-any-PR lookup can hand this step another PR's findings. Empty sentinel means that block never ran — run it now and honour its gate. Findings source is the same as Step 3a's **Review findings source**: the review's `findings.jsonl` beside the report, or, for an older report without it, a parsed `$IMPL_DIR/report-findings.jsonl` written once with the Write tool.
 
-**Deduplication**:
+**Merge, never rewrite by hand.** GitHub comments are often terse; the review's local finding for the same code carries the detail and the evidence paths. `merge_action_items.py` folds the review findings into Step 3b's `action-items.jsonl` deterministically:
 
-- Report finding matches GitHub item at same `file:line` → drop report item; annotate GitHub item with `(also flagged by /review — <owner-agent>)` where `<owner-agent>` is the report item's owner agent from taxonomy; update Author to `@login + <owner-agent>`
-- Semantic match (same file, no exact line, similar description) → drop report item; same annotation and Author update
-- No match → append report finding as `[report]` item
+- **Same `file:line` as a pending GitHub item** → same target. The GitHub item keeps its id and inherits `finding_id`, the full finding text (appended under the comment), `source_file` and `verify_file`. Author becomes `@login + <owner-agent>`, Summary gains `(also flagged by /review — <owner-agent>)`. It never inherits `verify_verdict`: the verifier confirmed the review's claim, not the GitHub comment's, so Step 8 Phase 1 still tests the item in full, reading the reviewer's evidence first.
+- **Same target at another line** (semantic match — your judgment, listed by `--candidates`) → same annotation and evidence paths.
+- **One finding per item.** A second finding on the same line, or a link to an item that is closed or already holds a finding, is not folded; that finding is appended as its own item. The summary counts ignored links as `links_ignored`.
+- **No match** → appended as a `[report]` item with the next free id (`G+1`, `G+2`, …). GitHub ids `1..G` never change, so no renumbering, and table IDs, Step 3d `SELECTED_ITEMS`, Step 3e task IDs and Step 8 lookups always name the same item.
+- **Unmatched pending GitHub item with a short comment** (not a `[question]`) → marked `thin: true`; Step 8 Phase 1 reassesses it from scratch.
+- Re-running the merge is safe: findings already present by `finding_id` are skipped.
+- When any GitHub row is annotated, the script replaces the file in one atomic rename instead of appending; ids and rows are never retyped.
 
-Before Step 3d, rewrite `$IMPL_DIR/action-items.jsonl` using the Write tool with the complete merged ACTION_ITEMS, replacing Step 3b's PR-only records:
+Step 1 — choose the findings file and list same-file pairs that did not match exactly:
 
-- Preserve each retained GitHub item's `full_comment_text`, `file`, `line`, `url`, `location`, and `origin`; apply dedup annotations to its `author` and `summary` consistently with the displayed row.
-- Append each unmatched report finding with the Step 3b ACTION_ITEM field set, `location: "report"`, `origin: "posted"`, an empty `url`, and its full finding bullet in `full_comment_text`.
-- Renumber every merged record sequentially from 1 in displayed order, including retained GitHub rows, so table IDs, Step 3d `SELECTED_ITEMS`, Step 3e task IDs, and Step 8's JSONL lookup name the same item.
-- Keep a zero-item file empty.
-- Stop before printing the merged table or opening Step 3d if the rewritten file is missing, malformed, or its IDs/row count differ from the merged table; never let Step 8 consume the stale PR-only JSONL.
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+[ -n "$IMPL_DIR" ] && [ -f "$IMPL_DIR/action-items.jsonl" ] || { echo "! BLOCKED — Step 3b action-items.jsonl missing"; exit 1; }
+[ -f "$REPORT_FILE" ] || { echo "! BLOCKED — report sentinel empty; run Report source resolution (Step 1) first"; exit 1; }
+FINDINGS="$(dirname "$REPORT_FILE")/findings.jsonl"
+if [ ! -s "$FINDINGS" ]; then
+    FINDINGS="$IMPL_DIR/report-findings.jsonl"
+    [ -f "$FINDINGS" ] || { echo "! BLOCKED — no findings.jsonl beside the report; write $FINDINGS from the parsed report first"; exit 1; }
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/mint_finding_ids.py" "$FINDINGS" || exit 1  # timeout: 5000
+fi
+printf '%s\n' "$FINDINGS" > "${TMPDIR:-/tmp}/resolve-findings-file-${CSID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --findings "$FINDINGS" --candidates  # timeout: 5000
+```
 
-**Re-prefix GitHub items** in deduplication: `[gh][req]` stays `[gh][req]`; `[suggest]` → `[gh][suggest]`, `[question]` → `[gh][question]` if not already prefixed. GitHub items carry `[gh]` prefix in all modes — no change needed for items already classified with `[gh]` in Step 3b.
+Step 2 — for each printed pair, decide whether the finding and the GitHub item describe the same problem (similar description, not merely the same file). Write the accepted pairs with the Write tool to `$IMPL_DIR/report-links.jsonl`, one `{"finding_id": "<id>", "item_id": <N>}` per line; write an empty file when none match. Then merge:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+IFS= read -r FINDINGS < "${TMPDIR:-/tmp}/resolve-findings-file-${CSID}" 2>/dev/null || FINDINGS=""
+[ -f "$IMPL_DIR/report-links.jsonl" ] || { echo "! BLOCKED — write report-links.jsonl (empty when no semantic match) before merging"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --findings "$FINDINGS" --links "$IMPL_DIR/report-links.jsonl"  # timeout: 5000
+```
+
+- The printed summary's `deduped_exact + deduped_semantic` is the `<M>` and `appended` is the `<K>` of the merge summary line below.
+- A non-zero exit stops the run before the merged table or Step 3d; never let Step 8 consume a half-merged file.
+- Keep a zero-item file empty. Render the merged table from `action-items.jsonl` itself, so displayed IDs are stored IDs.
+
+**GitHub prefixes**: Step 3b already writes `[gh][req]` / `[gh][suggest]` / `[gh][question]`, and the merge never changes an item's `type`. Never edit `action-items.jsonl` by hand to add a prefix.
 
 ### Sources confirmation
 
 Print Sources block (same format as Step 3a template; Mode=pr + report · PR=#<N> · GitHub=Read — PR body · <N> comments · <N> reviews · <N> inline code comments · <N> recurring findings merged · Report=Read <path>) right before merge summary and action item table.
 
-Result: single merged `ACTION_ITEMS`. GitHub items first (`[gh][req]`/`[gh][suggest]`), then `[report]` items. Print merge summary before table:
+Result: single merged `ACTION_ITEMS`. Storage order is append order (GitHub items `1..G`, then `[report]` items `G+1..`); the table below displays rows severity descending and always shows each row's stored id in `#`. Print merge summary before table:
 
 ```text
 Report merged: <N> findings from /review · <M> deduplicated against GitHub comments · <K> added as [report] items
@@ -516,7 +544,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:
 
 Then print this line **in the reply** (prose, not Bash stdout — tool output is not reliably shown to the user): `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. ``
 
-Immediately before the first `AskUserQuestion`, ensure the latest assistant user-facing reply contains every ACTION_ITEMS row the user is selecting from (the full Step 3b or 3c table, or the ≥19 compressed table). If intervening work separated the earlier table reply from the picker, repeat that table in the reply now. Bash/tool stdout and a row count do not satisfy this gate.
+Immediately before the first `AskUserQuestion`, ensure the latest assistant user-facing reply contains every ACTION_ITEMS row the user is selecting from (the full Step 3b or 3c table, or the ≥19 compressed table). If intervening work separated the earlier table reply from the picker, repeat that table in the reply now. Bash/tool stdout and a row count do not satisfy this gate. Steps 6–7a output (conflict fixes, merge commit) lands in this same turn, so print the table **after** it, as the last text before the picker. **Hook-enforced**: `hooks/enforce-resolve-table.js` denies the selection call while any pending `action-items.jsonl` id lacks a table row since the last user turn — on denial, print the table and re-issue the call.
 
 **Cap mechanics — read before building any call**: the tool cap is **4 questions per call**. The `Submit` tab is NOT a question — a 4-question call renders 5 tabs. Never stop at 3 questions believing the cap is reached, and never over-pack a question past 3 items to avoid opening a 4th. Within one question, `AskUserQuestion` appends "Type something" outside the option list, so 3 items + Type something = 4 visible rows; that is the **≤3 items/question** limit, a separate constraint from the 4-question cap.
 
@@ -1239,6 +1267,20 @@ cat "$_OSS_RESOLVE/templates/resolve-report.md"  # timeout: 5000
 
 Report template (loaded above) — use for section structure. Its `### Push` section shows the printed `PUSH_STATUS` through the template's status table, never a prose recollection of Step 10.
 
+**Tell the review what happened.** When this run consumed a review report, append one outcome per review-sourced item (`fixed` / `self-resolved` / `rejected` / `skipped` / `pending`, finding title and location, commit hash, reason) to `resolution.jsonl` beside that report. `fixed` and `self-resolved` need an implementation record (Phase 2 commit, Codex-direct record, or a `[resolve No.<id>]` commit after this run's base head); an accepted but unmerged item stays `pending`. The next `/oss:review` of this PR reads the ledger, confirms earlier fixes at the new head and re-checks rejected findings before deciding whether to report them again. Append-only and idempotent per run; the script builds records from this run's own files, never from recollection:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+IFS= read -r BASE_SHA < "${TMPDIR:-/tmp}/resolve-base-sha-${CSID}" 2>/dev/null || BASE_SHA=""
+if [ -n "$REPORT_FILE" ] && [ -f "$REPORT_FILE" ] && [ -f "$IMPL_DIR/action-items.jsonl" ]; then
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/append_resolution.py" --impl-dir "$IMPL_DIR" --review-dir "$(dirname "$REPORT_FILE")" --base-sha "$BASE_SHA"  # timeout: 30000
+else
+    echo "→ no review report consumed — resolution ledger skipped"
+fi
+```
+
 **Unblock push — last actionable item.** `PUSH_STATUS` is `blocked-guard` or `blocked-permission` → the block above `cat`s the `PUSH_UNBLOCK` file; end the report — after `**Next**`, the Challenge Log, Confidence, and every other section — with a `## Unblock push` section that repeats its lines verbatim in a fenced block. The user returns to the bottom of the report and runs exactly those lines; never paraphrase, reorder, or regenerate them. File missing or empty → print `⚠ push-unblock.txt missing — scroll to Step 10 for the guard's exact lines` in that section instead.
 
 Immediately before printing it — the one standalone bookkeeping call, so a compaction mid-report cannot leave the run `in_progress` (`rules/task-lifecycle.md` §TaskUpdate before long output):
@@ -1272,15 +1314,21 @@ Omit section when `--no-challenge`.
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r SAVED_BRANCH < "${TMPDIR:-/tmp}/resolve-saved-branch-${CSID}" 2>/dev/null || SAVED_BRANCH=""
 IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" 2>/dev/null || COMMIT_MODE="each"
+IFS= read -r PUSH_STATUS < "${TMPDIR:-/tmp}/resolve-push-status-${CSID}" 2>/dev/null || PUSH_STATUS="none"
 # stage mode: skip restore, else staged work lost
 if [ "$COMMIT_MODE" = "stage" ]; then
     echo "⚠ COMMIT_MODE=stage: changes are staged on $(git branch --show-current) — restore to $SAVED_BRANCH skipped to preserve staged work. Run: git stash && git switch $SAVED_BRANCH && git stash pop (on PR branch) when ready."
+# unpushed work (declined, blocked, rejected or never attempted): stay on the branch holding it, for review or a manual push
+elif [ -n "$SAVED_BRANCH" ] && [ "$PUSH_STATUS" != "pushed" ]; then
+    echo "→ Staying on $(git branch --show-current) — commits not pushed (PUSH_STATUS=$PUSH_STATUS). Return later with: git switch $SAVED_BRANCH"
 elif [ -n "$SAVED_BRANCH" ]; then
     git switch "$SAVED_BRANCH" 2>/dev/null && echo "→ Restored to $SAVED_BRANCH"  # timeout: 5000
 fi
 ```
 
-**Worktree exit** — if `WT_ENABLED=true` and a worktree was entered at Step 4: commits are already pushed to the fork (the deliverable is remote). Follow `worktree-isolation.md` §Exit — `git branch --show-current`, then `ExitWorktree(action="keep")` to return the session to the main tree, and append the `Worktree` block noting the local worktree is disposable (`git worktree remove` when done). The `SAVED_BRANCH` restore above was a no-op — the main tree was never switched. Never auto-merge.
+**Branch after the run** — the block above returns to `SAVED_BRANCH` only when `PUSH_STATUS=pushed`. Any unpushed outcome (push declined, blocked, rejected or never attempted) leaves the session on the PR branch that holds the commits, so the user can inspect them or push by hand; the block prints how to switch back.
+
+**Worktree exit** — if `WT_ENABLED=true` and a worktree was entered at Step 4: when pushed, the commits are on the fork (the deliverable is remote); when not pushed, they exist only in that worktree, so keep it. Follow `worktree-isolation.md` §Exit — `git branch --show-current`, then `ExitWorktree(action="keep")` to return the session to the main tree, and append the `Worktree` block noting the local worktree is disposable (`git worktree remove` when done). The `SAVED_BRANCH` restore above was a no-op — the main tree was never switched. Never auto-merge.
 
 Post-PR action — already answered by the Step 3d push question; no new `AskUserQuestion` here:
 

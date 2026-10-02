@@ -10,9 +10,10 @@ every reported finding.
 
 ## Scope
 
-Read only ``loop-ledger.json``, ``loop-evidence.json``, retained source and supporting snapshots, and completed review
-runs below one challenge-resolve run. The validator delegates route, role, child-lineage, and output checks to Code
-Review's existing manifest-only validator; it creates no reviewer, modifies no artifact, and makes no network call. It
+Read only ``loop-ledger.json`` with its ``loop-rounds.jsonl`` round log, ``loop-evidence.json``, retained source and
+supporting snapshots, and completed review runs below one challenge-resolve run. The validator delegates route, role,
+child-lineage, and output checks to Code Review's existing manifest-only validator; it creates no reviewer, modifies no
+artifact, and makes no network call. It
 supports native schema-five and local reviewer wave schema-four evidence because both retain a reviewer thread
 identifier and frozen context bytes. Loop evidence schema one remains readable with its historical request-coverage
 limit; current schema two binds task criteria, declared unchanged callers or consumers, continuation lineage,
@@ -65,7 +66,7 @@ SHARED_DIRECTORY = PLUGIN_ROOT / "shared"
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
-from adversarial_loop import summarize_ledger, validate_ledger  # noqa: E402
+from adversarial_loop import ledger_digest, load_ledger, summarize_ledger, validate_ledger  # noqa: E402
 from collect_diff import capture_source_snapshot  # noqa: E402
 
 
@@ -274,12 +275,12 @@ def _prior_findings_for_origin(origin: object, run: Path) -> dict[str, dict[str,
     if not caller_path.is_absolute() or caller_path.resolve() == run or caller_path.resolve().as_posix() != caller:
         raise ValueError("loop-evidence-origin-invalid")
     try:
-        prior_bytes = (caller_path / "loop-ledger.json").read_bytes()
-        prior_ledger = json.loads(prior_bytes)
+        caller_digest = ledger_digest(caller_path / "loop-ledger.json")
+        prior_ledger = load_ledger(caller_path / "loop-ledger.json")
     except (OSError, ValueError) as exception:
         raise ValueError("loop-evidence-prior-ledger-invalid") from exception
     if (
-        _sha256(prior_bytes) != prior_digest
+        caller_digest != prior_digest
         or not isinstance(prior_ledger, dict)
         or validate_ledger(prior_ledger)
         or not prior_ledger["rounds"]
@@ -742,7 +743,12 @@ def validate_loop_evidence(run_dir: Path, codex_home: Path) -> None:
         elif evidence["current_supporting_source_path"] is not None:
             raise ValueError("loop-evidence-supporting-path-invalid")
 
-    ledger = _json_object(run / "loop-ledger.json", "loop-evidence-ledger-invalid")
+    try:
+        ledger = load_ledger(run / "loop-ledger.json")
+    except (OSError, ValueError) as exception:
+        raise ValueError("loop-evidence-ledger-invalid") from exception
+    if not isinstance(ledger, dict):
+        raise ValueError("loop-evidence-ledger-invalid")
     errors = validate_ledger(ledger)
     if errors:
         raise ValueError("loop-evidence-ledger-invalid:" + ";".join(errors))

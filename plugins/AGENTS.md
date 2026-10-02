@@ -79,6 +79,17 @@ Root `AGENTS.md` already applies here and is not restated: edit scope, core prin
 - Use Bash only for install-path resolution, safe `$ARGUMENTS` parsing, or simple `find | sort | head` pipelines without business logic.
 - Inline SKILL.md Python is limited to cases requiring JSON parsing, multiline string manipulation, or numeric computation.
 
+## Growing Ledgers
+
+- A file that only grows — `.jsonl` record logs, `.tsv` rows, `.log` files, diaries, journals, results ledgers — is appended to, never re-written; a read-modify-write round trip can silently drop or reword earlier records.
+- Every instruction that adds to a ledger names its mechanism; "append", or "append with the Write/Edit tool", is not one.
+- A model-valued record is staged as one record in `<ledger>.rec`, then appended by the plugin's own `bin/append_ledger.py "$LEDGER"`, which supplies a missing trailing newline and deletes the staged file. Do not use `cat … >> … && rm -f …`: `rm` is outside Claude's plugin allow list and blueprint manifest, so that form prompts on every append.
+- Parallel writers stage separate `<ledger>.<writer>.rec` files, appended by one `append_ledger.py` call after all writers return. Values already in the shell are appended directly with `printf` or `jq -c` redirected with `>>`; files already on disk with `append_ledger.py "$LEDGER" --from <files>`.
+- Corrections are appended as new event records and readers take the last record per key; values derived later go to a sidecar file, not back into the ledger.
+- Exempt, where editing or rewriting is correct: single-value state, mtime-clock `agent-watch-*.tsv` batch files, compaction contracts, digest- or validator-bound rendered artifacts, dedup and merge reconciliation, the artifact being refined, and frozen plans.
+- `tests/test_append_only_ledgers.py` enforces the instruction wording; `plugins/CLAUDE.md` §Growing Ledgers holds the full rationale.
+- Codex Rig keeps the same `.rec` staging but has no `append_ledger.py`: the helper that owns a ledger's schema appends and validates the staged record (`codex-rig/shared/native-skill-contract.md` §Append-Only Ledgers). Intentional difference — Codex has no permission matcher or blueprint manifest to satisfy, and per-schema validation rejects a bad record before it lands.
+
 ## Version Pre-Bump Gate
 
 - Apply the repository Version Continuity rule to serialized artifact schemas separately from this plugin SemVer gate; compare each schema family with its own committed `HEAD` baseline before handoff.

@@ -392,7 +392,7 @@ Find nearest similar working code path, compare exhaustively:
 
 Step catches non-obvious causes — ordering dependency, environment-specific state, type coercion silently changing behaviour.
 
-**Record candidates (loop guard)** — as each candidate cause identified, append it to hypothesis ledger with verdict `open`. Ledger inlined into compaction contract at boundary below, so a mid-investigation compaction never loses which causes were already weighed. Verdict values: `open` · `refuted (challenger)` · `ruled-out (probe)`.
+**Record candidates (loop guard)** — as each candidate cause identified, append it to hypothesis ledger with verdict `open`. Ledger inlined into compaction contract at boundary below, so a mid-investigation compaction never loses which causes were already weighed. Verdict values: `open` · `refuted (challenger)` · `ruled-out (probe)`. The ledger is append-only: a later verdict on a candidate is a new `<candidate cause> :: <verdict>` line, never an edit of the earlier one, and readers take the **last** line per candidate as its current verdict.
 
 ```bash
 # ledger survives compaction via contract — avoids re-testing refuted causes mid-investigation
@@ -402,21 +402,18 @@ echo "<candidate cause> :: open" >> ${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}
 
 ## Challenger gate
 
-**Decision — three states** (default is NOT "skip": it runs on substantial root causes and auto-skips only narrow ones):
+**Decision** (default runs at any size — a narrow root cause on the main path is easy to misjudge; size never skips the gate):
 
-1. `--no-challenge` (`CHALLENGE_ENABLED=false`) → **skip gate entirely**, any size.
-2. else `--challenge` (`IFS= read -r CHALLENGE_FORCED < "${TMPDIR:-/tmp}/dev-challenge-forced-${CSID}" 2>/dev/null || CHALLENGE_FORCED=false` = `true`) → **always run**, even on a narrow root cause.
-3. else **default** → **run when root cause is substantial** (spans multiple files, a larger change, or touches public API); **auto-skip when narrow** (single file, ≲50 lines, no API change) — hypothesis simple enough to proceed directly.
-
-Both flags cover opposite regimes: `--no-challenge` suppresses gate on substantial cases that would otherwise fire; `--challenge` forces it on narrow cases that would otherwise auto-skip.
+1. `--no-challenge` (`CHALLENGE_ENABLED=false`) → **skip gate entirely**.
+2. else → **always run**. `--challenge` (`CHALLENGE_FORCED`) is accepted for compatibility and changes nothing.
 
 Arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits). Spawn `foundry:challenger` with pattern analysis from Step 2 (differences between working/broken paths, candidate causes):
 
 > "Review pattern analysis and candidate root causes. Challenge across all 5 dimensions: Assumptions, Missing Cases, Security Risks, Architectural Concerns, Complexity Creep. Apply mandatory refutation step."
 
-Parse result — update hypothesis ledger (`${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}`) with each candidate's verdict as you parse:
+Parse result — record each candidate's verdict as you parse by appending a verdict event line to the hypothesis ledger (`${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}`), one `echo` per verdict in one block, same shape as the Step 2 block — `echo "<candidate cause> :: refuted (challenger)" >> ${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}`; never rewrite earlier lines:
 
-- **Blockers found** → STOP. Present findings, then invoke `AskUserQuestion` — "Challenger raised N blocker(s) on the candidate root cause. How to proceed?" · (a) **Address blockers** — revise candidates, re-run gate · (b) **Accept risk** — proceed to Step 3 with blockers documented in the diagnosis file · (c) **Abort**. On Abort: stop. Incorporate surviving challenges into the hypothesis list before the Step 3 gate; mark any candidate the challenger refuted `:: refuted (challenger)` in the ledger.
+- **Blockers found** → STOP. Present findings, then invoke `AskUserQuestion` — "Challenger raised N blocker(s) on the candidate root cause. How to proceed?" · (a) **Address blockers** — revise candidates, re-run gate · (b) **Accept risk** — proceed to Step 3 with blockers documented in the diagnosis file · (c) **Abort**. On Abort: stop. Incorporate surviving challenges into the hypothesis list before the Step 3 gate; append a `<candidate cause> :: refuted (challenger)` event line for any candidate the challenger refuted.
 - **Concerns only** → add as alternative hypotheses in Step 3; append each new concern to ledger as `:: open (alt)`; continue.
 - **No findings / all refuted** → proceed.
 
@@ -426,7 +423,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEBUG_MODE < "${TMPDIR:-/tmp}/dev-debug-mode-${CSID}" 2>/dev/null || _DEBUG_MODE="symptom"
 IFS= read -r _CI_RUN < "${TMPDIR:-/tmp}/dev-ci-run-id-${CSID}" 2>/dev/null || _CI_RUN=""
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/dev-debug-keep-items-${CSID}" 2>/dev/null || _KEEP=""
-_TRIED=$(head -6 "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}" 2>/dev/null)  # cap keeps contract ≤12 lines
+_TRIED=$(tail -8 "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}" 2>/dev/null)  # cap keeps contract compact; tail keeps the latest verdict events (last line per candidate wins)
 _PRESERVE="mode=$_DEBUG_MODE, ci-run=${_CI_RUN:-none}"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:debug" "hypothesis+handoff (after evidence gathered and pattern analysis)" ".plans/active/" "$_PRESERVE" "state hypothesis with evidence (Step 3) → confirm root cause → write diagnosis → handoff to /develop:fix. Skip any candidate marked refuted/ruled-out in the tried list below." "tried (do NOT re-test refuted/ruled-out)" "$_TRIED"  # timeout: 5000

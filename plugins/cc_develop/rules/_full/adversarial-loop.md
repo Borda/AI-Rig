@@ -30,7 +30,7 @@ Before retry or a different route, record the observed failure class and its evi
 4. **Escalate unresolved severe findings.** If a `security`, `critical` or `high` finding cannot be resolved within current scope and authority, record `escalate`, stop dependent work and ask for the exact missing decision with evidence, attempted fixes, owner and next action. Never `defer` those tiers. Do not claim completion or commit with an open `security` or `critical` finding. Report unresolved lower tiers too at a stop; neither a green test nor a lower score silently closes them.
 5. **Repeat or stop.** Freeze the corrected source and return to step 1 while a round remains and the score is converging. Stop when an independently reviewed current snapshot is clean, three reviews including `W_0` are complete, or the score plateaus/non-converges. Missing independence, stale evidence, or required approval also stops the dependent route. Before clean acceptance, recapture source and require exact equality with the final reviewed snapshot; complete caller gates, artifact validation, promotion and output. A clean loop is not a merge decision or commit authorization.
 
-After every completed challenge, after triage and finding validation but before any next fix, review or stop, Codex Rig runs `python shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --progress`. This prints the full cumulative progress table on stderr while leaving JSON stdout unchanged. Consumers without that helper render the same table from validated rounds. Show it once for each newly completed round; never show a partial or unreviewed row.
+After every completed challenge, after triage and finding validation but before any next fix, review or stop, record that round in the append-only round log (see Evidence ledger). Codex Rig stages it and runs `python shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --append --progress`, which appends the round and prints the full cumulative progress table on stderr while leaving JSON stdout unchanged. Consumers without that helper render the same table from validated rounds. Show it once for each newly completed round; never show a partial or unreviewed row.
 
 The progress table has exactly these columns:
 
@@ -76,11 +76,14 @@ Stopping on a plateau is a valid process outcome — not successful remediation,
 
 ## Evidence ledger
 
-Keep `loop-ledger.json` and `loop-report.md` in the owning run. Ledger records observed facts; a checker establishes structural consistency, not reviewer authenticity or source correctness.
+Keep `loop-ledger.json`, its round log `loop-rounds.jsonl`, and `loop-report.md` in the owning run. Ledger records observed facts; a checker establishes structural consistency, not reviewer authenticity or source correctness.
 
-Schema version `1` uses these fields:
+Current schema version `2` splits the ledger so completed rounds are only appended, never rewritten:
 
-- Root: `schema_version`, `implementation_author`, `current_snapshot`, `rounds`.
+- Header `loop-ledger.json`: `schema_version`, `implementation_author`, `current_snapshot` — never `rounds`. Rewrite it in place only to move `current_snapshot`.
+- Round log `loop-rounds.jsonl`: one round object per line in index order. An absent log means no completed round. Never edit or rewrite an earlier line; a later verdict on a finding is the next round's disposition.
+- Recording a round: write it as one JSON object to `<run-directory>/loop-rounds.jsonl.rec` with the file tool, then append it. Codex Rig runs `python shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --append`; it validates the extended ledger, appends one line, and deletes the staged file, or exits nonzero, appends nothing, and keeps the staged file for repair. Claude plugins run their own `bin/append_ledger.py <run-directory>/loop-rounds.jsonl`, then validate the assembled rounds.
+- Historical schema `1` kept root `rounds` inline in one rewritten `loop-ledger.json`. The checker still reads those archives and the continuation digest of their exact bytes; current result validation requires schema `2`.
 - Snapshot: nonempty `revision`, lowercase 64-hex `diff_digest` of exact retained snapshot bytes.
 - Round: one-based `index` (1–3; score labels start at `W_0`), `reviewer`, `snapshot`, `report_path`, `findings`.
 - Reviewer: nonempty `identity`, boolean `independent`. Identity differs from the implementation author; record effective host provenance in the report, including unavailable verification. Empty rounds list records unavailable independent review, never a clean review.

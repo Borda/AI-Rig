@@ -12,6 +12,36 @@ CODE_REVIEW_SKILL = PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md"
 CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
 
 
+@pytest.mark.installed_plugin
+def test_review_repair_question_runs_native_discovery_before_async() -> None:
+    """Prevent generated repair approval from skipping discovery or replaying its live question."""
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    recovery = skill.split("### Reviewer validation recovery", 1)[1].split("\n### ", 1)[0]
+
+    assert "native discovery checkpoint" in recovery
+    assert "ALL_TOOLS" in recovery
+    assert "Absence from the short tool list is not unavailability" in recovery
+    assert "Unknown async rendering is unsuitable" in recovery
+    assert "The selected control owns the question and options" in recovery
+    assert "do not echo them in commentary or final output" in recovery
+
+
+@pytest.mark.installed_plugin
+def test_native_protocol_repair_resumes_the_retained_wave_without_reassessment() -> None:
+    """Prevent an internal dispatch or representation error from abandoning valid review work."""
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    recovery = skill.split("### Reviewer validation recovery", 1)[1].split("\n### ", 1)[0]
+
+    assert "prepare-repair" in recovery
+    assert "incomplete-dispatch" in recovery
+    assert "closure-evidence-shape" in recovery
+    assert "same run and current wave" in recovery
+    assert "one generated `_a2`" in recovery
+    assert "Preserve every claim, finding ID, severity, source coordinate, confidence and assessment" in recovery
+    assert "do not require a fresh complete PR review" in recovery
+    assert "No substantive reassessment" in recovery
+
+
 def test_code_review_preflights_specialist_manifest_before_candidate() -> None:
     """Prevent malformed spawned-attempt bookkeeping from leaving a candidate."""
     skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8").lower()
@@ -61,26 +91,27 @@ def test_execution_failure_cannot_be_reclassified_as_inapplicable() -> None:
     assert "execution failure never makes an applicable check `not-applicable`" in quality
     assert "archive runner-owned receipts under `gate-attempts/<NNN>`" in quality
     assert "reject failed-to-skipped reclassification" in quality
-    assert "return to the code-review manifest preflight checkpoint" in remediation
-    assert (
-        "do not promote the candidate, rerun the full review, or fall back to an older assessed report" in remediation
-    )
+    assert "rerun the full review from remediation, or fall back to an older assessed report" in remediation
     assert "continue independently authorized source-verified remediation" in remediation
 
 
-def test_remediation_revalidates_same_session_candidate_before_promotion() -> None:
-    """Recover a valid candidate without bypassing either review validator."""
+def test_remediation_validates_unpromoted_candidate_read_only() -> None:
+    """Diagnose an unpromoted review candidate without repairing or promoting the review run.
+
+    The review run belongs to code-review; remediation that rewrote its manifest or promoted its candidate would certify
+    a review it did not produce. A passing read-only check still sends the user back to code-review.
+    """
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8").lower()
 
     assert "matching-review-candidate-unpromoted" in skill
-    assert "same parent thread" in skill
-    assert "review-specific validator, then the shared validator" in skill
-    assert "promote it to `result.json` only after both validators pass" in skill
+    assert "remediation never repairs, rewrites, rerenders, or promotes its `specialist-manifest.json`" in skill
+    assert "review-specific validator, then the shared validator, read-only" in skill
+    assert "re-run code-review on <review-run-directory> to finish or repair it" in skill
+    assert "a passing read-only validation does not admit the candidate either" in skill
     assert "never consume `result.candidate.json` as a completed review" in skill
     assert "only its eligible finding records may be considered under preliminary finding intake" in skill
-    assert "one evidence-preserving repair" in skill
-    assert "retry both validators once" in skill
-    assert "do not promote the candidate" in skill
+    assert "same parent thread" not in skill
+    assert "promote it to `result.json`" not in skill
 
 
 def test_remediation_preserves_exact_candidate_validation_failure() -> None:
@@ -89,10 +120,9 @@ def test_remediation_preserves_exact_candidate_validation_failure() -> None:
 
     assert "review-candidate-validation.txt" in skill
     assert "manifest-invalid-attempt-count:<role>" in skill
-    assert "return to the code-review manifest preflight checkpoint" in skill
-    assert "one evidence-preserving repair" in skill
     assert "never invent missing attempt provenance" in skill
-    assert "do not fall back to an older assessed report" in skill
+    assert "fall back to an older assessed report" in skill
+    assert "code-remediate-review-run-mutated" in skill
 
 
 @pytest.mark.installed_plugin
@@ -172,16 +202,32 @@ def test_readme_preserves_the_existing_rejected_evidence_review_exception() -> N
 
 
 @pytest.mark.installed_plugin
-@pytest.mark.parametrize("skill_name", ["code-review", "code-remediate"])
-def test_successful_recovery_resumes_the_active_workflow(skill_name: str) -> None:
-    """Keep verified conflict recovery from ending before the user's original task finishes."""
-    skill = (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+def test_successful_remediation_recovery_resumes_the_active_workflow() -> None:
+    """Keep verified conflict recovery from ending before the user's original remediation finishes."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
 
-    assert f"Once an authorized recovery succeeds, resume the active {skill_name} workflow" in skill
+    assert "Once an authorized recovery succeeds, resume the active code-remediate workflow" in skill
     assert "first unmet checkpoint" in skill
     assert "do not stop at conflict resolution or ask the user to rerun the skill" in skill
-    if skill_name == "code-remediate":
-        assert "preserve and verify its recorded merge result" in skill
+    assert "preserve and verify its recorded merge result" in skill
+
+
+@pytest.mark.installed_plugin
+def test_review_reports_existing_merge_and_hands_it_to_remediation() -> None:
+    """Keep a review-only run from finishing, aborting, or authorizing an existing merge.
+
+    Finish/abort/defer choices mutate the invoking worktree, which belongs to remediation; review inspects its own
+    detached worktree and keeps going.
+    """
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    guidance = skill.split("For an existing merge or conflict in the invoking worktree", 1)[1].split("\n\n", 1)[0]
+
+    assert "never finishes, aborts, or resolves that merge" in guidance
+    assert "never asks for that authorization" in guidance
+    assert "belongs to `code-remediate`" in guidance
+    assert "does not block collection or source review" in guidance
+    assert "never as a PR finding" in guidance
+    assert "resume the active code-review workflow" not in skill
 
 
 @pytest.mark.installed_plugin

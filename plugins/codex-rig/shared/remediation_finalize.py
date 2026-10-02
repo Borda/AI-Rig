@@ -18,6 +18,9 @@ Derived, never authored by hand:
 - ``merge_resolution`` path, authorization, conflict flag, and status from ``pr/merge-resolution.json``.
 - Final-handoff verification, confidence, artifacts, remediation table, source records, and source coverage from
   ``gates.json`` and the derived metadata.
+- Each item's latest outcome fields and each bucket's latest status from the append-only ``resolution-events.jsonl``.
+  Growing ledgers (that event file, ``closure-log.md``, and the review run's ``resolution.jsonl``) are only appended,
+  never rewritten; rendered tables are rebuilt from them.
 
 Judgement fields stay with the agent: parallel eligibility and approval requirement, item outcomes, closure evidence,
 confidence gaps and closures, unresolved summaries, and the handoff outcome, remaining work, next steps, and commit
@@ -26,9 +29,14 @@ disposition. The helper never decides a finding, runs gates, changes Git state, 
 ## Usage
 
 ``metadata --run <run> --metadata <draft.json> --out <derived.json>`` writes merged metadata. ``workplan --run <run>
---metadata <draft.json>`` rewrites the four managed sections of ``resolution-workplan.md`` and keeps every other
-section. ``finalize --run <run> --metadata <draft.json> --handoff <draft.json> --status <status> --confidence <score>
---artifact-path <result path>`` derives metadata and handoff, renders ``final.md``, writes ``result.candidate.json``
+--metadata <draft.json>`` rewrites the four managed sections of ``resolution-workplan.md``, including each bucket's
+latest status, and keeps every other section. ``ledger --run <run> --metadata <draft.json>`` rewrites the resolution
+table and source records of ``action-items.md`` from ``selection.json`` identity plus the latest item outcomes.
+``append --run <run> --ledger closure-log.md|resolution-events.jsonl`` appends the staged ``<ledger>.rec`` record and
+removes it; status events are validated first. ``resolutions --run <run> --review-run <review run> [--sha <commit>]``
+appends one outcome per admitted review finding to that review run's ``resolution.jsonl``. ``finalize --run <run>
+--metadata <draft.json> --handoff <draft.json> --status <status> --confidence <score> --artifact-path <result path>``
+derives metadata and handoff, renders ``final.md``, writes ``result.candidate.json``
 through the shared result writer, and runs the shared validator in all-errors mode; ``--promote`` renames a passing
 candidate to ``result.json``.
 
@@ -58,6 +66,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
@@ -75,6 +84,51 @@ APPROVAL_STATUS = {"approve": "approved", "parent-only": "parent-only", "not-req
 LAYOUTS = {2: "grouped", 3: "concise", 4: "concise"}
 GATE_IDS = ("lint", "format", "types", "tests", "review")
 MANAGED_SECTIONS = ("Work Bucket Plan", "Parallel Approval", "Execution Order", "Ungrouped Items")
+LEDGER_SECTIONS = ("Review Item Resolution Table", "Expanded Source Records")
+EVENTS_LEDGER = "resolution-events.jsonl"
+CLOSURE_LEDGER = "closure-log.md"
+APPEND_LEDGERS = (CLOSURE_LEDGER, EVENTS_LEDGER)
+REVIEW_RESOLUTION_LEDGER = "resolution.jsonl"
+EVENT_SCHEMA_VERSION = 1
+RESOLUTION_SCHEMA_VERSION = 1
+BUCKET_STATUSES = frozenset({"planned", "in-progress", "fixed", "verified", "deferred", "unresolved"})
+ITEM_EVENT_ENUMS = {
+    # ``stale`` stays readable in historical results but is never a new disposition.
+    "triage_status": frozenset(
+        {
+            "valid",
+            "resolved",
+            "duplicate",
+            "out-of-scope",
+            "already-fixed",
+            "already-applied",
+            "needs-clarification",
+        }
+    ),
+    "resolution_status": frozenset(
+        {
+            "implemented",
+            "resolved",
+            "rejected",
+            "not-applicable",
+            "duplicate",
+            "already-fixed",
+            "already-applied",
+            "needs-clarification",
+            "unresolved",
+        }
+    ),
+    "owner_status": frozenset(
+        {"todo", "fixed", "resolved", "deferred", "unresolved", "not-selected", "not-actionable"}
+    ),
+    "pr_relation": frozenset({"direct-diff", "pr-intent", "adjacent", "unknown", "unrelated"}),
+}
+ITEM_EVENT_TEXT_FIELDS = ("resolved_how", "evidence")
+ITEM_OUTCOME_FIELDS = ("triage_status", "resolution_status", "owner_status", "resolved_how", "evidence")
+FIXED_RESOLUTIONS = frozenset({"implemented", "resolved", "already-fixed", "already-applied"})
+REJECTED_RESOLUTIONS = frozenset({"rejected", "not-applicable", "duplicate", "stale"})
+DEFERRED_OWNERS = frozenset({"deferred", "not-selected"})
+COMMIT_PATTERN = re.compile(r"[0-9a-f]{7,64}")
 
 
 class DeriveError(Exception):
@@ -105,6 +159,148 @@ def _load(path: Path) -> dict[str, Any]:
 def _write(path: Path, payload: dict[str, Any]) -> None:
     """Write deterministic UTF-8 JSON with LF line endings."""
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+
+
+def _append_text(path: Path, text: str) -> None:
+    """Append text to a growing ledger without reading or rewriting its existing bytes."""
+    with path.open("a", encoding="utf-8", newline="\n") as stream:
+        stream.write(text)
+
+
+def _json_line(record: dict[str, Any]) -> str:
+    """Serialize one ledger record as a single sorted JSON line."""
+    return json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
+
+
+def _known_identities(run: Path) -> tuple[set[str], set[str]]:
+    """Return the item IDs from ``selection.json`` and bucket IDs from ``work-bucket-plan.json`` events may name."""
+    items: set[str] = set()
+    buckets: set[str] = set()
+    if (run / "selection.json").is_file():
+        inventory = _load(run / "selection.json").get("items")
+        items = {item.get("input_item_id") for item in inventory or [] if isinstance(item, dict)}
+    if (run / "work-bucket-plan.json").is_file():
+        plan = _load(run / "work-bucket-plan.json").get("work_buckets")
+        buckets = {bucket.get("bucket_id") for bucket in plan or [] if isinstance(bucket, dict)}
+    return items, buckets
+
+
+def validate_event(event: object, items: set[str], buckets: set[str]) -> dict[str, Any]:
+    """Check one status event against its closed vocabulary and the run's known identities.
+
+    A bucket event carries ``status`` and an optional ``note``; an item event carries any subset of the outcome fields
+    the resolution table shows. Unknown keys, blank text, retired statuses, and IDs absent from the frozen selection or
+    bucket plan are rejected so a typo cannot silently create a phantom row.
+
+    Example:
+        >>> validate_event({"kind": "bucket", "id": "B1", "status": "fixed"}, set(), {"B1"})["schema_version"]
+        1
+    """
+    if not isinstance(event, dict):
+        raise DeriveError("event-not-object")
+    event = {"schema_version": EVENT_SCHEMA_VERSION, **event}
+    kind, identity = event.get("kind"), event.get("id")
+    if event["schema_version"] != EVENT_SCHEMA_VERSION or not isinstance(identity, str) or not identity.strip():
+        raise DeriveError("event-identity-invalid")
+    if kind == "bucket":
+        allowed = {"schema_version", "kind", "id", "status", "note"}
+        if identity not in buckets:
+            raise DeriveError(f"event-unknown-bucket:{identity}")
+        if event.get("status") not in BUCKET_STATUSES:
+            raise DeriveError(f"event-bucket-status-invalid:{identity}")
+    elif kind == "item":
+        allowed = {"schema_version", "kind", "id", *ITEM_EVENT_ENUMS, *ITEM_EVENT_TEXT_FIELDS}
+        if identity not in items:
+            raise DeriveError(f"event-unknown-item:{identity}")
+        if not set(event) & {*ITEM_EVENT_ENUMS, *ITEM_EVENT_TEXT_FIELDS}:
+            raise DeriveError(f"event-item-empty:{identity}")
+        for field, values in ITEM_EVENT_ENUMS.items():
+            if field in event and event[field] not in values:
+                raise DeriveError(f"event-item-{field}-invalid:{identity}")
+    else:
+        raise DeriveError("event-kind-invalid")
+    if set(event) - allowed:
+        raise DeriveError(f"event-field-unknown:{identity}:{','.join(sorted(set(event) - allowed))}")
+    for field in ("note", *ITEM_EVENT_TEXT_FIELDS):
+        if field in event and (not isinstance(event[field], str) or not event[field].strip()):
+            raise DeriveError(f"event-{field}-blank:{identity}")
+    return event
+
+
+def read_events(run: Path) -> list[dict[str, Any]]:
+    """Read the run's status-event ledger in append order; an absent ledger has no events."""
+    path = run / EVENTS_LEDGER
+    if not path.is_file():
+        return []
+    items, buckets = _known_identities(run)
+    events = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            # A hand-edited line must fail with a code, never reach folding as a partial record.
+            events.append(validate_event(json.loads(line), items, buckets))
+        except (json.JSONDecodeError, DeriveError) as error:
+            raise DeriveError(f"events-ledger-invalid:{number}") from error
+    return events
+
+
+def fold_events(events: list[dict[str, Any]]) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
+    """Reduce the append-order ledger to the latest bucket status and latest value of each item field.
+
+    Example:
+        >>> fold_events([{"kind": "bucket", "id": "B1", "status": "in-progress"},
+        ...              {"kind": "bucket", "id": "B1", "status": "fixed"},
+        ...              {"kind": "item", "id": "F1", "owner_status": "todo"},
+        ...              {"kind": "item", "id": "F1", "owner_status": "fixed", "evidence": "closure-log.md"}])
+        ({'B1': 'fixed'}, {'F1': {'owner_status': 'fixed', 'evidence': 'closure-log.md'}})
+    """
+    buckets: dict[str, str] = {}
+    items: dict[str, dict[str, str]] = {}
+    for event in events:
+        if event.get("kind") == "bucket":
+            buckets[event["id"]] = event["status"]
+        elif event.get("kind") == "item":
+            fields = items.setdefault(event["id"], {})
+            fields.update({key: value for key, value in event.items() if key not in {"schema_version", "kind", "id"}})
+    return buckets, items
+
+
+def append_record(run: Path, ledger: str, record: Path | None = None) -> dict[str, Any]:
+    """Append one staged record file to a run ledger, then remove the staged file.
+
+    The model writes the record to ``<ledger>.rec`` with its file tool; this action appends those bytes, so earlier
+    entries are never reread into a rewrite. ``closure-log.md`` records are Markdown blocks; the file receives its ``##
+    Closure Evidence`` heading on first append. ``resolution-events.jsonl`` records are one JSON object or a list of
+    objects, each validated before anything is appended.
+    """
+    if ledger not in APPEND_LEDGERS:
+        raise DeriveError(f"append-ledger-unsupported:{ledger}")
+    target = run / ledger
+    staged = record or run / f"{ledger}.rec"
+    try:
+        text = staged.read_text(encoding="utf-8")
+    except OSError as error:
+        raise DeriveError(f"append-record-missing:{staged.name}") from error
+    if not text.strip():
+        raise DeriveError(f"append-record-empty:{staged.name}")
+    if ledger == EVENTS_LEDGER:
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError as error:
+            raise DeriveError("append-record-invalid-json") from error
+        items, buckets = _known_identities(run)
+        events = [
+            validate_event(event, items, buckets) for event in (payload if isinstance(payload, list) else [payload])
+        ]
+        _append_text(target, "".join(_json_line(event) for event in events))
+        appended = len(events)
+    else:
+        prefix = "" if target.is_file() else "## Closure Evidence\n"
+        _append_text(target, f"{prefix}\n{text.strip()}\n")
+        appended = 1
+    staged.unlink()
+    return {"status": "pass", "ledger": str(target), "appended": appended}
 
 
 def derive_selection(run: Path, metadata: dict[str, Any]) -> None:
@@ -215,27 +411,39 @@ def derive_merge(run: Path, metadata: dict[str, Any]) -> None:
         summary[field] = resolution.get(field)
 
 
+def derive_events(run: Path, metadata: dict[str, Any]) -> None:
+    """Overlay the latest appended item outcomes onto the resolution items; no ledger leaves items unchanged."""
+    _, item_fields = fold_events(read_events(run))
+    if not item_fields:
+        return
+    for item in metadata.get("final_resolution_table", {}).get("items", []) or []:
+        fields = item_fields.get(item.get("input_item_id"), {})
+        item.update({field: fields[field] for field in ITEM_OUTCOME_FIELDS if field in fields})
+
+
 def derive_metadata(run: Path, metadata: dict[str, Any]) -> dict[str, Any]:
     """Merge every derivable metadata field into an agent draft, overwriting stale copies."""
     derive_selection(run, metadata)
+    derive_events(run, metadata)
     derive_workplan(run, metadata)
     derive_merge(run, metadata)
     return metadata
 
 
-def _workplan_table(buckets: list[dict[str, Any]]) -> list[str]:
-    """Render the bucket table with the columns the workplan validator reads."""
+def _workplan_table(buckets: list[dict[str, Any]], statuses: dict[str, str]) -> list[str]:
+    """Render the bucket table with the columns the workplan validator reads and each bucket's latest status."""
     lines = [
-        "| Bucket | Selected indexes | Owner | Verifier | Context pack | Owned paths | Mode | Closure |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Bucket | Selected indexes | Owner | Verifier | Context pack | Owned paths | Mode | Closure | Status |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for bucket in buckets:
         indexes = ", ".join(str(index) for index in bucket.get("selected_indexes", []))
         paths = ", ".join(f"`{path}`" for path in bucket.get("owned_paths", []))
         closure = bucket.get("expected_closure") or "closure-log.md"
+        status = statuses.get(bucket.get("bucket_id"), "planned")
         lines.append(
             f"| {bucket.get('bucket_id')} | {indexes} | {bucket.get('owner')} | {bucket.get('verifier')} | "
-            f"`{bucket.get('context_pack_path')}` | {paths} | {bucket.get('execution_mode')} | {closure} |"
+            f"`{bucket.get('context_pack_path')}` | {paths} | {bucket.get('execution_mode')} | {closure} | {status} |"
         )
     return lines
 
@@ -259,11 +467,10 @@ def _approval_lines(workplan: dict[str, Any], reason: str | None) -> list[str]:
     return lines
 
 
-def _unmanaged_sections(path: Path) -> tuple[str, list[str]]:
-    """Return the existing title and every section the helper does not own."""
+def _unmanaged_sections(path: Path, managed: tuple[str, ...], title: str | None) -> tuple[str | None, list[str]]:
+    """Return the existing title and every level-two section the helper does not own."""
     if not path.is_file():
-        return "# Resolution Workplan", []
-    title = "# Resolution Workplan"
+        return title, []
     sections: list[list[str]] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.startswith("# ") and not sections:
@@ -272,26 +479,41 @@ def _unmanaged_sections(path: Path) -> tuple[str, list[str]]:
             sections.append([line])
         elif sections:
             sections[-1].append(line)
-    kept = [section for section in sections if section[0][3:].strip() not in MANAGED_SECTIONS]
+    kept = [section for section in sections if section[0][3:].strip() not in managed]
     return title, ["\n".join(section).rstrip() for section in kept]
 
 
+def _recorded_reason(path: Path) -> str | None:
+    """Reuse the one ineligibility reason already rendered, so a status refresh need not restate it."""
+    if not path.is_file():
+        return None
+    section = re.search(r"(?ms)^## Parallel Approval[ \t]*\n(.*?)(?=^## |\Z)", path.read_text(encoding="utf-8"))
+    reasons = re.findall(r"(?m)^Ineligibility reason:[ \t]*(\S[^\n]*)$", section.group(1) if section else "")
+    return reasons[0].strip() if len(reasons) == 1 else None
+
+
 def render_workplan(run: Path, metadata: dict[str, Any], reason: str | None) -> Path:
-    """Rewrite the managed workplan sections from derived metadata and keep agent-owned sections."""
+    """Rewrite the managed workplan sections from derived metadata and keep agent-owned sections.
+
+    Bucket status comes from the latest ``bucket`` event in ``resolution-events.jsonl``; it lives only in this rendered
+    table, never in the digest-bound plan JSON or its metadata copy.
+    """
     derive_metadata(run, metadata)
     workplan = metadata.get("resolution_workplan")
     if not isinstance(workplan, dict) or "work_buckets" not in workplan:
         raise DeriveError("work-bucket-plan-missing")
     path = run / "resolution-workplan.md"
-    title, kept = _unmanaged_sections(path)
+    reason = reason if reason and reason.strip() else _recorded_reason(path)
+    title, kept = _unmanaged_sections(path, MANAGED_SECTIONS, "# Resolution Workplan")
     buckets = workplan["work_buckets"]
+    statuses, _ = fold_events(read_events(run))
     order = [
         f"{position}. {bucket.get('bucket_id')} — {bucket.get('execution_mode')}"
         for position, bucket in enumerate(buckets, 1)
     ]
     blocks = [
         title,
-        "\n".join(["## Work Bucket Plan", "", *_workplan_table(buckets)]),
+        "\n".join(["## Work Bucket Plan", "", *_workplan_table(buckets, statuses)]),
         "\n".join(["## Parallel Approval", "", *_approval_lines(workplan, reason)]),
         "\n".join(["## Execution Order", "", f"Execution mode: {workplan['execution_mode']}.", "", *order]),
         "## Ungrouped Items\n\nnone",
@@ -299,6 +521,221 @@ def render_workplan(run: Path, metadata: dict[str, Any], reason: str | None) -> 
     ]
     path.write_text("\n\n".join(blocks) + "\n", encoding="utf-8", newline="\n")
     return path
+
+
+def _cell(value: object) -> str:
+    """Keep one table cell on one line and escape the pipe the table parser splits on."""
+    return str(value).replace("\r\n", " ").replace("\n", " ").replace("|", "\\|")
+
+
+def _one_line(value: object) -> str:
+    """Collapse a detail definition to the single line the validator compares."""
+    return " ".join(str(value).split())
+
+
+def _ledger_row(position: int, index: str, item: dict[str, Any], extra: dict[str, Any], relation: str) -> str:
+    """Render one resolution-table row; outcome text lives in the O/E definitions below the table."""
+    sources = item.get("sources") or []
+    cells = [
+        index,
+        item["input_item_id"],
+        item["item_name"],
+        item["item_type"],
+        " ".join(f"{source.get('kind')} [{source.get('source_id')}]" for source in sources),
+        "; ".join(dict.fromkeys(str(source.get("location")) for source in sources)),
+        ", ".join(dict.fromkeys(str(source.get("kind")) for source in sources)),
+        "; ".join(dict.fromkeys(str(source.get("evidence")) for source in sources)),
+        relation,
+        item["severity"],
+        extra.get("summary") or "-",
+        item["triage_status"],
+        item["resolution_status"],
+        item["owner_status"],
+        f"[O{position}]",
+        f"[E{position}]",
+    ]
+    return "| " + " | ".join(_cell(cell) for cell in cells) + " |"
+
+
+def render_ledger(run: Path, metadata: dict[str, Any]) -> Path:
+    """Rewrite the resolution table and source records of ``action-items.md`` from selection identity and events.
+
+    Item outcomes come from the latest appended ``item`` events, falling back to the metadata draft; a missing outcome
+    field fails instead of rendering an empty cell. Every other section, including the summary, completeness counts,
+    review-report intake, and expanded item records, stays agent-owned and unchanged.
+    """
+    derive_metadata(run, metadata)
+    items = metadata["final_resolution_table"]["items"]
+    for item in items:
+        missing = [field for field in ITEM_OUTCOME_FIELDS if not isinstance(item.get(field), str) or not item[field]]
+        if missing:
+            raise DeriveError(f"ledger-item-outcome-missing:{item.get('input_item_id')}:{','.join(missing)}")
+    extras = {item.get("input_item_id"): item for item in _load(run / "selection.json").get("items", [])}
+    _, item_fields = fold_events(read_events(run))
+    header = [
+        "Selection index",
+        "Input item",
+        "Item name",
+        "Item type",
+        "Sources",
+        "Item id or source location",
+        "Source category",
+        "Fetched evidence path",
+        "PR/diff relation",
+        "Severity",
+        "Summary",
+        "Triage status",
+        "Resolution",
+        "Owner/status",
+        "Resolved how",
+        "Evidence",
+    ]
+    rows, details, records = [], [], []
+    selectable = 0
+    for position, item in enumerate(items, 1):
+        selectable += bool(item.get("selectable"))
+        index = str(selectable) if item.get("selectable") else "-"
+        relation = item_fields.get(item["input_item_id"], {}).get("pr_relation", "-")
+        rows.append(_ledger_row(position, index, item, extras.get(item["input_item_id"], {}), relation))
+        details.extend(
+            (f"[O{position}] {_one_line(item['resolved_how'])}", f"[E{position}] {_one_line(item['evidence'])}")
+        )
+        records.extend(
+            f"- {source.get('kind')} [{source.get('source_id')}] @ {_one_line(source.get('location'))} — "
+            f"{_one_line(source.get('body'))} — {_one_line(source.get('evidence'))}"
+            for source in item.get("sources") or []
+        )
+    path = run / "action-items.md"
+    title, kept = _unmanaged_sections(path, LEDGER_SECTIONS, None)
+    table = ["| " + " | ".join(header) + " |", "| " + " | ".join("---" for _ in header) + " |", *rows]
+    blocks = [
+        *([title] if title else []),
+        "\n".join(["## Review Item Resolution Table", "", *table, "", *details]),
+        "\n".join(["## Expanded Source Records", "", *records]),
+        *kept,
+    ]
+    path.write_text("\n\n".join(blocks) + "\n", encoding="utf-8", newline="\n")
+    return path
+
+
+def _report_finding_ids(item: dict[str, Any]) -> list[str]:
+    """List the canonical review finding IDs an item's report sources name, in source order."""
+    identities: list[str] = []
+    for source in item.get("sources") or []:
+        if not isinstance(source, dict) or source.get("kind") != "report":
+            continue
+        source_id = str(source.get("source_id", ""))
+        identity = source.get("finding_id") or (source_id.rpartition("#")[2] if "#" in source_id else "")
+        if identity and identity not in identities:
+            identities.append(identity)
+    return identities
+
+
+def resolution_verdict(item: dict[str, Any]) -> str:
+    """Map one item's recorded outcome to the review feedback verdict.
+
+    Examples:
+        >>> resolution_verdict({"resolution_status": "implemented", "owner_status": "fixed"})
+        'fixed'
+        >>> resolution_verdict({"resolution_status": "unresolved", "owner_status": "not-selected"})
+        'deferred'
+        >>> resolution_verdict({"resolution_status": "duplicate", "owner_status": "resolved"})
+        'rejected'
+        >>> resolution_verdict({"resolution_status": "unresolved", "owner_status": "unresolved"})
+        'skipped'
+    """
+    if item.get("owner_status") in DEFERRED_OWNERS:
+        return "deferred"
+    if item.get("resolution_status") in FIXED_RESOLUTIONS:
+        return "fixed"
+    if item.get("resolution_status") in REJECTED_RESOLUTIONS:
+        return "rejected"
+    return "skipped"
+
+
+def _admitted_review(review_run: Path, run: Path) -> dict[str, Any]:
+    """Return the review result whose exact bytes this remediation admitted as ``findings-input.txt``."""
+    try:
+        admitted = (run / "findings-input.txt").read_bytes()
+    except OSError as error:
+        raise DeriveError("resolution-findings-input-missing") from error
+    for name in ("result.json", "result.candidate.json"):
+        candidate = review_run / name
+        if candidate.is_file() and candidate.read_bytes() == admitted:
+            return json.loads(admitted)
+    raise DeriveError("resolution-review-run-mismatch")
+
+
+def _item_commits(pairs: list[str], default: str | None) -> tuple[dict[str, str], str | None]:
+    """Parse ``ITEM=SHA`` commit overrides and validate every commit identifier."""
+    commits: dict[str, str] = {}
+    for pair in pairs:
+        item, separator, commit = pair.partition("=")
+        if not separator or not item or COMMIT_PATTERN.fullmatch(commit) is None:
+            raise DeriveError(f"resolution-item-sha-invalid:{pair}")
+        commits[item] = commit
+    if default is not None and COMMIT_PATTERN.fullmatch(default) is None:
+        raise DeriveError("resolution-sha-invalid")
+    return commits, default
+
+
+def append_review_resolutions(
+    run: Path, review_run: Path, sha: str | None = None, item_shas: list[str] | None = None
+) -> dict[str, Any]:
+    """Append one feedback record per admitted review finding to that review run's ``resolution.jsonl``.
+
+    Records come from this remediation's promoted ``result.json``: the item that owns each report finding supplies the
+    verdict (``fixed``, ``rejected``, ``skipped`` or ``deferred``) and its ``resolved_how`` text. ``sha`` names the
+    commit holding the fix, or ``null`` while changes stay unstaged. The target must be the exact review this run
+    admitted, so feedback can never land on an unrelated report. An identical record already present is not appended
+    twice, which keeps a resumed run from duplicating lines; a later different outcome is appended and supersedes it.
+    """
+    run, review_run = run.resolve(), review_run.resolve()
+    result_path = run / "result.json"
+    if not result_path.is_file():
+        raise DeriveError("resolution-result-not-promoted")
+    review = _admitted_review(review_run, run)
+    review_metadata = review.get("metadata") if isinstance(review.get("metadata"), dict) else {}
+    known = {
+        record.get("id")
+        for field in ("review_findings", "operational_blockers")
+        for record in review_metadata.get(field) or []
+        if isinstance(record, dict)
+    }
+    commits, default = _item_commits(item_shas or [], sha)
+    ledger = review_run / REVIEW_RESOLUTION_LEDGER
+    existing = set(ledger.read_text(encoding="utf-8").splitlines()) if ledger.is_file() else set()
+    items = _load(result_path).get("metadata", {}).get("final_resolution_table", {}).get("items") or []
+    lines, unmatched, seen = [], [], set()
+    for item in items:
+        for finding_id in _report_finding_ids(item):
+            if finding_id not in known:
+                unmatched.append(finding_id)
+                continue
+            if finding_id in seen:
+                continue
+            seen.add(finding_id)
+            record = {
+                "schema_version": RESOLUTION_SCHEMA_VERSION,
+                "finding_id": finding_id,
+                "item_id": item.get("input_item_id"),
+                "verdict": resolution_verdict(item),
+                "sha": commits.get(item.get("input_item_id"), default),
+                "why": _one_line(item.get("resolved_how") or ""),
+                "remediation_run": run.name,
+            }
+            line = _json_line(record)
+            if line.rstrip("\n") not in existing:
+                lines.append(line)
+    if lines:
+        _append_text(ledger, "".join(lines))
+    return {
+        "status": "pass",
+        "ledger": str(ledger),
+        "appended": len(lines),
+        "already_recorded": len(seen) - len(lines),
+        "unmatched_finding_ids": sorted(set(unmatched)),
+    }
 
 
 def _confidence_block(metadata: dict[str, Any], score: float) -> dict[str, Any]:
@@ -568,16 +1005,46 @@ def _workplan_action(arguments: argparse.Namespace) -> dict[str, Any]:
     return {"status": "pass", "workplan": str(path)}
 
 
+def _ledger_action(arguments: argparse.Namespace) -> dict[str, Any]:
+    """Rewrite the managed resolution-table sections of ``action-items.md``."""
+    path = render_ledger(arguments.run.resolve(), _load(arguments.metadata))
+    return {"status": "pass", "action_items": str(path)}
+
+
+ACTIONS = {
+    "metadata": _metadata_action,
+    "workplan": _workplan_action,
+    "ledger": _ledger_action,
+    "append": lambda arguments: append_record(arguments.run.resolve(), arguments.ledger, arguments.record),
+    "resolutions": lambda arguments: append_review_resolutions(
+        arguments.run, arguments.review_run, arguments.sha, arguments.item_sha
+    ),
+}
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse one helper action and its options."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     actions = parser.add_subparsers(dest="action", required=True)
     metadata = actions.add_parser("metadata", help="Merge derived fields into a metadata draft.")
     workplan = actions.add_parser("workplan", help="Rewrite the managed resolution-workplan.md sections.")
+    ledger = actions.add_parser("ledger", help="Rewrite the action-items.md resolution table from items and events.")
     final = actions.add_parser("finalize", help="Derive, render, write, validate, and optionally promote a result.")
-    for action in (metadata, workplan, final):
+    append = actions.add_parser("append", help="Append a staged <ledger>.rec record to a run ledger, then remove it.")
+    feedback = actions.add_parser(
+        "resolutions", help="Append per-finding outcomes to the admitted review run's resolution.jsonl."
+    )
+    for action in (metadata, workplan, ledger, final, append, feedback):
         action.add_argument("--run", type=Path, required=True, help="Remediation run directory.")
+    for action in (metadata, workplan, ledger, final):
         action.add_argument("--metadata", type=Path, required=True, help="Agent-authored metadata draft JSON.")
+    append.add_argument("--ledger", required=True, choices=APPEND_LEDGERS, help="Run ledger receiving the record.")
+    append.add_argument("--record", type=Path, help="Staged record file; default <run>/<ledger>.rec.")
+    feedback.add_argument("--review-run", type=Path, required=True, help="Review run whose result was admitted.")
+    feedback.add_argument("--sha", help="Commit holding every fix; omit while changes stay unstaged.")
+    feedback.add_argument(
+        "--item-sha", action="append", default=[], help="ITEM=SHA commit for one item; repeat for per-finding commits."
+    )
     metadata.add_argument("--out", type=Path, required=True, help="Path for the merged metadata JSON.")
     workplan.add_argument("--ineligibility-reason", help="Concrete reason a parallel plan is not dispatched.")
     final.add_argument("--handoff", type=Path, required=True, help="Agent-authored final-handoff draft JSON.")
@@ -605,12 +1072,7 @@ def main(argv: list[str] | None = None) -> int:
     """Run one action and print its JSON summary."""
     arguments = parse_args(argv)
     try:
-        if arguments.action == "finalize":
-            summary = finalize(arguments)
-        elif arguments.action == "metadata":
-            summary = _metadata_action(arguments)
-        else:
-            summary = _workplan_action(arguments)
+        summary = finalize(arguments) if arguments.action == "finalize" else ACTIONS[arguments.action](arguments)
     except DeriveError as error:
         summary = {"status": "fail", "code": str(error)}
     print(json.dumps(summary, indent=2, sort_keys=True))

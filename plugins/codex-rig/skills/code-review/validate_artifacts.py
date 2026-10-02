@@ -1809,7 +1809,7 @@ def _validate_confidence_recovery(result: dict[str, Any], metadata: dict[str, An
 def _paged_native_manifest(manifest: dict[str, Any]) -> bool:
     """Identify audited native page reads while keeping aggregate admission separate."""
     return manifest.get("schema_version") == 6 or (
-        manifest.get("schema_version") == 7 and manifest.get("manifest_kind") == "native-wave"
+        manifest.get("schema_version") in {7, 8} and manifest.get("manifest_kind") == "native-wave"
     )
 
 
@@ -1821,7 +1821,7 @@ def _native_dispatch_message(manifest: dict[str, Any], plan_path: Path, role: st
         attempt,
         manifest["context_reader_python"],
         provenance_header=manifest.get("dispatch_protocol", "paged-context-v6") == "paged-context-v6",
-        reader_path=Path(manifest["context_reader_path"]) if manifest.get("schema_version") == 7 else None,
+        reader_path=Path(manifest["context_reader_path"]) if manifest.get("schema_version") in {7, 8} else None,
     )
 
 
@@ -1832,7 +1832,7 @@ def _native_recipe_plan(manifest: dict[str, Any], retained_plan: Path) -> Path:
         return retained_plan
     path = Path(str(original))
     if (
-        manifest.get("schema_version") != 7
+        manifest.get("schema_version") not in {7, 8}
         or manifest.get("dispatch_protocol") != "paged-context-v6"
         or not path.is_absolute()
         or not path.is_file()
@@ -1866,7 +1866,7 @@ def _validate_review_runtime(
     roles_dir: Path = PLUGIN_ROOT / "roles",
 ) -> dict[str, object]:
     """Validate route-specific execution evidence before granting reviewer independence."""
-    if manifest.get("schema_version") == 7 and manifest.get("manifest_kind") == "batched-review":
+    if manifest.get("schema_version") in {7, 8} and manifest.get("manifest_kind") == "batched-review":
         import review_batches  # Verified circular producer/validator boundary; resolve after initialization.
 
         return review_batches.validate_aggregate(
@@ -1877,7 +1877,7 @@ def _validate_review_runtime(
             parent_thread_id,
             retained_role_cards=roles_dir == out_dir / "role-cards",
         )
-    if manifest.get("schema_version") in {5, 6, 7} or _paged_native_manifest(manifest):
+    if manifest.get("schema_version") in {5, 6, 7, 8} or _paged_native_manifest(manifest):
         return _validate_instruction_bounded_review(out_dir, manifest, passes, codex_home, parent_thread_id, roles_dir)
     if manifest.get("schema_version") == 4:
         return _validate_local_reviewer_wave(
@@ -2019,7 +2019,7 @@ def _validate_inspection_plan(
             plan,
             plan_path,
             context_limit=None
-            if manifest.get("schema_version") == 7 and manifest.get("manifest_kind") == "native-wave"
+            if manifest.get("schema_version") in {7, 8} and manifest.get("manifest_kind") == "native-wave"
             else 4,
         )
     except ValueError as error:
@@ -2100,7 +2100,7 @@ def _validate_context_read(
             attempt["attempt"],
             manifest["context_reader_python"],
             page,
-            reader_path=Path(manifest["context_reader_path"]) if manifest.get("schema_version") == 7 else None,
+            reader_path=Path(manifest["context_reader_path"]) if manifest.get("schema_version") in {7, 8} else None,
         )
         expected_command = json.loads(expected_call.split("tools.exec_command(", 1)[1].split("); text", 1)[0])["cmd"]
         expected_output = render_read_output(
@@ -2239,7 +2239,7 @@ def _validate_native_schedule(
     parent_thread_id: str,
     roles_dir: Path,
 ) -> bool:
-    """Bind schema-seven dispatch order, allocated slots, refusals, and refill waits to parent evidence."""
+    """Bind native dispatch order, original and correction allocations, refusals, and waits to parent evidence."""
     plan_path = _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"])
     ordered_roles = sorted(frozen_contexts, key=lambda role: (-len(frozen_contexts[role].read_bytes()), role))
     role_attempts: dict[str, list[dict[str, Any]]] = {}
@@ -2278,6 +2278,11 @@ def _validate_native_schedule(
                 "reasoning_effort": card["model_reasoning_effort"],
                 "message": _native_dispatch_message(manifest, plan_path, role, number),
             }
+            recovered = next(item for item in passes if item["role"] == role)
+            if recovered.get("recovery") is not None and number == 2:
+                expected = _recovery_arguments(out_dir, manifest, recovered, parent_rows, codex_home)
+            elif recovered.get("recovery") == {"kind": "incomplete-dispatch"}:
+                expected["message"] = _original_dispatch_message(manifest, plan_path, role, attempt, parent_rows)
             if arguments != expected or receipt != {"task_name": attempt["agent_path"]}:
                 raise SystemExit(f"review-inspection-launch-arguments-invalid:{role}:{number}")
             launched_at = _parent_timestamp(calls[0])
@@ -2328,6 +2333,13 @@ def _validate_native_schedule(
                     "end": max(terminal_at, joined_at),
                 }
             )
+
+    for item in passes:
+        if item.get("recovery") is None:
+            continue
+        retained = [allocation for allocation in allocations if allocation["role"] == item["role"]]
+        if len(retained) != 2 or retained[1]["start"] <= retained[0]["end"]:
+            raise SystemExit(f"review-repair-before-original-join:{item['role']}")
 
     first_launches: dict[str, tuple[datetime, int]] = {}
     for allocation in allocations:
@@ -2520,10 +2532,12 @@ def _validate_native_schedule(
             raise SystemExit("review-inspection-schedule-wait-invalid")
 
     first_roles = set(first_launches)
+    repaired_roles = {item["role"] for item in passes if item.get("recovery") is not None}
     for started, _returned in wait_events:
-        pending = any(allocation["start"] > started for allocation in allocations) or any(
-            role not in first_roles or first_launches[role][0] > started for role in ordered_roles
-        )
+        pending = any(
+            (allocation["attempt"] == 1 or allocation["role"] not in repaired_roles) and allocation["start"] > started
+            for allocation in allocations
+        ) or any(role not in first_roles or first_launches[role][0] > started for role in ordered_roles)
         active = sum(allocation["start"] <= started < allocation["end"] for allocation in allocations)
         refusals = [entry for entry in capacity_refusals if entry["called_at"] <= started]
         observed_full_pool = max(refusals, key=lambda entry: entry["called_at"])["active"] if refusals else 4
@@ -2583,7 +2597,7 @@ def _validate_instruction_bounded_review(
             roles_dir,
         )
         if (
-            manifest.get("schema_version") == 7
+            manifest.get("schema_version") in {7, 8}
             and manifest.get("manifest_kind") == "native-wave"
             and manifest.get("dispatch_protocol") == "paged-context-v7"
         )
@@ -2607,7 +2621,7 @@ def _validate_instruction_bounded_review(
             if not context.startswith(role_card):
                 raise SystemExit(f"review-inspection-role-card-context-missing:{role}")
             child_rows = _read_jsonl(_find_rollout(codex_home, attempt["agent_thread_id"]))
-            if manifest.get("schema_version") == 7:
+            if manifest.get("schema_version") in {7, 8}:
                 turn_id = attempt.get("turn_id")
                 terminals = [
                     event for event in _event_payloads(child_rows, "task_complete") if event.get("turn_id") == turn_id
@@ -2628,7 +2642,18 @@ def _validate_instruction_bounded_review(
                 intervals.append((started_at, completed_at))
             if _paged_native_manifest(manifest):
                 plan_path = _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"])
-                _validate_context_read(child_rows, plan_path, role, attempt, manifest, context)
+                recovery = item.get("recovery")
+                if recovery is not None and (
+                    recovery["kind"] == "incomplete-dispatch"
+                    and attempt["attempt"] == 1
+                    or recovery["kind"] == "closure-evidence-shape"
+                    and attempt["attempt"] == 2
+                ):
+                    if recovery["kind"] == "closure-evidence-shape" and _inspection_child_called_tool(child_rows):
+                        raise SystemExit(f"review-repair-formatting-tool-use:{role}")
+                    _recovery_arguments(out_dir, manifest, item, parent_rows, codex_home)
+                else:
+                    _validate_context_read(child_rows, plan_path, role, attempt, manifest, context)
             elif _inspection_child_called_tool(child_rows):
                 raise SystemExit(f"review-inspection-child-tool-use:{role}")
         attempt = item["attempts"][selected - 1]
@@ -2688,22 +2713,32 @@ def _validate_instruction_bounded_review(
         message = _resolve_path(out_dir, attempt["output_path"]).read_text(encoding="utf-8").strip()
         if any(pattern.search(message) for pattern in _SECRET_PATTERNS):
             raise SystemExit(f"review-inspection-output-sensitive-material:{role}")
-        if manifest.get("schema_version") == 7:
+        if manifest.get("schema_version") in {7, 8}:
             joined = _joined_terminal_timestamp(parent_rows, attempt["agent_path"], message) is not None
         else:
             joined = _joined_terminal_result(parent_rows, attempt["agent_path"], message)
         if not joined:
             raise SystemExit(f"review-inspection-parent-join-missing:{role}")
-        if manifest.get("schema_version") != 7:
+        if manifest.get("schema_version") not in {7, 8}:
             intervals.append((started_at, completed_at))
-        selected_intervals.append((started_at, completed_at))
+        if item.get("recovery") == {"kind": "closure-evidence-shape"}:
+            original = item["attempts"][0]
+            original_rows = _read_jsonl(_find_rollout(codex_home, original["agent_thread_id"]))
+            original_terminal = next(
+                event
+                for event in _event_payloads(original_rows, "task_complete")
+                if event.get("turn_id") == original["turn_id"]
+            )
+            selected_intervals.append((original_terminal["started_at"], original_terminal["completed_at"]))
+        else:
+            selected_intervals.append((started_at, completed_at))
 
     overlaps = any(
         max(first[0], second[0]) < min(first[1], second[1])
         for index, first in enumerate(selected_intervals)
         for second in selected_intervals[index + 1 :]
     )
-    if manifest.get("schema_version") == 7:
+    if manifest.get("schema_version") in {7, 8}:
         active = peak_active = 0
         events = sorted(
             (event for start, end in intervals for event in ((start, 1), (end, -1))),
@@ -2888,6 +2923,207 @@ def _receipt_binds_child(
     return len(delivered) == 1 and delivered[0] == arguments.get("message")
 
 
+def _closure_shape_repair(content: str, snapshot: dict[str, Any], role: str) -> str:
+    """Repair only list-valued closure evidence while retaining every other response byte and finding value."""
+    match = re.search(r"\A\s*## Reviewer Findings\s*\n```json\n(.*?)\n```", content, re.DOTALL)
+    if match is None:
+        raise SystemExit(f"review-repair-ineligible-format:{role}")
+
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        """Reject duplicate keys rather than changing which claim survives."""
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate key")
+            result[key] = value
+        return result
+
+    try:
+        records = json.loads(match[1], object_pairs_hook=unique)
+    except (ValueError, RecursionError) as error:
+        raise SystemExit(f"review-repair-ineligible-json:{role}") from error
+    changed = False
+    if not isinstance(records, list):
+        raise SystemExit(f"review-repair-ineligible-records:{role}")
+    for record in records:
+        if not isinstance(record, dict):
+            raise SystemExit(f"review-repair-ineligible-records:{role}")
+        closure = record.get("closure_evidence")
+        if isinstance(closure, list):
+            if not closure or any(not isinstance(value, str) or not value.strip() for value in closure):
+                raise SystemExit(f"review-repair-ineligible-closure:{role}")
+            record["closure_evidence"] = "\n".join(closure)
+            changed = True
+    if not changed:
+        raise SystemExit(f"review-repair-no-shape-error:{role}")
+    expected = content[: match.start(1)] + json.dumps(records, ensure_ascii=False) + content[match.end(1) :]
+    _batch_reviewer_findings(Path("unused"), snapshot, role, content_override=expected)
+    return expected
+
+
+def _original_dispatch_message(
+    manifest: dict[str, Any],
+    plan_path: Path,
+    role: str,
+    attempt: dict[str, Any],
+    parent_rows: list[dict[str, Any]],
+) -> str:
+    """Permit only a malformed reader-call block inside the otherwise exact first dispatch."""
+    canonical = _native_dispatch_message(manifest, plan_path, role, 1)
+    calls = [
+        row["payload"]
+        for row in parent_rows
+        if row.get("type") == "response_item"
+        and row.get("payload", {}).get("type") == "function_call"
+        and row["payload"].get("call_id") == attempt.get("spawn_call_id")
+    ]
+    if len(calls) != 1:
+        raise SystemExit(f"review-repair-original-dispatch-missing:{role}")
+    try:
+        actual = json.loads(calls[0]["arguments"])["message"]
+    except (KeyError, TypeError, ValueError) as error:
+        raise SystemExit(f"review-repair-original-dispatch-invalid:{role}") from error
+    if actual == canonical:
+        return canonical
+    expected_block = re.search(r"```javascript\n(.*?)\n```", canonical, re.DOTALL)
+    actual_block = re.search(r"```javascript\n(.*?)\n```", actual, re.DOTALL) if isinstance(actual, str) else None
+    if (
+        actual_block is None
+        or expected_block is None
+        or (actual[: actual_block.start(1)] + expected_block[1] + actual[actual_block.end(1) :] != canonical)
+    ):
+        raise SystemExit(f"review-repair-original-dispatch-invalid:{role}")
+    return actual
+
+
+def _recovery_arguments(
+    out_dir: Path,
+    manifest: dict[str, Any],
+    item: dict[str, Any],
+    parent_rows: list[dict[str, Any]],
+    codex_home: Path,
+) -> dict[str, str]:
+    """Derive one correction from observed original provenance, never a parent-authored replacement finding."""
+    role = item["role"]
+    kind = item["recovery"]["kind"]
+    if kind not in {"closure-evidence-shape", "incomplete-dispatch"}:
+        raise SystemExit(f"review-repair-kind-invalid:{role}")
+    original = item["attempts"][0]
+    card = _load_role_card(PLUGIN_ROOT / "roles", role)
+    # The original response must independently bind to its real child, parent and exact output bytes.
+    initial = {**item, "attempts": [original], "selected_attempt": 1, "output_path": original["output_path"]}
+    initial.pop("recovery", None)
+    _validate_spawn_attempts(
+        out_dir,
+        initial,
+        manifest,
+        codex_home,
+        parent_rows,
+        set(),
+        card,
+        set(),
+        set(),
+        original_dispatch_failure=kind == "incomplete-dispatch",
+    )
+    rows = _read_jsonl(_find_rollout(codex_home, original["agent_thread_id"]))
+    raw = _resolve_path(out_dir, original["raw_output_path"]).read_text(encoding="utf-8")
+    if _joined_terminal_timestamp(parent_rows, original["agent_path"], raw.strip()) is None:
+        raise SystemExit(f"review-repair-original-not-joined:{role}")
+    context = _resolve_path(out_dir, original["context_path"]).read_text(encoding="utf-8")
+    plan_path = _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"])
+    if kind == "closure-evidence-shape":
+        _validate_context_read(rows, plan_path, role, original, manifest, context)
+        snapshot = _load_json(out_dir.parent.parent / "batch-inventory.json")["source_snapshot"]
+        expected = _closure_shape_repair(raw, snapshot, role)
+        message = (
+            "Correct only closure_evidence arrays in the following retained response. Join their strings with a newline "
+            "in original order. Preserve every other finding field, claim, severity, evidence, confidence and assessment "
+            "exactly. Use no tools and perform no source reassessment. Return exactly this validated correction:\n"
+            + expected
+        )
+    else:
+        outputs = [row.get("payload", {}).get("output") for row in rows if row.get("type") == "response_item"]
+        if any("codex-review-provenance" in json.dumps(output) for output in outputs):
+            raise SystemExit(f"review-repair-source-already-read:{role}")
+        calls = [
+            row["payload"]
+            for row in rows
+            if row.get("type") == "response_item"
+            and row.get("payload", {}).get("type") in {"custom_tool_call", "function_call"}
+        ]
+        expected_call = render_read_call(
+            plan_path, role, 1, manifest["context_reader_python"], reader_path=Path(manifest["context_reader_path"])
+        )
+        if not calls or any(
+            call.get("name") != "exec" or call.get("input") in {expected_call, expected_call + "\n"} for call in calls
+        ):
+            raise SystemExit(f"review-repair-dispatch-cause-unproven:{role}")
+        if (
+            _retained_reviewer_rating(
+                _resolve_path(out_dir, original["output_path"]), local_reviewer_wave=False, main=False, role=role
+            )
+            != 5
+        ):
+            raise SystemExit(f"review-repair-preassessment-blocker-missing:{role}")
+        tool_rows = [
+            row["payload"]
+            for row in rows
+            if row.get("type") == "response_item"
+            and row.get("payload", {}).get("type")
+            in {"custom_tool_call", "function_call", "custom_tool_call_output", "function_call_output"}
+        ]
+        if len(tool_rows) != 2 * len(calls):
+            raise SystemExit(f"review-repair-dispatch-results-missing:{role}")
+        for index, call in enumerate(calls):
+            output = tool_rows[2 * index + 1]
+            diagnostic = json.dumps(output.get("output"))
+            if (
+                tool_rows[2 * index] != call
+                or output.get("call_id") != call.get("call_id")
+                or ("usage:" not in diagnostic or "error:" not in diagnostic)
+            ):
+                raise SystemExit(f"review-repair-dispatch-failure-unproven:{role}")
+            try:
+                input_args = json.loads(call["input"].split("tools.exec_command(", 1)[1].split("); text", 1)[0])
+                expected_args = json.loads(expected_call.split("tools.exec_command(", 1)[1].split("); text", 1)[0])
+            except (ValueError, IndexError, KeyError, TypeError) as error:
+                raise SystemExit(f"review-repair-dispatch-cause-unproven:{role}") from error
+            if (
+                set(input_args) != set(expected_args)
+                or any(input_args[key] != expected_args[key] for key in expected_args if key != "cmd")
+                or not isinstance(input_args["cmd"], str)
+            ):
+                raise SystemExit(f"review-repair-dispatch-cause-unproven:{role}")
+            rendered = expected_call.replace(
+                json.dumps(expected_args, ensure_ascii=False), json.dumps(input_args, ensure_ascii=False)
+            )
+            reader_prefix = expected_args["cmd"].split(" --plan", 1)[0]
+            producer_prefix = reader_prefix.replace("review_context.py", "review_prepare.py")
+            if call["input"] not in {rendered, rendered + "\n"} or (
+                not any(input_args["cmd"].startswith(prefix + " ") for prefix in (reader_prefix, producer_prefix))
+                or any(character in input_args["cmd"] for character in (";", "|", "&", "`", "$", "<", ">", "\n", "\r"))
+            ):
+                raise SystemExit(f"review-repair-dispatch-cause-unproven:{role}")
+        commands = [
+            row["payload"]["item"]
+            for row in rows
+            if row.get("type") == "event_msg"
+            and row.get("payload", {}).get("type") == "item_completed"
+            and row.get("payload", {}).get("item", {}).get("type") == "CommandExecution"
+        ]
+        if any(command.get("exit_code") != 2 for command in commands):
+            raise SystemExit(f"review-repair-dispatch-failure-unproven:{role}")
+        message = _native_dispatch_message(manifest, plan_path, role, 2)
+    return {
+        "task_name": f"review_{role.replace('-', '_')}_{original['context_sha256'][:12]}_a2",
+        "agent_type": "default",
+        "fork_turns": "none",
+        "model": card["model"],
+        "reasoning_effort": card["model_reasoning_effort"],
+        "message": message,
+    }
+
+
 def _validate_spawn_attempts(
     out_dir: Path,
     item: dict[str, Any],
@@ -2898,6 +3134,8 @@ def _validate_spawn_attempts(
     role_card: dict[str, str],
     used_context_paths: set[Path],
     used_output_paths: set[Path],
+    *,
+    original_dispatch_failure: bool = False,
 ) -> None:
     """Bind a spawned specialist output to parent and child rollout evidence."""
     role = str(item["role"])
@@ -2908,8 +3146,19 @@ def _validate_spawn_attempts(
         raise SystemExit(f"manifest-attempt-not-object:{role}")
     if [attempt.get("attempt") for attempt in attempts] != list(range(1, len(attempts) + 1)):
         raise SystemExit(f"manifest-attempt-sequence:{role}")
-    if len(attempts) == 2 and (
-        attempts[0].get("status") == "completed" or attempts[0].get("error_type") not in TRANSIENT_RETRY_ERRORS
+    recovery = item.get("recovery")
+    if recovery is not None and (
+        manifest.get("schema_version") != 8
+        or len(attempts) != 2
+        or recovery not in ({"kind": "closure-evidence-shape"}, {"kind": "incomplete-dispatch"})
+        or item.get("selected_attempt") != 2
+        or any(attempt.get("status") != "completed" for attempt in attempts)
+    ):
+        raise SystemExit(f"manifest-invalid-internal-recovery:{role}")
+    if (
+        recovery is None
+        and len(attempts) == 2
+        and (attempts[0].get("status") == "completed" or attempts[0].get("error_type") not in TRANSIENT_RETRY_ERRORS)
     ):
         raise SystemExit(f"manifest-invalid-retry:{role}")
     selected = item.get("selected_attempt")
@@ -2923,14 +3172,14 @@ def _validate_spawn_attempts(
         event_id = attempt.get("event_id")
         agent_path = attempt.get("agent_path")
         receipt_route = (
-            manifest.get("schema_version") in {5, 6, 7} or _paged_native_manifest(manifest)
+            manifest.get("schema_version") in {5, 6, 7, 8} or _paged_native_manifest(manifest)
         ) and "event_id" not in attempt
         identities = (thread_id, agent_path) if receipt_route else (thread_id, event_id, agent_path)
         if not all(isinstance(value, str) and value for value in identities):
             raise SystemExit(f"manifest-attempt-identity-missing:{role}")
         context_path = _resolve_path(out_dir, attempt.get("context_path"))
         if context_path in used_context_paths and not (
-            (manifest.get("schema_version") in {5, 6, 7} or _paged_native_manifest(manifest))
+            (manifest.get("schema_version") in {5, 6, 7, 8} or _paged_native_manifest(manifest))
             and context_path in role_context_paths
         ):
             raise SystemExit("manifest-reused-context-path")
@@ -2964,6 +3213,16 @@ def _validate_spawn_attempts(
                 if _paged_native_manifest(manifest)
                 else context_path.read_bytes().decode("utf-8")
             )
+            if recovery is not None and attempt["attempt"] == 2:
+                sent_context = _recovery_arguments(out_dir, manifest, item, parent_rows, codex_home)["message"]
+            elif original_dispatch_failure or recovery == {"kind": "incomplete-dispatch"} and attempt["attempt"] == 1:
+                sent_context = _original_dispatch_message(
+                    manifest,
+                    _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"]),
+                    role,
+                    attempt,
+                    parent_rows,
+                )
             bound = _receipt_binds_child(
                 parent_rows,
                 codex_home,
@@ -2974,7 +3233,7 @@ def _validate_spawn_attempts(
                 model=role_card["model"],
                 effort=role_card["model_reasoning_effort"],
             )
-            if manifest.get("schema_version") == 7:
+            if manifest.get("schema_version") in {7, 8}:
                 sent_calls = [
                     row["payload"]
                     for row in parent_rows
@@ -3048,11 +3307,19 @@ def _validate_spawn_attempts(
         used_output_paths.add(output_path)
         if not output_path.exists() or _sha256(output_path) != attempt.get("output_sha256"):
             raise SystemExit(f"provenance-output-hash-mismatch:{role}")
-        if manifest.get("schema_version") == 7:
+        if manifest.get("schema_version") in {7, 8}:
             raw = completions[0]["last_agent_message"].encode("utf-8")
             raw_path = _resolve_path(out_dir, attempt.get("raw_output_path"))
             if raw_path.read_bytes() != raw or _sha256(raw_path) != attempt.get("raw_output_sha256"):
                 raise SystemExit(f"provenance-raw-output-mismatch:{role}")
+            if recovery is not None and attempt["attempt"] == 2:
+                expected_arguments = _recovery_arguments(out_dir, manifest, item, parent_rows, codex_home)
+                if recovery["kind"] == "closure-evidence-shape":
+                    expected_output = expected_arguments["message"].split(
+                        "Return exactly this validated correction:\n", 1
+                    )[1]
+                    if raw.decode("utf-8") != expected_output:
+                        raise SystemExit(f"review-repair-claims-changed:{role}")
         message = completions[0]["last_agent_message"].strip()
         if output_path.read_text(encoding="utf-8").strip() != message:
             raise SystemExit(f"provenance-output-message-mismatch:{role}")
@@ -3061,7 +3328,7 @@ def _validate_spawn_attempts(
             f"input={manifest['review_input_sha256']} context={attempt['context_sha256']} "
             f"attempt={attempt['attempt']} -->"
         )
-        if manifest.get("schema_version") != 7 and message.splitlines()[0] != expected_header:
+        if manifest.get("schema_version") not in {7, 8} and message.splitlines()[0] != expected_header:
             raise SystemExit(f"provenance-output-header-mismatch:{role}")
 
     if attempts[selected - 1].get("status") != "completed":
@@ -3086,11 +3353,11 @@ def _validate_manifest_entries(
     require_role_card_receipts: bool = False,
     runtime_summary: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Bind every triggered pass to its evidence and expose schema-seven runtime summary when requested."""
+    """Bind every triggered pass to its evidence and expose the native runtime summary when requested."""
     schema_version = manifest.get("schema_version")
-    if schema_version not in {2, 3, 4, 5, 6, 7}:
+    if schema_version not in {2, 3, 4, 5, 6, 7, 8}:
         raise SystemExit("manifest-schema-version")
-    if schema_version == 7:
+    if schema_version in {7, 8}:
         kind = manifest.get("manifest_kind")
         if kind not in {"native-wave", "batched-review"}:
             raise SystemExit("manifest-kind-invalid")
@@ -3158,6 +3425,8 @@ def _validate_manifest_entries(
     _validate_sol_selections(manifest, triggered_roles, label="manifest-sol-selection")
     for item in passes:
         role = item.get("role")
+        if "recovery" in item and (schema_version != 8 or item.get("mode") != "inspection"):
+            raise SystemExit(f"manifest-invalid-internal-recovery:{role}")
         axis = item.get("axis")
         mode = item.get("mode")
         trigger = item.get("trigger")
@@ -3170,9 +3439,9 @@ def _validate_manifest_entries(
         if retained_role_cards:
             _resolve_path(out_dir, str(roles_dir / role / "ROLE.md"))
         role_card = _load_role_card(roles_dir, role)
-        if schema_version in {3, 4, 5, 6, 7} and item.get("role_card_sha256") != role_card["role_card_sha256"]:
+        if schema_version in {3, 4, 5, 6, 7, 8} and item.get("role_card_sha256") != role_card["role_card_sha256"]:
             raise SystemExit(f"manifest-role-card-hash-mismatch:{role}")
-        if require_role_card_receipts and schema_version in {3, 4, 5, 6, 7} and not retained_role_cards:
+        if require_role_card_receipts and schema_version in {3, 4, 5, 6, 7, 8} and not retained_role_cards:
             retained_path = _resolve_path(out_dir, f"role-cards/{role}/ROLE.md")
             if not retained_path.is_file() or _sha256(retained_path) != role_card["role_card_sha256"]:
                 raise SystemExit(f"manifest-retained-role-card-mismatch:{role}")
@@ -3180,8 +3449,8 @@ def _validate_manifest_entries(
             raise SystemExit(f"manifest-missing-axis:{role}")
         if mode not in VALID_MODES:
             raise SystemExit(f"manifest-invalid-mode:{role}:{mode!r}")
-        if (schema_version in {5, 6, 7} and mode not in {"inspection", "substituted"}) or (
-            schema_version not in {5, 6, 7} and mode == "inspection"
+        if (schema_version in {5, 6, 7, 8} and mode not in {"inspection", "substituted"}) or (
+            schema_version not in {5, 6, 7, 8} and mode == "inspection"
         ):
             raise SystemExit(f"manifest-mode-schema-mismatch:{role}")
         if not isinstance(trigger, str) or not trigger.strip():
@@ -3224,13 +3493,13 @@ def _validate_manifest_entries(
             first_line = substitute_output.splitlines()[0].strip() if substitute_output else ""
             explicit_header = first_line == f"role_id: {role}"
             legacy_heading = first_line == f"{role}:" or re.fullmatch(rf"#{{1,6}}\s+{re.escape(role)}", first_line)
-            if not explicit_header and (schema_version in {5, 6, 7} or not legacy_heading):
+            if not explicit_header and (schema_version in {5, 6, 7, 8} or not legacy_heading):
                 raise SystemExit(f"manifest-substitute-output-not-role-bound:{role}")
         by_role[role] = item
 
     if set(by_role) != triggered_roles:
         raise SystemExit("manifest-triggered-role-set-mismatch")
-    if schema_version == 7:
+    if schema_version in {7, 8}:
         summary = _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id, roles_dir=roles_dir)
         if "reviewer_findings_version" in manifest:
             import review_batches  # Reuse the existing circular batch boundary after native provenance admission.
@@ -3282,7 +3551,7 @@ def _validate_challenge_manifest_preflight(
     manifest = _load_json(out_dir / "specialist-manifest.json")
     passes = _manifest_passes(manifest)
     if (
-        manifest.get("schema_version") not in {4, 5, 6, 7}
+        manifest.get("schema_version") not in {4, 5, 6, 7, 8}
         or len(passes) != 1
         or passes[0].get("role") != "challenger"
         or passes[0].get("mode") not in {"app-server", "inspection"}
@@ -3297,7 +3566,7 @@ def _validate_challenge_manifest_preflight(
         parent_thread_id,
         project_root,
     )
-    if manifest.get("schema_version") != 7:
+    if manifest.get("schema_version") not in {7, 8}:
         _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id)
 
 
@@ -3559,7 +3828,7 @@ def _validate_runtime_summary_metadata(
         ):
             if metadata.get(key) != expected:
                 raise SystemExit(f"metadata-{key.replace('_', '-')}-mismatch")
-        if manifest.get("schema_version") in {5, 6, 7}:
+        if manifest.get("schema_version") in {5, 6, 7, 8}:
             if metadata.get("execution_observed_controls") != runtime_summary.get("observed_controls"):
                 raise SystemExit("metadata-execution-observed-controls-mismatch")
     if metadata.get("review_run_id") != manifest.get("review_run_id"):
@@ -3603,7 +3872,7 @@ def _validate_specialist_manifest(
     )
     runtime_summary = (
         runtime_summary
-        if manifest.get("schema_version") == 7
+        if manifest.get("schema_version") in {7, 8}
         else _validate_review_runtime(
             out_dir,
             manifest,
@@ -3613,7 +3882,7 @@ def _validate_specialist_manifest(
             require_assessment=result.get("schema_version") != 2,
             roles_dir=out_dir / "role-cards" if retained_role_cards else PLUGIN_ROOT / "roles",
         )
-        if manifest.get("schema_version") in {3, 4, 5, 6, 7}
+        if manifest.get("schema_version") in {3, 4, 5, 6, 7, 8}
         else {}
     )
     _validate_runtime_summary_metadata(metadata, manifest, runtime_summary)
@@ -3715,21 +3984,21 @@ def _validate_independence_requirement(
     env: _ReviewEnvironment,
 ) -> None:
     """Check the review's independence requirement and the metadata that claims it was satisfied."""
-    if evidence.manifest.get("schema_version") in {5, 6, 7}:
+    if evidence.manifest.get("schema_version") in {5, 6, 7, 8}:
         independence_required, required_independent = _validate_inspection_independence(
             out_dir, evidence, metadata, status, env
         )
     else:
         independence_required, required_independent = _validate_legacy_independence(evidence, status, risk_tier)
     if (
-        evidence.manifest.get("schema_version") in {3, 4, 5, 6, 7}
+        evidence.manifest.get("schema_version") in {3, 4, 5, 6, 7, 8}
         and status == "pass"
         and len(evidence.triggered_roles) >= 2
         and (
             (
                 evidence.runtime_summary.get("actual_mode") != "parallel"
                 and not (
-                    evidence.manifest.get("schema_version") == 7
+                    evidence.manifest.get("schema_version") in {7, 8}
                     and evidence.runtime_summary.get("actual_mode") == "independent-spawned"
                     and evidence.runtime_summary.get("capacity_limited") is True
                 )
@@ -3750,13 +4019,15 @@ def _validate_independence_requirement(
         raise SystemExit("metadata-independence-required-mismatch")
 
 
-def _batch_reviewer_findings(path: Path, snapshot: dict[str, Any], role: str) -> list[dict[str, Any]]:
+def _batch_reviewer_findings(
+    path: Path, snapshot: dict[str, Any], role: str, *, content_override: str | None = None
+) -> list[dict[str, Any]]:
     """Parse explicit batched obligations and bind declared coordinates to frozen source hashes.
 
     Ordinary native and historical reviewer formats never enter this profile. Missing inventories and prose outside the
     allowed sections fail; ratings and blocking counts cannot invent or suppress records.
     """
-    content = path.read_text(encoding="utf-8")
+    content = path.read_text(encoding="utf-8") if content_override is None else content_override
     match = re.fullmatch(
         r"\s*## Reviewer Findings\s*\n```json\n(?P<records>.*?)\n```\s*"
         r"(?:## Finding Dispositions\s*\n(?P<dispositions>.*?))?"

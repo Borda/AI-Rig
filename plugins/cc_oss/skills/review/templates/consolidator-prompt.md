@@ -43,6 +43,7 @@ Do NOT encode head as HTML comments (`<!-- ... -->`) or any other form — orche
 - `PR Type:` classify from diff INTENT (not title/file-count): `fix` / `feat` / `refactor` / `perf` / `docs` / `ci` / `chore` / `test` / `mixed`
 - `Scope:` key changed files from `<CHANGED_FILES>` (skip test files if >3 source; cap ~5)
 - `Focus:` `<SCOPE>` — one-line description from diff + PR body
+- `Impact:` literal `<IMPACT>` value (`FULL · <reason>` or `LIGHT · <reason>`) — review depth came from code path, not diff size
 - `Agents:` short names of agents with output files in `$RUN_DIR/`
 - `CI:` `failing — [<CI_FAILING_CHECKS>]` when that value is non-empty, else `passing (<CI_COUNTS>)` — `<CI_COUNTS>` empty too (no checks reported): write `pending`
 - `Gate:` literal `<GATE>` value (`PASS` or `BLOCK` — reject-gate reports never reach the consolidator, that value is always one of these two here; a `BLOCK` gate does not change how you write `Outcome:` below, it's already carried in `CI:`/the findings)
@@ -53,6 +54,26 @@ Do NOT encode head as HTML comments (`<!-- ... -->`) or any other form — orche
 **Severity tiers:** Every finding must carry an explicit inline severity label: `[cosmetic]`, `[low]`, `[medium]`, `[high]`, or `[critical]`. Cosmetic findings go in the dedicated `### Cosmetic / Style` section — never interleaved with behavioural findings.
 
 **Confidence parsing:** Parse each agent's `confidence` from JSON envelope. Assign `codex` fixed confidence 0.75 (moderate — static analysis, no runtime context).
+
+**Findings sidecar — write it BEFORE the report.** `oss:resolve` and later re-reviews read this file instead of re-parsing the report, so it carries every actionable finding the report will show, with nothing dropped and nothing extra:
+
+1. Write `<REPORT_DIR>/findings.jsonl` with the Write tool, one compact JSON object per finding in report order. Fields:
+   - `section`: the canonical section header from the taxonomy (e.g. `### Architecture & Quality`)
+   - `severity`: `critical`, `high`, `medium`, `low` or `cosmetic`
+   - `title`: one-line finding name
+   - `full_text`: the finding bullet as the report prints it
+   - `required_change`: the resolution proposal
+   - `file`, `line`: location, `""` / `null` when none
+   - `change`, `author`: the taxonomy's resolve `change` and Owner agent columns for that section; for `### [blocking] Critical`, use the originating agent and the `change` matching its domain
+   - `verify_verdict`: `CONFIRMED` only when a Step 4 verifier confirmed exactly this finding, else `""`. A finding you merged from several agents' claims gets `""` unless the verifier confirmed every merged claim, because `/oss:resolve` skips re-proving a confirmed finding
+   - `verify_file`: that verifier's `$RUN_DIR/verify-*.md` path, else `""`
+   - `source_file`: the originating agent file in `$RUN_DIR`
+   - `codex_eligible`: `true` when the finding meets the "good fit" criteria in `<_OSS_SHARED>/codex-delegation.md` (load via `cat`) and none of its "don't delegate" cases, else `false`. Criteria only — never invoke the bridge or edit code; `/oss:resolve` decides who implements.
+   - Report-only sections (`Design Divergence`, `Issue Root Cause Alignment`, `OSS Checks`, `Recommended Next Steps`, `Review Confidence`) are not written here.
+2. Run `python "<REVIEW_SKILL_DIR>/../../bin/mint_finding_ids.py" "<REPORT_DIR>/findings.jsonl"`. It adds a stable `id` to every record (section slug + hash of file and title, no line number, so the id survives line drift between runs). A non-zero exit means a record lacks a required field; fix the record and re-run, never hand-write ids.
+3. Use those minted `id` values as the findings-overview `ID` column and prefix each detailed-section bullet with `[<id>]`.
+
+**Prior resolution ledger** — only when the orchestrator's prompt carries a `Prior resolution ledger:` line: taking only the last record per `finding_id` (later lines are later resolve runs), for every finding whose last verdict is `rejected` and that this report does not list again, add one line under `Review Confidence` naming its title, file and the ledger's `why`. A rejected finding left out silently is indistinguishable from one nobody re-checked.
 
 **Write to:** `<REPORT_DIR>/review-report.md` using Write tool.
 

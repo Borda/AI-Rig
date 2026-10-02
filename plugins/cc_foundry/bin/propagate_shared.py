@@ -66,6 +66,16 @@ MANIFEST: list[dict[str, object]] = [
         ],
     },
     {
+        # Appends staged `.rec` records to a growing ledger (plugins/CLAUDE.md §Growing Ledgers).
+        # The shell form needs `rm`, which prompts on every append; a plugin may be installed alone.
+        "canonical": "plugins/cc_foundry/bin/append_ledger.py",
+        "copies": [
+            "plugins/cc_oss/bin/append_ledger.py",
+            "plugins/cc_develop/bin/append_ledger.py",
+            "plugins/cc_research/bin/append_ledger.py",
+        ],
+    },
+    {
         # Parses `--keep "..."` out of a skill's arguments. The inline `[[ =~ ]]` twin it
         # replaces reads ${BASH_REMATCH[1]}, which zsh leaves empty, so every skill that
         # accepts --keep needs this and a plugin may be installed alone.
@@ -251,6 +261,15 @@ MANIFEST: list[dict[str, object]] = [
             "plugins/cc_foundry/rules/_full/notebook-style.md",
             "plugins/cc_research/skills/_shared/notebook-style.md",
             "plugins/cc_oss/skills/_shared/notebook-style.md",
+        ],
+    },
+    {
+        # Review depth by code path (FULL/LIGHT from codemap diff-impact + fn-blast).
+        # oss:review and develop:review gate on the same verdict; each plugin must run
+        # standalone, so develop ships a byte-identical copy instead of reading oss/bin.
+        "canonical": "plugins/cc_oss/bin/review_impact_tier.py",
+        "copies": [
+            "plugins/cc_develop/bin/review_impact_tier.py",
         ],
     },
     {

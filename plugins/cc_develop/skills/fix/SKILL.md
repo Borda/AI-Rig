@@ -321,13 +321,10 @@ cat "$_DEV_SHARED/plan-inline.md"
 
 ## Challenger gate
 
-**Decision — three states** (default is NOT "skip": runs on substantial fixes, auto-skips only small ones):
+**Decision** (default runs at any size — a few-line fix on the main path is often the riskiest; size never skips the gate):
 
-1. `--no-challenge` (`CHALLENGE_ENABLED=false`) → **skip gate entirely**, any size.
-2. else `--challenge` (`IFS= read -r CHALLENGE_FORCED < "${TMPDIR:-/tmp}/dev-challenge-forced-${CSID}" 2>/dev/null || CHALLENGE_FORCED=false` = `true`) → **always run**, even on a small fix.
-3. else **default** → **run when fix is substantial** (multi-file, ≳50 lines, or touches public API); **auto-skip when small** (single file, ≲50 lines, no API change) — challenger adds little on trivial fixes.
-
-Both flags exist for opposite regimes: `--no-challenge` suppresses gate on substantial fixes where it would otherwise fire; `--challenge` forces it on small fixes where it would otherwise auto-skip.
+1. `--no-challenge` (`CHALLENGE_ENABLED=false`) → **skip gate entirely**.
+2. else → **always run**. `--challenge` (`CHALLENGE_FORCED`) is accepted for compatibility and changes nothing.
 
 Arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits). Spawn `foundry:challenger` with root cause analysis from Step 1 (root cause, blast radius, assumptions, approach):
 

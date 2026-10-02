@@ -104,7 +104,8 @@ Process items in `SELECTED_ITEMS` (from Step 3e) in priority order (`[req]` firs
 
 **Codex effort classification** — classify each item before dispatch; set `ITEM_EFFORT`; aggregate to `CHANGE_SCOPE` for Step 9:
 
-- typo/spelling/whitespace/formatting/comment/rename-single/docstring → `medium`; multi-file/refactor/architecture/new-feature/redesign → `xhigh`; all else → `high` (default)
+- An item whose record carries `codex_eligible: true` (the review tagged it against `_shared/codex-delegation.md`, the same criteria the review applied) → `medium`, so C1 offers it to Codex; the review only tags, resolve implements
+- Otherwise: typo/spelling/whitespace/formatting/comment/rename-single/docstring → `medium`; multi-file/refactor/architecture/new-feature/redesign → `xhigh`; all else → `high` (default)
 - Minimum effort is always `medium` — never `low`
 - `ITEM_EFFORT` set per item; include in agent prompt as `"Effort level: $ITEM_EFFORT.\n..."` prefix
 - `CHANGE_SCOPE` = aggregate across all `SELECTED_ITEMS`:
@@ -389,15 +390,38 @@ Group items by `DOMAIN_CHALLENGER`, preserving each item's original priority-ord
 - `description` = 3–5 words naming that group's theme, never echoing `name` or the shared PR.
 - Compose every group's labels in one pass and confirm the prompt leads differ in their first word — FleetView prints `name` plus the leading chars of prompt line 1, so a shared prefix there yields indistinguishable rows (task-lifecycle.md §Spawn slots):
 
+Before building item lines, re-check every carried verifier verdict once. The review confirmed its findings at the head it recorded; a pushed PR, or a verifier file swept from `.temp`, voids that confirmation. The script drops `verify_verdict` from any item whose evidence no longer holds, so those items get the full Part 1 (report mode without a PR compares against the checkout's `HEAD`):
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
+IFS= read -r PR_HEAD_OID < "${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}" 2>/dev/null || PR_HEAD_OID=""
+IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
+[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing"; exit 1; }
+# no-PR report mode never runs Step 4, so a PR head oid left from an earlier run must not be compared
+case "$PR_NUMBER" in ''|n/a|*[!0-9]*) PR_HEAD_OID="" ;; esac
+if [ -f "$REPORT_FILE" ]; then
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --recheck-verdicts --review-dir "$(dirname "$REPORT_FILE")" --current-head "$PR_HEAD_OID" || exit 1  # timeout: 15000
+else
+    echo "→ no review report consumed — no verdicts to re-check"
+fi
+```
+
+Build each item line from its `action-items.jsonl` record (Step 3c merge carries the reviewer's evidence through), read after the re-check above: append `[confirmed verify=<verify_file>]` only when `verify_verdict` is `CONFIRMED`, `[evidence=<source_file>]` when `source_file` is set, and `[thin]` when `thin` is true. Omit a marker whose field is absent. `[confirmed]` covers the review finding the item was built from; GitHub items never carry it.
+
 ```text
 Agent(subagent_type="${DOMAIN_CHALLENGER}", prompt="<domain>: two-part challenge for these review items.
-Part 1 — for each, does the stated problem exist in the code as described?
+Spotter evidence first — an item listing evidence=/verify= paths carries the reviewer's own reasoning; read those files before the code, then confirm against the code.
+Part 1 — for each item WITHOUT [confirmed], does the stated problem exist in the code as described?
 The reviewer's assertion is itself an unproven claim, not evidence — 'reads like X' != 'is X'.
 When a finding asserts a fact reading the referenced file alone can't settle (a name/identifier/version/count is wrong, non-standard, or inconsistent — license names, API/symbol names, version numbers, spec IDs), verify it via WebFetch/WebSearch against the actual authoritative source for that claim (the specific project/library/spec it names — not a generic registry) before ruling VALID. Source unreachable or inconclusive → REJECT with evidence_rationale stating what couldn't be verified; never default VALID on the reviewer's word alone.
-Part 2 — if problem exists, is the suggested fix the right approach?
-Read each referenced file at <file:line>. Read-only: run no tests. Max 4 tool calls per item (the 4th reserved for one WebFetch/WebSearch when a claim needs external verification).
+[confirmed] items were already confirmed by an independent review-time verifier (its file is the verify= path). Do not re-prove them: only re-read <file:line> and check the code still matches the finding (the head may have moved). Still matching → evidence=VALID, rationale citing the verifier. No longer matching → run the full Part 1.
+[thin] items are terse GitHub comments that no review finding covers: first locate the code they refer to (PR diff, named symbols). A request about docs, changelog, tests or process has no single code target: judge the request itself. A code request whose target stays unidentifiable → evidence=REJECT, rationale saying so.
+Part 2 — for EVERY item whose problem exists, is the suggested fix the right approach?
+Read each referenced file at <file:line>. Read-only: run no tests. Max 4 tool calls per item (the 4th reserved for one WebFetch/WebSearch when a claim needs external verification), plus one read per evidence/verify file.
 Items:
-<id>: <full_comment_text> (<file>:<line>)
+<id>: <full_comment_text> (<file>:<line>) [confirmed verify=<verify_file>] [evidence=<source_file>] [thin]
 ...
 Write full analysis to $IMPL_DIR/challenge-domain-<domain>.md using the Write tool.
 Return ONLY compact JSON as your FINAL message (nothing after it):
@@ -472,7 +496,8 @@ fi
 
 Parse each group's per-item verdict array — same granularity as a single-item challenge, never relaxed by grouping:
 
-- Missing item id, or a present element with empty/null `evidence_rationale` or `suggestion_rationale` → treat as UNCERTAIN. Re-dispatch it alone (single-item challenge call, same domain); persist that reply via the Write tool to a **separate** file, `$IMPL_DIR/challenge-verdicts-<domain>-retry-<id>.json` — never overwrite the group's own `challenge-verdicts-<domain>.json`, which still holds every sibling item's verdict this pass hasn't appended yet. The append block below prefers the retry file for that id when present, and its `// "challenge agent returned no rationale after retry"` fallback covers the still-empty case exactly once, after the real retry — never before it.
+- Missing item id, or a present element with empty/null `evidence_rationale` or `suggestion_rationale` → treat as UNCERTAIN. Re-dispatch it alone (single-item challenge call, same domain); persist that reply via the Write tool to a **separate** file, `$IMPL_DIR/challenge-verdicts-<domain>-retry-<id>.json` — never overwrite the group's own `challenge-verdicts-<domain>.json`, which still holds every sibling item's verdict this pass hasn't appended yet. The retry prompt carries the item's `evidence=`/`verify=` markers like the group call. The append block below prefers the retry file for that id when present, and its `// "challenge agent returned no rationale after retry"` fallback covers the still-empty case exactly once, after the real retry — never before it.
+- **Ask the spotter** — the retry is still UNCERTAIN (empty rationale again) and the item carries a `finding_id` and its `author` names a real agent type (not an `@login`, not `codex`; on a GitHub item annotated by the merge, the agent type after `+`): dispatch that agent type for this item alone, as `name="caucus-<id>"`, with the same two-part prompt and JSON contract plus its `evidence=` file. This is the reviewer role that raised the finding, consulted on its own claim — a domain challenger guessing twice adds no signal. Persist the reply via the Write tool to `$IMPL_DIR/challenge-verdicts-<domain>-caucus-<id>.json`; arm `agent-watch-challenge-caucus.tsv` with a 300 s row. A caucus `evidence=VALID` counts only when its rationale cites the code it read (`file:line`); a bare restatement of the original claim falls to the no-rationale default, because the author agreeing with itself is not verification. Only then fall back to the no-rationale default. One caucus per item, never more.
 - `evidence=REJECT` → print `⊘ #<id> evidence rejected: <reason from the persisted verdict file>`; set type `[challenged:reject]`; run the shared append block below with `_ID=<id>`, `_RESOLUTION=rejected`, `_DOMAIN=<domain>`; drop from `SURVIVING_ITEMS`. The append block prints the task id to dispose (or explains why none exists in report mode); call `TaskUpdate(status="deleted")` on it.
 - `evidence=VALID` + `suggestion=VALID` → run the shared append block with `_RESOLUTION=as-suggested`; use original suggestion for implementation
 - `evidence=VALID` + `suggestion=REJECT` → run the shared append block with `_RESOLUTION=self-resolved`; self-resolve using `alternative` as guidance
@@ -494,7 +519,8 @@ case "$_DOMAIN" in ''|*[!a-z0-9-]*) echo "! BLOCKED — domain/batch-tag placeho
 if [ "$_RESOLUTION" = "codex-direct" ]; then
     _VJSON="$IMPL_DIR/c1-reply-${_DOMAIN}.json"
 else
-    _VJSON="$IMPL_DIR/challenge-verdicts-${_DOMAIN}-retry-${_ID}.json"
+    _VJSON="$IMPL_DIR/challenge-verdicts-${_DOMAIN}-caucus-${_ID}.json"
+    [ -s "$_VJSON" ] || _VJSON="$IMPL_DIR/challenge-verdicts-${_DOMAIN}-retry-${_ID}.json"
     [ -s "$_VJSON" ] || _VJSON="$IMPL_DIR/challenge-verdicts-${_DOMAIN}.json"
 fi
 [ -s "$_VJSON" ] || { echo "! BLOCKED — $_VJSON missing/empty; persist the agent/Codex JSON reply via the Write tool before running this block"; exit 1; }
@@ -585,7 +611,7 @@ Re-derive group membership after all reassignments (file overlap + import coupli
 **Spawn wave cap** (per `claude-config.md` §Parallel Spawn Ceilings — `CAP_OPUS=5`, `CAP_SONNET=8`): the 5-item cap above bounds one specialist's own group size, not the combined sub-group count across specialist types.
 
 - `foundry:sw-engineer`/`solution-architect`/`perf-optimizer` all draw from the opus pool; `foundry:qa-specialist`/`doc-scribe`/`linting-expert` from the sonnet pool.
-- Before firing, sum this run's sub-groups per pool; a pool whose sum exceeds its cap fires in ordered waves of that many (priority order, lowest item id first), waiting for each wave to return before opening the next — never one burst past the ceiling.
+- Before firing, sum this run's sub-groups per pool; a pool whose sum exceeds its cap fires in ordered waves of that many (`SELECTED_ITEMS` priority order — the same order Phase 3's merge plan uses; item ids are stable handles, not priorities, since `[report]` items are appended after GitHub ids), waiting for each wave to return before opening the next — never one burst past the ceiling.
 - Small/typical runs (most PRs) never approach either cap and fire as one wave, unchanged from before.
 - `DISPATCH_MODE=sequential` narrows every wave to **one** group regardless of pool; `per-specialist` lowers the sub-group count to at most one per specialist type (≤6 total, so neither pool cap is ever reached) without changing either cap.
 
@@ -794,7 +820,7 @@ elif [ -n "$_BASE_SHA" ] && [ "$_NOW_SHA" != "$_BASE_SHA" ]; then
 fi
 ```
 
-Build the cherry-pick plan in **original `SELECTED_ITEMS` priority order**, interleaved across specialist groups by item id — NOT grouped by specialist, so the base order matches severity ranking regardless of which group finished first.
+Build the cherry-pick plan in **original `SELECTED_ITEMS` priority order**, interleaved across specialist groups in that order (item ids are stable handles, not priorities) — NOT grouped by specialist, so the base order matches severity ranking regardless of which group finished first.
 
 - This global sort is safe because Phase 1/2 grouping preserved each specialist's internal relative order (stable partition) — sorting by original priority never reorders two items from the same specialist relative to each other.
 - Each entry also carries its worktree `group` tag (from Phase 2) and its `module` — the **canonical codemap name** for the item's `.file`, read from `file_module` in `$IMPL_DIR/codemap-maps.json` (built in Structural prep), blank when unresolved.
