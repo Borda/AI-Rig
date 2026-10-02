@@ -782,14 +782,14 @@ Mode boundaries:
 
 The default index path is `.cache/codemap/<project>.json`, where `<project>` is the project-root basename. Set `CODEMAP_INDEX_DIR` to an absolute override directory to use `<override>/<project>.json`; separate colliding project names with separate override directories. `SCAN_NO_AUTOBUILD=1` keeps query and test-impact routes from creating or refreshing an index implicitly.
 
-`.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved. `.claude-plugin/permissions-deny.json` is its counterpart — the operations that must stay denied no matter how broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, branch and tag deletion, force-push, `claude --dangerously-skip-permissions`) plus every public-GitHub write (`gh issue`/`pr`/`release`/`gist` create, edit, merge, delete, and `gh api` with `POST`, `PATCH`, `PUT` or `DELETE`). Neither file is merged into `~/.claude/settings.json` automatically. The sibling `cc_*` plugins each merge their own pair from their `/<plugin>:setup` skill; this plugin ships no setup skill, so the merge is manual. Both commands are additive and idempotent — `unique` keeps existing entries from duplicating, and nothing is ever removed:
+`.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved. `.claude-plugin/permissions-deny.json` is its counterpart — the operations that must stay denied no matter how broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, branch and tag deletion, force-push, `claude --dangerously-skip-permissions`) plus every public-GitHub write (`gh issue`/`pr`/`release`/`gist` create, edit, merge, delete, and `gh api` with `POST`, `PATCH`, `PUT` or `DELETE`). Neither file is merged into `~/.claude/settings.json` automatically. The sibling `cc_*` plugins each merge their own pair from their `/<plugin>:setup` skill; this plugin ships no setup skill, so the merge is manual. On upgrade, the allow command below removes only the obsolete `Bash(gh api repos/*:*)` entry, preserving all other allow and deny entries. The merges are otherwise additive and idempotent — `unique` keeps existing entries from duplicating:
 
 ```bash
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}"
 [ -f ~/.claude/settings.json ] || printf '{}\n' > ~/.claude/settings.json
 cp ~/.claude/settings.json ~/.claude/settings.json.bak
 jq --slurpfile perms "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" \
-    '.permissions.allow = ((.permissions.allow // []) + $perms[0] | unique)' \
+    '.permissions.allow = (((.permissions.allow // []) | map(select(. != "Bash(gh api repos/*:*)"))) + $perms[0] | unique)' \
     ~/.claude/settings.json > ~/.claude/settings.json.tmp && mv ~/.claude/settings.json.tmp ~/.claude/settings.json
 jq --slurpfile deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" \
     '.permissions.deny = ((.permissions.deny // []) + $deny[0] | unique)' \

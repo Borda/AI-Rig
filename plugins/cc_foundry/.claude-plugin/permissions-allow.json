@@ -23,7 +23,7 @@
   "Bash(find .temp*)",
   "Bash(find:*)",
   "Bash(gh api graphql:*)",
-  "Bash(gh api repos/*:*)",
+  "Bash(gh api repos/*)",
   "Bash(gh api search/*)",
   "Bash(gh auth status:*)",
   "Bash(gh issue list:*)",

@@ -182,19 +182,19 @@ Writeback happens in-bash above (`mv` — no Write-tool permission prompt, headl
 
 ## Step 5: Merge permissions.allow and permissions.deny
 
-Merge `$PLUGIN_ROOT/.claude-plugin/permissions-allow.json` into `~/.claude/settings.json` via jq below — add only entries not already present (exact string match):
+Merge `$PLUGIN_ROOT/.claude-plugin/permissions-allow.json` into `~/.claude/settings.json` via jq below — add only entries not already present (exact string match). Before merging, remove only the obsolete `Bash(gh api repos/*:*)` entry; the shipped `Bash(gh api repos/*)` replaces it. Preserve every other user allow entry, all deny entries, and unrelated settings:
 
 Writes merged `permissions.allow` array:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _jq_result=$(jq --slurpfile perms "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" \
-    '.permissions.allow = ((.permissions.allow // []) + $perms[0] | unique)' \
+    '.permissions.allow = (((.permissions.allow // []) | map(select(. != "Bash(gh api repos/*:*)"))) + $perms[0] | unique)' \
     ~/.claude/settings.json)  # timeout: 5000
 [ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging permissions.allow — settings.json unchanged\n"; exit 1; }
 ```
 
-Writeback happens in-bash above (`mv`). Report: "Added N new permissions.allow entries (M already present)."
+Writeback happens in-bash above (`mv`). Report: "Added N new permissions.allow entries (M already present)." Also report whether the exact obsolete repository API rule was replaced.
 
 Check whether `$PLUGIN_ROOT/.claude-plugin/permissions-deny.json` exists. If so: merge via jq below — add only entries not already present:
 

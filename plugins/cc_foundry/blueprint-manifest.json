@@ -436,10 +436,6 @@
       "kind": "block",
       "src": "skills/audit/SKILL.md:300"
     },
-    "136605a601b8226b2bf4068ad78b30beb46cb0a8efee607180433d7b2113ff87": {
-      "kind": "command",
-      "src": "skills/setup/SKILL.md:189"
-    },
     "14103738647ebfbbbcc90cc479b649f8472e6f68fa2511dcb9b49bdae0d72728": {
       "kind": "command",
       "src": "skills/audit/modes/steps-4-5-7.md:146"
@@ -879,6 +875,10 @@
     "27a93ea972760b3cb631add6f93e5227c0e339c70aca39501f594c9bd12935db": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills.md:792"
+    },
+    "283124066d2acd85f86d000e5fa195c5a67a200d65adfe8e441be985106b8994": {
+      "kind": "command",
+      "src": "skills/setup/SKILL.md:189"
     },
     "285e07c51ed6fcb7980f3569df22984b01af9b5949671d993a569f904ffdcc47": {
       "kind": "block",
@@ -1780,10 +1780,6 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-setup.md:89"
     },
-    "55037aa2970b1e7e384cb07f9b6bc7cae69d0791d1c3e4fac7141ebdc6a5aa89": {
-      "kind": "block",
-      "src": "skills/setup/SKILL.md:189"
-    },
     "55b7ed07eb53d37f03224bc5cec2233975c717987d837ceb69fce51fa7713bc4": {
       "kind": "command",
       "src": "skills/distill/SKILL.md:41"
@@ -2671,6 +2667,10 @@
     "7f84ba89248641126b9f490e3dbb8c5b5b415ab6a688769745801d81c7909d40": {
       "kind": "command",
       "src": "skills/distill/SKILL.md:91"
+    },
+    "7f8bd6307a920f696ef7c40980a7a59fc908f71f68c8d945bd563ade1b725679": {
+      "kind": "block",
+      "src": "skills/setup/SKILL.md:189"
     },
     "7f9cb586bb819730bed09f4387c62a87b7efee26b3083ea9ca96550e83f9b8cd": {
       "kind": "block",
@@ -5181,6 +5181,6 @@
       "src": "rules/claude-config.md:41"
     }
   },
-  "plugin": "cc_foundry@0.64.0",
+  "plugin": "cc_foundry@0.64.1",
   "schema": 1
 }

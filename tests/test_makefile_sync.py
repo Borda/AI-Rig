@@ -74,6 +74,7 @@ def _fake_claude(tmp_path: Path) -> FakeClaude:
     script.write_text(
         "#!/usr/bin/env bash\n"
         'echo "claude $*" >> "$CLAUDE_STUB_LOG"\n'
+        'if [[ "$1" == "--print" ]]; then echo "setup-root=$CLAUDE_PLUGIN_ROOT" >> "$CLAUDE_STUB_LOG"; fi\n'
         'if [[ "$CLAUDE_STUB_UTF8_STDOUT" == "true" ]]; then printf "\\340\\240\\235\\n"; fi\n'
         'if [[ "$1 $2" == "plugin install" && "$3" == bridge@* && "$FAIL_BRIDGE" == "true" ]]; then\n'
         "    exit 1\n"
@@ -159,6 +160,40 @@ def test_run_make_decodes_utf8_output_when_parent_default_is_cp1252(
 @pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
 class TestInstallClaudePlugins:
     """Bridge-purge guard and try-all-6-then-report contract for install-claude-plugins."""
+
+    @pytest.mark.skipif(JQ is None, reason="jq is required on this host")
+    def test_setup_receives_each_installed_plugin_root(self, fake_claude: FakeClaude, sandbox_home: Path) -> None:
+        """Setup must use its installed version even when the caller exports another plugin root."""
+        registry = {}
+        roots = []
+        for plugin in ("foundry", "oss"):
+            root = sandbox_home / ".claude" / "plugins" / "cache" / plugin / "version with spaces"
+            skill = root / "skills" / "setup" / "SKILL.md"
+            skill.parent.mkdir(parents=True)
+            skill.write_text("# Setup\n", encoding="utf-8")
+            roots.append(root.as_posix())
+            registry[f"{plugin}@borda-ai-rig"] = [{"installPath": root.as_posix()}]
+        installed = sandbox_home / ".claude" / "plugins" / "installed_plugins.json"
+        installed.write_text(json.dumps({"plugins": registry}), encoding="utf-8")
+        env = os.environ.copy()
+        env.update(
+            PATH=f"{fake_claude.bin_dir}{os.pathsep}{env['PATH']}",
+            HOME=str(sandbox_home),
+            CLAUDE_STUB_LOG=str(fake_claude.log),
+            CLAUDE_PLUGIN_ROOT="unrelated-plugin",
+        )
+
+        result = _run_make(
+            "install-claude-plugins",
+            env=env,
+            extra_vars={"PLUGINS": "foundry oss", "INSTALLED_PLUGINS": installed.as_posix()},
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        calls = fake_claude.log.read_text(encoding="utf-8").splitlines()
+        assert [line for line in calls if line.startswith("setup-root=")] == [f"setup-root={root}" for root in roots]
+        assert sum("/foundry:setup --approve" in line for line in calls) == 1
+        assert sum("/oss:setup --approve" in line for line in calls) == 1
 
     def test_purges_legacy_codex_plugin_when_bridge_install_succeeds(
         self, fake_claude: FakeClaude, sandbox_home: Path

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.40.1
+
+- Correct the GitHub repository API allow rule to use wildcard syntax without mixing it with legacy prefix syntax; migrate the exact obsolete entry in the documented manual merge.
+
 ## 0.40.0
 
 - Ship an independently installed local question tool using Codex's native terminal form: one scope-bound request, an explicit correlated answer, and no asynchronous question-text duplication. Unsupported clients and cancelled or malformed replies grant no consent.

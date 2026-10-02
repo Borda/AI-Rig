@@ -122,7 +122,7 @@ claude plugin install research@borda-ai-rig
 /foundry:setup
 ```
 
-Merges `statusLine`, `permissions.allow`, `permissions.deny`, `enabledPlugins`, the shipped `env` defaults, and (when pinned by the project) `advisorModel` into `~/.claude/settings.json`; symlinks all rule files into `~/.claude/rules/` as `foundry-<name>.md` and `TEAM_PROTOCOL.md` into `~/.claude/`. Run it from the project repository root. Idempotent — safe to re-run.
+Merges `statusLine`, `permissions.allow`, `permissions.deny`, `enabledPlugins`, the shipped `env` defaults, and (when pinned by the project) `advisorModel` into `~/.claude/settings.json`; removes the obsolete `Bash(gh api repos/*:*)` allow entry while preserving every other existing allow and deny entry. It also symlinks all rule files into `~/.claude/rules/` as `foundry-<name>.md` and `TEAM_PROTOCOL.md` into `~/.claude/`. Run it from the project repository root. Idempotent — safe to re-run.
 
 **After any plugin upgrade**, re-run `/foundry:setup` — auto-replaces stale foundry symlinks, removes rules gone from new version. No prompt for old-version symlinks.
 
@@ -187,7 +187,7 @@ What it does:
 
 - Detects Python 3.10+ (`python` / `py -3` / `python3`); installs `~/.local/bin/python` shim when `python` absent or resolves to Windows Store stub
 - Backs up `~/.claude/settings.json` before touching
-- Merges `statusLine`, `permissions.allow`, `permissions.deny`, `enabledPlugins`, `advisorModel` (copied from project `.claude/settings.json` when pinned)
+- Merges `statusLine`, `permissions.allow`, `permissions.deny`, `enabledPlugins`, `advisorModel` (copied from project `.claude/settings.json` when pinned); removes the obsolete `Bash(gh api repos/*:*)` allow entry while preserving all other existing allow and deny entries
 - Merges shipped `env` defaults from `.claude-plugin/env-defaults.json` — currently `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, without which Claude Code keeps the task tools disabled and every skill that mandates task tracking silently no-ops; existing values are never overwritten
 - Copies `permissions-guide.md` to `.claude/` (only if absent — preserves project-local edits)
 - Symlinks all `plugins/cc_foundry/rules/*.md` into `~/.claude/rules/` as `foundry-<name>.md`, plus `TEAM_PROTOCOL.md` into `~/.claude/`; on upgrade, auto-replaces stale foundry symlinks, removes rules gone from the current version, and migrates pre-namespace unprefixed links it provably owns.

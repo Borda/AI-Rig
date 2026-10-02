@@ -780,7 +780,7 @@ ______________________________________________________________________
 **Permission manifests:** `.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved.
 
 - `.claude-plugin/permissions-deny.json` is its counterpart — the operations that must stay denied no matter how broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, branch and tag deletion, force-push, `claude --dangerously-skip-permissions`), every public-GitHub write (`gh issue`/`pr`/`release`/`gist` create, edit, merge, delete, and `gh api` with `POST`, `PATCH`, `PUT` or `DELETE`), and the `curl` write verbs the broad `Bash(curl:*)` allowance would otherwise reach.
-- Both files are merged into `~/.claude/settings.json` by `/oss:setup` (Step 5) — additive and idempotent, nothing is ever removed.
+- Both files are merged into `~/.claude/settings.json` by `/oss:setup` (Step 5). Setup removes the obsolete `Bash(gh api repos/*:*)` allow entry while preserving every other existing allow and deny entry; the merge is otherwise additive and idempotent.
 - Deny entries are prefix matches, so they stop the documented command forms rather than every possible flag ordering.
 
 **Optional plugin integrations** detected automatically at runtime. Install any optional plugin from [Install](#oss-install) — skills use them next invocation, no config changes.

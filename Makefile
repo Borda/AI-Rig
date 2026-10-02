@@ -328,7 +328,7 @@ install-claude-plugins:
 			continue; \
 		fi; \
 		echo "  → $$p:setup"; \
-		claude --print --output-format text \
+		CLAUDE_PLUGIN_ROOT="$$install_path" claude --print --output-format text \
 			--append-system-prompt "Your output is printed directly in a plain terminal. Format all reports as plain text with short labels and indented lists. Do not use Markdown headings, emphasis markers, backticks, fenced code blocks, tables, or Markdown links. Write paths, commands, and URLs literally. Preserve all required report content." \
 			"/$$p:setup --approve"; \
 	done; \
