@@ -41,13 +41,22 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _DEV_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_shared_resolve.py" 2>/dev/null)  # timeout: 5000
 [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
 echo "$_DEV_SHARED" > "${TMPDIR:-/tmp}/dev-shared-${CSID}"  # cold resolve — every later block warm-reads this
+echo "$PWD/.temp/develop/agent-watch-$(date -u +%Y-%m-%dT%H-%M-%SZ)" > "${TMPDIR:-/tmp}/dev-agent-watch-dir-${CSID}"  # fresh per run — agent-resolution.md §Agent waits
 # loads: compaction-contract.md
 cat "$_DEV_SHARED/agent-resolution.md"
 ```
 
-Contains: foundry check + fallback table. If foundry not installed: substitute each `foundry:X` with `general-purpose` per table. Agents this skill uses: `foundry:sw-engineer`, `foundry:qa-specialist` (conditional — outcome C only), `foundry:challenger`.
+Contains: foundry check + fallback table, and §Agent waits — no polling (applies to every spawn below; never wait with `Monitor`). If foundry not installed: substitute each `foundry:X` with `general-purpose` per table. Agents this skill uses: `foundry:sw-engineer`, `foundry:qa-specialist` (conditional — outcome C only), `foundry:challenger`.
 
 **Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
+
+**Turn budget** — measured fix runs made one tool call per turn throughout and spent up to 15 turns on task bookkeeping alone — the cost was the standalone turns, not the task count; every turn re-reads the whole context.
+
+- **One task per step, never a bookkeeping-only turn.** Create one task per step — Step 1 Understand · Challenger gate · Step 2 Reproduce · Step 3 Apply fix · Step 4 Review and quality stack · Final Report — all in the same response as the first Project Detection call, so step-level progress stays visible. Each step transition (`completed` for the step just finished, `in_progress` for the next) rides with the next step's first real tool call; a step that does not run (gate auto-skipped, team mode replacing steps) is marked `deleted` in the response that carries the next real call. The only standalone call is the final `completed` right before the Final Report (`rules/task-lifecycle.md`).
+
+- **Checkpoint appends ride along.** Each `step: N — completed` line goes into `$DEV_DIR/checkpoint.md` inside the next real Bash block, never as a call of its own.
+
+- **Independent calls share one response — never across a question.** After Agent Resolution: Project Detection alone (its language gate may ask); then the preflight-helpers load, checkpoint init and the diagnosis parse together; both flag-parsing blocks together in the next response (after the resume offer, when a prior checkpoint exists). Every later preamble block keeps its order: each sits behind a question (codemap gates, unsupported flag) or the worktree entry, which must precede the codemap gate. Step 1 evidence gathering — issue fetch, Reads of suspect files, Grep for the error pattern — in one response. Consecutive Edits to the same file in one response, unless an edit depends on the previous one's result.
 
 ## Project Detection
 
@@ -237,7 +246,7 @@ cat "$_DEV_SHARED/codemap-context.md"
 
 Follow the codemap block. Skip entirely if the flag is false.
 
-Spawn **foundry:sw-engineer** agent to analyze failing code path and identify:
+Spawn **foundry:sw-engineer** agent to analyze failing code path — Arm batch `scope` in the spawn response (`agent-resolution.md` §Agent waits — no polling, per-agent deadlines). It must identify:
 
 - Root cause — what wrong and why (not just symptom)
 - Entry point to failure — which modules does call cross?
@@ -320,7 +329,7 @@ cat "$_DEV_SHARED/plan-inline.md"
 
 Both flags exist for opposite regimes: `--no-challenge` suppresses gate on substantial fixes where it would otherwise fire; `--challenge` forces it on small fixes where it would otherwise auto-skip.
 
-Spawn `foundry:challenger` with root cause analysis from Step 1 (root cause, blast radius, assumptions, approach):
+Arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits). Spawn `foundry:challenger` with root cause analysis from Step 1 (root cause, blast radius, assumptions, approach):
 
 > "Review root cause analysis and proposed fix approach. Challenge across all 5 dimensions: Assumptions, Missing Cases, Security Risks, Architectural Concerns, Complexity Creep. Apply mandatory refutation step."
 
@@ -366,7 +375,7 @@ Surface archaeology verdict before any writing:
 
 ### Part B — Write new reproduction test (only when outcome C)
 
-Spawn **foundry:qa-specialist** agent (outcome C only — no existing tests found) to write two reproduction tests:
+Arm batch `tests` (`agent-resolution.md` §Agent waits), then spawn **foundry:qa-specialist** agent (outcome C only — no existing tests found) to write two reproduction tests:
 
 Spawn with context:
 
@@ -479,7 +488,7 @@ Make minimal change to fix root cause:
    eval "$PYTEST_CMD --tb=short <test_file>::<test_name> -v"
    ```
 
-3. Run affected tests (prefer targeted over full suite):
+3. Run affected tests — targeted only; the full suite never runs inside this loop — it runs at the final gate once the loop is clean, and again after any fix to a full-suite failure (§Final gate):
 
    **Test impact (codemap-py)** — derive minimal test set before running anything.
 
@@ -506,23 +515,21 @@ Make minimal change to fix root cause:
    fi
    ````
 
-   **Live query** — run only when no fresh handoff result was reused (`REUSED_PYTEST_CMD` empty):
-
-   ```bash
-   codemap-py query test-impact "<changed_module::function or bare module>" 2>/dev/null
-   ```
-
-   - Reused `REUSED_PYTEST_CMD` non-empty, OR live result non-empty `pytest_cmd` → use it instead of full `<test_dir>` run; surface `not_covered` caveat if present
-   - Result empty or `codemap-py query` absent → fall back to full directory below
-
-   **Full suite fallback** (only when impact query returns empty or unavailable):
+   **Live selection** — run only when no fresh handoff result was reused (`REUSED_PYTEST_CMD` empty). One call selects and runs: `codemap-py query test-impact` per changed module when available, path heuristics otherwise (name-matched tests plus tests importing the module); the regression test from Step 2 is selected as a changed file:
 
    ```bash
    # timeout: 600000
-   eval "$PYTEST_CMD --tb=short <test_dir> -v"
+   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
+   IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-fix-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
+   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --pytest-cmd "$PYTEST_CMD" --run --record-dir "${DEV_DIR:-.developments}"
    ```
 
-   **If `<test_dir>` does not exist or has no tests beyond regression test**: run only regression test (already verified in Step 2). Note in Final Report: "No pre-existing test suite found — regression test is sole verification."
+   - Reused `REUSED_PYTEST_CMD` non-empty → run that set instead; surface `not_covered` caveat if present.
+   - The first output line is the selection JSON — surface any `codemap.partial`/`codemap.fell_back` count and every `not_covered` entry (`⚠ not_covered — some changed code has no mapped test`) as a coverage caveat; the selection and full log are recorded under `$DEV_DIR/test-targets.jsonl`.
+   - Empty selection (`note` set) → nothing ran beyond the Step 2 regression check; say so. Never widen to the full `<test_dir>` here.
+
+   **If the project has no tests beyond the regression test**: the regression test is the sole verification. Note in Final Report: "No pre-existing test suite found — regression test is sole verification."
 
 4. If existing tests break: fix has side effects — reconsider approach
 
@@ -560,18 +567,17 @@ Use scan to prioritize which criteria below get deepest scrutiny.
 
 2. Every gap found → implement fix immediately — tighten patch, remove collateral edits, adjust test. Return to Step 3 for gap requiring re-examined fix approach.
 
-3. Re-run affected tests (prefer targeted over full suite — the quality stack's own wide gate later covers the whole directory once, after this loop closes):
+3. Re-run the tests this cycle's changes touch — targeted only, same block as Step 3; the full suite never runs inside this loop — it runs at the final gate once the loop is clean, and again after any fix to a full-suite failure (§Final gate):
 
    ```bash
-   codemap-py query test-impact "<changed_module>" 2>/dev/null
+   # timeout: 600000
+   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
+   IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-fix-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
+   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --pytest-cmd "$PYTEST_CMD" --run --record-dir "${DEV_DIR:-.developments}"
    ```
 
-   - Non-empty `pytest_cmd` → `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/run_pytest_short.py" "$PYTEST_CMD" <test-impact target>; PYTEST_EXIT=$?; [ $PYTEST_EXIT -ne 0 ] && echo "PYTEST FAILED (exit $PYTEST_EXIT)"`
-   - Empty or `codemap-py query` absent → full suite fallback:
-
-   ```bash
-   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/run_pytest_short.py" "$PYTEST_CMD" <test_dir>; PYTEST_EXIT=$?; [ $PYTEST_EXIT -ne 0 ] && echo "PYTEST FAILED (exit $PYTEST_EXIT)"  # timeout: 600000
-   ```
+   Non-zero exit → `PYTEST FAILED` for this cycle; empty selection → say nothing ran, never widen to the full suite.
 
 4. **Adjacent bugs** (observation only): scan for similar patterns; document in Follow-up — don't fix here, avoids scope creep.
 
@@ -591,7 +597,17 @@ _SHARED="$_DEV_SHARED"  # foundry--quality-stack.md loads its siblings from $_SH
 cat "$_DEV_SHARED/foundry--quality-stack.md"
 ```
 
-Execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps. `foundry--quality-stack.md` ships in this plugin's own `_shared` (propagated foundry canonical, source-plugin prefix), so it is always present — absence means a broken install, not a missing optional dependency.
+Execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps. `foundry--quality-stack.md` ships in this plugin's own `_shared` (propagated foundry canonical, source-plugin prefix), so it is always present — absence means a broken install, not a missing optional dependency. Its directory-wide pytest run is the final gate's first full-suite run; it runs again only after code changes (§Final gate rerun).
+
+**Final gate rerun — full suite with the repository's own command**, after any code change that follows the quality stack's wide run — a Progressive Review fix, or any fix to a full-suite failure (the stack halting on a genuine failure, or this block failing) — a fix can break something outside the targeted set, and the stack's own re-checks are scoped. A suite that may outlive the ~10 min foreground cap runs as a background Bash call (`run_in_background: true`): end the turn, its exit re-invokes you, no polling. Non-zero → fix (rerun the failing node ids while fixing — never the verification), then rerun this block in full. Max 3 gate iterations; at the cap stop, surface the remaining failures, and never report the suite green. A green full suite is the last test evidence before the Final Report:
+
+```bash
+# timeout: 600000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r TEST_CMD < "${TMPDIR:-/tmp}/dev-test-cmd-${CSID}" 2>/dev/null || TEST_CMD=""
+[ -n "$TEST_CMD" ] || { echo "! BLOCKED — TEST_CMD sentinel missing; re-run Project Detection"; exit 1; }
+eval "$TEST_CMD"
+```
 
 ## Final Report
 
@@ -616,7 +632,8 @@ Execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review L
 
 ### Test Results
 - Regression test: PASS
-- Full suite: PASS (N tests)
+- Loop runs: targeted (N runs, selection source codemap/heuristic)
+- Full suite: PASS (N tests) — final gate, rerun after any fix to a full-suite failure; the last run is green
 - Lint: clean
 
 ### Follow-up

@@ -88,7 +88,7 @@ Main context receives only the envelope JSON.
 | `"done"` | Completed, full confidence |
 | `"done_with_concerns"` | Completed but agent has doubts — low confidence, incomplete coverage, or unverifiable claims; orchestrator surface this, not silently accept |
 | `"needs_context"` | No quality output; re-run with specific context named in `summary` unblocks agent |
-| `"timed_out"` | Health monitor cut off per §8 protocol |
+| `"timed_out"` | Orchestrator-assigned: per-agent deadline passed, or the agent's completion/idle notification arrived without its deliverable |
 | `"error"` | Unrecoverable failure |
 
 Orchestrator handling by status:
@@ -96,7 +96,7 @@ Orchestrator handling by status:
 - `"done"` → accept normally
 - `"done_with_concerns"` → include agent `summary` as flagged concern in consolidated report; not clean completion
 - `"needs_context"` → consider re-spawn with missing context named in `summary`; if not feasible, record as partial-result gap
-- `"timed_out"` / `"error"` → follow §8 health monitoring protocol; surface with ⏱ in report
+- `"timed_out"` / `"error"` → surface with ⏱ in report at once — never wait for the agent further, never poll it (`ScheduleWakeup`, `ListAgents`, `Monitor`); a ⏱ never answers, skips or defaults a user question
 
 ## Reference implementation
 

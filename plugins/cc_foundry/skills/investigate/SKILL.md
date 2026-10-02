@@ -40,7 +40,9 @@ $ARGUMENTS empty or too vague: use AskUserQuestion: "What exactly is failing or 
 
 **Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
-**Task tracking**: TaskCreate tasks for Gather, Hypothesise, Probe, Report; mark in_progress/completed as you go.
+**Task tracking**: TaskCreate tasks for Gather, Hypothesise, Probe, Report in the same response as the Step 1 block; each later `TaskUpdate` rides with that step's first real tool call — zero bookkeeping-only turns (measured: ~7 per run before this rule).
+
+**Turn budget** — the profiled runs were 94% single-call turns, and every turn re-reads the whole live context. Each step below is one bash block plus the Read/Grep/Write calls it needs, all issued together in one response; independent probes go in one response too. Never split a block to look at half its output.
 
 ## Step 1: Parse symptom and scope
 
@@ -56,6 +58,7 @@ INVESTIGATE_RUN=".temp/investigate/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
 mkdir -p "$INVESTIGATE_RUN"
 echo "$INVESTIGATE_RUN" > "${TMPDIR:-/tmp}/investigate-run-path-${CSID}"  # persist; re-read in later steps
 echo "INVESTIGATE_RUN=$INVESTIGATE_RUN"  # bash vars don't persist; read from stdout
+printf '%s\n' "$ARGUMENTS" | tr ' ' '\n' | grep -E '^--' | sed 's/^/UNKNOWN_FLAG=/'  # feeds unsupported-flag check
 ```
 
 From $ARGUMENTS extract:
@@ -64,35 +67,31 @@ From $ARGUMENTS extract:
 - **Where**: local / CI / both; which tool or command; which skill or hook if applicable
 - **When**: started recently (after change) or always broken; intermittent or consistent
 
-**Unsupported flag check** — after all supported flags extracted (`--fast`, `--keep`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: print `` ! Unknown flag(s): `--<token>`. Supported: `--fast`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted (`--fast`, `--keep`), every `UNKNOWN_FLAG=--<token>` line printed by the Step 1 block is a remaining `--<token>`. Found: print `` ! Unknown flag(s): `--<token>`. Supported: `--fast`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Step 2: Gather signals
 
 `$INVESTIGATE_RUN` is created in Step 1 and holds for every path, `--fast` included, so Step 6's read of `$INVESTIGATE_RUN/*-review.md` never expands to `/codex-review.md` or an unset reference. Step 4 creates review files only when adversarial review runs; Step 6 must guard reads with `[ -f <path> ]`. Re-read the path from `${TMPDIR:-/tmp}/investigate-run-path-${CSID}` in later steps — bash state does not persist.
 
-Collect evidence in parallel — do NOT form hypotheses yet. **Tool versions and PATH**:
+Collect evidence in parallel — do NOT form hypotheses yet. **Tool versions, PATH, environment, recent changes** — one block; persists the bridge status so Step 4 reads it instead of re-probing:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 which python && python --version                                                                   # timeout: 5000
 which uv 2>/dev/null && uv --version 2>/dev/null || echo "uv: not found"                             # timeout: 5000
 node --version 2>/dev/null || echo "node: not found"                                                 # timeout: 5000
-CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_bridge.py" --status 2>/dev/null || echo "absent"); echo "bridge@borda-ai-rig: $CODEX_STATUS"  # timeout: 5000
-```
-
-```bash
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_bridge.py" --status > "${TMPDIR:-/tmp}/investigate-codex-${CSID}" 2>/dev/null || echo "absent" > "${TMPDIR:-/tmp}/investigate-codex-${CSID}"  # timeout: 5000
+printf 'bridge@borda-ai-rig: '; cat "${TMPDIR:-/tmp}/investigate-codex-${CSID}"
 env | grep -E 'PATH|VIRTUAL_ENV|UV_|CLAUDE|HOME|SHELL|NODE' | grep -v -E '(_TOKEN|_KEY|_SECRET|_PASSWORD|_PASS)=' | sort # timeout: 5000
-```
-
-**Recent changes**:
-
-```bash
 git log --oneline -10        # timeout: 3000
 git diff HEAD~3..HEAD --stat # timeout: 3000
 ```
 
+Issue the **Config state** and **Logs** calls below in the same response as this block — none depends on its output.
+
 **Config state** (when symptom involves Claude Code, hooks, or skills):
 
-Use Read to check `.claude/settings.json` — look for hook registrations, allow entries relevant to failing command, and `enabledMcpjsonServers`. For `~/.claude/settings.json` (outside allowed Read paths), use Bash:
+Use Read to check `.claude/settings.json` — look for hook registrations, allow entries relevant to failing command, and `enabledMcpjsonServers`. For `~/.claude/settings.json` (outside allowed Read paths), use Bash (same response as the block above):
 
 ```bash
 jq . ~/.claude/settings.json  # timeout: 5000
@@ -104,7 +103,7 @@ Use Grep with pattern `ERROR|WARN|failed|not found|exit` across `.notes/logs/`, 
 
 Capture all output before Step 3.
 
-After gathering evidence, capture top signals as working notes for Step 4 spawn prompts, persist to disk so values survive bash-state reset between Steps 2 → 3 → 4:
+After gathering evidence, capture top signals as working notes for Step 4 spawn prompts, persist to disk so values survive bash-state reset between Steps 2 → 3 → 4. The two Writes below and the contract block after them go in **one** response:
 
 - `SYMPTOM_DESCRIPTION` — verbatim from `$ARGUMENTS`
 - `KEY_SIGNALS` — write 3–5 bullet-point sentences summarizing the most diagnostic signals found above (tool versions, missing binaries, config anomalies, recent changes)
@@ -169,7 +168,7 @@ Common categories:
 
 When `--fast`: mark Step 4 task `deleted` (not completed — it was skipped).
 
-Otherwise, set up adversarial review. Run dir created in Step 2; re-resolve path string here (bash state does not persist):
+Otherwise, set up adversarial review in one block — run dir from Step 1's sentinel, bridge status from Step 2's (bash state does not persist):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -177,23 +176,16 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r INVESTIGATE_RUN < "${TMPDIR:-/tmp}/investigate-run-path-${CSID}" 2>/dev/null || INVESTIGATE_RUN=""
 # fallback if path file absent
 [ -z "$INVESTIGATE_RUN" ] && INVESTIGATE_RUN=$(find .temp/investigate -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort -Vr | head -1)
-CODEX_OUT="$INVESTIGATE_RUN/codex-review.md"
-echo "INVESTIGATE_RUN=$INVESTIGATE_RUN"
-echo "CODEX_OUT=$CODEX_OUT"  # spawn-prompt reads both stdout lines
-```
-
-> **Step 2 appends the resolved run path to `${TMPDIR:-/tmp}/investigate-run-path-${CSID}`** so this resolution succeeds — see `echo "$INVESTIGATE_RUN" > "${TMPDIR:-/tmp}/investigate-run-path-${CSID}"` in Step 2.
-
-Re-check Codex availability at point of use (bash vars don't persist across tool calls) and **echo result so next prose decision can read it**:
-
-```bash
-# check_bridge.py resolves the installed-and-enabled state in one call and already honors a
-# project-local .claude/settings.json opt-out, which an inline registry read does not.
-CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_bridge.py" --status 2>/dev/null || echo "absent")  # timeout: 5000
+# Step 2 persisted check_bridge.py --status, which already honors a project-local .claude/settings.json opt-out
+IFS= read -r CODEX_STATUS < "${TMPDIR:-/tmp}/investigate-codex-${CSID}" 2>/dev/null || CODEX_STATUS="absent"
 [ "$CODEX_STATUS" = "available" ] && CODEX_AVAILABLE=true || CODEX_AVAILABLE=false
 [ "$CODEX_AVAILABLE" = "false" ] && printf "  bridge@borda-ai-rig is %s — skipping bridge review\n" "$CODEX_STATUS"
-echo "CODEX_AVAILABLE=$CODEX_AVAILABLE"  # bash vars don't persist; branch below MUST read this value from stdout
+echo "INVESTIGATE_RUN=$INVESTIGATE_RUN"
+echo "CODEX_OUT=$INVESTIGATE_RUN/codex-review.md"  # spawn-prompt reads these stdout lines
+echo "CODEX_AVAILABLE=$CODEX_AVAILABLE"  # branch below MUST read this value from stdout
 ```
+
+> **Step 1 writes the run path to `${TMPDIR:-/tmp}/investigate-run-path-${CSID}`, Step 2 the bridge status to `${TMPDIR:-/tmp}/investigate-codex-${CSID}`** — both reads above depend on them.
 
 **Read `CODEX_AVAILABLE=…` from bash stdout above** (NOT shell state). Printed `true`: spawn Codex; else spawn `foundry:challenger`. Spawn prompts below instruct subagent to Read persisted symptom/signals/hypotheses files (written in Steps 2 and 3) — more reliable than inlining values, which LLM can paraphrase under context pressure.
 
@@ -215,13 +207,24 @@ Agent(subagent_type="foundry:challenger", prompt="Adversarial review of hypothes
 
 Before issuing call: scan constructed prompt string for remaining `<` or `>` characters — present means substitution incomplete; resolve before spawning.
 
+**Deadline** (`_shared/agent-spawn-protocol.md` §Deadlines): in the same response as the spawn, Write `<INVESTIGATE_RUN>/agent-watch-challenger.tsv` = `challenger\t<INVESTIGATE_RUN>/challenger-review.md\t600`, then end the turn — never `ScheduleWakeup`, `ListAgents` or `Monitor`. On its notification run once:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/investigate-run-path-${CSID}" 2>/dev/null || RUN_DIR=""
+[ -n "$RUN_DIR" ] || { echo "! BLOCKED — investigate run-dir sentinel missing; cannot check agent deadline"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$RUN_DIR"  # timeout: 5000
+```
+
+`done` → fold its findings in below · notification arrived but row not `done` → ⏱ `timed_out` now, note it in the report's Evidence, continue to Step 5 with the unreviewed table — never wait further.
+
 - Add challenger alternative hypotheses as new rows in Step 3 table
 - Re-rank if challenger gives stronger evidence for lower-ranked candidate
 - Challenger finds category not in common list: add it
 
 ## Step 5: Probe top hypotheses
 
-One targeted test per hypothesis — clear confirm/rule-out signal. Run independent probes in parallel.
+One targeted test per hypothesis — clear confirm/rule-out signal. Run independent probes in parallel: all of them in one response. A probe that runs tests runs only the tests covering the suspect — `codemap-py` test-impact when installed, else the test files named after the suspect module — never the full suite.
 
 ```bash
 # Example probes — adapt to the actual symptom
@@ -239,7 +242,7 @@ ls -la ~/.claude/hooks/
 diff <(jq -S . .claude/settings.json) <(jq -S . ~/.claude/settings.json) | head -40
 ```
 
-Per probe: mark **Confirmed**, **Ruled out**, or **Inconclusive**. Append each verdict to probe ledger, refresh contract — so a mid-loop compaction doesn't re-probe an already-decided hypothesis:
+Per probe: mark **Confirmed**, **Ruled out**, or **Inconclusive**. Append verdicts to probe ledger, refresh contract — so a mid-loop compaction doesn't re-probe an already-decided hypothesis. One block per probe batch: one `echo` line per verdict from that batch, then the refresh once:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -295,7 +298,7 @@ Invoke `AskUserQuestion` as follow-up gate: (a) Invoke recommended next action (
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-rm -f .temp/state/skill-contract.md ${TMPDIR:-/tmp}/investigate-verdicts-${CSID}  # clear contract + probe ledger — skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
+rm -f .temp/state/skill-contract.md ${TMPDIR:-/tmp}/investigate-verdicts-${CSID} ${TMPDIR:-/tmp}/investigate-codex-${CSID}  # clear contract, probe ledger, bridge status — skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
 ```
 
 </workflow>

@@ -1,0 +1,887 @@
+{
+  "analyse": {
+    "artifacts": [],
+    "output_paths": [
+      ".reports/analyse/ecosystem",
+      ".reports/analyse/ecosystem/output-analyse-ecosystem-$TODAY.md",
+      ".reports/analyse/thread",
+      ".reports/analyse/thread/output-analyse-thread-$NUMBER-$TODAY.md",
+      ".reports/analyse/thread/output-reply-thread-<CLEAN_ARGS>-<TODAY>.md",
+      ".reports/analyse/vitality",
+      ".reports/analyse/vitality/$",
+      ".reports/analyse/vitality/partial-A-${GH_OWNER}-${GH_REPO}-${RUN_TS}.json",
+      ".reports/analyse/vitality/partial-B-${GH_OWNER}-${GH_REPO}-${RUN_TS}.json",
+      ".reports/analyse/vitality/partial-C-${GH_OWNER}-${GH_REPO}-${RUN_TS}.json",
+      ".reports/analyse/vitality/raw-data-${GH_OWNER}-${GH_REPO}-${TODAY}.jsonl",
+      ".reports/analyse/vitality/scores-${GH_OWNER}-${GH_REPO}-${RUN_TS}.json",
+      ".temp/state/skill-contract.md"
+    ],
+    "status_lines": [
+      {
+        "head": "! BLOCKED \u2014 could not resolve _OSS_SHARED (oss plugin missing, python",
+        "now": "! BLOCKED \u2014 could not resolve _OSS_SHARED (oss plugin missing, python"
+      },
+      {
+        "head": "\u2192 saved to <path>",
+        "now": "\u2192 saved to <path>"
+      },
+      {
+        "head": "\u26a0 Discussions not enabled or #N not found",
+        "now": "\u26a0 Discussions not enabled or #N not found"
+      },
+      {
+        "head": "\u26a0 _OSS_SHARED empty \u2014 oss plugin shared dir unresolved; conti",
+        "now": "\u26a0 _OSS_SHARED empty \u2014 oss plugin shared dir unresolved; conti"
+      },
+      {
+        "head": "\u26a0 cache write skipped \u2014 empty or malformed API response",
+        "now": "\u26a0 cache write skipped \u2014 empty or malformed API response"
+      },
+      {
+        "head": "\u26a0 challenger iter",
+        "now": "\u26a0 challenger iter"
+      },
+      {
+        "head": "\u26a0 github-review-parsing.md not found at",
+        "now": "\u26a0 github-review-parsing.md not found at"
+      },
+      {
+        "head": "\u26a0 shepherd output empty or missing",
+        "now": "\u26a0 shepherd output empty or missing"
+      }
+    ],
+    "task_calls": {},
+    "task_phases": [
+      "Step 1 Data Fetch",
+      "Step 2 Axis Scoring (3 parallel)",
+      "Step 3 Assemble Scores",
+      "Step 4 Report",
+      "Step 5 Codex Review",
+      "Step 6 Adversarial Rework Loop",
+      "Step 7 Terminal Output"
+    ]
+  },
+  "release": {
+    "artifacts": [],
+    "output_paths": [
+      ".reports/codex/review/*/review-notes.md",
+      ".reports/release",
+      ".reports/release/$BRANCH-$DATE.md",
+      ".reports/review/*/*/review-report.md",
+      ".reports/review/*/review-report.md",
+      ".reports/review/pr-*/run-*/review-report.md",
+      ".temp/output-",
+      ".temp/output-release-migration-$BRANCH-$DATE.md",
+      ".temp/output-release-migration-<branch>-<date>.md",
+      ".temp/output-release-summary-$BRANCH-$DATE.md",
+      ".temp/output-release-summary-<branch>-<date>.md",
+      ".temp/release-*",
+      ".temp/release-adversarial-$",
+      ".temp/release-append-items-$BRANCH-$DATE.json",
+      ".temp/release-breaking-$BRANCH-$DATE.json",
+      ".temp/release-changelog-audit-$BRANCH-$DATE.md",
+      ".temp/release-codex-audit-$BRANCH-$DATE.md",
+      ".temp/release-contributors-$BRANCH-$DATE.md",
+      ".temp/release-demo-$BRANCH-$DATE.py",
+      ".temp/release-demo-*.py",
+      ".temp/release-demo-<branch>-<date>.py",
+      ".temp/release-gather-$BRANCH-$DATE.md",
+      ".temp/release-shepherd-$",
+      ".temp/release-state-v2/$BRANCH_KEY/journal.json",
+      ".temp/release-state-v2/$BRANCH_KEY/marker",
+      ".temp/release-state-v2/$BRANCH_KEY/provenance.json",
+      ".temp/release-state-v2/<branch-key>/marker",
+      ".temp/release-state-v2/<branch-key>/provenance.json",
+      ".temp/release-waived-$BRANCH-$DATE-<unique",
+      ".temp/release-waived-$BRANCH-$DATE-XXXXXXXX",
+      "releases/$VERSION",
+      "releases/$VERSION/",
+      "releases/$VERSION/CHANGELOG.md",
+      "releases/$VERSION/DRAFT.md",
+      "releases/$VERSION/HIGHLIGHTS.md",
+      "releases/$VERSION/MIGRATION.md",
+      "releases/$VERSION/SUMMARY.md",
+      "releases/$VERSION/demo.py",
+      "releases/$VERSION/waived-changes.md",
+      "releases/*/DRAFT.md",
+      "releases/*/SUMMARY.md",
+      "releases/<version>/",
+      "releases/<version>/demo.py"
+    ],
+    "status_lines": [
+      {
+        "head": "! BLOCKED \u2014 setup_release_dir failed (RELEASE_DIR=",
+        "now": "! BLOCKED \u2014 setup_release_dir failed (RELEASE_DIR="
+      },
+      {
+        "head": "\u2192 wrote",
+        "now": "\u2192 wrote"
+      },
+      {
+        "head": "\u26a0 Could not detect default branch \u2014 listing all merged PRs",
+        "now": "\u26a0 Could not detect default branch \u2014 listing all merged PRs"
+      },
+      {
+        "head": "\u26a0 bridge@borda-ai-rig is",
+        "now": "\u26a0 bridge@borda-ai-rig is"
+      },
+      {
+        "head": "\u26a0 gh pr list reached its 500-item cap; recovering the complete",
+        "now": "\u26a0 gh pr list reached its 500-item cap; recovering the complete"
+      },
+      {
+        "head": "\u26a0 shepherd output empty or missing \u2014 using original draft",
+        "now": "\u26a0 shepherd output empty or missing \u2014 using original draft"
+      },
+      {
+        "head": "\u26a0 shepherd-voice.md not found \u2014 falling back",
+        "now": "\u26a0 shepherd-voice.md not found \u2014 falling back"
+      },
+      {
+        "head": "\u26a0 unknown flag:",
+        "now": "\u26a0 unknown flag:"
+      }
+    ],
+    "task_calls": {
+      "completed": 1
+    },
+    "task_phases": []
+  },
+  "resolve": {
+    "artifacts": [
+      "action-items.jsonl",
+      "action-items.jsonl>",
+      "c1-actual-files-",
+      "c1-brief-",
+      "c1-deferred-files.txt",
+      "c1-head-",
+      "c1-item-files.tsv",
+      "c1-item-summary.tsv",
+      "c1-reply-",
+      "c1-reply-<batch_tag>.json",
+      "challenge-domain-<domain>.md",
+      "challenge-log.txt",
+      "challenge-verdicts-",
+      "challenge-verdicts-<domain>-retry-<id>.json",
+      "challenge-verdicts-<domain>.json",
+      "codemap-deps.jsonl",
+      "codemap-maps.json",
+      "codemap-maps.stamp",
+      "group-commit-status.txt",
+      "group-files.txt",
+      "group-ids.txt",
+      "group-summaries.txt",
+      "head-at-conflict",
+      "impl-worktree-<group_tag>.md",
+      "item-tasks.tsv",
+      "linting-expert-step9.md",
+      "merge-plan.json",
+      "merge-result.json",
+      "phase2-commits.jsonl",
+      "phase2-commits.jsonl.dedup",
+      "phase2-envelope-",
+      "phase2-envelope-<group_tag>.json",
+      "phase2-plan-ids.txt",
+      "phase2-plan-shas.txt",
+      "pr-intelligence.md",
+      "pr-vars.sh",
+      "qa-specialist-step9.md",
+      "selected-items.txt",
+      "skipped-items.txt",
+      "specialist-worktrees.txt",
+      "worktrees-after-cleanup.txt",
+      "worktrees-before.txt",
+      "worktrees-unreported.txt"
+    ],
+    "output_paths": [
+      ".reports/codex/review/",
+      ".reports/codex/review/*",
+      ".reports/codex/review/*/review-notes.md",
+      ".reports/resolve/",
+      ".reports/resolve/$",
+      ".reports/review/",
+      ".reports/review/*/*/review-report.md",
+      ".reports/review/*/review-report.md",
+      ".reports/review/<timestamp>/",
+      ".reports/review/pr-*/run-*/review-report.md",
+      ".reports/review/pr-<N>/run-<NNN>/",
+      ".temp/output-*.md",
+      ".temp/resolve/codemap-context",
+      ".temp/review/*/codemap-context.md",
+      ".temp/review/<ts>/codemap-context.md",
+      ".temp/state/preflight/",
+      ".temp/state/skill-contract.md"
+    ],
+    "status_lines": [
+      {
+        "head": "! BLOCKED \u2014 C1 Git attribution failed (rc=",
+        "now": "! BLOCKED \u2014 C1 Git attribution failed (rc="
+      },
+      {
+        "head": "! BLOCKED \u2014 C1 batch tag placeholder not substituted or non-numeric",
+        "now": "! BLOCKED \u2014 C1 batch tag placeholder not substituted or non-numeric"
+      },
+      {
+        "head": "! BLOCKED \u2014 C1 cannot inspect Git status",
+        "now": "! BLOCKED \u2014 C1 cannot inspect Git status"
+      },
+      {
+        "head": "! BLOCKED \u2014 C1 cannot record HEAD",
+        "now": "! BLOCKED \u2014 C1 cannot record HEAD"
+      },
+      {
+        "head": "! BLOCKED \u2014 C1 deferred file(s) also touched by a Phase 2 item",
+        "now": "! BLOCKED \u2014 C1 deferred file(s) also touched by a Phase 2 item"
+      },
+      {
+        "head": "! BLOCKED \u2014 C1 per-item commit failed; no completed item record was w",
+        "now": "! BLOCKED \u2014 C1 per-item commit failed; no completed item record was w"
+      },
+      {
+        "head": "! BLOCKED \u2014 C1 reply missing in",
+        "now": "! BLOCKED \u2014 C1 reply missing in"
+      },
+      {
+        "head": "! BLOCKED \u2014 C1 requires a clean worktree; route this item through Pha",
+        "now": "! BLOCKED \u2014 C1 requires a clean worktree; route this item through Pha"
+      },
+      {
+        "head": "! BLOCKED \u2014 COMMIT_MODE is",
+        "now": "! BLOCKED \u2014 COMMIT_MODE is"
+      },
+      {
+        "head": "! BLOCKED \u2014 HEAD carries",
+        "now": "! BLOCKED \u2014 HEAD carries"
+      },
+      {
+        "head": "! BLOCKED \u2014 HEAD carries our own stranded pick(s) above base (",
+        "now": "! BLOCKED \u2014 HEAD carries our own stranded pick(s) above base ("
+      },
+      {
+        "head": "! BLOCKED \u2014 HEAD has not collapsed to base (HEAD=",
+        "now": "! BLOCKED \u2014 HEAD has not collapsed to base (HEAD="
+      },
+      {
+        "head": "! BLOCKED \u2014 HEAD moved (",
+        "now": "! BLOCKED \u2014 HEAD moved ("
+      },
+      {
+        "head": "! BLOCKED \u2014 IMPL_DIR sentinel missing; Step 3b never ran",
+        "now": "! BLOCKED \u2014 IMPL_DIR sentinel missing; Step 3b never ran"
+      },
+      {
+        "head": "! BLOCKED \u2014 IMPL_DIR sentinel missing; Step 3b/prelude never ran",
+        "now": "! BLOCKED \u2014 IMPL_DIR sentinel missing; Step 3b/prelude never ran"
+      },
+      {
+        "head": "! BLOCKED \u2014 IMPL_DIR sentinel missing; cannot locate skipped-items.tx",
+        "now": "! BLOCKED \u2014 IMPL_DIR sentinel missing; cannot locate skipped-items.tx"
+      },
+      {
+        "head": "! BLOCKED \u2014 IMPL_DIR sentinel missing; cannot locate specialist-workt",
+        "now": "! BLOCKED \u2014 IMPL_DIR sentinel missing; cannot locate specialist-workt"
+      },
+      {
+        "head": "! BLOCKED \u2014 IMPL_DIR sentinel missing; cannot reconcile item-tasks.ts",
+        "now": "! BLOCKED \u2014 IMPL_DIR sentinel missing; cannot reconcile item-tasks.ts"
+      },
+      {
+        "head": "! BLOCKED \u2014 IMPL_DIR sentinel missing; cannot verify child tasks befo",
+        "now": "! BLOCKED \u2014 IMPL_DIR sentinel missing; cannot verify child tasks befo"
+      },
+      {
+        "head": "! BLOCKED \u2014 IMPL_DIR sentinel missing; cannot verify stranded picks",
+        "now": "! BLOCKED \u2014 IMPL_DIR sentinel missing; cannot verify stranded picks"
+      },
+      {
+        "head": "! BLOCKED \u2014 IMPL_DIR sentinel missing; cannot verify stranded picks b",
+        "now": "! BLOCKED \u2014 IMPL_DIR sentinel missing; cannot verify stranded picks b"
+      },
+      {
+        "head": "! BLOCKED \u2014 IMPL_DIR sentinel missing; prelude never ran",
+        "now": "! BLOCKED \u2014 IMPL_DIR sentinel missing; prelude never ran"
+      },
+      {
+        "head": "! BLOCKED \u2014 PR number missing or invalid",
+        "now": "! BLOCKED \u2014 PR number missing or invalid"
+      },
+      {
+        "head": "! BLOCKED \u2014 PR number missing or invalid\\",
+        "now": "! BLOCKED \u2014 PR number missing or invalid\\"
+      },
+      {
+        "head": "! BLOCKED \u2014 PR reference missing or mismatched",
+        "now": "! BLOCKED \u2014 PR reference missing or mismatched"
+      },
+      {
+        "head": "! BLOCKED \u2014 PR reference missing or mismatched\\",
+        "now": "! BLOCKED \u2014 PR reference missing or mismatched\\"
+      },
+      {
+        "head": "! BLOCKED \u2014 PR reference missing or stale for local report",
+        "now": "! BLOCKED \u2014 PR reference missing or stale for local report"
+      },
+      {
+        "head": "! BLOCKED \u2014 PR reference missing or stale for local report\\",
+        "now": "! BLOCKED \u2014 PR reference missing or stale for local report\\"
+      },
+      {
+        "head": "! BLOCKED \u2014 Phase 3 already reported clean this entry \u2014 nothing left",
+        "now": "! BLOCKED \u2014 Phase 3 already reported clean this entry \u2014 nothing left"
+      },
+      {
+        "head": "! BLOCKED \u2014 Phase 3 has no clean result; cannot complete bulk tasks",
+        "now": "! BLOCKED \u2014 Phase 3 has no clean result; cannot complete bulk tasks"
+      },
+      {
+        "head": "! BLOCKED \u2014 Phase 3 has not reached conflict:null yet; do not run thi",
+        "now": "! BLOCKED \u2014 Phase 3 has not reached conflict:null yet; do not run thi"
+      },
+      {
+        "head": "! BLOCKED \u2014 SELECTED_ITEMS must be space-separated digits only, got:",
+        "now": "! BLOCKED \u2014 SELECTED_ITEMS must be space-separated digits only, got:"
+      },
+      {
+        "head": "! BLOCKED \u2014 SELECTED_ITEMS still holds the placeholder; substitute th",
+        "now": "! BLOCKED \u2014 SELECTED_ITEMS still holds the placeholder; substitute th"
+      },
+      {
+        "head": "! BLOCKED \u2014 agent override sentinel missing; Step 1 parser never ran",
+        "now": "! BLOCKED \u2014 agent override sentinel missing; Step 1 parser never ran"
+      },
+      {
+        "head": "! BLOCKED \u2014 base sha",
+        "now": "! BLOCKED \u2014 base sha"
+      },
+      {
+        "head": "! BLOCKED \u2014 cannot determine default branch; refusing to proceed\\n",
+        "now": "! BLOCKED \u2014 cannot determine default branch; refusing to proceed\\n"
+      },
+      {
+        "head": "! BLOCKED \u2014 codemap strict mode requested but codemap not installed o",
+        "now": "! BLOCKED \u2014 codemap strict mode requested but codemap not installed o"
+      },
+      {
+        "head": "! BLOCKED \u2014 collapse did not reach base (HEAD=",
+        "now": "! BLOCKED \u2014 collapse did not reach base (HEAD="
+      },
+      {
+        "head": "! BLOCKED \u2014 could not count commits since conflict (rev-list failed a",
+        "now": "! BLOCKED \u2014 could not count commits since conflict (rev-list failed a"
+      },
+      {
+        "head": "! BLOCKED \u2014 could not read",
+        "now": "! BLOCKED \u2014 could not read"
+      },
+      {
+        "head": "! BLOCKED \u2014 domain/batch-tag placeholder not substituted or invalid",
+        "now": "! BLOCKED \u2014 domain/batch-tag placeholder not substituted or invalid"
+      },
+      {
+        "head": "! BLOCKED \u2014 gh CLI required; install: https://cli.github.com",
+        "now": "! BLOCKED \u2014 gh CLI required; install: https://cli.github.com"
+      },
+      {
+        "head": "! BLOCKED \u2014 git diff-tree failed for sha",
+        "now": "! BLOCKED \u2014 git diff-tree failed for sha"
+      },
+      {
+        "head": "! BLOCKED \u2014 git log failed for sha",
+        "now": "! BLOCKED \u2014 git log failed for sha"
+      },
+      {
+        "head": "! BLOCKED \u2014 group",
+        "now": "! BLOCKED \u2014 group"
+      },
+      {
+        "head": "! BLOCKED \u2014 group commit failed; not flipping tasks for this group",
+        "now": "! BLOCKED \u2014 group commit failed; not flipping tasks for this group"
+      },
+      {
+        "head": "! BLOCKED \u2014 group id",
+        "now": "! BLOCKED \u2014 group id"
+      },
+      {
+        "head": "! BLOCKED \u2014 group tag placeholder not substituted or invalid",
+        "now": "! BLOCKED \u2014 group tag placeholder not substituted or invalid"
+      },
+      {
+        "head": "! BLOCKED \u2014 head-at-conflict sentinel unreadable",
+        "now": "! BLOCKED \u2014 head-at-conflict sentinel unreadable"
+      },
+      {
+        "head": "! BLOCKED \u2014 item",
+        "now": "! BLOCKED \u2014 item"
+      },
+      {
+        "head": "! BLOCKED \u2014 item <id> comment not found\\",
+        "now": "! BLOCKED \u2014 item <id> comment not found\\"
+      },
+      {
+        "head": "! BLOCKED \u2014 item id",
+        "now": "! BLOCKED \u2014 item id"
+      },
+      {
+        "head": "! BLOCKED \u2014 item id placeholder not substituted or non-numeric",
+        "now": "! BLOCKED \u2014 item id placeholder not substituted or non-numeric"
+      },
+      {
+        "head": "! BLOCKED \u2014 item/task id placeholder not substituted",
+        "now": "! BLOCKED \u2014 malformed or duplicate item-tasks.tsv row(s)"
+      },
+      {
+        "head": "! BLOCKED \u2014 item_id placeholder not substituted",
+        "now": "! BLOCKED \u2014 item_id placeholder not substituted"
+      },
+      {
+        "head": "! BLOCKED \u2014 malformed commit entry in",
+        "now": "! BLOCKED \u2014 malformed commit entry in"
+      },
+      {
+        "head": "! BLOCKED \u2014 merge fence produced no parsable JSON (rc=",
+        "now": "! BLOCKED \u2014 merge fence produced no parsable JSON (rc="
+      },
+      {
+        "head": "! BLOCKED \u2014 merge plan not built; Phase 3 cannot run",
+        "now": "! BLOCKED \u2014 merge plan not built; Phase 3 cannot run"
+      },
+      {
+        "head": "! BLOCKED \u2014 merge_specialist_batch.py rc=",
+        "now": "! BLOCKED \u2014 merge_specialist_batch.py rc="
+      },
+      {
+        "head": "! BLOCKED \u2014 newest review is codex-lineage (",
+        "now": "! BLOCKED \u2014 newest review is codex-lineage ("
+      },
+      {
+        "head": "! BLOCKED \u2014 no Git changed files for item",
+        "now": "! BLOCKED \u2014 no Git changed files for item"
+      },
+      {
+        "head": "! BLOCKED \u2014 non-numeric id in",
+        "now": "! BLOCKED \u2014 non-numeric id in"
+      },
+      {
+        "head": "! BLOCKED \u2014 overlap guard: comparison failed (rc=",
+        "now": "! BLOCKED \u2014 overlap guard: comparison failed (rc="
+      },
+      {
+        "head": "! BLOCKED \u2014 overlap guard: failed to read plan shas from",
+        "now": "! BLOCKED \u2014 overlap guard: failed to read plan shas from"
+      },
+      {
+        "head": "! BLOCKED \u2014 overlap guard: git diff-tree failed to resolve sha",
+        "now": "! BLOCKED \u2014 overlap guard: git diff-tree failed to resolve sha"
+      },
+      {
+        "head": "! BLOCKED \u2014 persisted action-items.jsonl missing; Step 3a/3b/3c did n",
+        "now": "! BLOCKED \u2014 persisted action-items.jsonl missing; Step 3a/3b/3c did n"
+      },
+      {
+        "head": "! BLOCKED \u2014 phase2-commits.jsonl unparsable or holds an empty sha; ca",
+        "now": "! BLOCKED \u2014 phase2-commits.jsonl unparsable or holds an empty sha; ca"
+      },
+      {
+        "head": "! BLOCKED \u2014 pr-vars.sh has unexpected output; refusing to source",
+        "now": "! BLOCKED \u2014 pr-vars.sh has unexpected output; refusing to source"
+      },
+      {
+        "head": "! BLOCKED \u2014 resolution",
+        "now": "! BLOCKED \u2014 resolution"
+      },
+      {
+        "head": "! BLOCKED \u2014 resolve_preflight.py failed (gh missing/unauthenticated o",
+        "now": "! BLOCKED \u2014 resolve_preflight.py failed (gh missing/unauthenticated o"
+      },
+      {
+        "head": "! BLOCKED \u2014 resumed merge plan not built",
+        "now": "! BLOCKED \u2014 resumed merge plan not built"
+      },
+      {
+        "head": "! BLOCKED \u2014 selected action items exceed the 20-item hard cap; Step 3",
+        "now": "! BLOCKED \u2014 selected action items exceed the 20-item hard cap; Step 3"
+      },
+      {
+        "head": "! BLOCKED \u2014 selected item",
+        "now": "! BLOCKED \u2014 selected item"
+      },
+      {
+        "head": "! BLOCKED \u2014 selected-items.txt contains no item ids",
+        "now": "! BLOCKED \u2014 selected-items.txt contains no item ids"
+      },
+      {
+        "head": "! BLOCKED \u2014 selected-items.txt has invalid item ids",
+        "now": "! BLOCKED \u2014 selected-items.txt has invalid item ids"
+      },
+      {
+        "head": "! BLOCKED \u2014 selected-items.txt missing/empty; cannot complete tasks",
+        "now": "! BLOCKED \u2014 selected-items.txt missing/empty; cannot complete tasks"
+      },
+      {
+        "head": "! BLOCKED \u2014 sha",
+        "now": "! BLOCKED \u2014 sha"
+      },
+      {
+        "head": "! BLOCKED \u2014 staged files remain after every group committed:",
+        "now": "! BLOCKED \u2014 staged files remain after every group committed:"
+      },
+      {
+        "head": "! BLOCKED \u2014 topic must be lowercase alphanumeric/hyphen",
+        "now": "! BLOCKED \u2014 topic must be lowercase alphanumeric/hyphen"
+      },
+      {
+        "head": "\u2192 All items skipped.",
+        "now": "\u2192 All items skipped."
+      },
+      {
+        "head": "\u2192 Already at PR head (",
+        "now": "\u2192 Already at PR head ("
+      },
+      {
+        "head": "\u2192 Codemap pre-scan \u2014 caller context for selected action items",
+        "now": "\u2192 Codemap pre-scan \u2014 caller context for selected action items"
+      },
+      {
+        "head": "\u2192 N pending items \u2014 selecting in 2 calls",
+        "now": "\u2192 N pending items \u2014 selecting in 2 calls"
+      },
+      {
+        "head": "\u2192 Re-aligning local branch:",
+        "now": "\u2192 Re-aligning local branch:"
+      },
+      {
+        "head": "\u2192 Report PR:",
+        "now": "\u2192 Report PR:"
+      },
+      {
+        "head": "\u2192 Restored to",
+        "now": "\u2192 Restored to"
+      },
+      {
+        "head": "\u2192 Reusing review report: <REPORT_FILE>",
+        "now": "\u2192 Reusing review report: <REPORT_FILE>"
+      },
+      {
+        "head": "\u2192 Review pre-flight cache materialized from",
+        "now": "\u2192 Review pre-flight cache materialized from"
+      },
+      {
+        "head": "\u2192 Run /oss:review <PR#>, then re-invoke /oss:resolve <PR#> re",
+        "now": "\u2192 Run /oss:review <PR#>, then re-invoke /oss:resolve <PR#> re"
+      },
+      {
+        "head": "\u2192 Using --agent:",
+        "now": "\u2192 Using --agent:"
+      },
+      {
+        "head": "\u2192 Using:",
+        "now": "\u2192 Using:"
+      },
+      {
+        "head": "\u2192 item",
+        "now": "\u2192 item"
+      },
+      {
+        "head": "\u2192 removed",
+        "now": "\u2192 removed"
+      },
+      {
+        "head": "\u2192 specialist branches kept as recovery \u2014 git cherry could not",
+        "now": "\u2192 specialist branches kept as recovery \u2014 git cherry could not"
+      },
+      {
+        "head": "\u2192 specialist branches kept as recovery \u2014 the staged diff is n",
+        "now": "\u2192 specialist branches kept as recovery \u2014 the staged diff is n"
+      },
+      {
+        "head": "\u26a0 --worktree has no effect in comment-dispatch mode",
+        "now": "\u26a0 --worktree has no effect in comment-dispatch mode"
+      },
+      {
+        "head": "\u26a0 COMMIT_MODE=stage: changes are staged on",
+        "now": "\u26a0 COMMIT_MODE=stage: changes are staged on"
+      },
+      {
+        "head": "\u26a0 Could not fetch resolved thread status \u2014 some items may alr",
+        "now": "\u26a0 Could not fetch resolved thread status \u2014 some items may alr"
+      },
+      {
+        "head": "\u26a0 PR branch not fast-forwardable \u2014 proceeding with local stat",
+        "now": "\u26a0 PR branch not fast-forwardable \u2014 proceeding with local stat"
+      },
+      {
+        "head": "\u26a0 Remote",
+        "now": "\u26a0 Remote"
+      },
+      {
+        "head": "\u26a0 Review loop hit 5-pass cap \u2014",
+        "now": "\u26a0 Review loop hit 5-pass cap \u2014"
+      },
+      {
+        "head": "\u26a0 base HEAD moved during Phase 2:",
+        "now": "\u26a0 base HEAD moved during Phase 2:"
+      },
+      {
+        "head": "\u26a0 fetch origin/",
+        "now": "\u26a0 fetch origin/"
+      },
+      {
+        "head": "\u26a0 group",
+        "now": "\u26a0 group"
+      },
+      {
+        "head": "\u26a0 item",
+        "now": "\u26a0 item"
+      },
+      {
+        "head": "\u26a0 local",
+        "now": "\u26a0 local"
+      },
+      {
+        "head": "\u26a0 no report findings merged \u2014 GitHub comments only",
+        "now": "\u26a0 no report findings merged \u2014 GitHub comments only"
+      },
+      {
+        "head": "\u26a0 origin/",
+        "now": "\u26a0 origin/"
+      },
+      {
+        "head": "\u26a0 resolve-base-sha sentinel missing \u2014 confirmation below is u",
+        "now": "\u26a0 resolve-base-sha sentinel missing \u2014 confirmation below is u"
+      },
+      {
+        "head": "\u26a0 worktree(s) created this run but never reported by any grou",
+        "now": "\u26a0 worktree(s) created this run but never reported by any grou"
+      },
+      {
+        "head": "\u26d4 BASE_REF sentinel missing or invalid; refusing vacuous QA r",
+        "now": "\u26d4 BASE_REF sentinel missing or invalid; refusing vacuous QA r"
+      },
+      {
+        "head": "\u26d4 Cannot determine a valid origin default branch for report Q",
+        "now": "\u26d4 Cannot determine a valid origin default branch for report Q"
+      },
+      {
+        "head": "\u26d4 Cannot establish a merge base with origin/",
+        "now": "\u26d4 Cannot establish a merge base with origin/"
+      },
+      {
+        "head": "\u26d4 Cannot switch to",
+        "now": "\u26d4 Cannot switch to"
+      },
+      {
+        "head": "\u26d4 Conflict markers still present in staged files \u2014 re-inspect",
+        "now": "\u26d4 Conflict markers still present in staged files \u2014 re-inspect"
+      },
+      {
+        "head": "\u26d4 Could not resolve fork PR URL",
+        "now": "\u26d4 Could not resolve fork PR URL"
+      },
+      {
+        "head": "\u26d4 Fork PR URL does not match PR number",
+        "now": "\u26d4 Fork PR URL does not match PR number"
+      },
+      {
+        "head": "\u26d4 Local report reference requires no PR number",
+        "now": "\u26d4 Local report reference requires no PR number"
+      },
+      {
+        "head": "\u26d4 No staged files found \u2014 sw-engineer may not have staged res",
+        "now": "\u26d4 No staged files found \u2014 sw-engineer may not have staged res"
+      },
+      {
+        "head": "\u26d4 On default branch",
+        "now": "\u26d4 On default branch"
+      },
+      {
+        "head": "\u26d4 QA gate blocked push \u2014 review findings above, fix errors, t",
+        "now": "\u26d4 QA gate blocked push \u2014 review findings above, fix errors, t"
+      },
+      {
+        "head": "\u26d4 Report PR field is not a PR number or n/a; refusing an ambi",
+        "now": "\u26d4 Report PR field is not a PR number or n/a; refusing an ambi"
+      },
+      {
+        "head": "\u26d4 Report PR heading conflicts with frontmatter",
+        "now": "\u26d4 Report PR heading conflicts with frontmatter"
+      },
+      {
+        "head": "\u26d4 Report source missing; run the Step 1 report gate",
+        "now": "\u26d4 Report source missing; run the Step 1 report gate"
+      },
+      {
+        "head": "\u26d4 SAME-REPO RULE VIOLATION: on",
+        "now": "\u26d4 SAME-REPO RULE VIOLATION: on"
+      },
+      {
+        "head": "\u26d4 Step 10 PR number sentinel missing or invalid; cannot verif",
+        "now": "\u26d4 Step 10 PR number sentinel missing or invalid; cannot verif"
+      },
+      {
+        "head": "\u26d4 Step 10 fallback: FORK_REMOTE/HEAD_REF unresolved \u2014 refusin",
+        "now": "\u26d4 Step 10 fallback: FORK_REMOTE/HEAD_REF unresolved \u2014 refusin"
+      },
+      {
+        "head": "\u26d4 Step 4 PR number sentinel missing or invalid; refusing PR r",
+        "now": "\u26d4 Step 4 PR number sentinel missing or invalid; refusing PR r"
+      },
+      {
+        "head": "\u26d4 Step 4 PR number sentinel missing or invalid; refusing chec",
+        "now": "\u26d4 Step 4 PR number sentinel missing or invalid; refusing chec"
+      },
+      {
+        "head": "\u26d4 Step 4 verify: HEAD_REF/IS_CROSS_REPO sentinels missing \u2014 c",
+        "now": "\u26d4 Step 4 verify: HEAD_REF/IS_CROSS_REPO sentinels missing \u2014 c"
+      },
+      {
+        "head": "\u26d4 Unmerged files remain \u2014 resolve before continuing:",
+        "now": "\u26d4 Unmerged files remain \u2014 resolve before continuing:"
+      },
+      {
+        "head": "\u26d4 another oss:resolve is active on branch",
+        "now": "\u26d4 another oss:resolve is active on branch"
+      },
+      {
+        "head": "\u26d4 checkout did not land on",
+        "now": "\u26d4 checkout did not land on"
+      },
+      {
+        "head": "\u26d4 fetch origin/",
+        "now": "\u26d4 fetch origin/"
+      },
+      {
+        "head": "\u26d4 gh pr checkout failed \u2014 aborting (network, branch deleted,",
+        "now": "\u26d4 gh pr checkout failed \u2014 aborting (network, branch deleted,"
+      }
+    ],
+    "task_calls": {
+      "completed": 9,
+      "create": 7,
+      "deleted": 6,
+      "in_progress": 7
+    },
+    "task_phases": []
+  },
+  "review": {
+    "artifacts": [
+      ".expected-files",
+      "<agent-slug>.md",
+      "<agent>.md",
+      "blind-solve-input.md",
+      "checks-required.json",
+      "checks.json",
+      "codemap-context.md",
+      "codemap-context.md>",
+      "files.txt",
+      "foundry--blind-solve.md",
+      "foundry--codex.md",
+      "head-sha.txt",
+      "issue-*.md",
+      "issue-<N>.md",
+      "oss--cicd-steward.md",
+      "pr-meta.json",
+      "pr.diff",
+      "review-report.md",
+      "verify-<finding-id>.md"
+    ],
+    "output_paths": [
+      ".reports/review/pr-<N>/",
+      ".reports/review/pr-<N>/run-<NNN>/review-report.md",
+      ".temp/output-reply-<PR",
+      ".temp/review/$TIMESTAMP",
+      ".temp/state/skill-contract.md"
+    ],
+    "status_lines": [
+      {
+        "head": "! BLOCKED \u2014 GATE_GROUND is",
+        "now": "! BLOCKED \u2014 GATE_GROUND is"
+      },
+      {
+        "head": "! BLOCKED \u2014 GATE_REASON still holds the placeholder; substitute the e",
+        "now": "! BLOCKED \u2014 GATE_REASON still holds the placeholder; substitute the e"
+      },
+      {
+        "head": "! BLOCKED \u2014 PR snapshot missing; rerun the Step-0 snapshot block",
+        "now": "! BLOCKED \u2014 PR snapshot missing; rerun the Step-0 snapshot block"
+      },
+      {
+        "head": "! BLOCKED \u2014 PR tag sentinel empty or non-numeric (",
+        "now": "! BLOCKED \u2014 PR tag sentinel empty or non-numeric ("
+      },
+      {
+        "head": "! BLOCKED \u2014 changed-files sentinel empty or missing; Step 1 gh fetch",
+        "now": "! BLOCKED \u2014 changed-files sentinel empty or missing; Step 1 gh fetch"
+      },
+      {
+        "head": "! BLOCKED \u2014 codemap strict mode requested but codemap not installed o",
+        "now": "! BLOCKED \u2014 codemap strict mode requested but codemap not installed o"
+      },
+      {
+        "head": "! BLOCKED \u2014 gh pr view failed for PR #",
+        "now": "! BLOCKED \u2014 gh pr view failed for PR #"
+      },
+      {
+        "head": "! BLOCKED \u2014 run-dir sentinel empty; agent health monitoring cannot be",
+        "now": "! BLOCKED \u2014 run-dir sentinel empty; agent deadlines cannot be checked"
+      },
+      {
+        "head": "! BLOCKED \u2014 run-dir sentinel empty; refusing to copy codemap context",
+        "now": "! BLOCKED \u2014 run-dir sentinel empty; refusing to copy codemap context"
+      },
+      {
+        "head": "\u2192 PR_TYPE=",
+        "now": "\u2192 PR_TYPE="
+      },
+      {
+        "head": "\u2192 SCOPE=",
+        "now": "\u2192 SCOPE="
+      },
+      {
+        "head": "\u2192 existing report: <PRIOR_REPORT>",
+        "now": "\u2192 existing report: <PRIOR_REPORT>"
+      },
+      {
+        "head": "\u2192 saved to",
+        "now": "\u2192 saved to"
+      },
+      {
+        "head": "\u26a0 CI is red: [list failing check names] \u2014 review proceeds; st",
+        "now": "\u26a0 CI is red: [list failing check names] \u2014 review proceeds; st"
+      },
+      {
+        "head": "\u26a0 No agent output files found in",
+        "now": "\u26a0 No agent output files found in"
+      },
+      {
+        "head": "\u26a0 Shallow clone detected \u2014 running: git fetch --unshallow to",
+        "now": "\u26a0 Shallow clone detected \u2014 running: git fetch --unshallow to"
+      },
+      {
+        "head": "\u26a0 _OSS_SHARED resolved to",
+        "now": "\u26a0 _OSS_SHARED resolved to"
+      },
+      {
+        "head": "\u26a0 bridge@borda-ai-rig is",
+        "now": "\u26a0 bridge@borda-ai-rig is"
+      },
+      {
+        "head": "\u26a0 git fetch --unshallow failed \u2014 Step 3 checks may be incompl",
+        "now": "\u26a0 git fetch --unshallow failed \u2014 Step 3 checks may be incompl"
+      },
+      {
+        "head": "\u26a0 module battery capped at 10 of",
+        "now": "\u26a0 module battery capped at 10 of"
+      },
+      {
+        "head": "\u26d4 _OSS_SHARED resolved to",
+        "now": "\u26d4 _OSS_SHARED resolved to"
+      }
+    ],
+    "task_calls": {
+      "completed": 8,
+      "deleted": 2,
+      "in_progress": 7
+    },
+    "task_phases": []
+  }
+}

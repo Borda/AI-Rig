@@ -318,6 +318,18 @@ MANIFEST: list[dict[str, object]] = [
         ],
     },
     {
+        # Per-agent deadline check that replaces waiting tools (ScheduleWakeup, ListAgents,
+        # Monitor) after an Agent() spawn. foundry's shared spawn protocol prescribes it for
+        # every foundry skill that spawns, develop's spawning skills use it too, and a plugin
+        # may be installed alone, so each ships its own byte-identical copy rather than
+        # reaching into oss's bin/.
+        "canonical": "plugins/cc_oss/bin/agent_watch.py",
+        "copies": [
+            "plugins/cc_foundry/bin/agent_watch.py",
+            "plugins/cc_develop/bin/agent_watch.py",
+        ],
+    },
+    {
         # SemVer classification rules for the develop:fix breaking-change gate. develop
         # used to glob oss's newest cache dir for this file — a sibling reach-in that the
         # self-contained _shared rule forbids and that silently read a stale or orphaned

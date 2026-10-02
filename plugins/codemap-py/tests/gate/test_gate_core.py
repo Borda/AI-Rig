@@ -165,10 +165,23 @@ def _events(log: str) -> list[dict]:
     ``O_APPEND`` writes are atomic at EOF on host-local filesystems, so line order reflects real write order and
     preserves causality. We deliberately do NOT sort by wall-clock ``t`` because it is diagnostic only and can move
     backward when the clock is adjusted.
+
+    On Windows an emitter appends under an exclusive ``msvcrt.locking`` byte-0 lock, and those byte-range locks are
+    mandatory: a concurrent read of the locked byte fails with ``PermissionError`` instead of blocking. The lock is held
+    for a single ``os.write``, so the read is retried briefly rather than surfaced as a test failure.
     """
     if not Path(log).exists():
         return []
-    return [json.loads(ln) for ln in Path(log).read_text().splitlines() if ln.strip()]
+    deadline = time.time() + 2.0
+    while True:
+        try:
+            text = Path(log).read_text()
+            break
+        except PermissionError:
+            if time.time() > deadline:
+                raise
+            time.sleep(0.005)
+    return [json.loads(ln) for ln in text.splitlines() if ln.strip()]
 
 
 def _wait_for_event(log: str, name: str, timeout: float = 6.0) -> None:

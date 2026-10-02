@@ -113,6 +113,8 @@ Return ONLY compact JSON as final line: {\"status\":\"done\",\"findings\":N,\"se
 ")
 ```
 
+Deadline (`_shared/agent-spawn-protocol.md` §Deadlines): in the spawn response Write `$EXT_RUN_DIR/agent-watch-challenge.tsv` = `challenger\t$EXT_RUN_DIR/challenger-review.md\t600`, end the turn — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. On its notification run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$EXT_RUN_DIR"` once; row not `done` → ⏱ `timed_out`, take the fallback below.
+
 After challenger returns: read `$EXT_RUN_DIR/challenger-review.md`. Annotate each adoption table row with challenger verdict — add **Verdict** column. Rows marked `DISCARD`: move to separate **Discarded by challenger** section below table with one-line reason. Rows marked `ADOPT_WITH_MODIFICATION`: update **Action** cell to `Tweak*`, add footnote with challenger's modification requirement. Confidence < 0.85: flag that group's findings with ⚠, surface named gap.
 
 **Fallback when challenger is unavailable or fails** — `$EXT_RUN_DIR/challenger-review.md` doesn't exist after spawn returns, OR returned JSON envelope has `status != "done"`, OR agent itself missing (`foundry:challenger` not installed):
@@ -163,5 +165,7 @@ Agent(subagent_type="foundry:curator", prompt="Review Claude config files modifi
 # .js / code files only — curator NOT-for excludes hooks; use sw-engineer
 Agent(subagent_type="foundry:sw-engineer", prompt="Apply the <hook-authoring> specialization from your agent definition. Review code files modified by /distill external mode: <list .js/.py/.ts/.sh files changed in E14>. Check: (1) file-header block present (PURPOSE, HOW IT WORKS, EXIT CODES); (2) exit-code semantics correct; (3) stdin pattern uses event-based accumulation; (4) subprocess calls use execFileSync/spawnSync with args array — no shell-string injection; (5) no unhandled exceptions escape. Write your full findings to ${EXT_RUN_DIR}/sw-engineer-external-review.md using the Write tool. Return ONLY: {\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"file\":\"${EXT_RUN_DIR}/sw-engineer-external-review.md\",\"issues\":N,\"confidence\":0.N,\"summary\":\"<one-line>\"}")
 ```
+
+Same response as the spawns: Write `$EXT_RUN_DIR/agent-watch-review.tsv` (`curator\t-\t900` and/or `sw-engineer\t-\t900`), end the turn — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep; run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$EXT_RUN_DIR"` once per notification; a reviewer without its envelope is ⏱ `timed_out` and reported as not reviewed.
 
 Critical findings returned by either reviewer: surface to user before marking complete. Non-critical findings: advisory only.

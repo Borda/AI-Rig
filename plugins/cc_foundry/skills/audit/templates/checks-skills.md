@@ -143,24 +143,24 @@ After scan, apply model reasoning — exclude lines inside illustration/example 
 
 ### Sub-check 23c — `eval` for multi-value data output
 
-Skill uses `eval "$(...)"` or `eval "$(python ...)"` to capture data values from a bin/ script, rather than writing to TMPDIR files. Distinct from shell-setup eval (health_sentinel.py, ssh-agent) — those exempt.
+Skill uses `eval "$(...)"` or `eval "$(python ...)"` to capture data values from a bin/ script, rather than writing to TMPDIR files. Distinct from shell-setup eval (ssh-agent) — those exempt.
 
 ```bash
 # timeout: 10000
 printf "=== Check 23c: eval for data output ===\n"
 grep -rn 'eval.*"\$.*python\|eval.*"\$.*bin/' \
     plugins/*/skills/*/SKILL.md .claude/skills/*/SKILL.md 2>/dev/null |
-  grep -v 'health_sentinel\|ssh-agent\|direnv\|rbenv\|pyenv\|nvm\|# shell-setup\|parse-skill-flags\|derive_codemap_target\|git_slugs' |
+  grep -v 'ssh-agent\|direnv\|rbenv\|pyenv\|nvm\|# shell-setup\|parse-skill-flags\|derive_codemap_target\|git_slugs' |
   grep -v '^\s*#' | head -20
 ```
 
-False-positive exemption: eval whose stdout is `VAR=val` shell assignments for the calling shell — argument parsing (`parse-skill-flags.py`), target derivation (`derive_codemap_target.py`), slug helpers (`git_slugs.sh`), health monitoring (`health_sentinel.py`). Finding = eval used to capture a script's **data output** into variables, where a TMPDIR file is the correct channel. Cross-block persistence is Sub-check 23d, not this one.
+False-positive exemption: eval whose stdout is `VAR=val` shell assignments for the calling shell — argument parsing (`parse-skill-flags.py`), target derivation (`derive_codemap_target.py`), slug helpers (`git_slugs.sh`). Finding = eval used to capture a script's **data output** into variables, where a TMPDIR file is the correct channel. Cross-block persistence is Sub-check 23d, not this one.
 
 **Sub-check 23d** — shell variable used for state across separate Bash tool calls. **Not grep-detectable** (requires cross-block analysis of Bash call boundaries, which are runtime not lexical). Flag during curator per-file review only: when auditing a skill, scan for `VAR=$(...)` pattern in one fenced block and `"$VAR"` or `[ -z "$VAR" ]` in a later fenced block with no `cat "${TMPDIR:-/tmp}/...-${CSID}"` supplying `VAR` between them.
 
 | Sub-check | Pattern | Severity | Auto-fix |
 | -- | -- | -- | -- |
-| 23c — eval for data output | `eval "$(python ...)` without `health_sentinel` context | medium | no — replace with TMPDIR-file pattern per `bin-authoring-guide.md §Script Output Routing` |
+| 23c — eval for data output | `eval "$(python ...)` capturing data output | medium | no — replace with TMPDIR-file pattern per `bin-authoring-guide.md §Script Output Routing` |
 | 23d — cross-call shell var | `$VAR` in block N, set in earlier block M, no TMPDIR bridge | medium | no — curator flag only |
 
 **Report only** — never auto-fix; replacement requires understanding the script's full output contract.
@@ -604,7 +604,7 @@ Severity: **medium** for `effort:` (no default documented); **low** for `when_to
 
 ## Check C35 — Background agent health monitoring compliance (CLAUDE.md §6)
 
-CLAUDE.md §6 requires every skill spawning background agents to implement: (1) launch sentinel creation, (2) 5-min file-activity poll, (3) 15-min hard cutoff. Absence = stalled agents silently drop findings.
+CLAUDE.md §6 requires every skill spawning agents to implement: (1) a per-agent deadline armed in the spawn response (`agent-watch-<batch>.tsv`), (2) completion-notification handling with one `agent_watch.py` check per wake-up, (3) immediate ⏱ `timed_out` for an agent whose notification arrives without its deliverable — and to use no waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`) and no fixed-interval poll. Absence = stalled agents silently drop findings, or the user is left typing "check on the agents".
 
 **Step 1 — Find skills that spawn agents**. Every spawn is a background spawn now: `Agent()` never blocks and there is no `run_in_background` parameter, so matching that dead token would make this check silently N/A everywhere.
 
@@ -623,40 +623,42 @@ else
 fi  # timeout: 5000
 ```
 
-**Step 2 — For each skill found, verify §8 protocol elements**:
+**Step 2 — For each skill found, verify deadline-protocol elements**:
 
-Step 1's list is re-read from the state file — a variable set in Step 1's block is gone by the time this block runs (fresh shell per Bash call).
+Step 1's list is re-read from the state file — a variable set in Step 1's block is gone by the time this block runs (fresh shell per Bash call). A waiting tool is flagged even in a skill that references `agent-spawn-protocol.md` — the reference proves intent, not compliance. A line that names a waiting tool only to forbid it (`never`, `no `, `not `) is not a finding.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 while IFS= read -r f; do  # timeout: 5000
     [ -f "$f" ] || continue
     skill=$(basename "$(dirname "$f")")
+    # grep -c prints 0 AND exits 1 on no match — || echo 0 double-fires, "0\n0" breaks numeric tests below
+    has_wait_tool=$(grep -E 'ScheduleWakeup|ListAgents|Monitor\(|`Monitor`' "$f" 2>/dev/null | grep -Evc '[Nn]ever|[Nn]o |not |forbid|ban') || has_wait_tool=0
+    has_interval=$(grep -c 'MONITOR_INTERVAL\|every 5 min\|poll every' "$f" 2>/dev/null) || has_interval=0
+    [ "$has_wait_tool" -gt 0 ] && printf "⚠ C35e: %s — waits on agents with ScheduleWakeup/ListAgents/Monitor (CLAUDE.md §6)\n" "$skill"  # wait-check: allow — detector output
+    [ "$has_interval" -gt 0 ] && printf "⚠ C35d: %s — prescribes a fixed-interval poll; spawns are background, the turn ends and resumes on notification\n" "$skill"
     if grep -q 'agent-spawn-protocol' "$f" 2>/dev/null; then
         printf "✓ C35: %s — references agent-spawn-protocol.md\n" "$skill"
         continue
     fi
-    # grep -c prints 0 AND exits 1 on no match — || echo 0 double-fires, "0\n0" breaks numeric tests below
-    has_sentinel=$(grep -c 'LAUNCH_AT\|touch /tmp/' "$f" 2>/dev/null) || has_sentinel=0
-    has_probe=$(grep -c 'find.*-newer.*-type f.*wc -l\|completion notification' "$f" 2>/dev/null) || has_probe=0
-    has_cutoff=$(grep -c 'HARD_CUTOFF\|timed.out\|15 min\|900' "$f" 2>/dev/null) || has_cutoff=0
-    # MONITOR_INTERVAL is now a defect, not evidence: nothing sleeps, so an interval has no clock to run on
-    has_interval=$(grep -c 'MONITOR_INTERVAL\|every 5 min\|poll every' "$f" 2>/dev/null) || has_interval=0
-    [ "$has_sentinel" -eq 0 ] && printf "⚠ C35a: %s — no launch sentinel (CLAUDE.md §6)\n" "$skill"
-    [ "$has_probe" -eq 0 ]   && printf "⚠ C35b: %s — no liveness probe and no completion-notification handling (CLAUDE.md §6)\n" "$skill"
-    [ "$has_cutoff" -eq 0 ]  && printf "⚠ C35c: %s — no 15-min hard cutoff (CLAUDE.md §6)\n" "$skill"
-    [ "$has_interval" -gt 0 ] && printf "⚠ C35d: %s — prescribes a fixed-interval poll; spawns are background, the turn ends and resumes on notification\n" "$skill"
+    has_deadline=$(grep -c 'agent-watch\|agent_watch' "$f" 2>/dev/null) || has_deadline=0
+    has_notify=$(grep -c 'completion notification\|idle notification' "$f" 2>/dev/null) || has_notify=0
+    has_timeout=$(grep -c 'timed.out' "$f" 2>/dev/null) || has_timeout=0
+    [ "$has_deadline" -eq 0 ] && printf "⚠ C35a: %s — no per-agent deadline (agent-watch-<batch>.tsv + agent_watch.py) (CLAUDE.md §6)\n" "$skill"
+    [ "$has_notify" -eq 0 ]   && printf "⚠ C35b: %s — no completion-notification handling (CLAUDE.md §6)\n" "$skill"
+    [ "$has_timeout" -eq 0 ]  && printf "⚠ C35c: %s — no timed_out handling (CLAUDE.md §6)\n" "$skill"
 done < "${TMPDIR:-/tmp}/audit-state-${CSID}/c35-bg-skills"
 ```
 
-Severity: **high** for C35a/b/c — stalled agents drop findings with no user-visible signal. **medium** for C35d — a dead interval wastes turns rather than losing findings. Fix: reference `$_FOUNDRY_SHARED/agent-spawn-protocol.md` (preferred) or inline the elements in the skill.
+Severity: **high** for C35a/b/c/e — stalled agents drop findings with no user-visible signal, or waiting-tool turns burn the whole context per wake-up. **medium** for C35d — a dead interval wastes turns rather than losing findings. Fix: reference `$_FOUNDRY_SHARED/agent-spawn-protocol.md` (preferred) or inline the elements in the skill.
 
 | Sub-check | Pattern | Severity | Auto-fix |
 | -- | -- | -- | -- |
-| C35a — no launch sentinel | no `touch /tmp/<sentinel>` after spawn | high | no |
-| C35b — no liveness probe | no `find -newer` probe, no completion-notification handling | high | no |
-| C35c — no hard cutoff | no `HARD_CUTOFF` / 15-min signal | high | no |
+| C35a — no per-agent deadline | no `agent-watch-<batch>.tsv` / `agent_watch.py` | high | no |
+| C35b — no notification handling | no completion/idle-notification handling | high | no |
+| C35c — no timeout handling | no `timed_out` path | high | no |
 | C35d — fixed-interval poll | `MONITOR_INTERVAL`, "every 5 min", "poll every" — no clock exists to run it | medium | no |
+| C35e — waiting tool | `ScheduleWakeup`, `ListAgents` or `Monitor` prescribed to wait on an agent | high | no |
 
 ## Check 32 — Dead file detection
 
@@ -975,22 +977,20 @@ done  # timeout: 5000
 
 ## Check 40 — Health monitoring gap
 
-Any SKILL.md that spawns `Agent(...)` with `run_in_background=True` (or the Agent tool's equivalent) **must** implement the CLAUDE.md §6 health monitoring protocol: sentinel file creation + 5-min find-newer poll + 15-min hard cutoff + one extension.
+Any SKILL.md that spawns `Agent(...)` **must** implement the CLAUDE.md §6 deadline protocol: per-agent deadline armed in the spawn response, one `agent_watch.py` check per wake-up, immediate ⏱ for a notification without its deliverable — never a waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`) or a `find -newer` poll. Every spawn is background; `run_in_background` no longer exists, so keying on it would make this check silently N/A.
 
-Scan all SKILL.md files in scope. For each file, detect `run_in_background` (case-insensitive). If found, verify that the SAME file also contains `health_sentinel` OR (`find ... -newer` AND `wc -l`). If not → flag.
+Scan all SKILL.md files in scope. For each file spawning `Agent(`, verify that the SAME file references `agent-spawn-protocol` OR `agent_watch`. If not → flag. A file still prescribing `health_sentinel` or a `find ... -newer ... wc -l` probe → flag as the retired liveness poll.
 
 ```bash
 printf "=== Check 40: Health monitoring gap ===\n"
 for f in $(find . -path "*/skills/*/SKILL.md" 2>/dev/null | sort); do
-    if grep -qi "run_in_background" "$f" 2>/dev/null; then
-        if ! grep -q "health_sentinel\|find.*-newer.*wc -l" "$f" 2>/dev/null; then
-            printf "C40-HIGH: background agent without monitoring protocol: %s\n" "$f"
-        fi
-    fi
+    grep -q "Agent(" "$f" 2>/dev/null || continue
+    grep -q "agent-spawn-protocol\|agent_watch" "$f" 2>/dev/null || printf "C40-HIGH: agent spawn without deadline protocol: %s\n" "$f"
+    grep -q "health_sentinel\|find.*-newer.*wc -l" "$f" 2>/dev/null && printf "C40-MEDIUM: retired liveness poll still prescribed: %s\n" "$f"
 done  # timeout: 5000
 ```
 
-**Severity**: high — background agents can silently time out with no user notification; lost work and false-progress indicators result. Fix: add CLAUDE.md §6 sentinel + poll protocol immediately after every `Agent(..., run_in_background=True)` spawn call.
+**Severity**: high — agents can silently time out with no user notification; lost work and false-progress indicators result. medium — a retired liveness poll costs a turn per probe and answers nothing the deadline check does not. Fix: reference `agent-spawn-protocol.md` §Deadlines; write `agent-watch-<batch>.tsv` in every spawn response.
 
 ## Check 43 — Shell variable persistence across Bash calls
 

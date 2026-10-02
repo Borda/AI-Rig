@@ -1,5 +1,7 @@
 <!-- file: changelog-audit-prompt.md — consumers: release/SKILL.md (Delegation strategy, Phases 5-6 parallel delegation) -->
 
+> **Agent waits** — SKILL.md §Agent wait discipline (batch `changelog-audit`); never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop.
+
 Spawn both in same response turn (two Agent() calls, one response — parallel). Expand `$REPO_ROOT`, `$RANGE`, `$GATHER_FILE`, `$CHANGELOG_AUDIT_FILE`, `$CONTRIBUTORS_FILE`, `$RELEASE_MODE`, `$VERSION` to literal values before spawning
 
 Agent A — Audit changelog (`subagent_type="foundry:doc-scribe"` — mechanical cross-check/insertion, no opus reasoning needed):

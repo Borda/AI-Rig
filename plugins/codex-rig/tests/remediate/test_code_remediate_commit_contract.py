@@ -88,6 +88,10 @@ def test_remediation_commit_stages_only_proven_owned_paths() -> None:
     assert "git diff --cached --quiet" in commit_section
     assert "git add -- <paths>" in commit_section
     assert "Never use `git add .`, `git add -A`, a glob" in commit_section
+    assert "stage and commit the unit with the shared template's one owning command" in commit_section
+    assert "`git --no-pager show --no-renames --name-only -z --format= HEAD`" in commit_section
+    assert "equal the unit's planned paths exactly as a set" in commit_section
+    assert "A mismatch stops before commit" not in commit_section
     assert "partial-hunk staging" in commit_section
     assert "code-remediate-commit-scope-unsafe" in fail_fast
     assert "code-remediate-commit-grouping-unsafe" in fail_fast

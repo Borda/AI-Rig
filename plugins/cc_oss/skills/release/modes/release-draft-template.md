@@ -77,6 +77,8 @@ IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/release-oss-shared-${CSID}" 2>/dev/n
 
 If still `true`, write draft to `$SHEPHERD_DIR/draft.md`, then spawn:
 
+> **Agent waits** — SKILL.md §Agent wait discipline (batch `shepherd`); never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop.
+
 ```text
 Agent(subagent_type="oss:shepherd", prompt="Review the full release draft at <$SHEPHERD_DIR/draft.md> for public-facing voice and tone. Apply shepherd voice guidelines: human and direct, no internal jargon, no staff names, no internal maintenance details. Write the revised content to <$SHEPHERD_DIR/shepherd-revised.md>. Return ONLY: {\"status\":\"done\",\"changes\":N,\"file\":\"<$SHEPHERD_DIR/shepherd-revised.md>\"}")
 ```

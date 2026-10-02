@@ -41,7 +41,7 @@ cat "$_RESEARCH_SHARED/agent-resolution.md"
 
 Triggered by `plan <goal|file>`. Wizard configures run.
 
-**Task tracking**: create tasks for P-P0, P-P1, P-P2, P-P2b, P-P3 at start; add P-P4 only if `--team` detected in arguments.
+**Task tracking**: create tasks for P-P0, P-P1, P-P2, P-P2b, P-P3 at start, all in the same response as the first real tool call; add P-P4 only if `--team` detected in arguments. Every later `TaskUpdate` rides with the next real tool call — never a bookkeeping-only turn; the one standalone call is a `completed` right before a long report.
 
 **Unsupported flag check**: load and follow the protocol below. Supported flags for this skill: `--team`.
 

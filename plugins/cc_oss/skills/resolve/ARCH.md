@@ -37,10 +37,11 @@ MERGE FINDINGS  (step 3c)
   +--------------------- FAN 2 ----------------------+
   |                                                  |
 CONFLICT RESOLVE  (steps 6, 7)            ◆ SELECTION GATE  (step 3d)
-  ▣ 1 per file  (step 7a)                   which items
+  ▣ 1 per file  (step 7a)                   which items · over-20 cap
   distill intent + base drift  (step 6)     commit mode
-  resolve markers, stage                    topic group
+  resolve markers, stage                    topic group + typed labels
                                             dispatch width
+                                            push intent + post-PR action
   |                                                  |
   +--------------------- JOIN -----------------------+
   |
@@ -52,12 +53,15 @@ IMPLEMENT  (step 8)
   ▣ specialists    parallel, one git worktree each  (step 8 phase 2)
     merge-back     sequential cherry-pick, most-central first  (step 8 phase 3)
   |
-VERIFY  (step 9)  ▣ qa-specialist ‖ ▣ linting-expert
+VERIFY  (step 9)  ▣ qa-specialist ‖ ▣ linting-expert  (targeted tests)
+  full suite once, background run  (step 9)
   |
-◆ PUSH GATE  (step 10)  authorize push + post-PR action
+◆ PUSH CONFIRMATION  (step 10)  diff stat + commit count — skipped on an explicit "don't push" intent
   |
 SHIP  push (step 10) · final report (step 11) · ▣ comment dispatch (step 12)
 ```
+
+Between the selection gate and the push confirmation the run is unattended on the normal path: every decision that can be made with the same information is answered at the selection gate and persisted. Push authorization needs the diff stat, which exists only after implementation, so it stays at Step 10.
 
 ## Fan and join points
 
@@ -67,8 +71,10 @@ SHIP  push (step 10) · final report (step 11) · ▣ comment dispatch (step 12)
 | CONFLICT RESOLVE ‖ SELECTION GATE | 2 | conflicted-file count on one side, one gate on the other | COMMIT MERGE |
 | IMPLEMENT challenge | ≤3 | challenger roster (3 domains) | before specialists |
 | IMPLEMENT specialists | `DISPATCH_MODE` | pool caps: opus 5, sonnet 8 | merge-back |
-| VERIFY | 2 | fixed | push gate |
+| VERIFY | 2 | fixed | ship |
 | SHIP comment dispatch | 3 | `BATCH_SIZE`, waves of 3 | end |
+
+Every `▣` lane carries a deadline armed in its spawn turn (`agent-watch-<batch>.tsv`) and checked by one `agent_watch.py` call at each wake-up; a join never polls, and a lane that stops without its deliverable joins as ⏱ timed out.
 
 Both top-level fans are free — each rides an idle window the orchestrator already had, so neither adds a spawn. The first works because checkout and the trial merge need only the PR number. The second works because conflict resolution does not depend on which items get selected; it is mandatory even at zero selected items.
 
@@ -80,16 +86,16 @@ Both top-level fans are free — each rides an idle window the orchestrator alre
 
 | Gate | Always? | Blocks |
 | -- | -- | -- |
-| unknown flag · missing report source | conditional | SETUP |
+| unknown flag · missing report source · codemap index | conditional | SETUP |
 | more than 20 conflicted files | conditional | trial merge, and aborts it |
-| **SELECTION** | **always** | everything past the second join |
-| more than 20 items selected | conditional | per-item task creation |
-| group preview (`DISPATCH_MODE=preview`) | conditional | challenge → specialists |
-| topic labels (`GROUP_STRATEGY=labels`) | conditional | implement commit |
-| **PUSH** | **always** | ship |
-| unresolved item status | conditional | final report |
+| **SELECTION** (items, commit mode, grouping + labels, dispatch width, over-20 cap, push intent + post-PR action) | **always** | everything past the second join |
+| group preview (`DISPATCH_MODE=preview`, elected at SELECTION) | conditional | challenge → specialists |
+| challenge timed out twice (batched per wave) | conditional, error recovery | challenge → specialists |
+| unresolved item status | conditional, error recovery | final report |
+| **PUSH CONFIRMATION** (target, diff stat, commit count, last subject; post-PR too when no intent was recorded) | **always**, unless SELECTION recorded an explicit "don't push" | ship |
+| typed-labels file lost | conditional, error recovery | implement commit |
 
-Normal action-item path costs at most 5 `AskUserQuestion` calls.
+Normal action-item path costs at most 3 `AskUserQuestion` calls at the selection gate plus the push confirmation. Between them, only the user-elected group preview and the error-recovery gates can ask. The push itself can still stop for a push guard or permission prompt — deliberate user safety controls the skill never bypasses; it records the push status, saves the guard's exact unblock lines, continues to the final report, and ends that report with those lines.
 
 ## Mode branches
 
@@ -97,7 +103,7 @@ Normal action-item path costs at most 5 `AskUserQuestion` calls.
 | -- | -- |
 | `pr` | full schema above; MERGE FINDINGS is a pass-through |
 | `pr + report` | full schema; MERGE FINDINGS dedups the saved review report against GitHub comments |
-| `report`, no PR number | both fans collapse. No branch, no merge, no conflicts: gather findings from the report, SELECTION GATE, implement, verify. No push. |
+| `report`, no PR number | both fans collapse. No branch, no merge, no conflicts: gather findings from the report, SELECTION GATE (no push question), implement, verify. No push. |
 
 ## Degenerate cases
 
@@ -123,4 +129,4 @@ Index of the `(step N)` tags in the schema above, one row per block. Text order 
 | COMMIT MERGE | 7b join, 3e |
 | IMPLEMENT | 8 |
 | VERIFY | 9 |
-| PUSH GATE · SHIP | 10, 11, 12 |
+| SHIP | 10, 11, 12 |

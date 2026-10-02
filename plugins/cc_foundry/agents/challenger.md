@@ -122,14 +122,11 @@ fi
 
 6. **Collect Codex output** (CODEX_ENABLED only)
 
-   - Health check before reading: `ELAPSED=$(( $(date +%s) - $LAUNCH_AT ))` — if `$ELAPSED < 60`, poll once: `find ${TMPDIR:-/tmp} -name "codex-ar-challenger-${_CHAL_ID}-${CSID}.txt" -newer ${TMPDIR:-/tmp}/challenger-codex-check-${_CHAL_ID}-${CSID} 2>/dev/null | wc -l`. Poll every 60s until new file activity; reading once at 60s risks a partial file. If poll returns 0 and `$ELAPSED > 900`: mark `CODEX_FAILED=true`, cleanup temp files: `rm -f ${TMPDIR:-/tmp}/codex-ar-challenger-${_CHAL_ID}-${CSID}.txt ${TMPDIR:-/tmp}/codex-ar-challenger-${_CHAL_ID}-${CSID}.err ${TMPDIR:-/tmp}/challenger-codex-check-${_CHAL_ID}-${CSID} 2>/dev/null`, surface `⏱ Codex stalled after ${ELAPSED}s — skipped.`, skip remainder of step 6.
-   - Read `${TMPDIR:-/tmp}/codex-ar-challenger-${_CHAL_ID}-${CSID}.txt`
-   - File non-empty → store as `CODEX_OUTPUT`; extract file paths for convergence detection
-   - File missing or empty:
-     - Read `${TMPDIR:-/tmp}/codex-ar-challenger-${_CHAL_ID}-${CSID}.err` for error text
-     - Set `CODEX_FAILED=true`; store error as `CODEX_ERROR`
+   - Use the result Step 2 recorded — `bridge:review` is a synchronous `Skill()` call, so there is no file to poll, no launch timestamp, and no stall timer
+   - Result non-empty → store as `CODEX_OUTPUT`; extract file paths for convergence detection
+   - Result empty, an error, or a bridge refusal:
+     - Set `CODEX_FAILED=true`; store the error text as `CODEX_ERROR`
      - **Do not silently skip** — surface failure in report (see output format)
-   - Cleanup: `rm -f ${TMPDIR:-/tmp}/codex-ar-challenger-${_CHAL_ID}-${CSID}.txt ${TMPDIR:-/tmp}/codex-ar-challenger-${_CHAL_ID}-${CSID}.err ${TMPDIR:-/tmp}/challenger-codex-check-${_CHAL_ID}-${CSID} 2>/dev/null`
 
 7. **Produce report** using output format below; end with `## Confidence` block per quality-gates rules
 

@@ -30,7 +30,9 @@ checks whose records it validates.
 
 It prints a passed validation confirmation or raises a precise contract error that names the missing or contradictory
 evidence. Errors use stable prefixes such as ``missing-gates-json``, ``gate-check-id-set-mismatch``, and skill-specific
-``code-remediate-*`` codes so callers can route recovery.
+``code-remediate-*`` codes so callers can route recovery. ``--all-errors`` runs each independent check group once and
+prints JSON listing every failed group's code with a repair hint, plus groups not run because a prerequisite failed, so
+one repair round can address all of them; any listed failure still exits nonzero.
 
 ## Failure
 
@@ -3701,21 +3703,91 @@ def _validate_required_artifacts(skill: str, out_dir: Path, result: dict[str, An
         _validate_jsonl(out_dir / str(filename))
 
 
-def _validate_code_remediate_skill(result: dict[str, Any], out_dir: Path, *, current_contract: bool = True) -> None:
-    """Run the code-remediate contract checks over scope, workplan, tables, and PR evidence."""
+def _code_remediate_metadata(result: dict[str, Any]) -> dict[str, Any]:
+    """Return remediation metadata after checking the two shapes every later check reads."""
     metadata = result.get("metadata", {})
     if not isinstance(metadata, dict):
         raise SystemExit("code-remediate-missing-metadata")
-    resolution_scope = metadata.get("resolution_scope")
-    if not isinstance(resolution_scope, dict):
+    if not isinstance(metadata.get("resolution_scope"), dict):
         raise SystemExit("code-remediate-missing-resolution-scope-metadata")
-    _validate_code_remediate_scope_selection(metadata, out_dir)
-    _validate_code_remediate_workplan(metadata, out_dir, current_contract=current_contract)
-    _validate_code_remediate_out_of_scope_confirmation(metadata, out_dir)
-    _validate_code_remediate_report_intake(result, out_dir, current_contract=current_contract)
-    _validate_code_remediate_final_resolution_table(metadata, out_dir)
-    _validate_code_remediate_pr_relevance(metadata, out_dir)
-    _validate_code_remediate_unresolved_summary(metadata, out_dir)
+    return metadata
+
+
+def _code_remediate_steps(
+    result: dict[str, Any], out_dir: Path, *, current_contract: bool = True
+) -> list[_ValidationStep]:
+    """List remediation checks in fail-fast order; each later step depends on the metadata shape step."""
+
+    def metadata() -> dict[str, Any]:
+        return _code_remediate_metadata(result)
+
+    shape = ("code-remediate-metadata",)
+    return [
+        _ValidationStep("code-remediate-metadata", metadata),
+        _ValidationStep(
+            "code-remediate-scope-selection",
+            lambda: _validate_code_remediate_scope_selection(metadata(), out_dir),
+            shape,
+        ),
+        _ValidationStep(
+            "code-remediate-workplan",
+            lambda: _validate_code_remediate_workplan(metadata(), out_dir, current_contract=current_contract),
+            shape,
+        ),
+        _ValidationStep(
+            "code-remediate-out-of-scope",
+            lambda: _validate_code_remediate_out_of_scope_confirmation(metadata(), out_dir),
+            shape,
+        ),
+        _ValidationStep(
+            "code-remediate-report-intake",
+            lambda: _validate_code_remediate_report_intake(result, out_dir, current_contract=current_contract),
+            shape,
+        ),
+        _ValidationStep(
+            "code-remediate-final-table",
+            lambda: _validate_code_remediate_final_resolution_table(metadata(), out_dir),
+            shape,
+        ),
+        _ValidationStep(
+            "code-remediate-pr-relevance", lambda: _validate_code_remediate_pr_relevance(metadata(), out_dir), shape
+        ),
+        _ValidationStep(
+            "code-remediate-unresolved-summary",
+            lambda: _validate_code_remediate_unresolved_summary(metadata(), out_dir),
+            shape,
+        ),
+        _ValidationStep(
+            "code-remediate-pass-closure",
+            lambda: _validate_code_remediate_pass_closure(result, metadata()),
+            ("code-remediate-final-table", "code-remediate-unresolved-summary"),
+        ),
+        _ValidationStep("code-remediate-scope-text", lambda: _validate_code_remediate_scope_text(out_dir), shape),
+        _ValidationStep(
+            "code-remediate-pr-artifacts",
+            lambda: _validate_code_remediate_pr_artifacts(result, metadata(), out_dir),
+            shape,
+        ),
+    ]
+
+
+def _validate_code_remediate_skill(result: dict[str, Any], out_dir: Path, *, current_contract: bool = True) -> None:
+    """Run the code-remediate contract checks over scope, workplan, tables, and PR evidence."""
+    for step in _code_remediate_steps(result, out_dir, current_contract=current_contract):
+        step.check()
+
+
+def _validate_code_remediate_scope_text(out_dir: Path) -> None:
+    """Require the rendered scope to name selectable, selected, and deferred work."""
+    scope_text = (out_dir / "resolution-scope.md").read_text(encoding="utf-8").lower()
+    for required_text in ("selectable", "selected", "deferred"):
+        if required_text not in scope_text:
+            raise SystemExit(f"code-remediate-scope-missing-{required_text}")
+
+
+def _validate_code_remediate_pass_closure(result: dict[str, Any], metadata: dict[str, Any]) -> None:
+    """Reject a passing remediation that still leaves required selected work open."""
+    resolution_scope = metadata["resolution_scope"]
     if result["status"] == "pass":
         summary = metadata["unresolved_summary"]
         selectable = [item for item in metadata["final_resolution_table"]["items"] if item["selectable"]]
@@ -3743,11 +3815,6 @@ def _validate_code_remediate_skill(result: dict[str, Any], out_dir: Path, *, cur
             )
         ):
             raise SystemExit("code-remediate-pass-with-required-unresolved-work")
-    scope_text = (out_dir / "resolution-scope.md").read_text(encoding="utf-8").lower()
-    for required_text in ("selectable", "selected", "deferred"):
-        if required_text not in scope_text:
-            raise SystemExit(f"code-remediate-scope-missing-{required_text}")
-    _validate_code_remediate_pr_artifacts(result, metadata, out_dir)
 
 
 def _audit_cost_artifact(out_dir: Path, record: object, field: str) -> Any:
@@ -3947,17 +4014,74 @@ def _validate_audit_evidence(result: dict[str, Any], gates: dict[str, Any], out_
         raise SystemExit("audit-cost-insufficient-reduction")
 
 
-def validate(skill: str, out_dir: Path, result_path: Path) -> None:
-    """Validate shared workflow evidence and the selected skill's completion contract."""
-    result = _load_json(result_path)
-    _require_result_shape(result)
-    _validate_confidence_gaps(result, skill)
-    gates = _validate_gates(out_dir)
-    _validate_code_review_unavailable_gates(result, gates, skill)
-    _reconcile_result_with_gates(result, gates)
-    if skill == "audit":
-        _validate_audit_evidence(result, gates, out_dir)
-    current_contract = (
+class _ValidationStep(NamedTuple):
+    """One named validation check and the earlier steps whose success it needs."""
+
+    name: str
+    check: Any
+    requires: tuple[str, ...] = ()
+
+
+#: Repair hints for frequent failure codes, matched by longest code prefix. Each hint restates the failed condition.
+VALIDATION_HINTS = {
+    "missing-gates-json": "Run run_gates.py into this run directory before writing or validating the result.",
+    "final-handoff-validation-failed": "Re-render final-handoff.json with final_handoff.py render, then rewrite the "
+    "result so its final_handoff digests match.",
+    "code-remediate-final-handoff-verification-mismatch": "handoff verification must list every gates.json check "
+    "in order as {check: id, status, evidence: stdout}; derive it with remediation_finalize.py handoff.",
+    "code-remediate-final-handoff-confidence-": "handoff confidence gaps, closure status/evidence, and limits must "
+    "copy metadata confidence_gaps, confidence_gap_closures, and confidence_recovery.remaining_limits; derive them "
+    "with remediation_finalize.py handoff.",
+    "code-remediate-final-handoff-result-artifact-missing": "handoff artifacts must include the result "
+    "artifact_path exactly; derive them with remediation_finalize.py handoff.",
+    "code-remediate-final-handoff-row-coverage-mismatch": "handoff table rows and O/E details must be generated "
+    "from final_resolution_table.items in order; derive them with remediation_finalize.py handoff.",
+    "code-remediate-final-handoff-source-coverage-mismatch": "handoff source_records must list every item source "
+    "as {id: kind:source_id, evidence} in item order; derive them with remediation_finalize.py handoff.",
+    "code-remediate-selection-pr-relevance-mismatch": "metadata pr_relevance must equal selection.json "
+    "pr_relevance; derive it with remediation_finalize.py metadata.",
+    "code-remediate-selection-final-inventory-mismatch": "final_resolution_table.items must keep selection.json "
+    "item identity, name, type, severity, selectability, and sources in order; derive with "
+    "remediation_finalize.py metadata.",
+    "code-remediate-selection-deferred-mismatch": "deferred_indexes must list every selectable index not "
+    "selected; derive with remediation_finalize.py metadata.",
+    "code-remediate-work-bucket-plan-content-mismatch": "resolution_workplan.work_buckets must equal "
+    "work-bucket-plan.json work_buckets exactly; derive with remediation_finalize.py metadata.",
+    "code-remediate-work-bucket-plan-digest-mismatch": "bucket_plan_sha256 must be the SHA-256 of the "
+    "work-bucket-plan.json bytes; derive with remediation_finalize.py metadata.",
+    "code-remediate-parallel-approval-evidence-mismatch": "parallel-approval.json must hold exactly plan_sha256, "
+    "prompt_presented, response, and source matching the workplan metadata.",
+    "code-remediate-workplan-missing-": "resolution-workplan.md must name owner, verifier, context, closure, and "
+    "approval; render it with remediation_finalize.py workplan.",
+    "code-remediate-workplan-approval-binding-missing": "resolution-workplan.md must contain the plan digest and "
+    "approval response; render it with remediation_finalize.py workplan.",
+    "code-remediate-workplan-bucket-id-missing": "resolution-workplan.md must name every bucket id; render it "
+    "with remediation_finalize.py workplan.",
+    "code-remediate-workplan-": "Group counts must match work_buckets; derive them with remediation_finalize.py "
+    "metadata.",
+    "code-remediate-work-bucket-invalid-": "Each bucket needs non-empty bucket_id, owner, verifier, "
+    "context_pack_path, execution_mode, selected_indexes, and owned_paths.",
+    "code-remediate-merge-resolution-path-mismatch": "merge_resolution.artifact_path must resolve to "
+    "<run>/pr/merge-resolution.json; derive it with remediation_finalize.py metadata.",
+    "code-remediate-merge-resolution-metadata-mismatch": "merge_resolution authorization, conflicts_detected, and "
+    "status must copy pr/merge-resolution.json; derive with remediation_finalize.py metadata.",
+}
+
+
+def validation_hint(code: str) -> str:
+    """Return the repair hint for one failure code, or the generic pointer to its raise site.
+
+    Example:
+        >>> validation_hint("missing-gates-json").startswith("Run run_gates.py")
+        True
+    """
+    matches = [prefix for prefix in VALIDATION_HINTS if code.startswith(prefix)]
+    return VALIDATION_HINTS[max(matches, key=len)] if matches else f"See the validator check that raises {code}."
+
+
+def _current_contract(skill: str, result: dict[str, Any], result_path: Path) -> bool:
+    """Decide whether current-contract rules apply to this result."""
+    return (
         result_path.name == "result.candidate.json"
         or skill == "challenge-resolve"
         or (skill == "code-review" and result.get("schema_version") == 3)
@@ -3966,22 +4090,126 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
             and result.get("metadata", {}).get("resolution_scope", {}).get("presentation_version") in {3, 4}
         )
     )
-    _validate_final_handoff(result, skill, out_dir, gates, candidate=current_contract)
 
-    _validate_required_artifacts(skill, out_dir, result)
-    _validate_confidence_recovery(result, skill)
+
+def _validation_steps(skill: str, out_dir: Path, result_path: Path) -> list[_ValidationStep]:
+    """List every validation step in the fail-fast order with its dependencies."""
+    state: dict[str, Any] = {}
+
+    def load() -> None:
+        state["result"] = _load_json(result_path)
+        _require_result_shape(state["result"])
+        state["current"] = _current_contract(skill, state["result"], result_path)
+
+    def gates() -> None:
+        state["gates"] = _validate_gates(out_dir)
+
+    loaded, gated = ("result",), ("result", "gates")
+    steps = [
+        _ValidationStep("result", load),
+        _ValidationStep("confidence-gaps", lambda: _validate_confidence_gaps(state["result"], skill), loaded),
+        _ValidationStep("gates", gates, loaded),
+        _ValidationStep(
+            "unavailable-gates",
+            lambda: _validate_code_review_unavailable_gates(state["result"], state["gates"], skill),
+            gated,
+        ),
+        _ValidationStep("gate-reconcile", lambda: _reconcile_result_with_gates(state["result"], state["gates"]), gated),
+    ]
+    if skill == "audit":
+        steps.append(
+            _ValidationStep(
+                "audit-evidence", lambda: _validate_audit_evidence(state["result"], state["gates"], out_dir), gated
+            )
+        )
+    steps.extend(
+        (
+            _ValidationStep(
+                "final-handoff",
+                lambda: _validate_final_handoff(
+                    state["result"], skill, out_dir, state["gates"], candidate=state["current"]
+                ),
+                gated,
+            ),
+            _ValidationStep(
+                "required-artifacts", lambda: _validate_required_artifacts(skill, out_dir, state["result"]), loaded
+            ),
+            _ValidationStep(
+                "confidence-recovery", lambda: _validate_confidence_recovery(state["result"], skill), loaded
+            ),
+        )
+    )
     if skill == "release":
-        _validate_release_communication(result, out_dir, gates)
+        steps.append(
+            _ValidationStep(
+                "release",
+                lambda: _validate_release_communication(state["result"], out_dir, state["gates"]),
+                gated,
+            )
+        )
     if skill == "challenge-resolve":
-        _validate_adversarial_loop(
-            result,
-            out_dir,
-            gates,
-            candidate=current_contract,
-            current_result=True,
+        steps.append(
+            _ValidationStep(
+                "adversarial-loop",
+                lambda: _validate_adversarial_loop(
+                    state["result"], out_dir, state["gates"], candidate=state["current"], current_result=True
+                ),
+                gated,
+            )
         )
     if skill == "code-remediate":
-        _validate_code_remediate_skill(result, out_dir, current_contract=current_contract)
+        steps.extend(_deferred_code_remediate_steps(state, out_dir))
+    return steps
+
+
+def _deferred_code_remediate_steps(state: dict[str, Any], out_dir: Path) -> list[_ValidationStep]:
+    """Wrap remediation steps so they read the loaded result only when they run."""
+    names = [step.name for step in _code_remediate_steps({}, out_dir)]
+    requires = {step.name: step.requires for step in _code_remediate_steps({}, out_dir)}
+
+    def run(position: int) -> None:
+        _code_remediate_steps(state["result"], out_dir, current_contract=state["current"])[position].check()
+
+    return [
+        _ValidationStep(name, lambda position=position: run(position), ("result", *requires[name]))
+        for position, name in enumerate(names)
+    ]
+
+
+def validate(skill: str, out_dir: Path, result_path: Path) -> None:
+    """Validate shared workflow evidence and the selected skill's completion contract."""
+    for step in _validation_steps(skill, out_dir, result_path):
+        step.check()
+
+
+def collect_errors(skill: str, out_dir: Path, result_path: Path) -> dict[str, Any]:
+    """Run every validation step once and report each failure with a repair hint.
+
+    A step whose prerequisite failed is reported as not run, never as passed. An unexpected exception inside a step
+    counts as a failure of that step because malformed input from another error can reach it.
+    """
+    errors: list[dict[str, str]] = []
+    not_run: list[dict[str, str]] = []
+    failed: set[str] = set()
+    for step in _validation_steps(skill, out_dir, result_path):
+        blocked = [name for name in step.requires if name in failed]
+        if blocked:
+            failed.add(step.name)
+            not_run.append({"step": step.name, "blocked_by": ",".join(blocked)})
+            continue
+        try:
+            step.check()
+        except SystemExit as error:
+            code = str(error.code)
+            failed.add(step.name)
+            errors.append({"step": step.name, "code": code, "hint": validation_hint(code)})
+        except (KeyError, TypeError, AttributeError, ValueError, OSError, IndexError) as error:
+            failed.add(step.name)
+            code = f"{step.name}-unchecked:{type(error).__name__}"
+            hint = "Malformed input reached this check; fix the other reported errors, then rerun."
+            errors.append({"step": step.name, "code": code, "hint": hint})
+    status = "fail" if errors or not_run else "pass"
+    return {"status": status, "errors": errors, "not_run": not_run}
 
 
 def main() -> int:
@@ -3991,8 +4219,17 @@ def main() -> int:
     )
     parser.add_argument("--out", required=True, type=Path, help="Skill artifact directory.")
     parser.add_argument("--result", required=True, type=Path, help="Candidate result JSON to validate.")
+    parser.add_argument(
+        "--all-errors",
+        action="store_true",
+        help="Run every check once and print JSON with each failure code and repair hint; exit 1 on any failure.",
+    )
     args = parser.parse_args()
 
+    if args.all_errors:
+        report = collect_errors(args.skill, args.out, args.result)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0 if report["status"] == "pass" else 1
     validate(args.skill, args.out, args.result)
     return 0
 

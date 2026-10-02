@@ -163,6 +163,13 @@ Every test must pass The Suspicious Check:
 - For those GitHub helpers, use the current session's effective permissions, not a stored default or profile definition. An active `github-read` profile supplies network evidence unless stricter runtime restrictions contradict it. When the profile name is hidden, explicit runtime network access enabled is sufficient to attempt the audited helper under existing destination policy; preserve explicit denied destinations. Verify required report, `.git`, and checkout paths are writable separately. With required grants, omit `sandbox_permissions` and `justification`, give no approval brief, and request no reusable rule. Missing profile identity or a failed lookup is not disabled access; never use `codex execpolicy list`, inspect credentials, or search other sessions to detect a profile. Required capability disabled, outside allowed write roots, or genuinely unknown uses the existing owning-command approval boundary only if runtime policy permits it; report uncertainty accurately. An explicit or unexpected restriction or denial stops the attempt without a broadened retry. This changes no permission grants, profiles, or remote-mutation boundaries.
 - For other intentionally networked CLI, execute the complete owning command with runtime-approved external access from the first attempt; wrappers own approval for nested subprocesses and HTTPS.
 - For those other Codex exec calls use `sandbox_permissions="require_escalated"` with narrow justification; never enable persistent workspace network access, request broad interpreter prefix, or assume nested executable's approval covers its parent.
+- Pytest outside the canonical `run_gates.py` gate follows packaged `shared/native-skill-contract.md` §Sandboxed Test Runs:
+  - Targeted loop runs without `-n`/`--numprocesses`/`--dist` in command or pytest `addopts` add `-p no:xdist`, so plugins opening a localhost socket whenever xdist is installed stay inside sandbox.
+  - Only interpreter-family reusable prefix permitted = repo's exact pinned test-runner prefix (e.g. `["<repo>/.venv/bin/python", "-m", "pytest"]`), requested once at scope selection only when selected work needs escalated pytest; never bare interpreter, `python -c`, or gate runner. Escalated pytest commands start with exactly that prefix — no `env VAR=...` or shell wrapper; pass env vars through tool's env field. Brief must state approved pytest runs unsandboxed, including repo `conftest.py`, for rest of session.
+  - Canonical gate keeps configured test command; its escalation stays one-time for complete `run_gates.py` command without `prefix_rule`.
+  - Loops run only changed-file targets from `shared/test_targets.py` (codemap-py test impact, else name/import heuristics); full suite runs once at canonical gate, never per finding or iteration.
+- Wait for child agents only with blocking `wait_agent` + timeout; never poll with `list_agents`, `sleep`, or re-check loops. Child past its per-agent deadline (default 30 min) = `timed_out`, reported at once.
+- Plan updates (`update_plan`) ride with the next real tool call; no plan-only turns.
 - This includes `kaggle`, Codex Git marketplace add/upgrade + owning sync wrapper, paid `codex exec`, and any networked CLI outside the audited GitHub-read boundary; web/browser/MCP/connector tools use their own permission path.
 - Marketplace/plugin listing and `codex plugin add` from existing snapshot stay sandboxed.
 - Missing external CLIs = user-owned prerequisites: explain required install + auth, but never install from workflow.
@@ -306,6 +313,7 @@ Every local commit created by Codex must end with:
 Applies to every skill and workflow.
 
 - Use Codex Rig's packaged `shared/commit-response-template.md` exactly for commit + summary messages.
+- Stage + commit reviewed paths in one owning command (`git add -- <paths> && git commit --cleanup=verbatim -m <message>`) after showing exact path list + full message and checking no staged entry outside those paths; afterward committed file set must equal reviewed path list.
 - `commit_attribution` setting and individual skill rules reinforce this project-wide requirement.
 
 Every proposed/created commit message must use packaged template's `Changes:`, `Impact:`, `Verification:`, `Residual limits:` sections.

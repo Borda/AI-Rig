@@ -59,7 +59,12 @@ _RESEARCH_SKILLS="${_RESEARCH_SHARED%/_shared}"
 [ -z "$_RESEARCH_SKILLS" ] && _RESEARCH_SKILLS="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/skills"
 ```
 
-**Task tracking**: create tasks for S1–S5 at start.
+**Task tracking** — one task per stage, never a bookkeeping-only turn: measured sweeps spent up to 5 of ~15 turns on task calls alone. The cost was the standalone turns, not the task count, so stage-level progress stays visible.
+
+- Load the deferred task tools (`ToolSearch(query="select:TaskCreate,TaskUpdate", max_results=2)`) in the same response as the Agent Resolution block.
+- Create tasks for S1–S5 at start, all in the same response as the first S1 call. Steps the inlined plan, judge and run skills track keep their own task lines.
+- Every later `TaskUpdate` rides with the next real tool call. A stop before S5 (abort, blocked, unresolved stop) closes the finished stages and marks the remaining ones `deleted` in the response that prints the stop message — one response, not one per task. The only standalone call is the final `completed` right before the R6 summary.
+- **Independent calls share one response — never across a question**: the S1 keep-flag and unsupported-flag-protocol blocks together, after the existing-program.md guard is answered (the `--out` validation runs before the guard, as the guard needs its path); S2 codebase-scan Reads/Greps together.
 
 ### Step S1: Parse arguments
 

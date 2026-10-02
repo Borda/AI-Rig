@@ -1,5 +1,5 @@
 ---
-description: Task lifecycle sequencing — TaskUpdate ordering, frozen plan, subagent task prohibition, spawn slots, end-turn-after-spawn
+description: Task lifecycle sequencing — TaskUpdate ordering, frozen plan, subagent task prohibition, spawn slots, end-turn-after-spawn, per-agent deadlines
 paths:
   - '**'
 ---
@@ -12,7 +12,7 @@ paths:
 
 Sequence: `TaskUpdate(completed)` → emit output. Never the reverse.
 
-This is the **one** sanctioned bookkeeping-only response. Everywhere else, a `TaskCreate`/`TaskUpdate` rides along with the next substantive tool call — `CLAUDE.md` §Task Management ▸ In-session task tracking, with the measured turn cost. Ordering rule, not a licence.
+This is the **one** sanctioned bookkeeping-only response. Everywhere else, a `TaskCreate`/`TaskUpdate` rides along with the next substantive tool call — zero bookkeeping-only turns (`CLAUDE.md` §Task Management ▸ In-session task tracking, with the measured turn cost). Ordering rule, not a licence.
 
 ### Frozen plan during build
 
@@ -22,7 +22,7 @@ An approved `.plans/active/todo_*.md` or `plan_*.md` is read-only once implement
 
 Tasks created inside a subagent are session-local — invisible in the parent `TaskList`, so useless for tracking.
 
-Subagents never call `TaskCreate` or `TaskUpdate`. The orchestrator creates all tasks before the first `Agent()` spawn, and marks each teammate's task `completed` as its delta arrives — never batched at session end.
+Subagents never call `TaskCreate` or `TaskUpdate`. The orchestrator creates all tasks before the first `Agent()` spawn, and marks each teammate's task `completed` as its delta arrives, in the same response that consumes the delta — never batched at session end, never a turn of its own.
 
 Every subagent spawn prompt includes:
 
@@ -86,10 +86,11 @@ Forbidden while agents are in flight, every skill:
 - Text-only waiting turns — "Waiting.", "Standing by.", "Still waiting.", "Waiting on the consolidator."
 - Any `sleep`, foreground or backgrounded, and any `while`/`until` poll loop. Foreground `sleep` is harness-blocked; the loop never runs.
 - Fixed-interval polling prose ("poll every 5 minutes", "check every `$MONITOR_INTERVAL` seconds") — an interval needs a clock the orchestrator does not have.
+- Any waiting tool — `ScheduleWakeup`, `ListAgents`, `Monitor` — and any liveness probe (`find <run-dir> -newer <sentinel>`) used to wait on a spawned agent.
 
-Permitted when a real signal is needed: **one** liveness probe per turn — a single `find <run-dir> -newer <sentinel>`, or one bounded `Monitor` call. Then end the turn again.
+Instead, a **per-agent deadline**: in the spawn response, write the batch's `agent-watch-<batch>.tsv` (one row per agent: name, deliverable, deadline seconds); on every completion or idle notification, run `agent_watch.py` once and act on every row (`_shared/agent-spawn-protocol.md` §Deadlines).
 
-On the notification: read each spawned agent's output file. Empty or missing → `timed_out`, surface with ⏱, never silently omit.
+On the notification: an agent whose notification arrived without its deliverable (empty or missing output file, idle without its envelope) is `timed_out` at once — surface with ⏱, never wait for it further, never silently omit. A ⏱ only informs: it never answers, skips or defaults a user question, and never prompts one asking whether to keep waiting.
 
 > Full detail (worked ✓/✗ slot, spawn-prompt, and FleetView examples) in `_full/task-lifecycle.md`. Read before composing multi-agent spawn prompts:
 >

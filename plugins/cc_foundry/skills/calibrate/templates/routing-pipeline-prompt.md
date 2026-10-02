@@ -94,7 +94,7 @@ Each selector gets this prompt (substitute `<ROSTER>`, `<TASK_PROMPT>`, `<PROBLE
 
 **Context discipline**: subagents write to disk, return single-line ack. Pipeline agent must NOT accumulate full analyses — scorers read from disk in Phase 3. `Wrote: <PROBLEM_ID>` per agent correct.
 
-**Completion handling** — spawns are blocking `Agent()` calls, so no poll loop is possible (`_FOUNDRY_SHARED/agent-spawn-protocol.md` §Synchronous spawns). Each subagent returns: check for `selection-<PROBLEM_ID>.md`; missing: mark that problem `{"selected":null,"timed_out":true}` with ⏱ in report.
+**Completion handling** — never a poll loop or a waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`); each subagent's result arrives as its `Agent()` result or completion notification (`_FOUNDRY_SHARED/agent-spawn-protocol.md`). Each subagent returns: check for `selection-<PROBLEM_ID>.md`; missing: mark that problem `{"selected":null,"timed_out":true}` with ⏱ in report.
 
 ### Phase 4 — Score
 

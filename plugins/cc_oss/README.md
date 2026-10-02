@@ -435,8 +435,15 @@ The bridge implementation route reads the bridge's structured response object an
 - The tool allows four questions per call, and the layout fills all four: up to three item-checkbox questions (≤3 items each) plus bulk.
 - Commit mode and, when "By topic group" is chosen, the grouping strategy (by change domain, by file, by specialist, or type your own labels) ride in the same call wherever a slot is free, so the run costs one fewer confirmation pause than asking them in sequence.
 - Checkbox selection tops out at 18 items; beyond that, per-item checkboxes are replaced by a compact inline table plus the bulk, commit, and grouping questions.
+- Choosing "type your own labels" means typing `<id>=<topic>` pairs right there; resolve no longer asks for labels after implementation.
 
-**Dispatch granularity.** The same selection gate also asks how Phase 2 should spread the work across specialist worktrees: `Auto` keeps the pool-capped waves described above, `Sequential` runs one worktree at a time, `Per specialist` puts every item of one specialist in a single worktree with no 5-item split (fewer spawns, and a warning that more than about ten items in one worktree can exhaust an agent's budget), and `Custom` prints the formed groups at the Phase 1 → Phase 2 boundary and asks again there. The answer changes wave width and sub-group size only — specialist routing and both grouping tiebreaks are unaffected by every answer. It rides a slot in an existing call in every band except 4-6 pending items, and only the preview choice adds a confirmation pause.
+**Tests run where they pay off.** Implementation and QA agents run only the tests that cover the files they changed (`resolve_test_plan.py`: codemap test-impact when available, name/import heuristics otherwise); the repository's own full-suite command runs in the background at the end of the lint/QA gate — once when it passes, again after each fix of a failure (within the gate's 3-iteration cap), so a green full suite is always the last test evidence before push.
+
+**Fewer turns while it runs.** Resolve keeps its step-level progress tasks, but every task update rides in the same response as real work (no bookkeeping-only turns), answers every "where am I" git question with one `git_state_snapshot.py` call, and never polls background agents: each spawn gets a deadline, checked by `agent_watch.py` whenever an agent finishes, and an agent that stops without its deliverable is reported as timed out immediately instead of waiting for you to ask.
+
+**Almost everything is asked up front.** The selection gate also asks whether you intend to push once the lint/QA gate passes and whether to open the PR in the browser afterwards, plus — only when more than 20 items are selected — whether to run the first 20 now. After you answer, conflict commit, implementation and lint/QA proceed without another question, so you can walk away. Before pushing, resolve asks you to confirm with the diff stat and commit count in front of you — unless you chose "don't push" at the gate. A normal run asks at most 3 times at the gate, plus that one confirmation. A push you did not authorize never happens; an authorized push that is rejected (non-fast-forward) or blocked by a push guard or permission prompt is not retried or forced. Resolve still writes the final report, shows the push status there (`pushed`, `blocked-guard`, `blocked-permission`, `rejected-non-ff`, `skipped-by-user`), and when the push was blocked ends the report with the exact lines to run to authorize and push.
+
+**Dispatch granularity.** The same selection gate also asks how Phase 2 should spread the work across specialist worktrees: `Auto` keeps the pool-capped waves described above, `Sequential` runs one worktree at a time, `Per specialist` puts every item of one specialist in a single worktree with no 5-item split (fewer spawns, and a warning that more than about ten items in one worktree can exhaust an agent's budget), and `Custom` prints the formed groups at the Phase 1 → Phase 2 boundary and asks again there. The answer changes wave width and sub-group size only — specialist routing and both grouping tiebreaks are unaffected by every answer. It shares a call with the commit-mode question in every band, and only the preview choice adds a confirmation pause after the selection gate.
 
 Resolve after `/review` on same PR: blast-radius check reuses per-module codemap answers review already computed, no re-query — review's persisted pre-flight batch split into freshness-stamped per-module artifacts.
 
@@ -842,23 +849,26 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 
 #### Review, resolve, and argument helpers
 
-| Helper                       | Purpose                                                                                           |
-| ---------------------------- | ------------------------------------------------------------------------------------------------- |
-| `build_merge_plan.py`        | Assemble Phase 3's cherry-pick plan from Phase 2's per-group commit ledger.                       |
-| `commit_action_item.py`      | Manage the commit sentinel around one resolve action-item commit.                                 |
-| `commit_all_items.py`        | Create a bulk commit summarizing resolved review items with a native temp-root sentinel.          |
-| `commit_lint_fixes.py`       | Stage tracked lint changes and create the lint-fix commit with a native temp-root sentinel.       |
-| `compute_commit_sentinel.py` | Print the current repository and branch commit-sentinel path using the native Windows temp root.  |
-| `derive_fork_remote.py`      | Ensure the contributor's fork remote exists, then report the pending push scope.                  |
-| `find_review_report.py`      | Enforce the `/oss:review` reject gate before `/oss:resolve` starts fixing a PR.                   |
-| `heal_git_artifacts.py`      | Reclaim stale resolve locks and orphaned git worktrees.                                           |
-| `merge_specialist_batch.py`  | Cherry-pick specialist worktree commits in priority order.                                        |
-| `parse-resolve-args.py`      | Parse `/oss:resolve` arguments into shell assignments.                                            |
-| `parse-skill-flags.py`       | Parse shared skill flags into shell assignments.                                                  |
-| `parse_audit_json.py`        | Summarize `pip-audit` JSON as dependency and vulnerability counts.                                |
-| `resolve_pr_refs.py`         | Resolve the default branch and the PR's head/base/fork metadata before checkout.                  |
-| `resolve_preflight.py`       | Verify tools, authentication, remote state, and native temporary preflight output before resolve. |
-| `resolve_shared_path.py`     | Resolve a plugin's shared directory portably (own, or the active `codemap-py` install).           |
+| Helper                       | Purpose                                                                                                         |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `agent_watch.py`             | Report each spawned resolve agent's deliverable and deadline in one call, so nothing polls.                     |
+| `build_merge_plan.py`        | Assemble Phase 3's cherry-pick plan from Phase 2's per-group commit ledger.                                     |
+| `commit_action_item.py`      | Manage the commit sentinel around one resolve action-item commit.                                               |
+| `commit_all_items.py`        | Create a bulk commit summarizing resolved review items with a native temp-root sentinel.                        |
+| `commit_lint_fixes.py`       | Stage tracked lint changes and create the lint-fix commit with a native temp-root sentinel.                     |
+| `compute_commit_sentinel.py` | Print the current repository and branch commit-sentinel path using the native Windows temp root.                |
+| `derive_fork_remote.py`      | Ensure the contributor's fork remote exists, then report the pending push scope.                                |
+| `find_review_report.py`      | Enforce the `/oss:review` reject gate before `/oss:resolve` starts fixing a PR.                                 |
+| `git_state_snapshot.py`      | Print branch, HEAD, upstream, base merge-base, status lists, remotes and worktrees as one JSON.                 |
+| `heal_git_artifacts.py`      | Reclaim stale resolve locks and orphaned git worktrees.                                                         |
+| `merge_specialist_batch.py`  | Cherry-pick specialist worktree commits in priority order.                                                      |
+| `parse-resolve-args.py`      | Parse `/oss:resolve` arguments into shell assignments.                                                          |
+| `parse-skill-flags.py`       | Parse shared skill flags into shell assignments.                                                                |
+| `parse_audit_json.py`        | Summarize `pip-audit` JSON as dependency and vulnerability counts.                                              |
+| `resolve_pr_refs.py`         | Resolve the default branch and the PR's head/base/fork metadata before checkout.                                |
+| `resolve_preflight.py`       | Verify tools, authentication, remote state, and native temporary preflight output before resolve.               |
+| `resolve_test_plan.py`       | Pick targeted tests for a change (codemap test-impact, else path heuristics) and the repo's full-suite command. |
+| `resolve_shared_path.py`     | Resolve a plugin's shared directory portably (own, or the active `codemap-py` install).                         |
 
 #### Release, installation, and path helpers
 
@@ -922,7 +932,7 @@ Blocks only the owning workflow follow-up until its report and matching current-
 
 **`/oss:resolve` pauses mid-run asking for confirmation**
 
-Up to 20 selected items dispatch automatically across parallel specialist waves — no confirmation needed. Above 20, resolve asks whether to dispatch the first 20 or stop; no item is silently dropped.
+It should not on the normal path: every decision — items, commit mode, grouping, dispatch width, the over-20 cap, push intent, and the post-PR action — is asked at the item-selection gate; the push itself is confirmed at the end with the diff stat and commit count, unless you chose "don't push" at the gate, and up to 20 selected items dispatch automatically across parallel specialist waves. Above 20, that same gate asks whether to dispatch the first 20 or stop; no item is silently dropped. A later question means one of: you chose `Custom` dispatch (group preview), an item's status could not be confirmed, you left the push question unanswered at the gate (resolve then asks at push time, as it used to), the recorded push answer or typed labels were lost (for example after resuming in a fresh session). A `git push` permission prompt or push-guard message comes from your harness or another plugin, not from resolve.
 
 **`/oss:resolve` aborts with "too many conflicted files"**
 

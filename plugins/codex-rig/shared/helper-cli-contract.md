@@ -19,7 +19,9 @@ Helper option schemas live in `--help`, not skills. In plugin, derive `PLUGIN_RO
 - `python PLUGIN_ROOT/shared/select-git-remote.py --help`
 - `python PLUGIN_ROOT/shared/write-result.py --help`
 - `python PLUGIN_ROOT/shared/final_handoff.py --help`
-- `python PLUGIN_ROOT/shared/validate-artifacts.py --help`
+- `python PLUGIN_ROOT/shared/validate-artifacts.py --help` — `--all-errors` reports every failed check group with a repair hint in one pass
+- `python PLUGIN_ROOT/shared/test_targets.py --help` — changed-file pytest targets (codemap-py test impact, else name/import heuristics) and the sandbox-safe flag decision for loop and reproduction runs, never a final gate
+- `python PLUGIN_ROOT/shared/remediation_finalize.py --help` — code-remediate and code-review (`--skill code-review` derives only shared handoff fields and also runs the review validator): derives copied metadata, workplan sections, and handoff fields, then renders, writes, validates, and optionally promotes in one call
 - `python PLUGIN_ROOT/skills/code-review/validate_artifacts.py --help`
 - `python PLUGIN_ROOT/skills/code-review/review_prepare.py --help` — deterministic native-wave preparation and assembly; inspect selected subcommand help
 - `python PLUGIN_ROOT/skills/code-review/review_context.py --help` — audited frozen-context delivery to a native reviewer

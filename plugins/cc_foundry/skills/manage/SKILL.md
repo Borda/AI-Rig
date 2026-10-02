@@ -64,12 +64,24 @@ Manage lifecycle of agents, skills, rules, hooks in `.claude/`. Handles creation
 <constants>
 
 - AGENTS_DIR: `.claude/agents`
+
 - SKILLS_DIR: `.claude/skills`
+
 - RULES_DIR: `.claude/rules`
+
 - HOOKS_DIR: `.claude/hooks`
+
 - AVAILABLE_COLORS: indigo, lime, magenta, teal, violet
 
-Each Step 4 spawn applies health monitoring in `_shared/agent-spawn-protocol.md` §8b — rely on harness completion notification, then read agent's output file; optional single `health_sentinel.py` probe per turn (no sleep loop). Substitute only its own `<ID>` suffix and output-file glob; don't re-paste the snippet per spawn.
+- AGENT_WATCH_DIR: `.temp/manage` · deadlines: `web-explorer` 300 s · `sw-engineer` 900 s
+
+Each Step 4 spawn follows `_shared/agent-spawn-protocol.md` §Deadlines. Spawns here are sequential, one agent in flight at a time, so every spawn response **overwrites** `.temp/manage/agent-watch-manage.tsv` with that one agent's row (`<name>\t<deliverable or ->\t<deadline>`) via the Write tool — never a waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`), probe, or sleep. On its completion notification run the check block once, before reading its output:
+
+```bash
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir ".temp/manage"  # timeout: 5000
+```
+
+`done` → continue · notification arrived but row not `done` (deliverable empty/missing, or idle without its envelope) → ⏱ `timed_out` now: surface it in the Step 10 report; a web-explorer ⏱ means default frontmatter fields (the existing missing-schema fallback). A ⏱ never answers, skips or defaults any question or gate below.
 
 Colors in use are read from live Grep in Step 3 (authoritative) — no static used-color list to maintain. AVAILABLE_COLORS is the candidate pool for a new agent; pick first entry not already in Step-3 set.
 
@@ -208,10 +220,10 @@ Extract names inline from Glob results — strip `.claude/agents/` prefix and `.
      if [ -n "$(find "$MANAGE_SCHEMA_FILE" -mmin -1440 2>/dev/null)" ]; then MANAGE_SCHEMA_CACHED=true; else MANAGE_SCHEMA_CACHED=false; fi
      echo "Schema file: $MANAGE_SCHEMA_FILE (cached: $MANAGE_SCHEMA_CACHED)"  # timeout: 3000
      ```
-   - **`MANAGE_SCHEMA_CACHED=true`**: skip spawn and health monitoring below; Read `$MANAGE_SCHEMA_FILE` (limit=60) for field list, continue at extraction bullet.
+   - **`MANAGE_SCHEMA_CACHED=true`**: skip spawn and deadline below; Read `$MANAGE_SCHEMA_FILE` (limit=60) for field list, continue at extraction bullet.
    - Spawn **foundry:web-explorer** to fetch `https://code.claude.com/docs/en/sub-agents` with instruction: "Write your full findings (schema fields, new fields, deprecated fields) to `<MANAGE_SCHEMA_FILE>` (substitute resolved path from bash block above) using the Write tool. Return ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"file\":\"<MANAGE_SCHEMA_FILE>\",\"fields\":N,\"new\":N,\"deprecated\":N,\"confidence\":0.N,\"summary\":\"N fields, N new, N deprecated\"}`"
 
-   Health monitoring §8b: `<ID>` = `web-explorer`, glob `agent-schema.md` (poll path `.cache/manage`).
+   Deadline (§Deadlines, constants): in this spawn response Write `.temp/manage/agent-watch-manage.tsv` = `web-explorer\t<MANAGE_SCHEMA_FILE>\t300`.
 
    - Read returned summary; extract: valid frontmatter fields (`name`, `description`, `tools`, `disallowedTools`, `model`, `permissionMode`, `maxTurns`, `effort`, `initialPrompt`, `skills`, `mcpServers`, `hooks`, `memory`, `background`, `isolation`, `color`), current model shorthands, new fields
    - Note new fields worth including. Adjust template to reflect current schema. New field broadly useful for agent's role (e.g. `maxTurns` for long-running agents): include with sensible default and inline comment.
@@ -245,7 +257,7 @@ Write the file using the Write tool.
 Return ONLY: {"status":"done","file":".claude/agents/<name>.md","lines":N,"confidence":0.N}
 ```
 
-Health monitoring §8b: `<ID>` = `sw-engineer-agent`, glob matching this agent's output files.
+Deadline (§Deadlines, constants): in this spawn response Write `.temp/manage/agent-watch-manage.tsv` = `sw-engineer-agent\t-\t900` (envelope-only — the file lands in a worktree).
 
 **CRITICAL — worktree isolation copy**: `foundry:sw-engineer` runs with `isolation: worktree` — scaffolded file lands in a temporary worktree, not the main tree. After agent completes: (1) read worktree path from agent result (returned in `worktree` field or as part of result message); (2) run: `cp <worktree-path>/.claude/agents/<name>.md .claude/agents/<name>.md` (substitute actual paths); (3) proceed with Steps 5–9 on main-tree copy; (4) remove the worktree once the copy is verified: read the `worktree` path and `branch` from the agent result, assert the path starts with `.claude/worktrees/` (`agents/sw-engineer.md` §Worktree isolation), then `git worktree remove --force <worktree-path>` followed by `git branch -D <branch>`. Assertion fails, removal errors, or the result carried no worktree path: change nothing — print the path and `→ leftover worktree; clean up with git worktree remove then git worktree prune` in the Step 10 report. Never run the removal on a path outside `.claude/worktrees/`. Without this step, Steps 5–9 Globs find nothing.
 
@@ -260,10 +272,10 @@ Health monitoring §8b: `<ID>` = `sw-engineer-agent`, glob matching this agent's
      if [ -n "$(find "$MANAGE_SKILL_SCHEMA_FILE" -mmin -1440 2>/dev/null)" ]; then MANAGE_SKILL_SCHEMA_CACHED=true; else MANAGE_SKILL_SCHEMA_CACHED=false; fi
      echo "Skill schema file: $MANAGE_SKILL_SCHEMA_FILE (cached: $MANAGE_SKILL_SCHEMA_CACHED)"  # timeout: 3000
      ```
-   - **`MANAGE_SKILL_SCHEMA_CACHED=true`**: skip spawn and health monitoring below; Read `$MANAGE_SKILL_SCHEMA_FILE` (limit=60) for field list, continue at extraction bullet.
+   - **`MANAGE_SKILL_SCHEMA_CACHED=true`**: skip spawn and deadline below; Read `$MANAGE_SKILL_SCHEMA_FILE` (limit=60) for field list, continue at extraction bullet.
    - Spawn **foundry:web-explorer** to fetch `https://code.claude.com/docs/en/skills` with instruction: "Write your full findings (schema fields, new fields, deprecated fields) to `<MANAGE_SKILL_SCHEMA_FILE>` (substitute resolved path from bash block above) using the Write tool. Return ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"file\":\"<MANAGE_SKILL_SCHEMA_FILE>\",\"fields\":N,\"new\":N,\"deprecated\":N,\"confidence\":0.N,\"summary\":\"N fields, N new, N deprecated\"}`"
 
-   Health monitoring §8b: `<ID>` = `web-explorer-skill`, glob matching this agent's output files.
+   Deadline (§Deadlines, constants): in this spawn response Write `.temp/manage/agent-watch-manage.tsv` = `web-explorer-skill\t<MANAGE_SKILL_SCHEMA_FILE>\t300`.
 
    - Read returned summary; extract: valid frontmatter fields (`name`, `description`, `argument-hint`,`disable-model-invocation`, `user-invocable`, `allowed-tools`, `model`, `effort`, `shell`, `paths`, `context`, `agent`, `hooks`), new fields
    - Note new fields worth including. Adjust template to reflect current schema. Include `model` or `context: fork` only when skill's purpose clearly benefits.
@@ -291,7 +303,7 @@ Write using the Write tool.
 Return ONLY: {"status":"done","file":".claude/skills/<name>/SKILL.md","lines":N,"confidence":0.N}
 ```
 
-Health monitoring §8b: `<ID>` = `sw-engineer-skill`, glob matching this agent's output files.
+Deadline (§Deadlines, constants): in this spawn response Write `.temp/manage/agent-watch-manage.tsv` = `sw-engineer-skill\t-\t900` (envelope-only).
 
 ### Mode: Update Agent (rename)
 
@@ -760,7 +772,7 @@ AskUserQuestion: "Run foundry:challenger to adversarially review the changes jus
   (b) Challenge — spawn foundry:challenger on modified file(s)
 ```
 
-On **(b)**: spawn `foundry:challenger` inline (foreground, not background):
+On **(b)**: spawn `foundry:challenger` — background like every spawn; in the same response Write `.temp/manage/agent-watch-manage.tsv` = `challenger\t.temp/manage-challenger-<YYYY-MM-DD>.md\t900`, end the turn, and on its notification run the `<constants>` deadline check block once (⏱ `timed_out` → report it in place of the findings):
 
 ```text
 Agent(subagent_type="foundry:challenger", prompt="Adversarially review the changes just made to <list modified file paths>. Challenge: correctness of design decisions, completeness, potential regressions, and whether the stated goal was achieved. Read-only. Write full findings to .temp/manage-challenger-<YYYY-MM-DD>.md using the Write tool. Return ONLY: {\"status\":\"done\",\"file\":\".temp/manage-challenger-<YYYY-MM-DD>.md\",\"findings\":N,\"confidence\":0.N}")

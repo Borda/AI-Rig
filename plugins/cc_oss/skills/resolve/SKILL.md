@@ -49,8 +49,8 @@ NOT-for additions (scope guards):
 
 <constants>
 ```text
-CHALLENGE_TIMEOUT_S=300  # tightened from CLAUDE.md §6 default 900s
-CHALLENGE_POLL_S=90      # tightened from CLAUDE.md §6 default 300s
+CHALLENGE_TIMEOUT_S=300  # intel + challenge agent deadline; tightened from CLAUDE.md §6 default 900s
+AGENT_DEADLINE_S=900     # conflict, specialist, QA/lint agent deadline — checked at wake-ups, never polled
 ```
 > Bash timeout convention — `# timeout: N` annotations in bash blocks are honored by the Claude Code
 >
@@ -70,9 +70,9 @@ CHALLENGE_POLL_S=90      # tightened from CLAUDE.md §6 default 300s
 - Boundary 2: end of Step 8 — per-item implementation loop complete, before Step 9 lint gate. Contract overwrites on each iteration (latest state wins).
 - Boundary 3: start of Step 11 — before final report write, after push.
 - Preserve at boundary 0: PR#, `IMPL_DIR`, `action-items.jsonl`, `pr-intelligence.md`, `pr-vars.sh` paths.
-- Preserve at boundary 1: PR#, `IMPL_DIR`, `challenge-log.txt`, `skipped-items.txt`, `item-tasks.tsv` paths.
-- Preserve at boundary 2: PR#, implemented/remaining item state, `IMPL_DIR`, `challenge-log.txt`, `item-tasks.tsv` paths.
-- Preserve at boundary 3: final report path, PR#, `IMPL_DIR`, `challenge-log.txt`, `item-tasks.tsv` paths.
+- Preserve at boundary 1: PR#, `IMPL_DIR`, `challenge-log.txt`, `skipped-items.txt`, `item-tasks.tsv` paths, recorded Step 3d push answer.
+- Preserve at boundary 2: PR#, implemented/remaining item state, `IMPL_DIR`, `challenge-log.txt`, `item-tasks.tsv` paths, recorded Step 3d push and post-PR answers, push status.
+- Preserve at boundary 3: final report path, PR#, `IMPL_DIR`, `challenge-log.txt`, `item-tasks.tsv` paths, recorded push status, `push-unblock.txt` path.
 - State that must survive a compaction lives in files under `$IMPL_DIR`, never only in-context: challenge verdicts (`challenge-log.txt`), item→task map (`item-tasks.tsv`), `IMPL_DIR` itself via the `resolve-impl-dir-${CSID}` sentinel written at `mktemp` time.
 
 </compaction>
@@ -95,13 +95,15 @@ CHALLENGE_POLL_S=90      # tightened from CLAUDE.md §6 default 300s
 
 ## Run structure — text order is not execution order
 
-Two blocking user gates cut this workflow into three **runs**. Within a run, work that shares no data dependency is dispatched in the same response turn so it overlaps instead of queueing. Sections below stay in step-number order for reading; the run marker on each heading says when it actually executes.
+Two blocking user gates cut this workflow into three **runs**; an explicit "don't push" at Step 3d removes the second gate, leaving two. Within a run, work that shares no data dependency is dispatched in the same response turn so it overlaps instead of queueing. Sections below stay in step-number order for reading; the run marker on each heading says when it actually executes.
 
 | Run | Executes | Ends at |
 | -- | -- | -- |
 | 1 | Step 1 · 2 · 3a · 3b ‖ **Step 4 + Step 5** · 3c · **Steps 6–7a** ‖ gate | Step 3d selection gate |
-| 2 | Step 7b join · 3e · 8 · 9 | Step 10 push gate |
+| 2 | Step 7b join · 3e · 8 · 9 | Step 10 push confirmation (skipped on an explicit Step 3d "don't push") |
 | 3 | Step 10 push · 11 · 12 | workflow end |
+
+**Run 2 is unattended on the normal path.** Step 3d collects every decision a later step needs and can predict up front with the same information — item scope, commit mode, grouping strategy and typed labels, dispatch width, the over-20 cap, push intent and the post-PR action — and persists each to a sentinel or `$IMPL_DIR` file. Later steps never re-ask a Step 3d decision. Push authorization is the one decision that cannot move: its required scope (diff stat, commit count, last subject) exists only after implementation, so Step 10 asks it with that scope unless the user explicitly chose "don't push" at Step 3d. Otherwise Run 2 asks only for error recovery (an unresolved item status, a challenge that timed out twice, a lost typed-labels file) or for the group preview the user explicitly chose at Step 3d.
 
 Two overlaps, both free — each rides an idle window the orchestrator already had:
 
@@ -111,6 +113,33 @@ Two overlaps, both free — each rides an idle window the orchestrator already h
 One dependency forbids a wider overlap: **Step 6a consumes the contribution motivation that `INTEL_AGENT` synthesizes** (`pr-intelligence.md`: PR body is stated intent, thread is the authoritative record). Steps 6–7 therefore cannot start before that envelope returns, and never fall back to a git-log-only lens.
 
 Degenerate cases, all reducing to the old serial order with no special handling: `report` mode with no PR# skips Steps 4–7 entirely; zero conflicted files means Step 5 commits the merge itself and Steps 6–7 plus the join are no-ops; `--worktree` enters the worktree inside Step 4, so an `INTEL_AGENT` spawned moments earlier keeps writing to the absolute `IMPL_DIR` it was handed.
+
+## Agent wait discipline — no polling, per-agent deadlines
+
+Every spawned agent (intel, conflict, Phase 1 challenge, Phase 2 specialists, Step 9 QA/lint) runs in the background. Waiting on one is **never** a tool call:
+
+- **Never** call `ScheduleWakeup`, `ListAgents`, or a `Monitor` loop to wait for a spawned agent — and no `sleep`, no poll loop, no no-op call, no "waiting" turn. Spawn, end the turn, resume on the completion notification (`rules/task-lifecycle.md` §After spawning).
+- **Arm a deadline per agent.** In the same response as each spawn batch, write `$IMPL_DIR/agent-watch-<batch>.tsv` with the Write tool — one row per agent, `<name>\t<deliverable path, or - for an envelope-only agent>\t<deadline seconds>`. The file's write time is the spawn time, so no clock value is ever typed. Batch names and deadlines: `intel` 300 · `conflict` 900 · `challenge` 300 · `challenge-retry` 300 · `impl` 900 (rewrite per wave) · `qa` 900.
+- **Check once per wake-up.** On every completion or idle notification, first persist any envelope the notification carried (where a step says to write it to a file), then run the block below once, before acting on any agent output, and act on every row: `done` → consume it · `timed_out` → ⏱ `timed_out` now and take the step's documented fallback · an agent whose notification arrived but whose row is still `pending`/`awaiting-envelope` (idle or finished without its deliverable) → ⏱ `timed_out` now, never wait for it further · rows still open with no notification → end the turn.
+- Never ask the user whether to keep waiting, and never leave a stalled agent for the user to notice — a run the user returns to must already show every ⏱.
+- A ⏱ only informs. It never answers, skips, or defaults a user question: every gate the step defines still fires on the timed-out path.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; cannot check agent deadlines"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/agent_watch.py" --state-dir "$IMPL_DIR"  # timeout: 5000
+```
+
+## State checks — one call
+
+Any ad-hoc look at repository state — branch, HEAD, upstream, ahead/behind, merge-base against the base branch, staged/unstaged/untracked/unmerged files, an in-progress merge, remotes, worktrees — is **one** call to the snapshot below, never a run of separate `git status` / `branch` / `log` / `rev-parse` / `remote` / `worktree list` calls. The guard fences inside steps keep their own git commands: they gate on exact exit codes and are already single calls. Writes (`add`, `commit`, `push`, `merge`) are never replaced.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/git_state_snapshot.py" --base-ref "$BASE_REF"  # timeout: 15000
+```
 
 ## Step 1: Pre-flight
 
@@ -213,7 +242,10 @@ case "${VALUE_AGENT:-}" in
 esac
 echo "$FLAG_NO_CHALLENGE" > "${TMPDIR:-/tmp}/resolve-no-challenge-${CSID}"  # read by Step 8 Phase 1
 echo "${VALUE_AGENT:-}" > "${TMPDIR:-/tmp}/resolve-agent-override-${CSID}"
-echo skip > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"  # Step 10 overwrites; a run that never reaches it must not inherit last run's `open`
+echo skip > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"  # Step 3d push question overwrites; a run that never reaches it must not inherit last run's `open`
+# `unset`, not `skip`/`push`: a run that never records a Step 3d push answer must neither push nor inherit last run's `push` — Step 10 asks instead
+echo unset > "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}"
+echo none > "${TMPDIR:-/tmp}/resolve-push-status-${CSID}"  # Step 10 overwrites with what happened; `none` = Step 10 never ran (no PR#, skip-all)
 # same reason: a run that never reaches Step 3d (zero pending items, bulk skip-all) must not inherit last run's `stage`/`grouped`.
 # `unset`, not `each`: Step 8's merge fence aborts on it, so a skipped Step 3d block fails loud instead of landing per-item commits
 echo unset > "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}"
@@ -331,7 +363,7 @@ Branch on the printed `REPORT_STATUS` — read it from stdout, never assume it:
 
 ### Create all workflow tasks upfront
 
-After `PR_NUMBER` and `MODE` resolved above, create all major-step tasks now. Store each returned `task_id` for step-level `TaskUpdate` calls. Conditional tasks: include condition in subject brackets; cancel via `TaskUpdate(status="deleted")` at skip point — never leave conditional tasks pending.
+After `PR_NUMBER` and `MODE` resolved above, create all major-step tasks now — every `TaskCreate` in **one response**, riding with the next real tool call (the Step 3a or 3b `cat` block). Store each returned `task_id` for step-level `TaskUpdate` calls. Conditional tasks: include condition in subject brackets; cancel via `TaskUpdate(status="deleted")` at skip point — never leave conditional tasks pending. All seven creates ride in that one response:
 
 ```text
 TASK_GATHER   = TaskCreate(subject="Step 2: Gather action items — PR #<N>",              activeForm="Gathering action items for PR #<N>")
@@ -343,11 +375,26 @@ TASK_LINT     = TaskCreate(subject="Step 9: Lint and QA gate",                  
 TASK_CLOSE    = TaskCreate(subject="Steps 10–11: Push and final report [if pr mode]",      activeForm="Pushing to fork and reporting")
 ```
 
+**Zero bookkeeping-only turns.** Step-level progress stays visible — every task above moves `pending` → `in_progress` → `completed` (or `deleted` when skipped) exactly as before — but no response may consist only of `TaskCreate`/`TaskUpdate`/`TaskList` calls, per-item and per-conflict tasks included. Each update rides in the response that carries the named real tool call; the only standalone one is `TASK_CLOSE` → `completed` immediately before the long Step 11 report (`rules/task-lifecycle.md` §TaskUpdate before long output):
+
+| Step | Updates | Rides with |
+| -- | -- | -- |
+| 2 | `TASK_GATHER` → `in_progress` | the Step 3a/3b `cat` block |
+| 4 | `TASK_CHECKOUT` → `in_progress` (or `TASK_CHECKOUT`, `TASK_CONFLICT` → `deleted` when skipped) | the Step 4 branch-safety block |
+| 4 end | `TASK_CHECKOUT` → `completed` | the FORK_REMOTE block |
+| 5 | `TASK_CONFLICT` → `in_progress` | the `conflict-resolution.md` load |
+| 3d | `TASK_GATHER` → `completed`, `TASK_SELECT` → `in_progress` | the boundary-0 contract block, before the selection prompt |
+| 7b join | `TASK_SELECT` → `completed`, `TASK_CONFLICT` → `completed` | the join's first tool call |
+| 8 | `TASK_IMPL` → `in_progress` (or `deleted` when no items) | the codemap index block, or Step 9's first call |
+| 8 end | `TASK_IMPL` → `completed` | Step 9's boundary-2 block, with `TASK_LINT` → `in_progress` |
+| 9 end | `TASK_LINT` → `completed` | Step 10's first block, with `TASK_CLOSE` → `in_progress` (or `deleted` when Step 10 is skipped) |
+| 11 | `TASK_CLOSE` → `completed` | standalone, right before the report |
+
+Per-item tasks (Step 3e) and per-conflict tasks (Step 5a): create each set in one response, and close each item's task in the response that already carries the next real call.
+
 ## Step 2: Gather action items
 
-```text
-TaskUpdate(task_id=TASK_GATHER, status="in_progress")
-```
+`TaskUpdate(task_id=TASK_GATHER, status="in_progress")` — rides with the Step 3a/3b `cat` block (§Zero bookkeeping-only turns).
 
 ## Step 3a: Report intelligence (report mode only)
 
@@ -442,18 +489,13 @@ Summary ≤60 chars. Notes = `—` when empty; carries commit SHA for `[done]` r
 
 ## Step 3d: User item selection
 
-<!-- branch: main-path — item-selection (always fires in step 3d; ≤3 items = one merged call incl. commit-mode + dispatch, +1 topic-group follow-up only when commit mode = (b); 4-6 and 7-9 = two calls: checkboxes + bulk, then commit-mode + topic-group + dispatch follow-up; 10-18 = three: two checkbox pages + the same follow-up) -->
+<!-- branch: main-path — item-selection (always fires in step 3d; ≤3 items = two calls: items + bulk + commit-mode + dispatch, then push + topic-group-when-grouped follow-up; 4-6 and 7-9 = two calls: checkboxes + bulk, then commit-mode + topic-group + dispatch + push follow-up; 10-18 = three: two checkbox pages + the same follow-up; ≥19 = two: bulk + commit-mode + topic-group + dispatch, then push + over-20-when-needed follow-up; zero pending with a PR = one push-only call; push question omitted when no PR number exists) -->
 
 ! IMPORTANT — invoke `AskUserQuestion` tool directly. Never write options as plain text.
 
-Gather is complete here (3a, 3b, or 3c done). Report mode also enters this step for nonempty report items, so the same user choice supplies item scope, commit mode, and the over-20 cap decision. Mark TASK_GATHER `completed` and TASK_SELECT `in_progress` **before** the selection prompt — otherwise the gather `activeForm` keeps driving the spinner through the user-selection window, falsely implying gather is still running:
+Gather is complete here (3a, 3b, or 3c done). Report mode also enters this step for nonempty report items, so the same user choice supplies item scope, commit mode, and the over-20 cap decision. Mark TASK_GATHER `completed` and TASK_SELECT `in_progress` **before** the selection prompt — otherwise the gather `activeForm` keeps driving the spinner through the user-selection window, falsely implying gather is still running. `TaskUpdate(task_id=TASK_GATHER, status="completed")` and `TaskUpdate(task_id=TASK_SELECT, status="in_progress")` both ride with the boundary-0 contract block below.
 
-```text
-TaskUpdate(task_id=TASK_GATHER, status="completed")
-TaskUpdate(task_id=TASK_SELECT, status="in_progress")
-```
-
-Pending items = ACTION_ITEMS where type ≠ `[done]` and type ≠ `[info]`. Zero pending → set `SELECTED_ITEMS` = all pending IDs; continue to Step 3e for `pr`/`pr+report`, or skip Step 3e in `report` mode.
+Pending items = ACTION_ITEMS where type ≠ `[done]` and type ≠ `[info]`. Zero pending → set `SELECTED_ITEMS` = all pending IDs; when a PR number exists, still ask the **Push question** below alone in one call — the Steps 5–7 merge commit is pushed even with no items — then continue to Step 3e for `pr`/`pr+report`, or skip Step 3e in `report` mode.
 
 Sort all pending items by severity descending (most impactful first).
 
@@ -482,17 +524,19 @@ Immediately before the first `AskUserQuestion`, ensure the latest assistant user
 
 | Pending | Call 1 slots | Follow-up call |
 | -- | -- | -- |
-| ≤3 | Q1 items · Q2 bulk · Q3 commit-mode · Q4 dispatch | topic-group, only when commit mode = (b) |
-| 4-6 | Q1-Q2 items (≤3 each) · Q3 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch |
-| 7-9 | Q1-Q3 items (≤3 each) · Q4 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch |
-| 10-18 | Q1-Q3 items (first 9) · Q4 bulk → Call 2: Q1-Q3 items (remainder, ≤3 each) · Q4 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch |
-| ≥19 | context-budget mode below — no item checkboxes exist | — |
+| ≤3 | Q1 items · Q2 bulk · Q3 commit-mode · Q4 dispatch | Q1 push · Q2 topic-group, only when commit mode = (b) |
+| 4-6 | Q1-Q2 items (≤3 each) · Q3 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch · Q4 push |
+| 7-9 | Q1-Q3 items (≤3 each) · Q4 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch · Q4 push |
+| 10-18 | Q1-Q3 items (first 9) · Q4 bulk → Call 2: Q1-Q3 items (remainder, ≤3 each) · Q4 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch · Q4 push |
+| ≥19 | context-budget mode below — no item checkboxes exist | Q1 push · Q2 over-20, only when more than 20 IDs are selected |
 
 Checkbox mode holds at most 18 items (2 calls × 3 questions × 3 items). Decide the mode from the pending count **before** building Call 1; never widen a question past 3 items and never open a Call 3 to stretch checkbox mode further.
 
-The dispatch question is asked in **every** run and always shares a call with the commit-mode question, so the user sets how to commit and how to parallelize together. The ≤3 row spends its last slot on it, and topic-group falls back to a follow-up asked only when commit mode = (b). Every band from 4 pending items up asks commit-mode, topic-group, and dispatch together in one follow-up call; the topic-group answer is discarded unless commit mode = (b).
+The dispatch question is asked in **every** run and always shares a call with the commit-mode question, so the user sets how to commit and how to parallelize together. The ≤3 row spends its last slot on it, and topic-group moves to the follow-up, asked there only when commit mode = (b). Every band from 4 pending items up asks commit-mode, topic-group, dispatch, and push together in one follow-up call; the topic-group answer is discarded unless commit mode = (b).
 
-Bulk action resolving to (d) Skip all → discard the commit-mode, topic-group, **and dispatch** answers from the same call (nothing will be committed and no specialist will be dispatched). This satisfies the distinct-menus rule below — menus stay separate questions; only the round-trips merge.
+The push question rides the follow-up call in every band, so Run 2 never stops to ask about pushing. When no PR number exists (`report` mode without a PR# in its header), Step 10 never runs: omit the push question, and the ≤3 follow-up then fires only when commit mode = (b).
+
+Bulk action resolving to (d) Skip all → discard the commit-mode, topic-group, **and dispatch** answers from the same call and issue no follow-up call (nothing will be committed, no specialist will be dispatched, and the run jumps to Step 11 without pushing). This satisfies the distinct-menus rule below — menus stay separate questions; only the round-trips merge.
 
 **Bulk action — hard rule**: single-select, fixed options, **present in every selection call without exception** — Call 1 and Call 2 alike, positioned after that call's last item-checkbox question. A selection call without a bulk page is a defect, never a valid compression. Never put items in it. Items span ≤3 groups per call regardless of how many type categories exist.
 
@@ -522,7 +566,7 @@ Bulk-action question — multiSelect: FALSE (single-select only — user picks o
 - Any bulk answer other than "unanswered" in Call 1 → skip Call 2 entirely (scope already resolved).
 - ≥19 pending → context-budget mode below instead, decided before Call 1; never open a Call 3.
 
-**≥19 pending items — context-budget mode**: no per-item checkboxes in this branch. **MANDATORY, in this order — print first, ask second:** (1) print the compressed table (type · id · summary ≤40 chars · file) with every row in an assistant user-facing reply, not Bash/tool stdout, immediately before AskUserQuestion; same non-decorative/no-compression-substitute rule as Step 3c (Output-Routing exemption applies — never divert to `.temp`); (2) then issue ONE call: Q1 bulk action · Q2 commit-mode · Q3 topic-group · Q4 dispatch (all four slots; no item checkboxes exist in this mode). Threshold is 19 because checkbox mode tops out at 18 — this branch takes the whole layout, never a partial checkbox pass.
+**≥19 pending items — context-budget mode**: no per-item checkboxes in this branch. **MANDATORY, in this order — print first, ask second:** (1) print the compressed table (type · id · summary ≤40 chars · file) with every row in an assistant user-facing reply, not Bash/tool stdout, immediately before AskUserQuestion; same non-decorative/no-compression-substitute rule as Step 3c (Output-Routing exemption applies — never divert to `.temp`); (2) then issue ONE call: Q1 bulk action · Q2 commit-mode · Q3 topic-group · Q4 dispatch (all four slots; no item checkboxes exist in this mode); (3) once the bulk answer resolves to anything but (d) Skip all, issue the follow-up call: Q1 push · Q2 over-20, only when more than 20 IDs are selected. Threshold is 19 because checkbox mode tops out at 18 — this branch takes the whole layout, never a partial checkbox pass.
 
 <!-- branch: main-path — commit-mode (same call in the ≤3-item merged layout; follow-up call with topic-group and dispatch from 4 items up; skipped only when bulk action = (d) skip) -->
 
@@ -546,7 +590,7 @@ Set `COMMIT_MODE`:
 - (d) → `stage`
 - unanswered → `each` (default)
 
-**Topic-group question** — always present in the SAME call as the commit-mode menu wherever the slot table leaves room (every follow-up call from 4 pending items up, and the ≥19 single call): the commit-mode answer is unknown when that call is built, so the question is asked unconditionally there and its answer discarded silently unless commit mode resolves to (b) — same pattern as the skip-all discard. For `≤3` items the call is already full, so ask it as a separate follow-up call, and only when commit mode = (b). Options are grouping strategies, not free-text labels: the orchestrator already knows each item's `change` category and `file`, so it proposes concrete groupings and only falls back to typing.
+**Topic-group question** — always present in the SAME call as the commit-mode menu wherever the slot table leaves room (every follow-up call from 4 pending items up, and the ≥19 single call): the commit-mode answer is unknown when that call is built, so the question is asked unconditionally there and its answer discarded silently unless commit mode resolves to (b) — same pattern as the skip-all discard. For `≤3` items the first call is already full, so ask it in the follow-up call beside the push question, and only when commit mode = (b). Options are grouping strategies, not free-text labels: the orchestrator already knows each item's `change` category and `file`, so it proposes concrete groupings and only falls back to typing. Typed labels are collected here rather than at Step 8 — the same decision over the same item list (HEAD's Step 8 label question listed `SELECTED_ITEMS`), and a label question after implementation would park the unattended Run 2.
 
 ```text
 Topic-group question — multiSelect: FALSE
@@ -554,10 +598,24 @@ Topic-group question — multiSelect: FALSE
   (a) By change domain — one commit per `change` category (perf, docs, test, ...)
   (b) By file/module — one commit per touched file or package
   (c) By specialist domain — mirrors the Step 8 Phase 2 dispatch groups
-  (d) Let me type labels — free-text via "Type something"
+  (d) Let me type labels — via "Type something" as `<id>=<topic>` pairs, e.g. `1=style 2=logic 3=tests`
 ```
 
-Set `GROUP_STRATEGY`: (a) → `domain` · (b) → `file` · (c) → `specialist` · (d) or free text → `labels` (prompt for labels at Step 8) · unanswered → `domain` (default). `COMMIT_MODE` ≠ `grouped` → discard; `GROUP_STRATEGY` unused.
+Set `GROUP_STRATEGY`: (a) → `domain` · (b) → `file` · (c) → `specialist` · typed `<id>=<topic>` pairs → `labels` · typed `auto` → `domain` (same `change`-field mapping) · unanswered → `domain` (default). `COMMIT_MODE` ≠ `grouped` → discard; `GROUP_STRATEGY` unused.
+
+**(d) picked with no pairs typed, and commit mode = (b)** → the labels are still owed: ask the **Topic-label question** below in the next Step 3d call (alone, or beside any question that call still has room for). It is the same question Step 8 used to ask after implementation, over the same `SELECTED_ITEMS` list — asked now so Run 2 stays unattended:
+
+```text
+AskUserQuestion: "Assign a topic label to each implemented item (e.g. style, logic, tests, docs, config).
+Items implemented:
+  <for each item in SELECTED_ITEMS: "#<id>: <summary>">
+Type a topic for each item ID (e.g. '1=style 2=logic 3=tests'), or type 'auto' to infer labels from change field."
+```
+
+- Typed `<id>=<topic>` pairs → `labels`. Typed `auto` → `domain` (the same `change`-field mapping).
+- Skipped (empty response or blank) → fall back to `each`, exactly as the Step 8 question did: run the `(a)` each commit-mode block instead of `grouped` and print `⚠ no labels typed — committing each item separately`.
+
+`labels` only: write the pairs with the Write tool to `$IMPL_DIR/group-labels.tsv`, one `<id>\t<topic>` row per pair — numeric ids only, topic lowercased with every character outside `[a-z0-9-]` replaced by `-`. The Write tool, not a shell `echo`: the topics are user free text, and Step 8's group commit reads this file instead of asking again.
 
 **Dispatch-granularity question** — placed per the slot table above, asked in every run that reaches this gate (skip only when bulk action = (d) skip-all, same discard rule as topic-group). It sets **wave width and sub-group size only**: specialist routing, the file-ownership tiebreak, and the import-coupling merge are correctness guards, never widened or dropped by any answer. The ≤5-items-per-group split is width, so `(c)` does drop it — deliberately, at the stall risk its own label states.
 
@@ -604,7 +662,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 echo preview > "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}"  # timeout: 3000
 ```
 
-Persist all three once the menus resolve — Step 8's merge fence passes `--commit-mode` to `merge_specialist_batch.py`, its after-loop grouping reads the strategy, and Phase 2 reads the dispatch mode; none survives a fence boundary or a compaction on its own.
+Persist every answer once the menus resolve — Step 8's merge fence passes `--commit-mode` to `merge_specialist_batch.py`, its after-loop grouping reads the strategy (and `group-labels.tsv` for `labels`), Phase 2 reads the dispatch mode, and Steps 10–11 read the push and post-PR answers; none survives a fence boundary or a compaction on its own.
 
 <!-- policy-sibling: plugins/CLAUDE.md §Blueprint Blocks (canonical), plugins/cc_foundry/agents/challenger.md, plugins/cc_oss/skills/resolve/SKILL.md (Step 3d, Step 10), plugins/cc_oss/skills/review/SKILL.md (reject gate) -->
 
@@ -660,39 +718,82 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 echo labels > "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}"  # timeout: 3000
 ```
 
-Then confirm what landed — the echoed line must match the user's answer before Step 3e starts:
+<!-- branch: main-path — push (follow-up call in every band; one push-only call at zero pending; omitted when no PR number exists) -->
+
+**Push question** — placed per the slot table above; asked whenever a PR number exists. It records **push intent only**, plus the post-PR action. It is never push authorization: commits do not exist yet, so the scope the push-safety rule (`git-commit.md`, "Never push without explicit user confirmation") requires the user to see — diff stat, commit count, last subject — cannot be shown here. Intent "push" means Step 10 asks the scope-bearing push confirmation; an explicit "don't push" is itself an answer, and Step 10 then skips its question silently. Name what is knowable now — target `$FORK_REMOTE/$HEAD_REF` when Step 4 already ran (`pr`, `pr+report`), otherwise `the head branch of PR #<N>` (`report` mode checks out after this gate) — plus the selected item count and commit mode.
+
+```text
+Push question — multiSelect: FALSE
+"After the lint/QA gate passes, push to <target>? (Step 10 shows the diff stat and asks you to confirm before pushing.)"
+  (a) Push (confirm at Step 10), then open the PR in the browser
+  (b) Push (confirm at Step 10) (Recommended)
+  (c) Don't push — I'll push manually; open the PR in the browser
+  (d) Don't push — I'll push manually
+```
+
+Unanswered or dismissed → run **no** push block and **no** post-PR block: the push sentinel stays `unset` and post-PR stays at Step 1's `skip`, so Step 10 asks both push and post-PR at push time exactly as before — no answer is never a silent skip. Otherwise run **exactly one** push block and **exactly one** post-PR block — never edit a block's value (same trap as the commit-mode blocks above: an unedited default silently wins):
+
+| Answer | Push block | Post-PR block |
+| -- | -- | -- |
+| (a) | push | open |
+| (b) | push | skip |
+| (c) | skip | open |
+| (d) | skip | skip |
+| unanswered / dismissed | none — stays `unset`, Step 10 asks push + post-PR | none |
+
+Push = push:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo push > "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}"  # read back at Step 10  # timeout: 3000
+```
+
+Push = skip:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo skip > "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}"  # read back at Step 10  # timeout: 3000
+```
+
+Post-PR = open:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo open > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"  # read back at the end of Step 11  # timeout: 3000
+```
+
+Post-PR = skip:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo skip > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"  # read back at the end of Step 11  # timeout: 3000
+```
+
+**Batch the answer blocks.** The matching commit-mode, strategy, dispatch, push and post-PR blocks each write a different file, so issue all of them in **one response**, never one block per turn. Run the confirm block below in the next response, beside the Step 7b join's first tool call — the echoed line must match the user's answers before Step 3e starts:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _CM < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" 2>/dev/null || _CM="unset"
 IFS= read -r _GS < "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}" 2>/dev/null || _GS="unset"
 IFS= read -r _DM < "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}" 2>/dev/null || _DM="unset"
-echo "commit-mode=$_CM group-strategy=$_GS dispatch-mode=$_DM"  # timeout: 3000
+IFS= read -r _PA < "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}" 2>/dev/null || _PA="unset"
+IFS= read -r _PP < "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}" 2>/dev/null || _PP="unset"
+echo "commit-mode=$_CM group-strategy=$_GS dispatch-mode=$_DM push=$_PA post-pr=$_PP"  # timeout: 3000
 ```
 
-**Over-20 selection gate** — after bulk or checkbox resolution and before creating any item tasks, count `SELECTED_ITEMS`. When more than 20 IDs are selected, invoke `AskUserQuestion`: "More than 20 items were selected; one resolve pass can handle at most 20. What should run now?" Options: (a) Apply the first 20 selected items in the displayed severity/priority order now, then rerun for the remaining items; (b) Stop and reselect at most 20 items. For (a), set `SELECTED_ITEMS` to exactly those first 20 selected IDs, print the deferred IDs, and tell the user to rerun for the remaining items. For (b) or no answer, stop without creating tasks. Never silently trim a bulk choice, run a second batch inside this pass, or pass more than 20 IDs to Step 3e.
-
-```text
-TaskUpdate(task_id=TASK_SELECT, status="completed")
-```
+**Over-20 selection gate** — rides the ≥19 band's follow-up call beside the push question: only that band can select more than 20 IDs, since checkbox mode tops out at 18. After bulk resolution and before creating any item tasks, count `SELECTED_ITEMS`; when more than 20 IDs are selected, add this question to that same `AskUserQuestion` call: "More than 20 items were selected; one resolve pass can handle at most 20. What should run now?" Options: (a) Apply the first 20 selected items in the displayed severity/priority order now, then rerun for the remaining items; (b) Stop and reselect at most 20 items. For (a), set `SELECTED_ITEMS` to exactly those first 20 selected IDs, print the deferred IDs, and tell the user to rerun for the remaining items. For (b) or no answer, stop without creating tasks and discard the push answer from the same call. Never silently trim a bulk choice, run a second batch inside this pass, or pass more than 20 IDs to Step 3e.
 
 ## Step 7b join: collect conflict resolutions — opens Run 2
 
-First work of Run 2, before any item task is created. The Steps 6–7a agents dispatched beside the gate have been running through it; collect them now (`### 7b: Verify and complete merge` in `conflict-resolution.md`): confirm `git diff --name-only --diff-filter=U` is empty, no residual conflict markers remain staged, mark each conflict task `completed`, and commit the merge. A group that returned nothing is `timed_out` — surface it with ⏱ and stop before Step 8 rather than implementing on an unmerged tree.
+First work of Run 2, before any item task is created. In the same response as the join's first tool call: `TaskUpdate(task_id=TASK_SELECT, status="completed")`; `TaskUpdate(task_id=TASK_CONFLICT, status="completed")` rides with the merge commit call (§Zero bookkeeping-only turns). The Steps 6–7a agents dispatched beside the gate have been running through it; run the §Agent wait discipline check, then collect them (`### 7b: Verify and complete merge` in `conflict-resolution.md`): confirm `git diff --name-only --diff-filter=U` is empty, no residual conflict markers remain staged, mark each conflict task `completed` (all in one response), and commit the merge. A group that returned nothing is `timed_out` — surface it with ⏱ and stop before Step 8 rather than implementing on an unmerged tree.
 
 Nothing dispatched (no conflicted files, or `report` mode with no PR#) → no-op, continue to Step 3e.
-
-```text
-TaskUpdate(task_id=TASK_CONFLICT, status="completed")
-```
 
 ## Step 3e: Create tasks for selected items
 
 `report` mode skips Step 3e, whether or not the report header names a PR. Step 3a already persisted its action items, and Step 8's report-mode task handling expects no `item-tasks.tsv`. Continue to Step 8 — Steps 4–7 already ran back in Run 1 when a PR# was found, and are skipped entirely when none was. `pr` and `pr+report` create per-item tasks below.
 
-> Step 2 gather task already marked `completed` at top of Step 3d.
-
-For each item in `SELECTED_ITEMS`, call `TaskCreate` **once per item** — one task per action item; scoped to selected items only, not all pending (avoids bloat when 20+ items exist but only a subset is selected):
+For each item in `SELECTED_ITEMS`, call `TaskCreate` **once per item** — one task per action item; scoped to selected items only, not all pending (avoids bloat when 20+ items exist but only a subset is selected). Issue every item's `TaskCreate` in **one response**, never one per turn — the same response as the Step 7b join's first tool call, so it is never a bookkeeping-only turn:
 
 ```text
 TaskCreate(
@@ -702,19 +803,16 @@ TaskCreate(
 )
 ```
 
-Store returned task ID in each `SELECTED_ITEMS` entry as `task_id` **and** run this block once per item — the file is the map; the Step 8 loop reads task IDs from it (a compaction between here and Step 8 would otherwise orphan every per-item task):
+Store returned task ID in each `SELECTED_ITEMS` entry as `task_id`, **then write the whole map in one Write tool call** to `$IMPL_DIR/item-tasks.tsv` — one `<item_id>\t<task_id>` row per selected item, in the response right after the creates return (beside the Step 8 `cat` load), never one append per item. The file is the map; the Step 8 loop reads task IDs from it (a compaction between here and Step 8 would otherwise orphan every per-item task). Then validate it once:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
-_ITEM_ID="<item_id>"; _TASK_ID="<task_id>"
-case "$_ITEM_ID$_TASK_ID" in *'<'*'>'*) echo "! BLOCKED — item/task id placeholder not substituted"; exit 1 ;; esac
-# checked separately, not concatenated: an empty _ITEM_ID with a valid _TASK_ID passes the placeholder
-# check above (no "<>" in the joined string) and would write a malformed "\tNNN" row that every
-# downstream numeric-only guard reading item-tasks.tsv parses as a wrong-but-valid-looking item_id
-case "$_ITEM_ID" in ''|*[!0-9]*) echo "! BLOCKED — item id '$_ITEM_ID' is not numeric; cannot write item-tasks.tsv"; exit 1 ;; esac
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; Step 3b never ran"; exit 1; }
-printf '%s\t%s\n' "$_ITEM_ID" "$_TASK_ID" >> "$IMPL_DIR/item-tasks.tsv"  # timeout: 3000
+[ -s "$IMPL_DIR/item-tasks.tsv" ] || { echo "! BLOCKED — item-tasks.tsv missing or empty; write it before Step 8"; exit 1; }
+# every row: numeric item id, non-empty task id, no unsubstituted <placeholder>; an empty or non-numeric id would be
+# parsed by every downstream numeric-only guard as a wrong-but-valid-looking item_id
+awk -F'\t' 'NF != 2 || $1 !~ /^[0-9]+$/ || $2 == "" || $0 ~ /[<>]/ || seen[$1]++ { bad = bad " " NR } END { if (bad) { print "! BLOCKED — malformed or duplicate item-tasks.tsv row(s):" bad; exit 1 } print "item-tasks.tsv rows: " NR }' "$IMPL_DIR/item-tasks.tsv"  # timeout: 3000
 ```
 
 **Applies to `pr` and `pr+report` modes only** — these run Step 3b (which initialises `IMPL_DIR`) and Step 3e. `report` mode skips both steps and has no per-item tasks; Step 3a initialises `IMPL_DIR` instead.
@@ -737,22 +835,7 @@ IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}" 2>/dev/n
 
 *Skip only when `MODE = report` with no PR# (`$PR_NUMBER` unset — no remote branch to check out). In pr mode, runs unconditionally regardless of `SELECTED_ITEMS` — conflict resolution must happen even when 0 action items selected.*
 
-When skipping:
-
-```text
-TaskUpdate(task_id=TASK_CHECKOUT, status="deleted")
-TaskUpdate(task_id=TASK_CONFLICT, status="deleted")
-```
-
-```text
-TaskUpdate(task_id=TASK_CHECKOUT, status="in_progress")
-```
-
-**`gh` availability check** — hard prereq; `gh pr checkout` has no fallback path:
-
-```bash
-command -v gh >/dev/null 2>&1 || { echo "! BLOCKED — gh CLI required; install: https://cli.github.com"; exit 1; }  # timeout: 3000
-```
+When skipping, both ride with the next real call: `TaskUpdate(task_id=TASK_CHECKOUT, status="deleted")`, `TaskUpdate(task_id=TASK_CONFLICT, status="deleted")`. Otherwise `TaskUpdate(task_id=TASK_CHECKOUT, status="in_progress")` rides with the branch-safety block below, and `TaskUpdate(task_id=TASK_CHECKOUT, status="completed")` with the FORK_REMOTE block.
 
 **Branch-safety pre-check** — must run BEFORE `gh pr checkout` so a wrong-branch commit is impossible (per `git-commit.md` Gate 2). Verify PR's `headRefName` isn't repo's default branch — `gh pr checkout` of a same-repo PR whose HEAD = default branch would land on default; any later commit (Step 8) would violate Gate 2:
 
@@ -765,6 +848,8 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_pr_refs.py" --pr "$PR_
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+# gh = hard prereq: gh pr checkout has no fallback path (folded here — its own block cost a call per run)
+command -v gh >/dev/null 2>&1 || { echo "! BLOCKED — gh CLI required; install: https://cli.github.com"; exit 1; }
 # fresh shell (Check 41) — reload what resolve_pr_refs.py persisted above
 IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
 case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "⛔ Step 4 PR number sentinel missing or invalid; refusing checkout"; exit 1 ;; esac
@@ -788,17 +873,10 @@ else
     gh pr checkout "$PR_NUMBER" --branch "$PR_HEAD_REF" \
         || { echo "⛔ gh pr checkout failed — aborting (network, branch deleted, auth expired, or local conflicts)"; exit 1; }   # timeout: 15000
 fi
-```
-
-`gh pr checkout` auto-handles forks — adds contributor's remote, configures tracking. Verify checkout landed on expected branch — if not, abort before Step 8 can commit:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# fresh shell (Check 41) — else gates below dead code
-IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""
+# verify in the same call — checkout must land on the expected branch, else abort before Step 8 can commit
+HEAD_REF="$PR_HEAD_REF"
 IFS= read -r IS_CROSS_REPO < "${TMPDIR:-/tmp}/resolve-is-cross-repo-${CSID}" 2>/dev/null || IS_CROSS_REPO=""
 [ -n "$HEAD_REF" ] && [ -n "$IS_CROSS_REPO" ] || { echo "⛔ Step 4 verify: HEAD_REF/IS_CROSS_REPO sentinels missing — checkout state unverifiable, aborting before Step 8 can commit"; exit 1; }
-PR_HEAD_REF="$HEAD_REF"
 git remote -v | grep '(fetch)' | head -10 # timeout: 3000
 git status  # timeout: 3000
 CURRENT_BRANCH=$(git branch --show-current 2>/dev/null)  # timeout: 3000
@@ -830,29 +908,23 @@ else
     PR_REF="#$PR_NUMBER"
 fi
 echo "$PR_REF" > "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}"  # timeout: 3000
-echo "$FORK_REMOTE" > "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}"  # read by Step10 push gate
+echo "$FORK_REMOTE" > "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}"  # read by Step 3d push question + Step 10 push
 # soft-verify — layouts vary across gh versions
 git remote get-url "$FORK_REMOTE" >/dev/null 2>&1 \
     || echo "⚠ Remote $FORK_REMOTE not registered — Step 10 will add it before push" # timeout: 3000
 ```
 
-`FORK_REMOTE`: contributor login (e.g. `alice`) for forks, `origin` for same-repo. Push always `git push` — tracking configured by `gh pr checkout`.
+`gh pr checkout` auto-handles forks — adds contributor's remote, configures tracking. `FORK_REMOTE`: contributor login (e.g. `alice`) for forks, `origin` for same-repo. Push always `git push` — tracking configured by `gh pr checkout`.
 
 `PR_REF`: the token Step 8's commit messages embed for this PR — `#<N>` when the commit lands same-repo (`FORK_REMOTE=origin`), or the full `PR_URL` when it lands in the contributor's fork (bare `#N` there would resolve against the fork's own issues, not this repo's PR — a cross-repo false link). Persisted to `${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}` for Step 8 to read.
-
-```text
-TaskUpdate(task_id=TASK_CHECKOUT, status="completed")
-```
 
 ## Steps 5–7: Conflict detection, context, and resolution
 
 <!-- Steps 5–7 defined in conflict-resolution.md — see that file for sub-step numbering -->
 
-> **Split across two dispatch points, one loaded file.** Step 5 runs in Run 1 immediately after Step 4, beside the intel agent. Steps 6–7a are dispatched in Run 1's gate turn (Step 3d overlap directive); 7b is collected at the Step 7b join that opens Run 2. Load the file once here and execute the parts at their own points — re-`cat` it only if a compaction dropped it from context.
+`TaskUpdate(task_id=TASK_CONFLICT, status="in_progress")` — rides with the load block below; it flips to `completed` at the Step 7b join.
 
-```text
-TaskUpdate(task_id=TASK_CONFLICT, status="in_progress")
-```
+> **Split across two dispatch points, one loaded file.** Step 5 runs in Run 1 immediately after Step 4, beside the intel agent. Steps 6–7a are dispatched in Run 1's gate turn (Step 3d overlap directive); 7b is collected at the Step 7b join that opens Run 2. Load the file once here and execute the parts at their own points — re-`cat` it only if a compaction dropped it from context.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -860,21 +932,13 @@ IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev
 cat "$_OSS_RESOLVE/modes/conflict-resolution.md"  # timeout: 5000
 ```
 
-Execute its steps (loaded above) at their dispatch points. `TASK_CONFLICT` flips to `completed` at the Step 7b join, not here.
+Execute its steps (loaded above) at their dispatch points.
 
 ## Step 8: Implement action items
 
 *Skip when `SELECTED_ITEMS` is empty — jump to Step 9.*
 
-When skipping:
-
-```text
-TaskUpdate(task_id=TASK_IMPL, status="deleted")
-```
-
-```text
-TaskUpdate(task_id=TASK_IMPL, status="in_progress")
-```
+When skipping, `TaskUpdate(task_id=TASK_IMPL, status="deleted")` rides with Step 9's first call. Otherwise `TaskUpdate(task_id=TASK_IMPL, status="in_progress")` rides with the codemap index block below.
 
 **Codemap index identity (if `CODEMAP_ENABLED=true`)**: resolve the index path the next block reuses. No query runs here — per-item blast radius is action-item-dispatch.md's **Pre-loop blast-radius scan**, which resolves each item's canonical module first and passes it as `rdeps`' positional argument.
 
@@ -936,12 +1000,12 @@ cat "$_OSS_RESOLVE/modes/action-item-dispatch.md"  # timeout: 5000
 
 `action-item-dispatch.md` caps a single pass at 20 items. Step 3d asks before task creation when a bulk or checkbox selection exceeds 20; only the chosen first 20 can enter Step 8, and the rest require a later invocation. Step 8's prelude rejects more than 20 IDs if that earlier gate was missed.
 
-**Straggler gate — before flipping `TASK_IMPL`**: `action-item-dispatch.md`'s per-item close-out (REJECT, skipped, cherry-pick landed — including the C1 medium-effort Codex-direct shortcut, which never enters Phase 1/2/3 at all) should have already terminated every id in `item-tasks.tsv`; this catches whichever one didn't. Never flip `TASK_IMPL` over an open child — that hid the original leak. Fails closed on a lost `IMPL_DIR` sentinel: distinct from "no items were selected," which the file's own absence still reports safely.
+**Straggler gate — before leaving Step 8**: `action-item-dispatch.md`'s per-item close-out (REJECT, skipped, cherry-pick landed — including the C1 medium-effort Codex-direct shortcut, which never enters Phase 1/2/3 at all) should have already terminated every id in `item-tasks.tsv`; this catches whichever one didn't. Never move on to Step 9 over an open child — that hid the original leak. Fails closed on a lost `IMPL_DIR` sentinel: distinct from "no items were selected," which the file's own absence still reports safely.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
-[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; cannot verify child tasks before flipping TASK_IMPL"; exit 1; }
+[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; cannot verify child tasks before leaving Step 8"; exit 1; }
 if [ -f "$IMPL_DIR/item-tasks.tsv" ]; then
     _SKIPPED_IDS=$(cut -f1 "$IMPL_DIR/skipped-items.txt" 2>/dev/null)
     # anchored right after id= — resolution= is the field placed there, before any free-text field
@@ -1007,17 +1071,13 @@ case "$COMMIT_MODE" in
 esac
 ```
 
-No confirming commit found → this item was never closed by any exit path; that's the exact defect this gate exists to catch — surface it via `AskUserQuestion` (dispose as `deleted` with a stated reason, or leave open and investigate) rather than guessing either status. Only once every printed id is accounted for:
+No confirming commit found → this item was never closed by any exit path; that's the exact defect this gate exists to catch — surface it via `AskUserQuestion` (dispose as `deleted` with a stated reason, or leave open and investigate) rather than guessing either status. Only once every printed id is accounted for, continue to Step 9. Batch every `TaskList`/`TaskUpdate` this gate needs into one response.
 
-```text
-TaskUpdate(task_id=TASK_IMPL, status="completed")
-```
+`TaskUpdate(task_id=TASK_IMPL, status="completed")` — only once every id is accounted for; rides with Step 9's boundary-2 block.
 
 ## Step 9: Lint and QA gate
 
-```text
-TaskUpdate(task_id=TASK_LINT, status="in_progress")
-```
+`TaskUpdate(task_id=TASK_LINT, status="in_progress")` rides with the boundary-2 block below (beside Step 8's `TASK_IMPL` completion); `TASK_LINT` flips to `completed` with Step 10's first block (§Zero bookkeeping-only turns).
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -1025,47 +1085,46 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR="n/a"
-_PRESERVE="pr=${_PR_NUMBER}, items-implemented, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv; next: lint/push/report"
+IFS= read -r _PUSH_AUTH < "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}" 2>/dev/null || _PUSH_AUTH="unset"
+IFS= read -r _POST_PR < "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}" 2>/dev/null || _POST_PR="skip"
+IFS= read -r _PUSH_STATUS < "${TMPDIR:-/tmp}/resolve-push-status-${CSID}" 2>/dev/null || _PUSH_STATUS="none"
+_PRESERVE="pr=${_PR_NUMBER}, items-implemented, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv, push-auth=${_PUSH_AUTH} (Step 3d answer), post-pr=${_POST_PR}, push-status=${_PUSH_STATUS} (file resolve-push-status, Step 10 overwrites); next: lint/push/report"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "lint-qa (after implementation loop)" "$_IMPL_DIR" "${_PRESERVE}" "lint/QA gate (Step 9) → push (Step 10) → final report (Step 11)"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "lint-qa (after implementation loop)" "$_IMPL_DIR" "${_PRESERVE}" "lint/QA gate (Step 9) → push per the recorded Step 3d answer, never re-ask (Step 10) → final report (Step 11)"  # timeout: 5000
 IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
 cat "$_OSS_RESOLVE/modes/lint-qa-gate.md"  # timeout: 5000
 ```
 
 Execute its steps (loaded above).
 
-```text
-TaskUpdate(task_id=TASK_LINT, status="completed")
-```
-
 ## Step 10: Push
 
 *Skip when report mode with no PR# (`$FORK_REMOTE`, `$HEAD_REF`, `$BASE_REF` unset — no fork branch; workflow ends at Step 11).*
 
-When skipping:
+When skipping, `TaskUpdate(task_id=TASK_CLOSE, status="deleted")` rides with Step 11's first call. Otherwise `TaskUpdate(task_id=TASK_CLOSE, status="in_progress")` rides with the block below, together with `TaskUpdate(task_id=TASK_LINT, status="completed")`.
 
-```text
-TaskUpdate(task_id=TASK_CLOSE, status="deleted")
-```
-
-```text
-TaskUpdate(task_id=TASK_CLOSE, status="in_progress")
-```
+**Push intent from Step 3d, confirmation here — with the full scope.** One call reads the recorded Step 3d intent back and computes the push scope the confirmation must show:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# fresh shell (Check 41) — unbound here → auth gate shows empty push scope
+IFS= read -r PUSH_AUTH < "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}" 2>/dev/null || PUSH_AUTH="unset"
+echo "PUSH_AUTH=$PUSH_AUTH"
+# fresh shell (Check 41) — unbound here → empty push scope
 IFS= read -r FORK_REMOTE < "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}" 2>/dev/null || FORK_REMOTE=""
 IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""
 IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/derive_fork_remote.py" --fork-remote "$FORK_REMOTE" --head-ref "$HEAD_REF" --base-ref "$BASE_REF"  # timeout: 10000
 ```
 
-<!-- branch: main-path — push-auth + post-pr in one call (call 3 of 3) -->
+The block exits non-zero (`⛔` — fork remote or head ref unresolved, push scope not computable) → never push and never ask about an unknown scope; record `not-attempted` (**Record the push outcome** below) and continue to Step 11. Otherwise branch on the printed `PUSH_AUTH`:
 
-**Push authorization + post-PR gate — one `AskUserQuestion` call, two questions.** Per `git-commit.md` push-safety rule ("Never push without explicit user confirmation") the push question precedes any `git push`; the post-PR question rides in the same call because each window is pure human idle and Step 11 has nothing left to ask that the user cannot decide now. Never split these into two calls.
+- `skip` → the user explicitly chose "don't push" at Step 3d: print `` → Push skipped (Step 3d answer) — run `git push` manually when ready. ``, record `skipped-by-user`, and jump to Step 11; the post-PR answer still applies there. No question.
+- `push` → ask the **push confirmation** below — Q1 only; the post-PR action was already answered at Step 3d.
+- anything else (`unset` — Step 3d's push question went unanswered or was dismissed, or no answer was ever recorded, e.g. a resume in a fresh session) → ask the **push confirmation** with both Q1 and Q2 in one call, as before the intent question existed. A missing answer is never a skip and never authorization.
 
-Second-longest idle window (measured up to 11 h). Boundary-1 contract already names every file Step 11 needs; print this line in the reply before the call: `` Long wait? `/compact` now — commits landed, challenge log + item map in <IMPL_DIR>, resume lossless. ``
+<!-- branch: main-path — push confirmation (intent push or no recorded intent; skipped only on an explicit Step 3d "don't push" or an uncomputable scope) -->
+
+**Push confirmation — one `AskUserQuestion` call.** Per `git-commit.md` push-safety rule ("Never push without explicit user confirmation") this question precedes any `git push`. Second-longest idle window (measured up to 11 h). Boundary-2 contract already names every file Step 11 needs; print this line in the reply before the call: `` Long wait? `/compact` now — commits landed, challenge log + item map in <IMPL_DIR>, resume lossless. ``
 
 Q1 — push. Must surface:
 
@@ -1078,31 +1137,25 @@ Options:
 - (a) **Push** — proceed with `git push` below (default)
 - (b) **Skip push** — stop after Step 9; user pushes manually later
 
-Q2 — after the final report: (a) **Open PR in browser** (`gh pr view <PR_NUMBER> --web`) · (b) **Skip**. Persist the answer for Step 11 — substitute `open` for the literal when Q2 = (a), the fence itself assigns nothing else:
+Q2 — `unset` intent only — after the final report: (a) **Open PR in browser** (`gh pr view <PR_NUMBER> --web`) · (b) **Skip**. Run the matching Step 3d post-PR block (`open` or `skip`) — never edit a block's value.
 
-Run exactly the block matching Q2 — never edit a block's value (same trap as the Step 3d commit-mode blocks: an unedited default silently wins). <!-- policy-sibling: plugins/CLAUDE.md §Blueprint Blocks (canonical), plugins/cc_foundry/agents/challenger.md, plugins/cc_oss/skills/resolve/SKILL.md (Step 3d, Step 10), plugins/cc_oss/skills/review/SKILL.md (reject gate) -->
+Only proceed to the `git push` below on Q1 option (a). On option (b): print `` → Push skipped — run `git push` manually when ready. ``, record `skipped-by-user`, and jump to Step 11 (the post-PR answer still applies there). Unanswered Q1 is never authorization: treat it as (b).
 
-Q2 = (a) open:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-echo open > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"  # read back at the end of Step 11  # timeout: 3000
-```
-
-Q2 = (b) skip:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-echo skip > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"  # read back at the end of Step 11  # timeout: 3000
-```
-
-Only proceed to the `git push` below on Q1 option (a). On option (b): print `` → Push skipped — run `git push` manually when ready. `` and jump to Step 11 (Q2's answer still applies there).
+<!-- policy-sibling: plugins/CLAUDE.md §Blueprint Blocks (canonical), plugins/cc_foundry/agents/challenger.md, plugins/cc_oss/skills/resolve/SKILL.md (Step 3d, Step 10), plugins/cc_oss/skills/review/SKILL.md (reject gate) -->
 
 ```bash
 git push # timeout: 30000
 ```
 
-Push rejected → fallback:
+An authorized push still stops on its own failures — never retried in a loop, never forced, never re-asked. The push guard and the absent `git push` allow rule are deliberate user safety controls: never weaken, bypass, or work around either, and never create, touch, or edit a guard's authorization file yourself.
+
+- **Blocked by a push guard** (a hook rejects the call and names a user-created authorization file) → print the guard's instruction verbatim, do not retry, record `blocked-guard`, and write its exact `! touch …` / `git push …` / `! rm -f …` lines — copied character for character from the guard's message, no paraphrase — with the Write tool to `$IMPL_DIR/push-unblock.txt`. Continue to Step 11.
+- **Blocked by a denied permission** (the harness permission prompt for `git push` was refused) → do not retry, record `blocked-permission`, and write the exact push command that was denied (`git push`, or the explicit-refspec form below) with the Write tool to `$IMPL_DIR/push-unblock.txt`. Continue to Step 11.
+- **Rejected as non-fast-forward** (the PR branch moved on the remote) → no force and no retry. Print `⛔ Push rejected (non-fast-forward) — the PR branch moved; merge the remote branch, then push manually.`, record `rejected-non-ff`, and continue to Step 11.
+- **No upstream or wrong tracking** (plain `git push` cannot resolve its destination) → the explicit-refspec fallback below, once; its own outcome is then classified by the bullets above.
+- **Push lands** → record `pushed` after the verification block below.
+
+Push failed for lack of upstream tracking → fallback:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -1122,6 +1175,50 @@ case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "⛔ Step 10 PR number sentinel missi
 gh pr view "$PR_NUMBER" --json headRefOid,commits --jq '.commits[-3:] | .[].messageHeadline' # timeout: 6000
 ```
 
+**Record the push outcome** — run **exactly one** block, the one matching what happened above; never edit a block's value (same trap as the Step 3d blocks). Step 11 reports this status, so a run that leaves Step 10 without recording one reports `none`.
+
+`pushed`:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo pushed > "${TMPDIR:-/tmp}/resolve-push-status-${CSID}"  # timeout: 3000
+```
+
+`blocked-guard`:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo blocked-guard > "${TMPDIR:-/tmp}/resolve-push-status-${CSID}"  # timeout: 3000
+```
+
+`blocked-permission`:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo blocked-permission > "${TMPDIR:-/tmp}/resolve-push-status-${CSID}"  # timeout: 3000
+```
+
+`rejected-non-ff`:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo rejected-non-ff > "${TMPDIR:-/tmp}/resolve-push-status-${CSID}"  # timeout: 3000
+```
+
+`skipped-by-user`:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo skipped-by-user > "${TMPDIR:-/tmp}/resolve-push-status-${CSID}"  # timeout: 3000
+```
+
+`not-attempted`:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo not-attempted > "${TMPDIR:-/tmp}/resolve-push-status-${CSID}"  # timeout: 3000
+```
+
 ## Step 11: Final report
 
 ```bash
@@ -1130,14 +1227,25 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR="n/a"
-_PRESERVE="pr=${_PR_NUMBER}, final-report=pending-write, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv"
+IFS= read -r PUSH_STATUS < "${TMPDIR:-/tmp}/resolve-push-status-${CSID}" 2>/dev/null || PUSH_STATUS="none"
+_PRESERVE="pr=${_PR_NUMBER}, final-report=pending-write, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv, push-status=${PUSH_STATUS}, push-unblock=${_IMPL_DIR}/push-unblock.txt"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "final-report (after push)" "$_IMPL_DIR" "${_PRESERVE}" "write final report → post-PR action gate"  # timeout: 5000
+echo "PUSH_STATUS=$PUSH_STATUS"
+case "$PUSH_STATUS" in blocked-guard|blocked-permission) echo "PUSH_UNBLOCK=$_IMPL_DIR/push-unblock.txt"; cat "$_IMPL_DIR/push-unblock.txt" 2>/dev/null || echo "⚠ push-unblock.txt missing" ;; esac
 IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
 cat "$_OSS_RESOLVE/templates/resolve-report.md"  # timeout: 5000
 ```
 
-Report template (loaded above) — use for section structure.
+Report template (loaded above) — use for section structure. Its `### Push` section shows the printed `PUSH_STATUS` through the template's status table, never a prose recollection of Step 10.
+
+**Unblock push — last actionable item.** `PUSH_STATUS` is `blocked-guard` or `blocked-permission` → the block above `cat`s the `PUSH_UNBLOCK` file; end the report — after `**Next**`, the Challenge Log, Confidence, and every other section — with a `## Unblock push` section that repeats its lines verbatim in a fenced block. The user returns to the bottom of the report and runs exactly those lines; never paraphrase, reorder, or regenerate them. File missing or empty → print `⚠ push-unblock.txt missing — scroll to Step 10 for the guard's exact lines` in that section instead.
+
+Immediately before printing it — the one standalone bookkeeping call, so a compaction mid-report cannot leave the run `in_progress` (`rules/task-lifecycle.md` §TaskUpdate before long output):
+
+```text
+TaskUpdate(task_id=TASK_CLOSE, status="completed")
+```
 
 **Print the final report — including the full Action Items resolution table — inline to terminal.**
 
@@ -1174,11 +1282,7 @@ fi
 
 **Worktree exit** — if `WT_ENABLED=true` and a worktree was entered at Step 4: commits are already pushed to the fork (the deliverable is remote). Follow `worktree-isolation.md` §Exit — `git branch --show-current`, then `ExitWorktree(action="keep")` to return the session to the main tree, and append the `Worktree` block noting the local worktree is disposable (`git worktree remove` when done). The `SAVED_BRANCH` restore above was a no-op — the main tree was never switched. Never auto-merge.
 
-```text
-TaskUpdate(task_id=TASK_CLOSE, status="completed")
-```
-
-Post-PR action — already answered in the Step 10 call (Q2); no new `AskUserQuestion` here:
+Post-PR action — already answered by the Step 3d push question; no new `AskUserQuestion` here:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -1229,17 +1333,17 @@ Non-calibratable — `disable-model-invocation: true` means skill dispatches to 
 - **Contribution motivation before code** — "whose intent wins" lens; PR body + linked issues reveal constraints invisible in diff.
 - **`[question]` items** — answer inline in resolve report only; reclassify before implementing; never silently implement unanswered question.
 - **Push verification** — confirm via `gh pr view --json commits`; exit 0 from `git push` necessary but not sufficient (branch protection can silently reject).
-- **Merge-push sequencing + escape hatch** — not atomic; concurrent push → non-fast-forward rejection; retry push only (don't re-run full merge). `git merge --abort` = undo conflict state; `git push --force-with-lease` on explicit user request only.
+- **Merge-push sequencing + escape hatch** — not atomic; concurrent push → non-fast-forward rejection; Step 10 never retries it unattended — the user retries the push only (don't re-run full merge). `git merge --abort` = undo conflict state; `git push --force-with-lease` on explicit user request only.
 - **Impl agent health + effort**: C1 medium-effort bridge implementation calls use `bridge:implement` on the default or explicit bridge route, one item from a clean worktree per call; Git-derived changed paths must match the reply before per-item records. Explicit `--agent foundry:*` sends medium items through Phase 1+2 with the selected specialist. Dirty or non-medium bridge items use the change-to-specialist table. Effort is never `low`, minimum `medium`, typo/doc `medium`, multi-file/new-feature `xhigh`, default `high`.
 - **Two-phase challenge**: evidence = problem exists?; suggestion = fix quality?; evidence reject → skip; suggestion reject → self-resolved via `alternative` field; all in `CHALLENGE_LOG` + Step 11 report.
 - **COMMIT_MODE**: `each` (default); `all`; `stage` (⚠ branch restore skipped); `grouped` (falls back to `each` when labels skipped). Set via the commit-mode menu (Step 3d) — placement per the Step 3d slot table — skipped/discarded only when the bulk action = (d) skip-all. Distinct MENU from the bulk action (item scope vs commit strategy); item scope never implies commit mode; menus may share a call, never options.
-- **GROUP_STRATEGY**: `domain` (default) · `file` · `specialist` · `labels`. Set via the topic-group question (Step 3d), asked beside the commit-mode menu. Read only when `COMMIT_MODE=grouped`; only `labels` triggers the Step 8 free-text label prompt, the rest group without another user round-trip.
+- **GROUP_STRATEGY**: `domain` (default) · `file` · `specialist` · `labels`. Set via the topic-group question (Step 3d), asked beside the commit-mode menu. Read only when `COMMIT_MODE=grouped`; `labels` are typed at Step 3d and persisted to `$IMPL_DIR/group-labels.tsv`, so no strategy adds a user round-trip at Step 8.
 - **DISPATCH_MODE**: `auto` (default) · `sequential` · `per-specialist` · `preview` (the "Custom" label). Set via the dispatch-granularity question (Step 3d), asked in every run beside the commit-mode or topic-group menu. Read by Phase 2 for sub-group splitting and wave width only — specialist routing, the file-ownership tiebreak and the import-coupling merge never change; `per-specialist` drops the ≤5 split, the one width guard a width answer may touch. Distinct from `GROUP_STRATEGY=specialist`, which is a commit-grouping strategy on its own sentinel. `preview` defers the width to one extra gate at the Phase 1 → Phase 2 boundary, where the formed groups are printed first; that gate resolves it to one of the other three.
-- **AskUserQuestion usage**: the normal action-item path, after successful source resolution and without diagnostic or conflict recovery, takes at most 5 calls (10-18 pending: two checkbox pages + commit-mode follow-up + labels question + push-auth/post-pr).
-  - The dispatch-granularity question rides the call that carries commit-mode in every band, so it adds no round-trip there; only 4-6 pending pays one, because its follow-up now fires unconditionally instead of only on grouped commits, and only `DISPATCH_MODE=preview` adds a call outside this count.
-  - The same path is 4 calls without the optional grouped-labels question.
-  - Other paths can add questions for unsupported flags, missing reports, conflicts, or unresolved item status; they are outside this normal-path count.
-  - Push authorization and the post-PR browser action share one call at Step 10 (two questions); Step 11 reads the stored answer and asks nothing.
+- **AskUserQuestion usage**: the normal action-item path, after successful source resolution and without diagnostic or conflict recovery, takes at most 3 calls at Step 3d (10-18 pending: two checkbox pages + the commit-mode/topic-group/dispatch/push-intent follow-up; every other band takes 2, and zero pending items with a PR takes 1 push-intent call) plus 1 Step 10 push confirmation unless the push intent was an explicit "don't push". Picking topic-group (d) without typing labels adds one Step 3d call for the topic-label question.
+  - Every decision a later step needs and can see at Step 3d is asked there: commit mode, grouping strategy and typed labels, dispatch width, the over-20 cap, push intent, and the post-PR browser action. Between Step 3d and the Step 10 push confirmation, nothing is asked on this path.
+  - Only `DISPATCH_MODE=preview` adds a call after Step 3d — the user elects it there by choosing Custom.
+  - Other paths can add questions for unsupported flags, missing reports, too many conflicts, codemap index gates (all before Step 3d), an unresolved item status, a challenge that timed out twice (one batched question per wave), a lost typed-labels file, or a push-intent question left unanswered at Step 3d (Step 10 then also asks the post-PR question); they are outside this normal-path count.
+  - The Step 3d push question carries push intent and the post-PR browser action in one 4-option menu; Step 10 asks the scope-bearing confirmation (Q1, plus Q2 only without a recorded intent) and Step 11 reads the stored post-PR action.
 - **`--agent <name>`**: bare name auto-prefixed `foundry:`; must be an implementation agent (not curator); omit the bridge trailer when another agent is selected.
 - **Thread resolution via GraphQL** — `isResolved` on `PullRequestReviewThread` (GraphQL only); REST doesn't expose it. `RESOLVED_THREAD_IDS` = root comment `databaseId`; GraphQL failure → `[]`.
 - **Discussion vs inline**: `gh pr view --comments` = discussion (`location: discussion`; no Resolve button); `gh api .../pulls/<N>/comments` = inline (`location: inline`; resolvable). `location: discussion` + `[report]` items: implement-only, no GitHub close action. Surface unresolvable rows through the Status suffix `· thread (no GH resolve)`, not a separate column.

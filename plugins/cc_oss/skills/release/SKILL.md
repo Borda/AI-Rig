@@ -45,7 +45,7 @@ Range notation: `v1->v2` (e.g. `v1.2->v2.0`) — converted internally to git ran
 
 **Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
-**Task tracking** — create ALL tasks upfront, execute sequentially; mark completed as each phase finishes. After mode detection, mark inapplicable tasks `deleted`:
+**Task tracking** — create ALL tasks upfront, execute sequentially; mark completed as each phase finishes. After mode detection, mark inapplicable tasks `deleted`. **Zero bookkeeping-only turns**: issue every `TaskCreate` in one response together with the first real tool call, every mode-detection `deleted` in one response together with the next real call, and each phase's `completed` plus the next phase's `in_progress` in the response that carries that next phase's first call — never a response of task calls alone, except a `completed` right before a long output block:
 
 - `demo` mode: mark deleted — Classify each change, Classify breaking changes, Validate migration docs, Audit changelog, Extract contributors, Draft migration guide, Draft executive summary, Write release draft, Post-merge re-validation
 - bug-fix-only release (no 🚀 Added items): mark deleted — Generate release demo
@@ -69,6 +69,15 @@ Tasks:
 - Post-merge re-validation (`--append` merge only — re-runs Truth check, Identify highlights, Validate migration docs, Validate docs, and the Summary shape/duplication check against the final merged DRAFT.md; see release-draft-template.md "Post-merge re-validation")
 
 **Sequential enforcement**: never begin phase until prior marked `completed`. On failure (empty range, git error, demo fail), stop and report — no downstream phases.
+
+**Agent wait discipline — no polling, per-agent deadlines.** Every spawn (gather, changelog audit, adversarial review, shepherd) runs in the background: spawn, end the turn, resume on its completion notification. Never `ScheduleWakeup`, `ListAgents`, a `Monitor` loop, a `sleep` or a no-op call to wait. In each spawn response write `${TMPDIR:-/tmp}/release-setup-${CSID}/agent-watch-<batch>.tsv` with the Write tool (`<batch>` = `gather`, `changelog-audit`, `adversarial`, `shepherd`) — one row per agent, `<name><TAB><deliverable file, or - when it returns only an envelope><TAB>1800` — and at every wake-up run the check below once before reading agent output: `done` → consume; `timed_out`, or a notification that arrived without the deliverable → ⏱ `timed_out` now and follow that step's failure path. A ⏱ only informs; it never answers or skips a user question.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/agent_watch.py" --state-dir "${TMPDIR:-/tmp}/release-setup-${CSID}"  # timeout: 5000
+```
+
+**State checks — one call.** Ad-hoc repository state (branch, HEAD, upstream, status lists, remotes, worktrees, merge-base against a ref) is one `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/git_state_snapshot.py"` call, never a run of separate `git status` / `branch` / `log -1` / `remote` calls; tag listing and range logs keep their own commands.
 
 <!-- ARCH.md beside this file diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
 

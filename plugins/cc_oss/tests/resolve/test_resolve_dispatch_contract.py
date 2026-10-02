@@ -82,7 +82,8 @@ def test_step_1_agent_sentinel_reaches_thread_intelligence(
         cwd=tmp_path,
         env=environment,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     assert producer.returncode == 0, producer.stderr
@@ -99,7 +100,8 @@ def test_step_1_agent_sentinel_reaches_thread_intelligence(
         cwd=tmp_path,
         env=environment | {"ARGUMENTS": "42"},
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     assert consumer.returncode == 0, consumer.stderr
@@ -134,7 +136,8 @@ def test_step_1_agent_sentinel_reaches_step_8_for_nine_medium_items(
         cwd=tmp_path,
         env=environment,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     assert producer.returncode == 0, producer.stderr
@@ -156,7 +159,8 @@ def test_step_1_agent_sentinel_reaches_step_8_for_nine_medium_items(
         cwd=tmp_path,
         env=environment | {"ARGUMENTS": "42"},
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     assert consumer.returncode == 0, consumer.stderr
@@ -219,9 +223,7 @@ def test_over20_choice_is_bounded_before_task_creation() -> None:
     assert "first 20 selected items" in gate
     assert "rerun for the remaining items" in gate
     assert "stop without creating tasks" in gate
-    assert skill.index("**Over-20 selection gate**") < skill.index(
-        'TaskUpdate(task_id=TASK_SELECT, status="completed")'
-    )
+    assert skill.index("**Over-20 selection gate**") < skill.index("## Step 7b join")
     assert "proceed with all" not in gate
     dispatch = (_RESOLVE / "modes/action-item-dispatch.md").read_text(encoding="utf-8")
     cap = dispatch[dispatch.index("**Caps**") : dispatch.index("**Parallel specialist-worktree dispatch**")]
@@ -246,21 +248,23 @@ def test_explicit_agent_bypasses_c1_and_reaches_specialist_dispatch() -> None:
     assert 'Skill(skill="bridge:implement"' in c1
 
 
-def test_question_maximum_includes_dispatch_cap_and_group_labels() -> None:
-    """The published longest path must count both Step 8 prompts."""
+def test_question_maximum_counts_step_3d_calls_plus_push_confirmation() -> None:
+    """The published longest normal path is three Step 3d calls plus the Step 10 push confirmation.
+
+    Labels and the post-PR action moved to the Step 3d follow-up call. Push authorization cannot move: it must show the
+    diff stat, which exists only after implementation, so Step 10 still confirms it.
+    """
     skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
     dispatch = (_RESOLVE / "modes/action-item-dispatch.md").read_text(encoding="utf-8")
     question_contract = skill[skill.index("- **AskUserQuestion usage**:") :]
 
     assert "| 10-18 |" in skill
-    assert "**`GROUP_STRATEGY=labels` only**" in dispatch
     assert (
-        "the normal action-item path, after successful source resolution and without diagnostic or conflict recovery, takes at most 5 calls"
+        "the normal action-item path, after successful source resolution and without diagnostic or conflict recovery, takes at most 3 calls at Step 3d"
         in question_contract
     )
-    assert "10-18 pending: two checkbox pages + commit-mode follow-up" in question_contract
-    assert "+ labels question + push-auth/post-pr" in question_contract
-    assert "4 calls without the optional grouped-labels question" in question_contract
+    assert "plus 1 Step 10 push confirmation unless the push intent was an explicit" in question_contract
+    assert "**`GROUP_STRATEGY=labels` only** — file missing or empty" in dispatch
 
 
 @pytest.mark.skipif(_BASH is None, reason="Resolve Step 8 uses Bash")
@@ -301,7 +305,8 @@ def test_all_mode_closeout_requires_item_work_record(tmp_path: Path, selected_id
         cwd=tmp_path,
         env=os.environ | {"CLAUDE_CODE_SESSION_ID": "resolve-closeout-test", "TMPDIR": str(tmp_path)},
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     assert result.returncode == 0, result.stderr
@@ -383,7 +388,8 @@ def test_c1_rejects_unattributed_or_incomplete_done_work(
         cwd=nested if not actual_shared and not claimed_shared else repo,
         env=os.environ | {"CLAUDE_CODE_SESSION_ID": "resolve-c1-test", "TMPDIR": str(tmp_path)},
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if expected_error:
@@ -441,7 +447,8 @@ def test_c1_brief_requires_clean_git_state(tmp_path: Path, dirty: bool) -> None:
         cwd=repo,
         env=os.environ | {"CLAUDE_CODE_SESSION_ID": "resolve-c1-brief", "TMPDIR": str(tmp_path)},
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     assert (result.returncode == 0) is not dirty
@@ -476,7 +483,8 @@ def test_phase1_to_phase2_boundary_refreshes_contract(tmp_path: Path) -> None:
             "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
         },
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     assert result.returncode == 0, result.stderr
@@ -503,11 +511,13 @@ def test_dispatch_granularity_question_offers_every_width_and_a_group_preview() 
         assert f'echo {mode} > "${{TMPDIR:-/tmp}}/resolve-dispatch-mode-${{CSID}}"' in skill, mode
     assert 'echo auto > "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}"  # timeout: 3000' in skill
     assert "| ≤3 | Q1 items · Q2 bulk · Q3 commit-mode · Q4 dispatch |" in skill
-    assert "| 4-6 | Q1-Q2 items (≤3 each) · Q3 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch |" in skill
-    assert "Q1 commit-mode · Q2 topic-group · Q3 dispatch |" in skill
+    assert (
+        "| 4-6 | Q1-Q2 items (≤3 each) · Q3 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch · Q4 push |" in skill
+    )
+    assert "Q1 commit-mode · Q2 topic-group · Q3 dispatch · Q4 push |" in skill
     assert "Q4 dispatch (all four slots; no item checkboxes exist in this mode)" in skill
     assert "discard the commit-mode, topic-group, **and dispatch** answers from the same call" in skill
-    assert 'echo "commit-mode=$_CM group-strategy=$_GS dispatch-mode=$_DM"' in skill
+    assert 'echo "commit-mode=$_CM group-strategy=$_GS dispatch-mode=$_DM push=$_PA post-pr=$_PP"' in skill
     assert "`DISPATCH_MODE=sequential` narrows every wave to **one** group regardless of pool" in dispatch
     assert "`per-specialist` skips only the ≤5 split" in dispatch
     assert "**Group-preview gate — `DISPATCH_MODE=preview` only" in dispatch
@@ -528,6 +538,207 @@ def test_context_budget_mode_asks_commit_mode_and_dispatch_together() -> None:
     """The ≥19-item single call carries commit mode and dispatch granularity side by side."""
     skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
     assert "Q1 bulk action · Q2 commit-mode · Q3 topic-group · Q4 dispatch" in skill
+
+
+#: Post-Step-3d `AskUserQuestion` mentions that are error recovery, a user-elected gate, or an explicit "no ask" note.
+_POST_SELECTION_ASK_ALLOWLIST = (
+    "No confirming commit found",  # straggler gate: unresolved item status
+    "**Push confirmation — one `AskUserQuestion` call.**",  # Step 10: scope-bearing push confirmation
+    "Assign a topic label to each implemented item",  # Step 8: typed-labels file lost (recovery)
+    "no new `AskUserQuestion` here",  # Step 11 states it reads the stored answer
+    "Phase 2 groups are formed",  # group preview, elected at Step 3d via Custom dispatch
+    "Challenge double-timeout gate",  # Phase 1: a retry also timed out; user decides, batched per wave
+)
+
+
+def _post_selection_text() -> str:
+    """Join every instruction that executes after the Step 3d gate on the action-item path."""
+    skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
+    conflicts = (_RESOLVE / "modes/conflict-resolution.md").read_text(encoding="utf-8")
+    return "\n".join(
+        (
+            skill[skill.index("## Step 7b join") : skill.index("## Step 12")],
+            conflicts[conflicts.index("### 7b: Verify and complete merge") :],
+            (_RESOLVE / "modes/action-item-dispatch.md").read_text(encoding="utf-8"),
+            (_RESOLVE / "modes/lint-qa-gate.md").read_text(encoding="utf-8"),
+        )
+    )
+
+
+def test_post_selection_steps_ask_only_for_recovery_or_elected_preview() -> None:
+    """Steps 7b–11 must not re-ask anything Step 3d can collect up front.
+
+    After the Step 3d answer the user leaves; any predictable question later (push, labels, over-20) parked real runs
+    for tens of minutes. Only error recovery and the group preview the user chose at Step 3d may still ask.
+    """
+    unexpected = [
+        line
+        for line in _post_selection_text().splitlines()
+        if "AskUserQuestion" in line and not any(marker in line for marker in _POST_SELECTION_ASK_ALLOWLIST)
+    ]
+    assert unexpected == []
+
+
+def test_push_question_lives_in_step_3d_with_fixed_blocks() -> None:
+    """Push and post-PR answers are recorded at Step 3d by one fixed block per closed-set value.
+
+    A single block carrying a default would record that default unedited on every run, so each value owns its own
+    literal block, and Step 10 must hold none of them.
+    """
+    skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
+    selection = skill[skill.index("## Step 3d") : skill.index("## Step 7b join")]
+    push_step = skill[skill.index("## Step 10: Push") : skill.index("## Step 11")]
+    blocks = [
+        'echo push > "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}"',
+        'echo skip > "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}"',
+        'echo open > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"',
+        'echo skip > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"',
+    ]
+    assert [block in selection for block in blocks] == [True] * 4
+    assert [block in push_step for block in blocks] == [False] * 4
+    assert "Push question — multiSelect: FALSE" in selection
+    assert "# substitute" not in selection
+    assert "**Over-20 selection gate** — rides the ≥19 band's follow-up call" in selection
+
+
+@pytest.mark.skipif(_BASH is None, reason="The Step 10 push read-back is Bash")
+@pytest.mark.parametrize(
+    ("sentinel", "expected"),
+    [
+        pytest.param("push", "push", id="authorized"),
+        pytest.param("skip", "skip", id="declined"),
+        pytest.param(None, "unset", id="lost-answer"),
+    ],
+)
+def test_step_10_reads_recorded_push_answer(tmp_path: Path, sentinel: str | None, expected: str) -> None:
+    """Step 10 reads the stored Step 3d push intent in the same call that computes the push scope.
+
+    A missing file reads as `unset`, never as `skip`, and routes to the full push confirmation (push + post-PR). With no
+    fork remote recorded the scope step refuses (`⛔`, exit 1), which Step 10 records as `not-attempted` and never
+    pushes.
+    """
+    skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
+    block = _bash_block_after(skill, "**Push intent from Step 3d, confirmation here")
+    session = f"resolve-push-{expected}"
+    if sentinel is not None:
+        (tmp_path / f"resolve-push-auth-{session}").write_text(f"{sentinel}\n", encoding="utf-8", newline="\n")
+
+    result = subprocess.run(
+        [_BASH, "-c", block],
+        cwd=tmp_path,
+        env=os.environ
+        | {
+            "CLAUDE_CODE_SESSION_ID": session,
+            "CLAUDE_PLUGIN_ROOT": str(_PLUGIN),
+            "TMPDIR": str(tmp_path),
+            "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
+        },
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert result.stdout.splitlines()[0] == f"PUSH_AUTH={expected}"
+    assert "⛔ Step 10: FORK_REMOTE/HEAD_REF unresolved" in result.stdout
+
+
+@pytest.mark.skipif(_BASH is None, reason="Resolve Step 1 uses Bash")
+def test_step_1_resets_push_answer_to_unset(tmp_path: Path) -> None:
+    """A new run must not inherit the previous run's `push` answer from the same session."""
+    skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
+    start = skill.index("export CSID=", skill.index("Parse $ARGUMENTS:"))
+    block = skill[start : skill.index("# defence-in-depth", start)]
+    session = "resolve-push-reset"
+    (tmp_path / f"resolve-push-auth-{session}").write_text("push\n", encoding="utf-8", newline="\n")
+
+    result = subprocess.run(
+        [_BASH, "-c", block],
+        cwd=tmp_path,
+        env=os.environ
+        | {
+            "ARGUMENTS": "42",
+            "CLAUDE_CODE_SESSION_ID": session,
+            "CLAUDE_PLUGIN_ROOT": str(_PLUGIN),
+            "TMPDIR": str(tmp_path),
+            "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
+        },
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / f"resolve-push-auth-{session}").read_text(encoding="utf-8").strip() == "unset"
+    assert (tmp_path / f"resolve-push-status-{session}").read_text(encoding="utf-8").strip() == "none"
+
+
+@pytest.mark.parametrize(
+    "status", ["pushed", "blocked-guard", "blocked-permission", "rejected-non-ff", "skipped-by-user", "not-attempted"]
+)
+def test_step_10_records_each_push_status_with_its_own_block(status: str) -> None:
+    """Every push outcome is a closed-set value, so each needs a literal block the report can trust.
+
+    A shared block with a default would silently report that default whenever the orchestrator forgot to edit it.
+    """
+    skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
+    push_step = skill[skill.index("## Step 10: Push") : skill.index("## Step 11")]
+    assert f'echo {status} > "${{TMPDIR:-/tmp}}/resolve-push-status-${{CSID}}"' in push_step
+
+
+def test_blocked_push_keeps_guard_lines_verbatim_and_never_bypasses_the_guard() -> None:
+    """A guard-blocked push saves the guard's own lines and the report ends with them.
+
+    The guard and the missing allow rule are user safety controls; the skill may only relay their instructions.
+    """
+    skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
+    push_step = skill[skill.index("## Step 10: Push") : skill.index("## Step 11")]
+    report = skill[skill.index("## Step 11") : skill.index("## Step 12")]
+    template = (_RESOLVE / "templates/resolve-report.md").read_text(encoding="utf-8")
+    assert "never create, touch, or edit a guard's authorization file yourself" in push_step
+    assert "`$IMPL_DIR/push-unblock.txt`" in push_step
+    assert "character for character" in push_step
+    assert "`## Unblock push` section that repeats its lines verbatim" in report
+    assert template.rstrip().splitlines()[-3] == "## Unblock push"
+
+
+@pytest.mark.skipif(_BASH is None, reason="The Step 11 report preamble is Bash")
+def test_step_11_surfaces_push_status_and_unblock_file(tmp_path: Path) -> None:
+    """The final report reads the recorded status and the saved unblock lines, not the transcript."""
+    skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
+    block = _bash_block_containing(skill, "boundary3: pre-final-report write")
+    session = "resolve-report-push"
+    impl_dir = tmp_path / "impl"
+    impl_dir.mkdir()
+    (impl_dir / "push-unblock.txt").write_text("! touch /x\ngit push\n", encoding="utf-8", newline="\n")
+    (tmp_path / f"resolve-impl-dir-{session}").write_text(f"{_bash_path(impl_dir)}\n", encoding="utf-8", newline="\n")
+    (tmp_path / f"resolve-push-status-{session}").write_text("blocked-guard\n", encoding="utf-8", newline="\n")
+    (tmp_path / f"resolve-oss-resolve-{session}").write_text(
+        f"{_bash_path(_RESOLVE)}\n", encoding="utf-8", newline="\n"
+    )
+
+    result = subprocess.run(
+        [_BASH, "-c", block],
+        cwd=tmp_path,
+        env=os.environ
+        | {
+            "CLAUDE_CODE_SESSION_ID": session,
+            "CLAUDE_PLUGIN_ROOT": str(_PLUGIN),
+            "TMPDIR": str(tmp_path),
+            "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
+        },
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "PUSH_STATUS=blocked-guard" in result.stdout
+    assert f"PUSH_UNBLOCK={_bash_path(impl_dir)}/push-unblock.txt\n! touch /x\ngit push\n" in result.stdout
+    assert "push-status=blocked-guard" in (tmp_path / ".temp/state/skill-contract.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(_BASH is None, reason="The Step 8 prelude is Bash")
@@ -572,7 +783,8 @@ def test_step_8_prelude_publishes_a_usable_dispatch_mode(tmp_path: Path, sentine
             "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
         },
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
 
@@ -602,6 +814,7 @@ def test_phase2_boundary_records_dispatch_mode_in_contract(tmp_path: Path, senti
     impl_dir.mkdir()
     (tmp_path / f"resolve-impl-dir-{session}").write_text(f"{_bash_path(impl_dir)}\n", encoding="utf-8", newline="\n")
     (tmp_path / f"resolve-dispatch-mode-{session}").write_text(f"{sentinel}\n", encoding="utf-8", newline="\n")
+    (tmp_path / f"resolve-push-auth-{session}").write_text("push\n", encoding="utf-8", newline="\n")
 
     result = subprocess.run(
         [_BASH, "-c", block],
@@ -614,13 +827,16 @@ def test_phase2_boundary_records_dispatch_mode_in_contract(tmp_path: Path, senti
             "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
         },
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
 
     assert result.returncode == 0, result.stderr
     assert f"DISPATCH_MODE={expected}" in result.stdout
-    assert f"dispatch-mode={expected}" in (tmp_path / ".temp/state/skill-contract.md").read_text(encoding="utf-8")
+    contract = (tmp_path / ".temp/state/skill-contract.md").read_text(encoding="utf-8")
+    assert f"dispatch-mode={expected}" in contract
+    assert "push-auth=push (Step 3d answer)" in contract
 
 
 def test_deprecation_filter_reads_tagged_blob_and_keeps_uncertain_history(tmp_path: Path) -> None:

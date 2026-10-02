@@ -133,6 +133,8 @@ CLAUDE_SKILL_CONTRACTS = {
         "`verdict`, `findings`, `files_touched`, `remaining`, and `blockers`",
         "`transcript_path`",
         "do not edit task-named paths",
+        "Never wait on a detached job with a loop",
+        "`run_in_background: true`",
         "re-read every `files_touched` path",
         "open the JSON file referenced by `incident`",
         "inspect its `fault`",
@@ -169,6 +171,7 @@ CLAUDE_SKILL_CONTRACTS = {
         'bridge_call.py" status --job-id "<job-id>"',
         "same `--workspace` value the originating detached call used",
         "Return JSON status unchanged",
+        "never wrapped in a `sleep`, `ScheduleWakeup`, `ListAgents`, or `Monitor` loop",
     ),
     "setup": (
         "bridge_setup.py",

@@ -44,11 +44,10 @@ CHALLENGE_ENABLED=true  # set to false via --no-challenge
 CODEMAP_ENABLED=auto    # on by default if codemap installed + index found; --no-codemap = off; --codemap = strict (stop if not installed)
 ```
 
-> Agent health monitoring (CLAUDE.md §6) — applies to Step 3 parallel agent spawns. Spawns are background; orchestrator ends its turn, resumes on completion notification. Constants below bound how long a run may stay silent — not a poll cadence, nothing sleeps.
+> Agent health monitoring (CLAUDE.md §6) — applies to Step 2 parallel agent spawns. Spawns are background; orchestrator ends its turn, resumes on completion notification. The constant below is a per-agent deadline checked at wake-ups by `agent_watch.py` — not a poll cadence, nothing sleeps. Every spawn — the Step 2 batch, Step 4 verifiers, the Step 5 consolidator, the Step 8 shepherd — writes its rows to `$RUN_DIR/agent-watch-<batch>.tsv` (`review`, `verify`, `consolidate`, `reply`) in its own spawn response; never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop to wait on any of them.
 
 ```text
-HARD_CUTOFF=900        # no file activity for this long across wake-ups → declare timed out
-EXTENSION=300          # one +5 min extension if output file explains delay
+AGENT_DEADLINE_S=1800  # per spawned agent, from its spawn; covers the former 900 s silence cutoff + 300 s extension with margin
 ```
 
 </constants>
@@ -91,12 +90,12 @@ Agents: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:perf-optimizer`
 
 **Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
-Create these tasks **before** starting Step 1 (in order, all at once):
+Create these tasks **before** starting Step 1 (in order, all at once), in the same response as Step 1's first tool call. **Zero bookkeeping-only turns**: every `TaskUpdate` below rides in the response that carries the next real tool call — one step's `completed` and the next step's `in_progress` go together with that step's first call. The single standalone exception stays `completed` right before a long output block.
 
 - **"Step 1: Scope and context detection"** — TaskUpdate(in_progress) at Step 1 start; TaskUpdate(completed) when all scope vars set (SCOPE, REPLY_MODE, mode flags)
 - **"Step 2: Agent launch"** — TaskUpdate(in_progress) before spawning agents; TaskUpdate(completed) when all Agent() calls issued
 - **"Step 3: Post-agent checks"** — TaskUpdate(in_progress) before post-agent checks run; TaskUpdate(completed) when all agent output files collected (or timed out); per task-lifecycle.md: TaskUpdate BEFORE long output blocks
-- **"Step 4: Cross-validate critical findings"** — TaskUpdate(in_progress) before spawning verifier agents; TaskUpdate(completed) when all verdicts received; **TaskUpdate(deleted) when no critical/blocking findings exist after Step 3** (always created upfront)
+- **"Step 4: Cross-validate critical findings"** — TaskUpdate(in_progress) before spawning verifier agents; TaskUpdate(completed) when all verdicts received; **TaskUpdate(deleted) when no critical/blocking findings exist after Step 3** (always created upfront, so the step stays visible; the delete rides with Step 5's first call)
 - **"Step 5: Consolidate findings"** — TaskUpdate(in_progress) before spawning consolidator; TaskUpdate(completed) when consolidator returns its one-liner (Write to `review-report.md` done) — **do NOT mark completed for the terminal print, that's a separate task below**
 - **"Step 5b: Print report header"** — created **blockedBy** "Step 5: Consolidate findings"; TaskUpdate(in_progress) immediately after the consolidator's one-liner returns; TaskUpdate(completed) only once the `---` header table has actually appeared in this response's output (not merely queued/intended).
   - The consolidator's one-liner (`verdict=... | findings=N | file=<path>`) is NOT this table — it is a routing signal for the orchestrator, never a substitute for reading `$REPORT_DIR/review-report.md` and printing its header.
@@ -666,36 +665,25 @@ _HEAD_SHA=$(jq -r '.headRefOid // empty' "$SNAP_DIR/pr-meta.json" 2>/dev/null)
 [ -n "$_HEAD_SHA" ] && echo "$_HEAD_SHA" > "$REPORT_DIR/head-sha.txt" || :
 ```
 
-**File-based handoff**:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# Reload _OSS_SHARED (Check 41: fresh shell)
-IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/review-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""
-cat "$_OSS_SHARED/file-handoff-protocol.md"  # timeout: 5000
-```
-
-Follow above. File absent → warn and continue without it.
-
-**IMPORTANT**: Replace `$REPORT_DIR`, `$REVIEW_SKILL_DIR`, `$BRANCH`, and `$DATE` with actual literal computed values in every Agent spawn prompt. Do NOT pass as shell variables — agents receive text, not shell context. **Exception — `$RUN_DIR`**: never hand-substitute it; agents self-resolve via `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"` per the run-dir preamble in `agent-prompts.md` (eliminates leading-dot transcription slips).
-
-Check Codex availability:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/check_bridge.py" --status 2>/dev/null || echo "absent")  # timeout: 5000
-if [ "$CODEX_STATUS" = "available" ]; then CODEX_AVAILABLE=1; echo "bridge@borda-ai-rig available"; else CODEX_AVAILABLE=0; echo "⚠ bridge@borda-ai-rig is ${CODEX_STATUS} — skipping co-review"; fi
-echo "$CODEX_AVAILABLE" > "${TMPDIR:-/tmp}/oss-review-codex-available-${CSID}"
-```
+**Step 2 prelude — one call**: file-based handoff protocol, Codex availability and the agent prompt templates load together; nothing between them depends on a decision.
 
 <!-- loads: agent-prompts.md -->
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# Reload REVIEW_SKILL_DIR (Check 41: fresh shell)
+# Reload _OSS_SHARED + REVIEW_SKILL_DIR (Check 41: fresh shell)
+IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/review-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""
 IFS= read -r REVIEW_SKILL_DIR < "${TMPDIR:-/tmp}/review-skill-dir-${CSID}" 2>/dev/null || REVIEW_SKILL_DIR=""
-cat "$REVIEW_SKILL_DIR/templates/agent-prompts.md"  # timeout: 5000
+cat "$_OSS_SHARED/file-handoff-protocol.md" 2>/dev/null || echo "⚠ file-handoff-protocol.md absent — continuing without it"
+CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/check_bridge.py" --status 2>/dev/null || echo "absent")
+if [ "$CODEX_STATUS" = "available" ]; then CODEX_AVAILABLE=1; echo "bridge@borda-ai-rig available"; else CODEX_AVAILABLE=0; echo "⚠ bridge@borda-ai-rig is ${CODEX_STATUS} — skipping co-review"; fi
+echo "$CODEX_AVAILABLE" > "${TMPDIR:-/tmp}/oss-review-codex-available-${CSID}"
+cat "$REVIEW_SKILL_DIR/templates/agent-prompts.md"  # timeout: 10000
 ```
+
+Follow the handoff protocol above. File absent → warn and continue without it.
+
+**IMPORTANT**: Replace `$REPORT_DIR`, `$REVIEW_SKILL_DIR`, `$BRANCH`, and `$DATE` with actual literal computed values in every Agent spawn prompt. Do NOT pass as shell variables — agents receive text, not shell context. **Exception — `$RUN_DIR`**: never hand-substitute it; agents self-resolve via `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"` per the run-dir preamble in `agent-prompts.md` (eliminates leading-dot transcription slips).
 
 Template (loaded above). Substitute `<REVIEW_SKILL_DIR>` → `$REVIEW_SKILL_DIR` before using content in spawn prompts. Leave `$RUN_DIR` literal in the prompt text — agents resolve it themselves via the run-dir preamble (`cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"`); the orchestrator must NOT retype the run-dir path.
 
@@ -713,15 +701,7 @@ if [ "$codemap_available" = "true" ] && [ -n "$CODEMAP_CONTEXT_STAGE" ] && [ -f 
 fi
 ```
 
-**Health monitoring** (CLAUDE.md §6): Create checkpoint BEFORE spawning agents:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-REVIEW_CHECKPOINT="${TMPDIR:-/tmp}/review-check-$(date +%s)-${CSID}"
-touch "$REVIEW_CHECKPOINT"
-# read back on a later wake-up (separate invocation)
-echo "$REVIEW_CHECKPOINT" > "${TMPDIR:-/tmp}/oss-review-checkpoint-${CSID}"
-```
+**Health monitoring** (CLAUDE.md §6): per-agent deadlines armed in the launch turn (below), checked by `agent_watch.py` at each wake-up — no checkpoint file, no `find -newer` probe.
 
 **Spawn-count gate — apply before spawning anything.** Each agent costs ~120,851 tok fixed overhead regardless of how little work it does — ~73 tool-calls' worth, plus ~12.0 s/call. Measured on a real PR review: 11 agents, ~55% of whole bill. Rules, all mandatory:
 
@@ -740,27 +720,25 @@ Two stages, in order — never collapse them:
 
 Launch the bridge review, the issue agent (one spawn for all linked issues), and all review agents in one message batch. Call `Skill(skill="bridge:review", args="Read-only adversarial review of <REVIEW_TARGET>, using changed files and <RUN_DIR>/codemap-context.md when present. Identify bugs, missed edge cases, and inconsistencies with exact file:line evidence; write findings to <RUN_DIR>/foundry--codex.md and do not apply fixes.")` when `CODEX_AVAILABLE=1` and DOCS_TYPING_MODE/TESTS_CI_MODE are false. Then launch the selected Foundry agents and rank survivors under `FANOUT_MAX` as before.
 
-Spawns are background: issue the whole batch in one message, then **end the turn**. Each agent's completion notification wakes the orchestrator; check expected output files then. Never `Bash(true)`, a "waiting" line, or a sleep to hold the turn open.
+Spawns are background: issue the whole batch in one message, then **end the turn**. Each agent's completion notification wakes the orchestrator; check expected output files then. Never `Bash(true)`, a "waiting" line, or a sleep to hold the turn open — and never call `ScheduleWakeup`, `ListAgents`, or a `Monitor` loop to wait for agents: the notification is the only resume signal. An agent whose completion or idle notification arrives while its expected output file is still missing is ⏱ `timed_out` at once — never wait on it further, and never leave it for the user to ask about.
 
-Persist the monitor list from the **actual launch batch** — never re-derive it from scope/mode flags (flag-derived lists include ranking-dropped dimensions; the monitor then waits ~15 min HARD_CUTOFF per never-spawned agent). In the same turn as the launch message, use the **Write tool** (the lineup is a ranking decision the shell cannot see) to create `$RUN_DIR/.expected-files`: one absolute path per line, exactly one line per output file of every agent actually spawned:
+Persist the monitor list from the **actual launch batch** — never re-derive it from scope/mode flags (flag-derived lists include ranking-dropped dimensions; the monitor would then wait out a deadline per never-spawned agent). In the same turn as the launch message, use the **Write tool** (the lineup is a ranking decision the shell cannot see) to create `$RUN_DIR/agent-watch-review.tsv`: one row per output file of every agent actually spawned, `<agent name><TAB><absolute output path><TAB>1800` (`AGENT_DEADLINE_S`) — a merged spawn gets one row per file it writes. In the same response also write `$RUN_DIR/.expected-files` exactly as before (one absolute path per line, one line per output file of every agent actually spawned), so the run dir keeps every artifact it always had:
 
 - `$RUN_DIR/foundry--codex.md` — only when the bridge review launched
 - `$RUN_DIR/issue-<N>.md` — one per linked issue the issue agent covers
 - one `$RUN_DIR/<agent>.md` per spawned review agent — basenames: `foundry--sw-engineer.md`, `foundry--qa-specialist.md`, `foundry--perf-optimizer.md`, `foundry--doc-scribe.md`, `foundry--linting-expert.md`, `foundry--solution-architect.md`, `foundry--challenger.md`, `oss--cicd-steward.md`, `foundry--blind-solve.md` (Agent 0, FEATURE/MIXED only)
 
-Then arm the guard (fresh shell):
+On each wake-up — a completion or idle notification, never a self-scheduled timer — run this once, before reading any agent output (fresh shell; it fails closed on an unbound run dir):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
-[ -n "$RUN_DIR" ] || { echo "! BLOCKED — run-dir sentinel empty; agent health monitoring cannot be armed"; exit 1; }
-[ -s "$RUN_DIR/.expected-files" ] || { echo "! BLOCKED — $RUN_DIR/.expected-files missing or empty; write it (one path per spawned agent) before polling"; exit 1; }
-POLL_START=$(date +%s)
+[ -n "$RUN_DIR" ] || { echo "! BLOCKED — run-dir sentinel empty; agent deadlines cannot be checked"; exit 1; }
+[ -s "$RUN_DIR/agent-watch-review.tsv" ] || { echo "! BLOCKED — $RUN_DIR/agent-watch-review.tsv missing or empty; write it (one row per spawned agent output) in the launch turn"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/agent_watch.py" --state-dir "$RUN_DIR"  # timeout: 5000
 ```
 
-Later wake-ups read paths back via `while read -r path; do [ -f "$path" ] || PENDING=1; done <"$RUN_DIR/.expected-files"` — no in-memory array required.
-
-On each wake-up — a completion notification, or one optional liveness probe per turn — rehydrate both run dir and checkpoint path first (fresh shell — an unbound `$RUN_DIR` makes `find` scan `/`): `IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""` and `IFS= read -r REVIEW_CHECKPOINT < "${TMPDIR:-/tmp}/oss-review-checkpoint-${CSID}" 2>/dev/null || REVIEW_CHECKPOINT=""` then `find "$RUN_DIR" -newer "$REVIEW_CHECKPOINT" -type f | wc -l` — non-zero = agents alive (refresh checkpoint: `touch "$REVIEW_CHECKPOINT"`); zero since last refresh for `$HARD_CUTOFF` seconds = stalled. One `$EXTENSION` if `tail -20` output file explains delay; second stall = cutoff. On timeout: read partial results from stalled agent's file, surface with ⏱ in report. Never omit timed-out agents.
+Act on every row: `done` → consume · `timed_out`, or a notification that arrived while its file is still missing → ⏱ `timed_out` now; read any partial file and surface it with ⏱ in the report · rows still open with no notification → end the turn. Never omit timed-out agents, and a ⏱ never skips a user question.
 
 After all outputs collected (or timed out):
 
@@ -837,6 +815,8 @@ cat "$_OSS_SHARED/foundry--cross-validation-protocol.md"  # timeout: 5000
 Follow above. File absent → warn: "cross-validation protocol not found — verify foundry plugin installed (`claude plugin list`); skipping Step 4." Then skip Step 4.
 
 **Independence requirement**: cross-validation must run as separate spawned agent — same type as finding's origin. Do NOT validate in orchestrator context.
+
+**Deadlines, no polling**: in the verifier spawn response, write `$RUN_DIR/agent-watch-verify.tsv` with the Write tool — one row per verifier, `<name><TAB><its output file per the protocol, or - when it returns only an envelope><TAB>1800` — and run the Step 2 wake-up check (it reads every `agent-watch-*.tsv` in `$RUN_DIR`) at each notification. Never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop.
 
 **Spawn cap: max 3 verifier agents.** Critical/blocking findings > 3 → group into batches of ≤2 findings per verifier; note grouped IDs in rationale.
 

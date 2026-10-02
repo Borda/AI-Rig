@@ -669,6 +669,47 @@ def test_commit_contract_preserves_literal_message_and_failure_boundaries() -> N
         assert required in contract
 
 
+def test_commit_contract_stages_and_commits_reviewed_paths_in_one_command() -> None:
+    """Keep staging and commit behind one owning command with scope guards on both sides.
+
+    Separate staging and commit calls each escalate for `.git` writes, so an unattended remediation run parked on the
+    second approval. The single command is safe only with a pre-command staged-scope guard and a post-commit file-set
+    comparison against the reviewed path list.
+    """
+    contract = _normalized_text(PLUGIN_ROOT / "shared" / "commit-response-template.md").lower()
+    for required in (
+        "one owning command that stages exactly those paths and commits them",
+        "`rtk git add -- <paths> && rtk git commit --cleanup=verbatim -m <message>`",
+        "show the complete secret-free message in chat with the exact reviewed path list",
+        "`git diff head -- <paths>`",
+        "`git status --porcelain=v1 -- <paths>`",
+        "`git diff --cached --name-only`: any staged entry outside the reviewed paths is user state and stops execution",
+        "never `.`, a directory, or a glob",
+        "as two argv calls",
+        "windows powershell 5.1 has no `&&`",
+        "treat the staging-and-commit command as a one-time state-changing command and omit `prefix_rule`",
+        "`git --no-pager show --no-renames --name-only -z --format= head`",
+        "equal the reviewed path list exactly as a set",
+        "a mismatch includes a committed file set that differs from the reviewed paths",
+        "do not amend, reset, unstage, re-stage, or create a repair commit",
+    ):
+        assert required in contract
+    assert "finish authorized staging separately" not in contract
+
+
+def _file_free_commit_argvs(transport: str, segments: list[list[str]]) -> list[list[str]]:
+    """Return the process argv list that one documented transport uses for the staging-and-commit command."""
+    identity = ["-c", "user.name=Contract Test", "-c", "user.email=contract@example.invalid"]
+    commands = [[segment[0], *identity, *segment[1:]] for segment in segments]
+    if transport == "rtk":
+        return [[shutil.which("rtk"), *command] for command in commands]
+    if transport == "posix":
+        # Match the documented POSIX apostrophe encoding, not shell interpolation, chained with &&.
+        quoted = [" ".join("'" + part.replace("'", "'\"'\"'") + "'" for part in command) for command in commands]
+        return [[shutil.which("sh"), "-c", " && ".join(quoted)]]
+    return commands
+
+
 @pytest.mark.parametrize(
     "transport",
     [
@@ -678,9 +719,13 @@ def test_commit_contract_preserves_literal_message_and_failure_boundaries() -> N
     ],
 )
 def test_file_free_commit_preserves_reviewed_message(tmp_path: Path, transport: str) -> None:
-    """Preserve hostile-looking literal text without shell expansion or draft files."""
+    """Preserve hostile-looking literal text and commit only the reviewed path without draft files.
+
+    The documented command stages explicit reviewed paths and commits them in one shell command; argv-only tools run the
+    same two segments as separate calls. An unrelated untracked file must stay out of the commit.
+    """
     contract = (PLUGIN_ROOT / "shared" / "commit-response-template.md").read_text(encoding="utf-8")
-    command = re.search(r"`(rtk git commit --cleanup=verbatim -m <message>)`", contract)
+    command = re.search(r"`(rtk git add -- <paths> && rtk git commit --cleanup=verbatim -m <message>)`", contract)
     assert command is not None
     message = (
         "test(cli): preserve literal commit text\n\n"
@@ -696,16 +741,13 @@ def test_file_free_commit_preserves_reviewed_message(tmp_path: Path, transport: 
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
     subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True, env=env, capture_output=True)
-    argv = shlex.split(command.group(1))
-    argv = argv[1:-1] + [message, "--allow-empty"]
-    argv[1:1] = ["-c", "user.name=Contract Test", "-c", "user.email=contract@example.invalid"]
-    if transport == "rtk":
-        argv.insert(0, shutil.which("rtk"))
-    if transport == "posix":
-        # Match the documented POSIX apostrophe encoding, not shell interpolation.
-        quoted = ["'" + part.replace("'", "'\"'\"'") + "'" for part in argv]
-        argv = [shutil.which("sh"), "-c", " ".join(quoted)]
-    subprocess.run(argv, cwd=tmp_path, env=env, check=True, capture_output=True)
+    (tmp_path / "reviewed file.txt").write_bytes(b"reviewed\n")
+    (tmp_path / "unrelated.txt").write_bytes(b"user state\n")
+    add_text, commit_text = command.group(1).split(" && ")
+    add_argv = [part if part != "<paths>" else "reviewed file.txt" for part in shlex.split(add_text)[1:]]
+    commit_argv = [*shlex.split(commit_text)[1:-1], message]
+    argvs = _file_free_commit_argvs(transport, [add_argv, commit_argv])
+    results = [subprocess.run(argv, cwd=tmp_path, env=env, check=True, capture_output=True) for argv in argvs]
     stored = subprocess.run(
         ["git", "--no-pager", "show", "-s", "--format=format:%B", "HEAD"],
         cwd=tmp_path,
@@ -713,8 +755,17 @@ def test_file_free_commit_preserves_reviewed_message(tmp_path: Path, transport: 
         check=True,
         capture_output=True,
     ).stdout.decode("utf-8")
+    committed = subprocess.run(
+        ["git", "--no-pager", "show", "--no-renames", "--name-only", "-z", "--format=", "HEAD"],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+    ).stdout.decode("utf-8")
+    assert len(results) == (1 if transport == "posix" else 2)
     assert stored.removesuffix("\n") == message
-    assert sorted(path.name for path in tmp_path.iterdir()) == [".git"]
+    assert set(committed.split("\0")) - {""} == {"reviewed file.txt"}
+    assert sorted(path.name for path in tmp_path.iterdir()) == [".git", "reviewed file.txt", "unrelated.txt"]
 
 
 def test_calibration_recurrence_cases_cover_each_escalation_stage() -> None:

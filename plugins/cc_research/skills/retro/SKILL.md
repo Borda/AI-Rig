@@ -44,7 +44,7 @@ IFS= read -r _RESEARCH_SHARED < "${TMPDIR:-/tmp}/research-shared-${CSID}" 2>/dev
 cat "$_RESEARCH_SHARED/unsupported-flag-protocol.md"
 ```
 
-**Task tracking**: create tasks for T1–T7 at start — before any tool calls.
+**Task tracking**: create tasks for T1–T7 at start, all in the same response as the first real tool call. Every later `TaskUpdate` rides with the next real tool call — never a bookkeeping-only turn; the one standalone call is a `completed` right before a long report.
 
 ### Step T1: Locate and load run data
 

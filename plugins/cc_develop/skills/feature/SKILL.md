@@ -41,6 +41,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _DEV_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_shared_resolve.py" 2>/dev/null)  # timeout: 5000
 [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
 echo "$_DEV_SHARED" > "${TMPDIR:-/tmp}/dev-shared-${CSID}"  # cold resolve — every later block warm-reads this
+echo "$PWD/.temp/develop/agent-watch-$(date -u +%Y-%m-%dT%H-%M-%SZ)" > "${TMPDIR:-/tmp}/dev-agent-watch-dir-${CSID}"  # fresh per run — agent-resolution.md §Agent waits
 # loads: compaction-contract.md
 cat "$_DEV_SHARED/agent-resolution.md"
 ```
@@ -524,23 +525,20 @@ fi
 
 Start from Step 2 demo — already failing, becomes first target. For each piece of functionality (or, in batch mode, per non-overlapping batch member):
 
-1. **Run existing suite — confirm all pass** (baseline before adding anything). Redundant from cycle 2 on **only when the prior cycle's step 6 already ran full-dir**; when it ran `test-impact`-scoped instead, that scoped run never proved the whole directory green, so the full baseline still runs:
+1. **Run existing suite — confirm all pass** (baseline before adding anything) — **first cycle only**. Later cycles never re-run the whole directory: each cycle's step 6 verifies the tests its change touches, and the full suite does not run again inside this loop — it runs at the final gate once the loop is clean, and again after any fix to a full-suite failure (§Final gate):
 
    ```bash
-   # timeout: 600000 — read-back merged into this fence (round-5 M9 file-scope extension): a
-   # separate read-only fence above left TDD_CYCLE/LAST_CYCLE_FULL_DIR unassigned here, since
-   # Bash() state doesn't survive a fence boundary — the exact H3/N9 shape, caught by extending
-   # M9's scope from _shared files to feature/SKILL.md itself.
+   # timeout: 600000
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
    IFS= read -r TDD_CYCLE < "${TMPDIR:-/tmp}/dev-feature-tdd-cycle-${CSID}" 2>/dev/null || TDD_CYCLE="0"
-   IFS= read -r LAST_CYCLE_FULL_DIR < "${TMPDIR:-/tmp}/dev-feature-last-full-dir-${CSID}" 2>/dev/null || LAST_CYCLE_FULL_DIR="false"
+   IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
    set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
-   if [ "$TDD_CYCLE" -eq 0 ] || [ "$LAST_CYCLE_FULL_DIR" != "true" ]; then
+   if [ "$TDD_CYCLE" -eq 0 ]; then
        # --ignore assumes new test is a discrete file; appended-to-existing-file case needs pytest node-ID deselection instead
        eval "$PYTEST_CMD --tb=short <target_test_dir> -v --ignore=<new_test_file>" 2>&1 | tail -20
        GATE_EXIT=$?
    else
-       echo "→ baseline already proven full-dir by the prior cycle's step 6 — skipping redundant re-run"
+       echo "→ baseline proven at cycle 0; this cycle verifies through step 6's targeted run"
        GATE_EXIT=0
    fi
    ```
@@ -567,49 +565,17 @@ Start from Step 2 demo — already failing, becomes first target. For each piece
 
 5. **Run demo/test — confirm it passes**
 
-6. **Run affected tests** (prefer targeted over full suite):
-
-   **Test impact (codemap-py)** — identify minimal test set first; decision, run, and persist stay in one fence so `LAST_CYCLE_FULL_DIR` is never read back empty by cycle 1's baseline check:
+6. **Run affected tests** — targeted only; never the full directory inside this loop. One call selects and runs: `codemap-py query test-impact` per changed module when available, path heuristics otherwise (name-matched tests plus tests importing the module); this cycle's new tests are selected as changed files:
 
    ```bash
    # timeout: 600000
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-   set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
-   _TI_JSON=$(codemap-py query test-impact "<changed_module>" 2>/dev/null)
-   _TI_CMD=$(printf '%s' "$_TI_JSON" | grep -o '"pytest_cmd"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
-   # codemap-py's own pytest_cmd field is literally "pytest " + space-joined file paths — a bare
-   # "pytest" guess, never the repo's real $PYTEST_CMD, and repo-derived content. Never eval it
-   # directly: strip its "pytest " prefix to recover the file-list operand. It is a *list*, not a
-   # single value — quoting the whole thing as one eval operand (the template every other data
-   # operand in this file uses) collapses multiple files into one bogus path and pytest exits 4
-   # "file or directory not found" on the normal multi-file case. Split on spaces (tr, not a zsh
-   # parameter substitution — ${VAR// /$'\n'} was tried and empirically inserts the literal 4-char
-   # text $'\n' under zsh instead of a real newline) and re-quote each path as its own operand,
-   # same escape logic as Retry A. Command substitution, not a heredoc, feeds the loop — a heredoc
-   # inside this list-item-indented fence breaks markdown fence parsing (confirmed) and also drops
-   # per-command coverage from the blueprint-permission manifest.
-   _TI_FILES="${_TI_CMD#pytest }"
-   if [ -n "$_TI_FILES" ] && [ "$_TI_FILES" != "$_TI_CMD" ]; then
-       LAST_CYCLE_FULL_DIR=false
-       _TI_FILES_NL=$(printf '%s' "$_TI_FILES" | tr ' ' '\n')
-       _TI_ARGS=$(printf '%s\n' "$_TI_FILES_NL" | while IFS= read -r _f; do
-           [ -z "$_f" ] && continue
-           _esc="${_f//\\/\\\\}"
-           _esc="${_esc//\"/\\\"}"
-           _esc="${_esc//\$/\\\$}"
-           _esc="${_esc//\`/\\\`}"
-           printf ' "%s"' "$_esc"
-       done)
-       eval "$PYTEST_CMD --tb=short -v$_TI_ARGS" 2>&1 | tail -20
-       GATE_EXIT=$?
-       printf '%s' "$_TI_JSON" | grep -q '"not_covered"' && echo "⚠ not_covered — some changed code has no mapped test"
-   else
-       LAST_CYCLE_FULL_DIR=true
-       eval "$PYTEST_CMD --tb=short <target_test_dir> -v" 2>&1 | tail -20
-       GATE_EXIT=$?
-   fi
-   echo "$LAST_CYCLE_FULL_DIR" > "${TMPDIR:-/tmp}/dev-feature-last-full-dir-${CSID}"
+   IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
+   IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-feature-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
+   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --pytest-cmd "$PYTEST_CMD" --run --record-dir "${DEV_DIR:-.developments}"
    ```
+
+   The first output line is the selection JSON — surface any `codemap.partial`/`codemap.fell_back` count and every `not_covered` entry (`⚠ not_covered — some changed code has no mapped test`) as a coverage caveat; the selection and full log are recorded under `$DEV_DIR/test-targets.jsonl`. Empty selection (`note` set) → say nothing ran beyond step 5.
 
 7. Regressions appear → fix before moving on — never carry forward broken suite
 
@@ -684,20 +650,14 @@ Use scan to prioritize which criteria below get deepest scrutiny.
 
 2. Every gap found → implement fix immediately — add missing tests, remove dead code, revert out-of-scope edits. Return to Step 3 for substantive implementation gap needing new TDD cycle.
 
-3. Re-run affected tests to confirm nothing regressed (prefer targeted over full suite — the quality stack's own wide gate in Step 5 already covers the whole directory once, after this loop closes):
-
-   ```bash
-   codemap-py query test-impact "<changed_module>" 2>/dev/null
-   ```
-
-   - Non-empty `pytest_cmd` → run those tests
-   - Empty or `codemap-py query` absent → full suite fallback:
+3. Re-run the tests this cycle's fixes touch to confirm nothing regressed — targeted only, same block as Step 3 item 6; the full suite never runs inside this loop — it runs at the final gate once the loop is clean, and again after any fix to a full-suite failure (§Final gate):
 
    ```bash
    # timeout: 600000
-   set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
-   eval "$PYTEST_CMD --tb=short <target_test_dir> -v" 2>&1 | tail -20
-   GATE_EXIT=$?
+   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
+   IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-feature-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
+   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --pytest-cmd "$PYTEST_CMD" --run --record-dir "${DEV_DIR:-.developments}"
    ```
 
    > **Objective convergence check**: findings in this cycle identical to previous cycle (same locations, same issues) → declare convergence, exit loop — further cycles won't resolve; surface to user.
@@ -744,7 +704,17 @@ _SHARED="$_DEV_SHARED"  # foundry--quality-stack.md loads its siblings from $_SH
 cat "$_DEV_SHARED/foundry--quality-stack.md"
 ```
 
-Execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps. `foundry--quality-stack.md` ships in this plugin's own `_shared` (propagated foundry canonical, source-plugin prefix), so it is always present — absence means a broken install, not a missing optional dependency.
+Execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps. `foundry--quality-stack.md` ships in this plugin's own `_shared` (propagated foundry canonical, source-plugin prefix), so it is always present — absence means a broken install, not a missing optional dependency. Its directory-wide pytest run is the final gate's first full-suite run; it runs again only after code changes (§Final gate rerun).
+
+**Final gate rerun — full suite with the repository's own command**, after any code change that follows the quality stack's wide run — a Progressive Review fix, or any fix to a full-suite failure (the stack halting on a genuine failure, or this block failing) — a fix can break something outside the targeted set, and the stack's own re-checks are scoped. A suite that may outlive the ~10 min foreground cap runs as a background Bash call (`run_in_background: true`): end the turn, its exit re-invokes you, no polling. Non-zero → fix (rerun the failing node ids while fixing — never the verification), then rerun this block in full. Max 3 gate iterations; at the cap stop, surface the remaining failures, and never report the suite green. A green full suite is the last test evidence before the Final Report:
+
+```bash
+# timeout: 600000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r TEST_CMD < "${TMPDIR:-/tmp}/dev-test-cmd-${CSID}" 2>/dev/null || TEST_CMD=""
+[ -n "$TEST_CMD" ] || { echo "! BLOCKED — TEST_CMD sentinel missing; re-run Project Detection"; exit 1; }
+eval "$TEST_CMD"
+```
 
 **Branch Safety Guard — no test suite**: no test suite found (pytest collects 0 tests or `$TEST_CMD` not set) → log `⚠ No test suite detected — Branch Safety Guard weakened`, require explicit user confirmation before proceeding past guard.
 

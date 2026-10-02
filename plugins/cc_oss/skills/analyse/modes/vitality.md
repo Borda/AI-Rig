@@ -2,7 +2,7 @@
 
 <workflow>
 
-**Task hygiene**: call TaskList first; close orphaned tasks from prior runs. **Task tracking**: TaskCreate tasks for each major phase before starting: "Step 1 Data Fetch", "Step 2 Axis Scoring (3 parallel)", "Step 3 Assemble Scores", "Step 4 Report", "Step 5 Codex Review", "Step 6 Adversarial Rework Loop", "Step 7 Terminal Output"; mark each in_progress/completed as you go. **In `--quick` mode** (QUICK_MODE=true): omit the "Step 5 Codex Review" and "Step 6 Adversarial Rework Loop" tasks — they are skipped.
+**Task hygiene**: call TaskList first; close orphaned tasks from prior runs. **Zero bookkeeping-only turns**: every `TaskCreate`/`TaskUpdate` below rides in the response that carries the next real tool call (one phase's `completed` with the next phase's first call). **Task tracking**: TaskCreate tasks for each major phase before starting, all in one response: "Step 1 Data Fetch", "Step 2 Axis Scoring (3 parallel)", "Step 3 Assemble Scores", "Step 4 Report", "Step 5 Codex Review", "Step 6 Adversarial Rework Loop", "Step 7 Terminal Output"; mark each in_progress/completed as you go. **In `--quick` mode** (QUICK_MODE=true): omit the "Step 5 Codex Review" and "Step 6 Adversarial Rework Loop" tasks — they are skipped.
 
 ## Step 1 — Data Fetch
 
@@ -38,7 +38,7 @@ echo "$RUN_TS" > "${TMPDIR:-/tmp}/vitality-run-ts-${CSID}"
 
 > `Agent(subagent_type="oss:gh-scraper", prompt="GH_OWNER=$GH_OWNER GH_REPO=$GH_REPO DATA_FILE=$DATA_FILE")`
 
-Wait for completion. Verify `$DATA_FILE` exists and non-empty. TaskUpdate "Step 1 Data Fetch" completed.
+In the spawn response write `<WATCH_DIR>/agent-watch-fetch.tsv` (`gh-scraper<TAB>$DATA_FILE<TAB>1800`, path expanded), end the turn, and resume on the completion notification (SKILL.md §Health monitoring — no polling). Verify `$DATA_FILE` exists and non-empty. TaskUpdate "Step 1 Data Fetch" completed, riding with the next step's first call.
 
 ## Step 2 — Parallel Axis Scoring
 
@@ -52,21 +52,9 @@ Spawn all 3 `oss:repo-warden` agents simultaneously in single response:
 >
 > `Agent(subagent_type="oss:repo-warden", prompt="GH_OWNER=$GH_OWNER GH_REPO=$GH_REPO DATA_FILE=$DATA_FILE PARTIAL_FILE=$PARTIAL_C AXIS_GROUP=C")`
 
-**Health monitoring** (CLAUDE.md §6): before spawning, create checkpoint:
+**Health monitoring** — SKILL.md §Health monitoring: in this spawn response write `<WATCH_DIR>/agent-watch-score.tsv` with one row per agent (`repo-warden-A<TAB>$PARTIAL_A<TAB>1800`, same for B and C, paths expanded). Never poll — no periodic `find`, no `ScheduleWakeup`, `ListAgents` or `Monitor` loop; run the SKILL.md watch block at each completion notification. `timed_out`, or a notification without its partial file → read the tail of any partial output; surface with ⏱ now.
 
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# reload vars (Check 41)
-IFS= read -r GH_OWNER < "${TMPDIR:-/tmp}/vitality-gh-owner-${CSID}" 2>/dev/null || GH_OWNER=""
-IFS= read -r GH_REPO < "${TMPDIR:-/tmp}/vitality-gh-repo-${CSID}" 2>/dev/null || GH_REPO=""
-IFS= read -r RUN_TS < "${TMPDIR:-/tmp}/vitality-run-ts-${CSID}" 2>/dev/null || RUN_TS=""
-SCORE_CHECKPOINT_FILE="/tmp/vitality-score-check-${GH_OWNER}-${GH_REPO}-${RUN_TS}-${CSID}"  # tmpdir-exempt: pre-existing hardcoded path, not a sentinel-suffix rename site
-touch "$SCORE_CHECKPOINT_FILE"  # timeout: 5000
-```
-
-Every 5 min while waiting: `find .reports/analyse/vitality -newer "$SCORE_CHECKPOINT_FILE" -name "partial-*.json" | wc -l` — new files = alive; zero = stalled. Hard cutoff: 15 min no file activity → timed out. One extension (+5 min) if partial file tail explains delay — second unexplained stall = cutoff. On timeout: read tail of any partial output; surface with ⏱ marker.
-
-Wait for all 3 agents. Verify all 3 partial files exist: `$PARTIAL_A`, `$PARTIAL_B`, `$PARTIAL_C`.
+Collect all 3 agents' results on their notifications. Verify all 3 partial files exist: `$PARTIAL_A`, `$PARTIAL_B`, `$PARTIAL_C`.
 
 TaskUpdate "Step 2 Axis Scoring (3 parallel)" completed.
 

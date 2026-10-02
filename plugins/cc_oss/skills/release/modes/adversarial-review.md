@@ -16,6 +16,8 @@ Write full assembled draft content to `$ADVERSARIAL_DIR/draft-to-review.md` usin
 
 Spawn adversarial reviewer — use `foundry:sw-engineer` for reliable tool execution (bash + read):
 
+> **Agent waits** — SKILL.md §Agent wait discipline (batch `adversarial`); never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop.
+
 ```text
 Agent(subagent_type="foundry:sw-engineer", prompt="Adversarial review of a release draft against the project codebase and docs. Working directory: <REPO_ROOT>. Your job is to REFUTE claims, not confirm them — treat every stated fact as wrong until you prove it correct.
 

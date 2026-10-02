@@ -54,7 +54,7 @@ After the last edit in the batch is applied, snapshot once more the same way (on
 
 ### Batch run
 
-One pytest invocation covering the union of the batch's `test-impact` sets, capturing its exit as `BATCH_RUN_EXIT`. **Only on success** persist the batch size for the caller's cap accounting and reset batch identity for the next batch — on failure, leave `BATCH_ID`/`N` in place so the bisect fence below can still read them. The batch-size sentinel path is read from `_SKILL`, written once by the calling skill (`feature`/`refactor`) before loading this file — never a literal `<skill>` placeholder, which a fenced block can never substitute at runtime and can never match the permission manifest (`plugins/CLAUDE.md` §Blueprint Blocks):
+One pytest invocation covering the union of the batch's `test-impact` sets, capturing its exit as `BATCH_RUN_EXIT` — `dev_test_targets.py --pytest-cmd "$PYTEST_CMD" --run` is that invocation: it selects across every file changed since HEAD, which includes every batch member, and runs the selection as one pytest process. The non-overlap predicate above keeps calling codemap directly: deciding attribution needs an index-grade test set per edit, while the heuristic fallback only selects what to run. **Only on success** persist the batch size for the caller's cap accounting and reset batch identity for the next batch — on failure, leave `BATCH_ID`/`N` in place so the bisect fence below can still read them. The batch-size sentinel path is read from `_SKILL`, written once by the calling skill (`feature`/`refactor`) before loading this file — never a literal `<skill>` placeholder, which a fenced block can never substitute at runtime and can never match the permission manifest (`plugins/CLAUDE.md` §Blueprint Blocks):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -131,11 +131,11 @@ A batch writes all N members' red tests up front; **one run** confirms all N red
 **feature** (Step 3, TDD implementation loop):
 
 - A batch member = one Step-2-shaped demo/test-writing act (one piece of functionality).
-- Red-green test ownership stays lead / `foundry:sw-engineer` per `feature/SKILL.md:480` — batching changes run *count*, never who writes the tests.
+- Red-green test ownership stays lead / `foundry:sw-engineer` per `feature/SKILL.md` §Step 3: TDD implementation loop — batching changes run *count*, never who writes the tests.
 - Scope: this loop only, never the Step 4 review loop (which keeps its own `test-impact`-scoped per-cycle re-runs, unbatched).
 
 **refactor** (Step 4, refactor-with-safety-net loop):
 
-- A batch member = one focused change (`refactor/SKILL.md:375`'s "one focused change per edit," now applied per *batch member* rather than per test run).
+- A batch member = one focused change (`refactor/SKILL.md` §Step 4: Refactor with safety net — "one focused change per edit," now applied per *batch member* rather than per test run).
 - No red-green ownership rule to reconcile — refactor has no red-test step; a batch member's "confirm it fails" is not part of this loop.
 - Scope: this loop only, never Step 5's review loop (which keeps its own per-cycle re-run, unbatched).

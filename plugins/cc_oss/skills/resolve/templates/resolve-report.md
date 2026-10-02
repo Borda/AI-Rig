@@ -55,6 +55,18 @@
 
 ✓ Pushed to [Remote]/[Branch] — N new commits
 
+> Exactly one status line, chosen by the recorded `PUSH_STATUS`, with the key shown in backticks after it:
+>
+> | `PUSH_STATUS` | Line |
+> | -- | -- |
+> | `pushed` | `✓ Pushed to [Remote]/[Branch] — N new commits` |
+> | `blocked-guard` | `⚠ Push blocked by push guard — run the lines under Unblock push at the end of this report` |
+> | `blocked-permission` | `⚠ Push blocked — git push permission not granted; run the command under Unblock push` |
+> | `rejected-non-ff` | `✗ Push rejected (non-fast-forward) — merge the remote branch, then push manually` |
+> | `skipped-by-user` | `⊘ Push skipped by you (Step 3d "don't push" or Step 10 "Skip push") — run git push when ready` |
+> | `not-attempted` | `✗ Push not attempted — push scope could not be computed` |
+> | `none` | `⊘ No push this run (no PR number, or all items skipped)` |
+
 **Next**:
 
 - Maintainer reviews, clicks Merge in GitHub UI — merge commit keeps per-item commits; squash collapses them
@@ -72,3 +84,7 @@
 **Refinements**: N passes.
 
 - Pass 1: [what gap was addressed]
+
+## Unblock push
+
+> `blocked-guard` / `blocked-permission` only, and always the last section of the report — after **Next**, the Challenge Log and Confidence. Repeat the lines of `push-unblock.txt` verbatim in one fenced block; omit the section for every other status.

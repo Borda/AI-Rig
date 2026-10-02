@@ -188,7 +188,7 @@ The verb skills accept the bridge's task text and these caller-selected fields:
 | `implement`           | `--background` and `--session-id`. A write-capable implementation is never automatically retried after timeout because its process may already have changed the worktree.                                                      |
 | `advise` and `review` | May receive one bounded retry at the next lower supported effort tier, so the retry can finish within the same budget.                                                                                                         |
 
-Long-running implementation work may be detached. Use the job identifier printed by the bridge to inspect or stop it:
+Long-running implementation work may be detached. Use the job identifier printed by the bridge to inspect or stop it — one check when you have a reason to look, never a polling loop; any state other than `queued` or `running` is final:
 
 ```text
 /bridge:status <job-id>

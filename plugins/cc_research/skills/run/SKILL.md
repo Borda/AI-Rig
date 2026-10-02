@@ -132,7 +132,7 @@ echo "$CLAUDE_SKILL_DIR" > "${TMPDIR:-/tmp}/research-run-skill-dir-${CSID}"
 
 Triggered by `run <goal|file.md>`.
 
-**Task tracking**: create tasks R0–R7 at start. If no `--researcher`/`--architect`, mark R0 skipped. If `--codex` active, create task `R5b: Codex co-pilot (iter ?/max)` status `pending`.
+**Task tracking**: create tasks R0–R7 at start, all in the same response as the first real tool call. Every later `TaskUpdate` rides with the next real tool call — never a bookkeeping-only turn; the one standalone call is a `completed` right before a long report. Per-iteration R5 subject updates ride with that iteration's next real call. If no `--researcher`/`--architect`, mark R0 skipped. If `--codex` active, create task `R5b: Codex co-pilot (iter ?/max)` status `pending`.
 
 ### Step R0: Hypothesis pre-phase (`--researcher` / `--architect`)
 

@@ -15,3 +15,13 @@ Foundry **not** installed: substitute `foundry:X` with `general-purpose`, prepen
 | `foundry:web-explorer` | `general-purpose` | `sonnet` | `You are a web research specialist. Fetch and extract structured information from URLs; summarize documentation, changelogs, and API references.` |
 
 `research:scientist` same plugin — no fallback if research plugin installed. Skills with `--team` mode: fallback agents work, lower quality. Apply fallback only for agents skill dispatches to.
+
+## Agent waits — no polling
+
+<!-- policy-sibling: plugins/cc_develop/skills/_shared/agent-resolution.md (§Agent waits — no polling), plugins/cc_oss/skills/review/SKILL.md (background-spawn wait line) — same no-polling wait contract -->
+
+Every background `Agent()` spawn: issue the batch in one response, end that turn with one line naming each agent in flight and the file it will write, and resume on its completion notification — the user never has to ask whether a run is still waiting.
+
+- Never `Bash(true)`, a "waiting" line, or a sleep to hold the turn open — and never call `ScheduleWakeup`, `ListAgents`, or a `Monitor` loop to wait for agents: the notification is the only resume signal. No fixed-interval polling.
+- **Deadline**: the skill's stated cutoff, else 15 min from the spawn. A completion notification whose expected output is missing or empty, or any wake-up that finds an agent past its deadline with no output, marks it ⏱ `timed_out` at once — never wait on it further, and never leave it for the user to ask about. The skill's own timeout handling then applies.
+- A ⏱ only informs. It never answers, skips, or defaults a user question.

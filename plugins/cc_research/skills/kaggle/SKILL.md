@@ -309,7 +309,7 @@ Write `<OUTFILE>`. Return only:
 {"status":"done","file":"<OUTFILE>","lines":N,"sections":N,"problem_type":"<type>","mode":"<MODE>","confidence":0.N}
 ```
 
-**Spawn note**: `foundry:sw-engineer` runs in the background — spawn, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). On the completion notification, check the agent's output under `.experiments/kaggle/`; missing or empty → treat as timed out, surface with ⏱ marker — never silently omit.
+**Spawn note**: `foundry:sw-engineer` runs in the background — spawn, then end the turn; no filler call, no "waiting" line, no sleep, and never a `ScheduleWakeup`, `ListAgents`, or `Monitor` loop (CLAUDE.md §6). On the completion notification, check the agent's output under `.experiments/kaggle/`; missing or empty → treat as timed out, surface with ⏱ marker — never silently omit.
 
 ```bash
 # boundary: after Step 3 notebook generated (compaction-contract.md)

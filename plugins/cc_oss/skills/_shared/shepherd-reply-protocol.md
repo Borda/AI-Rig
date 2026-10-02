@@ -8,6 +8,8 @@ Shared invocation pattern, `oss:shepherd` reply generation — used by `oss:revi
 SPAWN_DATE="$(date -u +%Y-%m-%d)"
 ```
 
+> **Agent waits** — no polling: end the turn after this spawn and resume on its completion notification, under the calling skill's per-agent deadline rule (`agent_watch.py`); never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop.
+
 ```
 Agent(subagent_type="oss:shepherd", prompt="
   Read the report at <REPORT_PATH>.

@@ -197,7 +197,7 @@ Return ONLY this compact JSON as your FINAL message (nothing after it):
 ")
 ```
 
-> **Health monitoring** — CLAUDE.md §6: checkpoint before spawn; poll every 5 min; hard cutoff 15 min (tighten: use `CHALLENGE_TIMEOUT_S=300` from `<constants>` as the polling interval). On timeout ⏱: fall back to inline execution (fetch GitHub data directly in orchestrator context, classify inline) with explicit warning — never silently produce empty ACTION_ITEMS.
+> **Health monitoring** — SKILL.md §Agent wait discipline: in the spawn response, write `$IMPL_DIR/agent-watch-intel.tsv` with the row `intel<TAB><IMPL_DIR>/pr-intelligence.md<TAB>300` (`CHALLENGE_TIMEOUT_S`). Never poll — no `ScheduleWakeup`, `ListAgents` or `Monitor` loop; end the turn and resume on the notification. At the notification, or any later wake-up, run the watch check; `timed_out`, or a notification that arrived without `pr-intelligence.md` → ⏱: fall back to inline execution (fetch GitHub data directly in orchestrator context, classify inline) with explicit warning — never silently produce empty ACTION_ITEMS.
 
 Validate and source vars after agent returns:
 

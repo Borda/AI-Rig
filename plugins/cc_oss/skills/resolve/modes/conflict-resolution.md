@@ -44,19 +44,17 @@ if git show-ref --verify --quiet "refs/heads/$BASE_REF"; then
 fi  # timeout: 3000
 # 3. merge — no-commit to inspect conflicts before finalizing
 git merge "origin/$BASE_REF" --no-commit --no-ff # timeout: 6000
+# 4. conflicted files, same call — merge exits 1 on conflict, this line still runs
+git diff --name-only --diff-filter=U  # timeout: 3000
 ```
 
 The merge always uses the freshly fetched `origin/$BASE_REF`, never the local `$BASE_REF`, so a stale or diverged local target branch never leaks into the PR. The local update keeps the maintainer's own target branch in step with what was merged; `git fetch .` is fast-forward only and never touches a branch that is checked out, so it cannot rewrite local work.
 
-Check conflicted files:
-
-```bash
-git diff --name-only --diff-filter=U # timeout: 3000
-```
+The block's last line lists the conflicted files — no second call.
 
 ### 5a: Create per-conflict tasks
 
-For each conflicted file, create task **before touching any file**:
+For each conflicted file, create task **before touching any file** — every file's `TaskCreate` in **one response**, riding with the next real tool call:
 
 ```text
 TaskCreate(
@@ -85,7 +83,7 @@ No conflicts → complete merge here:
 git commit --no-edit # timeout: 6000
 ```
 
-Report clean merge. Steps 6–7 and the Step 7b join become no-ops — mark `TASK_CONFLICT` `completed` now and return to Run 1 (await the `INTEL_AGENT` envelope, then Step 3c).
+Report clean merge. Steps 6–7 and the Step 7b join become no-ops — return to Run 1 (await the `INTEL_AGENT` envelope, then Step 3c).
 
 ⛔ More than 20 conflicted files → abort and stop:
 
@@ -105,25 +103,30 @@ Report count + file list; `AskUserQuestion` with options:
 
 ### 6a: Source-branch intent
 
-Use Step 3b motivation as primary lens — the 2–3 sentence synthesis `INTEL_AGENT` wrote, where thread consensus outranks the PR body. This is the dependency that keeps Steps 6–7 out of the earlier overlap; never substitute a git-log-only reading of intent for it. Additionally:
+Use Step 3b motivation as primary lens — the 2–3 sentence synthesis `INTEL_AGENT` wrote, where thread consensus outranks the PR body. This is the dependency that keeps Steps 6–7 out of the earlier overlap; never substitute a git-log-only reading of intent for it. Additionally, one call collects both 6a's source-branch intent and 6b's target-branch drift:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+# fresh shell (Check 41) — reload refs Step 4 persisted; bare $BASE_REF/$HEAD_REF are unbound in a new Bash call
+IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
+IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""
+[ -n "$BASE_REF" ] && [ -n "$HEAD_REF" ] || { echo "⛔ Step 6: BASE_REF/HEAD_REF sentinels missing — cannot distill conflict context"; exit 1; }
 MERGE_BASE=$(git merge-base "origin/$BASE_REF" "$HEAD_REF") # timeout: 3000
-git log $MERGE_BASE..$HEAD_REF --oneline --no-merges        # timeout: 3000
-git diff $MERGE_BASE $HEAD_REF --stat                       # timeout: 3000
+echo "## 6a: what HEAD_REF added"
+git log "$MERGE_BASE..$HEAD_REF" --oneline --no-merges
+git diff "$MERGE_BASE" "$HEAD_REF" --stat
+echo "## 6b: target drift since merge-base"
+git log "$MERGE_BASE..origin/$BASE_REF" --oneline --no-merges
+SOURCE_LAST_TIME=$(git log "$HEAD_REF" -1 --format="%ci")
+echo "## 6b: commits the contributor never saw"
+git log "origin/$BASE_REF" --after="$SOURCE_LAST_TIME" --oneline  # timeout: 9000
 ```
 
-One-sentence summary: which files/modules PR owns, what it changes.
+6a one-sentence summary: which files/modules PR owns, what it changes.
 
 ### 6b: Target-branch drift (the "surprises")
 
-```bash
-git log $MERGE_BASE..origin/$BASE_REF --oneline --no-merges    # timeout: 3000
-SOURCE_LAST_TIME=$(git log "$HEAD_REF" -1 --format="%ci")      # timeout: 3000
-git log origin/$BASE_REF --after="$SOURCE_LAST_TIME" --oneline # commits the contributor never saw  # timeout: 3000
-```
-
-One-sentence summary: independent base changes after contributor's last commit — preserve unconditionally
+From the same call's `## 6b` sections. One-sentence summary: independent base changes after contributor's last commit — preserve unconditionally
 
 ## Step 7: Resolve per conflicted file
 
@@ -163,7 +166,7 @@ Return ONLY a compact JSON envelope — no prose, no explanation:
 ")
 ```
 
-> **Health monitoring**: spawn runs in background — spawn, end turn, resume on completion notification; no filler call, no "waiting" line, no sleep. Nothing after ~15 min → surface partial results ⏱, proceed with staged files.
+> **Health monitoring** — SKILL.md §Agent wait discipline: in the spawn response, write `$IMPL_DIR/agent-watch-conflict.tsv` with the row `conflict-resolver<TAB>-<TAB>900` (envelope-only agent, 15-min deadline). Never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop; no filler call, no "waiting" line, no sleep. At the Step 7b join run the watch check first: `timed_out`, or a notification that arrived without the JSON envelope → ⏱ `timed_out` now, surface partial results, proceed with staged files.
 
 > **Turn placement**: this spawn is followed in the same response by Step 3d's `AskUserQuestion`, not by an ended turn — the selection question is substantive work, so the no-filler rule above is satisfied. The completion notification and the user's answer arrive independently; whichever lands second opens the join below.
 
@@ -204,8 +207,8 @@ Print conflict report:
 **Result**: N files resolved. Merge commit created.
 ```
 
-Mark all conflict tasks completed:
+Mark all conflict tasks completed — in one response, riding with the merge commit call:
 
 ```text
-for each (filepath, conflict_task_id) pair from Step 5a: TaskUpdate(task_id=\<conflict_task_id>, status="completed")
+for each (filepath, conflict_task_id) pair from Step 5a: TaskUpdate(task_id=\<conflict_task_id>, status="completed")  — all in one response, beside the merge commit call
 ```

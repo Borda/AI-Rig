@@ -41,7 +41,7 @@ Root `AGENTS.md` already applies here and is not restated: edit scope, core prin
 - Use `~/`, `$(git rev-parse --show-toplevel)`, or `$CLAUDE_PLUGIN_ROOT` as appropriate.
 - Use a bare `plugins/` path only as the final fallback after resolving the installed cache path.
 - Every agent spawn runs in the background: the skill spawns, ends its turn, and resumes on the harness completion notification. Never hold a turn open with a no-op call, a text-only waiting line, a sleep, or a fixed-interval poll.
-- A skill that spawns agents must provide the sentinel, a single liveness probe per turn, and the fifteen-minute cutoff required by the shared agent-spawn protocol.
+- A skill that spawns agents must arm a per-agent deadline (default fifteen minutes) in the spawn response, check it with `agent_watch.py` at each wake-up, and mark a missed deadline or a notification without output as timed out at once, as the shared agent-spawn protocol requires. Never wait with ScheduleWakeup, ListAgents, or Monitor.
 
 ## Independent Plugins and Cross-References
 

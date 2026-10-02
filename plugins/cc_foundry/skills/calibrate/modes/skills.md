@@ -34,7 +34,7 @@ Skill domains:
 
 Mark "Calibrate skills" in_progress. **Availability check** (vars set in SKILL.md Step 2): exclude skills marked with plugin requirements above when plugin absent. Log: "<plugin> plugin not installed — skipping <skill> calibration" per excluded skill.
 
-For each skill in domain table (after exclusions), spawn one `general-purpose` pipeline subagent. **Spawn in batches of `$PIPELINE_BATCH_SIZE` (5 when this category runs alone, 2 while two categories in flight — see constants)**: issue up to that many skill pipeline spawns per response, wait for all in batch to return compact JSON results, spawn next batch. Skills within a batch run concurrently; batches sequential. Do NOT spawn all skills in one response.
+For each skill in domain table (after exclusions), spawn one `general-purpose` pipeline subagent. **Spawn in batches of `$PIPELINE_BATCH_SIZE` (5 when this category runs alone, 2 while two categories in flight — see constants)**: issue up to that many skill pipeline spawns per response, collect every result in the batch via completion notifications and the SKILL.md Step 2 batch deadline (never a waiting tool), spawn next batch. Skills within a batch run concurrently; batches sequential. Do NOT spawn all skills in one response.
 
 For skill targets (target name starts with `/`): spawn `general-purpose` subagent with skill's `SKILL.md` content prepended as context, running against synthetic input from problem. Pipeline template write-and-acknowledge pattern still applies.
 

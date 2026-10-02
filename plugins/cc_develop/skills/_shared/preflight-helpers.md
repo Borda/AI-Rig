@@ -27,14 +27,14 @@ echo "$PLAN_FILE" > "${TMPDIR:-/tmp}/dev-plan-file-${CSID}"
 
 Spawn prompt template for foundry:sw-engineer teammate spawns. Replace `[ROLE_PHRASE]` and `[FILE_SLUG]` with skill-specific values before inserting.
 
-Output filenames are per-skill contracts — the consumer skill's spawn prompts and monitor/gate expressions are the source of truth; this table mirrors them. Never invent a different shape from the generic `[FILE_SLUG]-[N]-[timestamp]` pattern below — feature's Wave-1 gate and each monitor glob key on these exact names:
+Output filenames are per-skill contracts — the consumer skill's spawn prompts and completion-check/gate expressions are the source of truth; this table mirrors them. Never invent a different shape from the generic `[FILE_SLUG]-[N]-[timestamp]` pattern below — feature's Wave-1 gate and each completion-check glob key on these exact names:
 
 | skill | `[ROLE_PHRASE]` | output file(s) |
 | -- | -- | -- |
 | debug | `[symptom]` | `.temp/develop/[TS]/debug-hypothesis-[N]-[TS].md` (N = 1..3) |
 | feature | `[feature description]` | `.temp/develop/[TS]/feature-[agent-name]-[TS].md` (agent-name = sw-engineer, qa-specialist, doc-scribe) |
 | fix | `[bug description]` | `[RUN_DIR]/fix-hypothesis-[N]-[TS].md` (N = A, B — hypothesis letters serve as `[N]`) |
-| refactor | `[refactor goal]` | `[RUN_DIR]/refactor-[agent-name].md` (agent-name = qa-specialist, sw-engineer; no timestamp — monitor globs `-type f`) |
+| refactor | `[refactor goal]` | `[RUN_DIR]/refactor-[agent-name].md` (agent-name = qa-specialist, sw-engineer; no timestamp — completion check globs `-type f`) |
 
 ```
 You are a foundry:sw-engineer teammate working on: [ROLE_PHRASE].

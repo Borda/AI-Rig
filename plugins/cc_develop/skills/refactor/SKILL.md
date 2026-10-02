@@ -49,13 +49,22 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _DEV_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_shared_resolve.py" 2>/dev/null)  # timeout: 5000
 [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
 echo "$_DEV_SHARED" > "${TMPDIR:-/tmp}/dev-shared-${CSID}"  # cold resolve — every later block warm-reads this
+echo "$PWD/.temp/develop/agent-watch-$(date -u +%Y-%m-%dT%H-%M-%SZ)" > "${TMPDIR:-/tmp}/dev-agent-watch-dir-${CSID}"  # fresh per run — agent-resolution.md §Agent waits
 # loads: compaction-contract.md
 cat "$_DEV_SHARED/agent-resolution.md"
 ```
 
-Contains: foundry check + fallback table. If foundry not installed: substitute each `foundry:X` with `general-purpose` per table. Agents skill uses: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:linting-expert`, `foundry:challenger`.
+Contains: foundry check + fallback table, and §Agent waits — no polling (applies to every spawn below). If foundry not installed: substitute each `foundry:X` with `general-purpose` per table. Agents skill uses: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:linting-expert`, `foundry:challenger`.
 
 **Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
+
+**Turn budget** — measured refactor runs made one tool call per turn throughout and spent up to 16 turns on task bookkeeping alone — the cost was the standalone turns, not the task count; every turn re-reads the whole context.
+
+- **One task per step, never a bookkeeping-only turn.** Create one task per step — Step 1 Scope · Challenger gate · Step 2 Coverage audit · Step 3 Characterization tests · Step 4 Refactor · Step 5 Review and quality stack · Final Report — all in the same response as the first Project Detection call, so step-level progress stays visible. Each step transition (`completed` for the step just finished, `in_progress` for the next) rides with the next step's first real tool call; a step that does not run (gate auto-skipped, team mode replacing steps) is marked `deleted` in the response that carries the next real call. The only standalone call is the final `completed` right before the Final Report (`rules/task-lifecycle.md`).
+
+- **Checkpoint appends ride along.** Each `step: N — completed` line goes into `$DEV_DIR/checkpoint.md` inside the next real Bash block (a boundary contract block or the next step's first command), never as a call of its own.
+
+- **Independent calls share one response — never across a question.** After Agent Resolution: Project Detection, the preflight-helpers load and checkpoint init together; both flag-parsing blocks together in the next response (after the resume offer, when a prior checkpoint exists). Every later preamble block keeps its order: each sits behind a question (unsupported flag, codemap gates) or the worktree entry, which must precede the codemap gate. Step 1 discovery — Reads of the target files, Glob/Grep for its tests and callers — in one response. Consecutive Edits to the same file in one response, unless an edit depends on the previous one's result.
 
 ## Project Detection
 
@@ -210,7 +219,7 @@ fi
 
 Include `## Scope & Reusability (codemap-py)` block in foundry:sw-engineer spawn prompt. `rdeps` returns callers **outside** refactoring scope → flag explicitly — those callers must update or refactoring silently breaks public contract. `CODEMAP_ENABLED=false` and scope is multi-file → skip silently.
 
-Spawn **foundry:sw-engineer** agent to analyze code and identify:
+Spawn **foundry:sw-engineer** agent to analyze code and identify — Arm batch `scope` in the spawn response (`agent-resolution.md` §Agent waits — no polling, per-agent deadlines). It must identify:
 
 - Public API surface (functions, classes, methods external code calls)
 - Internal complexity hotspots (cyclomatic complexity, deep nesting, long functions)
@@ -252,7 +261,7 @@ cat "$_DEV_SHARED/plan-inline.md"
 
 Two flags are opposites for two regimes, why both exist: `--no-challenge` suppresses gate on *substantial* changes where it would otherwise fire; `--challenge` forces it on *small* changes where it would otherwise auto-skip.
 
-Spawn `foundry:challenger` with scope analysis from Step 1 (affected files, dependencies, coupling, risks):
+Arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits). Spawn `foundry:challenger` with scope analysis from Step 1 (affected files, dependencies, coupling, risks):
 
 > "Review the refactoring scope and approach. Challenge across all 5 dimensions: Assumptions, Missing Cases, Security Risks, Architectural Concerns, Complexity Creep. Apply mandatory refutation step."
 
@@ -334,7 +343,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "
 
 ## Step 3: Add characterization tests (if needed)
 
-For every **uncovered** or **partially covered** public API, spawn **foundry:qa-specialist** to generate characterization tests:
+For every **uncovered** or **partially covered** public API, arm batch `tests` (`agent-resolution.md` §Agent waits) and spawn **foundry:qa-specialist** to generate characterization tests:
 
 - Import function, call with representative inputs, assert **current** output
 - Use `pytest.mark.parametrize` for multiple input/output pairs
@@ -392,16 +401,16 @@ fi
 For each change (or, in batch mode, per non-overlapping batch member):
 
 1. One focused change (single responsibility per edit)
-2. Run affected tests (prefer targeted over full characterization suite):
-   ```bash
-   codemap-py query test-impact "<changed_module>" 2>/dev/null
-   ```
-   - Non-empty `pytest_cmd` → run those tests; surface `not_covered` caveat if present; fall back to full suite if all tests pass but feel incomplete
-   - Empty or unavailable → full suite:
+2. Run the tests this change touches — targeted only; the full suite never runs inside this loop — it runs at the final gate once the loop is clean, and again after any fix to a full-suite failure (§Final gate):
    ```bash
    # timeout: 600000
-   eval "$PYTEST_CMD --tb=short <test_files> -v"
+   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
+   IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
+   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --pytest-cmd "$PYTEST_CMD" --run --record-dir "${DEV_DIR:-.developments}"
    ```
+   - Selects per changed module via `codemap-py query test-impact` when available, path heuristics otherwise (name-matched tests plus tests importing the module); Step 3's characterization tests are selected as changed files. The first output line is the selection JSON — surface any `codemap.partial`/`codemap.fell_back` count and every `not_covered` entry (`⚠ not_covered — some changed code has no mapped test`) as a coverage caveat; the selection and full log are recorded under `$DEV_DIR/test-targets.jsonl`.
+   - Empty selection (`note` set) → nothing ran; say so. Never widen to the full suite here.
 3. Tests pass: proceed to next change
 4. Tests fail: revert, try different approach
 
@@ -479,13 +488,14 @@ Full review of refactored code. **Loop** — review -> targeted refactoring (ret
 
 2. For every gap: return to Step 4, apply targeted fix — one focused change per gap.
 
-3. Re-run full test suite:
+3. Re-run the tests this cycle's fixes touch — targeted, same block as Step 4 item 2. Measured runs re-ran the whole suite every cycle (up to seven times per session); the full suite never runs inside this loop — it runs at the final gate once the loop is clean, and again after any fix to a full-suite failure (§Final gate):
 
    ```bash
    # timeout: 600000
-   set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
-   eval "$PYTEST_CMD --tb=short <test_files> -v" 2>&1 | tail -20
-   GATE_EXIT=$?
+   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
+   IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
+   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --pytest-cmd "$PYTEST_CMD" --run --record-dir "${DEV_DIR:-.developments}"
    ```
 
 4. **Objective convergence check**: findings this cycle identical to previous (same locations, same issues) → declare convergence, exit — further cycles won't resolve; surface to user.
@@ -514,7 +524,17 @@ _SHARED="$_DEV_SHARED"  # foundry--quality-stack.md loads its siblings from $_SH
 cat "$_DEV_SHARED/foundry--quality-stack.md"
 ```
 
-Not found → skip quality stack entirely, note the message above in Final Report. Otherwise execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps.
+Not found → skip quality stack entirely, note the message above in Final Report, and run the final gate below instead. Otherwise execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps — the quality stack's directory-wide pytest run **is** the final gate's full-suite run; do not run it again unless code changes after it (§Final gate).
+
+**Final gate — full suite with the repository's own command.** Runs when the quality stack was skipped, and again after any code change that follows the quality stack's wide run — a Progressive Review fix, or any fix to a full-suite failure (the stack halting on a genuine failure, or this block failing) — a fix can break something outside the targeted set, and the stack's own re-checks are scoped. A suite that may outlive the ~10 min foreground cap runs as a background Bash call (`run_in_background: true`): end the turn, its exit re-invokes you, no polling. Non-zero → fix (rerun the failing node ids while fixing — never the verification), then rerun this block in full. Max 3 gate iterations; at the cap stop, surface the remaining failures, and never report the suite green. A green full suite is the last test evidence before the Final Report:
+
+```bash
+# timeout: 600000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r TEST_CMD < "${TMPDIR:-/tmp}/dev-test-cmd-${CSID}" 2>/dev/null || TEST_CMD=""
+[ -n "$TEST_CMD" ] || { echo "! BLOCKED — TEST_CMD sentinel missing; re-run Project Detection"; exit 1; }
+eval "$TEST_CMD"
+```
 
 ## Final Report
 
@@ -535,6 +555,7 @@ Not found → skip quality stack entirely, note the message above in Final Repor
 
 ### Test Results
 - All tests passing: yes/no
+- Loop runs: targeted (N runs, selection source codemap/heuristic); full suite: final gate, rerun after any fix to a full-suite failure; the last run is green
 - Coverage: before% -> after%
 
 ### Follow-up

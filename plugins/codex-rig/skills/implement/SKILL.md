@@ -129,6 +129,8 @@ While implementing, keep code understandable from code itself:
 - Match project's configured or established docstring style, and keep function/class purpose in docstrings rather than comments directly above definitions.
 - Refactor instead of writing long docstrings or comments when block needs long explanation to be understandable.
 
+Failing-first and acceptance pytest runs in this loop follow [Sandboxed Test Runs](../../shared/native-skill-contract.md#sandboxed-test-runs): add `-p no:xdist` when its conditions hold, and request the reusable pinned test-runner approval only when its trigger holds, once, before the first escalated run.
+
 ### 06: Orchestrate specialists when the change crosses a domain boundary
 
 Read and apply `../../shared/specialist-orchestration.md` only when task crosses domains, benefits from independent verification, or splits into parallel context packs; do not load it for narrow one-domain implementation in one to three files.

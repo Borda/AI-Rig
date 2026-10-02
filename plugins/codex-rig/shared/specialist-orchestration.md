@@ -190,6 +190,7 @@ Claim "specialist fan-out" only with separate outputs/runtime provenance. Record
 
 ## Retry And Checkpoint Policy
 
+- Wait for children under [Agent Waits](native-skill-contract.md#agent-waits): blocking wait with a timeout, no polling, and a child past its per-agent deadline recorded `timed_out` at once.
 - Max 2 attempts/specialist.
 - Retry only timeout, transport, rate limit; not deterministic finding, validation failure, completed output.
 - Preserve completed output/narrow packs. Checkpoint records evidence, not completed response.

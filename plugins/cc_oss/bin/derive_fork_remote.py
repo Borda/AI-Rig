@@ -5,8 +5,9 @@ Adds the fork remote when it is missing, mirroring the transport of ``origin``: 
 an HTTPS origin gets an HTTPS one. Hardcoding either form breaks the push silently on the other — an SSH-only checkout
 has no HTTPS credentials to fall back on.
 
-The printed summary feeds the push-authorization question in ``oss:resolve`` Step 10, so the run stops rather than
-present an authorization prompt whose scope could not be computed.
+``oss:resolve`` Step 10 prints this summary before pushing on the authorization recorded at Step 3d (or quotes it in
+the lost-answer recovery question). A failed scope computation exits 1 so Step 10 records ``not-attempted`` and never
+pushes a scope it cannot describe.
 
 Usage:
     python "${CLAUDE_PLUGIN_ROOT}/bin/derive_fork_remote.py" --fork-remote "$FORK_REMOTE" --head-ref "$HEAD_REF" \
@@ -153,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
 
     if not args.fork_remote or not args.head_ref:
-        print("⛔ Step 10: FORK_REMOTE/HEAD_REF unresolved — refusing to present an empty push-authorization prompt")
+        print("⛔ Step 10: FORK_REMOTE/HEAD_REF unresolved — refusing to push to an unresolved target")
         return 1
 
     for flag, value in (
@@ -174,10 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     _, last_subject = _git(["log", "-1", "--format=%s"], args.timeout)
 
     if not count:
-        print(
-            "⛔ Step 10: push scope could not be computed — refusing to present an authorization prompt with no diff "
-            "stat or commit count"
-        )
+        print("⛔ Step 10: push scope could not be computed — refusing to push without a diff stat or commit count")
         return 1
     print(
         f'→ {count} commits ready to push to {args.fork_remote}/{args.head_ref} ({stat}); last commit: "{last_subject}"'

@@ -183,7 +183,7 @@ Shell variables set in one Bash tool call don't persist to next separate call �
 
 **Preferred idiom for cross-block persistence: `bin/state.py`.** Instead of hand-rolling per-skill temp file + reload, use tested helper — `python "${CLAUDE_PLUGIN_ROOT}/bin/state.py" set <namespace> RUN_DIR="$RUN_DIR" SCOPE="$SCOPE"` in producing block, then `eval "$(python "${CLAUDE_PLUGIN_ROOT}/bin/state.py" load <namespace>)"` at top of each consuming block. Values single-quote-escaped, keys must be shell identifiers matching `^[A-Za-z_][A-Za-z0-9_]*$` (`set` exits 2 on unsafe key; `load` skips one) — `eval` injection-safe. Include run-unique component in `<namespace>` (timestamp/run-id) when concurrent sessions of same skill could collide. `check_bash_persistence` recognizes this as valid reload — `eval "$(…)"` form suppresses cross-block-loss finding.
 
-> **Scope**: rule applies to DATA output (returning computed values to skill). Shell-setup eval — e.g. `eval "$(python health_sentinel.py ...)"` injecting `SENTINEL=...` into calling shell for health monitoring — different pattern, remains valid.
+> **Scope**: rule applies to DATA output (returning computed values to skill). Shell-setup eval — e.g. `eval "$(python parse-skill-flags.py ...)"` injecting `FLAG_*=...` assignments into calling shell — different pattern, remains valid.
 
 **Naming convention**: `${TMPDIR:-/tmp}/<plugin>-<script-slug>-<value-name>-${CSID}` (terminal session-scope suffix — see `rules/claude-config.md` §TMPDIR Sentinel Scoping). Script with more than one consumer (e.g. shared `resolve-shared.py`) — calling skill passes unique prefix: `--out-prefix <skill>-<run-id>`; script writes `<prefix>-proj-${_CSID}`, `<prefix>-index-${_CSID}`. Never hardcode prefix in shared script — consumers collide.
 
@@ -494,11 +494,11 @@ Example:
 
 ```bash
 # audit-skip: resilience-replication
-HARD_CUTOFF=${HARD_CUTOFF:-900}
-EXTENSION=${EXTENSION:-300}
+AGENT_DEADLINE_S=${AGENT_DEADLINE_S:-900}
+APPLY_DEADLINE_S=${APPLY_DEADLINE_S:-600}
 ```
 
-**When to use**: block appears in 2+ plugin files with only constant differences AND isn't a bin/ extraction candidate — e.g. health-monitoring constants, plugin-availability checks, unsupported-flag resilience boilerplate. See `plugins/CLAUDE.md` §Fallback / Resilience Infrastructure for design rationale.
+**When to use**: block appears in 2+ plugin files with only constant differences AND isn't a bin/ extraction candidate — e.g. agent-deadline constants, plugin-availability checks, unsupported-flag resilience boilerplate. See `plugins/CLAUDE.md` §Fallback / Resilience Infrastructure for design rationale.
 
 ## Integration with `foundry:manage create skill`
 

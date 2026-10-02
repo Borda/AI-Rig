@@ -33,7 +33,7 @@ NOT for: running experiments (use `/research:run`); judging experimental methodo
 
 Triggered by `verify <paper>` where `<paper>` is PDF path, arXiv URL, or multi-line quoted text.
 
-**Task tracking**: create tasks for V1, V2, V3, V4, V5, V6 at start — before any tool calls.
+**Task tracking**: create tasks for V1, V2, V3, V4, V5, V6 at start, all in the same response as the first real tool call. Every later `TaskUpdate` rides with the next real tool call — never a bookkeeping-only turn; the one standalone call is a `completed` right before a long report.
 
 ### Step V1: Parse paper input
 
@@ -227,7 +227,7 @@ Include ## Confidence block.
 Return ONLY: {"status":"done","claims_verified":N,"mismatches":N,"high":N,"medium":N,"low":N,"fidelity":0.N,"file":"$RUN_DIR/audit-raw.md","confidence":0.N}
 ```
 
-`timeout` is not a valid parameter on `Agent()` — do NOT pass it. The `HARD_CUTOFF: 900` constant is advisory only (see `<constants>`); a background `Agent()` call cannot be polled or interrupted mid-flight.
+`timeout` is not a valid parameter on `Agent()` — do NOT pass it. The `HARD_CUTOFF: 900` constant is advisory only (see `<constants>`); a background `Agent()` call cannot be polled or interrupted mid-flight — never wait on it with `sleep`, `ScheduleWakeup`, `ListAgents`, or a `Monitor` loop; resume on its completion notification.
 
 **Single timeout policy** (matches `<constants>`): after `Agent()` returns, read `$RUN_DIR/audit-raw.md`. If absent or empty → set `fidelity = null`, status = `TIMED_OUT`, continue to V4 with ⏱ marker in the report. If present → parse normally regardless of nominal budget. Never defer handling to a "next turn" or rely on context compaction.
 

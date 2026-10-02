@@ -189,7 +189,7 @@ Prompt for each subagent:
 
 **Context discipline**: subagents write to disk, return single-line acknowledgment. Pipeline agent must NOT accumulate their full analyses in context — scorers read from disk in Phase 3. `Wrote: <problem_id>` per agent = correct.
 
-**Completion handling** — spawns are blocking `Agent()` calls, so no poll loop is possible (`_FOUNDRY_SHARED/agent-spawn-protocol.md` §Synchronous spawns). Each subagent returns: check for `response-<problem_id>.md`; empty or missing: mark that problem `{"timed_out": true}` in scores.json, proceed. Never block indefinitely on single response.
+**Completion handling** — never a poll loop or a waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`); each subagent's result arrives as its `Agent()` result or completion notification (`_FOUNDRY_SHARED/agent-spawn-protocol.md`). Each subagent returns: check for `response-<problem_id>.md`; empty or missing: mark that problem `{"timed_out": true}` in scores.json, proceed. Never block indefinitely on single response.
 
 For **agent targets** when `LOCAL_MODE=true` and `TARGET_FILE` set: spawn `general-purpose` subagent with TARGET_FILE content prepended ("You are an agent described by the following instructions: <content of TARGET_FILE>") — tests source tree definition rather than installed plugin. When LOCAL_MODE=false or TARGET_FILE empty: spawn `Agent(subagent_type="<TARGET>")` normally.
 
@@ -199,7 +199,7 @@ For **skill targets** (target starts with `/`): spawn `general-purpose` subagent
 
 Spawn one `general-purpose` subagent per problem using **identical prompt** as Phase 2 (same task_prompt + input + Confidence instruction), plus same write-and-acknowledge suffix pointing to `response-<problem_id>-general.md`. Issue ALL spawns in **single response** — no waiting between spawns.
 
-**Completion handling** — same as Phase 2 (`_FOUNDRY_SHARED/agent-spawn-protocol.md` §Synchronous spawns): each subagent returns, check for `response-<problem_id>-general.md`; missing: proceed with partial baseline data.
+**Completion handling** — same as Phase 2 (`_FOUNDRY_SHARED/agent-spawn-protocol.md`): each subagent returns, check for `response-<problem_id>-general.md`; missing: proceed with partial baseline data.
 
 ### Phase 3a — Score responses via Claude scorers (parallel)
 

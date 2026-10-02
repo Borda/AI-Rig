@@ -1,6 +1,6 @@
 ## Task lifecycle sequencing — worked examples
 
-Full detail behind the `rules/task-lifecycle.md` stub — three-slot spawn labelling, FleetView examples, end-turn-after-spawn contract. Rules themselves (TaskUpdate-before-long-output, subagent task prohibition, slot/unique-first constraints, the no-op-filler ban) live in the stub, always loaded — this file is illustration only.
+Full detail behind the `rules/task-lifecycle.md` stub — three-slot spawn labelling, FleetView examples, end-turn-after-spawn contract. Rules themselves (TaskUpdate-before-long-output, subagent task prohibition, slot/unique-first constraints, the no-op-filler and waiting-tool ban, per-agent deadlines) live in the stub, always loaded — this file is illustration only.
 
 ### Spawn slots — three fields, no repeats
 
@@ -91,5 +91,20 @@ The stub forbids no-op filler while agents are in flight. What that looks like w
 ```
 
 Each filler call is a full model turn: the entire live context is re-read to produce `true`. A handful of them costs more than the agents being waited on.
+
+Waiting tools are the same mistake with a nicer name. Observed in `/foundry:audit` and `/oss:resolve` runs — the orchestrator, unsure whether a curator had stalled, scheduled its own wake-ups and listed agents between them, while the user typed "ping fix-codemap if it's taking long":
+
+```text
+✗  ⏺ ScheduleWakeup(300s)     [turn ends; wakes with nothing new]
+   ⏺ ListAgents()             ⎿  fix-codemap: running
+   ⏺ ScheduleWakeup(300s)
+   ⏺ Monitor(…)               [same turn cost, same missing answer]
+
+✓  [spawn turn: Agent() × N + Write $RUN_DIR/agent-watch-fix.tsv — one row per agent, deadline 900 s]
+   [each notification → python …/bin/agent_watch.py --state-dir "$RUN_DIR" → act on every row]
+   [notification for fix-codemap, its output file still empty → ⏱ timed_out now, report it, move on]
+```
+
+A deadline needs no clock in the orchestrator: the batch file's write time is the spawn time, and the check runs only when the harness has already woken the orchestrator for some other reason. Nothing is ever scheduled.
 
 The mistake is understandable and worth naming, because skill prose still invites it: a skill that says "spawns are synchronous — the framework awaits each response natively" describes a harness that no longer exists. `Agent()` has no `run_in_background` parameter to pass, because every spawn is already background. Skill fragment and this rule disagree → this rule is current.

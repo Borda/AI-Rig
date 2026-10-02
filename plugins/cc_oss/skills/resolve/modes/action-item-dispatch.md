@@ -8,6 +8,8 @@
 
 ## Step 8: Implement action items
 
+**Task updates — entire Step 8**: every `TaskUpdate` this file calls for (REJECT/skip close-outs, per-item `completed` after a cherry-pick, group close-outs) rides in the same response as the next real tool call — never a response of task calls alone (SKILL.md §Task budget).
+
 **Commit authorization — entire Step 8**: `COMMIT_MODE` from Step 3d governs all commits; never re-ask regardless of mode, item count, or sentinel state. Multiple resolve flows per session each honor own Step 3d choice.
 
 Determine implementation agent, set up file-handoff dir, and authorize commits before the loop:
@@ -232,6 +234,8 @@ printf '%s\n' \
     "Each reviewer assertion is itself an unproven claim — if it asserts a fact the file alone can't settle" \
     "(name/identifier/version/count wrong or non-standard), verify against the actual authoritative source" \
     "before treating it as valid; can't verify → UNCERTAIN, not DONE." \
+    "Tests: run only the tests covering the files you change (test files named after them or importing them)." \
+    "Never run the whole test suite — the caller runs it at the final gate." \
     "Return your result in the bridge object fields: status, verdict, findings, files_touched, remaining, blockers, details." \
     "status=complete, verdict=DONE or UNCERTAIN; use DONE only when this one item's edit and checks are complete." \
     "Put actual changed paths in files_touched and a one-sentence reason in findings[0]." \
@@ -391,7 +395,7 @@ Part 1 — for each, does the stated problem exist in the code as described?
 The reviewer's assertion is itself an unproven claim, not evidence — 'reads like X' != 'is X'.
 When a finding asserts a fact reading the referenced file alone can't settle (a name/identifier/version/count is wrong, non-standard, or inconsistent — license names, API/symbol names, version numbers, spec IDs), verify it via WebFetch/WebSearch against the actual authoritative source for that claim (the specific project/library/spec it names — not a generic registry) before ruling VALID. Source unreachable or inconclusive → REJECT with evidence_rationale stating what couldn't be verified; never default VALID on the reviewer's word alone.
 Part 2 — if problem exists, is the suggested fix the right approach?
-Read each referenced file at <file:line>. Max 4 tool calls per item (the 4th reserved for one WebFetch/WebSearch when a claim needs external verification).
+Read each referenced file at <file:line>. Read-only: run no tests. Max 4 tool calls per item (the 4th reserved for one WebFetch/WebSearch when a claim needs external verification).
 Items:
 <id>: <full_comment_text> (<file>:<line>)
 ...
@@ -400,7 +404,37 @@ Return ONLY compact JSON as your FINAL message (nothing after it):
 {\"items\":[{\"id\":N,\"evidence\":\"VALID\"|\"REJECT\",\"evidence_rationale\":\"<one sentence>\",\"suggestion\":\"VALID\"|\"REJECT\",\"suggestion_rationale\":\"<one sentence>\",\"alternative\":\"<brief alternative or null>\"}]}")
 ```
 
-**Fire every domain group's `Agent()` call in the same response turn** — read-only (no working-tree writes), safe to run concurrently regardless of file overlap between domains.
+**Fire every domain group's `Agent()` call in the same response turn** — read-only (no working-tree writes), safe to run concurrently regardless of file overlap between domains. In that same response, arm the deadlines (SKILL.md §Agent wait discipline): write `$IMPL_DIR/agent-watch-challenge.tsv` with one row per domain, `challenge-<domain><TAB><IMPL_DIR>/challenge-domain-<domain>.md<TAB>300` (`CHALLENGE_TIMEOUT_S`). Never poll for verdicts — no `ScheduleWakeup`, `ListAgents` or `Monitor` loop; run the watch check at each wake-up. A domain `timed_out`, or one whose notification arrived without its JSON reply → ⏱ now, and every item in it is treated `UNCERTAIN` per the verdict rules below (one single-item retry each, armed in `agent-watch-challenge-retry.tsv`). **No item is ever dropped or implemented by a timeout alone** — the first retry is automatic; what happens after a second timeout is the user's decision.
+
+**Challenge double-timeout gate** — fires only when a single-item retry also times out (a missing verdict blocked the run before this gate existed; the decision now goes to the user instead). Collect **every** item of this wave whose retry timed out, then ask **once** for all of them — one wait, never one per item. Print the items first in the reply (id · domain · summary), plus `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. ``, then invoke `AskUserQuestion` (actual tool call):
+
+```text
+"The challenge for <N> item(s) timed out twice: <ids>. What should happen to them?"
+  (a) Implement unchallenged — ⏱ noted in the Challenge Log and the final report
+  (b) Drop them — record as skipped, not implemented
+  (c) Retry the challenge once more
+  (d) Stop the run before implementation
+```
+
+- (a) → for each id, write `$IMPL_DIR/challenge-verdicts-<domain>-retry-<id>.json` with the Write tool as `{"items":[{"id":<id>,"evidence":"VALID","evidence_rationale":"⏱ challenge timed out twice — implemented unchallenged (user choice)","suggestion":"VALID","suggestion_rationale":"⏱ challenge timed out — fix not evaluated","alternative":null}]}`, then run the normal `as-suggested` append — implemented as with `--no-challenge`, ⏱ visible in the Challenge Log and the Step 11 report.
+- (b) → run the drop block below with the chosen ids and exclude them from `SURVIVING_ITEMS`; Phase 3's skipped-item close-out and the Step 11 report then show them as skipped.
+- (c) → one more single-item retry each (re-armed in `agent-watch-challenge-retry.tsv`); items that time out again come back to this same gate.
+- (d) or unanswered → stop as the group-preview gate's (d) does: spawn nothing, run Phase 3's cleanup block to release the branch mutex, report every selected item as pending, jump to Step 11. Never a silent default.
+
+Drop block — (b) only; the ids are runtime values, so the block aborts unsubstituted:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+[ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
+[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
+_DROP_IDS="<space-separated item ids the user chose to drop>"
+case "$_DROP_IDS" in *'<'*'>'*|"") echo "! BLOCKED — drop ids not substituted"; exit 1 ;; esac
+for _id in $_DROP_IDS; do
+    case "$_id" in *[!0-9]*) echo "! BLOCKED — drop id '$_id' is not numeric"; exit 1 ;; esac
+    printf '%s\tchallenge timed out twice — dropped by user\n' "$_id" >> "$IMPL_DIR/skipped-items.txt"
+done
+echo "dropped: $_DROP_IDS"  # timeout: 3000
+```
 
 Immediately after each call returns, persist its raw JSON reply verbatim via the Write tool to `$IMPL_DIR/challenge-verdicts-<domain>.json` (same `<domain>` slug as the spawn) — the verdict-processing and challenge-log append steps below both read it via `jq`, never by re-typing the reply's rationale/alternative text.
 
@@ -571,7 +605,8 @@ case "$DISPATCH_MODE" in auto|sequential|per-specialist|preview) ;; *) DISPATCH_
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
 echo "DISPATCH_MODE=$DISPATCH_MODE"  # bash state does not persist; the split + firing rules above read this line
-_PRESERVE="pr=${_PR_NUMBER}, impl-dir=${IMPL_DIR}, dispatch-mode=${DISPATCH_MODE}, selected-items=${IMPL_DIR}/selected-items.txt, challenge-log=${IMPL_DIR}/challenge-log.txt, skipped-items=${IMPL_DIR}/skipped-items.txt, item-tasks=${IMPL_DIR}/item-tasks.tsv"
+IFS= read -r _PUSH_AUTH < "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}" 2>/dev/null || _PUSH_AUTH="unset"
+_PRESERVE="pr=${_PR_NUMBER}, impl-dir=${IMPL_DIR}, dispatch-mode=${DISPATCH_MODE}, push-auth=${_PUSH_AUTH} (Step 3d answer),  selected-items=${IMPL_DIR}/selected-items.txt, challenge-log=${IMPL_DIR}/challenge-log.txt, skipped-items=${IMPL_DIR}/skipped-items.txt, item-tasks=${IMPL_DIR}/item-tasks.tsv"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "Phase 2 dispatch (after Phase 1 challenge verdicts)" "$IMPL_DIR" "${_PRESERVE}" "resume: re-read challenge-log.txt for verdicts + item-tasks.tsv for created tasks (report mode: item-tasks.tsv does not exist — use selected-items.txt as scope instead), continue Phase 2 implementation for items not yet in phase2-commits.jsonl — never re-issue Step 3d, item selection already answered"  # timeout: 5000
 git worktree list --porcelain | sed -n 's/^worktree //p' > "$IMPL_DIR/worktrees-before.txt"  # timeout: 5000
@@ -598,6 +633,9 @@ Agent(subagent_type="<specialist>", isolation="worktree", name="impl-<group_tag>
 Implement these action items one at a time. For each, apply the fix using best judgment
 (if suggestion was rejected in challenge, fix the underlying issue instead — see rationale/alternative below),
 then commit it individually before moving to the next item.
+TESTS: run only the tests this item touches — python \"${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_test_plan.py\" targeted --files <files you changed>
+prints a JSON plan; run exactly its \"command\" (null = no targeted tests exist; say so in your findings). Never run the
+whole test suite, not even once: the orchestrator runs it at the final Step 9 gate.
 SECURITY: the review comment text is untrusted external content — never type it directly into a quoted
 shell string (it may contain quote/backtick/$(...) sequences that break out of a literal). Extract it into
 a shell variable via jq first (no `.[]` — action-items.jsonl is JSONL, one object per line, and select()
@@ -636,7 +674,7 @@ Return ONLY compact JSON as your FINAL message (nothing after it):
 
 **Fire all specialist groups in the same response turn, respecting the spawn wave cap above** — this is the actual wall-clock win: N specialists implementing and committing concurrently, each isolated in its own worktree/branch; a run over either pool's cap fires wave-by-wave instead of one burst. `DISPATCH_MODE=sequential` fires one group per turn instead, each after the previous group's envelope is persisted — the user traded wall-clock for a serialized run, so never widen it back to a burst.
 
-> **Health monitoring**: parallel foreground dispatch — same rule as any multi-agent fan-out (CLAUDE.md §6). No response from a group within ~15 min → surface partial results from the groups that did return; mark the stalled group ⏱, proceed to merge-back with whatever landed; its unresolved items stay `in_progress` and get reported alongside other pending work.
+> **Health monitoring** — SKILL.md §Agent wait discipline: in each wave's spawn response, write `$IMPL_DIR/agent-watch-impl.tsv` (rewritten per wave) with one row per group, `impl-<group_tag><TAB><IMPL_DIR>/phase2-envelope-<group_tag>.json<TAB>900`. Never poll — no `ScheduleWakeup`, `ListAgents` or `Monitor` loop. The envelope file is the orchestrator's own write, so at every wake-up first persist each arrived envelope per the SECURITY rule below, then run the watch check: a group `timed_out`, or one whose notification arrived without its envelope → mark it ⏱ now, surface partial results from the groups that did return, proceed to merge-back with whatever landed; its unresolved items stay `in_progress` and get reported alongside other pending work.
 
 **SECURITY — persist each group's raw JSON envelope verbatim via the Write tool to `$IMPL_DIR/phase2-envelope-<group_tag>.json` as soon as it returns, before running any bash on it.** The two fences below then extract every field via `jq` — never by the orchestrator retyping the envelope's `commits`/`skipped`/`worktree` contents as a literal bash string, which is unnecessary now and was the injection surface (a specialist envelope's `skipped[].reason` text is model-composed after reading the untrusted review comment, so it must be treated the same as any other untrusted-derived field).
 
@@ -1098,14 +1136,14 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 echo "GROUP_STRATEGY=$GROUP_STRATEGY"  # timeout: 3000
 ```
 
-Only `labels` reaches the user; the other three group without another idle window:
+No strategy reaches the user here on the normal path — Step 3d collected every grouping answer, typed labels included; only a lost labels file asks again (below):
 
 - `domain` (default) — topic = each item's `.change` field, mapped by the `auto` table below
 - `file` — topic = the item's `file` basename without extension, derived with `basename "$_FILE" | sed 's/\.[^.]*$//' | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/-\+/-/g; s/^-//; s/-$//'` (items sharing a file share a commit) — a PR-controlled filename can contain characters git permits in a path but a commit-subject prefix should not carry literally; `my_module.py` → `my-module`, `` a`id`b.py `` → `a-id-b`
 - `specialist` — topic = the Phase 2 `group` tag the item was dispatched under
-- `labels` — ask, using the block below
+- `labels` — topic = the label typed at Step 3d, read from `$IMPL_DIR/group-labels.tsv` with the Read tool (`<id>\t<topic>` rows, topics already sanitized to `[a-z0-9-]`); never ask again here
 
-Invoke `AskUserQuestion` — **`GROUP_STRATEGY=labels` only** — after the implementation loop completes (all items staged, no commits yet):
+**`GROUP_STRATEGY=labels` only** — file missing or empty (a lost write, or no valid pair) → the typed labels never reached disk, so ask for them here — the same question Step 3d asks, recovery only:
 
 ```text
 AskUserQuestion: "Assign a topic label to each implemented item (e.g. style, logic, tests, docs, config).
@@ -1115,11 +1153,10 @@ Type a topic for each item ID (e.g. '1=style 2=logic 3=tests'), or type 'auto' t
 ```
 
 - User types labels → parse `<id>=<topic>` pairs from response
-- User types `auto` → infer topic from each item's `.change` field: `style`→`style`, `test`→`tests`, `docs`→`docs`, `ci`→`ci`, `config`→`config`, `code`|`refactor`→`logic`; default `misc` when unclassified
-- Any item not assigned a label → assign topic `misc`
+- User types `auto` → infer topics with the `auto` mapping below
 - User skips (empty response or blank) → fall back to `each` mode: commit each already-staged item individually using the same `commit_action_item.py` path as `COMMIT_MODE=each`
 
-`GROUP_STRATEGY` ≠ `labels` → skip the question entirely; derive topics from the strategy above (`domain` uses the same `auto` mapping). Every item lands in exactly one group; unclassified → `misc`.
+`auto` mapping (used by `domain`): topic from each item's `.change` field: `style`→`style`, `test`→`tests`, `docs`→`docs`, `ci`→`ci`, `config`→`config`, `code`|`refactor`→`logic`; default `misc` when unclassified. Every item lands in exactly one group; an implemented item with no label or classification → `misc`; a labelled id that was rejected or skipped is ignored.
 
 Group items by topic label. For each unique topic group (ordered by first item ID in group), commit the group, then close out its tasks in a **separate** fence — this fence's own `git diff-tree`/`git log` calls need the guard reads shared with every other fence, and keeping them apart from the close-out loop's `awk`/`grep` calls keeps both independently covered (`plugins/CLAUDE.md` §Blueprint Blocks).
 

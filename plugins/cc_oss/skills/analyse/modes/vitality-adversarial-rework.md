@@ -75,6 +75,8 @@ For each item in rework list (parsed from `$REWORK_JSON`):
 
 Spawn FRESH rework agent per flagged section with MINIMAL context (no report history, no prior iteration findings):
 
+> **Agent waits** — SKILL.md §Health monitoring (batch `adversarial`, rewritten per iteration); never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop.
+
 ```
 Agent(subagent_type="foundry:sw-engineer", prompt="""
 You are a technical writer revising one section of a vitality analysis report.

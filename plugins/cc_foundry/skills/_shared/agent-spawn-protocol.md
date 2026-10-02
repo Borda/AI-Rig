@@ -12,25 +12,31 @@ Harness runs one Bash call at a time (max ~10 min/call, foreground `sleep` block
 
 ## Every spawn is a background spawn
 
-`Agent()` never blocks. No `run_in_background` parameter, no synchronous mode — call returns immediately; harness re-invokes orchestrator with a **completion notification** when agent finishes.
+`Agent()` never blocks. No `run_in_background` parameter, no synchronous mode — call returns immediately; harness re-invokes orchestrator with a **completion notification** when agent finishes (or an idle notification when a teammate stops).
 
-1. Spawn, finish turn, **stop**. Notification is the resume signal — nothing to wait through.
-2. Never hold turn open: no-op calls (`Bash(true)`, `Bash(:)`, re-`ls`), text-only "Waiting."/"Standing by." turns, any `sleep`, fixed-interval poll. Each burns a full model turn re-reading whole live context for nothing.
-3. Need real signal between turns? **One** probe per turn — `Monitor` tool, or single `health_sentinel.py`/`find` call (§8b) — then end turn again.
-4. On notification: read agent's output file. Empty/missing → mark `timed_out` with ⏱, record `{"verdict":"timed_out"}`; never silently omit a stalled agent.
+1. Spawn, arm the batch's deadlines (§Deadlines) in the **same response**, finish turn, **stop**. Notification is the resume signal — nothing to wait through.
+2. **Never wait with a tool.** No `ScheduleWakeup`, `ListAgents` or `Monitor` to wait on a spawned agent; no no-op calls (`Bash(true)`, `Bash(:)`, re-`ls`), text-only "Waiting."/"Standing by." turns, `sleep`, poll loop or fixed-interval poll. Each burns a full model turn re-reading whole live context for nothing — measured: 399 `ScheduleWakeup` calls across `/oss:resolve` runs in one month, while users typed "check on the agents".
+3. On every completion or idle notification: one `agent_watch.py` call (§Deadlines) **before** acting on any agent output; act on every row it prints.
+4. Notification arrived, deliverable missing (empty/missing output file, or idle without its envelope) → ⏱ `timed_out` **at once**, record `{"verdict":"timed_out"}`; never wait for it further, never silently omit it.
+5. A ⏱ only informs. It never answers, skips or defaults a user question — every gate the skill defines still fires on the timed-out path.
+6. Never ask the user whether to keep waiting; never leave a stalled agent for the user to notice — a run the user returns to already shows every ⏱.
+7. Task bookkeeping rides with real work: the batch's `TaskUpdate(in_progress)` ships in the spawn response, each `TaskUpdate(completed)` in the response that consumes that agent's result — zero bookkeeping-only turns (`rules/task-lifecycle.md`).
 
 Skill prose still claiming spawns are "synchronous" or "the framework awaits each response natively" describes a harness that no longer exists; this protocol is current. Canonical rule: `rules/task-lifecycle.md` §After spawning: end the turn.
 
-## §8b health_sentinel.py liveness helper (optional)
+## Deadlines — `agent_watch.py`
 
-Single between-turn liveness probe on background run: `health_sentinel.py` validates run dir, emits quoted sentinel path:
+One deadline per agent, armed in the spawn response, checked at each wake-up — the orchestrator never needs a clock, a timer, or a poll.
+
+- **Arm**: in the same response as the spawn batch, Write `<RUN_DIR>/agent-watch-<batch>.tsv` with the Write tool — one row per agent: `<name>\t<deliverable path, or - for an envelope-only agent>\t<deadline seconds>`. The file's write time is the batch's spawn time, so no clock value is ever typed; a write deferred to a later turn silently shifts every deadline — never defer it. Deadline seconds come from the skill's `<constants>` (default 900).
+- **Check**: on each wake-up, re-read the run dir from the skill's own sentinel and run once, in the same block:
 
 ```bash
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/health_sentinel.py" start <SKILL>-<ID> 2>/dev/null)"  # timeout: 5000
-[ -n "$SENTINEL" ] || printf "⚠ health monitoring disabled — health_sentinel.py missing or failed\n"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$RUN_DIR"  # timeout: 5000
 ```
 
-Later (separate Bash call, e.g. after a completion notification), probe progress: `find <output-dir> -newer "$SENTINEL" -name "<glob>" | wc -l` — new files since sentinel = progress. Shell state doesn't persist across Bash calls — persist sentinel path to a file if a later turn needs it.
+- **Act on every row**: `done` → consume · `timed_out` → ⏱ now, take the step's documented fallback · `pending`/`awaiting-envelope` for an agent whose notification already arrived → ⏱ `timed_out` now (an envelope-only agent whose notification carried its envelope is done — persist the envelope first when the step says to) · rows still open with no notification → end the turn.
+- A re-spawned agent gets a fresh row in a new batch file (`agent-watch-<batch>-retry.tsv`), never an edited row — editing rewrites the mtime of every sibling's deadline.
 
 ## Resume vs fresh spawn — context cost discipline
 
@@ -58,7 +64,7 @@ Doesn't apply: genuinely cross-file-dependent fixes (must read another file to g
 ## Rules
 
 - Never omit the timed-out signal (⏱) — surface partial results always
-- Rely on the harness completion notification, not a busy-wait loop
+- Rely on the harness completion notification plus the per-agent deadline — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a busy-wait loop, or a no-op call
 - New independent follow-up task → fresh `Agent()` spawn, not `SendMessage`-resume (see above)
 - Batch independent trivial/mechanical findings into one spawn; don't pay per-finding agent overhead for unambiguous, low-risk fixes (see §Delegation cost discipline)
 - Canonical reference: CLAUDE.md §6

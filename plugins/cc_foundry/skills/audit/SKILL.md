@@ -88,7 +88,7 @@ WAVE_STEP=5            # growth toward a tier's ceiling happens this much at a t
 
 **Orchestration contract**: orchestrator is thin coordinator — issues Glob/Grep for inventory, spawns agents, reads JSON envelopes, aggregates findings. Must NOT read agent/skill/rule file bodies directly. Inline read of non-template file = protocol violation; causes context overflow at scale.
 
-**Task tracking**: TaskCreate for each major phase; mark status live:
+**Task tracking**: TaskCreate for each major phase; mark status live — every status change rides in the response carrying that phase's spawns or checks, never a turn of its own (zero bookkeeping-only turns; profiled runs averaged 9 per run):
 
 - Phase 1: setup + collect (Pre-flight + Steps 1–2) → in_progress on start, completed when file list ready
 - Phase 2: per-file audit (Step 3) → in_progress on agent launch, completed when all reports received
@@ -325,7 +325,16 @@ Replace `<RUN_DIR>` with actual path, `<file-slug>` with plugin-prefixed unique 
 
 After spawns complete: short summaries in context; use to identify files with findings. Full content in run-dir files.
 
-**Health monitoring** (CLAUDE.md §6): apply the honest protocol in `$_FS/agent-spawn-protocol.md` — these curator batches return on completion; after each returns, read its `$RUN_DIR` output file. On empty/missing output: mark `timed_out`, surface with ⏱ in final report. Never omit timed-out agents.
+**Health monitoring** (CLAUDE.md §6, `$_FS/agent-spawn-protocol.md` §Deadlines): in the response that spawns a curator wave, Write `$RUN_DIR/agent-watch-<wave>.tsv` — one row per batch, `<batch name>\t-\t900` (envelope-only — a batch writes several slug files) (Steps 4 docs-freshness `300`, Step 5b passes `600`, fix-mode agents `900`). End the turn — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a probe, or a "waiting" line. On each completion or idle notification, before reading any output, run once:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/null || RUN_DIR=""
+[ -n "$RUN_DIR" ] || { echo "! BLOCKED — audit run-dir sentinel missing; cannot check agent deadlines"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$RUN_DIR"  # timeout: 5000
+```
+
+`done`, or an envelope-only row whose notification carried its envelope → read it · notification arrived without its envelope or output (empty/missing) → mark `timed_out` now, surface with ⏱ in final report, never wait further · open rows without a notification → end the turn. Never omit timed-out agents; a ⏱ never answers or skips the follow-up gate or a `! BREAKING` acknowledgment.
 
 ## Steps 4–5b: System-wide checks, aggregate, low-confidence remediation
 

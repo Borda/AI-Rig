@@ -246,10 +246,10 @@ ______________________________________________________________________
 1. **Scope analysis** (`foundry:sw-engineer`): existing patterns, reuse opportunities, affected files, compatibility concerns. GitHub issue number given → fetches full issue + comments (upstream if `--repo`).
 2. **Source verification** (conditional): feature calls external library API → detects installed version from `pyproject.toml`, fetches official docs via WebFetch, cites relevant passage in code comments.
 3. **Demo use-case**: crystallises API contract as inline doctest (simple functions) or example script (complex features with setup). Demo must fail against current code before proceeding. Gate enforced via exit code — not output text.
-4. **TDD implementation loop** (`foundry:sw-engineer`): tests pass in non-overlapping groups by default (`--no-batch` for one run per piece of functionality), redundant full-directory re-runs dropped once a prior cycle already proved the whole suite green.
+4. **TDD implementation loop** (`foundry:sw-engineer`): tests pass in non-overlapping groups by default (`--no-batch` for one run per piece of functionality), full-directory baseline on the first cycle only; every later cycle and the review loop run only the tests each change touches (`dev_test_targets.py`).
 5. **Review and close gaps**: 5-axis quality scan (correctness, readability, architecture, security, performance) → fix loop, max 3 cycles.
 6. **Documentation** (`foundry:doc-scribe`): updates docstrings and README content when the implementation changes a public API; a separate changelog step is used only when the project has a changelog convention.
-7. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available, probed against the detected runner) → optional Codemap blast-radius check → optional Codex pre-pass → progressive review loop.
+7. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available, probed against the detected runner) — rerun in full after any later fix, max 3 gate iterations → optional Codemap blast-radius check → optional Codex pre-pass → progressive review loop.
 
 **! BREAKING (report format)** — the quality stack folds `--doctest-modules` into the main suite run when a clean-collection check passes; `Doctests:` in the Final Report is now `pass` / `fail` / `not-merged` (was a plain pass/fail line). Flaky-test retry now re-runs only the specific failing node-ids (was a blind whole-directory re-run); a failure reproducing only under parallel execution is reported as a likely test-isolation bug, not marked flaky.
 
@@ -300,9 +300,9 @@ ______________________________________________________________________
 
 1. **Understand the problem** (`foundry:sw-engineer`): reads full traceback, searches failing code path, traces call graph, identifies root cause, state mutation, blast radius. Argument = positive integer → fetches GitHub issue (upstream if `--repo`).
 2. **Reproduce the bug** (`foundry:qa-specialist`): writes regression test failing on unfixed code. Gate: test must exit non-zero before proceeding.
-3. **Apply the fix** (`foundry:sw-engineer`): minimal change — only what makes regression test pass.
-4. **Review and close gaps**: 5-axis quality scan → fix loop, max 3 cycles. Adjacent bugs documented as observations, handled in separate session — never fixed same pass.
-5. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available) → optional Codemap blast-radius check → optional Codex pre-pass → progressive review loop.
+3. **Apply the fix** (`foundry:sw-engineer`): minimal change — only what makes regression test pass. Then runs only the tests the change touches (`dev_test_targets.py`: Codemap test-impact, or name/import heuristics without Codemap).
+4. **Review and close gaps**: 5-axis quality scan → fix loop, max 3 cycles, each cycle re-running targeted tests only. Adjacent bugs documented as observations, handled in separate session — never fixed same pass.
+5. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available) — the final gate after the loop, rerun in full after any later fix, max 3 gate iterations; a green full suite is the last test evidence → optional Codemap blast-radius check → optional Codex pre-pass → progressive review loop.
 
 **Realistic example**:
 
@@ -361,9 +361,9 @@ ______________________________________________________________________
 1. **Scope and understand** (`foundry:sw-engineer`): reads target code, maps public API surface, identifies complexity hotspots + coupling. Codemap for blast-radius when available. Scope gate: target spans 3+ modules, 5+ files, or any public-API rename → asks narrow or proceed.
 2. **Audit test coverage**: classifies each public function covered / partially covered / uncovered. No `pytest-cov` installed → falls back to "all uncovered" conservatively.
 3. **Add characterization tests** (`foundry:qa-specialist`): every uncovered/partial public API gets tests asserting *current* behavior (not desired). Gate: all characterization tests must pass on unmodified code before proceeding.
-4. **Refactor with safety net**: focused changes run in non-overlapping groups by default (`--no-batch` for one focused change per cycle), tests after each. Safety break: max 5 change-test cycles per inner session (edits, not cycles, unless `--no-batch` is set); max 10 total across all outer review cycles.
-5. **Review and close gaps**: behavior preservation, goal achievement, no new smells, no unintended API surface changes. Max 3 outer review cycles.
-6. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available) → optional Codemap blast-radius check → optional Codex pre-pass → progressive review loop.
+4. **Refactor with safety net**: focused changes run in non-overlapping groups by default (`--no-batch` for one focused change per cycle), with only the tests each change touches after each (`dev_test_targets.py`: Codemap test-impact, or name/import heuristics without Codemap) — never the full suite inside the loop. Safety break: max 5 change-test cycles per inner session (edits, not cycles, unless `--no-batch` is set); max 10 total across all outer review cycles.
+5. **Review and close gaps**: behavior preservation, goal achievement, no new smells, no unintended API surface changes. Max 3 outer review cycles, each re-running targeted tests only.
+6. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available) — the final gate after the loop (the repository's own test command when the quality stack is unavailable), rerun in full after any later fix, max 3 gate iterations; a green full suite is the last test evidence → optional Codemap blast-radius check → optional Codex pre-pass → progressive review loop.
 
 **Refactoring categories skill handles**:
 
@@ -688,12 +688,12 @@ Hooks register automatically from `hooks/hooks.json` when the plugin is enabled 
 
 Skills write to these dirs at project root (all gitignored):
 
-| Directory                      | Contents                                                               |
-| ------------------------------ | ---------------------------------------------------------------------- |
-| `.plans/active/`               | Plan files from `/develop:plan`, diagnosis files from `/develop:debug` |
-| `.developments/<timestamp>/`   | Checkpoint files for resumable feature/fix/refactor sessions           |
-| `.temp/review/<timestamp>/`    | Per-agent handover files (intermediate) from `/develop:review`         |
-| `.reports/review/<timestamp>/` | Consolidated final report from `/develop:review`                       |
+| Directory                      | Contents                                                                                                                     |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `.plans/active/`               | Plan files from `/develop:plan`, diagnosis files from `/develop:debug`                                                       |
+| `.developments/<timestamp>/`   | Checkpoint files for resumable feature/fix/refactor sessions; targeted-test records (`test-targets.jsonl`) and full run logs |
+| `.temp/review/<timestamp>/`    | Per-agent handover files (intermediate) from `/develop:review`                                                               |
+| `.reports/review/<timestamp>/` | Consolidated final report from `/develop:review`                                                                             |
 
 Completed runs cleaned after 30 days. Interrupted runs (no `result.jsonl`) kept for debugging.
 
@@ -722,6 +722,10 @@ Same pattern in `/develop:fix` Step 2. Regression test passes on unfixed code �
 ### Characterization test fails on unmodified code
 
 `/develop:refactor` Step 3: characterization tests must pass before refactoring begins. Characterization test fails → test wrong — must assert *current* behavior, not desired. Fix test to match what code actually does now.
+
+### A spawned agent shows ⏱ timed out
+
+Skills never poll a background agent; they resume on its completion notification. Each spawn arms a deadline (`agent_watch.py`); an agent whose notification arrives without its expected output, or that a later wake-up finds past its deadline, is marked ⏱ `timed_out` at once and named in the report. Analysis and test-writing work is then done inline; a timed-out challenger asks you to retry it, proceed unchallenged, or abort — it is never counted as a clean pass.
 
 ### Session interrupted mid-skill
 
@@ -792,12 +796,13 @@ Both files are merged into `~/.claude/settings.json` by `/develop:setup` (Step 5
 
 <a id="bin-helper-inventory"></a>
 
-## 🧰 Bin helper inventory (22 shipped deterministic helpers)
+## 🧰 Bin helper inventory (29 shipped deterministic helpers)
 
 These helpers are installed workflow support and maintainer surfaces, not additional slash-command skills. The skills own the development workflow; the helpers handle bounded flag parsing, Codemap context, test execution, worktree setup, path resolution, and state extraction.
 
 | Helper                       | Purpose                                                                      |
 | ---------------------------- | ---------------------------------------------------------------------------- |
+| `agent_watch.py`             | Report each spawned agent's deliverable and deadline in one call.            |
 | `build_codemap_batch.py`     | Build one Codemap pre-flight batch for changed modules.                      |
 | `codemap_resolve.py`         | Resolve Codemap auto, strict, or disabled mode.                              |
 | `codemap_scan.py`            | Derive affected modules and emit structural Codemap queries.                 |
@@ -808,6 +813,7 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 | `dev_run_dir.py`             | Create a timestamped `.developments/` run directory and optional sentinel.   |
 | `dev_setup_worktree_wrap.py` | Set up team-mode worktree run directories and state.                         |
 | `dev_shared_resolve.py`      | Resolve develop's own shared directory portably.                             |
+| `dev_test_targets.py`        | Select the tests a change touches; `--run` runs them in one call.            |
 | `diagnosis_parse.py`         | Parse and validate a `--diagnosis` path from arguments.                      |
 | `extract-keep-flag.py`       | Parse `--keep "<items>"` and clear a stale compaction contract.              |
 | `extract_json_field.py`      | Recover a JSON object from text and print a selected field.                  |
@@ -820,7 +826,7 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 | `pytest_gate.py`             | Run an allow-listed pytest command with full output.                         |
 | `resolve_review_target.py`   | Resolve a review target and its changed Python files.                        |
 | `resolve_shared_path.py`     | Resolve the active `codemap-py` install for its shared contracts.            |
-| `run_pytest_short.py`        | Run an allow-listed pytest command and show its final output lines.          |
+| `run_pytest_short.py`        | Run an allow-listed pytest command on one or more targets; show final lines. |
 | `setup_worktree.py`          | Create a team-mode `.temp/develop/` run directory and optional sentinel.     |
 | `sync_rules.py`              | Install namespaced rule symlinks into `~/.claude/rules/`.                    |
 | `verify_blueprint_audit.py`  | Verify and prune the auto-allow audit log.                                   |

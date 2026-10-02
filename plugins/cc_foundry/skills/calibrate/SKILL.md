@@ -68,7 +68,7 @@ NOT for: static routing overlap analysis (use /foundry:audit); manually reviewin
 - CALIBRATE_LOG: `.notes/logs/calibrations.jsonl` (legacy `.claude/logs/calibrations.jsonl` read-only fallback for historical entries)
 - AB_ADVANTAGE_THRESHOLD: 0.10 (delta recall or F1 above this → meaningful advantage; below → marginal or none)
 - PHASE_TIMEOUT_MIN: 5 (per-phase budget — if spawned subagents haven't all returned, collect partial results and continue)
-- PIPELINE_TIMEOUT_MIN: 10 (hard cutoff — pipeline not notified within 10 min of launch is timed out; extendable if agent explains delay) # tighter than global 15-min cutoff from CLAUDE.md §6 — intentional for calibrate
+- PIPELINE_TIMEOUT_MIN: 10 (per-pipeline deadline, armed in the spawn response as `600` in `agent-watch-*.tsv` — no extension: the orchestrator has no clock to grant one) # tighter than global 15-min cutoff from CLAUDE.md §6 — intentional for calibrate
 - PIPELINE_BATCH_SIZE: 5 when one mode category runs alone, 2 while two categories are in flight (max agent/skill pipeline subagents spawned concurrently within one mode — prevents agent count explosion on `all`; batch: spawn ≤ that many, wait for all results, then spawn next batch; halving keeps peak concurrency at 4 ≤ 5 when paired)
 - ROUTING_ACCURACY_THRESHOLD: 0.90 (below → agent descriptions need improvement) # keep in sync with modes/routing.md
 - ROUTING_HARD_THRESHOLD: 0.80 (below → high-overlap pair descriptions need disambiguation)
@@ -81,7 +81,8 @@ NOT for: static routing overlap analysis (use /foundry:audit); manually reviewin
 - CODEX_SCORER_WEIGHT: 0.49 (Codex scorer weight; Claude = 0.51 — Claude has last word on disagreements)
 - SCORER_AGREEMENT_WARN: 0.70 (scorer agreement below this → flag ambiguous ground truth ⚠)
 - CODEX_MODES: ["agents", "skills"] (modes where Codex is active; routing/communication/rules excluded — test Claude-specific internals)
-- PIPELINE_TIMEOUT_MIN_DUAL: 15 (hard cutoff when Codex active — replaces PIPELINE_TIMEOUT_MIN=10 for dual-source runs)
+- PIPELINE_TIMEOUT_MIN_DUAL: 15 (deadline `900` when Codex active — replaces PIPELINE_TIMEOUT_MIN=10 for dual-source runs)
+- APPLY_TIMEOUT_S: 600 (Step 6 apply-subagent deadline)
 
 Domain tables per mode: see `modes/agents.md`, `modes/skills.md`, `modes/routing.md`, `modes/communication.md`, `modes/rules.md`.
 
@@ -214,12 +215,23 @@ For each target mode in resolved target list, read corresponding mode file, exec
 
 **Execution order for `all`**: agents → skills → routing → communication → rules, run as pairs in that order — (agents + skills), (routing + communication), then rules alone at batch 5. For each pair:
 
-1. **Guard** — call `TaskList`; a category task (agents/skills/routing/communication/rules) is `in_progress` but its mode is **not** one of the categories currently in flight: call `TaskUpdate(that_task_id, completed)` before proceeding — corrects a missed completed call from a prior iteration. Never complete the task of a category still running: with two in flight, two category tasks are legitimately `in_progress`.
-2. Mark both in-flight modes' tasks `in_progress` (all others stay `pending`)
-3. Spawn pipelines for both modes with `$PIPELINE_BATCH_SIZE` = 2 (= 5 when a category runs alone — see constants)
-4. Wait for all batch results from both modes before proceeding
-5. Mark each mode's task `completed` as its own results arrive
-6. Only then start the next pair
+1. **Guard** — call `TaskList` in the same response as the pair's first spawn batch (never a turn of its own); a category task (agents/skills/routing/communication/rules) is `in_progress` but its mode is **not** one of the categories currently in flight: call `TaskUpdate(that_task_id, completed)` before proceeding — corrects a missed completed call from a prior iteration. Never complete the task of a category still running: with two in flight, two category tasks are legitimately `in_progress`.
+2. Mark both in-flight modes' tasks `in_progress` (all others stay `pending`) — same response as the spawns
+3. Spawn pipelines for both modes with `$PIPELINE_BATCH_SIZE` = 2 (= 5 when a category runs alone — see constants), and in that same response arm the batch deadline (below)
+4. End the turn; collect every batch result from both modes via completion notifications + the deadline check before proceeding — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a poll, or a "waiting" line
+5. Mark each mode's task `completed` in the response that consumes its last result
+
+**Batch deadline** (`_shared/agent-spawn-protocol.md` §Deadlines): every spawn response Writes `<RUN_DIR>/agent-watch-<mode>-<batch-number>.tsv` (`<RUN_DIR>` = `.reports/calibrate/<TIMESTAMP>`), one row per pipeline: `<target>\t<that target's result.jsonl path from its mode file>\t<600, or 900 when Codex active>`. On every completion notification run once, before reading any result:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _TIMESTAMP < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/timestamp" 2>/dev/null || _TIMESTAMP=""
+[ -n "$_TIMESTAMP" ] || { echo "! BLOCKED — calibrate timestamp sentinel missing; cannot check agent deadlines"; exit 1; }
+RUN_DIR=".reports/calibrate/$_TIMESTAMP"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$RUN_DIR"  # timeout: 5000
+```
+
+`done` → consume · notification arrived but row not `done` → that target is ⏱ `timed_out` now (Step 3 synthesizes its record) · rows open without a notification → end the turn. A ⏱ never answers or skips the Step 3 or Step 6 gates. 6. Only then start the next pair
 
 | Target mode | Mode file | Task to mark in_progress |
 | -- | -- | -- |
@@ -270,7 +282,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "
 
 ## Step 3: Collect results and print combined report
 
-**Completion handling** — pipeline spawns run in the background: issue the batch, end turn, resume on completion notifications; never a poll loop, a filler call, or a "waiting" line (`_FOUNDRY_SHARED/agent-spawn-protocol.md`). Each returns: read that target's compact JSON; absent: read `.reports/calibrate/<TIMESTAMP>/<TARGET>/result.jsonl` (written on every exit path per pipeline's graceful-exit protocol). Neither present: record `{"verdict":"timed_out"}`, mark target `⏱` in report; never omit a stalled target.
+**Completion handling** — pipeline spawns run in the background: issue the batch, end turn, resume on completion notifications and the Step 2 batch-deadline check; never a waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`), a poll loop, a filler call, or a "waiting" line (`_FOUNDRY_SHARED/agent-spawn-protocol.md`). Each returns: read that target's compact JSON; absent: read `.reports/calibrate/<TIMESTAMP>/<TARGET>/result.jsonl` (written on every exit path per pipeline's graceful-exit protocol). Neither present: record `{"verdict":"timed_out"}`, mark target `⏱` in report; never omit a stalled target.
 
 **On timeout**: read `tail -100 <output_file>` for partial JSON; none: use: `{"target":"<TARGET>","verdict":"timed_out","mean_recall":null,"gaps":["pipeline timed out — re-run individually with /calibrate <target> fast"]}`. Timed-out targets appear in report with ⏱ prefix and null metrics.
 
@@ -420,7 +432,7 @@ After processing all edits return **only** this compact JSON:
 
 `{"status":"done","target":"<TARGET>","applied":N,"skipped":N,"file":"<AGENT_FILE>","summary":"Applied N, skipped N edits to <AGENT_FILE>"}`
 
-**Completion handling** — like Step 3, these spawns run in the background: issue the batch, end turn, resume on completion notifications (`_FOUNDRY_SHARED/agent-spawn-protocol.md`) — never a poll loop or a filler call. A subagent that returns nothing after notification: record `{"status":"timed_out","target":"<TARGET>"}`, print with ⏱, still counted in the final table — never silently dropped from the summary.
+**Completion handling** — like Step 3, these spawns run in the background: issue the batch and, in the same response, Write `<RUN_DIR>/agent-watch-apply.tsv` (`<target>\t-\t600` per subagent, APPLY_TIMEOUT_S); end turn, resume on completion notifications and run the Step 2 deadline check block once per notification (`_FOUNDRY_SHARED/agent-spawn-protocol.md`) — never a waiting tool, a poll loop or a filler call. A subagent that returns nothing after notification: record `{"status":"timed_out","target":"<TARGET>"}`, print with ⏱, still counted in the final table — never silently dropped from the summary.
 
 After all subagents complete, collect JSON results and print final summary:
 
@@ -446,7 +458,7 @@ End response with `## Confidence` block per CLAUDE.md output standards.
 
 <notes>
 
-- **Timeout handling**: phase and pipeline budgets (see constants block) prevent nested subagent hangs from cascading. Extension granted once if pipeline explains delay in output file — second unexplained stall still triggers cutoff. Timed-out pipelines appear with ⏱ prefix and `verdict:"timed_out"`; re-run individually with `/calibrate <target> --fast` after session.
+- **Timeout handling**: phase and pipeline budgets (see constants block) prevent nested subagent hangs from cascading. Deadlines are armed in the spawn response and checked by `agent_watch.py` on each notification — no extension, since nothing in the orchestrator can count time to grant one. Timed-out pipelines appear with ⏱ prefix and `verdict:"timed_out"`; re-run individually with `/calibrate <target> --fast` after session.
 - **Context safety**: each target runs in own pipeline subagent — only compact JSON (~200 bytes) returns to main context per target. Sequential spawning prevents concurrent resource and token spike; accumulated context across all targets still compact.
 - **Scorer delegation**: Phase 3a delegates scoring to per-problem `general-purpose` subagents. Each scorer reads response files from disk, returns ~200 bytes. Phase 3b runs Codex scorers sequentially via Bash (writes per-problem files). Phase 3c merges both into `scores.json`. Pipeline holds only compact JSONs regardless of N or A/B mode — no context budget concern.
 - **Nesting depth**: main → pipeline subagent → target/scorer agents (2 levels). Pipeline spawns target agents (Phase 2), Claude scorer agents (Phase 3a), Codex scoring Bash calls (Phase 3b) at same depth — no additional nesting.

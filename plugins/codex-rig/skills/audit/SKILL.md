@@ -3,7 +3,7 @@ name: audit
 description: Audit Codex configuration and workflow contracts, including failures between individually successful steps, plus prompt-efficiency drift; emit evidence-backed gaps and measurable gates.
 ---
 
-> Before asking, read [User Questions](../../shared/codex-user-questions.md).
+> Before asking, read [User Questions](../../shared/codex-user-questions.md). Waits, plan updates, and test runs follow [Agent Waits](../../shared/native-skill-contract.md#agent-waits), [Plan Updates](../../shared/native-skill-contract.md#plan-updates), and [Sandboxed Test Runs](../../shared/native-skill-contract.md#sandboxed-test-runs).
 
 # Audit
 

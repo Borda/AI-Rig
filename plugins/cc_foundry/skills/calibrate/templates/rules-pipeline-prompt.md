@@ -88,7 +88,7 @@ Write complete response to `<RUN_DIR>/response-<PROBLEM_ID>.md` using Write tool
 
 **Context discipline**: subagents write to disk, return single-line acknowledgment. Pipeline agent must NOT accumulate their full analyses in context — scorers read from disk in Phase 3. Receiving only `Wrote: <PROBLEM_ID>` per agent is correct, expected.
 
-**Completion handling** — spawns are blocking `Agent()` calls, so no poll loop is possible (`_FOUNDRY_SHARED/agent-spawn-protocol.md` §Synchronous spawns). Each subagent returns: check for `response-<PROBLEM_ID>.md`; missing: mark that problem `{"timed_out": true}` in scores.json, proceed.
+**Completion handling** — never a poll loop or a waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`); each subagent's result arrives as its `Agent()` result or completion notification (`_FOUNDRY_SHARED/agent-spawn-protocol.md`). Each subagent returns: check for `response-<PROBLEM_ID>.md`; missing: mark that problem `{"timed_out": true}` in scores.json, proceed.
 
 ### Phase 3 — Score (parallel scorer subagents)
 

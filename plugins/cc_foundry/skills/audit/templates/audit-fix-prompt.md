@@ -21,7 +21,7 @@ Once a gate returns a verbatim replacement string, every downstream call is tran
 
 **Adversarial pre-apply gate**: for each unique file that didn't qualify for the fast path, spawn **foundry:challenger** AND **foundry:curator** in parallel — challenge/validate each finding batch: "Is each finding real? Is the fix appropriate? Does any fix risk removing load-bearing behavioral or structural/display content (e.g. CommonMark fence nesting, template rendering, visual output structure)?" Each writes verdict to `<RUN_DIR>/gate-<file-basename>.md`; return `{"verdict":"approved"|"blocked","reason":"<one-line>","file":"<path>"}`. Either returns `blocked` → mark findings for that file as blocked (add to `blocked_findings` list with reason); skip fix agent. Proceed to fix agent only if both return `approved`. Issue all gate spawns in a single response (parallel).
 
-After gate verdicts received: **Phase 1 — Parallel basket**: issue all parallel-safe approved fix spawns in a single response. Wait for all to complete.
+After gate verdicts received: **Phase 1 — Parallel basket**: issue all parallel-safe approved fix spawns in a single response, with `$RUN_DIR/agent-watch-fix-p1.tsv` (one row per fix agent, `-`, `900`) written in that same response; collect results via completion notifications and the SKILL.md Step 3 `agent_watch.py` check — never a waiting tool.
 
 **Phase 2 — Sequential basket**: re-read the files modified in Phase 1 that are dependency inputs for Phase 2 fixes.
 

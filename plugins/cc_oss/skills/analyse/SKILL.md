@@ -33,11 +33,10 @@ NOT for implementing PR action items (use oss:resolve). NOT for **code-quality a
 
 <constants>
 
-> Agent health monitoring (CLAUDE.md §6) — applies to Step 7 shepherd spawn. The spawn is background; end the turn after it and resume on the completion notification. The constants bound silence, not a poll cadence — nothing sleeps.
+> Agent health monitoring (CLAUDE.md §6) — applies to every spawn (shepherd, reproduction agent, gh-scraper, repo-warden, adversarial reviewers). Spawns are background; end the turn after each and resume on the completion notification. The constant is a per-agent deadline checked at wake-ups by `agent_watch.py` — not a poll cadence, nothing sleeps.
 
 ```text
-HARD_CUTOFF=900        # no file activity for this long across wake-ups → declare timed out
-EXTENSION=300          # one +5 min extension if output file explains delay
+AGENT_DEADLINE_S=1800  # per spawned agent, from its spawn; covers the former 900 s silence cutoff + 300 s extension with margin
 ```
 
 </constants>
@@ -384,7 +383,15 @@ Verify output file exists and is non-empty after spawn: `[ -s "<OUTPUT_PATH>" ] 
 
 If `DRIFT=true`: append `[analysis refreshed — new activity since last report]` to terminal summary.
 
-**Health monitoring** (CLAUDE.md §6): agent spawns run in the background — spawn, end the turn, resume on the completion notification; no filler call, no "waiting" line, no sleep. On timeout (`$HARD_CUTOFF` seconds of no activity): read `tail -100` of expected reply path; if none, use `{"verdict":"timed_out"}`; surface with ⏱. Never silently omit.
+**Health monitoring** (CLAUDE.md §6) — every spawn in this skill and its modes: agent spawns run in the background — spawn, end the turn, resume on the completion notification (shared rule: `rules/task-lifecycle.md` §After spawning); no filler call, no "waiting" line, no sleep, and never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop. Run the block below once before the first spawn (it prints the watch directory) and in each spawn response write `<WATCH_DIR>/agent-watch-<batch>.tsv` with the Write tool — one row per agent, `<name><TAB><expected output path, or - for an envelope-only agent><TAB>1800`. At every wake-up run the block once before reading agent output: `done` → consume; `timed_out`, or a notification that arrived without the deliverable → read `tail -100` of the expected path; if none, use `{"verdict":"timed_out"}`; surface with ⏱ now. Never silently omit, and a ⏱ never skips a user question.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+WATCH_DIR="${TMPDIR:-/tmp}/oss-analyse-watch-${CSID}"
+mkdir -p "$WATCH_DIR"
+echo "WATCH_DIR=$WATCH_DIR"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/agent_watch.py" --state-dir "$WATCH_DIR"  # timeout: 5000
+```
 
 End response with `## Confidence` block per CLAUDE.md — always **absolute last thing**.
 

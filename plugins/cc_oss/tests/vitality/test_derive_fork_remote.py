@@ -124,7 +124,7 @@ def test_push_scope_falls_back_to_base_range(monkeypatch: pytest.MonkeyPatch) ->
     [pytest.param("", "feature", id="no-remote"), pytest.param("contrib", "", id="no-head-ref")],
 )
 def test_main_blocks_on_unresolved_refs(fork_remote: str, head_ref: str, capsys: pytest.CaptureFixture) -> None:
-    """An unresolved remote or head ref refuses to raise an empty push-authorization prompt."""
+    """An unresolved remote or head ref refuses to push to an unresolved target."""
     assert dfr.main(["--fork-remote", fork_remote, "--head-ref", head_ref, "--base-ref", "main"]) == 1
     assert "FORK_REMOTE/HEAD_REF unresolved" in capsys.readouterr().out
 
@@ -152,14 +152,14 @@ def test_main_rejects_leading_dash_argv(flag: str, capsys: pytest.CaptureFixture
 
 
 def test_main_blocks_when_scope_uncomputable(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
-    """With no commit count, the run stops instead of prompting for a push it cannot describe."""
+    """With no commit count, Step 10 never pushes a scope it cannot describe."""
     monkeypatch.setattr(dfr.subprocess, "run", lambda *_a, **_k: _FakeCompleted(returncode=1))
     assert dfr.main(["--fork-remote", "contrib", "--head-ref", "feature", "--base-ref", "main"]) == 1
     assert "push scope could not be computed" in capsys.readouterr().out
 
 
 def test_main_prints_push_summary(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
-    """The success path prints the exact line the push-authorization question quotes."""
+    """The success path prints the exact scope line Step 10 shows before an authorized push."""
 
     def fake_run(cmd: list[str], **_kwargs: object) -> _FakeCompleted:
         if "rev-list" in cmd:

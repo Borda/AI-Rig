@@ -51,7 +51,7 @@ KEEP: <section-name>
 CONFIDENCE: 0.N
 ```
 
-Wait for all agents to complete. Merge into consolidated proposal list keyed by slug, labeling each section with its project slug.
+In the spawn response Write `.temp/distill/prune/agent-watch-analysis.tsv` — one row per project, `<slug>\t-\t600` (envelope-only) — then end the turn; never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep (`_shared/agent-spawn-protocol.md` §Deadlines). On each notification run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir ".temp/distill/prune"` once; a project whose notification carried no analysis is ⏱ `timed_out` — list it as not analysed. Once every row is settled, merge into consolidated proposal list keyed by slug, labeling each section with its project slug.
 
 **If `$EAGER == true`**: skip P1–P3 below, execute P-eager steps:
 
@@ -117,7 +117,7 @@ Write MEMORY.md changes using the Edit tool.
 Return ONLY: {"status":"done","project":"<slug>","sections_dropped":N,"sections_trimmed":N,"rule_conversions":N,"confidence":0.N}
 ```
 
-Wait for all curator agents to complete. Collect results. Print consolidated summary:
+Same deadline protocol: in the spawn response Write `.temp/distill/prune/agent-watch-apply.tsv` (`<slug>\t-\t600` per curator), end the turn, run the check once per notification; a curator whose notification carried no envelope is ⏱ `timed_out` — report that project's MEMORY.md as unverified. Once every row is settled, collect results. Print consolidated summary:
 
 ```text
 Pruned MEMORY.md — <date>

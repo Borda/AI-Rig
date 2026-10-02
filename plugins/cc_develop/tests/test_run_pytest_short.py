@@ -145,6 +145,43 @@ def test_rejects_unsafe_cmd(
     assert "rejected" in capsys.readouterr().err
 
 
+def test_several_targets_run_as_one_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Several targets reach a single pytest invocation in order, so a targeted selection costs one run.
+
+    ``dev_test_targets.py --run`` hands over its whole selection at once; splitting it into one process per file would
+    re-pay pytest start-up and collection for every file.
+    """
+    recorded = _patch_subprocess(monkeypatch, returncode=0, stdout="")
+    run_pytest_short.main(["pytest", "tests/test_a.py", "tests/test_b.py"])
+    assert recorded[0]["cmd"] == ["/fake/pytest", "--tb=short", "tests/test_a.py", "tests/test_b.py", "-v"]
+
+
+def test_any_target_outside_cwd_rejects_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One escaping target among several still exits 1 before pytest starts."""
+    monkeypatch.chdir(tmp_path)
+    recorded = _patch_subprocess(monkeypatch, returncode=0, stdout="")
+    with pytest.raises(SystemExit) as exc:
+        run_pytest_short.main(["pytest", "tests/test_a.py", str(tmp_path.parent)])
+    assert (exc.value.code, recorded) == (1, [])
+    assert "rejected target" in capsys.readouterr().err
+
+
+def test_log_keeps_full_output_while_terminal_shows_tail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--log`` writes every output line to disk while stdout still shows only the tail.
+
+    Targeted loop runs print a short tail to keep context small; the full output must stay inspectable afterwards.
+    """
+    _patch_subprocess(monkeypatch, returncode=0, stdout=_make_lines(30))
+    log = tmp_path / "logs" / "run.log"
+    run_pytest_short.main(["pytest", "--tail-n", "5", "--log", str(log)])
+    assert capsys.readouterr().out.splitlines() == [f"line-{i}" for i in range(26, 31)]
+    assert log.read_text(encoding="utf-8").splitlines() == [f"line-{i}" for i in range(1, 31)]
+
+
 def test_combined_stdout_stderr_captured(monkeypatch: pytest.MonkeyPatch) -> None:
     """Subprocess invoked with ``stdout=PIPE`` and ``stderr=STDOUT`` for merged tailing."""
     recorded = _patch_subprocess(monkeypatch, returncode=0, stdout=_make_lines(5))

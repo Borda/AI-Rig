@@ -16,7 +16,10 @@ from anywhere in argv before positional slicing. This keeps the allowlist-reject
 the legacy bash script defined them.
 
 Usage:
-    run_pytest_short.py [pytest_cmd] [target] [--tail-n N]
+    run_pytest_short.py [pytest_cmd] [target ...] [--tail-n N] [--log PATH]
+
+Every target is containment-checked; several targets run as one pytest process (``dev_test_targets.py --run``
+passes its whole selection this way). ``--log PATH`` also writes the full, untruncated-by-tail output there.
 
 Exit codes:
     0 — pytest passed.
@@ -119,27 +122,28 @@ def _parse_tail_n(raw: str) -> int:
     return n if n >= 0 else _DEFAULT_TAIL_N
 
 
-def _extract_named_flags(args: list[str]) -> tuple[list[str], str]:
-    """Pull ``--tail-n VALUE`` out of argv.
+def _extract_named_flags(args: list[str]) -> tuple[list[str], str, str]:
+    """Pull ``--tail-n VALUE`` and ``--log PATH`` out of argv.
 
     Args:
         args: Raw argument list, flags and positionals interleaved in any order.
 
     Returns:
-        Tuple of (remaining positional args in original order, raw tail_n string or ``""`` if absent).
+        Tuple of (remaining positional args in original order, raw tail_n string or ``""`` if absent, log path or
+        ``""`` if absent).
     """
     positional: list[str] = []
-    tail_n_raw = ""
+    named = {"--tail-n": "", "--log": ""}
     i = 0
     while i < len(args):
         arg = args[i]
-        if arg == "--tail-n" and i + 1 < len(args):
-            tail_n_raw = args[i + 1]
+        if arg in named and i + 1 < len(args):
+            named[arg] = args[i + 1]
             i += 2
             continue
         positional.append(arg)
         i += 1
-    return positional, tail_n_raw
+    return positional, named["--tail-n"], named["--log"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -173,19 +177,21 @@ def main(argv: list[str] | None = None) -> int:
             default=str(_DEFAULT_TAIL_N),
             help=f"Number of trailing output lines to print (default: {_DEFAULT_TAIL_N}).",
         )
+        parser.add_argument("--log", help="Also write the full combined output to this file.")
         parser.parse_args(args)  # exits 0 after printing help
 
-    positional, tail_n_raw = _extract_named_flags(args)
+    positional, tail_n_raw, log_path = _extract_named_flags(args)
     pytest_cmd = positional[0] if len(positional) >= 1 else "pytest"
-    target = positional[1] if len(positional) >= 2 else "."
+    # Several targets are accepted so a targeted-test selection runs as one pytest process, not one per file.
+    targets = positional[1:] or ["."]
     tail_n = _parse_tail_n(tail_n_raw)
 
     if pytest_cmd not in _PYTEST_ALLOWLIST:
         print(f"run-pytest-short: rejected unsafe PYTEST_CMD: {pytest_cmd}", file=sys.stderr)
         return 2
 
-    targets = [target]
-    _validate_target_in_cwd(target)
+    for target in targets:
+        _validate_target_in_cwd(target)
 
     parts = shlex.split(pytest_cmd)
     parts[0] = _resolve(parts[0])
@@ -223,6 +229,10 @@ def main(argv: list[str] | None = None) -> int:
     output = "".join(chunks)
     if truncated:
         output += f"\n[run-pytest-short: output truncated at {_MAX_OUTPUT_BYTES} bytes]"
+    if log_path:
+        # full output stays inspectable on disk while the terminal shows only the tail
+        Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(log_path).write_text(output, encoding="utf-8", newline="\n")
     # splitlines drops the trailing newline if present; reattach to preserve newline semantics.
     lines = output.splitlines()
     tail = lines[-tail_n:] if tail_n > 0 else []

@@ -303,13 +303,14 @@ Max 3 cycles. Applied after quality stack. **`oss:*` skills are NEVER auto-invok
 **Cycle 2: Targeted re-check**
 
 - Fix critical/high findings from Cycle 1
-- Re-run quality stack on modified files only — scoped via `codemap-py query test-impact "<changed_module>"` (per file, then union): non-empty `pytest_cmd` → re-run that scoped test set instead of the quality stack's directory-wide pytest line. Codemap absent or empty result → honest fallback to the full quality-stack re-run — never silently claim file-scoping the instruction can't actually perform
+- Re-run quality stack on modified files only — scoped via `codemap-py query test-impact "<changed_module>"` (per file, then union): non-empty `pytest_cmd` **and** the result's `index.stale` is false and `index.query_complete` is true → re-run that scoped test set instead of the quality stack's directory-wide pytest line. Both freshness fields live under the nested `index` object, never at the top level — a top-level read finds nothing and trusts a stale index. Codemap absent, empty result, `index.stale` true, or `index.query_complete` not true → honest fallback to the full quality-stack re-run — never silently claim file-scoping the instruction can't actually perform
+- Scoped re-runs only shorten the fix loop: whenever Cycle 2 ends clean after any fix, run the full quality stack (its directory-wide pytest line, the repository's own settings) once before the report — the last code change is never verified by a scoped set alone
 - Set up run dir for file-based handoff: `RUN_DIR=".developments/$(date -u +%Y-%m-%dT%H-%M-%SZ)"; mkdir -p "$RUN_DIR"`
 - For each agent type in `agents_with_findings`: spawn directly (not `/oss:review`) with focused prompt scoped to modified files + prior findings. Each agent prompt must end with: "Write your full findings to `$RUN_DIR/<agent-name>.md` using the Write tool. Return ONLY a compact JSON envelope: `{\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"file\":\"$RUN_DIR/<agent-name>.md\",\"confidence\":0.N,\"summary\":\"<agent-name>: N critical, N high\"}`"
 
 Replace bare agent names in spawn prompts with `foundry:` prefixed equivalents: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:linting-expert`, `foundry:doc-scribe`, `foundry:perf-optimizer`, `foundry:solution-architect`.
 
-**Health monitoring**: Agent calls run in background. Spawn, end turn, resume on completion notification — no filler tool call, no "waiting" turn, no sleep. No file activity across wake-ups for 15 min → use Read tool on `$RUN_DIR/<agent-name>.md` to surface partial results. Mark timed-out agents with ⏱ in final report.
+**Health monitoring**: Agent calls run in background. Spawn, end turn, resume on completion notification — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler tool call, a "waiting" turn, or a sleep. A notification whose `$RUN_DIR/<agent-name>.md` is empty or missing → that agent is ⏱ `timed_out` at once: Read whatever partial file exists, mark it ⏱ in final report, never wait for it further. A ⏱ never answers or skips a user decision.
 
 - Skip agents clean in Cycle 1
 - Collect envelopes to update review state (don't read full finding files into context — check envelopes to determine if critical/high remain)

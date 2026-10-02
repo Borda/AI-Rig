@@ -1,0 +1,22 @@
+{
+  "README.md": [
+    "- The envelope carries workspace-relative `transcript_path` and, for faults, an `incident` path;",
+    "- Detached calls return their job identifier separately.",
+    "MCP is complementary to the bridge as a whole but mandatory for the Codex \u2192 Claude Code direction.",
+    "Long-running implementation work may be detached. Use the job identifier printed by the bridge to",
+    "/bridge:status <job-id>",
+    "/bridge:result <job-id>"
+  ],
+  "claude-skills/implement/SKILL.md": [
+    "Return compact public envelope. `verdict`, `findings`, `files_touched`, `remaining`, and `blockers`"
+  ],
+  "claude-skills/status/SKILL.md": [
+    "Require one job identifier. Run `python \"${CLAUDE_PLUGIN_ROOT}/bin/bridge_call.py\" status --job-id"
+  ],
+  "docs/operations.md": [
+    "The Codex-facing MCP tools are the supported reverse entry point; do not invoke `claude --print`",
+    "Only Claude Code-to-Codex `implement` supports detached execution. Start it with `--background`;",
+    "1. Read `blockers` and the bounded `transcript_path`. When `incident` is present, open the JSON",
+    "The bridge stores bounded transcripts at `.temp/bridge/raw-<timestamp>.txt`, detached-job records"
+  ]
+}

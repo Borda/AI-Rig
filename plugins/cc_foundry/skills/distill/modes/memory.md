@@ -223,6 +223,8 @@ After applying changes, dispatch curator to audit created and modified config fi
 Agent(subagent_type="foundry:curator", prompt="Review the following Claude config files just created or modified by /distill:memory: <list new rule files and updated agent/skill files from Step L4>. Check: (1) quality — rules are concrete, not vague; (2) duplication — no overlap with existing files; (3) NOT-for boundary clarity; (4) structural consistency. Write your full findings to <RUN_DIR>/curator-review.md using the Write tool. Return ONLY a compact JSON envelope: {\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"file\":\"<RUN_DIR>/curator-review.md\",\"issues\":N,\"confidence\":0.N,\"summary\":\"<one-line>\"}")
 ```
 
+Deadline (`_shared/agent-spawn-protocol.md` §Deadlines): in the spawn response Write `$RUN_DIR/agent-watch-review.tsv` = `curator\t-\t900`, end the turn — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. On its notification run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$RUN_DIR"` once; no envelope → ⏱ `timed_out`, say the review did not complete.
+
 Surface curator findings as advisory block in terminal output. Don't block on curator findings — quality recommendations, not release gates.
 
 End response with `## Confidence` block per CLAUDE.md output standards.

@@ -52,6 +52,7 @@ CHECKS: list[dict[str, object]] = [
     {"id": "cli-flag-drift", "kind": "whole", "script": "check_cli_flag_drift.py"},
     {"id": "shared-drift", "kind": "whole", "script": "propagate_shared.py"},
     {"id": "codemap-guard", "kind": "whole", "script": "check_codemap_guard.py"},
+    {"id": "agent-waits", "kind": "scan", "script": "check_agent_waits.py"},
 ]
 
 

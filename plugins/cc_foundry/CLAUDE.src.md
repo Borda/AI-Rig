@@ -44,8 +44,9 @@ Harness runs one Bash call at a time (foreground `sleep` blocked, ~10 min per-ca
 
 - **Every spawn is background.** `Agent()` never blocks; no `run_in_background` parameter exists. Spawn, **end the turn**, resume on the harness completion notification.
 - **Never hold the turn open**: no no-op call (`Bash(true)`, `Bash(:)`, re-`ls`), no text-only "Waiting."/"Standing by." turn, no `sleep`, no fixed-interval poll. Each costs a full model turn and returns nothing.
-- **Optional between-turn liveness**: `Monitor` tool, or a single `find <run-dir> -newer <sentinel>` probe per turn — one probe, then end the turn again.
-- **On notification**: read agent output file; empty or missing → mark `timed_out`, record `{"verdict":"timed_out"}`, surface with ⏱ — never omit stalled agent.
+- **No waiting tools**: never `ScheduleWakeup`, `ListAgents` or `Monitor` to wait on a spawned agent, and no `find -newer` liveness probe.
+- **Per-agent deadline**: in the spawn response, write the batch's `agent-watch-<batch>.tsv`; on every notification, run `agent_watch.py` once and act on every row.
+- **On notification**: read agent output file; empty or missing, or idle without its envelope → mark `timed_out` at once, record `{"verdict":"timed_out"}`, surface with ⏱ — never omit stalled agent, never wait for it further. A ⏱ never answers, skips or defaults a user question.
 
 Canonical helper: `_FOUNDRY_SHARED/agent-spawn-protocol.md`. Skills may tighten timeouts in own `<constants>` block.
 

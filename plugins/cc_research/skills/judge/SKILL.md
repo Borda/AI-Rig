@@ -46,7 +46,7 @@ cat "$_RESEARCH_SHARED/agent-resolution.md"
 
 Triggered by `judge` or `judge <file.md>`.
 
-**Task tracking**: create tasks for J1, J2, J3, J4, J5a, J5b, J6 at start — before any tool calls. (J5a = Codex adversarial review; J5b = resolve rating source.)
+**Task tracking**: create tasks for J1, J2, J3, J4, J5a, J5b, J6 at start, all in the same response as the first real tool call. Every later `TaskUpdate` rides with the next real tool call — never a bookkeeping-only turn; the one standalone call is a `completed` right before a long report. (J5a = Codex adversarial review; J5b = resolve rating source.)
 
 ## Step J1: Locate and parse program.md
 

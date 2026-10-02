@@ -32,7 +32,9 @@ specialist analysis.
 
 accepts a coherent review artifact or emits an explicit contract failure for missing routing, source evidence, close
 evidence, decision rationale, or action-table cells. Successful validation returns a zero exit status, while failures
-identify the violated contract so the workflow can stop before presenting a merge recommendation.
+identify the violated contract so the workflow can stop before presenting a merge recommendation. ``--all-errors``
+with ``--result`` runs every review check once and prints JSON listing each failed check, plus checks not run because a
+prerequisite failed; any listed failure still exits nonzero, and the default fail-fast output is unchanged.
 
 ## Failure
 
@@ -3905,15 +3907,16 @@ def _validate_batch_source_findings(result: dict[str, Any], manifest: dict[str, 
         raise SystemExit("review-batch-duplicate-accounting-mismatch")
 
 
-def _validate_result(
-    out_dir: Path,
-    result_path: Path,
-    codex_home: Path,
-    parent_thread_id: str,
-    project_root: Path,
-) -> None:
-    """Validate a complete review decision against routing, independent evidence, and gates."""
-    env = _ReviewEnvironment(codex_home=codex_home, parent_thread_id=parent_thread_id, project_root=project_root)
+class _ReviewStep(NamedTuple):
+    """One named review check and the earlier steps whose success it needs."""
+
+    name: str
+    check: Any
+    requires: tuple[str, ...] = ()
+
+
+def _result_context(result_path: Path) -> dict[str, Any]:
+    """Load the candidate and check the shape fields every later review step reads."""
     result = _load_json(result_path)
     status = result.get("status")
     if status not in {"pass", "fail", "timeout"}:
@@ -3932,34 +3935,144 @@ def _validate_result(
         raise SystemExit(f"invalid-risk-tier:{risk_tier!r}")
 
     review_status = metadata.get("review_status")
-    if review_status == "unavailable":
-        _validate_unavailable_result(out_dir, result, metadata, scope)
-        _validate_confidence_gaps(result, metadata)
-        _validate_confidence_recovery(result, metadata)
-        return
-    if review_status == "closed":
-        _validate_closed_result(out_dir, result, metadata, scope)
-        _validate_confidence_gaps(result, metadata)
-        _validate_confidence_recovery(result, metadata)
-        return
-    if review_status is not None:
+    if review_status not in {None, "unavailable", "closed"}:
         raise SystemExit(f"invalid-review-status:{review_status!r}")
+    return {
+        "result": result,
+        "status": status,
+        "metadata": metadata,
+        "scope": scope,
+        "risk_tier": risk_tier,
+        "review_status": review_status,
+    }
 
+
+def _terminal_review_steps(out_dir: Path, context: dict[str, Any]) -> list[_ReviewStep]:
+    """List the checks for an unavailable or closed review in fail-fast order."""
+    result, metadata, scope = context["result"], context["metadata"], context["scope"]
+    terminal = _validate_unavailable_result if context["review_status"] == "unavailable" else _validate_closed_result
+    return [
+        _ReviewStep(str(context["review_status"]), lambda: terminal(out_dir, result, metadata, scope)),
+        _ReviewStep("confidence-gaps", lambda: _validate_confidence_gaps(result, metadata)),
+        _ReviewStep("confidence-recovery", lambda: _validate_confidence_recovery(result, metadata)),
+    ]
+
+
+def _assessed_review_steps(
+    out_dir: Path, result_path: Path, context: dict[str, Any], env: _ReviewEnvironment
+) -> list[_ReviewStep]:
+    """List the checks for an assessed review in fail-fast order with their dependencies."""
+    result, metadata, scope = context["result"], context["metadata"], context["scope"]
+    risk_tier, status = context["risk_tier"], context["status"]
     notes_path = out_dir / "review-notes.md"
-    _require_notes_sections(notes_path)
-    _validate_review_decision(metadata, result)
-    _validate_action_table(notes_path, result, metadata, scope)
-    _validate_confidence_gaps(result, metadata)
-    _validate_confidence_recovery(result, metadata)
-    if scope == "pr":
-        _validate_pr_review_scope(out_dir, result, metadata, notes_path)
+    state: dict[str, Any] = {}
 
-    evidence = _validate_specialist_manifest(out_dir, result, result_path, metadata, risk_tier, env)
-    _validate_specialist_pass_metadata(metadata, evidence.by_role)
-    _validate_batch_source_findings(result, evidence.manifest)
-    if result.get("schema_version") == 3 or metadata.get("reviewer_assessments") is not None:
-        _validate_reviewer_assessments(out_dir, metadata, evidence.by_role)
-    _validate_independence_requirement(out_dir, evidence, metadata, status, risk_tier, env)
+    def manifest() -> None:
+        state["evidence"] = _validate_specialist_manifest(out_dir, result, result_path, metadata, risk_tier, env)
+
+    def assessments() -> None:
+        if result.get("schema_version") == 3 or metadata.get("reviewer_assessments") is not None:
+            _validate_reviewer_assessments(out_dir, metadata, state["evidence"].by_role)
+
+    notes, evidence = ("notes-sections",), ("specialist-manifest",)
+    steps = [
+        _ReviewStep("notes-sections", lambda: _require_notes_sections(notes_path)),
+        _ReviewStep("review-decision", lambda: _validate_review_decision(metadata, result)),
+        _ReviewStep("action-table", lambda: _validate_action_table(notes_path, result, metadata, scope), notes),
+        _ReviewStep("confidence-gaps", lambda: _validate_confidence_gaps(result, metadata)),
+        _ReviewStep("confidence-recovery", lambda: _validate_confidence_recovery(result, metadata)),
+    ]
+    if scope == "pr":
+        steps.append(
+            _ReviewStep("pr-scope", lambda: _validate_pr_review_scope(out_dir, result, metadata, notes_path), notes)
+        )
+    steps.extend(
+        (
+            _ReviewStep("specialist-manifest", manifest),
+            _ReviewStep(
+                "specialist-passes",
+                lambda: _validate_specialist_pass_metadata(metadata, state["evidence"].by_role),
+                evidence,
+            ),
+            _ReviewStep(
+                "batch-findings", lambda: _validate_batch_source_findings(result, state["evidence"].manifest), evidence
+            ),
+            _ReviewStep("reviewer-assessments", assessments, evidence),
+            _ReviewStep(
+                "independence",
+                lambda: _validate_independence_requirement(
+                    out_dir, state["evidence"], metadata, status, risk_tier, env
+                ),
+                evidence,
+            ),
+        )
+    )
+    return steps
+
+
+def _review_steps(
+    out_dir: Path, result_path: Path, context: dict[str, Any], env: _ReviewEnvironment
+) -> list[_ReviewStep]:
+    """Select the terminal or assessed review check list for one loaded candidate."""
+    if context["review_status"] is not None:
+        return _terminal_review_steps(out_dir, context)
+    return _assessed_review_steps(out_dir, result_path, context, env)
+
+
+def _validate_result(
+    out_dir: Path,
+    result_path: Path,
+    codex_home: Path,
+    parent_thread_id: str,
+    project_root: Path,
+) -> None:
+    """Validate a complete review decision against routing, independent evidence, and gates."""
+    env = _ReviewEnvironment(codex_home=codex_home, parent_thread_id=parent_thread_id, project_root=project_root)
+    context = _result_context(result_path)
+    for step in _review_steps(out_dir, result_path, context, env):
+        step.check()
+
+
+def collect_result_errors(
+    out_dir: Path,
+    result_path: Path,
+    codex_home: Path,
+    parent_thread_id: str,
+    project_root: Path,
+) -> dict[str, Any]:
+    """Run every review check once and report each failure; dependent checks are reported as not run.
+
+    An unexpected exception inside a check counts as that check's failure, because malformed input from another reported
+    error can reach it. Any failure or not-run check makes the report fail.
+    """
+    env = _ReviewEnvironment(codex_home=codex_home, parent_thread_id=parent_thread_id, project_root=project_root)
+    try:
+        context = _result_context(result_path)
+    except SystemExit as error:
+        errors = [{"step": "result-shape", "code": str(error.code)}]
+        return {
+            "status": "fail",
+            "errors": errors,
+            "not_run": [{"step": "review-checks", "blocked_by": "result-shape"}],
+        }
+    errors: list[dict[str, str]] = []
+    not_run: list[dict[str, str]] = []
+    failed: set[str] = set()
+    for step in _review_steps(out_dir, result_path, context, env):
+        blocked = [name for name in step.requires if name in failed]
+        if blocked:
+            failed.add(step.name)
+            not_run.append({"step": step.name, "blocked_by": ",".join(blocked)})
+            continue
+        try:
+            step.check()
+        except SystemExit as error:
+            failed.add(step.name)
+            errors.append({"step": step.name, "code": str(error.code)})
+        except (KeyError, TypeError, AttributeError, ValueError, OSError, IndexError) as error:
+            failed.add(step.name)
+            errors.append({"step": step.name, "code": f"{step.name}-unchecked:{type(error).__name__}"})
+    return {"status": "fail" if errors or not_run else "pass", "errors": errors, "not_run": not_run}
 
 
 def main() -> int:
@@ -3997,8 +4110,15 @@ def main() -> int:
         default=os.environ.get("CODEX_THREAD_ID", ""),
         help="Current parent Codex thread ID.",
     )
+    parser.add_argument(
+        "--all-errors",
+        action="store_true",
+        help="With --result, run every review check once and print JSON listing each failure; exit 1 on any failure.",
+    )
     args = parser.parse_args()
 
+    if args.all_errors and args.manifest_only:
+        parser.error("--all-errors requires --result")
     if args.challenge_only and not args.manifest_only:
         parser.error("--challenge-only requires --manifest-only")
     if not args.parent_thread_id:
@@ -4009,6 +4129,10 @@ def main() -> int:
         else:
             _validate_manifest_preflight(args.out, args.codex_home, args.parent_thread_id, args.project_root)
         return 0
+    if args.all_errors:
+        report = collect_result_errors(args.out, args.result, args.codex_home, args.parent_thread_id, args.project_root)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0 if report["status"] == "pass" else 1
     _validate_result(args.out, args.result, args.codex_home, args.parent_thread_id, args.project_root)
     return 0
 

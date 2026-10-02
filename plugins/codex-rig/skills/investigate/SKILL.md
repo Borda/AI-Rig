@@ -79,7 +79,7 @@ Each context pack: symptom slice, relevant logs/touched files/environment facts,
 
 ### 06: Probe the top hypotheses
 
-Use targeted probes confirming, ruling out, or narrowing one hypothesis at a time.
+Use targeted probes confirming, ruling out, or narrowing one hypothesis at a time. Targeted pytest probes follow [Sandboxed Test Runs](../../shared/native-skill-contract.md#sandboxed-test-runs); keep the unchanged command when the hypothesis involves xdist, parallelism, or the plugin that `-p no:xdist` would change.
 
 Diagnosis does not authorize source fixes. Parent owns probe execution and log persistence; read-only specialists return findings or concrete probe request under [read-only work and executable probes](../../shared/specialist-orchestration.md#read-only-work-and-executable-probes). A request includes hypothesis, exact command/code, working directory, inputs, expected falsifier, anticipated side effects. Inspect executable probes before running; use isolated disposable inputs for necessary writes, retain runtime approval boundaries. No safe child route does not prevent permitted parent-serial investigation. Denied or unavailable execution remains inconclusive, never confirmed; parent-run evidence is not independent specialist conclusion. Hand source remediation off only after root-cause gate.
 

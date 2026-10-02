@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.31.0
+
+- Run targeted tests inside remediation, challenge and implementation fix loops: the new `test_targets.py` selects tests from codemap-py test impact when its index is fresh and complete, falls back to name and import heuristics, and records each selection in the run directory. The full suite runs once at the final gate with the repository's own settings; the code-review gate always runs the full selection.
+- Keep targeted loop test runs inside the sandbox with `-p no:xdist`, request one reusable approval for the pinned pytest prefix up front, and stage and commit reviewed paths with one approval guarded by a staged-scope and file-set check.
+- Ask every predictable remediation decision in one upfront packet after scope, defaulting the commit choice to decide after verification; every earlier question and approval still happens.
+- Finalize code-review and remediation in one helper call that derives handoff fields, renders, writes the result and runs both validators; validators gain an opt-in `--all-errors` mode while their default output is unchanged.
+- Wait for child agents with a blocking wait and a per-agent deadline instead of polling; progress names pending and timed-out agents, and plan updates ride with real work.
+
 ## 0.30.1
 
 - Validate native review evidence once per admission request, reducing repeated source and receipt checks while preserving fresh validation for later consumers.

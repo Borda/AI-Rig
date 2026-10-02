@@ -25,7 +25,7 @@ NOT for: implementation, code gen, README writing (use `foundry:doc-scribe`), st
 
 **Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
-**Task tracking**: TaskCreate all steps before any tool calls.
+**Task tracking**: TaskCreate all steps in the same response as the first real tool call — never a response of bookkeeping alone.
 
 ## Step 1 — Parse topic and out-of-scope detection
 
@@ -132,7 +132,7 @@ created: YYYY-MM-DD
   2. Scan constructed string for remaining `<` or `>` characters; either present means substitution incomplete — resolve missing value(s) before spawning
   3. Confirm outline file path in prompt matches `<outline-path>` exactly (resolved path including any counter suffix, not a guess)
 
-  If user selects (a), issue Agent() call in same response turn AFTER verification above passes. Do not narrate intent — call the tool.
+  If user selects (a), issue Agent() call in same response turn AFTER verification above passes. Do not narrate intent — call the tool. Same response: Write `.temp/create/agent-watch-creator.tsv` = `creator\t<artifact output path>\t900` (`_shared/agent-spawn-protocol.md` §Deadlines), end the turn — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. On its notification run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir ".temp/create"` once; row not `done` → report the artifact as ⏱ `timed_out`.
 
 - End with `## Confidence` block per quality-gates.md protocol, score based on outline coverage of topic, arc, audience.
 

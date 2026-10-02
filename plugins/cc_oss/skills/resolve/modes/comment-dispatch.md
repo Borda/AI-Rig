@@ -8,7 +8,7 @@ Reached when `$ARGUMENTS` = bare comment text (not PR number or URL). File read,
 
 Reached when $ARGUMENTS = bare comment text (not PR number or URL).
 
-Create task:
+Create task — in the same response as this step's first real tool call:
 
 ```text
 TaskCreate(
@@ -31,6 +31,8 @@ If `CODEX_AVAILABLE=false`: degrade gracefully — match `action-item-dispatch.m
 Print `⚠ bridge@borda-ai-rig is absent or disabled — falling back to <agent> for this comment.` Set `IMPL_AGENT=<fallback agent>`; proceed to Step 12a with fallback. Skip Codex review loop (Step 12b) when bridge unavailable — single dispatch only.
 
 ### 12a: Dispatch
+
+> **Agent waits** — SKILL.md §Agent wait discipline: arm `$IMPL_DIR/agent-watch-comment.tsv` (one row per spawned agent) in each batch's spawn response and resume on completion notifications; never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop.
 
 **BATCH_SIZE=3** — dispatch at most 3 `Agent()` calls per response turn; wait for all to return before next batch. More comment items than that (multi-comment dispatch) → process first 3, wait, continue with next 3. Prevents rate-limit hits and unbounded parallel spawn. Lowered from 5 on cost evidence: each spawn carries ~120,851 tok fixed overhead regardless of item size, so a wide batch of small comments pays far more in overhead than the work is worth — batching narrower costs wall-clock, not tokens.
 
@@ -100,7 +102,7 @@ Execute its steps (loaded above).
 
 Commit authorization revoked automatically by `trap 'rm -f "$SENTINEL"' EXIT INT TERM` registered in Step 12a — `$SENTINEL` stays in scope for entire dispatch+review+gate sequence. Do **not** issue separate `rm -f /tmp/claude-commit-authorized` here — path no longer used (sentinel now scoped per repo+branch per `git-commit.md`).
 
-Mark task `completed`:
+Mark task `completed` — riding in the same response as the next real tool call, or as the one standalone completion right before the final output (`rules/task-lifecycle.md` §TaskUpdate before long output):
 
 ```text
 TaskUpdate(task_id=<task_id_from_above>, status="completed")

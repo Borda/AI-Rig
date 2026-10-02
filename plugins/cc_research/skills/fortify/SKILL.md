@@ -81,7 +81,7 @@ cat "$_RESEARCH_SHARED/agent-resolution.md"
 
 Triggered by `fortify` or `fortify <run-id|program.md>`.
 
-**Task tracking**: create tasks for F1, F2, F3, F4, F5, F6, F7, F8 at start — before any tool calls.
+**Task tracking**: create tasks for F1, F2, F3, F4, F5, F6, F7, F8 at start, all in the same response as the first real tool call. Every later `TaskUpdate` rides with the next real tool call — never a bookkeeping-only turn; the one standalone call is a `completed` right before a long report.
 
 ## Step F1: Locate source run, parse flags, and validate judge approval
 
@@ -212,7 +212,7 @@ Gather two inputs for scientist:
 
 > **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
-Spawn `research:scientist` via `Agent(subagent_type="research:scientist", prompt="...")` with health monitoring (15-min cutoff, one 5-min extension — same pattern as judge J3).
+Spawn `research:scientist` via `Agent(subagent_type="research:scientist", prompt="...")` with the post-hoc timeout of the Spawn note below (15-min deadline; `agent-resolution.md` §Agent waits — no polling).
 
 Before building the prompt, substitute all bash variables into a single concrete string — never pass literal `<FORTIFY_DIR>` or `<path>` placeholders to the agent:
 
@@ -587,7 +587,7 @@ Return ONLY: {\"status\":\"done\",\"questions\":N,\"file\":\"${FORTIFY_DIR}/revi
 
 Pass `$F6_PROMPT` (fully expanded) as the `prompt=` argument to `Agent(...)`.
 
-**Health monitoring**: same as F2 (15-min cutoff, one extension). On timeout: note `"Reviewer Q&A: timed out"` in report, continue to F7.
+**Health monitoring**: same as F2 (15-min deadline, checked on the completion notification — no polling). On timeout: note `"Reviewer Q&A: timed out"` in report, continue to F7.
 
 ## Step F7: Write fortify report
 

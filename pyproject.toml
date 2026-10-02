@@ -85,7 +85,7 @@ lint.pylint = { max-returns = 6, max-branches = 12, max-statements = 50 }
 # ignore-words-list: real words/tokens codespell misflags — "derails" (not "details"),
 # "fo" (Windows tasklist's real /FO format flag, not a typo for "for"/"of")
 ignore-words-list = "derails,fo"
-skip = "./site,./.git"  # MkDocs build output + git internals — generated, not source
+skip = "./site,./.git,*/tests/data/observability_*.json"  # MkDocs build output + git internals + observability snapshots (markers truncated mid-word by design) — generated, not source
 
 [tool.docformatter]
 black = true

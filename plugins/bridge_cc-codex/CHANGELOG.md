@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+
+- Wait for a detached Codex job without polling it in a loop: any state other than queued or running ends the wait, and the job's hard cutoff is its deadline. Status, result and cancel commands are unchanged, and implement still returns the job identifier.
+
 ## 0.6.0
 
 - Breaking change: the Codex Bridge starts without a project folder. Use `bridge_bind_workspace` to select a folder in a native form and confirm its resolved path; every subsequent executable call requires the current `binding_id`. Rebinding or changed folder identity invalidates previous authority. This selects the project without granting editing or paid-call approval.

@@ -36,13 +36,19 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _DEV_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_shared_resolve.py" 2>/dev/null)  # timeout: 5000
 [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
 echo "$_DEV_SHARED" > "${TMPDIR:-/tmp}/dev-shared-${CSID}"  # cold resolve — every later block warm-reads this
+echo "$PWD/.temp/develop/agent-watch-$(date -u +%Y-%m-%dT%H-%M-%SZ)" > "${TMPDIR:-/tmp}/dev-agent-watch-dir-${CSID}"  # fresh per run — agent-resolution.md §Agent waits
 # loads: compaction-contract.md
 cat "$_DEV_SHARED/agent-resolution.md"
 ```
 
-Contains: foundry check + fallback table. If foundry not installed: substitute each `foundry:X` with `general-purpose` per table. Agents this skill uses: `foundry:sw-engineer`, `foundry:challenger`.
+Contains: foundry check + fallback table, and §Agent waits — no polling (applies to every spawn below, team mode included). If foundry not installed: substitute each `foundry:X` with `general-purpose` per table. Agents this skill uses: `foundry:sw-engineer`, `foundry:challenger`.
 
 **Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
+
+**Turn budget** — measured debug runs made one tool call per turn throughout and spent up to 11 turns on task bookkeeping alone — the cost was the standalone turns, not the task count; every turn re-reads the whole context.
+
+- **One task per step, never a bookkeeping-only turn.** Create one task per step — Step 1 Symptom · Step 2 Pattern analysis · Challenger gate · Step 3 Hypothesis and gate · Step 4 Hand off · Final Report — all in the same response as the first Project Detection call, so step-level progress stays visible. Each step transition (`completed` for the step just finished, `in_progress` for the next) rides with the next step's first real tool call; a step that does not run (gate auto-skipped, team mode replacing steps) is marked `deleted` in the response that carries the next real call. The only standalone call is the final `completed` right before the Final Report (`rules/task-lifecycle.md`).
+- **Independent calls share one response — never across a question.** After Agent Resolution: Project Detection and the language check together; both flag-parsing blocks together in the next response, once any language question is answered. Every later preamble block keeps its order: each sits behind a question (codemap gates, unsupported flag) or the worktree entry, which must precede the codemap gate. Step 1 evidence gathering — log fetch, issue fetch, Reads of suspect files, Grep for the error pattern — in one response.
 
 ## Project Detection
 
@@ -186,7 +192,7 @@ for N in 1 2 3; do
 done
 ```
 
-Spawn the batch, **end the turn**, resume on each completion notification — never a no-op call, a "waiting" line, or a sleep. At most one liveness probe per wake-up: `find .temp/develop/$TS -name "debug-hypothesis-${N}*" -newer ${TMPDIR:-/tmp}/debug-team-check-${N}-${CSID} | wc -l` where `$N` is the actual agent index in the loop variable.
+Arm batch `team` in the spawn response (deliverables `.temp/develop/$TS/debug-hypothesis-N-$TS.md`; `agent-resolution.md` §Agent waits — no polling, per-agent deadlines). Spawn the batch, **end the turn**, resume on each completion notification and run the check block once — never a no-op call, a "waiting" line, or a sleep. At most one liveness probe per wake-up: `find .temp/develop/$TS -name "debug-hypothesis-${N}*" -newer ${TMPDIR:-/tmp}/debug-team-check-${N}-${CSID} | wc -l` where `$N` is the actual agent index in the loop variable.
 
 `-name` scope is load-bearing: a directory-wide `find` marks every agent alive whenever any sibling writes, collapsing exactly the per-agent isolation these sentinels exist for. Poll only indices actually spawned (2-hypothesis run → poll N=1,2 only; third touched sentinel is harmless unused file). A single shared sentinel collapses health isolation — stalled agent N=2 can't be distinguished from active agent N=1.
 
@@ -347,7 +353,7 @@ Classify claim type and validate accordingly:
 
 Use Grep (pattern: failing symbol, class, or error keyword) to trace call path, entry point to failure site. Path hint: `src/` if exists, else search from project root (`.`).
 
-Spawn **foundry:sw-engineer** agent to map execution path and produce:
+Spawn **foundry:sw-engineer** agent to map execution path — Arm batch `scope` in the spawn response (`agent-resolution.md` §Agent waits — no polling, per-agent deadlines). It must produce:
 
 - Entry point to failure: which modules does call cross?
 - What state mutated along the way?
@@ -404,7 +410,7 @@ echo "<candidate cause> :: open" >> ${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}
 
 Both flags cover opposite regimes: `--no-challenge` suppresses gate on substantial cases that would otherwise fire; `--challenge` forces it on narrow cases that would otherwise auto-skip.
 
-Spawn `foundry:challenger` with pattern analysis from Step 2 (differences between working/broken paths, candidate causes):
+Arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits). Spawn `foundry:challenger` with pattern analysis from Step 2 (differences between working/broken paths, candidate causes):
 
 > "Review pattern analysis and candidate root causes. Challenge across all 5 dimensions: Assumptions, Missing Cases, Security Risks, Architectural Concerns, Complexity Creep. Apply mandatory refutation step."
 

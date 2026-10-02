@@ -50,7 +50,7 @@ Spawn **foundry:curator** per plugin directory found under `$_SCAN_DIR` (one spa
 
 After all spawns complete: update `CHECK33_FILES` to point to new files in `$RUN_DIR`.
 
-**Health monitoring for scan spawns** (`_shared/agent-spawn-protocol.md`): curator spawns run in background. Issue them, end turn, resume on each completion notification — never a filler call, a "waiting" line, or a sleep. On each notification read that plugin's `$RUN_DIR/efficiency-check33-<plugin>.md`. Empty or missing: mark that plugin `timed_out`, surface with ⏱, continue with completed plugins' results.
+**Health monitoring for scan spawns** (`_shared/agent-spawn-protocol.md`): curator spawns run in background. Issue them together with `$RUN_DIR/agent-watch-scan.tsv` (one row per plugin: `<plugin>\t$RUN_DIR/efficiency-check33-<plugin>.md\t900`) in one response, end turn, resume on each completion notification and run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$RUN_DIR"` once — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. On each notification read that plugin's `$RUN_DIR/efficiency-check33-<plugin>.md`. Empty or missing: mark that plugin `timed_out`, surface with ⏱, continue with completed plugins' results.
 
 ## Step E2: Parse candidates
 
@@ -123,7 +123,7 @@ Return ONLY: {\"status\":\"done\",\"file\":\"$RUN_DIR/extract-<cluster-id>.md\",
 ")
 ```
 
-**Health monitoring for extraction spawns** (`_shared/agent-spawn-protocol.md`): sw-engineer spawns run in background. Issue them, end turn, resume on each completion notification — never a filler call, a "waiting" line, or a sleep. On each notification read that cluster's `$RUN_DIR/extract-<cluster-id>.md`. Empty or missing: mark that cluster `timed_out`, surface with ⏱, continue with completed clusters.
+**Health monitoring for extraction spawns** (`_shared/agent-spawn-protocol.md`): sw-engineer spawns run in background. Issue them together with `$RUN_DIR/agent-watch-extract.tsv` (one row per cluster: `<cluster-id>\t$RUN_DIR/extract-<cluster-id>.md\t900`) in one response, end turn, resume on each completion notification and run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$RUN_DIR"` once — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. On each notification read that cluster's `$RUN_DIR/extract-<cluster-id>.md`. Empty or missing: mark that cluster `timed_out`, surface with ⏱, continue with completed clusters.
 
 ## Step E5: Re-audit changed files
 

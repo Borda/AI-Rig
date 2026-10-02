@@ -158,6 +158,8 @@ Extract minimal reproduction code or steps from thread. Bind `REPRO_AGENT` — *
 
 Issue the spawn as a literal bound call — `subagent_type` **must** be the `REPRO_AGENT` value, never inferred (all context self-contained — runs in forked context):
 
+> **Agent waits** — SKILL.md §Health monitoring (batch `repro`); never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop.
+
 ```text
 Agent(subagent_type="<REPRO_AGENT>", description="Reproduce issue #<NUMBER>", prompt="""
 <the reproduction prompt below>
@@ -178,6 +180,8 @@ Check:
 1. Does the issue reproduce as described?
 2. What Python / library version or environment is required?
 3. Is anything missing or ambiguous (imports, data, config)?
+
+Run only what reproduction needs — the extracted snippet, or the specific test ids it names; never the whole test suite.
 
 Return ONLY a compact JSON envelope — nothing else:
 {"status":"reproduced|not_reproduced|partial|missing_context","confidence":0.N,"notes":"<one observation max 15 words>","missing":"<what is missing, or null>"}
