@@ -69,6 +69,12 @@ Probe the highest-impact unproven assumption with the smallest safe executable c
 
 Report tested transitions separately from untested coverage. A passing inventory, schema validator, command, or existing regression suite cannot close an untested end-to-end claim. Generalize demonstrated mechanisms into recommendations; keep incident-specific names and benchmark answers out of shipped instructions.
 
+### Instruction composition and productivity regressions
+
+Review effective instruction composition, not only each file separately: user overrides, global managed and unmanaged blocks, project siblings, installed skill names, role cards, runtime defaults, and historical evidence consumed by launchers. Distinguish source readiness from active installation. Use `scripts/install_global_agents.py --check --source <template> --codex-home <home>` for read-only global-state diagnosis during explicit setup/audit; never add a per-task setup gate or automatically delete custom instructions.
+
+Include positive and negative outcome probes for a small parent-only change, authorized serial fallback without redundant consent, productive multi-step investigation, useful unfinished recovery, a feasible structural fix, gradual review-score improvement, and GPT 6+ launch selection. Confirm actual delegated-write and runtime permission denials still reject. A test that only checks prescribed wording or reproduces an implementation choice cannot establish workflow quality. Record each tested invariant, the check that would fail on its counterexample, and residual untested behavior. Review added obligations for current necessity; remove superseded active rules instead of layering another exception over them. Preserve explicitly labeled historical records without treating them as executable routing authority.
+
 ### 04: Audit prompt efficiency without using length as quality
 
 Always write `<run-directory>/prompt-efficiency.md` with `Measurement`, `Cost Baseline`, `Loaded Context`, `Obligation Map`, `Value Guards`, `Adversarial Review`, `Recommendations` sections. For `scope=config|roles` with no skill target, record `not-applicable` and why. For `scope=skills|all` or `axis=value-per-token`, audit each discovered local skill root independently; absent optional Codex Rig, Codemap, or Bridge root is `not-configured`, never cross-plugin dependency or failure.

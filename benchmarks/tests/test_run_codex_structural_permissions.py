@@ -124,7 +124,7 @@ def test_codex_command_is_ephemeral_json_profile_backed_and_keeps_prompt_exact(
 
     command = script_run_codex.build_codex_command(
         repo_path=tmp_path,
-        model="fixture-model",
+        model="gpt-6.1-sol",
         reasoning_effort="high",
         prompt=prompt,
     )
@@ -136,7 +136,7 @@ def test_codex_command_is_ephemeral_json_profile_backed_and_keeps_prompt_exact(
     assert "--sandbox" not in command
     assert command[command.index("--config") + 1] == 'model_reasoning_effort="high"'
     assert command[command.index("--cd") + 1] == str(tmp_path)
-    assert command[command.index("--model") + 1] == "fixture-model"
+    assert command[command.index("--model") + 1] == "gpt-6.1-sol"
     assert command[-1] == prompt
 
 
@@ -146,7 +146,7 @@ def test_executable_command_uses_profile_permissions_without_legacy_sandbox(
     """Executable cells rely on the verified profile rather than a CLI sandbox override."""
     command = script_run_codex.build_codex_command(
         repo_path=tmp_path,
-        model="fixture-model",
+        model="gpt-6.1-sol",
         reasoning_effort="high",
         prompt="Edit the disposable worktree.",
     )
@@ -196,26 +196,26 @@ def test_worktree_index_relocation_rejects_an_unrelated_source_root(script_run_c
 
 def test_codex_stratum_locks_luna_and_high_effort(script_run_codex: Any) -> None:
     """The accepted model/effort pair is consumed from the active manifest."""
-    script_run_codex._validate_codex_stratum("gpt-5.6-luna", "high", MANIFEST_PATH)
+    script_run_codex._validate_codex_stratum("gpt-6.1-sol", "high", MANIFEST_PATH)
 
-    with pytest.raises(ValueError, match="gpt-5.6-luna"):
+    with pytest.raises(ValueError, match="gpt-6.1-sol"):
         script_run_codex._validate_codex_stratum("gpt-5.3-codex", "high", MANIFEST_PATH)
     with pytest.raises(ValueError, match="reasoning effort"):
-        script_run_codex._validate_codex_stratum("gpt-5.6-luna", "medium", MANIFEST_PATH)
+        script_run_codex._validate_codex_stratum("gpt-6.1-sol", "medium", MANIFEST_PATH)
 
 
 def test_deterministic_order_uses_only_current_plain_cli_skill_arms(script_run_codex: Any) -> None:
     """Prevent the historical auto/required arm registry leaking into the new experiment."""
     first = script_run_codex._manifest_arm_order(
         "codex-integration-v1",
-        "gpt-5.6-luna",
+        "gpt-6.1-sol",
         "FN-02",
         1,
         "high",
     )
     second = script_run_codex._manifest_arm_order(
         "codex-integration-v1",
-        "gpt-5.6-luna",
+        "gpt-6.1-sol",
         "FN-02",
         1,
         "high",
@@ -413,7 +413,7 @@ def test_runner_reads_parent_evidence_roots_without_forwarding_them_to_arm_homes
     evidence_root.mkdir()
     monkeypatch.setenv("BENCHMARK_EVIDENCE_ROOTS", json.dumps([str(evidence_root)]))
 
-    runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path)
 
     assert runner.evidence_roots == (evidence_root.resolve(),)
 
@@ -484,7 +484,7 @@ def test_bound_snapshot_is_denied_as_evidence_while_staged_arm_runtime_remains_a
     launcher = _make_direct_runtime_bundle(snapshot_root / "B_auto")
     source_root = launcher.parent.parent
     _write_runtime_snapshot_metadata(snapshot_root, {"B_auto:direct-cli": source_root})
-    runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path)
     runner._bind_runtime_snapshot(snapshot_root, {"B_auto": {"direct-cli": source_root}})
     home_path = tmp_path / "codex-home"
     home_path.mkdir()
@@ -521,7 +521,7 @@ def test_prepare_verified_home_passes_writable_workspace_to_permission_verifier(
     source = tmp_path / "source"
     workspace.mkdir()
     source.mkdir()
-    runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path)
     prepare_original = script_run_codex.prepare_arm_home
     observed: dict[str, Any] = {}
 
@@ -642,7 +642,7 @@ def test_skill_home_preserves_plugin_registration_when_permissions_are_applied(
     monkeypatch.setattr(codex_provisioning, "_verify_installed_plugin_pair", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(codex_provisioning, "_verify_permission_profile", lambda *_args, **_kwargs: None)
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         repo_path,
         index_path=index_path,
         marketplace_root=marketplace_root,
@@ -742,7 +742,7 @@ def test_verified_home_overrides_treatment_python_and_removes_it_from_plain(
     monkeypatch.setattr(codex_provisioning, "_admit_staged_direct_cli", lambda *_args, **_kwargs: None)
     launcher = _make_direct_runtime_bundle(tmp_path)
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         repo_path,
         index_path=index_path,
         codemap_bin=launcher,

@@ -166,9 +166,9 @@ MODEL_STALL_CASE_CONTRACT: dict[str, tuple[str, tuple[str, ...]]] = {
     "model-stall-progress-without-closure": (
         "delegation-lead",
         (
-            "closure-condition-not-recorded",
-            "evidence-backed-attempt-escalation-required",
-            "progress-without-closure-ledger-missing",
+            "productive-progress-misclassified",
+            "false-advisory-escalation",
+            "unfinished-acceptance-must-remain-recorded",
         ),
     ),
     "model-stall-user-directed-progress": (
@@ -832,6 +832,305 @@ def check_agent_effort(run: CalibrationRun, agent: str, file: Path) -> None:
         run.append_check(f"agent-effort:{agent}={expected}")
         return
     run.fail_and_leak("agent-effort-policy", f"agent-effort-mismatch:{agent}:expected={expected}:{file}")
+
+
+def _active_policy_statements(text: str) -> list[str]:
+    """Separate known current-clause wording from explicitly labeled historical evidence.
+
+    This bounded classifier recognizes sentence, semicolon, and current-clause contrast boundaries; it does not infer
+    arbitrary prose intent. A colon introducing a historical quotation remains within that historical clause.
+    """
+    boundary = (
+        r"\n|(?<=[.!?])\s+|;\s*|"
+        r"(?:,\s*(?:(?:but|while|whereas|however|yet|and)\s*,?\s*)?|"
+        r"\s+(?:but|while|whereas|however|yet|and)\s*,?\s*)(?=(?:current|active|normal|new)\b)"
+    )
+    return [
+        statement
+        for statement in re.split(boundary, text, flags=re.I)
+        if not re.match(r"\s*(?:[-*] )?(?:Historical|Archived)\b", statement, re.I)
+    ]
+
+
+def workflow_policy_findings(policy: str, implementation: str) -> list[str]:
+    """Recognize bounded policy regressions, without claiming general prose understanding.
+
+    Explicitly historical evidence is exempt only within its classified clause. These checks cover known assignment and
+    stop wording plus the required lightweight implementation branch; executable outcome checks separately cover helper
+    behavior.
+    """
+    findings: list[str] = []
+    active_lines = _active_policy_statements(policy)
+    if any(re.search(r"gpt-[0-5](?:[.\s-]|$)", line, re.I) for line in active_lines):
+        findings.append("obsolete-runtime-model")
+    if re.search(
+        r"(?:open structural finding|same open signature in consecutive reviews)[^\n]*stop(?:s)? (?:a )?clean claim",
+        "\n".join(active_lines),
+        re.I,
+    ):
+        findings.append("blanket-review-stop")
+    section = re.search(r"^## Lightweight Local Work\n(.*?)(?=^## |\Z)", implementation, re.M | re.S)
+    required = ("parent-only", "optional", "tests and documentation for one change do not create separate domains")
+    mandatory_roles = re.search(
+        r"(?:always require|required roles|must (?:spawn|delegate|use))[^\n]*(?:sw-engineer|qa-specialist|doc-scribe)",
+        implementation,
+        re.I,
+    )
+    if section is None or any(text not in section[1].lower() for text in required) or mandatory_roles:
+        findings.append("lightweight-local-work")
+    return findings
+
+
+def workflow_summary_findings(summary: str) -> list[str]:
+    """Recognize known public summary contradictions while preserving generic write approvals and archives."""
+    summary = "\n".join(_active_policy_statements(summary))
+    findings: list[str] = []
+    if re.search(r"regardless of their progress flags", summary, re.I):
+        findings.append("productive-summary-contradiction")
+    if re.search(
+        r"(?:any planned parent|a planned) mutation requires separate approval|every write still needs newly frozen plan|every later live write still requires newly frozen consumer-specific plan",
+        summary,
+        re.I,
+    ):
+        findings.append("write-summary-contradiction")
+    if re.search(
+        r"prior open weighted findings must fall by at least half|old-finding residue exceeds half",
+        summary,
+        re.I,
+    ):
+        findings.append("review-half-score-contradiction")
+    if re.search(
+        r"Code Review also has separate instruction-bounded native inspection route:[^\n]*instructed not to use child tools|New native specialist manifests use schema 6|Text-only reviewers receive source, diff, and evidence inline",
+        summary,
+        re.I,
+    ):
+        findings.append("native-review-delivery-contradiction")
+    return findings
+
+
+def check_workflow_outcomes(run: CalibrationRun) -> None:
+    """Exercise productive unfinished work and a one-point review improvement through public helpers."""
+    modules = {}
+    for name in ("escalation_ledger", "adversarial_loop"):
+        path = run.paths.shared_dir / f"{name}.py"
+        if not path.is_file():
+            run.fail_and_leak("workflow-prevention", f"workflow-helper-unavailable:{name}")
+            continue
+        spec = importlib.util.spec_from_file_location(f"calibration_{name}", path)
+        if spec is None or spec.loader is None:
+            run.fail_and_leak("workflow-prevention", f"workflow-helper-unavailable:{name}")
+            continue
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+        except OSError as error:
+            run.fail_and_leak("workflow-prevention", f"workflow-helper-unavailable:{name}:{error}")
+            continue
+        except (SyntaxError, ImportError) as error:
+            run.fail_and_leak("workflow-prevention", f"workflow-helper-import-invalid:{name}:{error}")
+            continue
+        required_callable = "validate_ledger" if name == "escalation_ledger" else "summarize_ledger"
+        invalid_exports = []
+        if name == "escalation_ledger":
+            schema_version = getattr(module, "SCHEMA_VERSION", None)
+            if type(schema_version) is not int or schema_version < 1:
+                invalid_exports.append("SCHEMA_VERSION")
+        if not callable(getattr(module, required_callable, None)):
+            invalid_exports.append(required_callable)
+        for symbol in invalid_exports:
+            run.fail_and_leak("workflow-prevention", f"workflow-helper-api-invalid:{name}:{symbol}")
+        if invalid_exports:
+            continue
+        modules[name] = module
+    if len(modules) != 2:
+        return
+
+    cycles = [
+        {
+            "index": index,
+            "objective": "Resolve the acceptance failure",
+            "operation": f"inspect-result-{index}",
+            "outcome": "New evidence narrows the remaining defect",
+            "next_decision": "Check the remaining cause",
+            "material_progress": True,
+            "work_kind": "primary",
+            "evidence": [f"observed-result-{index}"],
+        }
+        for index in range(1, 4)
+    ]
+    ledger = {
+        "schema_version": modules["escalation_ledger"].SCHEMA_VERSION,
+        "primary_goal": "Resolve the acceptance failure",
+        "workstream_id": "calibration-productive-work",
+        "closure_condition": {"id": "acceptance-check", "status": "open"},
+        "cycles": cycles,
+        "outcome": "working",
+    }
+    for label in (
+        "productive-primary",
+        "productive-recovery",
+        "recovery-followed-by-one-failure",
+        "recovery-followed-by-stall-handoff",
+    ):
+        if label == "productive-recovery":
+            ledger["advisory"] = {
+                "requested_model": DEFAULT_MODEL,
+                "requested_effort": "high",
+                "observed_model": DEFAULT_MODEL,
+                "observed_effort": "high",
+                "observed_sandbox": "read-only",
+                "mode": "advice-only",
+                "state_changes": [],
+                "recommendation": cycles[-1]["operation"],
+                "stop_condition": "Stop if the recovery makes no material progress",
+            }
+            ledger["recovery"] = {
+                "action": cycles[-1]["operation"],
+                "material_progress": True,
+                "closure_met": False,
+            }
+        elif label.startswith("recovery-followed-by"):
+            cycles.append(
+                {
+                    "index": len(cycles) + 1,
+                    "objective": "Resolve the acceptance failure",
+                    "operation": f"verify-remaining-{len(cycles) + 1}",
+                    "outcome": "No new narrowing evidence",
+                    "next_decision": "Assess the remaining obstacle",
+                    "material_progress": False,
+                    "work_kind": "primary",
+                    "evidence": ["acceptance still fails"],
+                }
+            )
+            if label == "recovery-followed-by-stall-handoff":
+                try:
+                    modules["escalation_ledger"].validate_ledger(ledger)
+                except ValueError as error:
+                    if str(error) != "escalation-required-after-stall-trigger":
+                        run.fail_and_leak(
+                            "workflow-prevention", f"workflow-outcome:recovery-stall-wrong-reason:{error}"
+                        )
+                else:
+                    run.fail_and_leak("workflow-prevention", "workflow-outcome:recovery-stall-not-rejected")
+                ledger["outcome"] = "human_handoff"
+                ledger["human_handoff"] = {
+                    "summary": "Two later checks made no primary progress after useful recovery",
+                    "recommended_next_step": "Choose a new investigation direction",
+                    "alternatives": ["Defer this workstream"],
+                }
+        try:
+            modules["escalation_ledger"].validate_ledger(ledger)
+        except ValueError as error:
+            run.fail_and_leak("workflow-prevention", f"workflow-outcome:{label}:{error}")
+        else:
+            run.append_check(f"workflow-outcome:{label}=ok")
+
+    snapshot = {"revision": "HEAD", "diff_digest": "a" * 64}
+    rounds = []
+    # Retain structural and repeated signatures while one nit is independently verified fixed.
+    for index in (1, 2):
+        rounds.append(
+            {
+                "index": index,
+                "reviewer": {"identity": "independent-reviewer", "independent": True},
+                "snapshot": snapshot,
+                "report_path": f"review-{index}.json",
+                "findings": [
+                    {
+                        "signature": "remaining",
+                        "tier": "medium",
+                        "structural": True,
+                        "disposition": "open",
+                        "evidence": [],
+                    },
+                    {
+                        "signature": "remaining-low",
+                        "tier": "nit",
+                        "structural": False,
+                        "disposition": "open",
+                        "evidence": [],
+                    },
+                    {
+                        "signature": "corrected",
+                        "tier": "nit",
+                        "structural": False,
+                        "disposition": "open" if index == 1 else "verified-fixed",
+                        "evidence": [] if index == 1 else ["independent verification"],
+                    },
+                ],
+            }
+        )
+    review = {"schema_version": 1, "implementation_author": "parent", "current_snapshot": snapshot, "rounds": rounds}
+    try:
+        result = modules["adversarial_loop"].summarize_ledger(review)
+        if (result["status"], result["reason"], result["scores"]) != ("active", "converging", [6, 5]):
+            raise ValueError(f"incremental-review-rejected:{result}")
+    except ValueError as error:
+        run.fail_and_leak("workflow-prevention", f"workflow-outcome:incremental-review:{error}")
+    else:
+        run.append_check("workflow-outcome:incremental-review=ok:6->5")
+
+    # Strict score descent, rather than elapsed round count, bounds the same-scope continuation.
+    for index, signature in ((3, "remaining"), (4, "remaining-low")):
+        rounds.append(
+            {
+                **rounds[-1],
+                "index": index,
+                "report_path": f"review-{index}.json",
+                "findings": [
+                    {**finding, "disposition": "verified-fixed", "evidence": ["independent verification"]}
+                    if finding["signature"] == signature
+                    else finding
+                    for finding in rounds[-1]["findings"]
+                ],
+            }
+        )
+    try:
+        result = modules["adversarial_loop"].summarize_ledger(review)
+        if (result["status"], result["reason"], result["scores"]) != ("stopped", "clean", [6, 5, 1, 0]):
+            raise ValueError(f"progress-bounded-review-rejected:{result}")
+    except ValueError as error:
+        run.fail_and_leak("workflow-prevention", f"workflow-outcome:review-progress-bound:{error}")
+    else:
+        run.append_check("workflow-outcome:review-progress-bound=ok:6->5->1->0")
+
+
+def check_workflow_prevention(run: CalibrationRun) -> None:
+    """Compose active policy checks with executable workflow outcomes in ordinary calibration."""
+    policies = [run.paths.asset_root / "assets/AGENTS.md"] if run.paths.layout == "plugin" else []
+    policies.extend(
+        path
+        for path in (run.paths.root / "AGENTS.md", run.paths.root / ".codex/global-session-policy.md")
+        if path.exists()
+    )
+    implementation = run.paths.skills_dir / "implement/SKILL.md"
+    implementation_text = implementation.read_text(encoding="utf-8") if implementation.exists() else ""
+    if not policies:
+        run.fail_and_leak("workflow-prevention", "workflow-policy-missing:active-policy")
+    for path in policies:
+        if not path.exists():
+            run.fail_and_leak("workflow-prevention", f"workflow-policy-missing:{path}")
+            continue
+        findings = workflow_policy_findings(path.read_text(encoding="utf-8"), implementation_text)
+        for finding in findings:
+            run.fail_and_leak("workflow-prevention", f"workflow-policy:{finding}:{path}")
+        if not findings:
+            run.append_check(f"workflow-policy=ok:{path}")
+    summaries = {
+        directory / name
+        for directory in (run.paths.asset_root, run.paths.root)
+        for name in ("README.md", "ARCHITECTURE.md")
+    }
+    summaries.update(run.paths.skills_dir.glob("*/SKILL.md"))
+    for path in sorted(summaries):
+        if not path.exists():
+            continue
+        findings = workflow_summary_findings(path.read_text(encoding="utf-8"))
+        for finding in findings:
+            run.fail_and_leak("workflow-prevention", f"workflow-summary:{finding}:{path}")
+        if not findings:
+            run.append_check(f"workflow-summary=ok:{path}")
+    check_workflow_outcomes(run)
 
 
 def check_core_configs(run: CalibrationRun) -> None:
@@ -1594,9 +1893,12 @@ def selftest_live_ab_contract(run: CalibrationRun, selftest_dir: Path) -> None:
     """
     live_dir = selftest_dir / "live-ab"
     selftest_live_ab_contract_runner_safety(run)
-    if not selftest_live_ab_contract_plan(run, live_dir):
+    if not selftest_live_ab_contract_archived_policy_guard(run, live_dir):
         return
-    if not selftest_live_ab_contract_paid_guards(run, live_dir):
+    policy_path = synthetic_live_guard_policy(run, live_dir)
+    if not selftest_live_ab_contract_plan(run, live_dir, policy_path):
+        return
+    if not selftest_live_ab_contract_paid_guards(run, live_dir, policy_path):
         return
     fixture = _live_ab_contract_fixture(run, live_dir)
     if not selftest_live_ab_contract_input_snapshot(run, fixture):
@@ -1627,7 +1929,50 @@ def selftest_live_ab_contract_runner_safety(run: CalibrationRun) -> None:
             )
 
 
-def selftest_live_ab_contract_plan(run: CalibrationRun, live_dir: Path) -> bool:
+def synthetic_live_guard_policy(run: CalibrationRun, live_dir: Path) -> Path:
+    """Write scratch-only current model names for executable guard tests, without altering archived scoring inputs."""
+    policy = json.loads(run.paths.live_route_policy.read_bytes())
+    for route in policy["routes"].values():
+        route["baseline_model"] = "gpt-6.1-sol"
+        route["candidate_model"] = "gpt-6-luna"
+    live_dir.mkdir(parents=True, exist_ok=True)
+    path = live_dir / "synthetic-gpt6-guard-policy.json"
+    path.write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8", newline="\n")
+    return path
+
+
+def selftest_live_ab_contract_archived_policy_guard(run: CalibrationRun, live_dir: Path) -> bool:
+    """Require archived model assignments to fail before auth guards and leave no run output."""
+    out = live_dir / "archive-blocked-run"
+    result = run_command(
+        [
+            sys.executable,
+            run.paths.live_ab_runner,
+            "--cases",
+            run.paths.behavioral_cases,
+            "--tasks",
+            run.paths.live_ab_tasks,
+            "--route-policy",
+            run.paths.live_route_policy,
+            "--out",
+            out,
+            "--root",
+            run.paths.root,
+            "--layout",
+            run.paths.layout,
+            "--confirm-paid-run",
+            "chatgpt-subscription",
+        ],
+        env={**os.environ, "CI": "1", "GITHUB_ACTIONS": "1", "OPENAI_API_KEY": "selftest-must-not-be-used"},
+    )
+    if result.returncode == 0 or "unsupported live model:" not in result.stderr or out.exists():
+        run.fail_and_leak("shared-script-selftests", "selftest-failed:live-ab-archived-policy-guard")
+        return False
+    run.append_check("selftest:live-ab-archived-policy=blocked-before-auth:no-output")
+    return True
+
+
+def selftest_live_ab_contract_plan(run: CalibrationRun, live_dir: Path, policy_path: Path | None = None) -> bool:
     """Verify the unconfirmed run only plans: correct paid-call budget, no output directory.
 
     Returns ``False`` once a failure is recorded, which stops the remaining live A/B scenarios.
@@ -1641,7 +1986,7 @@ def selftest_live_ab_contract_plan(run: CalibrationRun, live_dir: Path) -> bool:
             "--tasks",
             run.paths.live_ab_tasks,
             "--route-policy",
-            run.paths.live_route_policy,
+            policy_path or run.paths.live_route_policy,
             "--out",
             live_dir / "planned-run",
             "--root",
@@ -1669,10 +2014,11 @@ def selftest_live_ab_contract_plan(run: CalibrationRun, live_dir: Path) -> bool:
     if (live_dir / "planned-run").exists():
         run.fail_and_leak("shared-script-selftests", "selftest-failed:live-ab-plan-created-output")
         return False
+    run.append_check("selftest:live-ab-synthetic-plan=64-calls:unconfirmed:no-output")
     return True
 
 
-def selftest_live_ab_contract_paid_guards(run: CalibrationRun, live_dir: Path) -> bool:
+def selftest_live_ab_contract_paid_guards(run: CalibrationRun, live_dir: Path, policy_path: Path | None = None) -> bool:
     """Verify the runner refuses to bill in CI and under API-key auth, writing nothing either way.
 
     Both guards must fail closed: a non-zero exit, the specific refusal on stderr, and no output directory left
@@ -1686,7 +2032,7 @@ def selftest_live_ab_contract_paid_guards(run: CalibrationRun, live_dir: Path) -
         "--tasks",
         run.paths.live_ab_tasks,
         "--route-policy",
-        run.paths.live_route_policy,
+        policy_path or run.paths.live_route_policy,
         "--root",
         run.paths.root,
         "--layout",
@@ -1699,7 +2045,8 @@ def selftest_live_ab_contract_paid_guards(run: CalibrationRun, live_dir: Path) -
     ci_blocked = run_command([*paid_args, "--out", ci_out], env=ci_env)
     if ci_blocked.returncode == 0 or "live-paid-run-disabled-in-ci" not in ci_blocked.stderr or ci_out.exists():
         run.fail_and_leak("shared-script-selftests", "selftest-failed:live-ab-ci-paid-guard")
-        return
+        return False
+    run.append_check("selftest:live-ab-synthetic-ci-guard=blocked:no-output")
 
     api_out = live_dir / "api-key-blocked-run"
     api_env = {
@@ -1716,6 +2063,7 @@ def selftest_live_ab_contract_paid_guards(run: CalibrationRun, live_dir: Path) -
     ):
         run.fail_and_leak("shared-script-selftests", "selftest-failed:live-ab-api-key-paid-guard")
         return False
+    run.append_check("selftest:live-ab-synthetic-api-key-guard=blocked:no-output")
     return True
 
 
@@ -1769,9 +2117,16 @@ def selftest_live_ab_contract_input_snapshot(run: CalibrationRun, fixture: LiveA
     spec = importlib.util.spec_from_file_location("calibration_live_ab_runner", run.paths.live_ab_runner)
     if spec is None or spec.loader is None:
         run.fail_and_leak("shared-script-selftests", "selftest-import:live-ab-runner")
-        return
+        return False
     live_runner = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(live_runner)
+    try:
+        spec.loader.exec_module(live_runner)
+    except (OSError, SyntaxError, ImportError) as error:
+        run.fail_and_leak("shared-script-selftests", f"selftest-import:live-ab-runner:{error}")
+        return False
+    if not callable(getattr(live_runner, "_write_input_snapshot", None)):
+        run.fail_and_leak("shared-script-selftests", "selftest-api:live-ab-runner:_write_input_snapshot")
+        return False
     snapshot_root = live_runner._write_input_snapshot(
         fixture.live_dir / "snapshot-run",
         fixture.cases_payload,
@@ -2501,7 +2856,16 @@ def selftest_code_remediate_pr_identity(run: CalibrationRun) -> None:
         run.fail_and_leak("shared-script-selftests", "selftest-setup:code-remediate-pr-identity")
         return
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except (OSError, SyntaxError, ImportError) as error:
+        run.fail_and_leak("shared-script-selftests", f"selftest-import:code-remediate-pr-identity:{error}")
+        return
+    if not callable(getattr(module, "_validate_code_remediate_pr_identity", None)):
+        run.fail_and_leak(
+            "shared-script-selftests", "selftest-api:code-remediate-pr-identity:_validate_code_remediate_pr_identity"
+        )
+        return
     routing = {
         "base_identity_source": "pr_url",
         "base_host": "github.com",
@@ -3200,6 +3564,7 @@ def write_result(run: CalibrationRun) -> None:
             "native-runtime-leakage",
             "confidence-policy",
             "fixed-task-set",
+            "workflow-prevention",
             *(["behavioral-version-policy"] if run.behavioral_version_skip_reason is None else []),
             "benchmark-pattern-checks",
             "behavioral-metrics",
@@ -3311,6 +3676,7 @@ def main() -> int:
     paths = Paths.create(args.layout, args.root)
     run = CalibrationRun(paths=paths)
     check_core_configs(run)
+    check_workflow_prevention(run)
     check_native_runtime_leaks(run)
     check_shared_scripts(run)
     run_benchmark_pattern_checks(run)

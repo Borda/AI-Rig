@@ -59,7 +59,7 @@ No mode states an explicit concurrency ceiling on its own fan-out (e.g. no `DISP
 | APPLY PROPOSALS? | memory | always | native Write/Edit APPLY, then REVIEW |
 | APPLY EXTERNAL SOURCE CANDIDATES? | external | always | APPLY step |
 | EXTRACT CANDIDATES TO bin/? | executables | always | EXTRACT spawns |
-| convergence-loop stop | executables | conditional — plateau/non-convergence/round-cap, open findings | COMMIT |
+| convergence-loop stop | executables | conditional — plateau/non-convergence or stricter caller-budget stop, open findings | COMMIT |
 
 Default mode reaches no gate at all. Every other mode reaches exactly one always-on gate per branch taken, at most two total (PROJECT PICKER, then the branch's own apply gate).
 
@@ -233,7 +233,7 @@ RE-AUDIT  (step E5)  ▣ foundry:curator per modified file
   |
 MEASURE + CONVERGE  (step E6)
   capture after-numbers
-  Adversarial Convergence Loop (up to 3 rounds, ▣ foundry:challenger)
+  Adversarial Convergence Loop (strictly decreasing integer score, ▣ foundry:challenger)
   ◆ AskUserQuestion      [only on stop — plateau/non-convergence/cap]
   |
 COMMIT  (step E6)

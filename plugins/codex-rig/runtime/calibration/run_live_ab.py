@@ -46,6 +46,7 @@ import os
 import shlex
 import signal
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,6 +55,7 @@ from typing import Any, NamedTuple
 from live_contract import Layout, build_prompt, candidate_findings, prompt_sha256, role_context, task_contract_sha256
 
 PRICING_REF = "normalized-token-v1:uncached+0.1*cached+4*output"
+SUPPORTED_LIVE_MODELS = ("gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra")
 
 
 class BoundedProcessResult(NamedTuple):
@@ -246,26 +248,59 @@ def _require_local_subscription_run() -> None:
         raise SystemExit("live-paid-run-requires-chatgpt-subscription-login")
 
 
-def _terminate_process_group(process: subprocess.Popen[str], timeout_seconds: int) -> tuple[str, str]:
-    """Stop a timed-out process group and drain whatever output it already produced.
-
-    SIGTERM goes to the whole group first; a group still alive two seconds later gets SIGKILL. A group that exited on
-    its own between the timeout and the signal raises ``ProcessLookupError``, which is the expected race and not a
-    failure. The returned stderr carries the appended timeout note.
-    """
+def _signal_process_tree(process: subprocess.Popen[str], force: bool) -> str | None:
+    """Signal the owned tree and return a diagnostic when descendant cleanup is unproven."""
     try:
-        os.killpg(process.pid, signal.SIGTERM)
+        if sys.platform != "win32":
+            os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
+            return None
+        if force:
+            process.kill()
+            return "process-tree cleanup unproven: forced parent-only fallback"
+        cleanup = subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+            check=False,
+        )
+        if cleanup.returncode != 0:
+            return f"process-tree cleanup unproven: taskkill exited {cleanup.returncode}"
     except ProcessLookupError:
-        pass
-    try:
-        stdout, stderr = process.communicate(timeout=2)
-    except subprocess.TimeoutExpired:
+        return None
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return f"process-tree cleanup unproven: {error}"
+    return None
+
+
+def _terminate_process_group(
+    process: subprocess.Popen[str], timeout_seconds: int, initial_timeout: subprocess.TimeoutExpired
+) -> tuple[str, str]:
+    """Attempt bounded process-tree cleanup while preserving timeout output and cleanup failures.
+
+    Windows uses taskkill's tree operation; POSIX sends SIGTERM then SIGKILL to the owned group. Two bounded drain
+    attempts preserve cumulative output. If tree cleanup or pipe draining fails, stderr explicitly records the unproven
+    cleanup instead of blocking indefinitely or implying descendants were terminated.
+    """
+    notes = [f"timeout after {timeout_seconds} seconds"]
+    stdout, stderr = initial_timeout.output, initial_timeout.stderr
+    for force in (False, True):
+        cleanup_note = _signal_process_tree(process, force)
+        if cleanup_note:
+            notes.append(cleanup_note)
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        stdout, stderr = process.communicate()
-    return stdout, f"{stderr or ''}\ntimeout after {timeout_seconds} seconds\n"
+            stdout, stderr = process.communicate(timeout=2)
+            break
+        except subprocess.TimeoutExpired as error:
+            stdout = error.output if error.output is not None else stdout
+            stderr = error.stderr if error.stderr is not None else stderr
+    else:
+        # Windows reader threads can hold pipe locks; closing those streams could defeat the drain timeout.
+        notes.append("output drain incomplete; process-tree cleanup unproven")
+    stdout = stdout.decode(errors="replace") if isinstance(stdout, bytes) else stdout
+    stderr = stderr.decode(errors="replace") if isinstance(stderr, bytes) else stderr
+    return stdout or "", f"{stderr or ''}\n" + "\n".join(notes) + "\n"
 
 
 def _run_bounded_process(
@@ -276,9 +311,9 @@ def _run_bounded_process(
 ) -> BoundedProcessResult:
     """Run one child process under a hard timeout and capture everything it produced.
 
-    The child starts in its own session, so a timeout terminates the whole process group instead of leaving orphaned
-    grandchildren behind: SIGTERM first, then SIGKILL if the group has not exited within two seconds. A timed-out run
-    reports exit code 124 and keeps whatever output was already captured, with the timeout noted in ``stderr``.
+    The child starts in its own session. Timeout cleanup targets its POSIX process group or Windows process tree,
+    with bounded escalation and pipe draining. A timed-out run reports exit code 124, preserves captured output,
+    and records any unproven cleanup in ``stderr``.
 
     Args:
         argv: Executable and arguments to run; never passed through a shell.
@@ -299,8 +334,8 @@ def _run_bounded_process(
     try:
         stdout, stderr = process.communicate(timeout=timeout_seconds)
         exit_code = process.returncode
-    except subprocess.TimeoutExpired:
-        stdout, stderr = _terminate_process_group(process, timeout_seconds)
+    except subprocess.TimeoutExpired as error:
+        stdout, stderr = _terminate_process_group(process, timeout_seconds, error)
         exit_code = 124
     if isinstance(stdout, bytes):
         stdout = stdout.decode(errors="replace")
@@ -494,6 +529,12 @@ def main() -> int:
     unknown_routes = sorted(set(selected_routes) - set(policy))
     if unknown_routes:
         raise ValueError(f"unknown routes: {unknown_routes}")
+    # Historical route evidence stays readable, but only selected supported models may become live plans or calls.
+    for route_id in selected_routes:
+        for field in ("baseline_model", "candidate_model"):
+            model = policy[route_id].get(field)
+            if model not in SUPPORTED_LIVE_MODELS:
+                raise ValueError(f"unsupported live model: {route_id}:{field}={model!r}")
     context_root = _context_root(args.layout, args.root)
     roles: set[str] = set()
     for route_id in selected_routes:

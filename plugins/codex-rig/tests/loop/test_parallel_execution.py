@@ -1726,14 +1726,14 @@ class TestPortableReadConsumerRuntimeMatrix:
             resource_clause,
             "The default execution mode is `auto`.",
             "`auto` selects this route only after this consumer's runtime matrix and promotion; otherwise it resolves safely to `serial`.",
-            "Every write still requires a frozen plan and exact-digest approval.",
+            "Serial parent work uses existing task authorization; exact-plan-digest approval applies when the promoted parallel-read route is selected.",
             "Before any dispatch, freeze",
             "Dispatch at most one fixed dependency-ready wave",
             "canonical quality gates; verdict; and promotion",
             "Unavailable or unsafe fan-out uses equal-gate `serial-fallback` from the same frozen plan with the same quality gates and retained evidence.",
             "This skill's shared runtime matrix and consumer promotion must remain complete before `auto` selects this route.",
             "Generic parallel writes remain disabled.",
-            "This route never bypasses consumer promotion, serial parent authority, or write approval",
+            "This route never bypasses consumer promotion, serial parent authority, or applicable write approval",
             f"parallel_execution.py preflight --consumer {skill}",
             f"parallel_execution.py validate-runtime --consumer {skill}",
             "Run the same preflight again after the terminal join and before the first parent mutation.",
@@ -1906,10 +1906,12 @@ def test_consumer_preflight_cli_binds_auto_and_exact_parent_write_approval(tmp_p
         pytest.param("source", "environment", id="source"),
     ),
 )
+@pytest.mark.parametrize("route", ["parallel-read", "serial", "serial-fallback"])
 def test_consumer_preflight_rejects_each_invalid_write_approval_field(
     tmp_path: Path,
     field: str,
     value: str,
+    route: str,
 ) -> None:
     """Reject stale, denied, or non-human parent write authority independently."""
     manifest, manifest_path, plan_path, _parent_rollout, _sessions_dir, _roles_dir = _schema_v2_runtime_fixture(
@@ -1918,6 +1920,10 @@ def test_consumer_preflight_rejects_each_invalid_write_approval_field(
     _bind_portable_read_consumer_policy(
         manifest, manifest_path, plan_path, consumer_id="implement", parent_writes="planned"
     )
+    if route == "serial-fallback":
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        plan["read_host"]["approval_policy"] = "on-request"
+        plan_path.write_text(json.dumps(plan) + "\n", encoding="utf-8", newline="\n")
     approval = {"plan_sha256": _sha256(plan_path), "response": "approve", "source": "explicit-input"}
     approval[field] = value
     approval_path = plan_path.with_name("write-approval.json")
@@ -1926,11 +1932,55 @@ def test_consumer_preflight_rejects_each_invalid_write_approval_field(
     with pytest.raises(ValueError, match="^write-approval-invalid$"):
         _load_validator().resolve_consumer_execution_mode(
             "implement",
-            "--execution=auto",
+            "--execution=serial" if route == "serial" else "--execution=auto",
             environment={},
             plan_path=plan_path,
             approval_path=approval_path,
         )
+
+
+@pytest.mark.parametrize("consumer_id", ["implement", "manage"])
+@pytest.mark.parametrize("route", ["serial", "serial-fallback"])
+@pytest.mark.parametrize("supplied_approval", [False, True])
+def test_consumer_preflight_serial_parent_writes_use_existing_authorization(
+    tmp_path: Path, consumer_id: str, route: str, supplied_approval: bool
+) -> None:
+    """Admit authorized serial parent writes while validating any supplied approval."""
+    manifest, manifest_path, plan_path, _parent_rollout, _sessions_dir, _roles_dir = _schema_v2_runtime_fixture(
+        tmp_path
+    )
+    _bind_portable_read_consumer_policy(
+        manifest, manifest_path, plan_path, consumer_id=consumer_id, parent_writes="planned"
+    )
+    if route == "serial-fallback":
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        plan["read_host"]["approval_policy"] = "on-request"
+        plan_path.write_text(json.dumps(plan) + "\n", encoding="utf-8", newline="\n")
+    approval_path = None
+    if supplied_approval:
+        approval_path = plan_path.with_name("write-approval.json")
+        approval_path.write_text(
+            json.dumps({"plan_sha256": _sha256(plan_path), "response": "approve", "source": "user-prompt"}) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+
+    result = _load_validator().resolve_consumer_execution_mode(
+        consumer_id,
+        "--execution=serial" if route == "serial" else "--execution=auto",
+        environment={},
+        plan_path=plan_path,
+        approval_path=approval_path,
+    )
+
+    assert result["effective_mode"] == "serial"
+    assert result["requested_mode"] == ("serial" if route == "serial" else "auto")
+    assert result.get("fallback_reason") == (
+        "host-controls-unavailable-before-dispatch" if route == "serial-fallback" else None
+    )
+    assert result["write_approval_required"] is False
+    assert result["write_approval_validated"] is supplied_approval
+    assert result["plan_sha256"] == _sha256(plan_path)
 
 
 def test_consumer_preflight_requires_approval_for_planned_parent_writes(tmp_path: Path) -> None:

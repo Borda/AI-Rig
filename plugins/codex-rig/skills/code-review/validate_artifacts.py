@@ -635,18 +635,55 @@ def _readable_review_role(role_id: str) -> str:
     return " ".join([first, *parts[1:]])
 
 
-def _retained_reviewer_rating(path: Path, *, local_reviewer_wave: bool, main: bool, role: str) -> int:
-    """Read a scoped rating and rationale from the retained reviewer response."""
+def _retained_reviewer_rating(
+    path: Path,
+    *,
+    local_reviewer_wave: bool,
+    main: bool,
+    role: str,
+    structured_native: bool = False,
+    preassessment_blocker: bool = False,
+) -> int:
+    """Read a scoped rating and rationale from the retained reviewer response.
+
+    Proven preassessment recovery may retain paired unavailable digests only for an empty blocking response. Completed
+    inspection retains the strict digest contract.
+    """
     try:
         content = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         raise SystemExit(f"review-assessment-content-invalid:{role}") from error
-    if local_reviewer_wave:
+    if local_reviewer_wave or structured_native:
+        if structured_native:
+            block = re.fullmatch(r"```adversarial-loop\n(.*?)\n```", content.strip(), re.DOTALL)
+            content = block.group(1) if block else content
         try:
             payload = json.loads(content)
         except (ValueError, RecursionError) as error:
             raise SystemExit(f"review-assessment-content-invalid:{role}") from error
         assessment = payload.get("assessment") if isinstance(payload, dict) else None
+        if structured_native:
+            if (
+                not isinstance(payload, dict)
+                or set(payload) != {"source_sha256", "diff_sha256", "findings", "assessment"}
+                or not isinstance(payload["findings"], list)
+                or not isinstance(assessment, dict)
+                or set(assessment) != {"rating", "rationale"}
+            ):
+                raise SystemExit(f"review-assessment-content-invalid:{role}")
+            # Failed first reads cannot supply source digests; this receipt never certifies inspection.
+            unavailable = (
+                preassessment_blocker
+                and payload["source_sha256"] is None
+                and payload["diff_sha256"] is None
+                and payload["findings"] == []
+                and assessment["rating"] == 5
+            )
+            if not unavailable and any(
+                not isinstance(payload[key], str) or re.fullmatch(r"[0-9a-f]{64}", payload[key]) is None
+                for key in ("source_sha256", "diff_sha256")
+            ):
+                raise SystemExit(f"review-assessment-content-invalid:{role}")
         rating = assessment.get("rating") if isinstance(assessment, dict) else None
         rationale = assessment.get("rationale") if isinstance(assessment, dict) else None
     else:
@@ -2009,14 +2046,23 @@ def _validate_inspection_plan(
     }
     if set(plan) != required_keys:
         raise SystemExit("review-inspection-plan-shape-invalid")
-    if plan["consumer_policy"] != {
-        "consumer_id": "code-review",
+    policy = plan["consumer_policy"]
+    consumer = policy.get("consumer_id") if isinstance(policy, dict) else None
+    if consumer not in {"code-review", "challenge-resolve"} or policy != {
+        "consumer_id": consumer,
         "capability": "instruction-bounded-review",
         "promotion_status": "promoted",
         "parent_mutations": "serial",
         "canonical_gates": "serial",
     }:
         raise SystemExit("review-inspection-plan-policy-invalid")
+    if consumer == "challenge-resolve" and (
+        not isinstance(plan["contexts"], list)
+        or len(plan["contexts"]) != 1
+        or not isinstance(plan["contexts"][0], dict)
+        or plan["contexts"][0].get("role_id") != "challenger"
+    ):
+        raise SystemExit("review-inspection-plan-challenge-role-invalid")
     if plan["review_operation"] != "inspection-only" or plan["write_policy"] != {
         "parent_writes": "none",
         "approval_requirement": "not-required",
@@ -3117,7 +3163,12 @@ def _recovery_arguments(
             raise SystemExit(f"review-repair-dispatch-cause-unproven:{role}")
         if (
             _retained_reviewer_rating(
-                _resolve_path(out_dir, original["output_path"]), local_reviewer_wave=False, main=False, role=role
+                _resolve_path(out_dir, original["output_path"]),
+                local_reviewer_wave=False,
+                main=False,
+                role=role,
+                structured_native=_load_json(plan_path)["consumer_policy"]["consumer_id"] == "challenge-resolve",
+                preassessment_blocker=True,
             )
             != 5
         ):

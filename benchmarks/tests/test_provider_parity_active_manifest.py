@@ -204,7 +204,7 @@ def test_agentic_execution_contract_records_provider_specific_default_cells() ->
     assert contract["default_total_cells_by_provider"] == {"claude": 180, "codex": 60}
     assert contract["models_by_provider"] == {
         "claude": ["haiku", "sonnet", "opus"],
-        "codex": ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"],
+        "codex": ["gpt-6.1-sol", "gpt-6-luna", "gpt-6-sol", "gpt-6-astra"],
     }
 
 
@@ -214,7 +214,7 @@ def test_every_codex_manifest_admits_the_same_declared_strata(manifest_name: str
 
     Scenario: --models resolves a name against the methodology manifest, while each runner admits a
     name against its own manifest's model block. A stratum missing from one of those blocks is a
-    name the launcher accepts and the runner then refuses — the agentic manifest omitted gpt-5.6-sol
+    name the launcher accepts and the runner then refuses — the agentic manifest omitted gpt-6-sol
     while the structural one declared it, so the two lanes disagreed about what could be selected.
     """
     declared = _load(METHODOLOGY_MANIFEST)["agentic_execution_contract"]["models_by_provider"]["codex"]
@@ -447,7 +447,7 @@ def test_methodology_manifest_locks_luna_high_and_exact_implementation_identitie
     implementation = manifest["implementation_contract"]
 
     assert implementation["codex_model_stratum"] == {
-        "model": "gpt-5.6-luna",
+        "model": "gpt-6.1-sol",
         "reasoning_effort": "high",
         "strict_config": True,
     }

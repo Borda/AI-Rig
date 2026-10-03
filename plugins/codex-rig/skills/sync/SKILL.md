@@ -46,6 +46,10 @@ For one active installation, resolve selected cache path reported or implied by 
 
 Inspect the managed `github-read` config state without writing: report absent, current, or unverifiable. Inspect legacy plugin-owned reader and PR rules for safe removal; an edited or unrecognized owned rule blocks setup before writes. Absence is valid before setup and does not authorize installation during `check`.
 
+### Global instruction health
+
+At explicit check or after an approved refresh, run the selected package's `scripts/install_global_agents.py --check --source <selected-package>/assets/AGENTS.md --codex-home <home>`. A nonzero result is degraded instruction composition even when package hashes pass. Report overlapping or stale global policy and the bounded recognizable legacy skill signatures; do not declare healthy or delete user skills automatically. For a verified old duplicate prefix, prepare its exact digest and review the prefix before offering the separate `--migrate-legacy-prefix-sha256` lifecycle action. That action backs up the entire file and preserves the custom suffix; it does not remove legacy skills. Source checkout edits do not update an active installation.
+
 ### 03: Report external-agent residue without touching it
 
 Read-only scan user agent directory for exact `codex-rig-*.toml` names. Record names and hashes, never file bodies. Classify every match `unmanaged-or-unknown` unless compatible lifecycle manager and its ownership state are available and verified. Plugin-only sync never deletes or overwrites match.

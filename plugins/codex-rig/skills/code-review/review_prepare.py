@@ -241,19 +241,25 @@ def prepare(
     expected_diff_base: str | None = None,
     scope_path: str | None = None,
     batches: bool = False,
+    challenge_only: bool = False,
 ) -> dict[str, Any]:
     """Freeze all selected reviewers together and emit small, exact native dispatch arguments."""
     out = out.resolve()
     if not run_id.strip() or not parent_thread_id.strip():
         raise ValueError("review-identity-empty")
-    review_routing.synchronize_routing(out)
+    if challenge_only and batches:
+        raise ValueError("review-challenge-batches-unsupported")
+    if not challenge_only:
+        review_routing.synchronize_routing(out)
     routing_bytes = (out / "review-routing.json").read_bytes()
     briefs_bytes = (out / "review-briefs.json").read_bytes()
     routing = json.loads(routing_bytes)
     briefs = json.loads(briefs_bytes)
     if not isinstance(routing, dict) or not isinstance(briefs, dict):
         raise ValueError("review-preparation-input-not-object")
-    roles = validator._validate_routing(out, routing["risk_tier"])
+    roles = {"challenger"} if challenge_only else validator._validate_routing(out, routing["risk_tier"])
+    if challenge_only and routing.get("triggered_roles") != ["challenger"]:
+        raise ValueError("review-challenge-role-set-mismatch")
     if set(briefs) != roles:
         raise ValueError("review-brief-role-set-mismatch")
     selections = {}
@@ -291,7 +297,7 @@ def prepare(
         raise ValueError(f"review-source-coverage-incomplete:{json.dumps(missing, sort_keys=True)}")
     plan = {
         "consumer_policy": {
-            "consumer_id": "code-review",
+            "consumer_id": "challenge-resolve" if challenge_only else "code-review",
             "capability": "instruction-bounded-review",
             "promotion_status": "promoted",
             "parent_mutations": "serial",
@@ -323,7 +329,8 @@ def prepare(
         source = validator._resolve_path(out, brief["evidence_path"]).read_text(encoding="utf-8")
         if not source.strip():
             raise ValueError(f"review-brief-empty:{role}")
-        if not set(selections[role]) & (sections.keys() | untracked):
+        # Challenge scopes may inspect clean implementations; ordinary review requires changed source.
+        if not challenge_only and not set(selections[role]) & (sections.keys() | untracked):
             raise ValueError(f"review-brief-source-unrelated:{role}")
         selected_source = []
         for path in selections[role]:
@@ -351,6 +358,9 @@ def prepare(
             "Do not use bold headings or fractions such as 5/5. Keep the response concise; do not omit findings "
             "to meet a token target.\n\n" + source + "\n\n## Verified selected source\n\n" + "\n".join(selected_source)
         ).encode("utf-8")
+        if challenge_only:
+            # Preserve the strict challenge evidence envelope, including its exact final byte.
+            context = card + b"\n" + validator._resolve_path(out, brief["evidence_path"]).read_bytes()
         # The page reader transports larger contexts without dropping source; cap total work at 256 KiB.
         if not batches and len(context) > MAX_REVIEW_CONTEXT_BYTES:
             raise ValueError(f"review-context-capacity-exceeded:{role}:{MAX_REVIEW_CONTEXT_BYTES}-bytes")
@@ -524,7 +534,14 @@ def _observed_pass(
     raw_output_path = f"specialists/{role}{suffix}.raw.md"
     _freeze({out / raw_output_path: terminal["last_agent_message"].encode("utf-8")})
     if not retain_rejected:
-        validator._retained_reviewer_rating(out / output_path, local_reviewer_wave=False, main=False, role=role)
+        plan = validator._load_json(out / "inspection-plan.json")
+        validator._retained_reviewer_rating(
+            out / output_path,
+            local_reviewer_wave=False,
+            main=False,
+            role=role,
+            structured_native=plan["consumer_policy"]["consumer_id"] == "challenge-resolve",
+        )
     agent_path = session.get("agent_path") or session["source"]["subagent"]["thread_spawn"]["agent_path"]
     attempt = {
         "attempt": attempt_number,
@@ -627,7 +644,7 @@ def manifest_header(plan: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def assemble(out: Path, codex_home: Path) -> dict[str, Any]:
+def assemble(out: Path, codex_home: Path, challenge_only: bool = False) -> dict[str, Any]:
     """Assemble and validate actual specialist evidence after the complete wave has joined."""
     out = out.resolve()
     plan = validator._load_json(out / "inspection-plan.json")
@@ -639,7 +656,11 @@ def assemble(out: Path, codex_home: Path) -> dict[str, Any]:
     if dispatch.get("briefs_sha256") != validator._sha256(out / "review-briefs.json"):
         raise ValueError("review-prepared-briefs-changed")
     routing = validator._load_json(out / "review-routing.json")
-    roles = validator._validate_routing(out, routing["risk_tier"])
+    if (plan["consumer_policy"]["consumer_id"] == "challenge-resolve") != challenge_only:
+        raise ValueError("review-challenge-mode-mismatch")
+    roles = {"challenger"} if challenge_only else validator._validate_routing(out, routing["risk_tier"])
+    if challenge_only and routing.get("triggered_roles") != ["challenger"]:
+        raise ValueError("review-challenge-role-set-mismatch")
     briefs = validator._load_json(out / "review-briefs.json")
     assessments = validator._load_json(out / "specialist-assessments.json")
     if set(assessments) != roles or {entry["role_id"] for entry in plan["contexts"]} != roles:
@@ -797,6 +818,7 @@ def main() -> int:
     prepare_parser.add_argument("--run-id", required=True)
     prepare_parser.add_argument("--parent-thread-id", required=True)
     prepare_parser.add_argument("--source-root", required=True, type=Path)
+    prepare_parser.add_argument("--challenge-only", action="store_true", help="Freeze one strict challenger brief.")
     prepare_parser.add_argument("--expected-head")
     prepare_parser.add_argument("--expected-diff-base", help="Exact comparison base required for committed review.")
     prepare_parser.add_argument("--scope-path", help="Declared repository-relative path for a local path review.")
@@ -821,6 +843,7 @@ def main() -> int:
     repair_parser.add_argument("--kind", required=True, choices=("closure-evidence-shape", "incomplete-dispatch"))
     assemble_parser = commands.add_parser("assemble", help="Bind received child results to actual runtime records.")
     assemble_parser.add_argument("--out", required=True, type=Path)
+    assemble_parser.add_argument("--challenge-only", action="store_true")
     assemble_parser.add_argument(
         "--codex-home", type=Path, default=Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
     )
@@ -836,6 +859,7 @@ def main() -> int:
                 args.expected_diff_base,
                 args.scope_path,
                 args.batches,
+                args.challenge_only,
             )
             print(
                 json.dumps(
@@ -848,7 +872,7 @@ def main() -> int:
                 )
             )
         elif args.command == "assemble":
-            print(json.dumps(assemble(args.out, args.codex_home)))
+            print(json.dumps(assemble(args.out, args.codex_home, args.challenge_only)))
         elif args.command == "prepare-repair":
             print(json.dumps(prepare_repair(args.out, args.codex_home, args.role, args.kind)))
         elif args.command == "recover-native-provenance":

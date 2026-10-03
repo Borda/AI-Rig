@@ -407,6 +407,12 @@ def sync_codex(
         )
         if result.stdout:
             print(result.stdout.rstrip(), file=stdout)
+        health = _run(
+            run,
+            [sys.executable, str(installer), "--check", "--source", str(template), "--codex-home", str(home)],
+        )
+        if health.stdout:
+            print(health.stdout.rstrip(), file=stdout)
     print(
         "  Start a fresh Codex session. Legacy files copied by older sync versions are not deleted automatically.",
         file=stdout,

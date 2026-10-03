@@ -542,7 +542,7 @@ Copy each canonical `authors` list to its final finding row without changing the
 
 `Status` must distinguish required, minor, verification-only, rejected, or not aligned; `Implemented` alone is not open action. Do not collapse distinct findings into generic row. This table is mandatory after assessment for every non-`accept-as-is` PR and any `needs-more-work` review; missing, malformed, empty, or non-actionable rows fail validation. Terminal review-unavailable output forbids tables and uses plain process diagnostic prose.
 
-### 10: Run confidence calibration and recovery before any user-facing output
+### 10: Record confidence evidence before the final handoff
 
 Before final chat/`result.json`, write `Confidence Calibration` in `review-notes.md`; mirror in `CODE_REVIEW_METADATA.confidence_recovery`.
 

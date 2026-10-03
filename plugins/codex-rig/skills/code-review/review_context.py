@@ -164,6 +164,16 @@ def dispatch_message(
         else "all pages. Return your findings and Reviewer Assessment; provenance is derived from the audited reads. "
         "Do not include the context body in the final answer."
     )
+    if plan.get("consumer_policy", {}).get("consumer_id") == "challenge-resolve":
+        final_instruction = (
+            "all pages. Return exactly one raw JSON object or one fenced adversarial-loop block with "
+            "source_sha256, diff_sha256, findings, and assessment (rating and rationale). Use the supplied "
+            "digests and review request; put every finding inside findings, with no provenance header or "
+            "surrounding prose. If the first context read fails before any source evidence is available, return "
+            "source_sha256 and diff_sha256 as null, findings as an empty list, and assessment rating 5 with "
+            "a rationale naming the read failure. This preassessment blocker certifies no inspection or coverage; "
+            "never guess unavailable digests. Do not include the context body in the final answer."
+        )
     if _all_page_calls:
         calls = "\n\n".join(
             "```javascript\n"

@@ -360,7 +360,7 @@ def _build_manifest() -> dict[str, Any]:
         },
         "models_by_provider": {
             "claude": ["haiku", "sonnet", "opus"],
-            "codex": ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"],
+            "codex": ["gpt-6.1-sol", "gpt-6-luna", "gpt-6-sol", "gpt-6-astra"],
         },
         "providers": ["claude", "codex"],
         "repeat_override": (
@@ -383,6 +383,7 @@ def _build_manifest() -> dict[str, Any]:
         "task_ids": agentic_suite["ordered_task_ids"],
     }
     manifest["implementation_contract"]["artifact_sha256"] = _artifact_hashes()
+    manifest["implementation_contract"]["codex_model_stratum"]["model"] = "gpt-6.1-sol"
     manifest["index"] = copy.deepcopy(INDEX_LOCK)
     manifest["patch_index_contract"] = _load_json(BENCHMARKS / "suites" / "patch-index-locks.json")
     manifest["suite_integrity"] = _suite_integrity(suites)

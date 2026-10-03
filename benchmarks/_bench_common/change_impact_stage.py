@@ -23,6 +23,7 @@ from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
+from _bench_codex.runtime import SUPPORTED_CODEX_MODELS
 from . import change_impact_contracts as contracts
 from .paid_lifecycle import (
     PaidStageCallbacks,
@@ -49,9 +50,11 @@ def resolve_scope(provider: str, *, model: str | None = None, timeout: int = 600
         raise ValueError("change-impact provider must be claude or codex")
     if type(timeout) is not int or timeout <= 0:
         raise ValueError("change-impact timeout must be a positive integer")
-    model = model or ("gpt-5.6-terra" if provider == "codex" else "sonnet")
+    model = model or ("gpt-6.1-sol" if provider == "codex" else "sonnet")
     if not isinstance(model, str) or not model.strip() or any(char.isspace() for char in model):
         raise ValueError("change-impact requires one explicit model identifier")
+    if provider == "codex" and model not in SUPPORTED_CODEX_MODELS:
+        raise ValueError(f"supported Codex benchmark model required: {', '.join(SUPPORTED_CODEX_MODELS)}")
     tasks = contracts.load_change_impact_tasks(_TASKS)
     provider_cli = shutil.which(provider)
     cli_version = None

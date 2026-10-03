@@ -1,6 +1,6 @@
 # Codex Quality Gates
 
-All codex-native skills must emit same gate fields.
+Detailed codex-native workflows emit the same gate fields. Documented lightweight local paths run applicable project checks directly and report their evidence without creating this bundle.
 
 ## Required checks
 
@@ -35,7 +35,7 @@ Optional but recommended:
 
 ## Fail rules
 
-- An execution failure never makes an applicable check `not-applicable`. Missing tools, launcher panics, or sandbox restrictions require diagnosis and preserved failed evidence. Direct-check receipts may support diagnosis but cannot turn the canonical gate green; rerun an equivalent check through `run_gates.py` with the verified project environment or retain `fail`/`timeout`. Same-directory reruns archive runner-owned receipts under `gate-attempts/<NNN>` before executing and reject failed-to-skipped reclassification. Incomplete prior state blocks overwrite; diagnose it before starting a separately scoped run.
+- An execution failure never makes an applicable check `not-applicable`. Missing tools, launcher panics, or sandbox restrictions require diagnosis and preserved failed evidence. Choose the required check entrypoint before execution. Do not rerun passing checks solely to wrap them in a different report or obtain a second approval: lightweight paths retain direct-check evidence, and detailed paths reuse an existing valid canonical receipt for unchanged source, selection, environment, and command. A direct check cannot silently replace a required source-bound canonical gate; if that proof was not collected, run the required gate or disclose it as incomplete. Same-directory reruns archive runner-owned receipts under `gate-attempts/<NNN>` before executing and reject failed-to-skipped reclassification. Incomplete prior state blocks overwrite; diagnose it before starting a separately scoped run.
 - Any `critical` finding => `status=fail`
 - Any failed check in `checks_failed` => `status=fail`
 - Missing command/tool for required gate => `status=fail`

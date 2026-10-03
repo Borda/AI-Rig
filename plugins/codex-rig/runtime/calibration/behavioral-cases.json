@@ -2233,12 +2233,12 @@
     },
     {
       "expected_findings": [
-        "closure-condition-not-recorded",
-        "evidence-backed-attempt-escalation-required",
-        "progress-without-closure-ledger-missing"
+        "productive-progress-misclassified",
+        "false-advisory-escalation",
+        "unfinished-acceptance-must-remain-recorded"
       ],
       "id": "model-stall-progress-without-closure",
-      "prompt": "Assess an agent that completes three sequential, evidence-backed attempts against one unchanged acceptance condition. Each attempt contributes useful new evidence, but none closes the condition; the agent treats progress as a reason to continue without recording the closure condition, escalating for one advisory pass, or preparing the user handoff.",
+      "prompt": "Assess an agent whose three successive primary attempts each record new falsifiable evidence narrowing the remaining defect. The acceptance condition is still recorded as open. The agent stops useful work and requests an advisory escalation solely because acceptance remains unfinished, treating productive progress as failed closure attempts.",
       "target": "delegation-lead"
     },
     {
@@ -2677,5 +2677,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.34"
+  "version": "1.35"
 }

@@ -971,7 +971,9 @@ def resolve_consumer_execution_mode(
     authoritative post-run control validation. Explicit parallel reads fail closed; automatic mode retains serial work
     when compatible child controls are unavailable. Supplied-context code review may use an instruction-bounded
     inspection plan without permission attestation; its separate review validator checks actual child activity and
-    provenance. This exception never authorizes executable probes, writes, or another consumer's dispatch.
+    provenance. This exception never authorizes executable probes, writes, or another consumer's dispatch. Serial parent
+    writes use existing task authorization; selected parallel reads require exact-plan-digest approval for planned
+    parent writes. Any supplied approval remains subject to exact validation on either route.
     """
     try:
         plan_bytes = plan_path.read_bytes()
@@ -988,20 +990,6 @@ def resolve_consumer_execution_mode(
     if inspection_only:
         validate_inspection_contexts(plan, plan_path)
     plan_sha256 = hashlib.sha256(plan_bytes).hexdigest()
-    write_approval_validated = False
-    if writes_planned:
-        if approval_path is None:
-            raise ValueError("write-approval-required")
-        try:
-            approval = json.loads(approval_path.read_bytes())
-        except (OSError, json.JSONDecodeError) as error:
-            raise ValueError("write-approval-invalid") from error
-        if not isinstance(approval, dict):
-            raise ValueError("write-approval-invalid")
-        _validate_exact_write_approval(approval, plan_sha256)
-        write_approval_validated = True
-    elif approval_path is not None:
-        raise ValueError("write-approval-unexpected")
     resolution = resolve_execution_mode(
         explicit,
         environment=environment,
@@ -1021,11 +1009,26 @@ def resolve_consumer_execution_mode(
                 raise ValueError(f"{prefix}host-controls-unavailable-before-dispatch")
             resolution["effective_mode"] = "serial"
             resolution["fallback_reason"] = "host-controls-unavailable-before-dispatch"
+    write_approval_required = writes_planned and resolution["effective_mode"] == "parallel-read"
+    write_approval_validated = False
+    if approval_path is not None:
+        if not writes_planned:
+            raise ValueError("write-approval-unexpected")
+        try:
+            approval = json.loads(approval_path.read_bytes())
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError("write-approval-invalid") from error
+        if not isinstance(approval, dict):
+            raise ValueError("write-approval-invalid")
+        _validate_exact_write_approval(approval, plan_sha256)
+        write_approval_validated = True
+    elif write_approval_required:
+        raise ValueError("write-approval-required")
     return {
         **resolution,
         **consumer_policy,
         "plan_sha256": plan_sha256,
-        "write_approval_required": writes_planned,
+        "write_approval_required": write_approval_required,
         "write_approval_validated": write_approval_validated,
     }
 

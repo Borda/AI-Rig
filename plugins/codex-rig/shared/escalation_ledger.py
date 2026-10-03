@@ -4,8 +4,8 @@
 ## Purpose
 
 Make progress-stall escalation observable instead of relying on an agent's self-description. The validator prevents a
-lifecycle owner from silently repeating work after the defined no-progress or non-closing trigger. It also preserves the
-exact evidence needed for a human to choose a next step.
+lifecycle owner from repeating work after the no-progress or failed-attempt trigger. It also preserves the exact
+evidence needed for a human to choose a next step.
 
 ## Scope
 
@@ -14,6 +14,12 @@ modify project files, or decide whether the workstream should be accepted. Calle
 only their observed outcome here. The ledger retains the user's primary goal and distinguishes primary work from
 auxiliary setup/report repairs; auxiliary success cannot count as primary material progress. It validates declared
 dependencies and state consistency, not the truth of a claimed user goal or the host's adherence to instructions.
+
+A useful unfinished recovery may transition to `working` when a primary cycle records that recovery action, material
+progress, and non-empty evidence. Later ordinary cycles retain their normal stall thresholds. Matching the operation
+to the action links records; it does not authenticate execution or establish evidence truth. The recovery header may
+remain while ordinary productive work resumes. Evidence-backed primary progress starts a new failed-attempt sequence;
+auxiliary rows cannot reset it. Earlier primary failures remain in the append-only cycle history.
 
 Current schema three keeps work cycles append-only. `reasoning-progress.json` is a header holding every field except
 `cycles` (goal, workstream, closure condition, outcome, advisory, recovery, handoff), rewritten in place as that state
@@ -42,7 +48,7 @@ status still requires escalation or repair of the header before another cycle.
 
 ## Failure
 
-Validation rejects two consecutive cycles without material progress or three evidence-backed non-closing cycles that
+Validation rejects two consecutive primary cycles without material progress or three evidence-backed failed cycles that
 remain marked as ordinary work. It also rejects advisory records without an observed read-only sandbox, advisor state
 changes, a second recovery path, and incomplete human handoffs.
 
@@ -223,7 +229,7 @@ def _validate_handoff(value: object) -> None:
 
 
 def validate_ledger(ledger: dict[str, Any], *, historical: bool = False) -> None:
-    """Validate bounded retries, counting observed primary attempts independently of progress.
+    """Validate bounded retries without mistaking useful diagnostics for failed attempts.
 
     Args:
         ledger: Assembled ledger object, as returned by ``load_ledger``.
@@ -263,13 +269,18 @@ def validate_ledger(ledger: dict[str, Any], *, historical: bool = False) -> None
     if closure_status == "closed" and outcome != "closed":
         raise ValueError("closed-condition-requires-closed-outcome")
 
-    no_progress_trigger = len(cycles) >= 2 and all(not cycle["material_progress"] for cycle in cycles[-2:])
-    # Auxiliary repair cannot reset earlier attempts; observed failures still count without material progress.
-    primary_attempts = sum(cycle["work_kind"] == "primary" and bool(cycle["evidence"]) for cycle in cycles)
-    nonclosing_trigger = closure_status == "open" and primary_attempts >= 3
-    if (no_progress_trigger or nonclosing_trigger) and outcome == "working":
-        raise ValueError("escalation-required-after-stall-trigger")
-
+    primary_cycles = [cycle for cycle in cycles if cycle["work_kind"] == "primary"]
+    no_progress_trigger = len(primary_cycles) >= 2 and all(
+        not cycle["material_progress"] for cycle in primary_cycles[-2:]
+    )
+    # Only observed primary progress starts a new failure sequence; setup cannot reset it.
+    failed_attempts = 0
+    for cycle in primary_cycles:
+        if cycle["material_progress"]:
+            failed_attempts = 0
+        elif cycle["evidence"]:
+            failed_attempts += 1
+    failed_attempt_trigger = closure_status == "open" and failed_attempts >= 3
     advisory = ledger.get("advisory")
     recovery = ledger.get("recovery")
     handoff = ledger.get("human_handoff")
@@ -279,7 +290,7 @@ def validate_ledger(ledger: dict[str, Any], *, historical: bool = False) -> None
         _validate_advisory(advisory)
 
     if recovery is not None:
-        if outcome not in {"recovery", "human_handoff", "closed"}:
+        if outcome not in {"working", "recovery", "human_handoff", "closed"}:
             raise ValueError("recovery-outcome-invalid")
         _validate_advisory(advisory)
         recovery_record = _require_mapping(recovery, "recovery")
@@ -288,10 +299,24 @@ def validate_ledger(ledger: dict[str, Any], *, historical: bool = False) -> None
             raise ValueError("recovery-material-progress-boolean-required")
         if not isinstance(recovery_record.get("closure_met"), bool):
             raise ValueError("recovery-closure-met-boolean-required")
+        if recovery_record["material_progress"]:
+            # Retain the original recovery receipt; later cycles use ordinary stall thresholds.
+            if not any(
+                cycle["operation"] == recovery_record["action"] and cycle["material_progress"] and cycle["evidence"]
+                for cycle in primary_cycles
+            ):
+                raise ValueError("recovery-progress-evidence-required")
         if recovery_record["closure_met"] and outcome != "closed":
             raise ValueError("successful-recovery-must-close-workstream")
-        if not recovery_record["closure_met"] and outcome != "human_handoff":
-            raise ValueError("unsuccessful-recovery-requires-human-handoff")
+        if not recovery_record["closure_met"]:
+            if recovery_record["material_progress"]:
+                if outcome not in {"working", "closed", "human_handoff"}:
+                    raise ValueError("productive-recovery-must-resume-working")
+            elif outcome != "human_handoff":
+                raise ValueError("unsuccessful-recovery-requires-human-handoff")
+
+    if (no_progress_trigger or failed_attempt_trigger) and outcome == "working":
+        raise ValueError("escalation-required-after-stall-trigger")
 
     if outcome == "human_handoff":
         _validate_handoff(handoff)

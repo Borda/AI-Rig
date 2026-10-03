@@ -9,13 +9,13 @@
 #   bash benchmarks/run-all.sh claude --agentic --dry-run  # shared 144-cell Claude agentic plan, no model
 #   bash benchmarks/run-all.sh claude --agentic --tasks=BA-02,BA-04,BA-12,BA-16 --dry-run  # selected nonpoolable Claude plan
 #   bash benchmarks/run-all.sh claude --agentic --repetitions=2 --dry-run  # scope-bound Claude repeat override
-#   bash benchmarks/run-all.sh codex --struct --dry-run  # default Luna+Terra 73-task/438-cell Codex plans, no model
+#   bash benchmarks/run-all.sh codex --struct --dry-run  # default gpt-6.1-sol Codex plan, no model
 #   bash benchmarks/run-all.sh claude --struct --models=opus,haiku  # declared tiers, restricted and reordered
-#   bash benchmarks/run-all.sh codex --struct --models=luna,terra --dry-run  # both Codex strata, one approval
-#   bash benchmarks/run-all.sh codex --struct --models=terra --dry-run  # second Codex stratum alone
+#   bash benchmarks/run-all.sh codex --struct --models=gpt-6.1-sol,gpt-6-luna --dry-run  # both Codex strata, one approval
+#   bash benchmarks/run-all.sh codex --struct --models=luna --dry-run  # second Codex stratum alone
 #
-#   bash benchmarks/run-all.sh codex --models=terra --dry-run  # combined plan on one named stratum
-#   bash benchmarks/run-all.sh codex --agentic --models=sol --dry-run  # agentic plan on one named stratum
+#   bash benchmarks/run-all.sh codex --models=luna --dry-run  # combined plan on one named stratum
+#   bash benchmarks/run-all.sh codex --agentic --models=gpt-6-sol --dry-run  # agentic plan on one named stratum
 #
 #   bash benchmarks/run-all.sh codex --struct --isolated --dry-run  # private worktree, runs beside another study
 #
@@ -30,15 +30,15 @@
 #
 # --models restricts and orders the provider's declared strata; it never introduces one. A stratum
 # answers to its full declared name or to its nickname — the segment after the last dash, so
-# gpt-5.6-terra is also "terra" — whenever that nickname belongs to exactly one declared stratum.
+# gpt-6-luna is also "luna" — whenever that nickname belongs to exactly one declared stratum.
 # The selection pairs with any lane and is validated in every mode. The structural lane runs one study
 # per selected stratum, as does the agentic lane. Combined invocations run both lanes on the same
-# ordered selection. Codex defaults to luna,terra and prints one token covering the selected studies.
+# ordered selection. Codex defaults to gpt-6.1-sol and prints one token covering the selected studies.
 #   bash benchmarks/run-all.sh codex --struct  # paid unified Codex task study
-#   bash benchmarks/run-all.sh codex --dry-run  # default Luna+Terra task + agentic Codex plans, no model
-#   bash benchmarks/run-all.sh codex   # paid Luna+Terra task studies, then paid Luna+Terra agentic studies
+#   bash benchmarks/run-all.sh codex --dry-run  # default gpt-6.1-sol task + agentic Codex plans, no model
+#   bash benchmarks/run-all.sh codex   # paid gpt-6.1-sol task study, then paid gpt-6.1-sol agentic study
 #   bash benchmarks/run-all.sh codex --struct --tasks=RC,FS,FM,PT [--dry-run]  # selected stage-native task families
-#   bash benchmarks/run-all.sh codex --agentic --dry-run  # default Luna+Terra 96-cell agentic plans, no model
+#   bash benchmarks/run-all.sh codex --agentic --dry-run  # default gpt-6.1-sol agentic plan, no model
 #   bash benchmarks/run-all.sh codex --agentic --tasks=BA-02,BA-04,BA-12,BA-16 --dry-run  # selected nonpoolable Codex plan
 #   bash benchmarks/run-all.sh codex --agentic --repetitions=2 --dry-run  # scope-bound repeat override
 #   bash benchmarks/run-all.sh codex --agentic  # paid shared agentic study
@@ -1150,14 +1150,22 @@ codex_models_scope_sha() {
   sha256_string "$1"$'\n'"$2"$'\n'
 }
 
-# A stratum may be named in full ("gpt-5.6-terra") or by its nickname — the segment after the last
-# dash ("terra"). A nickname resolves only when exactly one declared stratum carries it, so an
+# A stratum may be named in full ("gpt-6-luna") or by its nickname — the segment after the last
+# dash ("luna"). A nickname resolves only when exactly one declared stratum carries it, so an
 # ambiguous short name fails rather than choosing a stratum on the operator's behalf. Every selection
 # is canonicalized to the declared full name before it reaches a run directory or an approval hash,
 # so the two spellings are the same authorization rather than two.
 canonical_provider_model() {
   local name="$1" declared="$2" provider="$3" candidate
   local -a matches=()
+  if [ "$provider" = "codex" ]; then
+    for candidate in $declared; do
+      case "$candidate" in
+        gpt-6.1-sol|gpt-6-luna|gpt-6-sol|gpt-6-astra) ;;
+        *) echo "ERROR: supported Codex benchmark model required; legacy declaration: $candidate" >&2; return 1 ;;
+      esac
+    done
+  fi
   for candidate in $declared; do
     if [ "$candidate" = "$name" ]; then
       printf '%s\n' "$candidate"
@@ -2256,7 +2264,7 @@ run_codex_combined_studies() {
 # run. Resolving the selection here fails in a second instead, and the resolved list is discarded
 # so each study still resolves its own.
 if [ "$MODE" = "codex" ] && [ -z "$MODELS_SELECTION" ]; then
-  MODELS_SELECTION="luna,terra"
+  MODELS_SELECTION="gpt-6.1-sol"
 fi
 if [ -n "$MODELS_SELECTION" ] && [ "$MODE" != "smoke" ]; then
   resolve_provider_models "$MODE"

@@ -79,14 +79,13 @@ Separate pool per model, bounding how many nodes of that model may be in flight 
 | -- | -- | -- |
 | Luna | 20 | Cheap bounded-support tier — highest headroom |
 | Sol | 5 | Implementation/verification tier — matches Claude's `opus` ceiling in `claude-config.md` §Parallel Spawn Ceilings |
-| Terra | 10 | Legacy pre-GPT-6 parent tier (see `roles/README.md`) — remove this row once GPT-6 rollout retires Terra entirely |
 | Astra | 2 | Has no standing route (above) — ceiling is precautionary, not an invitation to route work here |
 
 ### Reasoning-Progress Escalation
 
-The [reasoning-progress escalation policy](native-skill-contract.md#reasoning-progress-escalation) is authoritative for detecting stalled workstream and its required ledger. Two consecutive work cycles without material progress or three evidence-backed attempts without closing same condition are observed lower-tier insufficiency, not permission to bypass role boundaries.
+The [reasoning-progress escalation policy](native-skill-contract.md#reasoning-progress-escalation) is authoritative for detecting stalled workstream and its required ledger. Two consecutive primary work cycles without material progress or three evidence-backed unsuccessful primary attempts since the last evidence-backed material primary progress are observed lower-tier insufficiency, not permission to bypass role boundaries.
 
-For a single advisory pass, first request one supported higher reasoning-effort level for the same permitted model; only then consider a separately permitted model. Luna may consult Sol when the task boundary permits it; architecture/security specialist selection still requires the user's explicit request or agent selection. No advisory pass transfers executable acceptance or state-changing authority. A route is advisory-eligible only when actual observed sandbox is `read-only`; requested or claimed sandbox is insufficient. If no permitted read-only route is observable or available, route directly to human handoff. Record trigger ledger, closure condition, requested and observed model/effort, observed sandbox, route result, advisory recommendation, and its stop condition. Parent may authorize one bounded recovery action; result without material progress or unchanged unmet closure condition then requires human handoff, not another advisor or retry.
+For a single advisory pass, first request one supported higher reasoning-effort level for the same permitted model; only then consider a separately permitted model. Luna may consult Sol when the task boundary permits it; architecture/security specialist selection still requires the user's explicit request or agent selection. No advisory pass transfers executable acceptance or state-changing authority. A route is advisory-eligible only when actual observed sandbox is `read-only`; requested or claimed sandbox is insufficient. If no permitted read-only route is observable or available, route directly to human handoff. Record trigger ledger, closure condition, requested and observed model/effort, observed sandbox, route result, advisory recommendation, and its stop condition. Parent may authorize one bounded recovery action; result without evidence-backed material primary progress and an unchanged unmet closure condition then requires human handoff, not another advisor or retry.
 
 ## Context Packs
 

@@ -245,6 +245,8 @@ def build_codex_command(
         raise TypeError("prompt must be a string")
     if not isinstance(model, str) or not model:
         raise ValueError("model must be a non-empty string")
+    if model not in runtime.SUPPORTED_CODEX_MODELS:
+        raise ValueError(f"supported Codex benchmark model required: {', '.join(runtime.SUPPORTED_CODEX_MODELS)}")
     if not isinstance(reasoning_effort, str) or not reasoning_effort:
         raise ValueError("reasoning_effort must be a non-empty string")
     path = str(Path(repo_path).resolve())

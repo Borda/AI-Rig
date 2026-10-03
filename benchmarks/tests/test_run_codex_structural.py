@@ -262,7 +262,7 @@ def test_loaded_task_keeps_canonical_identity_and_shared_evaluator_input(script_
         return core.EvaluationResult(scored=True, correct=True, quality_score=0.75)
 
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         transport=lambda *_args, **_kwargs: _completed_stream(),
         evaluator=_evaluator,
@@ -331,7 +331,7 @@ def test_arm_call_semantics_are_separate_from_quality(
     """A contamination and C compliance cannot silently change correctness."""
     task = {"id": "fixture", "prompt": "unchanged prompt", "type": "demo", "scoreable": True}
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         transport=lambda *_args, **_kwargs: _completed_stream(commands=commands),
         evaluator=lambda *_args: core.EvaluationResult(scored=True, correct=True, quality_score=1.0),
@@ -351,7 +351,7 @@ def test_runner_persists_cache_over_gross_as_explicit_unscoreable_token_accounti
 ) -> None:
     """Provider-native gross/cache evidence remains raw when fresh-token derivation is impossible."""
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         transport=lambda *_args, **_kwargs: _completed_stream(input_tokens=25, cached_input_tokens=80),
         evaluator=lambda *_args: core.EvaluationResult(scored=True, correct=True, quality_score=1.0),
@@ -373,7 +373,7 @@ def test_result_rows_show_gross_input_while_telemetry_retains_cache_detail(
 ) -> None:
     """Console output avoids cache-derived claims while JSONL retains provider evidence."""
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         transport=lambda *_args, **_kwargs: _completed_stream(input_tokens=120, cached_input_tokens=80),
         evaluator=lambda *_args: core.EvaluationResult(scored=True, correct=True, quality_score=1.0),
@@ -521,7 +521,7 @@ def test_retry_policy_only_retries_zero_token_transport_failures(
         return next(streams)
 
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         transport=_transport,
         evaluator=lambda *_args: core.EvaluationResult(scored=True, correct=True, quality_score=1.0),
@@ -562,7 +562,7 @@ def test_retry_policy_does_not_repeat_non_retryable_authentication_failures(
         return next(streams)
 
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         transport=_transport,
         evaluator=lambda *_args: core.EvaluationResult(scored=True, correct=True, quality_score=1.0),
@@ -657,7 +657,7 @@ def test_retry_policy_preserves_partial_response_when_usage_is_absent(
         return next(streams)
 
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         transport=_transport,
         evaluator=lambda *_args: core.EvaluationResult(scored=True, correct=True, quality_score=1.0),
@@ -690,7 +690,7 @@ def test_retry_attempts_share_one_coordinate_wall_clock_budget(
     clock = iter([0.0, 0.0, 600.0, 600.0])
     monkeypatch.setattr(script_run_codex.time, "monotonic", lambda: next(clock))
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         timeout=600.0,
         transport=_transport,
@@ -812,7 +812,7 @@ def test_runner_rejects_tampered_nested_provenance(script_run_codex: Any, tmp_pa
         "task_hash": "0" * 64,
     }
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         transport=lambda *_args, **_kwargs: _completed_stream(),
         evaluator=lambda *_args: core.EvaluationResult(scored=True, correct=True, quality_score=1.0),
@@ -1222,7 +1222,7 @@ def test_paid_skill_home_installs_only_from_bound_run_snapshot(
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         workspace,
         index_path=index_path,
         marketplace_root=marketplace_root,
@@ -1283,7 +1283,7 @@ def test_bound_runtime_snapshot_rejects_byte_drift_and_records_observed_identity
         snapshot_root,
         {"C_strict:codemap-py": source, "C_strict:codex-rig": rig_source},
     )
-    runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path)
     runner._bind_runtime_snapshot(
         snapshot_root,
         {"C_strict": {"codemap-py": source, "codex-rig": rig_source}},
@@ -1322,7 +1322,7 @@ def test_verified_runtime_identity_is_recorded_before_home_cleanup(script_run_co
         ),
         encoding="utf-8",
     )
-    runner = script_run_codex.CodexRunner("fixture-model", tmp_path, manifest_path=manifest_path)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path, manifest_path=manifest_path)
     runner._runtime_evidence_path = tmp_path / "runtime-isolation.jsonl"
     home = SimpleNamespace(codemap_plugin_path=codemap, codex_rig_path=codex_rig)
 
@@ -1372,7 +1372,7 @@ def test_initial_skill_admission_failure_keeps_identity_evidence_after_cleanup(
     marketplace_root = tmp_path / "marketplace"
     marketplace_root.mkdir()
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         manifest_path=manifest_path,
         marketplace_root=marketplace_root,
@@ -1571,7 +1571,7 @@ def test_prepare_verified_home_cleans_credential_home_after_keyboard_interrupt(
         """Interrupt authentication setup before provider execution."""
         raise KeyboardInterrupt("fixture interrupt")
 
-    runner = script_run_codex.CodexRunner("fixture-model", tmp_path, auth_source=auth_source)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path, auth_source=auth_source)
     monkeypatch.setattr(codex_diff_impact, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(codex_provisioning, "prepare_arm_home", _prepare)
     monkeypatch.setattr(codex_provisioning, "_write_permission_config", lambda *_args, **_kwargs: None)
@@ -1605,7 +1605,7 @@ def test_auth_source_path_validation_error_is_generic_and_does_not_expose_source
     alias = tmp_path / "source-alias"
     alias.symlink_to(source_root, target_is_directory=True)
     auth_source = alias / "auth.json"
-    runner = script_run_codex.CodexRunner("fixture-model", tmp_path, auth_source=auth_source)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path, auth_source=auth_source)
 
     with pytest.raises(ValueError) as raised:
         runner._ensure_auth_state()
@@ -1646,7 +1646,7 @@ def test_probe_verifies_authentication_without_disclosing_auth_source(
     fixture_index = tmp_path / "fixture-index.json"
     fixture_index.write_text("{}", encoding="utf-8")
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         index_path=fixture_index,
         auth_source=auth_source,
@@ -1687,7 +1687,7 @@ def test_runner_cleans_auth_home_when_transport_raises(
     fixture_index = tmp_path / "fixture-index.json"
     fixture_index.write_text("{}", encoding="utf-8")
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         index_path=fixture_index,
         auth_source=auth_source,
@@ -1733,7 +1733,7 @@ def test_runner_reuses_rotated_auth_state_without_mutating_immutable_source(
         codex_provisioning, "_verify_authentication", lambda home, **_kwargs: setattr(home, "authenticated", True)
     )
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         index_path=index_path,
         auth_source=source,
@@ -1798,7 +1798,7 @@ def test_runner_rejects_auth_source_drift_before_the_next_model_call(
         codex_provisioning, "_verify_authentication", lambda home, **_kwargs: setattr(home, "authenticated", True)
     )
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         index_path=index_path,
         auth_source=source,
@@ -2053,7 +2053,7 @@ def test_fixture_runtime_coordinate_is_distinct_from_graph_admission(
 def test_result_exposes_native_telemetry_and_turn_limit_capability(script_run_codex: Any, tmp_path: Path) -> None:
     """Every result keeps measurable Codex-native fields and the turn-limit gap."""
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         transport=lambda *_args, **_kwargs: _completed_stream(),
         evaluator=lambda *_args: core.EvaluationResult(scored=True, correct=True, quality_score=1.0),
@@ -2093,7 +2093,7 @@ def test_default_evaluator_score_and_identity_match_claude_reference(
 
 def test_runner_default_timeout_matches_shared_parity_contract(script_run_codex: Any, tmp_path: Path) -> None:
     """The Codex adapter inherits the same provider-neutral wall-clock budget."""
-    runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path)
 
     assert runner.timeout == core.PARITY_TIMEOUT_SECONDS == 600
 
@@ -2102,7 +2102,7 @@ def test_subprocess_timeout_and_nonzero_exit_keep_distinct_error_types(
     script_run_codex: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Transport timeout and nonzero exit remain separately diagnosable."""
-    runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path)
 
     monkeypatch.setattr(script_run_codex.subprocess, "Popen", _FakePopen.factory(timeout_after_streaming=""))
     monkeypatch.setattr(codex_structural_runner, "terminate_process_group", lambda _process: None)
@@ -2176,7 +2176,7 @@ def test_failed_coordination_cleanup_is_recorded_not_silently_dropped(
     A suppressed failure left the coordination root behind with no trace anywhere, so a leak was invisible until
     something later tripped over it.
     """
-    runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path)
     coordination = tmp_path / "coordination"
 
     def _refuse(_path: Path) -> None:
@@ -2196,7 +2196,7 @@ def test_successful_coordination_cleanup_records_nothing(
     script_run_codex: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The ordinary path stays silent."""
-    runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path)
     monkeypatch.setattr(codex_provisioning, "_cleanup_coordination_root", lambda _path: None)
 
     assert runner._cleanup_coordination(tmp_path / "coordination") is None
@@ -2207,7 +2207,7 @@ def test_coordination_cleanup_never_raises_from_a_finally_block(
     script_run_codex: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Raising from cleanup would mask the exception carrying the real cause."""
-    runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path)
 
     def _refuse(_path: Path) -> None:
         """Reject cleanup as though its target directory were not empty."""
@@ -2229,7 +2229,7 @@ def test_timed_out_transport_preserves_streamed_usage_events(
 
     Returning only an error envelope previously discarded billed tokens and persisted zero usage.
     """
-    runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path)
     streamed = _completed_stream(output="partial answer")
     monkeypatch.setattr(script_run_codex.subprocess, "Popen", _FakePopen.factory(timeout_after_streaming=streamed))
     monkeypatch.setattr(codex_structural_runner, "terminate_process_group", lambda _process: None)
@@ -2244,7 +2244,7 @@ def test_timed_out_transport_kills_the_whole_process_group(
     script_run_codex: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Killing only the direct child leaves descendants burning paid budget."""
-    runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path)
     terminated: list[Any] = []
     monkeypatch.setattr(script_run_codex.subprocess, "Popen", _FakePopen.factory(timeout_after_streaming=""))
     monkeypatch.setattr(codex_structural_runner, "terminate_process_group", terminated.append)
@@ -2265,7 +2265,7 @@ def test_transport_decodes_undecodable_bytes_instead_of_raising(
     script_run_codex: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Text mode without an error policy raises on malformed provider bytes."""
-    runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path)
     captured: dict[str, Any] = {}
 
     def _popen(*args: Any, **kwargs: Any) -> Any:
@@ -3689,7 +3689,7 @@ def test_main_plans_every_preregistered_pilot_coordinate_once(
 
     script_run_codex.main(
         repo_path=tmp_path,
-        model="gpt-5.6-luna",
+        model="gpt-6.1-sol",
         tasks_path=tmp_path / "tasks.json",
         task_ids=pilot_ids,
         repetitions=repetitions,
@@ -4336,7 +4336,7 @@ def test_input_snapshot_keeps_private_executable_launcher_for_later_b_home(
     assert archived_launcher.read_bytes() == launcher_bytes
 
     shutil.rmtree(runtime.parent)
-    adapter = script_run_codex.CodexRunner("fixture-model", tmp_path)
+    adapter = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path)
     adapter._bind_runtime_snapshot(
         snapshot_root,
         {"B_auto": {"direct-cli": archived_root}},
@@ -4960,7 +4960,7 @@ def test_diff_impact_contamination_persists_stage_and_worktree_evidence(script_r
     with stager:
         admission = script_run_codex._capture_diff_impact_stage(repo, task)
         runner = script_run_codex.CodexRunner(
-            "fixture",
+            "gpt-6.1-sol",
             repo,
             index_path=index,
             manifest_path=manifest,
@@ -5088,7 +5088,7 @@ def test_diff_impact_preflight_exercises_stage_admission_and_strict_revert(
 ) -> None:
     """No-model DI preflight proves enter, exact admission, and clean restoration together."""
     repo, index, manifest, task = _make_locked_diff_impact_repo(tmp_path)
-    runner = script_run_codex.CodexRunner("fixture", repo, index_path=index, manifest_path=manifest)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", repo, index_path=index, manifest_path=manifest)
     admitted: list[str] = []
 
     def _prepare(arm: str, *, diff_impact_stage: Any = None) -> Any:
@@ -5353,7 +5353,7 @@ def test_unified_paid_command_preserves_the_supplied_absolute_manifest_path(
         index_path=tmp_path / "locked-index.json",
         marketplace_root=tmp_path / "marketplace root",
         codemap_bin=tmp_path / "codemap-py",
-        model="gpt-5.6-luna",
+        model="gpt-6.1-sol",
         selectors=("RC", "FS-03"),
         scope_sha256="a" * 64,
         patch_pytest="/opt/bench runtime/bin/pytest",
@@ -5567,7 +5567,7 @@ def test_run_level_relocation_reaches_every_admission_inside_the_runner(
     index_path.parent.mkdir(parents=True)
     index_path.write_text(json.dumps({"scan_root": str(tmp_path), "modules": []}), encoding="utf-8")
     runner = script_run_codex.CodexRunner(
-        "gpt-5.6-luna",
+        "gpt-6.1-sol",
         tmp_path,
         index_path=index_path,
         manifest_path=MANIFEST_PATH,

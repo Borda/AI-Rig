@@ -223,8 +223,8 @@ def test_integration_manifest_locks_plain_cli_and_skill_arms_and_artifacts() -> 
 
     assert list(manifest["arms"]) == ["A_plain", "B_auto", "C_strict"]
     assert manifest["model"] == {
-        "name": "gpt-5.6-luna",
-        "additional_strata": ["gpt-5.6-terra", "gpt-5.6-sol"],
+        "name": "gpt-6.1-sol",
+        "additional_strata": ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"],
         "reasoning_effort": "high",
         "strict_config": True,
     }

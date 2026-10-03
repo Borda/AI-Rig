@@ -9,9 +9,10 @@ rather than trusting a supplied total.
 
 ## Scope
 
-Validate one ledger with at most three independent review rounds. It checks record shape and consistency, but does not
-establish that a named reviewer, revision, digest, or report really exists; those fields are traceability evidence for
-an external owner to inspect.
+Validate one scoped ledger whose weighted score strictly decreases after the baseline review. Scores are nonnegative
+integers, so continued improvement reaches a terminal result within a finite number of rounds without a fixed round
+cap. It checks record shape and consistency, but does not establish that a named reviewer, revision, digest, or report
+really exists; those fields are traceability evidence for an external owner to inspect.
 
 The current schema 2 splits the ledger in two files so completed rounds are only ever appended. ``loop-ledger.json`` is
 a small header (``schema_version``, ``implementation_author``, ``current_snapshot``) that the owner rewrites as the
@@ -46,8 +47,8 @@ appended.
 
 ## Failure
 
-The contract blocks clean acceptance without current-snapshot independent coverage, stops plateau, nonconverging, and
-capped loops, and rejects malformed records or history that loses a stable finding. Scope and authority checks for
+The contract blocks clean acceptance without current-snapshot independent coverage, stops plateau and nonconverging
+loops, and rejects malformed records or history that loses a stable finding. Scope and authority checks for
 structural or severe fixes remain with the parent workflow. A repeated fix without root-cause evidence is rejected by
 the optional action validation.
 
@@ -71,7 +72,6 @@ from typing import Any
 SCHEMA_VERSION = 2
 #: Historical single-file schema with every round inline; readable archives, never a current result.
 HISTORICAL_SCHEMA_VERSION = 1
-MAX_ROUNDS = 3
 _DISPOSITIONS = {"open", "fixed-pending-verification", "verified-fixed", "rejected"}
 _TIERS = {"security": 20, "critical": 10, "high": 6, "medium": 4, "low": 2, "nit": 1}
 _OPEN_DISPOSITIONS = {"open", "fixed-pending-verification"}
@@ -249,8 +249,6 @@ def _validate_rounds(payload: dict[str, Any], errors: list[str]) -> list[dict[st
     if not isinstance(value, list):
         errors.append("rounds-list-required")
         return []
-    if len(value) > MAX_ROUNDS:
-        errors.append("round-limit-exceeded")
     author = payload.get("implementation_author")
     prior_findings: dict[str, dict[str, Any]] = {}
     rounds: list[dict[str, Any]] = []
@@ -389,13 +387,11 @@ def _summary_from_valid(payload: dict[str, Any]) -> dict[str, object]:
             else:
                 decision = "clean"
         elif position > 1:
-            ratio = score / scores[-2]
-            if ratio >= 1:
+            previous_score = scores[-2]
+            if score > previous_score:
                 decision = "nonconverging"
-            elif ratio > 0.5:
+            elif score == previous_score:
                 decision = "plateau"
-        if position == MAX_ROUNDS and decision == "converging":
-            decision = "round-cap"
         round_summaries.append({"index": position, "score": score, "counts": counts, "decision": decision})
         if decision not in {"baseline", "converging"}:
             return {"status": "stopped", "reason": decision, "scores": scores, "rounds": round_summaries}

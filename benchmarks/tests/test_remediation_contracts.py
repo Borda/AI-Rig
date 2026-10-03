@@ -103,7 +103,7 @@ def test_materialized_review_prompt_is_ordered_and_hashes_the_exact_delivered_by
             )
         )
 
-    codex = script_run_codex.CodexRunner("fixture-model", tmp_path, transport=_codex_transport)
+    codex = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path, transport=_codex_transport)
     codex_result = codex.run(task, "A_plain")
 
     assert claude_commands[-1][-1] == delivered
@@ -146,7 +146,7 @@ def test_codex_preserves_shared_evaluator_extraction_failure(script_run_codex: A
         extraction_failed=True,
     )
     runner = script_run_codex.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         transport=lambda *_args, **_kwargs: json.dumps(
             {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}}
@@ -492,7 +492,7 @@ def test_codex_canonical_sidecar_keeps_raw_order_and_starts_non_poolable(script_
         index_path=None,
         output_path=telemetry,
         metadata_path=tmp_path / "run-metadata.json",
-        model="gpt-5.6-luna",
+        model="gpt-6.1-sol",
         reasoning_effort="high",
         repetitions=1,
         task_arms={("SE-01", 1): ("A_plain", "B_auto", "C_strict")},

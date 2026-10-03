@@ -124,7 +124,7 @@ def test_paid_stage_request_explains_missing_flags_and_stale_scope(stage_fix: An
         "study": "fix-single",
         "repo_path": tmp_path / "repo",
         "task_ids": ["FS-01", "FS-03"],
-        "model": "gpt-5.6-luna",
+        "model": "gpt-6.1-sol",
         "expected_scope": FIXTURE_SCOPE_SHA,
     }
 
@@ -155,8 +155,8 @@ def test_scope_binds_the_validated_source_and_index(stage_fix: Any) -> None:
     task = {"contract": SimpleNamespace(task_id="FS-01", provider_binding=lambda: {"task": "one"})}
     shared = {"repo_path": "/private/tmp/repo", "repo_sha256": "repo", "manifest_sha256": "manifest"}
 
-    first = stage_fix._resolve_scope([task], "gpt-5.6-luna", {**shared, "index_sha256": "one"})
-    second = stage_fix._resolve_scope([task], "gpt-5.6-luna", {**shared, "index_sha256": "two"})
+    first = stage_fix._resolve_scope([task], "gpt-6.1-sol", {**shared, "index_sha256": "one"})
+    second = stage_fix._resolve_scope([task], "gpt-6.1-sol", {**shared, "index_sha256": "two"})
 
     assert first["scope_sha256"] != second["scope_sha256"]
 
@@ -182,7 +182,7 @@ def test_patch_scope_and_snapshot_close_over_runtime_and_implementation(stage_fi
         }
     }
 
-    scope = stage_fix._resolve_scope([task], "gpt-5.6-luna", source_binding)
+    scope = stage_fix._resolve_scope([task], "gpt-6.1-sol", source_binding)
     files = stage_fix._patch_snapshot_files(tmp_path, [task])
 
     assert set(files) == {
@@ -240,7 +240,7 @@ def test_dry_run_emits_exact_paid_command_after_preflight(
         auth_source=None,
         run_dir=None,
         paid_approval=None,
-        model="gpt-5.6-luna",
+        model="gpt-6.1-sol",
         index_path=tmp_path / "repo/.cache/codemap/repo.json",
         marketplace_root=BENCHMARKS.parent,
         codemap_bin=BENCHMARKS.parent / "plugins/codemap-py/bin/codemap-py",
@@ -311,7 +311,7 @@ def test_full_study_dry_run_emits_paid_command_without_task_selector(
         auth_source=None,
         run_dir=None,
         paid_approval=None,
-        model="gpt-5.6-luna",
+        model="gpt-6.1-sol",
         index_path=tmp_path / "repo/.cache/codemap/repo.json",
         marketplace_root=BENCHMARKS.parent,
         codemap_bin=BENCHMARKS.parent / "plugins/codemap-py/bin/codemap-py",
@@ -386,7 +386,7 @@ def test_patch_stage_preflights_each_distinct_task_baseline(
         auth_source=None,
         run_dir=None,
         paid_approval=None,
-        model="gpt-5.6-luna",
+        model="gpt-6.1-sol",
         index_path=tmp_path / "repo/.cache/codemap/repo.json",
         marketplace_root=BENCHMARKS.parent,
         codemap_bin=BENCHMARKS.parent / "plugins/codemap-py/bin/codemap-py",
@@ -451,7 +451,7 @@ def test_patch_preflight_reports_each_historical_baseline(
         auth_source=None,
         run_dir=None,
         paid_approval=None,
-        model="gpt-5.6-luna",
+        model="gpt-6.1-sol",
         index_path=tmp_path / "repo/.cache/codemap/repo.json",
         marketplace_root=BENCHMARKS.parent,
         codemap_bin=BENCHMARKS.parent / "plugins/codemap-py/bin/codemap-py",

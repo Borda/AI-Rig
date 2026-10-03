@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.32.2
+
+- Give bounded local implementation and management tasks a parent-only path with relevant project checks.
+- Resolve serial fallback before digest consent, preserve supplied denials, and retain delegated-write safeguards.
+- Count failed primary attempts rather than productive diagnostics; allow useful recovery and later terminal states without rewriting its evidence.
+- Treat any review-score decrease as convergence and align feasible structural-fix/recurrence rules across plugins.
+- Detect overlapping/stale global instructions and known legacy skills; provide explicit digest-bound prefix migration with full backup and custom suffix preservation.
+- Reject pre-GPT-6 live routes before authentication or execution; preserve historical scoring archives.
+- Add outcome and composition regressions to calibration and clarify scoped follow-up decisions.
+- Preserve calibration failure reports for importable helpers missing required APIs, and distinguish historical policy quotes from active summary instructions.
+- Prepare and assemble current native challenges through a dedicated single-challenger route, preserving exact frozen context, terminal output, identity and historical evidence checks.
+
 ## 0.32.1
 
 - Block PR checkout when ignored local files overlap incoming paths, including filesystem aliases and file/directory replacements; preserve unrelated ignored files and distinct link names.

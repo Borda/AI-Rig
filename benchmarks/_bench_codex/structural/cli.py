@@ -723,6 +723,7 @@ def _resolve_execution_scope(
     from _bench_codex.stage_fix import resolve_fix_stage_scope
     from _bench_codex.stage_readcrop import resolve_readcrop_stage_scope
 
+    _validate_codex_stratum(model, reasoning_effort, manifest_path)
     scoped_stages: list[dict[str, Any]] = []
     for stage in selection["stages"]:
         stage_id = str(stage["stage_id"])
@@ -1007,7 +1008,7 @@ def cli(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag wi
     force_color: bool = False,
     hide_plan: bool = False,
     repo_path: str | None = None,
-    model: str | None = None,
+    model: str | None = PARITY_CODEX_MODEL,
     reasoning_effort: str = PARITY_CODEX_REASONING_EFFORT,
     manifest_path: str | Path = PARITY_MANIFEST_PATH,
     index_path: str | None = None,
@@ -1053,7 +1054,7 @@ def cli(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag wi
         hide_plan: Drop human ``PLAN`` rows in the renderer; requires
             ``--render-results``. Test-only.
         repo_path: Target repository clone; required for execution.
-        model: Codex model identifier; required for execution.
+        model: Codex model identifier; defaults to the current parent model.
         reasoning_effort: Locked Codex reasoning stratum; only
             ``PARITY_CODEX_REASONING_EFFORT`` is accepted.
         manifest_path: Active benchmark manifest defining the locked contract.
@@ -1135,6 +1136,7 @@ def cli(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag wi
         )
         print(f"rescored: {output_dir}")
         return
+    _validate_codex_stratum(str(model), reasoning_effort, Path(manifest_path))
     _require_execution_options(repo_path=repo_path, model=model)
     if reasoning_effort != PARITY_CODEX_REASONING_EFFORT:
         _cli_error(f"--reasoning-effort must be {PARITY_CODEX_REASONING_EFFORT!r}")

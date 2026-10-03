@@ -1529,7 +1529,7 @@ def test_reviewed_stopped_continuation_retains_prior_open_signature(tmp_path: Pa
     evidence["rounds"].append(second_entry)
     _write_json(evidence_path, evidence)
     loop = _module(PLUGIN_ROOT / "shared" / "adversarial_loop.py")
-    assert loop.summarize_ledger(ledger)["reason"] == "nonconverging"
+    assert loop.summarize_ledger(ledger)["reason"] == "plateau"
 
     current["validator"].validate_loop_evidence(run, current["codex_home"])
 
@@ -1856,3 +1856,252 @@ def test_final_rejects_prefixed_primary_labels(tmp_path: Path, label: str) -> No
 
     with pytest.raises(ValueError, match="loop-evidence-review-context-incomplete"):
         validator.validate_loop_evidence(run, fixture["sessions"])
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "none",
+        "raw",
+        "context",
+        "output",
+        "identity",
+        "mode",
+        "wrong-role",
+        "multiple-roles",
+        "forged-raw",
+        "brief-drift",
+        "preface",
+        "empty-diff",
+        "ordinary-empty-diff",
+        "completed-null",
+    ],
+)
+def test_native_preparation_reaches_strict_challenge_consumer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    """Bind a genuine headerless producer wave to challenge evidence and reject corrupted receipts."""
+    producer_tests = _module(REVIEW_TESTS / "test_review_prepare.py")
+    validator = _validator()
+    monkeypatch.setenv("CODEX_THREAD_ID", "parent")
+    run = tmp_path / "loop"
+    run.mkdir()
+    review = producer_tests._review_inputs(run, unchanged=damage in {"empty-diff", "ordinary-empty-diff"})
+    repository = run / "repository"
+    unchanged = damage in {"empty-diff", "ordinary-empty-diff"}
+    source_root = (
+        repository
+        if unchanged
+        else Path(
+            json.loads((review / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
+        )
+    )
+    committed_args = []
+    if unchanged:
+        head = subprocess.run(
+            ["git", "-C", str(repository), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        committed_args = ["--expected-head", head, "--expected-diff-base", head]
+    if damage == "ordinary-empty-diff":
+        ordinary = subprocess.run(
+            [
+                sys.executable,
+                str(producer_tests.HELPER),
+                "prepare",
+                "--out",
+                str(review),
+                "--run-id",
+                "bounded-review",
+                "--parent-thread-id",
+                "parent",
+                "--source-root",
+                str(source_root),
+                *committed_args,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert ordinary.returncode != 0 and "review-brief-source-unrelated" in ordinary.stderr
+        return
+    source = validator.capture_source_snapshot(repository, ["widget.py"])
+    source_bytes = validator._canonical_source_bytes(source)
+    diff_bytes = (review / "diff.patch").read_bytes()
+    source_digest = hashlib.sha256(source_bytes).hexdigest()
+    diff_digest = hashlib.sha256(diff_bytes).hexdigest()
+    request = json.dumps(REQUEST, sort_keys=True)
+    brief = f"Review request:\n{request}\nFrozen source:\n{source_bytes.decode('utf-8')}\nFrozen diff:\n{diff_bytes.decode('utf-8')}\n"
+    if damage == "brief-drift":
+        brief = brief.replace(source_bytes.decode("utf-8"), source_bytes.decode("utf-8") + "forged")
+    elif damage == "preface":
+        brief = "## Bounded review task\n" + brief
+    (review / "challenger-evidence.md").write_bytes(brief.encode("utf-8"))
+    routing = json.loads((review / "review-routing.json").read_text(encoding="utf-8"))
+    routing.update(triggered_roles=["challenger"], trigger_reasons={"challenger": ["Bounded challenge."]})
+    _write_json(review / "review-routing.json", routing)
+    briefs = json.loads((review / "review-briefs.json").read_text(encoding="utf-8"))
+    _write_json(review / "review-briefs.json", {"challenger": briefs["challenger"]})
+    prepared = subprocess.run(
+        [
+            sys.executable,
+            str(producer_tests.HELPER),
+            "prepare",
+            "--challenge-only",
+            "--out",
+            str(review),
+            "--run-id",
+            "bounded-review",
+            "--parent-thread-id",
+            "parent",
+            "--source-root",
+            str(source_root),
+            *committed_args,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert prepared.returncode == 0, prepared.stderr
+    dispatch = json.loads((review / "dispatch.json").read_text(encoding="utf-8"))
+    message = dispatch["calls"][0]["arguments"]["message"]
+    assert "Return exactly one raw JSON object or one fenced adversarial-loop block" in message
+    assert "Return your findings and Reviewer Assessment" not in message
+    response = json.dumps(
+        {
+            "source_sha256": source_digest,
+            "diff_sha256": diff_digest,
+            "findings": [],
+            "assessment": {
+                "rating": 1,
+                "rationale": json.dumps(
+                    {
+                        "reviewed_paths": ["widget.py"],
+                        "unreviewed_paths": [],
+                        "limits": "Offline runtime fixture.",
+                        "judgment": "Clean.",
+                    }
+                ),
+            },
+        }
+    )
+    if damage == "completed-null":
+        payload = json.loads(response)
+        payload.update(source_sha256=None, diff_sha256=None)
+        payload["assessment"]["rating"] = 5
+        response = json.dumps(payload)
+    terminal = "  \n" + response + "\n  "
+    _, home, _ = producer_tests._assembly_evidence(
+        run, prepared_run=review, findings={"challenger": terminal}, final_header="missing"
+    )
+    # The runtime fixture's legacy formatting prefix is deliberately retained as raw whitespace.
+    assembled = subprocess.run(
+        [
+            sys.executable,
+            str(producer_tests.HELPER),
+            "assemble",
+            "--challenge-only",
+            "--out",
+            str(review),
+            "--codex-home",
+            str(home),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if damage == "completed-null":
+        assert assembled.returncode != 0 and "review-assessment-content-invalid" in assembled.stderr
+        return
+    assert assembled.returncode == 0, assembled.stderr
+    manifest = json.loads((review / "specialist-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 8
+    assert len(manifest["passes"]) == 1
+    attempt = manifest["passes"][0]["attempts"][0]
+    normalized = (review / attempt["output_path"]).read_bytes()
+    raw = (review / attempt["raw_output_path"]).read_bytes()
+    assert normalized == (response + "\n").encode("utf-8")
+    assert raw == ("\n" + terminal).encode("utf-8")
+    assert raw != normalized and b"codex-review-provenance" not in raw
+    for filename in ("current-source.json", "source-1.json"):
+        (run / filename).write_bytes(source_bytes)
+    (run / "round-1.diff").write_bytes(diff_bytes)
+    (run / "review-1.md").write_bytes(raw if damage == "raw" else normalized)
+    _write_ledger(
+        run / "loop-ledger.json",
+        {
+            "schema_version": 2,
+            "implementation_author": "parent",
+            "current_snapshot": {"revision": source["revision"], "diff_digest": diff_digest},
+            "rounds": [
+                {
+                    "index": 1,
+                    "reviewer": {"identity": attempt["agent_thread_id"], "independent": True},
+                    "snapshot": {"revision": source["revision"], "diff_digest": diff_digest},
+                    "report_path": "review-1.md",
+                    "findings": [],
+                }
+            ],
+        },
+    )
+    _write_json(
+        run / "loop-evidence.json",
+        {
+            "schema_version": 2,
+            "origin": {"kind": "first-run", "caller_run": None, "prior_ledger_sha256": None},
+            "repository": repository.as_posix(),
+            "scope_paths": ["widget.py"],
+            "current_source_path": "current-source.json",
+            "request": REQUEST,
+            "supporting_paths": [],
+            "current_supporting_source_path": None,
+            "rounds": [
+                {
+                    "index": 1,
+                    "source_path": "source-1.json",
+                    "review_run": "review",
+                    "role": "challenger",
+                    "supporting_source_path": None,
+                    "triage": [],
+                }
+            ],
+        },
+    )
+    if damage in {"context", "output"}:
+        path = review / attempt[f"{damage}_path"]
+        path.write_bytes(path.read_bytes() + b"forged")
+    elif damage == "forged-raw":
+        raw_path = review / attempt["raw_output_path"]
+        raw_path.write_bytes(raw + b"forged")
+        attempt["raw_output_sha256"] = hashlib.sha256(raw_path.read_bytes()).hexdigest()
+        _write_json(review / "specialist-manifest.json", manifest)
+    elif damage in {"wrong-role", "multiple-roles"}:
+        plan_path = review / "inspection-plan.json"
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        if damage == "wrong-role":
+            plan["contexts"][0]["role_id"] = "qa-specialist"
+        else:
+            plan["contexts"].append(dict(plan["contexts"][0]))
+        _write_json(plan_path, plan)
+        manifest["inspection_execution"]["plan_sha256"] = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+        _write_json(review / "specialist-manifest.json", manifest)
+    elif damage == "identity":
+        attempt["agent_thread_id"] = "forged-child"
+        _write_json(review / "specialist-manifest.json", manifest)
+    elif damage == "mode":
+        result = producer_tests._assemble(review, home)
+        assert result.returncode != 0 and "review-challenge-mode-mismatch" in result.stderr
+        return
+    if damage in {"none", "raw", "empty-diff"}:
+        validator.validate_loop_evidence(run, home)
+    elif damage in {"brief-drift", "preface"}:
+        expected = (
+            "loop-evidence-review-context-incomplete"
+            if damage == "brief-drift"
+            else "loop-evidence-review-preface-invalid"
+        )
+        with pytest.raises(ValueError, match=expected):
+            validator.validate_loop_evidence(run, home)
+    else:
+        with pytest.raises(ValueError, match="loop-evidence-review-manifest-invalid"):
+            validator.validate_loop_evidence(run, home)

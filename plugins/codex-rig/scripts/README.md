@@ -90,11 +90,15 @@ python3 plugins/codex-rig/scripts/validate_package.py
 **Usage** (verified via `--help`):
 
 ```
-usage: install_global_agents.py [-h] [--source SOURCE] --codex-home CODEX_HOME [--remove]
+usage: install_global_agents.py [-h] [--source SOURCE] --codex-home CODEX_HOME
+                               [--remove | --check | --migrate-legacy-prefix-sha256 DIGEST]
 
 --source SOURCE          packaged assets/AGENTS.md template (required unless --remove)
 --codex-home CODEX_HOME  target Codex home
 --remove                 strip the managed block instead of installing it
+--check                  read-only bounded instruction and legacy-route health check
+--migrate-legacy-prefix-sha256 DIGEST
+                         explicitly migrate the exact reviewed old global prefix
 ```
 
 **How-to:**
@@ -103,6 +107,8 @@ usage: install_global_agents.py [-h] [--source SOURCE] --codex-home CODEX_HOME [
 python3 plugins/codex-rig/scripts/install_global_agents.py \
     --source plugins/codex-rig/assets/AGENTS.md --codex-home ~/.codex
 ```
+
+**Safety:** Ordinary install refuses an overlapping unmanaged global policy before writes. `--check` detects overlap, stale or invalid managed blocks, and exact recognized legacy `develop`/`analyse` skill descriptions; optional absence is valid. Migration authenticates the current managed block, requires the old prefix SHA-256, saves the full original, and preserves custom suffix bytes. It does not delete skills. Observed concurrent drift rejects replacement, although no portable atomic compare-and-swap prevents the final check/replace race; a verified backup may remain after late rejection.
 
 **When-to-use:** During plugin install/sync (called by `sync_codex.py`'s install path) or when diagnosing a `CODEX_HOME/AGENTS.md` that has stale or missing managed block. Use `--remove` to strip block cleanly, e.g. before uninstalling plugin.
 
@@ -244,7 +250,7 @@ python3 plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/lo
 python3 plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --actions <run-directory>/loop-actions.json
 ```
 
-The progress table has exactly `Iteration | Critical | High | Medium | Low | Nits | Weighted score`. Every numeric cell is literal `old + new`: currently open signatures seen in any prior round, including signatures that were closed and later reopened, plus signatures first seen in the current round. Only `open` and `fixed-pending-verification` count; security and critical combine in the display, while scoring retains weights `20/10/6/4/2/1`. Invoke after each newly completed validated round; an empty ledger prints no progress table or unreviewed zero row. Feasible structural or repeated findings may continue when score and authority permit; plateau, nonconvergence, three rounds and unavailable evidence still stop.
+The progress table has exactly `Iteration | Critical | High | Medium | Low | Nits | Weighted score`. Every numeric cell is literal `old + new`: currently open signatures seen in any prior round, including signatures that were closed and later reopened, plus signatures first seen in the current round. Only `open` and `fixed-pending-verification` count; security and critical combine in the display, while scoring retains weights `20/10/6/4/2/1`. Invoke after each newly completed validated round; an empty ledger prints no progress table or unreviewed zero row. Feasible structural or repeated findings may continue when score and authority permit; plateau, nonconvergence, unavailable evidence, the third occurrence of the same open signature and stricter caller budgets still stop their affected routes. No arbitrary three-review cap applies to strictly decreasing unchanged-scope integer scores.
 
 `--require-clean` remains an independent exit-status gate. The final adversarial-loop result table is not replaced by this in-turn stderr transcript.
 

@@ -32,6 +32,7 @@ def _review_inputs(
     deleted: bool = False,
     large_source: bool = False,
     large_patch: bool = False,
+    unchanged: bool = False,
 ) -> Path:
     """Write semantic reviewer decisions while leaving mechanical evidence to the producer."""
     spec = importlib.util.spec_from_file_location("prepare_validator", SKILL / "validate_artifacts.py")
@@ -62,29 +63,35 @@ def _review_inputs(
     (repository / "widget.py").write_text(
         "value = 2\n" + ("changed = 'café'\n" * 18000 if large_patch else stable_source), encoding="utf-8", newline="\n"
     )
+    if unchanged:
+        (repository / "widget.py").write_text("value = 1\n" + stable_source, encoding="utf-8", newline="\n")
     if second_file:
         (repository / "other.py").write_text("other = 2\n", encoding="utf-8", newline="\n")
     if deleted:
         (repository / "widget.py").unlink()
     if untracked:
         (repository / "new.txt").write_text("new_value = 7\n", encoding="utf-8", newline="\n")
-    collected = subprocess.run(
-        [
-            sys.executable,
-            str(PLUGIN_ROOT / "shared/collect_diff.py"),
-            "--review-worktree",
-            "--repository",
-            str(repository),
-            "--out",
-            str(run / "local-source"),
-        ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    assert collected.returncode == 0, collected.stderr
-    (run / "diff.patch").write_bytes((run / "local-source/diff.patch").read_bytes())
+    if unchanged:
+        subprocess.run(["git", "-C", str(repository), "checkout", "--detach", "-q"], check=True, capture_output=True)
+        (run / "diff.patch").write_bytes(b"")
+    else:
+        collected = subprocess.run(
+            [
+                sys.executable,
+                str(PLUGIN_ROOT / "shared/collect_diff.py"),
+                "--review-worktree",
+                "--repository",
+                str(repository),
+                "--out",
+                str(run / "local-source"),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        assert collected.returncode == 0, collected.stderr
+        (run / "diff.patch").write_bytes((run / "local-source/diff.patch").read_bytes())
     if untracked:
         (run / "untracked.txt").write_text("new.txt\n", encoding="utf-8", newline="\n")
     roles = ["challenger", "qa-specialist"]
@@ -141,7 +148,12 @@ def test_review_source_fixture_preserves_utf8_lf_under_windows_defaults(
 
 
 def _prepare(
-    run: Path, *, source_root: Path | None = None, expected_head: str | None = None, scope_path: str | None = None
+    run: Path,
+    *,
+    source_root: Path | None = None,
+    expected_head: str | None = None,
+    scope_path: str | None = None,
+    challenge_only: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Invoke the shipped producer as an installed-path command."""
     if source_root is None:
@@ -161,6 +173,8 @@ def _prepare(
         "--source-root",
         str(source_root),
     ]
+    if challenge_only:
+        command.append("--challenge-only")
     if expected_head is not None:
         command.extend(["--expected-head", expected_head])
         base = subprocess.run(
@@ -721,23 +735,83 @@ def _assembly_evidence(
     return run, home, children
 
 
-def _assemble(run: Path, home: Path) -> subprocess.CompletedProcess[str]:
+def _assemble(run: Path, home: Path, *, challenge_only: bool = False) -> subprocess.CompletedProcess[str]:
     """Invoke the shipped assembly command against synthetic native sessions."""
     return subprocess.run(
-        [sys.executable, str(HELPER), "assemble", "--out", str(run), "--codex-home", str(home)],
+        [
+            sys.executable,
+            str(HELPER),
+            "assemble",
+            "--out",
+            str(run),
+            "--codex-home",
+            str(home),
+            *(["--challenge-only"] if challenge_only else []),
+        ],
         capture_output=True,
         text=True,
         check=False,
     )
 
 
-@pytest.mark.parametrize("case", ["repair", "parent-miscopy", "source-read", "no-diagnostic", "wrong-parent"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "repair",
+        "parent-miscopy",
+        "source-read",
+        "no-diagnostic",
+        "wrong-parent",
+        "challenge-raw",
+        "challenge-fenced",
+        "challenge-nonblocker",
+        "challenge-malformed",
+        "challenge-malformed-shape",
+        "challenge-unproven",
+        "challenge-partial-digest",
+        "challenge-with-findings",
+    ],
+)
 def test_same_wave_dispatch_repair_requires_observed_preassessment_failure(tmp_path: Path, case: str) -> None:
     """Recover a failed reader dispatch without dropping original allocation or valid sibling evidence."""
-    run = _five_role_review_inputs(tmp_path)
-    assert _prepare(run).returncode == 0
-    run, home, children = _assembly_evidence(tmp_path, prepared_run=run, active_limit=4)
-    role = "sw-engineer"
+    challenge = case.startswith("challenge-")
+    run = _review_inputs(tmp_path) if challenge else _five_role_review_inputs(tmp_path)
+    final_message = ""
+    if challenge:
+        source_bytes = (run / "local-source/source-snapshot.json").read_bytes()
+        diff_bytes = (run / "diff.patch").read_bytes()
+        source_digest, diff_digest = (hashlib.sha256(content).hexdigest() for content in (source_bytes, diff_bytes))
+        request = {
+            "goal": "Review the frozen implementation",
+            "specification": f"Use source_sha256={source_digest} and diff_sha256={diff_digest}; return structured findings and assessment.",
+            "done_when": "Independent source inspection completed.",
+        }
+        brief = f"Review request:\n{json.dumps(request, sort_keys=True)}\nFrozen source:\n{source_bytes.decode('utf-8')}\nFrozen diff:\n{diff_bytes.decode('utf-8')}\n"
+        (run / "challenger-evidence.md").write_bytes(brief.encode("utf-8"))
+        final_message = json.dumps(
+            {
+                "source_sha256": source_digest,
+                "diff_sha256": diff_digest,
+                "findings": [],
+                "assessment": {"rating": 1, "rationale": "Completed frozen review."},
+            }
+        )
+        routing = json.loads((run / "review-routing.json").read_text(encoding="utf-8"))
+        routing.update(triggered_roles=["challenger"], trigger_reasons={"challenger": ["Bounded challenge."]})
+        (run / "review-routing.json").write_text(json.dumps(routing), encoding="utf-8", newline="\n")
+        briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
+        (run / "review-briefs.json").write_text(
+            json.dumps({"challenger": briefs["challenger"]}), encoding="utf-8", newline="\n"
+        )
+    assert _prepare(run, challenge_only=challenge).returncode == 0
+    run, home, children = _assembly_evidence(
+        tmp_path,
+        prepared_run=run,
+        active_limit=4,
+        findings={"challenger": final_message} if challenge else None,
+        final_header="missing" if challenge else "complete",
+    )
+    role = "challenger" if challenge else "sw-engineer"
     child = children[role]
     original_rows = [json.loads(line) for line in child.read_text().splitlines()]
     rows = json.loads(json.dumps(original_rows))
@@ -756,7 +830,7 @@ def test_same_wave_dispatch_repair_requires_observed_preassessment_failure(tmp_p
             {
                 "type": "input_text",
                 "text": "usage: review_prepare.py\nerror: unsupported arguments"
-                if case != "no-diagnostic"
+                if case not in {"no-diagnostic", "challenge-unproven"}
                 else "Unknown failure",
             },
         ]
@@ -765,7 +839,32 @@ def test_same_wave_dispatch_repair_requires_observed_preassessment_failure(tmp_p
         row["payload"] for row in rows if row["type"] == "event_msg" and row["payload"].get("type") == "task_complete"
     )
     blocked_message = "Reader dispatch failed before source inspection.\n\n## Reviewer Assessment\nRating: 5\nRationale: No frozen source pages were available."
+    if challenge:
+        blocked = {
+            "source_sha256": None,
+            "diff_sha256": None,
+            "findings": [],
+            "assessment": {
+                "rating": 1 if case == "challenge-nonblocker" else 5,
+                "rationale": "No frozen source pages were available.",
+            },
+        }
+        if case == "challenge-partial-digest":
+            blocked["source_sha256"] = "a" * 64
+        elif case == "challenge-with-findings":
+            blocked["findings"] = [{"signature": "uninspected-claim"}]
+        blocked_message = json.dumps(blocked)
+        if case == "challenge-fenced":
+            blocked_message = f"```adversarial-loop\n{blocked_message}\n```"
+        elif case == "challenge-malformed-shape":
+            del blocked["findings"]
+            blocked_message = json.dumps(blocked)
+        elif case == "challenge-malformed":
+            blocked_message = "```adversarial-loop\n{broken JSON}\n```"
     terminal["last_agent_message"] = blocked_message
+    if case in {"challenge-raw", "challenge-fenced"}:
+        assert all(source_digest not in json.dumps(row) and diff_digest not in json.dumps(row) for row in rows)
+        assert "source_sha256 and diff_sha256 as null" in json.dumps(rows)
     parent_path = home / "sessions/rollout-parent.jsonl"
     parent = [json.loads(line) for line in parent_path.read_text().splitlines()]
     for row in parent:
@@ -811,7 +910,25 @@ def test_same_wave_dispatch_repair_requires_observed_preassessment_failure(tmp_p
         "incomplete-dispatch",
     ]
     prepared = subprocess.run(command, capture_output=True, text=True, check=False)
-    if case not in {"repair", "parent-miscopy"}:
+    if case in {
+        "challenge-nonblocker",
+        "challenge-malformed",
+        "challenge-malformed-shape",
+        "challenge-unproven",
+        "challenge-partial-digest",
+        "challenge-with-findings",
+    }:
+        expected = {
+            "challenge-nonblocker": "assessment-content-invalid",
+            "challenge-malformed": "assessment-content-invalid",
+            "challenge-malformed-shape": "assessment-content-invalid",
+            "challenge-unproven": "failure-unproven",
+            "challenge-partial-digest": "assessment-content-invalid",
+            "challenge-with-findings": "assessment-content-invalid",
+        }[case]
+        assert prepared.returncode != 0 and expected in prepared.stderr
+        return
+    if case not in {"repair", "parent-miscopy", "challenge-raw", "challenge-fenced"}:
         assert prepared.returncode != 0
         assert (
             "source-already-read"
@@ -881,14 +998,23 @@ def test_same_wave_dispatch_repair_requires_observed_preassessment_failure(tmp_p
         ]
     )
     _write_jsonl(parent_path, parent)
-    assembled = _assemble(run, home)
+    assembled = _assemble(run, home, challenge_only=challenge)
     assert assembled.returncode == 0, assembled.stderr
     manifest = json.loads((run / "specialist-manifest.json").read_text())
     repaired = next(item for item in manifest["passes"] if item["role"] == role)
     assert repaired["selected_attempt"] == 2
     assert len(repaired["attempts"]) == 2
+    if challenge:
+        original = (run / repaired["attempts"][0]["output_path"]).read_text(encoding="utf-8").strip()
+        assert original == blocked_message
+        selected = json.loads((run / repaired["output_path"]).read_text(encoding="utf-8"))
+        assert selected["source_sha256"] == source_digest
+        assert selected["diff_sha256"] == diff_digest
+        assert selected["assessment"]["rating"] == 1
     assert all(item["selected_attempt"] == 1 for item in manifest["passes"] if item["role"] != role)
-    assert json.loads((run / "inspection-summary.json").read_text())["actual_mode"] == "parallel"
+    assert json.loads((run / "inspection-summary.json").read_text())["actual_mode"] == (
+        "serial" if challenge else "parallel"
+    )
 
 
 def test_prepare_freezes_complete_wave_and_keeps_source_out_of_dispatch(tmp_path: Path) -> None:

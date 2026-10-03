@@ -25,6 +25,19 @@ SCRIPTS_DIR = PLUGIN_ROOT / "scripts"
 SYNC_SCRIPT = PLUGIN_ROOT / "scripts" / "sync_codex.py"
 
 
+def test_check_only_workflow_reaches_instruction_health_before_refresh_boundary() -> None:
+    """A read-only sync check must diagnose composed instructions before its mandatory stop."""
+    skill = (PLUGIN_ROOT / "skills" / "sync" / "SKILL.md").read_text(encoding="utf-8")
+    health = skill.index("### Global instruction health")
+    boundary = skill.index("### 04: Stop after dry run")
+    refresh = skill.index("### 05: Refresh through the Codex CLI")
+
+    assert health < boundary < refresh
+    assert "install_global_agents.py --check" in skill[health:boundary]
+    assert "A nonzero result is degraded instruction composition" in skill[health:boundary]
+    assert "A check-only request" in skill[boundary:refresh]
+
+
 @pytest.mark.parametrize("action", ["install", "clear"])
 def test_sync_checks_python310_tomli_before_local_changes(monkeypatch: pytest.MonkeyPatch, action: str) -> None:
     """A missing parser must stop either sync action before invoking a command."""
@@ -733,3 +746,23 @@ def test_system_runner_rejects_simulated_windows_batch_shell_syntax(
 
     with pytest.raises(OSError, match="unsafe Windows batch command"):
         module._resolve_system_command(["codex", "plugin", "add", argument], windows=True)
+
+
+def test_sync_rejects_degraded_instruction_composition_after_install(tmp_path: Path) -> None:
+    """Package installation success cannot conceal a degraded active instruction check."""
+    module = _load_sync()
+    root = _marketplace_fixture(tmp_path)
+    calls: list[tuple[str, ...]] = []
+    base_run = _fake_runner(root, calls)
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Return the diagnostic failure from the external instruction helper."""
+        if len(command) > 1 and Path(command[1]).name == "install_global_agents.py" and "--check" in command:
+            calls.append(tuple(str(item) for item in command))
+            return subprocess.CompletedProcess(command, 4, "", "global-agents-check: legacy-skill-route:develop")
+        return base_run(command, **kwargs)
+
+    output = io.StringIO()
+    with pytest.raises(module.SyncError, match="legacy-skill-route:develop"):
+        module.sync_codex(module.parse_args([]), run=run, environ={"CODEX_HOME": str(tmp_path / "home")}, stdout=output)
+    assert "Start a fresh Codex session" not in output.getvalue()

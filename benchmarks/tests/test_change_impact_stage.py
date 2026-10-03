@@ -64,11 +64,11 @@ def test_paid_impact_lifecycle_uses_isolated_fixture_and_native_rows(
 
         yield SimpleNamespace(run_cell=_run)
 
-    scope = stage.resolve_scope("codex", model="gpt-5.6-terra")
+    scope = stage.resolve_scope("codex", model="gpt-6.1-sol")
     destination = tmp_path / "paid"
     stage.run_stage(
         provider="codex",
-        model="gpt-5.6-terra",
+        model="gpt-6.1-sol",
         paid_approval=scope["scope_sha256"][:16],
         output_dir=destination,
         runtime_factory=_runtime,
@@ -153,7 +153,7 @@ def test_impact_scope_binds_provider_model_and_frozen_index(provider: str) -> No
     assert scope["paid_admission"] == "exact_scope_approval_and_native_runtime_preflight_required"
     assert len(scope["fixture_sha256"]) == 64
     assert len(scope["scope_sha256"]) == 64
-    assert scope["model"] == ("sonnet" if provider == "claude" else "gpt-5.6-terra")
+    assert scope["model"] == ("sonnet" if provider == "claude" else "gpt-6.1-sol")
     assert len(scope["semantic_index_sha256"]) == 64
 
 
@@ -324,7 +324,7 @@ def test_scope_is_stable_but_model_timeout_and_source_changes_invalidate_it(
     """Approval survives only temporary-root/timestamp changes, never semantic input changes."""
     original = stage.resolve_scope("codex")
     assert original == stage.resolve_scope("codex")
-    assert original["scope_sha256"] != stage.resolve_scope("codex", model="gpt-5.6-sol")["scope_sha256"]
+    assert original["scope_sha256"] != stage.resolve_scope("codex", model="gpt-6-sol")["scope_sha256"]
     assert original["scope_sha256"] != stage.resolve_scope("codex", timeout=5)["scope_sha256"]
     fixture = tmp_path / "fixture"
     shutil.copytree(stage._FIXTURE, fixture)
@@ -343,12 +343,12 @@ def test_stale_approval_never_opens_provider_or_output(tmp_path: Path) -> None:
         """Fail the test if a rejected request reaches the external provider boundary."""
         pytest.fail("stale approval reached provider")
 
-    scope = stage.resolve_scope("codex", model="gpt-5.6-sol")
+    scope = stage.resolve_scope("codex", model="gpt-6-sol")
     destination = tmp_path / "stale"
     with pytest.raises(ValueError, match="current scope approval"):
         stage.run_stage(
             provider="codex",
-            model="gpt-5.6-terra",
+            model="gpt-6.1-sol",
             paid_approval=scope["scope_sha256"][:16],
             output_dir=destination,
             runtime_factory=_runtime,

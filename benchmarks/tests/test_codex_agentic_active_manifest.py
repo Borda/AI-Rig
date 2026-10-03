@@ -118,8 +118,8 @@ def test_manifest_locks_shared_scope_and_identity() -> None:
     manifest = _load(MANIFEST)
     assert manifest["experiment_id"] == "codex-agentic"
     assert manifest["model"] == {
-        "name": "gpt-5.6-luna",
-        "additional_strata": ["gpt-5.6-terra", "gpt-5.6-sol"],
+        "name": "gpt-6.1-sol",
+        "additional_strata": ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"],
         "reasoning_effort": "high",
         "strict_config": True,
     }

@@ -171,7 +171,7 @@ def test_global_agents_installer_updates_authenticated_block(tmp_path: Path) -> 
 def test_global_agents_installer_adopts_exact_legacy_copy(tmp_path: Path) -> None:
     """Prevent an old unmarked full-template copy from being duplicated during migration."""
     source = tmp_path / "template.md"
-    source.write_text("legacy generic policy\n", encoding="utf-8")
+    source.write_text("# Global Agent Instructions\nlegacy generic policy\n", encoding="utf-8")
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir()
     target = codex_home / "AGENTS.md"
@@ -341,25 +341,211 @@ def test_remove_requires_no_source_argument(tmp_path: Path) -> None:
     assert "--source is required unless --remove" in missing_source.stderr
 
 
-def test_installer_warns_on_unmanaged_global_policy_without_deleting_it(tmp_path: Path) -> None:
-    """Expose a legacy-policy collision on merge and repeat while preserving user bytes."""
+@pytest.mark.parametrize("managed_state", ("absent", "current", "stale"))
+def test_installer_refuses_overlapping_global_policy_without_writes(tmp_path: Path, managed_state: str) -> None:
+    """Reject legacy collisions before mutation, including otherwise idempotent updates."""
+    namespace = runpy.run_path(str(INSTALLER))
     source = tmp_path / "template.md"
-    source.write_bytes(b"# Global Agent Instructions\n\nCurrent model policy.\n")
+    source.write_bytes(b"# Global Agent Instructions\n\nCurrent policy.\n")
     codex_home = tmp_path / "home"
     codex_home.mkdir()
     target = codex_home / "AGENTS.md"
-    original = b"# Global Agent Instructions\n\nPRIVATE user model policy.\n"
+    original = b"# Global Agent Instructions\n\nPRIVATE old policy.\n\n"
+    if managed_state != "absent":
+        body = source.read_bytes() if managed_state == "current" else b"# Global Agent Instructions\nOld managed.\n"
+        original += namespace["managed_block"](body)
     target.write_bytes(original)
-    first = _run_installer(source, codex_home)
-    merged = target.read_bytes()
-    second = _run_installer(source, codex_home)
-    assert first.returncode == second.returncode == 0
-    assert merged.startswith(original)
-    assert target.read_bytes() == merged
-    for result in (first, second):
-        assert "global-agents-overlap" in result.stderr
-        assert "Review and migrate" in result.stderr
-        assert "PRIVATE" not in result.stderr
+
+    result = _run_installer(source, codex_home)
+
+    assert result.returncode == 4
+    assert target.read_bytes() == original
+    assert not (codex_home / "backups").exists()
+    assert "overlap" in result.stderr
+    assert "PRIVATE" not in result.stderr
+    assert "[ok]" not in result.stdout
+
+
+def _run_mode(source: Path, codex_home: Path, *options: str) -> subprocess.CompletedProcess[str]:
+    """Exercise explicit diagnostic or migration options through the public CLI."""
+    return subprocess.run(
+        [sys.executable, str(INSTALLER), "--source", str(source), "--codex-home", str(codex_home), *options],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize("heading_ending", (pytest.param(b"\n", id="lf"), pytest.param(b"\r\n", id="crlf")))
+def test_prefix_migration_preserves_suffix_and_full_backup(tmp_path: Path, heading_ending: bytes) -> None:
+    """Remove the exact reviewed LF or CRLF prefix and retain custom suffix bytes."""
+    namespace = runpy.run_path(str(INSTALLER))
+    source = tmp_path / "template.md"
+    source.write_bytes(b"# Global Agent Instructions\nCurrent.\n")
+    codex_home = tmp_path / "home"
+    codex_home.mkdir()
+    target = codex_home / "AGENTS.md"
+    prefix = b"# Global Agent Instructions" + heading_ending + b"PRIVATE old policy.\r\n\r\n"
+    suffix = b"\n# Personal policy\r\nKeep exact bytes.\r\n"
+    block = namespace["managed_block"](source.read_bytes())
+    original = prefix + block + suffix
+    target.write_bytes(original)
+
+    result = _run_mode(source, codex_home, "--migrate-legacy-prefix-sha256", hashlib.sha256(prefix).hexdigest())
+
+    assert result.returncode == 0, result.stderr
+    assert target.read_bytes() == block + suffix
     backups = list((codex_home / "backups" / "codex-rig").glob("*-AGENTS.md"))
     assert len(backups) == 1
     assert backups[0].read_bytes() == original
+
+
+@pytest.mark.parametrize("damage", ("digest", "body", "ambiguous-prefix"))
+def test_prefix_migration_refuses_unreviewed_bytes(tmp_path: Path, damage: str) -> None:
+    """Fail without writes when migration consent or managed integrity is stale."""
+    namespace = runpy.run_path(str(INSTALLER))
+    source = tmp_path / "template.md"
+    source.write_bytes(b"# Global Agent Instructions\nCurrent.\n")
+    codex_home = tmp_path / "home"
+    codex_home.mkdir()
+    prefix = b"# Global Agent Instructions\nLegacy.\n\n"
+    digest = hashlib.sha256(prefix).hexdigest()
+    block = namespace["managed_block"](source.read_bytes())
+    if damage == "digest":
+        digest = "0" * 64
+    elif damage == "body":
+        block = block.replace(b"Current.", b"Modified.")
+    else:
+        prefix = b"# Personal policy\n" + prefix
+    original = prefix + block
+    target = codex_home / "AGENTS.md"
+    target.write_bytes(original)
+
+    result = _run_mode(source, codex_home, "--migrate-legacy-prefix-sha256", digest)
+
+    assert result.returncode == 4
+    assert target.read_bytes() == original
+    assert not (codex_home / "backups").exists()
+
+
+@pytest.mark.parametrize(
+    "state", ("absent", "current", "stale", "duplicate", "modified", "orphan-marker", "legacy-skill")
+)
+def test_check_is_read_only_and_rejects_degraded_state(tmp_path: Path, state: str) -> None:
+    """Diagnose bounded instruction drift without making backups or modifying files."""
+    namespace = runpy.run_path(str(INSTALLER))
+    source = tmp_path / "template.md"
+    source.write_bytes(b"# Global Agent Instructions\nCurrent.\n")
+    codex_home = tmp_path / "home"
+    block = namespace["managed_block"](source.read_bytes())
+    if state != "absent":
+        codex_home.mkdir()
+        payload = block
+        if state == "stale":
+            payload = namespace["managed_block"](b"# Global Agent Instructions\nOld.\n")
+        elif state == "duplicate":
+            payload = b"# Global Agent Instructions\nPRIVATE.\n" + block
+        elif state == "modified":
+            payload = block.replace(b"Current.", b"Modified.")
+        elif state == "orphan-marker":
+            payload = block.replace(END_MARKER.encode("ascii"), b"")
+        (codex_home / "AGENTS.md").write_bytes(payload)
+        if state == "legacy-skill":
+            skill = codex_home / "skills" / "develop" / "SKILL.md"
+            skill.parent.mkdir(parents=True)
+            skill.write_bytes(
+                b"---\nname: develop\ndescription: Minimal codex-native develop loop. Use for implementation tasks with linear plan-build-verify flow and measurable quality gates.\n---\n"
+            )
+    before = {p.relative_to(codex_home): p.read_bytes() for p in codex_home.rglob("*") if p.is_file()}
+
+    result = _run_mode(source, codex_home, "--check")
+
+    assert result.returncode == (0 if state in {"absent", "current"} else 4), result.stderr
+    after = {p.relative_to(codex_home): p.read_bytes() for p in codex_home.rglob("*") if p.is_file()}
+    assert after == before
+    assert not (codex_home / "backups").exists()
+    assert "PRIVATE" not in result.stderr
+    if state == "absent":
+        assert not codex_home.exists()
+    if state == "legacy-skill":
+        assert "legacy-skill-route" in result.stderr
+
+
+def test_check_allows_unmanaged_optional_setup_and_custom_skill(tmp_path: Path) -> None:
+    """Do not classify absent management or unrelated same-name custom skills as corruption."""
+    source = tmp_path / "template.md"
+    source.write_bytes(b"# Global Agent Instructions\nCurrent.\n")
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "AGENTS.md").write_bytes(b"# Global Agent Instructions\nCustom policy.\n")
+    skill = home / "skills" / "develop" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_bytes(b"---\nname: develop\ndescription: Custom development workflow.\n---\n")
+
+    result = _run_mode(source, home, "--check")
+
+    assert result.returncode == 0, result.stderr
+    assert "bounded instruction check" in result.stdout
+    assert not (home / "backups").exists()
+
+
+def test_migration_requires_existing_managed_block_without_creating_home(tmp_path: Path) -> None:
+    """Reject removal consent that has no existing reviewed prefix to select."""
+    source = tmp_path / "template.md"
+    source.write_bytes(b"# Global Agent Instructions\nCurrent.\n")
+    home = tmp_path / "absent-home"
+
+    result = _run_mode(source, home, "--migrate-legacy-prefix-sha256", "0" * 64)
+
+    assert result.returncode == 4
+    assert not home.exists()
+
+
+def test_atomic_write_refuses_same_byte_target_replacement(tmp_path: Path) -> None:
+    """Reject replacement identity drift even when the target still has the same bytes."""
+    namespace = runpy.run_path(str(INSTALLER))
+    target = tmp_path / "AGENTS.md"
+    payload = b"observed\n"
+    target.write_bytes(payload)
+    identity = target.stat()
+    replacement = tmp_path / "replacement.md"
+    replacement.write_bytes(payload)
+    replacement.replace(target)
+
+    with pytest.raises(namespace["UnsafeGlobalAgentsState"], match="replaced"):
+        namespace["atomic_write"](target, b"desired\n", 0o600, payload, identity)
+
+    assert target.read_bytes() == payload
+    assert list(tmp_path.glob(".AGENTS.md.codex-rig-*")) == []
+
+
+def test_migration_refuses_concurrent_replacement_before_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Preserve a concurrently replaced target without creating migration backups."""
+    namespace = runpy.run_path(str(INSTALLER))
+    source = tmp_path / "template.md"
+    source.write_bytes(b"# Global Agent Instructions\nCurrent.\n")
+    home = tmp_path / "home"
+    home.mkdir()
+    prefix = b"# Global Agent Instructions\nLegacy.\n\n"
+    original = prefix + namespace["managed_block"](source.read_bytes())
+    target = home / "AGENTS.md"
+    target.write_bytes(original)
+    replacement = home / "concurrent.md"
+    replacement.write_bytes(original)
+    migrate = namespace["migrated_prefix_payload"]
+
+    def replace_after_review(existing: bytes, block: bytes, digest: str) -> bytes:
+        """Simulate replacement after migration validation but before backup creation."""
+        desired = migrate(existing, block, digest)
+        replacement.replace(target)
+        return desired
+
+    monkeypatch.setitem(namespace["install_global_agents"].__globals__, "migrated_prefix_payload", replace_after_review)
+
+    with pytest.raises(namespace["UnsafeGlobalAgentsState"], match="changed before backup"):
+        namespace["install_global_agents"](source, home, hashlib.sha256(prefix).hexdigest())
+
+    assert target.read_bytes() == original
+    assert not (home / "backups").exists()

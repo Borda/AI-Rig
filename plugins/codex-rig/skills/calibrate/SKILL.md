@@ -38,7 +38,7 @@ Repository maintainers may use `--layout source --root <source-project>` to vali
 
 ### 04: Inspect `../../runtime/calibration/run.py --help`, then run plugin layout against the consuming project
 
-Use `--require-live-routes` only for strict-live gate. Default offline scoring remains fixture-backed and makes no paid model calls.
+Use `--require-live-routes` only for strict-live gate. Default offline scoring remains fixture-backed and makes no paid model calls. Composition/outcome checks reject known redundant orchestration, conflicting active instructions, false progress stalls, and premature review plateaus; they are bounded regressions rather than a general natural-language policy proof. Historical GPT-5.6 observations stay archived. The live runner rejects selected models outside its supported GPT 6+ lineup before planning, authentication, or calls; fresh GPT-6 paired route evidence requires a separately supplied policy and authorized collection.
 
 ### 05: Inspect `checks_failed`, `leaks_found`, and `behavioral`
 

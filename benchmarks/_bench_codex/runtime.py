@@ -24,6 +24,8 @@ from _bench_common import presentation
 from _bench_common.paid_lifecycle import paid_approval_token
 from _bench_common.presentation import fmt_time, fmt_tok
 
+SUPPORTED_CODEX_MODELS = ("gpt-6.1-sol", "gpt-6-luna", "gpt-6-sol", "gpt-6-astra")
+
 _SENSITIVE_EVENT_KEYS = frozenset(
     {"access_token", "refresh_token", "id_token", "authorization", "cookie", "set-cookie"}
 )
@@ -329,6 +331,8 @@ def _has_unquoted_comment(command: str) -> bool:
 
 def validate_codex_stratum(model: str, reasoning_effort: str, manifest_path: Path) -> None:
     """Reject execution outside the model and effort declared by the active manifest."""
+    if model not in SUPPORTED_CODEX_MODELS:
+        raise ValueError(f"supported Codex benchmark model required: {', '.join(SUPPORTED_CODEX_MODELS)}")
     try:
         configured = json.loads(Path(manifest_path).read_text(encoding="utf-8"))["model"]
         # Each declared stratum runs as its own nonpoolable study, like Claude's three tiers.

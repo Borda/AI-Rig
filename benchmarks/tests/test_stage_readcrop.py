@@ -396,10 +396,10 @@ def test_scope_hash_changes_when_task_selection_changes() -> None:
     ]
 
     assert (
-        runner.resolve_scope(first, manifest, runner.STRUCTURAL_PATH, "gpt-5.6-luna")["scope_sha256"]
-        != runner.resolve_scope(second, manifest, runner.STRUCTURAL_PATH, "gpt-5.6-luna")["scope_sha256"]
+        runner.resolve_scope(first, manifest, runner.STRUCTURAL_PATH, "gpt-6.1-sol")["scope_sha256"]
+        != runner.resolve_scope(second, manifest, runner.STRUCTURAL_PATH, "gpt-6.1-sol")["scope_sha256"]
     )
-    scope = runner.resolve_scope(first, manifest, runner.STRUCTURAL_PATH, "gpt-5.6-luna")
+    scope = runner.resolve_scope(first, manifest, runner.STRUCTURAL_PATH, "gpt-6.1-sol")
     assert scope["stage_runner_sha256"] == hashlib.sha256(runner.Path(runner.__file__).read_bytes()).hexdigest()
     assert scope["structural_runner_sha256"] == hashlib.sha256(runner.STRUCTURAL_PATH.read_bytes()).hexdigest()
 
@@ -414,9 +414,9 @@ def test_scope_hash_changes_when_treatment_manifest_changes(tmp_path: Path) -> N
         {"contract": type("Contract", (), {"task_id": "RC-01", "oracle_sha256": "a" * 64, "source_sha256": "b" * 64})()}
     ]
 
-    first = runner.resolve_scope(tasks, methodology, treatment_manifest, "gpt-5.6-luna")
+    first = runner.resolve_scope(tasks, methodology, treatment_manifest, "gpt-6.1-sol")
     treatment_manifest.write_text('{"artifact_sha256":{"codex_rig_adapter":"b"}}\n', encoding="utf-8")
-    second = runner.resolve_scope(tasks, methodology, treatment_manifest, "gpt-5.6-luna")
+    second = runner.resolve_scope(tasks, methodology, treatment_manifest, "gpt-6.1-sol")
 
     assert first["treatment_manifest_sha256"] != second["treatment_manifest_sha256"]
     assert first["scope_sha256"] != second["scope_sha256"]
@@ -436,7 +436,7 @@ def test_paid_stage_scope_drift_reports_hashes_and_safe_recovery(monkeypatch: An
     with pytest.raises(ValueError, match="scope inputs changed after aggregate approval") as error:
         runner.run_stage(
             repo_path=tmp_path / "repo",
-            model="gpt-5.6-luna",
+            model="gpt-6.1-sol",
             tasks_selector="RC-01",
             dry_run_requested=False,
             resolve_scope_requested=False,
@@ -479,7 +479,7 @@ def test_preflight_probes_every_native_arm(monkeypatch: Any, tmp_path: Path) -> 
         index_path=tmp_path / "index.json",
         marketplace_root=tmp_path,
         codemap_bin=tmp_path / "codemap-py",
-        model="gpt-5.6-luna",
+        model="gpt-6.1-sol",
         structural_manifest_path=tmp_path / "manifest.json",
     )
 
@@ -519,7 +519,7 @@ def test_paid_snapshot_binds_the_structural_launcher_and_readcrop_stage(monkeypa
             codemap_bin=tmp_path / "codemap-py",
             auth_source=tmp_path / "auth.json",
             run_dir=tmp_path / "run",
-            model="gpt-5.6-luna",
+            model="gpt-6.1-sol",
             structural_manifest_path=tmp_path / "manifest.json",
         )
 
@@ -571,7 +571,7 @@ def test_preflight_hands_the_run_relocation_to_the_adapter(monkeypatch: pytest.M
         index_path=tmp_path / "repo" / "index.json",
         marketplace_root=tmp_path,
         codemap_bin=tmp_path / "codemap-py",
-        model="gpt-5.6-luna",
+        model="gpt-6.1-sol",
         structural_manifest_path=tmp_path / "manifest.json",
         index_relocation=relocation,
     )
@@ -624,3 +624,123 @@ def test_dry_run_reports_unknown_for_an_arm_the_probe_never_measured() -> None:
 
     assert rows[0] == "PROBE   A_plain   codemap=false  use=forbidden"
     assert rows[2] == "PROBE   C_strict  codemap=unknown use=required"
+
+
+@pytest.fixture
+def archived_readcrop_run(tmp_path: Path) -> tuple[Path, Path, dict[str, Any]]:
+    """Build checksummed synthetic historical telemetry against real locked task loaders."""
+    runner = _load()
+    repo = tmp_path / "repo"
+    tasks = runner.load_task_suite(runner.TASKS_PATH)
+    modules: dict[str, dict[str, list[str]]] = {}
+    for task in tasks:
+        class_name, method_name = task["symbol"].split(".")
+        parameters = ["self", *task.get("required_parameters", task["expected_keywords"])]
+        method = f"    def {method_name}({', '.join(parameters)}):\n        pass\n"
+        modules.setdefault(task["primary_module"], {}).setdefault(class_name, []).append(method)
+    for module, classes in modules.items():
+        path = repo / Path(*module.split(".")).with_suffix(".py")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(f"class {name}:\n" + "\n".join(methods) for name, methods in classes.items()))
+    loaded = runner.load_readcrop_tasks(runner.TASKS_PATH, runner.METHODOLOGY_PATH, repo)
+    contract = loaded[0]["contract"]
+    answer = (
+        "BEGIN_READ_CROP_JSON\n"
+        + json.dumps(
+            {
+                "signature": contract.symbol,
+                "parameters": list(contract.required_parameter_names),
+                "behavior": "Synthetic fixture.",
+            }
+        )
+        + "\nEND_READ_CROP_JSON"
+    )
+    stream = [
+        {"type": "item.completed", "item": {"type": "agent_message", "text": answer}},
+        {"type": "turn.completed", "status": "completed"},
+    ]
+    row = runner.parse_readcrop_stream(
+        (json.dumps(event) for event in stream), arm="A_plain", contract=contract, skill_path=None
+    )
+    row["elapsed_s"] = 1.0
+    source_scope = {"model": "gpt-5.6-luna", "scope_sha256": "a" * 64, "fixture": "synthetic archived replay"}
+    source_run = tmp_path / "archived-run"
+    source_run.mkdir()
+    (source_run / "run-metadata.json").write_text(json.dumps({"status": "completed", "scope": source_scope}))
+    (source_run / "telemetry.jsonl").write_text(json.dumps(row) + "\n")
+    runner.write_checksums(source_run)
+    return repo, source_run, source_scope
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("entrypoint", ["stage", "cli"])
+def test_archived_readcrop_replay_preserves_scope_without_live_admission(
+    archived_readcrop_run: tuple[Path, Path, dict[str, Any]],
+    entrypoint: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Replay an explicit archived model offline while retaining its original source scope."""
+    runner = _load()
+    repo, source_run, source_scope = archived_readcrop_run
+    output = tmp_path / "replayed"
+    source_bytes = {path.name: path.read_bytes() for path in source_run.iterdir()}
+
+    def forbidden_process(*_args: Any, **_kwargs: Any) -> Any:
+        """Fail on any attempted model or provisioning subprocess during offline replay."""
+        pytest.fail("offline replay must not start a subprocess")
+
+    from _bench_codex.structural.runner import CodexRunner
+
+    monkeypatch.setattr(CodexRunner, "__init__", forbidden_process)
+    monkeypatch.setattr(subprocess, "run", forbidden_process)
+    monkeypatch.setattr(subprocess, "Popen", forbidden_process)
+    if entrypoint == "stage":
+        runner.run_stage(
+            repo_path=repo,
+            model="gpt-5.6-luna",
+            tasks_selector=None,
+            dry_run_requested=False,
+            resolve_scope_requested=False,
+            auth_source=None,
+            run_dir=None,
+            paid_approval=None,
+            rescore_run_dir=source_run,
+            rescore_output_dir=output,
+        )
+    else:
+        from _bench_codex.structural.cli import cli
+
+        cli(
+            repo_path=str(repo),
+            model="gpt-5.6-luna",
+            rescore_readcrop_run_dir=str(source_run),
+            rescore_readcrop_output_dir=str(output),
+        )
+    metadata = json.loads((output / "run-metadata.json").read_bytes())
+    assert metadata["status"] == "completed"
+    assert metadata["kind"] == "offline-readcrop-reparse-v1"
+    assert metadata["source_scope"] == source_scope
+    assert metadata["persisted_cells"] == 1
+    assert {path.name: path.read_bytes() for path in source_run.iterdir()} == source_bytes
+    runner.verify_checksums(output)
+
+
+def test_archived_readcrop_model_still_rejected_for_live_scope(
+    archived_readcrop_run: tuple[Path, Path, dict[str, Any]],
+    tmp_path: Path,
+) -> None:
+    """Offline compatibility cannot authorize a new live scope for the archived model."""
+    runner = _load()
+    repo, _, _ = archived_readcrop_run
+    with pytest.raises(ValueError, match="supported Codex benchmark model"):
+        runner.run_stage(
+            repo_path=repo,
+            model="gpt-5.6-luna",
+            tasks_selector=None,
+            dry_run_requested=False,
+            resolve_scope_requested=True,
+            auth_source=None,
+            run_dir=None,
+            paid_approval=None,
+        )

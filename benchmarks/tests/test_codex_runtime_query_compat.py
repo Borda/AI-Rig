@@ -153,7 +153,7 @@ def test_required_compliance_needs_successful_compact_delivery_by_arm(script_run
     def _run(arm: str, command: str) -> Any:
         """Evaluate one arm against synthetic completed query events."""
         runner = script_run_codex.CodexRunner(
-            "fixture-model",
+            "gpt-6.1-sol",
             tmp_path,
             transport=lambda *_args, **_kwargs: _completed_stream(
                 commands=[
@@ -315,7 +315,7 @@ def test_no_model_probe_removes_its_coordination_root(
         codemap_verified=True,
         coordination_path=coordination_root,
     )
-    runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
+    runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path)
     monkeypatch.setattr(runner, "_prepare_verified_home", lambda _arm: home)
 
     runner.probe_arm("B_auto")

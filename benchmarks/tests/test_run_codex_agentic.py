@@ -848,7 +848,7 @@ def test_agentic_first_strict_admission_failure_keeps_identity_evidence_after_cl
     install_calls: list[str] = []
     model_calls: list[str] = []
     adapter = agentic._structural.CodexRunner(
-        "fixture-model",
+        "gpt-6.1-sol",
         tmp_path,
         manifest_path=manifest_path,
         marketplace_root=marketplace_root,
@@ -1610,7 +1610,7 @@ def test_selected_stratum_hashes_into_its_own_scope(agentic: Any) -> None:
     studies of the two strata an operator had actually named.
     """
     default = agentic.resolve_agentic_scope()
-    selected = agentic.resolve_agentic_scope(model="gpt-5.6-terra")
+    selected = agentic.resolve_agentic_scope(model="gpt-6-luna")
     named_default = agentic.resolve_agentic_scope(model=_default_stratum(agentic))
 
     assert selected["scope_sha256"] != default["scope_sha256"]
@@ -1625,7 +1625,7 @@ def test_undeclared_stratum_is_refused_before_any_scope_exists(agentic: Any) -> 
     run of whatever the operator typed. Only the manifest's own default and its declared additional
     strata may be selected.
     """
-    with pytest.raises(ValueError, match="Codex provider parity requires one of"):
+    with pytest.raises(ValueError, match="supported Codex benchmark model"):
         agentic.resolve_agentic_scope(model="gpt-5.3-codex")
 
 
@@ -1642,7 +1642,7 @@ def test_paid_run_of_a_selected_stratum_binds_and_records_it(
     manifest_path, manifest_approval, index_path, _launcher_path = _prepare_paid_fixture(agentic, monkeypatch, tmp_path)
     run_dir = tmp_path / "stratum"
     _manifest_approval, launcher_path = _lock_run_launcher(manifest_path, run_dir)
-    scope_approval = agentic.resolve_agentic_scope(manifest_path, model="gpt-5.6-terra")["scope_sha256"]
+    scope_approval = agentic.resolve_agentic_scope(manifest_path, model="gpt-6-luna")["scope_sha256"]
 
     agentic.run_paid(
         repo_path=tmp_path,
@@ -1651,14 +1651,14 @@ def test_paid_run_of_a_selected_stratum_binds_and_records_it(
         approval_sha256=scope_approval,
         run_dir=run_dir,
         manifest_path=manifest_path,
-        model="gpt-5.6-terra",
+        model="gpt-6-luna",
         scope_sha256=scope_approval,
         runner_factory=_FixtureRunner,
         invocation_launcher_path=launcher_path,
     )
 
     metadata = json.loads((run_dir / "run-metadata.json").read_text())
-    assert metadata["execution"]["model"] == "gpt-5.6-terra"
+    assert metadata["execution"]["model"] == "gpt-6-luna"
     assert metadata["approval_sha256"] == scope_approval
     assert manifest_approval != scope_approval
 
@@ -1684,7 +1684,7 @@ def test_paid_run_of_a_selected_stratum_refuses_the_default_study_token(
             approval_sha256=manifest_approval,
             run_dir=run_dir,
             manifest_path=manifest_path,
-            model="gpt-5.6-terra",
+            model="gpt-6-luna",
             runner_factory=_FixtureRunner,
             invocation_launcher_path=launcher_path,
         )
@@ -2107,7 +2107,7 @@ def test_impact_cli_passes_native_factory_and_private_auth_only_to_paid_stage(
     auth_source = tmp_path / "auth.json"
     agentic.main(
         study="change-impact",
-        model="gpt-5.6-terra",
+        model="gpt-6-luna",
         timeout=73,
         run_dir=tmp_path / "result",
         paid_approval="a" * 16,
@@ -2116,7 +2116,7 @@ def test_impact_cli_passes_native_factory_and_private_auth_only_to_paid_stage(
     )
 
     assert observed["provider"] == "codex"
-    assert observed["model"] == "gpt-5.6-terra"
+    assert observed["model"] == "gpt-6-luna"
     assert observed["timeout"] == 73
     assert observed["output_dir"] == tmp_path / "result"
     assert observed["paid_approval"] == "a" * 16
@@ -2127,11 +2127,11 @@ def test_impact_cli_passes_native_factory_and_private_auth_only_to_paid_stage(
     observed.clear()
     agentic.main(study="change-impact", dry_run=True, timeout=600)
 
-    assert observed["model"] == "gpt-5.6-terra"
+    assert observed["model"] == "gpt-6.1-sol"
     assert observed["runtime_factory"].keywords["auth_source"] is None
     with pytest.raises(SystemExit):
         agentic.main(study="change-impact", dry_run=True, timeout=True)
     assert "positive integer" in capsys.readouterr().err
     with pytest.raises(SystemExit):
         agentic.main(study="change-impact", resolve_scope=True, model="unadmitted-model")
-    assert "Codex provider parity requires" in capsys.readouterr().err
+    assert "supported Codex benchmark model" in capsys.readouterr().err

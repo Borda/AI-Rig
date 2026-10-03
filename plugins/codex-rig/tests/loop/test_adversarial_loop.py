@@ -112,14 +112,14 @@ def test_clean_requires_independent_review_of_current_snapshot() -> None:
     assert module.summarize_ledger(current)["reason"] == "clean"
 
 
-def test_ratio_boundaries_and_round_cap_are_deterministic() -> None:
-    """Continue at one-half, stop above it, and cap the third review round."""
+def test_score_decreases_remain_active_after_third_round() -> None:
+    """Continue after any decrease without a fixed review-round cap."""
     module = _load_module()
     half = _ledger(
         _round(1, [_finding("security-a", "security")]),
         _round(2, [_finding("security-a", "security", "verified-fixed"), _finding("critical-b", "critical")]),
     )
-    plateau = _ledger(
+    smaller_decrease = _ledger(
         _round(1, [_finding("security-a", "security")]),
         _round(
             2,
@@ -131,7 +131,7 @@ def test_ratio_boundaries_and_round_cap_are_deterministic() -> None:
             ],
         ),
     )
-    capped = _ledger(
+    improving = _ledger(
         _round(1, [_finding("security-a", "security")]),
         _round(2, [_finding("security-a", "security", "verified-fixed"), _finding("critical-b", "critical")]),
         _round(
@@ -145,8 +145,24 @@ def test_ratio_boundaries_and_round_cap_are_deterministic() -> None:
     )
 
     assert module.summarize_ledger(half)["reason"] == "converging"
-    assert module.summarize_ledger(plateau)["reason"] == "plateau"
-    assert module.summarize_ledger(capped)["reason"] == "round-cap"
+    assert module.summarize_ledger(smaller_decrease)["reason"] == "converging"
+    assert module.summarize_ledger(improving)["reason"] == "converging"
+
+
+@pytest.mark.parametrize(
+    ("tier", "reason"),
+    [
+        pytest.param("high", "plateau", id="unchanged-score"),
+        pytest.param("critical", "nonconverging", id="increased-score"),
+    ],
+)
+def test_unchanged_and_increased_scores_stop(tier: str, reason: str) -> None:
+    """Stop true score plateaus and regressions without confusing a smaller decrease."""
+    ledger = _ledger(
+        _round(1, [_finding("initial", "high")]),
+        _round(2, [_finding("initial", "high", "verified-fixed"), _finding("remaining", tier)]),
+    )
+    assert _load_module().summarize_ledger(ledger)["reason"] == reason
 
 
 def test_feasible_structural_and_repeated_findings_can_converge() -> None:
@@ -501,7 +517,7 @@ def test_cli_progress_reprints_history_and_splits_old_new_weights(tmp_path: Path
     assert "| 2 | 0 + 0 | 1 + 3 | 0 + 0 | 0 + 0 | 0 + 0 | 6 + 18 |" in updated.stderr
     assert json.loads(baseline.stdout) == _load_module().summarize_ledger(_ledger(_round(1, first)))
     assert json.loads(updated.stdout) == _load_module().summarize_ledger(ledger)
-    assert json.loads(updated.stdout)["reason"] == "plateau"
+    assert json.loads(updated.stdout)["reason"] == "converging"
 
 
 def test_cli_progress_counts_reopened_signatures_as_old(tmp_path: Path) -> None:
@@ -706,3 +722,124 @@ def test_ledger_digest_binds_historical_bytes_and_current_round_log(tmp_path: Pa
 
     assert module.ledger_digest(historical) == hashlib.sha256(historical.read_bytes()).hexdigest()
     assert len({empty_digest, one_round_digest, module.ledger_digest(current)}) == 3
+
+
+@pytest.mark.integration
+def test_five_improving_rounds_append_to_clean_without_rewriting_history(tmp_path: Path) -> None:
+    """Permit a monotone five-round correction while preserving append-only identity and clean gating."""
+    module = _load_module()
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    tiers = ["security", "critical", "high", "medium"]
+    expected_scores = [40, 20, 10, 4, 0]
+    prior_bytes = b""
+    for index in range(1, 6):
+        findings = [
+            _finding(f"finding-{number}", tier, "verified-fixed" if number < index else "open")
+            for number, tier in enumerate(tiers, start=1)
+        ]
+        result = _append(ledger_path, _round(index, findings))
+        assert result.returncode == 0, result.stderr
+        summary = json.loads(result.stdout)
+        assert summary["scores"] == expected_scores[:index]
+        assert summary["reason"] == ("baseline" if index == 1 else "clean" if index == 5 else "converging")
+        current_bytes = module.rounds_path(ledger_path).read_bytes()
+        assert current_bytes.startswith(prior_bytes)
+        assert len(current_bytes.splitlines()) == index
+        prior_bytes = current_bytes
+    clean = subprocess.run(
+        [sys.executable, str(LEDGER_PATH), "--ledger", str(ledger_path), "--require-clean"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert clean.returncode == 0, clean.stderr
+    assert json.loads(clean.stdout)["reason"] == "clean"
+    assert module.load_ledger(ledger_path)["schema_version"] == module.SCHEMA_VERSION == 2
+    after_clean = _append(ledger_path, _round(6, findings))
+    assert after_clean.returncode == 1
+    assert "round-after-stop" in json.loads(after_clean.stderr)["errors"]
+    assert module.rounds_path(ledger_path).read_bytes() == prior_bytes
+
+
+@pytest.mark.parametrize(
+    "tier, reason",
+    [
+        pytest.param("medium", "plateau", id="late-plateau"),
+        pytest.param("high", "nonconverging", id="late-increase"),
+    ],
+)
+def test_late_nonimprovement_stops_and_refuses_a_further_round(tier: str, reason: str) -> None:
+    """Removing the cardinality limit never permits extension after a late score stop."""
+    module = _load_module()
+    history = [
+        _round(1, [_finding("a", "security")]),
+        _round(2, [_finding("a", "security", "verified-fixed"), _finding("b", "critical")]),
+        _round(
+            3,
+            [
+                _finding("a", "security", "verified-fixed"),
+                _finding("b", "critical", "verified-fixed"),
+                _finding("c", "medium"),
+            ],
+        ),
+    ]
+    latest = [
+        _finding("a", "security", "verified-fixed"),
+        _finding("b", "critical", "verified-fixed"),
+        _finding("c", "medium", "verified-fixed"),
+        _finding("d", tier),
+    ]
+    stopped = _ledger(*history, _round(4, latest)) | {"schema_version": 2}
+    assert module.validate_ledger(stopped) == []
+    assert module.summarize_ledger(stopped)["reason"] == reason
+    continued = {
+        **stopped,
+        "rounds": [
+            *stopped["rounds"],
+            _round(5, [dict(item, disposition="verified-fixed", evidence=["verified"]) for item in latest]),
+        ],
+    }
+    assert "round-after-stop" in module.validate_ledger(continued)
+
+
+def test_reopened_third_occurrence_cannot_be_fixed_despite_improving_total() -> None:
+    """Count reopened signatures cumulatively so closing other findings cannot hide a third recurrence."""
+    module = _load_module()
+    tiers = {"repeat": "low", "a": "security", "b": "critical", "c": "high", "d": "medium", "e": "nit"}
+    closed_by_round = [set(), {"repeat", "a"}, {"a", "b"}, {"repeat", "a", "b", "c"}, {"a", "b", "c", "d"}]
+    rounds = [
+        _round(
+            index,
+            [
+                _finding(signature, tier, "verified-fixed" if signature in closed else "open")
+                for signature, tier in tiers.items()
+            ],
+        )
+        for index, closed in enumerate(closed_by_round, start=1)
+    ]
+    ledger = _ledger(*rounds) | {"schema_version": 2}
+    actions = {
+        "schema_version": 1,
+        "rounds": [
+            {
+                "index": index,
+                "actions": [
+                    {
+                        "signature": signature,
+                        "decision": "fix" if signature == "repeat" else "escalate",
+                        "evidence": ["Retained independent recurrence evidence"],
+                        "owner": "parent",
+                        "next_action": "Seek independent verification",
+                        "root_cause": None,
+                    }
+                    for signature in tiers
+                    if signature not in closed
+                ],
+            }
+            for index, closed in enumerate(closed_by_round, start=1)
+        ],
+    }
+    assert module.validate_ledger(ledger) == []
+    assert module.summarize_ledger(ledger)["scores"] == [43, 21, 13, 5, 3]
+    assert module.validate_actions(ledger, actions) == ["round-5-third-occurrence-must-stop:repeat"]

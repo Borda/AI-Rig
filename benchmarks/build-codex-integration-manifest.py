@@ -414,8 +414,8 @@ def _build_manifest() -> dict[str, Any]:
     implementation_contract = copy.deepcopy(source["implementation_contract"])
     implementation_contract["artifact_sha256"] = artifact_sha256
     implementation_contract["codex_model_stratum"] = {
-        "model": "gpt-5.6-luna",
-        "additional_strata": ["gpt-5.6-terra", "gpt-5.6-sol"],
+        "model": "gpt-6.1-sol",
+        "additional_strata": ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"],
         "reasoning_effort": "high",
         "strict_config": True,
     }
@@ -468,14 +468,14 @@ def _build_manifest() -> dict[str, Any]:
         "implementation_contract": implementation_contract,
         "index": source["index"],
         "model": {
-            "name": "gpt-5.6-luna",
+            "name": "gpt-6.1-sol",
             # Additional strata are run as separate, nonpoolable studies, exactly as Claude runs
             # haiku/sonnet/opus. "name" stays the default so a single-model invocation is unchanged.
             # This list and the methodology manifest's models_by_provider["codex"] are the same
             # declaration read from two sides: --models resolves a name against the methodology
             # list, and the runner admits a stratum against this one, so a name missing here fails
             # at the preflight after the selection already resolved.
-            "additional_strata": ["gpt-5.6-terra", "gpt-5.6-sol"],
+            "additional_strata": ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"],
             "reasoning_effort": "high",
             "strict_config": True,
         },
@@ -496,7 +496,7 @@ def _build_manifest() -> dict[str, Any]:
                         "python3 benchmarks/run-codex-structural.py --repo-path <locked-target> "
                         "--manifest-path benchmarks/manifests/codex-integration.json --index-path <locked-index> "
                         "--marketplace-root <repository> --codemap-bin "
-                        "<repository>/plugins/codemap-py/bin/codemap-py --model gpt-5.6-luna --tasks FN-02 --dry-run"
+                        "<repository>/plugins/codemap-py/bin/codemap-py --model gpt-6.1-sol --tasks FN-02 --dry-run"
                     ),
                     "required_result": (
                         "exit 0; A absent; B exact staged runtime plus task-shaped compact query; C locked provider-then-consumer "
@@ -630,7 +630,7 @@ def _human_bytes(manifest: dict[str, Any], machine_sha256: str) -> bytes:
         "Run the matching no-model dry run first. It validates every selected stage and prints one exact `PAID_COMMAND` containing the aggregate approval and a fresh run directory.",
         "",
         "```bash",
-        "python3 benchmarks/run-codex-structural.py --repo-path <locked-target> --index-path <locked-index> --marketplace-root <marketplace> --codemap-bin <absolute-launcher> --model gpt-5.6-luna --tasks RC,FS,FM,PT --dry-run",
+        "python3 benchmarks/run-codex-structural.py --repo-path <locked-target> --index-path <locked-index> --marketplace-root <marketplace> --codemap-bin <absolute-launcher> --model gpt-6.1-sol --tasks RC,FS,FM,PT --dry-run",
         "```",
         "",
         "## Full execution",

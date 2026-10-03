@@ -85,19 +85,21 @@ After required fields, add skill-specific fields relevant to the report type (e.
 
 ## Adversarial Convergence Loop
 
-The mandatory procedure is `_full/adversarial-loop.md`. This example only demonstrates the round-cap outcome.
+The mandatory procedure is `_full/adversarial-loop.md`. This example demonstrates continued strictly decreasing scores beyond three reviews.
 
 ### Worked example
 
-A refactor has three independent review rounds, including initial `W_0`:
+A refactor stays within unchanged scope and reviewed coverage. Each later review verifies the prior signatures fixed and discovers distinct additional signatures; none reaches a third open occurrence:
 
 | Iteration | Findings | `W_n` | `r_n` | Reading |
 | -- | -- | -- | -- | -- |
 | 0 | 1 critical, 2 high, 3 medium, 4 low | 10 + 12 + 12 + 8 = 42 | — | first review |
 | 1 | 1 high, 2 medium, 3 low | 6 + 8 + 6 = 20 | 0.48 | converging — continue |
-| 2 | 2 low, 1 nit | 4 + 1 = 5 | 0.25 | round cap with findings open — stop and ask for direction |
+| 2 | 2 low, 1 nit | 4 + 1 = 5 | 0.25 | converging — continue |
+| 3 | 1 low | 2 | 0.40 | converging — continue |
+| 4 | none | 0 | 0 | independently clean — complete remaining caller gates |
 
-The remaining `2 low` and `1 nit` findings remain open; this is not clean, complete, or permission to proceed. Report their evidence and per-tier count with `W_0 → W_1 → W_2`, then ask for the next scoped decision.
+The third review has open findings but still decreases the total integer score, so it does not trigger a generic round cap. Continue only with valid authority, independence, current snapshots and caller budgets; plateau, increase or a third occurrence of the same open signature still stops the affected route. The final zero needs current independent coverage and the owning workflow's post-clean gates. Preserve every completed row and any earlier stopped history.
 
 ## Pre-Handover Check
 

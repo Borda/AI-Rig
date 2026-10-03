@@ -77,12 +77,8 @@ SELECTED_SCOPE_SHA = "e" * 64
 #: Model-specific scopes must all participate in the ordered aggregate.
 SECOND_STRATUM_SCOPE_SHA = "f" * 64
 #: Combined admission binds both child scopes into the one token the unified plan prints.
-DEFAULT_STRUCTURAL_SWEEP_SCOPE_SHA = hashlib.sha256(
-    f"{DEFAULT_SCOPE_SHA} {SECOND_STRATUM_SCOPE_SHA}\ngpt-5.6-luna gpt-5.6-terra\n".encode()
-).hexdigest()
-DEFAULT_AGENTIC_SWEEP_SCOPE_SHA = hashlib.sha256(
-    f"{AGENTIC_MANIFEST_SHA} {AGENTIC_STRATUM_SCOPE_SHA}\ngpt-5.6-luna gpt-5.6-terra\n".encode()
-).hexdigest()
+DEFAULT_STRUCTURAL_SWEEP_SCOPE_SHA = DEFAULT_SCOPE_SHA
+DEFAULT_AGENTIC_SWEEP_SCOPE_SHA = AGENTIC_MANIFEST_SHA
 COMBINED_SCOPE_SHA = hashlib.sha256(
     f"{DEFAULT_STRUCTURAL_SWEEP_SCOPE_SHA}\n{DEFAULT_AGENTIC_SWEEP_SCOPE_SHA}\n".encode()
 ).hexdigest()
@@ -93,30 +89,30 @@ COMBINED_SECOND_STRATUM_SCOPE_SHA = hashlib.sha256(
 ).hexdigest()
 #: Each lane binds every ordered model scope before combined approval hashes the two lanes.
 MULTI_STRATUM_SCOPE_SHA = hashlib.sha256(
-    f"{DEFAULT_SCOPE_SHA} {SECOND_STRATUM_SCOPE_SHA}\ngpt-5.6-sol gpt-5.6-terra\n".encode()
+    f"{DEFAULT_SCOPE_SHA} {SECOND_STRATUM_SCOPE_SHA}\ngpt-6-sol gpt-6-luna\n".encode()
 ).hexdigest()
 AGENTIC_MULTI_STRATUM_SCOPE_SHA = hashlib.sha256(
-    f"{AGENTIC_SOL_SCOPE_SHA} {AGENTIC_STRATUM_SCOPE_SHA}\ngpt-5.6-sol gpt-5.6-terra\n".encode()
+    f"{AGENTIC_SOL_SCOPE_SHA} {AGENTIC_STRATUM_SCOPE_SHA}\ngpt-6-sol gpt-6-luna\n".encode()
 ).hexdigest()
 COMBINED_AGENTIC_MULTI_STRATUM_SCOPE_SHA = hashlib.sha256(
     f"{MULTI_STRATUM_SCOPE_SHA}\n{AGENTIC_MULTI_STRATUM_SCOPE_SHA}\n".encode()
 ).hexdigest()
 AGENTIC_TRIPLE_STRATUM_SCOPE_SHA = hashlib.sha256(
     f"{AGENTIC_MANIFEST_SHA} {AGENTIC_STRATUM_SCOPE_SHA} {AGENTIC_SOL_SCOPE_SHA}\n"
-    "gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol\n".encode()
+    "gpt-6.1-sol gpt-6-luna gpt-6-sol\n".encode()
 ).hexdigest()
 AGENTIC_SOL_TERRA_LUNA_SCOPE_SHA = hashlib.sha256(
     f"{AGENTIC_SOL_SCOPE_SHA} {AGENTIC_STRATUM_SCOPE_SHA} {AGENTIC_MANIFEST_SHA}\n"
-    "gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna\n".encode()
+    "gpt-6-sol gpt-6-luna gpt-6.1-sol\n".encode()
 ).hexdigest()
 AGENTIC_SELECTED_REPEAT_TERRA_SCOPE_SHA = "agentic-selected-repeat-terra-scope"
 AGENTIC_SELECTED_REPEAT_SOL_SCOPE_SHA = "agentic-selected-repeat-sol-scope"
 AGENTIC_SELECTED_REPEAT_MULTI_SCOPE_SHA = hashlib.sha256(
     f"{AGENTIC_SELECTED_REPEAT_TERRA_SCOPE_SHA} {AGENTIC_SELECTED_REPEAT_SOL_SCOPE_SHA}\n"
-    "gpt-5.6-terra gpt-5.6-sol\n".encode()
+    "gpt-6-luna gpt-6-sol\n".encode()
 ).hexdigest()
 STRUCTURAL_SELECTED_MULTI_SCOPE_SHA = hashlib.sha256(
-    f"{SELECTED_SCOPE_SHA} {SELECTED_SCOPE_SHA}\ngpt-5.6-sol gpt-5.6-terra\n".encode()
+    f"{SELECTED_SCOPE_SHA} {SELECTED_SCOPE_SHA}\ngpt-6-sol gpt-6-luna\n".encode()
 ).hexdigest()
 SELECTED_TASK_IDS = ("DI-01", "GR-01")
 
@@ -260,22 +256,22 @@ if [[ "$*" == *"run-codex-agentic.py"* && "$*" == *"--resolve-scope"* ]]; then
       exit 0
     fi
   fi
-  if [[ "$*" == *"--task-id BA-02,BA-04"* && "$*" == *"--repetitions 2"* && "$*" == *"--model gpt-5.6-terra"* ]]; then
-    printf '{{"task_ids":["BA-02","BA-04"],"repetitions":2,"total_cells":12,"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-terra"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_SELECTED_REPEAT_TERRA_SCOPE_SHA}"}}\n'
-  elif [[ "$*" == *"--task-id BA-02,BA-04"* && "$*" == *"--repetitions 2"* && "$*" == *"--model gpt-5.6-sol"* ]]; then
-    printf '{{"task_ids":["BA-02","BA-04"],"repetitions":2,"total_cells":12,"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-sol"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_SELECTED_REPEAT_SOL_SCOPE_SHA}"}}\n'
+  if [[ "$*" == *"--task-id BA-02,BA-04"* && "$*" == *"--repetitions 2"* && "$*" == *"--model gpt-6-luna"* ]]; then
+    printf '{{"task_ids":["BA-02","BA-04"],"repetitions":2,"total_cells":12,"arms":["A_plain","B_auto","C_strict"],"models":["gpt-6-luna"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_SELECTED_REPEAT_TERRA_SCOPE_SHA}"}}\n'
+  elif [[ "$*" == *"--task-id BA-02,BA-04"* && "$*" == *"--repetitions 2"* && "$*" == *"--model gpt-6-sol"* ]]; then
+    printf '{{"task_ids":["BA-02","BA-04"],"repetitions":2,"total_cells":12,"arms":["A_plain","B_auto","C_strict"],"models":["gpt-6-sol"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_SELECTED_REPEAT_SOL_SCOPE_SHA}"}}\n'
   elif [[ "$*" == *"--task-id BA-02,BA-04"* ]]; then
-    printf '{{"task_ids":["BA-02","BA-04"],"repetitions":1,"total_cells":{AGENTIC_SELECTED_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-luna"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_SELECTED_SCOPE_SHA}"}}\n'
-  elif [[ "$*" == *"--model gpt-5.6-luna"* ]]; then
-    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":1,"total_cells":{AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-luna"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_LUNA_SCOPE_SHA}"}}\n'
-  elif [[ "$*" == *"--model gpt-5.6-terra"* ]]; then
-    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":1,"total_cells":{AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-terra"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_STRATUM_SCOPE_SHA}"}}\n'
-  elif [[ "$*" == *"--model gpt-5.6-sol"* ]]; then
-    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":1,"total_cells":{AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-sol"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_SOL_SCOPE_SHA}"}}\n'
+    printf '{{"task_ids":["BA-02","BA-04"],"repetitions":1,"total_cells":{AGENTIC_SELECTED_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-6.1-sol"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_SELECTED_SCOPE_SHA}"}}\n'
+  elif [[ "$*" == *"--model gpt-6.1-sol"* ]]; then
+    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":1,"total_cells":{AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-6.1-sol"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_LUNA_SCOPE_SHA}"}}\n'
+  elif [[ "$*" == *"--model gpt-6-luna"* ]]; then
+    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":1,"total_cells":{AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-6-luna"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_STRATUM_SCOPE_SHA}"}}\n'
+  elif [[ "$*" == *"--model gpt-6-sol"* ]]; then
+    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":1,"total_cells":{AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-6-sol"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_SOL_SCOPE_SHA}"}}\n'
   elif [[ "$*" == *"--repetitions 2"* ]]; then
-    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":2,"total_cells":{AGENTIC_TOTAL_CELLS * 2},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-luna"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_REPEAT_TWO_SCOPE_SHA}"}}\n'
+    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":2,"total_cells":{AGENTIC_TOTAL_CELLS * 2},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-6.1-sol"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_REPEAT_TWO_SCOPE_SHA}"}}\n'
   else
-    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":1,"total_cells":{AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-luna"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_SCOPE_SHA}"}}\n'
+    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":1,"total_cells":{AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-6.1-sol"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_SCOPE_SHA}"}}\n'
   fi
   exit 0
 fi
@@ -363,7 +359,7 @@ if [[ "$*" == *"run-codex-structural.py"* && "$*" == *"--dry-run"* ]]; then
     printf "SCOPE   {SELECTED_SCOPE_SHA}\\n"
   elif [[ "$*" == *"--tasks PT-01"* ]]; then
     printf "SCOPE   {SELECTED_SCOPE_SHA}\\n"
-  elif [[ "$*" == *"--model gpt-5.6-terra"* ]]; then
+  elif [[ "$*" == *"--model gpt-6-luna"* ]]; then
     printf "SCOPE   {SECOND_STRATUM_SCOPE_SHA}\\n"
   elif [[ "$*" != *"--tasks FN-02"* ]]; then
     printf "SCOPE   {DEFAULT_SCOPE_SHA}\\n"
@@ -560,7 +556,7 @@ def test_launcher_preserves_evaluator_roots_for_provider_children(
         EVIDENCE_ROOTS_LOG=str(evidence_log),
     )
     result = _run_batch(
-        provider, env, "--agentic", "--models=terra" if provider == "codex" else "--models=sonnet", "--dry-run"
+        provider, env, "--agentic", "--models=luna" if provider == "codex" else "--models=sonnet", "--dry-run"
     )
     assert result.returncode == 0, result.stderr
     observations = [json.loads(line) for line in evidence_log.read_text(encoding="utf-8").splitlines()]
@@ -668,10 +664,10 @@ def test_codex_default_dry_run_dispatches_structural_then_agentic_without_paid_i
     assert completed.returncode == 0, completed.stderr
     calls = call_log.read_text(encoding="utf-8").splitlines()
     codex_calls = [line for line in calls if "run-codex-structural.py" in line]
-    assert len(codex_calls) == 3
+    assert len(codex_calls) == 2
     assert all("--dry-run" in line for line in codex_calls)
     structural_plans = [line for line in codex_calls if "--tasks FN-02" not in line]
-    assert [_option_value(line, "--model") for line in structural_plans] == ["gpt-5.6-luna", "gpt-5.6-terra"]
+    assert [_option_value(line, "--model") for line in structural_plans] == ["gpt-6.1-sol"]
     full_plan = structural_plans[0]
     assert "--task-id" not in full_plan
     assert "--study" not in full_plan
@@ -679,11 +675,10 @@ def test_codex_default_dry_run_dispatches_structural_then_agentic_without_paid_i
     assert "--paid-approval" not in full_plan
     assert "--max-wall-clock-seconds" not in full_plan
     agentic_calls = [line for line in calls if "run-codex-agentic.py" in line and "--resolve-scope" not in line]
-    assert len(agentic_calls) == 2
+    assert len(agentic_calls) == 1
     assert f"--manifest-path {AGENTIC_MANIFEST}" in agentic_calls[0]
     assert all("--repetitions 1" in line and "--dry-run" in line for line in agentic_calls)
     assert "--model" not in agentic_calls[0]
-    assert "--model gpt-5.6-terra" in agentic_calls[1]
     dispatched = [
         line
         for line in calls
@@ -697,9 +692,9 @@ def test_codex_default_dry_run_dispatches_structural_then_agentic_without_paid_i
     assert all("--output-path" not in line for line in agentic_calls)
     assert all("--render-results" not in line for line in codex_calls)
     assert "PLAN " in completed.stdout
-    assert "438 cells" in completed.stdout
+    assert "219 cells" in completed.stdout
     assert completed.stdout.count(f"SCOPE   {DEFAULT_SCOPE_SHA}") == 1
-    assert "120 cells" in completed.stdout
+    assert "60 cells" in completed.stdout
 
 
 @_skip_windows_posix
@@ -711,16 +706,16 @@ def test_codex_default_dry_run_dispatches_structural_then_agentic_without_paid_i
         pytest.param((), id="combined"),
     ],
 )
-def test_codex_default_models_match_an_explicit_luna_terra_selection(
+def test_codex_default_models_match_an_explicit_parent_selection(
     batch_env: tuple[dict[str, str], Path], lane_args: tuple[str, ...]
 ) -> None:
-    """Omitting --models plans the same ordered two-model studies as naming Luna and Terra."""
+    """Omitting --models plans the same parent model in every study lane."""
     env, call_log = batch_env
 
     default = _run_batch("codex", env, *lane_args, "--dry-run")
     default_calls = call_log.read_text(encoding="utf-8").splitlines()
     call_log.unlink()
-    explicit = _run_batch("codex", env, *lane_args, "--models=luna,terra", "--dry-run")
+    explicit = _run_batch("codex", env, *lane_args, "--models=gpt-6.1-sol", "--dry-run")
     explicit_calls = call_log.read_text(encoding="utf-8").splitlines()
 
     assert default.returncode == 0, default.stderr
@@ -793,7 +788,7 @@ def test_paid_codex_uses_a_fresh_default_run_directory_without_total_timeout(
     env["CODEX_RESULTS_ROOT"] = str(results_root)
     env.pop("CODEX_RUN_DIR")
 
-    completed = _run_batch("codex", env, "--struct", "--models=luna")
+    completed = _run_batch("codex", env, "--struct", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 0, completed.stderr
     run_dirs = list(results_root.glob("codex-integration-*"))
@@ -810,7 +805,7 @@ def test_paid_codex_executes_from_a_run_scoped_source_snapshot(
     expected_launcher = SCRIPT.read_bytes()
     expected_manifest = ACTIVE_MANIFEST.read_bytes()
 
-    completed = _run_batch("codex", env, "--struct", "--models=luna")
+    completed = _run_batch("codex", env, "--struct", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 0, completed.stderr
     source_root = Path(env["CODEX_RUN_DIR"]) / ".launcher" / "source"
@@ -1037,11 +1032,11 @@ def test_codex_agentic_rejects_missing_paid_inputs_before_setup(
     }[missing]:
         env.pop(name, None)
 
-    completed = _run_batch("codex", env, "--agentic", "--models=luna")
+    completed = _run_batch("codex", env, "--agentic", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 2
     assert expected_error in completed.stderr
-    assert "bash benchmarks/run-all.sh codex --agentic --models=gpt-5.6-luna --dry-run" in completed.stderr
+    assert "bash benchmarks/run-all.sh codex --agentic --models=gpt-6.1-sol --dry-run" in completed.stderr
     assert f"CODEX_PAID_APPROVAL={AGENTIC_MANIFEST_SHA[:16]}" in completed.stderr
     assert "CODEX_AUTH_SOURCE=" in completed.stderr
     assert "CODEX_RUN_DIR only to choose another new path" in completed.stderr
@@ -1059,13 +1054,13 @@ def test_codex_agentic_rejects_reused_run_directory_before_setup(
     env["CODEX_AGENTIC_PAID_APPROVAL"] = AGENTIC_MANIFEST_SHA
     Path(env["CODEX_RUN_DIR"]).mkdir()
 
-    completed = _run_batch("codex", env, "--agentic", "--models=luna")
+    completed = _run_batch("codex", env, "--agentic", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 2
     assert "CODEX_RUN_DIR already exists" in completed.stderr
     assert "Traceback" not in completed.stderr
     assert "Review the exact no-model shared agentic plan:" in completed.stderr
-    assert "bash benchmarks/run-all.sh codex --agentic --models=gpt-5.6-luna --dry-run" in completed.stderr
+    assert "bash benchmarks/run-all.sh codex --agentic --models=gpt-6.1-sol --dry-run" in completed.stderr
     assert f"Then launch the paid {AGENTIC_TOTAL_CELLS}-cell study with one scope-bound command:" in completed.stderr
     assert f"CODEX_PAID_APPROVAL={AGENTIC_MANIFEST_SHA[:16]}" in completed.stderr
     assert 'CODEX_AUTH_SOURCE="$HOME/.codex/auth.json"' in completed.stderr
@@ -1087,7 +1082,7 @@ def test_paid_codex_agentic_uses_snapshot_and_exact_runner_contract(
     evidence_log = Path(env["CODEX_RUN_DIR"]).with_name("snapshot-evidence-roots.jsonl")
     env["EVIDENCE_ROOTS_LOG"] = str(evidence_log)
 
-    completed = _run_batch("codex", env, "--agentic", "--models=luna")
+    completed = _run_batch("codex", env, "--agentic", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 0, completed.stderr
     calls = call_log.read_text(encoding="utf-8").splitlines()
@@ -1143,7 +1138,7 @@ def test_paid_codex_agentic_admits_the_short_token_under_the_structural_variable
     env["CODEX_PAID_APPROVAL"] = AGENTIC_MANIFEST_SHA[:16]
     env["CODEX_RUN_DIR"] = str(Path(env["CODEX_RUN_DIR"]).with_name("codex-agentic-short-token-run"))
 
-    completed = _run_batch("codex", env, "--agentic", "--models=luna")
+    completed = _run_batch("codex", env, "--agentic", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 0, completed.stderr
     calls = call_log.read_text(encoding="utf-8").splitlines()
@@ -1164,7 +1159,7 @@ def test_paid_codex_agentic_final_checksums_exclude_archived_source_tree(
     env["CODEX_AGENTIC_PAID_APPROVAL"] = AGENTIC_MANIFEST_SHA
     env["CODEX_RUN_DIR"] = str(Path(env["CODEX_RUN_DIR"]).with_name("codex-agentic-checksum-run"))
 
-    completed = _run_batch("codex", env, "--agentic", "--models=luna")
+    completed = _run_batch("codex", env, "--agentic", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 0, completed.stderr
     entries = (Path(env["CODEX_RUN_DIR"]) / "checksums.sha256").read_text(encoding="utf-8").splitlines()
@@ -1183,7 +1178,7 @@ def test_paid_codex_agentic_admits_the_run_directory_before_console_capture(
     env["CODEX_AGENTIC_PAID_APPROVAL"] = AGENTIC_MANIFEST_SHA
     env["CODEX_RUN_DIR"] = str(Path(env["CODEX_RUN_DIR"]).with_name("codex-agentic-admission-run"))
 
-    completed = _run_batch("codex", env, "--agentic", "--models=luna")
+    completed = _run_batch("codex", env, "--agentic", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 0, completed.stderr
     assert "agentic console artifact existed before paid Python admission" not in completed.stdout
@@ -1199,7 +1194,7 @@ def test_paid_codex_agentic_failure_preserves_artifacts_and_prints_fresh_command
     env["CODEX_RUN_DIR"] = str(Path(env["CODEX_RUN_DIR"]).with_name("codex-agentic-failed-run"))
     env["FAIL_WHEN_ARGS_CONTAIN"] = "--auth-source"
 
-    completed = _run_batch("codex", env, "--agentic", "--models=luna")
+    completed = _run_batch("codex", env, "--agentic", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 41
     assert "Preserve the reported artifact for diagnosis" in completed.stderr
@@ -1222,7 +1217,7 @@ def test_paid_codex_agentic_tty_output_uses_shared_renderer(
     env["CODEX_AGENTIC_PAID_APPROVAL"] = AGENTIC_MANIFEST_SHA
     env["CODEX_RUN_DIR"] = str(Path(env["CODEX_RUN_DIR"]).with_name("codex-agentic-tty-run"))
 
-    completed = _run_batch_tty("codex", env, "--agentic", "--models=luna")
+    completed = _run_batch_tty("codex", env, "--agentic", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 0, completed.stdout
     assert "Legend" in completed.stdout
@@ -1273,7 +1268,7 @@ def test_codex_tasks_dry_run_dispatches_resolved_scope(
     ):
         env.pop(name)
 
-    completed = _run_batch("codex", env, "--struct", "--models=luna", "--tasks=DI,GR", "--dry-run")
+    completed = _run_batch("codex", env, "--struct", "--models=gpt-6.1-sol", "--tasks=DI,GR", "--dry-run")
 
     assert completed.returncode == 0, completed.stderr
     codex_calls = [
@@ -1526,10 +1521,10 @@ def test_smoke_checks_claude_and_codex_without_paid_codex(
     ("mode", "args"),
     [
         pytest.param("smoke", (), id="smoke"),
-        pytest.param("codex", ("--models=luna", "--dry-run"), id="codex-dry-run"),
-        pytest.param("codex", ("--struct", "--models=luna"), id="codex-struct-paid"),
-        pytest.param("codex", ("--struct", "--models=luna", "--tasks=DI,GR", "--dry-run"), id="tasks-dry-run"),
-        pytest.param("codex", ("--struct", "--models=luna", "--tasks=DI,GR"), id="tasks-paid"),
+        pytest.param("codex", ("--models=gpt-6.1-sol", "--dry-run"), id="codex-dry-run"),
+        pytest.param("codex", ("--struct", "--models=gpt-6.1-sol"), id="codex-struct-paid"),
+        pytest.param("codex", ("--struct", "--models=gpt-6.1-sol", "--tasks=DI,GR", "--dry-run"), id="tasks-dry-run"),
+        pytest.param("codex", ("--struct", "--models=gpt-6.1-sol", "--tasks=DI,GR"), id="tasks-paid"),
     ],
 )
 def test_top_level_provider_invocation_emits_one_bounded_legend(
@@ -1884,13 +1879,13 @@ def test_combined_paid_run_carries_one_token_through_every_selected_stratum(
     env["CODEX_RESULTS_ROOT"] = str(tmp_path / "results")
     env.pop("CODEX_RUN_DIR")
 
-    completed = _run_batch("codex", env, "--models=gpt-5.6-sol,gpt-5.6-terra")
+    completed = _run_batch("codex", env, "--models=gpt-6-sol,gpt-6-luna")
 
     assert completed.returncode == 0, completed.stderr + completed.stdout
     calls = call_log.read_text(encoding="utf-8").splitlines()
     paid_structural = [line for line in calls if "run-codex-structural.py" in line and "--auth-source" in line]
-    assert any("--model gpt-5.6-sol" in line for line in paid_structural)
-    assert any("--model gpt-5.6-terra" in line for line in paid_structural)
+    assert any("--model gpt-6-sol" in line for line in paid_structural)
+    assert any("--model gpt-6-luna" in line for line in paid_structural)
     assert any("run-codex-agentic.py" in line and "--auth-source" in line for line in calls)
 
 
@@ -1908,7 +1903,7 @@ def test_combined_agentic_sweep_rejects_reordered_scope_before_paid_dispatch(
     env["CODEX_RESULTS_ROOT"] = str(tmp_path / "results")
     env.pop("CODEX_RUN_DIR")
 
-    completed = _run_batch("codex", env, "--models=gpt-5.6-terra,gpt-5.6-sol")
+    completed = _run_batch("codex", env, "--models=gpt-6-luna,gpt-6-sol")
 
     assert completed.returncode == 2
     assert "requires CODEX_PAID_APPROVAL" in completed.stderr + completed.stdout
@@ -1929,7 +1924,7 @@ def test_agentic_sweep_stops_after_a_failed_child(batch_env: tuple[dict[str, str
     env.pop("CODEX_RUN_DIR")
     env["FAIL_WHEN_ARGS_CONTAIN"] = "--auth-source"
 
-    completed = _run_batch("codex", env, "--agentic", "--models=luna,terra,sol")
+    completed = _run_batch("codex", env, "--agentic", "--models=gpt-6.1-sol,luna,gpt-6-sol")
 
     assert completed.returncode != 0
     paid = [
@@ -1938,8 +1933,8 @@ def test_agentic_sweep_stops_after_a_failed_child(batch_env: tuple[dict[str, str
         if "run-codex-agentic.py" in line and "--auth-source" in line
     ]
     assert paid
-    assert not any("--model gpt-5.6-terra" in line for line in paid)
-    assert not any("--model gpt-5.6-sol" in line for line in paid)
+    assert not any("--model gpt-6-luna" in line for line in paid)
+    assert not any("--model gpt-6-sol" in line for line in paid)
 
 
 @_skip_windows_posix
@@ -1948,9 +1943,9 @@ def test_agentic_dry_sweep_stops_without_an_authorization_after_a_runner_failure
 ) -> None:
     """A failed scalar dry runner prevents both aggregate output and later planned models."""
     env, call_log = batch_env
-    env["FAIL_AGENTIC_DRY_MODEL"] = "gpt-5.6-terra"
+    env["FAIL_AGENTIC_DRY_MODEL"] = "gpt-6-luna"
 
-    completed = _run_batch("codex", env, "--agentic", "--models=terra,sol", "--dry-run")
+    completed = _run_batch("codex", env, "--agentic", "--models=luna,gpt-6-sol", "--dry-run")
 
     assert completed.returncode == 41
     assert "CODEX AGENTIC MODEL-SWEEP AUTHORIZATION" not in completed.stdout
@@ -1959,7 +1954,7 @@ def test_agentic_dry_sweep_stops_without_an_authorization_after_a_runner_failure
         for line in call_log.read_text(encoding="utf-8").splitlines()
         if "run-codex-agentic.py" in line and "--dry-run" in line and "--resolve-scope" not in line
     ]
-    assert [_option_value(line, "--model") for line in plans] == ["gpt-5.6-terra"]
+    assert [_option_value(line, "--model") for line in plans] == ["gpt-6-luna"]
 
 
 @_skip_windows_posix
@@ -1980,7 +1975,7 @@ def test_agentic_sweep_children_keep_the_selected_tasks_and_repeat_scope(
         "codex",
         env,
         "--agentic",
-        "--models=terra,sol",
+        "--models=luna,gpt-6-sol",
         "--tasks=BA-02,BA-04",
         "--repetitions=2",
     )
@@ -1991,7 +1986,7 @@ def test_agentic_sweep_children_keep_the_selected_tasks_and_repeat_scope(
         for line in call_log.read_text(encoding="utf-8").splitlines()
         if "run-codex-agentic.py" in line and "--auth-source" in line
     ]
-    assert [_option_value(line, "--model") for line in paid] == ["gpt-5.6-terra", "gpt-5.6-sol"]
+    assert [_option_value(line, "--model") for line in paid] == ["gpt-6-luna", "gpt-6-sol"]
     assert all("--task-id BA-02,BA-04" in line and "--repetitions 2" in line for line in paid)
 
 
@@ -2007,14 +2002,14 @@ def test_agentic_sweep_rejects_a_first_child_scope_that_changes_after_approval(
     """
     env, call_log = batch_env
     env["CODEX_PAID_APPROVAL"] = hashlib.sha256(
-        f"{AGENTIC_STRATUM_SCOPE_SHA} {AGENTIC_SOL_SCOPE_SHA}\ngpt-5.6-terra gpt-5.6-sol\n".encode()
+        f"{AGENTIC_STRATUM_SCOPE_SHA} {AGENTIC_SOL_SCOPE_SHA}\ngpt-6-luna gpt-6-sol\n".encode()
     ).hexdigest()[:16]
     env["CODEX_RESULTS_ROOT"] = str(tmp_path / "results")
-    env["DRIFT_AGENTIC_SCOPE_MODEL"] = "gpt-5.6-terra"
+    env["DRIFT_AGENTIC_SCOPE_MODEL"] = "gpt-6-luna"
     env["DRIFT_AGENTIC_SCOPE_COUNT"] = str(tmp_path / "agentic-scope-count")
     env.pop("CODEX_RUN_DIR")
 
-    completed = _run_batch("codex", env, "--agentic", "--models=terra,sol")
+    completed = _run_batch("codex", env, "--agentic", "--models=luna,gpt-6-sol")
 
     assert completed.returncode != 0
     assert int(Path(env["DRIFT_AGENTIC_SCOPE_COUNT"]).read_text(encoding="utf-8")) == 4
@@ -2034,10 +2029,10 @@ def test_agentic_sweep_stops_before_the_third_child_after_the_second_fails(
     env, call_log = batch_env
     env["CODEX_PAID_APPROVAL"] = AGENTIC_SOL_TERRA_LUNA_SCOPE_SHA[:16]
     env["CODEX_RESULTS_ROOT"] = str(tmp_path / "results")
-    env["FAIL_AGENTIC_MODEL"] = "gpt-5.6-terra"
+    env["FAIL_AGENTIC_MODEL"] = "gpt-6-luna"
     env.pop("CODEX_RUN_DIR")
 
-    completed = _run_batch("codex", env, "--agentic", "--models=sol,terra,luna")
+    completed = _run_batch("codex", env, "--agentic", "--models=gpt-6-sol,luna,gpt-6.1-sol")
 
     assert completed.returncode == 41
     paid = [
@@ -2045,7 +2040,7 @@ def test_agentic_sweep_stops_before_the_third_child_after_the_second_fails(
         for line in call_log.read_text(encoding="utf-8").splitlines()
         if "run-codex-agentic.py" in line and "--auth-source" in line
     ]
-    assert [_option_value(line, "--model") for line in paid] == ["gpt-5.6-sol", "gpt-5.6-terra"]
+    assert [_option_value(line, "--model") for line in paid] == ["gpt-6-sol", "gpt-6-luna"]
 
 
 @_skip_windows_posix
@@ -2058,7 +2053,7 @@ def test_structural_sweep_children_keep_the_selected_tasks(
     env["CODEX_RESULTS_ROOT"] = str(tmp_path / "results")
     env.pop("CODEX_RUN_DIR")
 
-    completed = _run_batch("codex", env, "--struct", "--models=sol,terra", "--tasks=DI,GR")
+    completed = _run_batch("codex", env, "--struct", "--models=gpt-6-sol,luna", "--tasks=DI,GR")
 
     assert completed.returncode == 0, completed.stderr + completed.stdout
     paid = [
@@ -2066,7 +2061,7 @@ def test_structural_sweep_children_keep_the_selected_tasks(
         for line in call_log.read_text(encoding="utf-8").splitlines()
         if "run-codex-structural.py" in line and "--auth-source" in line
     ]
-    assert [_option_value(line, "--model") for line in paid] == ["gpt-5.6-sol", "gpt-5.6-terra"]
+    assert [_option_value(line, "--model") for line in paid] == ["gpt-6-sol", "gpt-6-luna"]
     assert all("--tasks DI,GR" in line for line in paid)
 
 
@@ -2078,11 +2073,11 @@ def test_structural_sweep_stops_when_the_second_child_scope_drifts(
     env, call_log = batch_env
     env["CODEX_PAID_APPROVAL"] = MULTI_STRATUM_SCOPE_SHA[:16]
     env["CODEX_RESULTS_ROOT"] = str(tmp_path / "results")
-    env["DRIFT_STRUCTURAL_SCOPE_MODEL"] = "gpt-5.6-terra"
+    env["DRIFT_STRUCTURAL_SCOPE_MODEL"] = "gpt-6-luna"
     env["DRIFT_STRUCTURAL_SCOPE_COUNT"] = str(tmp_path / "structural-scope-count")
     env.pop("CODEX_RUN_DIR")
 
-    completed = _run_batch("codex", env, "--struct", "--models=sol,terra")
+    completed = _run_batch("codex", env, "--struct", "--models=gpt-6-sol,luna")
 
     assert completed.returncode != 0
     paid = [
@@ -2090,7 +2085,7 @@ def test_structural_sweep_stops_when_the_second_child_scope_drifts(
         for line in call_log.read_text(encoding="utf-8").splitlines()
         if "run-codex-structural.py" in line and "--auth-source" in line
     ]
-    assert [_option_value(line, "--model") for line in paid] == ["gpt-5.6-sol"]
+    assert [_option_value(line, "--model") for line in paid] == ["gpt-6-sol"]
 
 
 @_skip_windows_posix
@@ -2102,7 +2097,7 @@ def test_multi_stratum_paid_run_admits_a_stratum_whose_scope_differs_from_the_pa
 
     Scenario: this is the defect that cost a real paid study half its data. A stratum's execution
     scope binds its own model, so only the primary stratum can ever match the scope the parent
-    derived. The parent used to hand each child that parent scope, so `gpt-5.6-sol` ran its full 219
+    derived. Historically, the parent handed each child that parent scope, so `gpt-5.6-sol` ran its full 219
     cells and `gpt-5.6-terra` was then refused for a token it could not have matched — after the
     operator had already paid for the first half. The stub answers a distinct scope for the second
     stratum, which is what makes this test able to fail.
@@ -2113,7 +2108,7 @@ def test_multi_stratum_paid_run_admits_a_stratum_whose_scope_differs_from_the_pa
     env["CODEX_RESULTS_ROOT"] = str(tmp_path / "results")
     env.pop("CODEX_RUN_DIR")
 
-    completed = _run_batch("codex", env, "--struct", "--models=gpt-5.6-sol,gpt-5.6-terra")
+    completed = _run_batch("codex", env, "--struct", "--models=gpt-6-sol,gpt-6-luna")
 
     assert completed.returncode == 0, completed.stderr + completed.stdout
     assert "requires CODEX_PAID_APPROVAL" not in completed.stderr
@@ -2122,8 +2117,8 @@ def test_multi_stratum_paid_run_admits_a_stratum_whose_scope_differs_from_the_pa
         for line in call_log.read_text(encoding="utf-8").splitlines()
         if "run-codex-structural.py" in line and "--auth-source" in line
     ]
-    assert any("--model gpt-5.6-sol" in line for line in paid_structural)
-    assert any("--model gpt-5.6-terra" in line for line in paid_structural)
+    assert any("--model gpt-6-sol" in line for line in paid_structural)
+    assert any("--model gpt-6-luna" in line for line in paid_structural)
 
 
 @_skip_windows_posix
@@ -2140,12 +2135,12 @@ def test_a_stratum_token_does_not_admit_a_model_outside_the_authorized_selection
     env, call_log = batch_env
     env["CODEX_PAID_APPROVAL"] = MULTI_STRATUM_SCOPE_SHA[:16]
     env["CODEX_STRATUM_PARENT_SCOPE"] = f"{DEFAULT_SCOPE_SHA} {SECOND_STRATUM_SCOPE_SHA}"
-    env["CODEX_STRATUM_MODELS"] = "gpt-5.6-sol gpt-5.6-terra"
+    env["CODEX_STRATUM_MODELS"] = "gpt-6-sol gpt-6-luna"
     env["CODEX_STRATUM_AGENTIC_APPROVAL"] = ""
     env["CODEX_RESULTS_ROOT"] = str(tmp_path / "results")
     env.pop("CODEX_RUN_DIR")
 
-    completed = _run_batch("codex", env, "--struct", "--models=gpt-5.6-luna")
+    completed = _run_batch("codex", env, "--struct", "--models=gpt-6.1-sol")
 
     assert completed.returncode != 0
     assert not any(
@@ -2243,10 +2238,9 @@ def test_provider_modes_dispatch_only_the_selected_provider(
     calls = call_log.read_text(encoding="utf-8").splitlines()
     paid_structural = [line for line in calls if "run-codex-structural.py" in line and "--auth-source" in line]
     paid_agentic = [line for line in calls if "run-codex-agentic.py" in line and "--auth-source" in line]
-    assert [_option_value(line, "--model") for line in paid_structural] == ["gpt-5.6-luna", "gpt-5.6-terra"]
-    assert len(paid_agentic) == 2
+    assert [_option_value(line, "--model") for line in paid_structural] == ["gpt-6.1-sol"]
+    assert len(paid_agentic) == 1
     assert "--model" not in paid_agentic[0]
-    assert "--model gpt-5.6-terra" in paid_agentic[1]
     structural_call = paid_structural[0]
     agentic_call = paid_agentic[0]
     assert calls.index(structural_call) < calls.index(agentic_call)
@@ -2318,7 +2312,7 @@ def test_paid_codex_tasks_runs_only_resolved_scope(
     env["CODEX_PAID_APPROVAL"] = SELECTED_SCOPE_SHA[:16]
     env["CODEX_RUN_DIR"] = str(Path(env["CODEX_RUN_DIR"]).with_name("codex-selected-run"))
 
-    completed = _run_batch("codex", env, "--struct", "--models=luna", "--tasks=DI,GR")
+    completed = _run_batch("codex", env, "--struct", "--models=gpt-6.1-sol", "--tasks=DI,GR")
 
     assert completed.returncode == 0, completed.stderr
     codex_calls = [
@@ -2352,7 +2346,7 @@ def test_paid_codex_checksums_include_canonical_telemetry_sidecar(
     """Record and verify the canonical telemetry sidecar in the artifact checksum list."""
     env, _ = batch_env
 
-    completed = _run_batch("codex", env, "--struct", "--models=luna")
+    completed = _run_batch("codex", env, "--struct", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 0, completed.stderr
     run_dir = Path(env["CODEX_RUN_DIR"])
@@ -2372,7 +2366,7 @@ def test_codex_mode_reconstructs_a_missing_locked_index_before_dispatch(
     index_path = Path(env["REPO"]) / ".cache" / "codemap" / "target.json"
     index_path.unlink()
 
-    completed = _run_batch("codex", env, "--struct", "--models=luna")
+    completed = _run_batch("codex", env, "--struct", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 0, completed.stderr
     rebuilt = json.loads(index_path.read_text(encoding="utf-8"))
@@ -2388,7 +2382,7 @@ def test_paid_codex_noninteractive_output_and_artifact_log_remain_plain(
     """A redirected paid run must retain plain terminal output and a plain tee log."""
     env, _ = batch_env
 
-    completed = _run_batch("codex", env, "--struct", "--models=luna")
+    completed = _run_batch("codex", env, "--struct", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 0, completed.stderr
     run_log = (Path(env["CODEX_RUN_DIR"]) / "run.log").read_text(encoding="utf-8")
@@ -2419,7 +2413,7 @@ def test_paid_codex_tty_output_hides_plan_rows_and_uses_shared_renderer(
     """An interactive paid run uses the same renderer while preserving its plan log."""
     env, call_log = batch_env
 
-    completed = _run_batch_tty("codex", env, "--struct", "--models=luna")
+    completed = _run_batch_tty("codex", env, "--struct", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 0, completed.stdout
     run_log = (Path(env["CODEX_RUN_DIR"]) / "run.log").read_text(encoding="utf-8")
@@ -2436,7 +2430,7 @@ def test_paid_codex_runner_failure_survives_the_artifact_tee(
     env, call_log = batch_env
     env["FAIL_WHEN_ARGS_CONTAIN"] = "--auth-source"
 
-    completed = _run_batch("codex", env, "--struct", "--models=luna")
+    completed = _run_batch("codex", env, "--struct", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 41
     assert "--auth-source" in call_log.read_text(encoding="utf-8")
@@ -2467,7 +2461,7 @@ def test_paid_codex_renderer_failure_survives_the_artifact_pipeline(
     env, _ = batch_env
     env["FAIL_RENDER_RESULTS"] = "1"
 
-    completed = _run_batch("codex", env, "--struct", "--models=luna")
+    completed = _run_batch("codex", env, "--struct", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 43
     assert (Path(env["CODEX_RUN_DIR"]) / "run.log").is_file()
@@ -2482,7 +2476,7 @@ def test_paid_codex_tee_failure_survives_the_artifact_pipeline(
     tee = Path(env["PATH"].split(":", maxsplit=1)[0]) / "tee"
     _write_executable(tee, "exit 44")
 
-    completed = _run_batch("codex", env, "--struct", "--models=luna")
+    completed = _run_batch("codex", env, "--struct", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 44
 
@@ -2539,7 +2533,7 @@ def test_stale_lock_from_a_dead_run_does_not_block_the_next_study(
     lock.mkdir()
     (lock / "owner").write_text("2147483646 run-all.sh claude\n", encoding="utf-8")
 
-    completed = _run_batch("codex", env, "--struct", "--models=luna")
+    completed = _run_batch("codex", env, "--struct", "--models=gpt-6.1-sol")
 
     assert completed.returncode == 0, completed.stderr
     assert "clearing stale target lock" in completed.stdout
@@ -2579,12 +2573,12 @@ def test_models_selection_rejects_a_model_the_provider_never_declared(
     """
     env, call_log = batch_env
 
-    completed = _run_batch("claude", env, "--struct", "--dry-run", "--models=opus,gpt-5.6-luna")
+    completed = _run_batch("claude", env, "--struct", "--dry-run", "--models=opus,gpt-6.1-sol")
 
     assert completed.returncode == 2
     assert "not a declared claude stratum" in completed.stderr
     calls = call_log.read_text(encoding="utf-8") if call_log.exists() else ""
-    assert "--model gpt-5.6-luna" not in calls
+    assert "--model gpt-6.1-sol" not in calls
 
 
 @_skip_windows_posix
@@ -2613,13 +2607,13 @@ def test_codex_multi_stratum_dry_run_discloses_the_full_design_and_its_own_token
     """
     env, _ = batch_env
 
-    completed = _run_batch("codex", env, "--struct", "--dry-run", "--models=gpt-5.6-luna,gpt-5.6-terra")
+    completed = _run_batch("codex", env, "--struct", "--dry-run", "--models=gpt-6.1-sol,gpt-6-luna")
 
     assert completed.returncode == 0, completed.stderr
     assert "CODEX MULTI-STRATUM AUTHORIZATION" in completed.stdout
-    assert "MODELS             gpt-5.6-luna gpt-5.6-terra" in completed.stdout
+    assert "MODELS             gpt-6.1-sol gpt-6-luna" in completed.stdout
     assert "2 strata" in completed.stdout
-    assert "--models=gpt-5.6-luna,gpt-5.6-terra" in completed.stdout
+    assert "--models=gpt-6.1-sol,gpt-6-luna" in completed.stdout
 
 
 @_skip_windows_posix
@@ -2633,8 +2627,8 @@ def test_codex_multi_stratum_token_binds_the_ordered_model_list(
     """
     env, _ = batch_env
 
-    forward = _run_batch("codex", env, "--struct", "--dry-run", "--models=gpt-5.6-luna,gpt-5.6-terra")
-    reversed_order = _run_batch("codex", env, "--struct", "--dry-run", "--models=gpt-5.6-terra,gpt-5.6-luna")
+    forward = _run_batch("codex", env, "--struct", "--dry-run", "--models=gpt-6.1-sol,gpt-6-luna")
+    reversed_order = _run_batch("codex", env, "--struct", "--dry-run", "--models=gpt-6-luna,gpt-6.1-sol")
 
     def _token(output: str) -> str:
         line = next(row for row in output.splitlines() if "CODEX_PAID_APPROVAL=" in row)
@@ -2652,28 +2646,28 @@ def test_codex_models_selection_runs_the_named_stratum(batch_env: tuple[dict[str
     """
     env, call_log = batch_env
 
-    completed = _run_batch("codex", env, "--struct", "--dry-run", "--models=gpt-5.6-terra")
+    completed = _run_batch("codex", env, "--struct", "--dry-run", "--models=gpt-6-luna")
 
     assert completed.returncode == 0, completed.stderr
     calls = call_log.read_text(encoding="utf-8") if call_log.exists() else ""
-    assert "--model gpt-5.6-terra" in calls
+    assert "--model gpt-6-luna" in calls
 
 
 @_skip_windows_posix
 def test_models_selection_accepts_a_stratum_nickname(batch_env: tuple[dict[str, str], Path]) -> None:
     """A stratum's trailing nickname selects the declared full name it belongs to.
 
-    Scenario: the Codex strata differ only after the last dash, so an operator naming "terra" means
+    Scenario: the Codex strata differ only after the last dash, so an operator naming "luna" means
     exactly one declared stratum. The runner still has to receive the full declared name, because
     that name is what the manifest, the run directory, and the results are keyed by.
     """
     env, call_log = batch_env
 
-    completed = _run_batch("codex", env, "--struct", "--dry-run", "--models=terra")
+    completed = _run_batch("codex", env, "--struct", "--dry-run", "--models=luna")
 
     assert completed.returncode == 0, completed.stderr
     calls = call_log.read_text(encoding="utf-8") if call_log.exists() else ""
-    assert "--model gpt-5.6-terra" in calls
+    assert "--model gpt-6-luna" in calls
 
 
 @_skip_windows_posix
@@ -2688,8 +2682,8 @@ def test_nickname_and_full_name_mint_the_same_multi_stratum_token(
     """
     env, _ = batch_env
 
-    full = _run_batch("codex", env, "--struct", "--dry-run", "--models=gpt-5.6-luna,gpt-5.6-terra")
-    nicknamed = _run_batch("codex", env, "--struct", "--dry-run", "--models=luna,terra")
+    full = _run_batch("codex", env, "--struct", "--dry-run", "--models=gpt-6.1-sol,gpt-6-luna")
+    nicknamed = _run_batch("codex", env, "--struct", "--dry-run", "--models=gpt-6.1-sol,luna")
 
     def _token(output: str) -> str:
         line = next(row for row in output.splitlines() if "CODEX_PAID_APPROVAL=" in row)
@@ -2697,7 +2691,7 @@ def test_nickname_and_full_name_mint_the_same_multi_stratum_token(
 
     assert nicknamed.returncode == 0, nicknamed.stderr
     assert _token(nicknamed.stdout) == _token(full.stdout)
-    assert "MODELS             gpt-5.6-luna gpt-5.6-terra" in nicknamed.stdout
+    assert "MODELS             gpt-6.1-sol gpt-6-luna" in nicknamed.stdout
 
 
 @_skip_windows_posix
@@ -2707,11 +2701,11 @@ def test_models_selection_rejects_a_stratum_named_twice_under_two_spellings(
     """A nickname and its full name are one stratum, so naming both is still a duplicate.
 
     Scenario: canonicalizing before the duplicate check is what makes this fail; comparing the raw
-    spellings would let "luna,gpt-5.6-luna" through and run one stratum twice under one approval.
+    spellings would let "luna,gpt-6-luna" through and run one stratum twice under one approval.
     """
     env, _ = batch_env
 
-    completed = _run_batch("codex", env, "--struct", "--dry-run", "--models=luna,gpt-5.6-luna")
+    completed = _run_batch("codex", env, "--struct", "--dry-run", "--models=luna,gpt-6-luna")
 
     assert completed.returncode == 2
     assert "selected more than once" in completed.stderr
@@ -2730,14 +2724,14 @@ def test_agentic_selector_runs_the_stratum_it_names(
     """
     env, call_log = batch_env
 
-    completed = _run_batch("codex", env, "--agentic", "--models=gpt-5.6-terra", "--dry-run")
+    completed = _run_batch("codex", env, "--agentic", "--models=gpt-6-luna", "--dry-run")
 
     assert completed.returncode == 0, completed.stderr
-    assert "stratum           gpt-5.6-terra" in completed.stdout
+    assert "stratum           gpt-6-luna" in completed.stdout
     calls = call_log.read_text(encoding="utf-8").splitlines()
     agentic_calls = [line for line in calls if "run-codex-agentic.py" in line]
     assert agentic_calls
-    assert all("--model gpt-5.6-terra" in line for line in agentic_calls)
+    assert all("--model gpt-6-luna" in line for line in agentic_calls)
     assert all("run-codex-structural.py" not in line for line in calls)
 
 
@@ -2753,7 +2747,9 @@ def test_agentic_selector_sweeps_each_selected_stratum_in_requested_order(
     """
     env, call_log = batch_env
 
-    completed = _run_batch("codex", env, "--agentic", "--models=luna,terra,sol", "--repetitions=1", "--dry-run")
+    completed = _run_batch(
+        "codex", env, "--agentic", "--models=gpt-6.1-sol,luna,gpt-6-sol", "--repetitions=1", "--dry-run"
+    )
 
     assert completed.returncode == 0, completed.stderr
     assert "180 cells" in completed.stdout
@@ -2765,7 +2761,7 @@ def test_agentic_selector_sweeps_each_selected_stratum_in_requested_order(
     ]
     assert len(plans) == 3
     assert "--model" not in plans[0]
-    assert [_option_value(line, "--model") for line in plans[1:]] == ["gpt-5.6-terra", "gpt-5.6-sol"]
+    assert [_option_value(line, "--model") for line in plans[1:]] == ["gpt-6-luna", "gpt-6-sol"]
     assert all("--repetitions 1" in line for line in plans)
 
 
@@ -2773,7 +2769,7 @@ def test_agentic_selector_sweeps_each_selected_stratum_in_requested_order(
 @pytest.mark.parametrize(
     ("provider", "models", "expected"),
     [
-        pytest.param("codex", "terra,sol", ("gpt-5.6-terra", "gpt-5.6-sol"), id="codex"),
+        pytest.param("codex", "luna,gpt-6-sol", ("gpt-6-luna", "gpt-6-sol"), id="codex"),
         pytest.param("claude", "haiku,sonnet", ("haiku", "sonnet"), id="claude"),
     ],
 )
@@ -2879,7 +2875,7 @@ def test_structural_only_dry_run_keeps_the_command_its_own_lane_authorizes(
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.count("PAID_COMMAND:") == 1
-    authorization = completed.stdout.split("== CODEX MULTI-STRATUM AUTHORIZATION", 1)[1]
+    authorization = completed.stdout.split("== CODEX STRUCTURAL AUTHORIZATION", 1)[1]
     assert "bash benchmarks/run-all.sh codex --struct\n" in authorization
     lane_plans = [
         line
@@ -2930,7 +2926,7 @@ def test_explicit_luna_agentic_dry_run_names_the_command_it_authorizes(
     """
     env, _ = batch_env
 
-    completed = _run_batch("codex", env, "--agentic", "--models=luna", "--dry-run")
+    completed = _run_batch("codex", env, "--agentic", "--models=gpt-6.1-sol", "--dry-run")
 
     assert completed.returncode == 0, completed.stderr
     authorization = completed.stdout.split("== CODEX AGENTIC AUTHORIZATION", 1)[1]
@@ -2959,12 +2955,12 @@ def test_combined_mode_binds_every_selected_stratum_into_one_authorization(
     """
     env, call_log = batch_env
 
-    completed = _run_batch("codex", env, "--models=gpt-5.6-sol,gpt-5.6-terra", "--dry-run")
+    completed = _run_batch("codex", env, "--models=gpt-6-sol,gpt-6-luna", "--dry-run")
 
     assert completed.returncode == 0, completed.stderr
     authorization = completed.stdout.split("== CODEX COMBINED AUTHORIZATION", 1)[1]
-    assert "strata            gpt-5.6-sol gpt-5.6-terra" in authorization
-    assert "bash benchmarks/run-all.sh codex --models=gpt-5.6-sol,gpt-5.6-terra" in authorization
+    assert "strata            gpt-6-sol gpt-6-luna" in authorization
+    assert "bash benchmarks/run-all.sh codex --models=gpt-6-sol,gpt-6-luna" in authorization
     assert "2 strata (separate, nonpoolable studies)" in authorization
     # One combined token, so one copyable command: a structural-only block here would drop the
     # agentic study from whatever the operator pastes.
@@ -2986,8 +2982,8 @@ def test_combined_token_separates_a_multi_stratum_run_from_a_single_stratum_one(
     """
     env, _ = batch_env
 
-    one = _run_batch("codex", env, "--models=gpt-5.6-terra", "--dry-run")
-    several = _run_batch("codex", env, "--models=gpt-5.6-sol,gpt-5.6-terra", "--dry-run")
+    one = _run_batch("codex", env, "--models=gpt-6-luna", "--dry-run")
+    several = _run_batch("codex", env, "--models=gpt-6-sol,gpt-6-luna", "--dry-run")
 
     assert one.returncode == 0, one.stderr
     assert several.returncode == 0, several.stderr
@@ -3006,11 +3002,11 @@ def test_combined_paid_command_carries_the_declared_name_of_the_selected_stratum
     """
     env, _ = batch_env
 
-    completed = _run_batch("codex", env, "--models=terra", "--dry-run")
+    completed = _run_batch("codex", env, "--models=luna", "--dry-run")
 
     assert completed.returncode == 0, completed.stderr
     authorization = completed.stdout.split("== CODEX COMBINED AUTHORIZATION", 1)[1]
-    assert "bash benchmarks/run-all.sh codex --models=gpt-5.6-terra" in authorization
+    assert "bash benchmarks/run-all.sh codex --models=gpt-6-luna" in authorization
 
 
 @_skip_windows_posix
@@ -3025,17 +3021,17 @@ def test_combined_dry_run_runs_one_selected_stratum_in_both_lanes(
     """
     env, call_log = batch_env
 
-    completed = _run_batch("codex", env, "--models=gpt-5.6-terra", "--dry-run")
+    completed = _run_batch("codex", env, "--models=gpt-6-luna", "--dry-run")
 
     assert completed.returncode == 0, completed.stderr
     authorization = completed.stdout.split("== CODEX COMBINED AUTHORIZATION", 1)[1]
-    assert "strata            gpt-5.6-terra (both lanes)" in authorization
+    assert "strata            gpt-6-luna (both lanes)" in authorization
     calls = call_log.read_text(encoding="utf-8").splitlines()
     structural_dry_run = [line for line in calls if "run-codex-structural.py" in line and "--dry-run" in line]
-    assert any("--model gpt-5.6-terra" in line for line in structural_dry_run)
+    assert any("--model gpt-6-luna" in line for line in structural_dry_run)
     agentic_dry_run = [line for line in calls if "run-codex-agentic.py" in line and "--dry-run" in line]
     assert agentic_dry_run
-    assert all("--model gpt-5.6-terra" in line for line in agentic_dry_run)
+    assert all("--model gpt-6-luna" in line for line in agentic_dry_run)
 
 
 @_skip_windows_posix
@@ -3049,16 +3045,16 @@ def test_combined_dry_run_sweeps_every_selected_stratum_in_both_lanes(
     """
     env, call_log = batch_env
 
-    completed = _run_batch("codex", env, "--models=gpt-5.6-sol,gpt-5.6-terra", "--dry-run")
+    completed = _run_batch("codex", env, "--models=gpt-6-sol,gpt-6-luna", "--dry-run")
 
     assert completed.returncode == 0, completed.stderr
     authorization = completed.stdout.split("== CODEX COMBINED AUTHORIZATION", 1)[1]
-    assert "gpt-5.6-sol gpt-5.6-terra (both lanes)" in authorization
+    assert "gpt-6-sol gpt-6-luna (both lanes)" in authorization
     calls = call_log.read_text(encoding="utf-8").splitlines()
     agentic_dry_run = [line for line in calls if "run-codex-agentic.py" in line and "--dry-run" in line]
     assert [_option_value(line, "--model") for line in agentic_dry_run if "--resolve-scope" not in line] == [
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
+        "gpt-6-sol",
+        "gpt-6-luna",
     ]
 
 
@@ -3098,15 +3094,15 @@ def test_combined_paid_run_forwards_one_selected_stratum_to_both_children(
     env["CODEX_RESULTS_ROOT"] = str(tmp_path / "results")
     env.pop("CODEX_RUN_DIR")
 
-    completed = _run_batch("codex", env, "--models=gpt-5.6-terra")
+    completed = _run_batch("codex", env, "--models=gpt-6-luna")
 
     assert completed.returncode == 0, completed.stderr
     calls = call_log.read_text(encoding="utf-8").splitlines()
     paid_structural = [line for line in calls if "run-codex-structural.py" in line and "--auth-source" in line]
     paid_agentic = [line for line in calls if "run-codex-agentic.py" in line and "--auth-source" in line]
-    assert any("--model gpt-5.6-terra" in line for line in paid_structural)
+    assert any("--model gpt-6-luna" in line for line in paid_structural)
     assert paid_agentic
-    assert all("--model gpt-5.6-terra" in line for line in paid_agentic)
+    assert all("--model gpt-6-luna" in line for line in paid_agentic)
 
 
 @_skip_windows_posix
@@ -3324,7 +3320,7 @@ def test_isolated_paid_run_keeps_every_child_study_on_the_one_worktree(
     env["CODEX_RESULTS_ROOT"] = str(tmp_path / "results")
     env.pop("CODEX_RUN_DIR")
 
-    completed = _run_batch("codex", env, "--isolated", "--models=gpt-5.6-sol,gpt-5.6-terra")
+    completed = _run_batch("codex", env, "--isolated", "--models=gpt-6-sol,gpt-6-luna")
 
     assert completed.returncode == 0, completed.stderr
     created = [line for line in completed.stdout.splitlines() if line.startswith("→ run worktree: ")]
@@ -3419,7 +3415,7 @@ def test_agentic_authorization_reprints_the_isolation_the_operator_asked_for(
     completed = _run_batch("codex", env, "--agentic", "--isolated", "--dry-run")
 
     assert completed.returncode == 0, completed.stderr
-    authorization = completed.stdout.split("== CODEX AGENTIC MODEL-SWEEP AUTHORIZATION", 1)[1]
+    authorization = completed.stdout.split("== CODEX AGENTIC AUTHORIZATION", 1)[1]
     assert "bash benchmarks/run-all.sh codex --agentic --isolated\n" in authorization
 
 
@@ -3438,11 +3434,11 @@ def test_multi_stratum_authorization_reprints_the_isolation_the_operator_asked_f
     env, _ = batch_env
     _managed_clone_with_frozen_index(env, tmp_path)
 
-    completed = _run_batch("codex", env, "--struct", "--isolated", "--models=gpt-5.6-sol,gpt-5.6-terra", "--dry-run")
+    completed = _run_batch("codex", env, "--struct", "--isolated", "--models=gpt-6-sol,gpt-6-luna", "--dry-run")
 
     assert completed.returncode == 0, completed.stderr
     authorization = completed.stdout.split("== CODEX MULTI-STRATUM AUTHORIZATION", 1)[1]
-    assert "bash benchmarks/run-all.sh codex --struct --isolated --models=gpt-5.6-sol,gpt-5.6-terra\n" in authorization
+    assert "bash benchmarks/run-all.sh codex --struct --isolated --models=gpt-6-sol,gpt-6-luna\n" in authorization
 
 
 @_skip_windows_posix
@@ -3458,13 +3454,11 @@ def test_multi_stratum_authorization_keeps_the_task_selection_its_token_binds(
     """
     env, _ = batch_env
 
-    completed = _run_batch("codex", env, "--struct", "--tasks=DI,GR", "--models=gpt-5.6-sol,gpt-5.6-terra", "--dry-run")
+    completed = _run_batch("codex", env, "--struct", "--tasks=DI,GR", "--models=gpt-6-sol,gpt-6-luna", "--dry-run")
 
     assert completed.returncode == 0, completed.stderr
     authorization = completed.stdout.split("== CODEX MULTI-STRATUM AUTHORIZATION", 1)[1]
-    assert (
-        "bash benchmarks/run-all.sh codex --struct --tasks=DI,GR --models=gpt-5.6-sol,gpt-5.6-terra\n" in authorization
-    )
+    assert "bash benchmarks/run-all.sh codex --struct --tasks=DI,GR --models=gpt-6-sol,gpt-6-luna\n" in authorization
 
 
 @_skip_windows_posix
@@ -3474,11 +3468,11 @@ def test_agentic_authorization_reprints_the_selected_model(
     """The paid command preserves the model selected in the reviewed agentic plan."""
     env, _ = batch_env
 
-    completed = _run_batch("codex", env, "--agentic", "--models=gpt-5.6-terra", "--dry-run")
+    completed = _run_batch("codex", env, "--agentic", "--models=gpt-6-luna", "--dry-run")
 
     assert completed.returncode == 0, completed.stderr
     authorization = completed.stdout.split("== CODEX AGENTIC AUTHORIZATION", 1)[1]
-    assert "bash benchmarks/run-all.sh codex --agentic --models=gpt-5.6-terra\n" in authorization
+    assert "bash benchmarks/run-all.sh codex --agentic --models=gpt-6-luna\n" in authorization
 
 
 @_skip_windows_posix
@@ -3521,7 +3515,7 @@ def test_structural_authorization_reprints_the_isolation_the_operator_asked_for(
     completed = _run_batch("codex", env, "--struct", "--isolated", "--dry-run")
 
     assert completed.returncode == 0, completed.stderr
-    authorization = completed.stdout.split("== CODEX MULTI-STRATUM AUTHORIZATION", 1)[1]
+    authorization = completed.stdout.split("== CODEX STRUCTURAL AUTHORIZATION", 1)[1]
     assert "bash benchmarks/run-all.sh codex --struct --isolated\n" in authorization
 
 
@@ -3537,7 +3531,7 @@ def test_multi_stratum_dry_run_prints_exactly_one_copyable_paid_command(
     """
     env, _ = batch_env
 
-    completed = _run_batch("codex", env, "--struct", "--models=gpt-5.6-sol,gpt-5.6-terra", "--dry-run")
+    completed = _run_batch("codex", env, "--struct", "--models=gpt-6-sol,gpt-6-luna", "--dry-run")
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.count("PAID_COMMAND:") == 1

@@ -486,17 +486,19 @@ def resolve_agentic_model(manifest: Mapping[str, Any], manifest_path: Path, mode
         ValueError: When the manifest lacks a model block, or the name is not a declared stratum.
 
     Examples:
-        >>> resolve_agentic_model({"model": {"name": "gpt-x"}}, _MANIFEST_PATH, None) is None
+        >>> manifest = {"model": {"name": "gpt-6.1-sol", "reasoning_effort": "high"}}
+        >>> resolve_agentic_model(manifest, _MANIFEST_PATH, None) is None
         True
-        >>> resolve_agentic_model({"model": {"name": "gpt-x"}}, _MANIFEST_PATH, "gpt-x") is None
+        >>> resolve_agentic_model(manifest, _MANIFEST_PATH, "gpt-6.1-sol") is None
         True
     """
     configured = manifest.get("model")
     if not isinstance(configured, Mapping) or not isinstance(configured.get("name"), str):
         raise ValueError("Codex agentic manifest lacks a model stratum")
+    selected = configured["name"] if model is None else str(model)
+    codex_runtime.validate_codex_stratum(selected, str(configured.get("reasoning_effort", "")), Path(manifest_path))
     if model is None or model == configured["name"]:
         return None
-    codex_runtime.validate_codex_stratum(str(model), str(configured.get("reasoning_effort", "")), Path(manifest_path))
     return str(model)
 
 
@@ -1945,7 +1947,7 @@ def main(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag w
             _cli_error("change-impact timeout must be a positive integer")
         if impact_timeout < 1 or str(impact_timeout) != str(timeout):
             _cli_error("change-impact timeout must be a positive integer")
-        impact_model = "gpt-5.6-terra" if model is None else str(model)
+        impact_model = "gpt-6.1-sol" if model is None else str(model)
         try:
             codex_runtime.validate_codex_stratum(impact_model, "high", _MANIFEST_PATH)
         except ValueError as exc:

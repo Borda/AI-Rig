@@ -14,9 +14,9 @@ Read only ``loop-ledger.json`` with its ``loop-rounds.jsonl`` round log, ``loop-
 supporting snapshots, and completed review runs below one challenge-resolve run. The validator delegates route, role,
 child-lineage, and output checks to Code Review's existing manifest-only validator; it creates no reviewer, modifies no
 artifact, and makes no network call. It
-supports native schema-five and local reviewer wave schema-four evidence because both retain a reviewer thread
-identifier and frozen context bytes. Loop evidence schema one remains readable with its historical request-coverage
-limit; current schema two binds task criteria, declared unchanged callers or consumers, continuation lineage,
+supports native schema-five through schema-eight and local reviewer wave schema-four evidence. Both retain a reviewer
+thread identifier and frozen context bytes. Historical loop evidence schema one retains its request-coverage limit;
+current schema two binds task criteria, declared unchanged callers or consumers, continuation lineage,
 machine-readable reviewer-stated coverage, and an explicit parent mapping for every reviewer signature. Loop evidence
 schema three is unsupported. Older review schemas are rejected.
 
@@ -496,9 +496,11 @@ def _findings_from_report(
     return findings
 
 
-def _selected_native_pass(manifest: dict[str, Any], review_run: Path, role: str) -> tuple[Path, str, Path]:
-    """Return selected schema-five output, reviewer thread, and frozen context for one exact role."""
-    if manifest.get("schema_version") not in {5, 6}:
+def _selected_native_pass(
+    manifest: dict[str, Any], review_run: Path, role: str, *, raw: bool = False
+) -> tuple[Path, str, Path]:
+    """Return the selected native output, reviewer thread, and frozen context for one exact role."""
+    if manifest.get("schema_version") not in {5, 6, 7, 8}:
         raise ValueError("loop-evidence-review-schema-unsupported")
     passes = manifest.get("passes")
     if not isinstance(passes, list):
@@ -515,7 +517,11 @@ def _selected_native_pass(manifest: dict[str, Any], review_run: Path, role: str)
     if not isinstance(attempt, dict) or not isinstance(attempt.get("agent_thread_id"), str):
         raise ValueError("loop-evidence-review-selected-attempt-invalid")
     return (
-        _run_path(review_run, attempt.get("output_path"), "loop-evidence-review-output-path-invalid"),
+        _run_path(
+            review_run,
+            attempt.get("raw_output_path" if raw else "output_path"),
+            "loop-evidence-review-output-path-invalid",
+        ),
         attempt["agent_thread_id"],
         _run_path(review_run, attempt.get("context_path"), "loop-evidence-review-context-path-invalid"),
     )
@@ -582,7 +588,7 @@ def _validate_review_round(
     if (review_run / "diff.patch").read_bytes() != diff_bytes:
         raise ValueError("loop-evidence-review-diff-mismatch")
     schema = manifest.get("schema_version")
-    if schema in {5, 6}:
+    if schema in {5, 6, 7, 8}:
         selected_output, reviewer_identity, _ = _selected_native_pass(manifest, review_run, selected_role)
         selector = _selected_native_pass
     elif schema == 4:
@@ -594,7 +600,11 @@ def _validate_review_round(
         raise ValueError("loop-evidence-reviewer-is-implementation-author")
     if ledger_reviewer_identity != reviewer_identity:
         raise ValueError("loop-evidence-reviewer-identity-mismatch")
-    if ledger_report.read_bytes() != selected_output.read_bytes():
+    accepted_outputs = [selected_output.read_bytes()]
+    if schema in {7, 8}:
+        raw_output, _, _ = _selected_native_pass(manifest, review_run, selected_role, raw=True)
+        accepted_outputs.append(raw_output.read_bytes())
+    if ledger_report.read_bytes() not in accepted_outputs:
         raise ValueError("loop-evidence-report-bytes-mismatch")
 
     passes = manifest.get("passes")

@@ -45,15 +45,15 @@ Apply this policy to every same or plausibly shared obstacle, incl. one appearin
 - Work cycle records objective, operation/hypothesis, observed output, next decision.
 - Material progress = new falsifiable evidence, decision-changing scope/root-cause narrowing, acceptance-check status change, or user-directed decision; repeated equivalent actions, rewording, elapsed time, token count, confidence claims don't qualify.
 - Closure condition = unchanged result ending workstream: passing acceptance check, resolved decision, or user-approved scope.
-- Two cycles no material progress, or three evidence-backed attempts leaving one closure condition unmet, require owner persist `reasoning-progress.json` and validate via `python PLUGIN_ROOT/shared/escalation_ledger.py --ledger <run-directory>/reasoning-progress.json` before further cycle. Cycles append-only: stage one in `<run-directory>/reasoning-cycles.jsonl.rec`, run same command with `--append`; header holds other state, rewritten in place.
+- Two primary cycles no material progress, or three evidence-backed unsuccessful primary attempts since last evidence-backed material primary progress, require owner persist `reasoning-progress.json` and validate via `python PLUGIN_ROOT/shared/escalation_ledger.py --ledger <run-directory>/reasoning-progress.json` before further cycle. Cycles append-only: stage one in `<run-directory>/reasoning-cycles.jsonl.rec`, run same command with `--append`; header holds other state, rewritten in place.
 - Ledger records objective; closure condition; operations/hypotheses; outputs/evidence; why each attempt lacked progress/closure; current model/effort when observable; state changes; recurrence count.
 
 1. Pause, request exactly one permitted higher-capability advisory pass: first supported reasoning-effort increase, else next valid model tier.
 2. Advisor route valid only when observed sandbox `read-only`; diagnoses, proposes one bounded recovery action + stop condition, makes no state changes or acceptance claim.
 3. Read-only advisory route unavailable/unverified → ask human for missing advisory-route decision; never claim enforced isolation. Keep that route stopped while continuing unrelated authorized work or already-permitted source-inspection alternative with its limitations disclosed.
 4. Parent may run that one action.
-5. Action makes no material progress or closure condition unmet → stop that workstream and ask human with ledger, advisory evidence, current hypotheses, rejected alternatives, one recommended next step with alternatives, and evidence or decision needed to resume. Explain which unaffected work can continue.
-6. Never resets/weakens repeated-obstacle policy; closure-attempt count resets only when its condition fulfilled or materially replaced by recorded user direction or external-state evidence; Luna never escalates bounded support to Sol, and Astra requires a separate evidenced escalation.
+5. Action makes no evidence-backed material primary progress and closure condition remains unmet → stop that workstream and ask human with ledger, advisory evidence, current hypotheses, rejected alternatives, one recommended next step with alternatives, and evidence or decision needed to resume. Explain which unaffected work can continue.
+6. Evidence-backed material primary progress permits useful unfinished recovery to continue and resets unsuccessful-attempt sequence; auxiliary success never does. Never reset/weaken separate repeated-obstacle policy; Luna never escalates bounded support to Sol, and Astra requires a separate evidenced escalation.
 
 ## Coordination Discipline
 

@@ -672,6 +672,8 @@ def _patch_stage_source_binding(repo_path: Path, tasks: list[dict[str, Any]]) ->
 
 def _resolve_scope(tasks: list[dict[str, Any]], model: str, source_binding: Mapping[str, Any]) -> dict[str, Any]:
     """Bind one selected executable stage to immutable contracts, scorer, and source inputs."""
+    if model not in runtime.SUPPORTED_CODEX_MODELS:
+        raise ValueError(f"supported Codex benchmark model required: {', '.join(runtime.SUPPORTED_CODEX_MODELS)}")
     payload: dict[str, Any] = {
         "arms": ARMS,
         "model": model,

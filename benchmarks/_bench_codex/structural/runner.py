@@ -106,6 +106,8 @@ class CodexRunner:
         evaluator: Callable[[Mapping[str, Any], str], EvaluationResult] | None = None,
         evidence_roots: Iterable[Path] = (),
     ) -> None:
+        if model not in runtime.SUPPORTED_CODEX_MODELS:
+            raise ValueError(f"supported Codex benchmark model required: {', '.join(runtime.SUPPORTED_CODEX_MODELS)}")
         self.model = model
         self.reasoning_effort = reasoning_effort
         self.repo_path = Path(repo_path).resolve()

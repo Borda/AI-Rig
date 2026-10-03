@@ -29,11 +29,21 @@ When independent review findings are fixed in a cycle, read `../../shared/advers
 }
 ```
 
+## Lightweight Local Work
+
+Use a parent-only path for a small, understood, reversible local change with bounded impact and existing task authorization. A code fix plus its regression test remains one change. Routing examples are optional; tests and documentation for one change do not create separate domains.
+
+1. Inspect the affected flow and applicable instructions; define the requested outcome. Investigate an unknown cause before editing.
+2. Make the smallest authorized change. Run the relevant acceptance check and configured lint/format checks; inspect the diff.
+3. Report the outcome, verification, and material limits concisely. Do not create execution plans, specialist packs, confidence worksheets, five-entry gate bundles, or final-handoff/result artifacts solely for this path. Reuse still-valid checks for unchanged source and environment.
+
+This path takes precedence over the detailed workflow and role examples below. Select the detailed workflow for broad or risky changes, an explicitly requested structured report/review, or work requiring independent specialist coverage. Actual runtime permissions, protected-state decisions, and project-required checks still apply. Missing parallel controls select parent-serial work; they do not require another permission request for already-authorized local edits.
+
 ## Parallel Adoption (Portable read-only)
 
 <!-- policy-sibling: skills/manage/SKILL.md (Parallel Adoption section) — near-duplicate; also see skills/code-review/SKILL.md Workflow parallel-review section as a third divergent variant; check siblings before editing this section alone -->
 
-This skill permits only its promoted portable read-only route. Resolve execution precedence from per-invocation `--execution=<mode>`, then `CODEX_RIG_EXECUTION`, then the `auto` default. The default execution mode is `auto`. `auto` selects this route only after this consumer's runtime matrix and promotion; otherwise it resolves safely to `serial`. Every write still requires a frozen plan and exact-digest approval. This route never bypasses consumer promotion, serial parent authority, or write approval.
+This skill permits only its promoted portable read-only route. Resolve execution precedence from per-invocation `--execution=<mode>`, then `CODEX_RIG_EXECUTION`, then the `auto` default. The default execution mode is `auto`. `auto` selects this route only after this consumer's runtime matrix and promotion; otherwise it resolves safely to `serial`. Serial parent work uses existing task authorization; exact-plan-digest approval applies when the promoted parallel-read route is selected. This route never bypasses consumer promotion, serial parent authority, or applicable write approval. Supplied denials or stale approvals remain invalid in every execution mode.
 
 Follow the [canonical G0–G8 execution flow](../../ARCHITECTURE.md#canonical-g0g8-execution-flow) for shared gate order and fork outcomes. This consumer's read-only evidence passes are bounded by G0–G5; parent owns deterministic G6 integration, G7 verification, and G8 verdict/promotion.
 
@@ -47,11 +57,11 @@ Apply shared [host compatibility check](../../shared/specialist-orchestration.md
 
 Before any dispatch, freeze goal, mode, `done_when`, baseline, ownership DAG, context packs, role-card hashes, checks, resource locks, and plan digest. Dispatch at most one fixed dependency-ready wave, then join every terminal handoff before implementation, integration, gates, or acceptance; changed scope requires new plan.
 
-The frozen `<run-directory>/execution-plan.json` must include exact `consumer_policy` values `consumer_id=implement`, `capability=portable-read-only`, `promotion_status=promoted`, `parent_mutations=serial`, and `canonical_gates=serial`. It must also include `write_policy`: use `parent_writes=planned` with `approval_requirement=exact-plan-digest` when any parent mutation is planned, otherwise `parent_writes=none` with `approval_requirement=not-required`. A planned write requires `<run-directory>/write-approval.json` containing only exact plan SHA-256, `response=approve`, and `source=explicit-input|user-prompt`.
+The frozen `<run-directory>/execution-plan.json` must include exact `consumer_policy` values `consumer_id=implement`, `capability=portable-read-only`, `promotion_status=promoted`, `parent_mutations=serial`, and `canonical_gates=serial`. It must also include `write_policy`: use `parent_writes=planned` with `approval_requirement=exact-plan-digest` when any parent mutation is planned, otherwise `parent_writes=none` with `approval_requirement=not-required`. When parallel-read is selected, a planned parent write requires `<run-directory>/write-approval.json` containing only exact plan SHA-256, `response=approve`, and `source=explicit-input|user-prompt`. Serial execution or an automatic serial fallback does not require a new digest receipt for already-authorized work.
 
 Bootstrap exception: run-directory creation (Step 01), baseline diff/branch persistence (Step 02), and the `write-approval.json` write itself are exempt from requiring a prior approved plan digest — these precursor writes must exist before a plan digest can be computed or approved.
 
-Before dispatch, run `python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer implement --plan <run-directory>/execution-plan.json --approval <run-directory>/write-approval.json`; append `--execution=<mode>` only for explicit invocation value. Omit `--approval` only when frozen write policy declares no parent writes. A nonzero result stops route.
+Before dispatch, run `python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer implement --plan <run-directory>/execution-plan.json --approval <run-directory>/write-approval.json`; append `--execution=<mode>` only for explicit invocation value. Omit `--approval` when no parent writes are planned or effective execution is serial and no approval was supplied. Resolve host fallback before deciding whether the parallel route needs a receipt. A nonzero result stops route.
 
 After every spawned child reaches a terminal handoff, run `python PLUGIN_ROOT/shared/parallel_execution.py validate-runtime --consumer implement --manifest <run-directory>/execution-manifest.json --plan <run-directory>/execution-plan.json --parent-rollout <authoritative-parent-rollout> --sessions-dir <authoritative-sessions-directory> --run-dir <run-directory> --roles-dir PLUGIN_ROOT/roles`. Require `runtime_promotion_eligible=true`, `consumer_id=implement`, and `write_parallel_eligible=false`. Run the same preflight again after the terminal join and before the first parent mutation. Any plan, approval, consumer, runtime, or join drift stops mutation and requires a new frozen plan plus exact approval.
 
@@ -140,7 +150,7 @@ Before spawning or substituting specialists, write `<run-directory>/specialist-p
 | role | trigger | context pack | expected output | mode |
 | -- | -- | -- | -- | -- |
 
-Required orchestration patterns:
+Optional routing examples for work that actually benefits from separate expertise:
 
 - public API or architecture: `sw-engineer` returns a proposal for review, `qa-specialist` for acceptance matrix, and `doc-scribe` for public docs/docstrings when applicable. Use `solution-architect` only when the user expressly requests that advisory pass or selects the role; it returns a bounded read-only design artifact to the Sol parent/session, which continues and accepts.
 - bug fix or regression: `investigate` or equivalent root-cause evidence first, then `sw-engineer` for fix and `qa-specialist` for failure-before/pass-after proof.
@@ -170,7 +180,7 @@ Inspect `python PLUGIN_ROOT/shared/run_gates.py --help`, then run all project-re
 
 ### 10: Classify findings using `../../shared/severity-map.md`
 
-### 11: Run confidence calibration and recovery before any user-facing output
+### 11: Record confidence evidence before the detailed final handoff
 
 Write `<run-directory>/confidence-calibration.md` with these sections:
 

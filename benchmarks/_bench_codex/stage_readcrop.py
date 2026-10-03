@@ -433,6 +433,8 @@ def resolve_scope(
     tasks: list[dict[str, Any]], methodology_path: Path, treatment_manifest_path: Path, model: str
 ) -> dict[str, Any]:
     """Bind one selected ReadCrop calibration to every enforced immutable coordinate."""
+    if model not in runtime.SUPPORTED_CODEX_MODELS:
+        raise ValueError(f"supported Codex benchmark model required: {', '.join(runtime.SUPPORTED_CODEX_MODELS)}")
     scope = {
         "arms": ARMS,
         "manifest_sha256": hashlib.sha256(methodology_path.read_bytes()).hexdigest(),
@@ -676,6 +678,19 @@ def run_stage(
     ``index_relocation`` is present only for a run outside the canonical clone; it travels to every adapter this stage
     builds, because each one admits the source and index before touching them.
     """
+    # Historical replay uses frozen source contracts and source_scope, never a fresh execution scope.
+    if rescore_run_dir is not None and not resolve_scope_requested:
+        if rescore_output_dir is None:
+            raise ValueError("--rescore-run-dir requires --rescore-output-dir")
+        tasks = load_readcrop_tasks(tasks_path, methodology_path, repo_path)
+        if tasks_selector:
+            selected = {item.strip() for item in tasks_selector.split(",") if item.strip()}
+            tasks = [item for item in tasks if item["contract"].task_id in selected]
+            if not tasks or len(tasks) != len(selected):
+                raise ValueError("--tasks must select known read-crop IDs")
+        output_path = rescore_results(rescore_run_dir, rescore_output_dir, tasks)
+        print(f"rescored: {output_path}")
+        return
     index_path = index_path or (repo_path / ".cache" / "codemap" / f"{repo_path.name}.json")
     marketplace_root = marketplace_root or ROOT
     codemap_bin = codemap_bin or (ROOT / "plugins" / "codemap-py" / "bin" / "codemap-py")
@@ -689,12 +704,6 @@ def run_stage(
     )
     if resolve_scope_requested:
         print(json.dumps(scope, sort_keys=True))
-        return
-    if rescore_run_dir is not None:
-        if rescore_output_dir is None:
-            raise ValueError("--rescore-run-dir requires --rescore-output-dir")
-        output_path = rescore_results(rescore_run_dir, rescore_output_dir, tasks)
-        print(f"rescored: {output_path}")
         return
     if dry_run_requested:
         observed_codemap = preflight_isolation(

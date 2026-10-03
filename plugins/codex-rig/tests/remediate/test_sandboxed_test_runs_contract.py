@@ -47,7 +47,7 @@ def test_reusable_pytest_approval_is_narrow_upfront_and_disclosed() -> None:
     """
     section = _section(NATIVE_CONTRACT, "## Sandboxed Test Runs", "## Actionable Pauses")
     for required in (
-        "imports both `xdist` and `pytest_rerunfailures`",
+        "verified required capability unavailable under the active sandbox",
         "Never request it when only sandbox-safe targeted runs are needed.",
         "immediately after the selected scope is accepted and before the first edit",
         "Never repeat it in the same session after a grant or denial.",
@@ -107,3 +107,12 @@ def test_agent_contract_mirrors_sandboxed_test_runs() -> None:
     assert "add `-p no:xdist`" in agents
     assert "never bare interpreter, `python -c`, or gate runner" in agents
     assert "`git add -- <paths> && git commit --cleanup=verbatim -m <message>`" in agents
+
+
+def test_local_test_authorization_does_not_invent_a_sandbox_restriction() -> None:
+    """Require observed restrictions, avoiding speculative approval and duplicate wrapper runs."""
+    section = _section(NATIVE_CONTRACT, "## Sandboxed Test Runs", "## Actionable Pauses")
+    assert "verified required capability unavailable under the active sandbox" in section
+    assert "Installed plugins alone do not establish a sandbox restriction." in section
+    assert "reuse valid unchanged canonical evidence" in section
+    assert "avoid a redundant wrapper run for a lightweight path" in section

@@ -820,9 +820,9 @@ def test_calibration_model_stall_cases_cover_advisory_and_human_escalation() -> 
         "model-stall-progress-without-closure": (
             "delegation-lead",
             [
-                "closure-condition-not-recorded",
-                "evidence-backed-attempt-escalation-required",
-                "progress-without-closure-ledger-missing",
+                "productive-progress-misclassified",
+                "false-advisory-escalation",
+                "unfinished-acceptance-must-remain-recorded",
             ],
         ),
         "model-stall-user-directed-progress": (

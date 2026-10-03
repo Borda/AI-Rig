@@ -129,7 +129,7 @@ def test_auxiliary_receipt_repairs_cannot_count_as_primary_progress() -> None:
 def test_auxiliary_setup_does_not_reset_the_primary_stall() -> None:
     """Count a correctly labeled auxiliary success as no progress toward the requested fix."""
     module = _load_ledger_module()
-    stalled = _ledger(_cycle(1, False), _cycle(2, False))
+    stalled = _ledger(_cycle(1, False), _cycle(2, False), _cycle(3, False))
     stalled["cycles"][1].update(work_kind="auxiliary", required_for="independent review evidence")
 
     with pytest.raises(ValueError, match="escalation-required-after-stall-trigger"):
@@ -294,22 +294,17 @@ def test_user_directed_progress_does_not_count_as_evidence_free() -> None:
     module.validate_ledger(active)
 
 
-def test_three_nonclosing_evidence_backed_cycles_require_advisory() -> None:
-    """Escalate productive but non-closing attempts against one open condition."""
+def test_three_productive_nonclosing_cycles_remain_working() -> None:
+    """Keep evidence-backed diagnostics working while their acceptance condition remains open."""
     module = _load_ledger_module()
     stalled = _ledger(_cycle(1, True), _cycle(2, True), _cycle(3, True))
 
-    with pytest.raises(ValueError, match="escalation-required-after-stall-trigger"):
-        module.validate_ledger(stalled)
-
-    stalled["outcome"] = "advisory"
-    stalled["advisory"] = _advisory()
     module.validate_ledger(stalled)
 
 
 @pytest.mark.parametrize("auxiliary", [False, True])
-def test_mixed_progress_attempts_cannot_bypass_nonclosing_stop(auxiliary: bool) -> None:
-    """Count observed primary attempts even when one yields no material progress."""
+def test_mixed_productive_cycles_do_not_trigger_failed_attempt_stop(auxiliary: bool) -> None:
+    """Distinguish one failed diagnostic from three failed attempts, including setup rows."""
     module = _load_ledger_module()
     cycles = [_cycle(1, True), _cycle(2, False), _cycle(3, True)]
     cycles[1]["evidence"] = ["Acceptance check still fails after the second attempted fix."]
@@ -320,8 +315,65 @@ def test_mixed_progress_attempts_cannot_bypass_nonclosing_stop(auxiliary: bool) 
         cycles[-1]["index"] = 4
     stalled = _ledger(*cycles)
 
+    module.validate_ledger(stalled)
+
+
+def test_productive_primary_cycles_ignore_auxiliary_rows() -> None:
+    """Administrative rows cannot turn productive primary work into a two-cycle stall."""
+    cycles = [_cycle(1, True), _cycle(2, False), _cycle(3, False), _cycle(4, True), _cycle(5, True)]
+    for cycle in cycles[1:3]:
+        cycle.update(work_kind="auxiliary", required_for="independent review evidence")
+    _load_ledger_module().validate_ledger(_ledger(*cycles))
+
+
+def test_primary_progress_starts_new_failed_attempt_sequence() -> None:
+    """Observed primary progress separates old failures from the current diagnostic sequence."""
+    cycles = [_cycle(index, index in {2, 5}) for index in range(1, 7)]
+    for cycle in cycles:
+        cycle["evidence"] = [f"Observed diagnostic result {cycle['index']}."]
+    cycles[3].update(work_kind="auxiliary", required_for="independent review evidence")
+    _load_ledger_module().validate_ledger(_ledger(*cycles))
+
+
+def test_useful_unfinished_recovery_resumes_working() -> None:
+    """Resume from observed recovery progress without pretending the condition is closed."""
+    active = _ledger(_cycle(1, False), _cycle(2, False), _cycle(3, True))
+    active["cycles"][-1]["operation"] = "run one diagnostic"
+    active.update(
+        advisory=_advisory(), recovery={"action": "run one diagnostic", "material_progress": True, "closure_met": False}
+    )
+    _load_ledger_module().validate_ledger(active)
+    active["cycles"].append(_cycle(4, True))
+    _load_ledger_module().validate_ledger(active)
+
+
+def test_one_ordinary_failure_after_productive_recovery_remains_working() -> None:
+    """Recovery history cannot impose a stricter threshold on later ordinary diagnostics."""
+    active = _ledger(_cycle(1, True), _cycle(2, False))
+    active.update(
+        advisory=_advisory(), recovery={"action": "attempt-1", "material_progress": True, "closure_met": False}
+    )
+    _load_ledger_module().validate_ledger(active)
+    active["cycles"].append(_cycle(3, False))
     with pytest.raises(ValueError, match="escalation-required-after-stall-trigger"):
-        module.validate_ledger(stalled)
+        _load_ledger_module().validate_ledger(active)
+
+
+@pytest.mark.parametrize("mismatch", ["progress", "operation", "evidence"])
+def test_recovery_progress_requires_current_observed_cycle(mismatch: str) -> None:
+    """Reject a recovery boolean unsupported by the latest primary operation and evidence."""
+    active = _ledger(_cycle(1, True))
+    active.update(
+        advisory=_advisory(), recovery={"action": "attempt-1", "material_progress": True, "closure_met": False}
+    )
+    if mismatch == "progress":
+        active["cycles"][-1]["material_progress"] = False
+    elif mismatch == "operation":
+        active["recovery"]["action"] = "unobserved action"
+    else:
+        active["cycles"][-1]["evidence"] = []
+    with pytest.raises(ValueError, match="recovery-progress-evidence-required|material-progress-evidence-required"):
+        _load_ledger_module().validate_ledger(active)
 
 
 def test_two_observed_attempts_and_auxiliary_work_do_not_become_three_attempts() -> None:
@@ -408,3 +460,20 @@ def test_unsuccessful_recovery_requires_complete_human_handoff() -> None:
     stalled["outcome"] = "human_handoff"
     stalled["human_handoff"] = _handoff()
     module.validate_ledger(stalled)
+
+
+@pytest.mark.parametrize("terminal", ["closed", "human_handoff"])
+def test_productive_recovery_keeps_original_evidence_after_later_terminal_state(terminal: str) -> None:
+    """Preserve the recovery outcome when subsequent work closes or genuinely stalls."""
+    active = _ledger(_cycle(1, True))
+    active.update(
+        advisory=_advisory(), recovery={"action": "attempt-1", "material_progress": True, "closure_met": False}
+    )
+    if terminal == "closed":
+        active["cycles"].append(_cycle(2, True))
+        active["closure_condition"]["status"] = "closed"
+    else:
+        active["cycles"].extend([_cycle(2, False), _cycle(3, False)])
+        active["human_handoff"] = _handoff()
+    active["outcome"] = terminal
+    _load_ledger_module().validate_ledger(active)
