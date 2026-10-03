@@ -477,7 +477,7 @@ def test_check_allows_unmanaged_optional_setup_and_custom_skill(tmp_path: Path) 
     source.write_bytes(b"# Global Agent Instructions\nCurrent.\n")
     home = tmp_path / "home"
     home.mkdir()
-    (home / "AGENTS.md").write_bytes(b"# Global Agent Instructions\nCustom policy.\n")
+    (home / "AGENTS.md").write_bytes(b"# Personal Policy\nCustom policy.\n")
     skill = home / "skills" / "develop" / "SKILL.md"
     skill.parent.mkdir(parents=True)
     skill.write_bytes(b"---\nname: develop\ndescription: Custom development workflow.\n---\n")
@@ -487,6 +487,43 @@ def test_check_allows_unmanaged_optional_setup_and_custom_skill(tmp_path: Path) 
     assert result.returncode == 0, result.stderr
     assert "bounded instruction check" in result.stdout
     assert not (home / "backups").exists()
+
+
+def test_check_matches_install_refusal_for_single_unmarked_global_policy(tmp_path: Path) -> None:
+    """One unmanaged global heading must not pass preflight when ordinary install refuses overlap."""
+    source = tmp_path / "template.md"
+    source.write_bytes(b"# Global Agent Instructions\nCurrent managed policy.\n")
+    home = tmp_path / "home"
+    home.mkdir()
+    target = home / "AGENTS.md"
+    original = b"# Global Agent Instructions\nCustom unmanaged policy.\n"
+    target.write_bytes(original)
+
+    checked = _run_mode(source, home, "--check")
+    installed = _run_mode(source, home)
+
+    assert checked.returncode == installed.returncode == 4
+    assert "global-agents-overlap" in checked.stderr and "global-agents-overlap" in installed.stderr
+    assert target.read_bytes() == original
+    assert not (home / "backups").exists()
+
+
+def test_check_preserves_exact_unmarked_template_adoption(tmp_path: Path) -> None:
+    """An exact template copy is adoptable without creating a duplicated policy during preflight."""
+    source = tmp_path / "template.md"
+    original = b"# Global Agent Instructions\nCurrent managed policy.\n"
+    source.write_bytes(original)
+    home = tmp_path / "home"
+    home.mkdir()
+    target = home / "AGENTS.md"
+    target.write_bytes(original)
+
+    checked = _run_mode(source, home, "--check")
+    assert checked.returncode == 0, checked.stderr
+    assert target.read_bytes() == original and not (home / "backups").exists()
+    installed = _run_mode(source, home)
+    assert installed.returncode == 0 and "adopted" in installed.stdout
+    assert target.read_bytes().count(b"Current managed policy.") == 1
 
 
 def test_migration_requires_existing_managed_block_without_creating_home(tmp_path: Path) -> None:

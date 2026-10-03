@@ -14,6 +14,34 @@ CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
 
 
 @pytest.mark.installed_plugin
+def test_review_prior_choice_precedes_run_creation() -> None:
+    """Avoid superseding a reusable completed report before offering the entry choice."""
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    entry = skill.split("### Entry: resume or previous completed review", 1)[1].split("### 01:", 1)[0]
+
+    assert "--target" in entry and "--result" in entry
+    assert "Reuse completed review" in entry and "Run fresh review" in entry
+    assert "No eligible completed report means fresh review without a question" in entry
+    assert "before creating or promoting another run" in entry
+    assert "recorded revision" in entry and "current-head" in entry
+    assert "first unmet checkpoint" in entry
+
+
+@pytest.mark.installed_plugin
+def test_review_shorthand_identity_resolves_before_previous_report_lookup() -> None:
+    """Keep numeric and current-branch invocation on the same pre-allocation reuse route."""
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    entry = skill.split("### Entry: resume or previous completed review", 1)[1].split("### 01:", 1)[0]
+
+    lookup = entry.index("--target <canonical PR URL>")
+    assert entry.index("--canonical-pr-url <positive PR number>") < lookup
+    assert entry.index("-- gh pr view --json url") < lookup
+    assert "temporary identity file" in entry
+    assert "all PR input forms" in entry
+    assert "known canonical PR identity" not in entry
+
+
+@pytest.mark.installed_plugin
 def test_review_and_remediation_routes_remain_distinct_during_incomplete_handoff() -> None:
     """Keep calibrated checkout routes and incomplete-report continuation aligned with skills."""
     review = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
@@ -307,3 +335,14 @@ def test_merge_resume_preserves_both_checkpoints_and_protected_path_redaction() 
     assert "pre-merge source receipts" in remediation
     assert "post_merge_head" in remediation
     assert "do not insert protected path lists into the bound summary" in review.lower()
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.parametrize("section", ["Routing rules:", "## Fail-fast Rules"])
+def test_broad_routing_and_fail_fast_admit_complete_fast_native_coverage(section: str) -> None:
+    """Prevent mandatory broad-review rules from rejecting already validated fast native coverage."""
+    skill = (PLUGIN_ROOT / "skills/code-review/SKILL.md").read_text(encoding="utf-8")
+    contract = skill.split(section, 1)[1].split("\n\n", 1)[1].split("\n\n", 1)[0]
+    assert "validated current native all-role evidence" in contract
+    assert "naturally fast uninterrupted dispatch" in contract.casefold()
+    assert "narrowly validated capacity-limited schema-eight" not in contract

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.40.3
+
+- Ask only for missing decisions or protected effects; keep authorized internal work moving and preserve scope, native-answer and runtime boundaries.
+
 ## 0.40.2
 
 - Discover deferred native question tools before fallback; treat unverified async rendering as unsuitable and preserve text-delivered questions without duplicate submission.

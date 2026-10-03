@@ -831,6 +831,104 @@ def test_grouped_review_gate_intake_does_not_depend_on_display_words(tmp_path: P
     VALIDATOR._validate_code_remediate_report_intake({"metadata": metadata}, tmp_path)
 
 
+def _write_remediation_producer(tmp_path: Path, items: list[dict]) -> Path:
+    """Build a complete producer whose canonical findings match the consumer's retained source bodies."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    result_path = run / "result.json"
+    result = json.loads(result_path.read_bytes())
+    metadata = result["metadata"]
+    records = []
+    for item in items:
+        source = next(source for source in item["sources"] if source["kind"] == "report")
+        record = {
+            "id": item["input_item_id"],
+            "severity": item["severity"],
+            "title": item["item_name"],
+            "summary": source["body"],
+            "required_change": f"Resolve {item['item_name']}.",
+            "evidence": ["widget.txt:1"],
+            "closure_evidence": "The closure regression passes.",
+            "authors": ["Main reviewer"],
+        }
+        records.append(record)
+        source["finding_id"] = record["id"]
+        source["body"] = "\n".join(
+            [
+                record["title"],
+                record["summary"],
+                record["required_change"],
+                *record["evidence"],
+                record["closure_evidence"],
+                *metadata["confidence_gaps"],
+                *metadata["confidence_recovery"]["remaining_limits"],
+            ]
+        )
+    metadata["review_findings"] = records
+    metadata["review_decision"].update(recommendation="needs-more-work", summary="Resolve the retained findings.")
+    metadata["reviewer_assessments"][0]["rating"] = 4
+    result["findings"] = {
+        severity: sum(record["severity"] == severity for record in records) for severity in result["findings"]
+    }
+    notes_path = run / "review-notes.md"
+    notes = notes_path.read_text(encoding="utf-8").replace("Rating: 1", "Rating: 4")
+    notes += "\n\n## Review Findings and Merge Blocks\n\n"
+    notes += "| Finding / area | Author | Required change | Evidence | Status |\n| --- | --- | --- | --- | --- |\n"
+    notes += "\n".join(
+        f"| {record['id']} | Main reviewer | {record['required_change']} | widget.txt:1 | Required |"
+        for record in records
+    )
+    notes_path.write_text(notes, encoding="utf-8")
+    handoff_path = run / "final-handoff.json"
+    handoff = json.loads(handoff_path.read_bytes())
+    handoff["outcome"]["summary"] = "Recommendation: needs-more-work."
+    handoff["tables"][0]["summary"] = metadata["review_decision"]["summary"]
+    handoff["tables"][0]["reviewers"] = metadata["reviewer_assessments"]
+    handoff["tables"][0]["rows"][-1]["cells"][1] = "needs work"
+    handoff["tables"].append(
+        {
+            "heading": "Review Findings and Merge Blocks",
+            "layout": "grouped",
+            "columns": ["Finding / area", "Required change", "Evidence", "Status"],
+            "rows": [
+                {
+                    "id": record["id"],
+                    "title": record["title"],
+                    "summary": record["summary"],
+                    "closure_evidence": record["closure_evidence"],
+                    "authors": record["authors"],
+                    "cells": [record["id"], record["required_change"], "widget.txt:1", "Required"],
+                    "source_ids": [record["id"]],
+                }
+                for record in records
+            ],
+        }
+    )
+    handoff["source_records"].extend({"id": record["id"], "evidence": "review-notes.md"} for record in records)
+    handoff["source_coverage"] = {
+        "source_records_total": len(handoff["source_records"]),
+        "represented_source_records_total": len(handoff["source_records"]),
+        "omitted_source_records_total": 0,
+    }
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    proof = _load_finalizer().render_files(handoff_path, run / "final.md", run / "final-handoff.validation.json")
+    for field in ("handoff_sha256", "rendered_sha256"):
+        metadata["final_handoff"][field] = proof[field]
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    admitted = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parents[2] / "shared/find-review-report.py"),
+            "--result",
+            str(result_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert admitted.returncode == 0, admitted.stderr
+    return result_path
+
+
 def _write_remediation_candidate(
     tmp_path: Path, item_type: str, selected_resolution: tuple[str, str] | None = None
 ) -> Path:
@@ -844,19 +942,10 @@ def _write_remediation_candidate(
         item.update(
             item_type=item_type, selectable=False, triage_status="already-fixed", resolution_status="already-fixed"
         )
-    (tmp_path / "findings-input.txt").write_text(
-        json.dumps(
-            {
-                "schema_version": 3,
-                "metadata": {
-                    "review_findings": [
-                        {"id": item["input_item_id"], "summary": item["sources"][0]["body"]} for item in table["items"]
-                    ]
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
+    producer_root = tmp_path / "review-producer"
+    producer_root.mkdir()
+    producer = _write_remediation_producer(producer_root, table["items"])
+    (tmp_path / "findings-input.txt").write_bytes(producer.read_bytes())
     if selected_resolution is not None:
         table["items"][0].update(
             selectable=True,
@@ -906,6 +995,7 @@ def _write_remediation_candidate(
             "bucket_plan_sha256": "0" * 64,
         },
         review_report_intake={
+            "admission_evidence": {"producer_result_path": str(producer)},
             "requested_report": True,
             "report_items_total": 2,
             "review_gate_items_total": 2 if item_type == "review-gate" else 0,

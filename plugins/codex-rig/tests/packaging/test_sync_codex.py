@@ -766,3 +766,131 @@ def test_sync_rejects_degraded_instruction_composition_after_install(tmp_path: P
     with pytest.raises(module.SyncError, match="legacy-skill-route:develop"):
         module.sync_codex(module.parse_args([]), run=run, environ={"CODEX_HOME": str(tmp_path / "home")}, stdout=output)
     assert "Start a fresh Codex session" not in output.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("status", "diagnostic"),
+    [
+        pytest.param(4, "global-agents-check: global-agents-overlap", id="overlapping-policy"),
+        pytest.param(4, "global-agents-check: invalid-managed-instructions", id="invalid-managed-block"),
+        pytest.param(4, "global-agents-check: legacy-skill-route:develop", id="legacy-route"),
+        pytest.param(4, "unexpected diagnostic", id="malformed-diagnostic"),
+        pytest.param(4, "", id="missing-diagnostic"),
+        pytest.param(2, "global-agents-check: stale-managed-template", id="unexpected-exit-status"),
+        pytest.param(0, "global-agents-check: global-agents-overlap", id="contradictory-success"),
+        pytest.param(
+            4,
+            "global-agents-check: stale-managed-template\nglobal-agents-check: global-agents-overlap",
+            id="stale-and-overlapping",
+        ),
+    ],
+)
+def test_instruction_preflight_blocks_plugin_and_profile_mutation(tmp_path: Path, status: int, diagnostic: str) -> None:
+    """Known blocked instruction composition must stop before plugin changes or profile writes."""
+    module = _load_sync()
+    root = _marketplace_fixture(tmp_path)
+    calls: list[tuple[str, ...]] = []
+    base_run = _fake_runner(root, calls)
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Return the public helper's blocked state without mocking sync internals."""
+        if len(command) > 1 and Path(command[1]).name == "install_global_agents.py" and "--check" in command:
+            calls.append(tuple(str(item) for item in command))
+            return subprocess.CompletedProcess(command, status, "", diagnostic)
+        return base_run(command, **kwargs)
+
+    with pytest.raises(module.SyncError):
+        module.sync_codex(
+            module.parse_args([]), run=run, environ={"CODEX_HOME": str(tmp_path / "home")}, stdout=io.StringIO()
+        )
+
+    assert not any(call[:3] in {("codex", "plugin", "remove"), ("codex", "plugin", "add")} for call in calls)
+    assert not any(len(call) > 1 and Path(call[1]).name == "install_github_read_rules.py" for call in calls)
+    assert not any(
+        len(call) > 1 and Path(call[1]).name == "install_global_agents.py" and "--check" not in call for call in calls
+    )
+
+
+@pytest.mark.integration
+def test_instruction_preflight_uses_real_overlap_check_before_plugin_changes(tmp_path: Path) -> None:
+    """Run the real bounded installer check while keeping marketplace and plugin commands external fakes."""
+    module = _load_sync()
+    root = _marketplace_fixture(tmp_path)
+    plugin = root / "plugins" / "codex-rig"
+    (plugin / "assets/AGENTS.md").write_bytes(b"# Global Agent Instructions\nCurrent managed policy.\n")
+    _write_fixture_package_manifest(plugin, "0.3.0")
+    home = tmp_path / "home"
+    home.mkdir()
+    original = b"# Global Agent Instructions\nUnmanaged custom policy.\n"
+    (home / "AGENTS.md").write_bytes(original)
+    calls: list[tuple[str, ...]] = []
+    base_run = _fake_runner(root, calls)
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Execute only the read-only instruction subprocess against the isolated home."""
+        if len(command) > 1 and Path(command[1]).name == "install_global_agents.py" and "--check" in command:
+            calls.append(tuple(str(item) for item in command))
+            return subprocess.run(
+                [sys.executable, str(SCRIPTS_DIR / "install_global_agents.py"), *command[2:]], **kwargs
+            )
+        return base_run(command, **kwargs)
+
+    with pytest.raises(module.SyncError, match="global-agents-overlap"):
+        module.sync_codex(module.parse_args([]), run=run, environ={"CODEX_HOME": str(home)}, stdout=io.StringIO())
+    assert not any(call[:3] in {("codex", "plugin", "remove"), ("codex", "plugin", "add")} for call in calls)
+    assert not any(len(call) > 1 and Path(call[1]).name == "install_github_read_rules.py" for call in calls)
+    assert (home / "AGENTS.md").read_bytes() == original
+    assert not (home / "backups").exists()
+
+
+@pytest.mark.parametrize("final_status", [0, 4])
+def test_instruction_preflight_accepts_stale_template_then_requires_current_health(
+    tmp_path: Path, final_status: int
+) -> None:
+    """A normal template upgrade may proceed, but final instruction health remains mandatory."""
+    module = _load_sync()
+    root = _marketplace_fixture(tmp_path)
+    calls: list[tuple[str, ...]] = []
+    base_run = _fake_runner(root, calls)
+    checks = 0
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Report only the upgradeable preflight mismatch, then the actual installed health."""
+        nonlocal checks
+        if len(command) > 1 and Path(command[1]).name == "install_global_agents.py" and "--check" in command:
+            calls.append(tuple(str(item) for item in command))
+            checks += 1
+            return subprocess.CompletedProcess(
+                command,
+                4 if checks == 1 else final_status,
+                "",
+                "global-agents-check: stale-managed-template" if checks == 1 or final_status else "",
+            )
+        return base_run(command, **kwargs)
+
+    if final_status:
+        with pytest.raises(module.SyncError, match="stale-managed-template"):
+            module.sync_codex(
+                module.parse_args([]), run=run, environ={"CODEX_HOME": str(tmp_path / "home")}, stdout=io.StringIO()
+            )
+    else:
+        assert (
+            module.sync_codex(
+                module.parse_args([]), run=run, environ={"CODEX_HOME": str(tmp_path / "home")}, stdout=io.StringIO()
+            )
+            == 0
+        )
+    assert checks == 2
+    check_calls = [
+        call
+        for call in calls
+        if len(call) > 1 and Path(call[1]).name == "install_global_agents.py" and "--check" in call
+    ]
+    first_remove = next(index for index, call in enumerate(calls) if call[:3] == ("codex", "plugin", "remove"))
+    assert calls.index(check_calls[0]) < first_remove
+    install = next(
+        index
+        for index, call in enumerate(calls)
+        if len(call) > 1 and Path(call[1]).name == "install_global_agents.py" and "--check" not in call
+    )
+    assert calls.index(check_calls[-1], install + 1) > install

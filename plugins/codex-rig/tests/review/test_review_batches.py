@@ -297,6 +297,9 @@ def _completed_batches(
     final_records: list[dict[str, object]] | None = None,
     final_dispositions: dict[str, str] | None = None,
     five_roles: bool = False,
+    fast_reviewers: bool = False,
+    independent_required: bool = False,
+    conditional_tail: bool = False,
 ) -> tuple[Path, Path]:
     """Record actual context-reader bytes for every source wave and final interaction wave."""
     run = (
@@ -306,6 +309,28 @@ def _completed_batches(
         if single_file
         else _batch_inputs(tmp_path, large=large)
     )
+    if independent_required:
+        routing_path = run / "review-routing.json"
+        routing = json.loads(routing_path.read_bytes())
+        routing.update(
+            independent_review_required=True,
+            independence_requirement_evidence="The request requires independent source inspection.",
+        )
+        routing_path.write_text(json.dumps(routing), encoding="utf-8", newline="\n")
+    if conditional_tail:
+        routing_path = run / "review-routing.json"
+        routing = json.loads(routing_path.read_bytes())
+        routing["signals"].update(axis_doc_scribe=True, axis_web_explorer=True)
+        routing["triggered_roles"] = sorted([*routing["triggered_roles"], "doc-scribe", "web-explorer"])
+        briefs_path = run / "review-briefs.json"
+        briefs = json.loads(briefs_path.read_bytes())
+        for role in ("doc-scribe", "web-explorer"):
+            routing["trigger_reasons"][role] = ["Declared conditional source inspection."]
+            evidence = f"{role}-evidence.md"
+            (run / evidence).write_text("Bounded conditional source review.\n" * 7000, encoding="utf-8", newline="\n")
+            briefs[role] = {**briefs["qa-specialist"], "axis": role, "evidence_path": evidence}
+        routing_path.write_text(json.dumps(routing), encoding="utf-8", newline="\n")
+        briefs_path.write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
     if advisor:
         routing = json.loads((run / "review-routing.json").read_text(encoding="utf-8"))
         routing["signals"]["axis_" + advisor.replace("-", "_")] = True
@@ -337,7 +362,7 @@ def _completed_batches(
             home=home,
             wave_index=wave["wave"],
             final_header="missing",
-            active_limit=4 if five_roles else None,
+            active_limit=1 if fast_reviewers else 4 if five_roles else None,
             findings={
                 blocker[1]: _batch_output(
                     source_records
@@ -422,7 +447,7 @@ def _completed_batches(
             home=home,
             wave_index=index,
             final_header="missing",
-            active_limit=4 if five_roles else None,
+            active_limit=1 if fast_reviewers else 4 if five_roles else None,
             findings=findings,
         )
         result = _batch_command(directory, "assemble-wave", home)
@@ -436,7 +461,7 @@ def _completed_batches(
         home=home,
         wave_index=len(schedule["waves"]) + len(interaction_schedule["waves"]) + 1,
         final_header="missing",
-        active_limit=4 if five_roles else None,
+        active_limit=1 if fast_reviewers else 4 if five_roles else None,
         findings={
             final_finding[0]: _batch_output(
                 final_records
@@ -519,14 +544,20 @@ def test_batches_keep_deletion_and_untracked_evidence(tmp_path: Path, route: str
         assert "Untracked file: exact source bytes" in context
 
 
-def test_aggregate_admits_every_native_wave_and_interaction_output(tmp_path: Path) -> None:
+@pytest.mark.parametrize("fast_reviewers", [False, True])
+def test_aggregate_admits_every_native_wave_and_interaction_output(tmp_path: Path, fast_reviewers: bool) -> None:
     """Ordinary manifest admission validates all successful batch receipts, not a selected batch."""
-    run, home = _completed_batches(tmp_path)
+    run, home = _completed_batches(tmp_path, fast_reviewers=fast_reviewers, independent_required=fast_reviewers)
     result = _batch_command(run, "assemble-batches", home)
     assert result.returncode == 0, result.stderr
     manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
     assert manifest["schema_version"] == 8
     assert manifest["manifest_kind"] == "batched-review"
+    summary = json.loads((run / "inspection-summary.json").read_bytes())
+    assert summary["actual_mode"] == ("independent-spawned" if fast_reviewers else "parallel")
+    assert summary["capacity_limited"] is False
+    if fast_reviewers:
+        assert summary["independence_required"] is True and summary["independence_satisfied"] is True
     spec = importlib.util.spec_from_file_location(
         "batch_acceptance_validator", preparation.SKILL / "validate_artifacts.py"
     )
@@ -556,7 +587,7 @@ def test_aggregate_admits_every_native_wave_and_interaction_output(tmp_path: Pat
     )
     assert retained == by_role
     summary = validator._validate_review_runtime(run, manifest, manifest["passes"], home, "parent")
-    assert summary["actual_mode"] == "parallel"
+    assert summary["actual_mode"] == ("independent-spawned" if fast_reviewers else "parallel")
     assert summary["batch_mode"] == "serial-waves"
     assert summary["batch_count"] > 1
 

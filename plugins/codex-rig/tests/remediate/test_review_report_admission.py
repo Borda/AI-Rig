@@ -15,6 +15,9 @@ import pytest
 
 from test_code_remediate_final_outcome_validation import _metadata, _status_counts, _write_action_items
 from test_code_remediate_work_bucket_validation import _parallel_metadata, _write_workplan
+from test_review_remediation_handoff import (
+    test_native_assembly_finalization_and_separate_intake_preserve_proof as build_native_review_evidence,
+)
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -24,6 +27,246 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC is not None and SPEC.loader is not None
 VALIDATOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VALIDATOR)
+
+
+@pytest.fixture
+def completed_report(tmp_path: Path) -> tuple[dict, Path, Path]:
+    """Retain exact producer bytes and a lossless consumer inventory of its obligations."""
+    fixture_path = PLUGIN_ROOT / "tests/review/test_review_completion_gate.py"
+    spec = importlib.util.spec_from_file_location("intake_producer_fixture", fixture_path)
+    assert spec is not None and spec.loader is not None
+    fixture = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixture)
+    producer = fixture._assessed_pr.__wrapped__(tmp_path)
+    report_path = producer / "result.json"
+    report = json.loads(report_path.read_bytes())
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    (consumer / "findings-input.txt").write_bytes(report_path.read_bytes())
+    (consumer / "action-items.md").write_text("## Review Report Intake\n", encoding="utf-8")
+    (consumer / "resolution-scope.md").write_text("Retain review obligations.\n", encoding="utf-8")
+    original = report["metadata"]
+    obligations = [
+        *report.get("checks_failed", []),
+        *report.get("follow_up", []),
+        *original["confidence_gaps"],
+        *original["review_decision"].get("required_next_work", []),
+        *original["confidence_recovery"]["remaining_limits"],
+    ]
+    metadata = {
+        "mode": "report",
+        "resolution_scope": {"presentation_version": 4},
+        "final_resolution_table": {
+            "items": [
+                {
+                    "input_item_id": "G1",
+                    "item_type": "confidence-gap",
+                    "selectable": True,
+                    "sources": [{"kind": "report", "source_id": "result.json#limits", "body": "\n".join(obligations)}],
+                }
+            ]
+        },
+        "review_report_intake": {
+            "schema_version": 1,
+            "admission_status": "completed",
+            "requested_report": True,
+            "report_items_total": 1,
+            "review_gate_items_total": 1,
+            "review_gate_items_selectable": 1,
+            "report_items_marked_out_of_scope": 0,
+        },
+    }
+    return {"status": "fail", "metadata": metadata}, consumer, producer
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("damage", ["unpromoted", "forged-proof", "source-drift", "copied-bytes"])
+def test_completed_intake_rejects_unvalidated_producer(completed_report: tuple[dict, Path, Path], damage: str) -> None:
+    """A mirrored inventory cannot turn a candidate, forged proof, or stale source into completion."""
+    result, consumer, producer = completed_report
+    if damage == "unpromoted":
+        (producer / "result.json").rename(producer / "result.candidate.json")
+    elif damage == "forged-proof":
+        (producer / "final-handoff.validation.json").write_text("{}", encoding="utf-8")
+    elif damage == "source-drift":
+        (producer / "diff.patch").write_bytes(b"changed source\n")
+    else:
+        (consumer / "findings-input.txt").write_bytes((producer / "result.json").read_bytes() + b"\n")
+    with pytest.raises(SystemExit, match="code-remediate-report-producer-"):
+        VALIDATOR._validate_code_remediate_report_intake(result, consumer, current_contract=True)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("path_style", ["absolute-artifact", "producer-relative-artifact"])
+def test_completed_intake_admits_validated_immutable_producer(
+    completed_report: tuple[dict, Path, Path], path_style: str
+) -> None:
+    """Revalidate promoted producer bytes without changing either producer or consumer artifacts."""
+    result, consumer, producer = completed_report
+    if path_style == "producer-relative-artifact":
+        report_path = producer / "result.json"
+        report = json.loads(report_path.read_bytes())
+        report["artifact_path"] = "result.json"
+        handoff_path = producer / "final-handoff.json"
+        handoff = json.loads(handoff_path.read_bytes())
+        handoff["artifacts"][0]["path"] = "result.json"
+        handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+        spec = importlib.util.spec_from_file_location(
+            "intake_relative_handoff", PLUGIN_ROOT / "shared/final_handoff.py"
+        )
+        assert spec is not None and spec.loader is not None
+        renderer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(renderer)
+        proof = renderer.render_files(handoff_path, producer / "final.md", producer / "final-handoff.validation.json")
+        for field in ("handoff_sha256", "rendered_sha256"):
+            report["metadata"]["final_handoff"][field] = proof[field]
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        (consumer / "findings-input.txt").write_bytes(report_path.read_bytes())
+        result["metadata"]["review_report_intake"]["admission_evidence"] = {"producer_result_path": str(report_path)}
+    before = {path: path.read_bytes() for path in producer.iterdir() if path.is_file()}
+    copied = (consumer / "findings-input.txt").read_bytes()
+    VALIDATOR._validate_code_remediate_report_intake(result, consumer, current_contract=True)
+    assert (consumer / "findings-input.txt").read_bytes() == copied
+    assert {path: path.read_bytes() for path in before} == before
+
+
+def test_completed_intake_requires_origin_for_producer_relative_artifact(
+    completed_report: tuple[dict, Path, Path],
+) -> None:
+    """Reject a copied producer-relative filename rather than guessing its original directory."""
+    result, consumer, _producer = completed_report
+    copied = consumer / "findings-input.txt"
+    report = json.loads(copied.read_bytes())
+    report["artifact_path"] = "result.json"
+    copied.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(SystemExit, match="code-remediate-report-producer-origin-missing"):
+        VALIDATOR._validate_code_remediate_report_intake(result, consumer, current_contract=True)
+
+
+@pytest.fixture
+def native_report(tmp_path: Path) -> tuple[dict, Path, Path, Path]:
+    """Reuse real native assembly and finalization evidence for a later consumer session."""
+    producer_root = tmp_path / "producer"
+    producer_root.mkdir()
+    build_native_review_evidence(producer_root, "none")
+    producer = producer_root / "review"
+    home = producer_root / "codex-home"
+    manifest = json.loads((producer / "specialist-manifest.json").read_bytes())
+    report = json.loads((producer / "result.json").read_bytes())
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    (consumer / "findings-input.txt").write_bytes((producer / "result.json").read_bytes())
+    (consumer / "action-items.md").write_text("## Review Report Intake\n", encoding="utf-8")
+    (consumer / "resolution-scope.md").write_text("Retain native proof obligations.\n", encoding="utf-8")
+    metadata = {
+        "mode": "report",
+        "resolution_scope": {"presentation_version": 4},
+        "final_resolution_table": {
+            "items": [
+                {
+                    "input_item_id": "G1",
+                    "item_type": "confidence-gap",
+                    "selectable": True,
+                    "sources": [
+                        {
+                            "kind": "report",
+                            "source_id": "result.json#limits",
+                            "body": "\n".join(report["metadata"]["confidence_gaps"]),
+                        }
+                    ],
+                }
+            ]
+        },
+        "review_report_intake": {
+            "schema_version": 1,
+            "admission_status": "completed",
+            "requested_report": True,
+            "report_items_total": 1,
+            "review_gate_items_total": 1,
+            "review_gate_items_selectable": 1,
+            "report_items_marked_out_of_scope": 0,
+            "admission_evidence": {
+                "producer_result_path": str(producer / "result.json"),
+                "producer_codex_home": str(home),
+                "producer_parent_thread_id": manifest["parent_thread_id"],
+            },
+        },
+    }
+    return {"status": "fail", "metadata": metadata}, consumer, producer, home
+
+
+@pytest.mark.integration
+def test_local_finder_recovers_producer_thread_in_later_session(
+    native_report: tuple[dict, Path, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A local manifest retains the actual producer thread rather than the consumer's current thread."""
+    _result, consumer, producer, home = native_report
+    monkeypatch.setenv("CODEX_THREAD_ID", "unrelated-consumer")
+    monkeypatch.setenv("CODEX_HOME", str(consumer))
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/find-review-report.py"),
+            "--result",
+            str(producer / "result.json"),
+            "--codex-home",
+            str(home),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == str(producer / "result.json")
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("thread_override", [True, False])
+def test_completed_native_intake_preserves_producer_evidence_location(
+    native_report: tuple[dict, Path, Path, Path], monkeypatch: pytest.MonkeyPatch, thread_override: bool
+) -> None:
+    """A later consumer admits real native proof using original coordinates without rewriting artifacts."""
+    result, consumer, producer, home = native_report
+    monkeypatch.setenv("CODEX_THREAD_ID", "unrelated-consumer")
+    monkeypatch.setenv("CODEX_HOME", str(consumer))
+    if not thread_override:
+        result["metadata"]["review_report_intake"]["admission_evidence"].pop("producer_parent_thread_id")
+    paths = [path for root in (producer, home, consumer) for path in root.rglob("*") if path.is_file()]
+    before = {path: path.read_bytes() for path in paths}
+    VALIDATOR._validate_code_remediate_report_intake(result, consumer, current_contract=True)
+    assert {path: path.read_bytes() for path in before} == before
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("damage", ["wrong-home", "wrong-thread", "malformed-proof"])
+def test_completed_native_intake_rejects_wrong_producer_coordinates(
+    native_report: tuple[dict, Path, Path, Path], monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    """Explicit evidence coordinates never weaken thread, rollout-home, or proof validation."""
+    result, consumer, producer, home = native_report
+    monkeypatch.setenv("CODEX_THREAD_ID", "unrelated-consumer")
+    monkeypatch.setenv("CODEX_HOME", str(consumer))
+    evidence = result["metadata"]["review_report_intake"]["admission_evidence"]
+    if damage == "wrong-home":
+        evidence["producer_codex_home"] = str(consumer)
+    elif damage == "wrong-thread":
+        evidence["producer_parent_thread_id"] = "unrelated-producer"
+    else:
+        child, rows = next(
+            (path, records)
+            for path in home.rglob("*.jsonl")
+            if (records := [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()])
+            and any(record.get("payload", {}).get("type") == "custom_tool_call" for record in records)
+        )
+        calls = [row for row in rows if row.get("payload", {}).get("type") == "custom_tool_call"]
+        assert len(calls) >= 2
+        calls[1]["payload"]["input"] += "\nUnrequested execution."
+        child.write_bytes(("\n".join(json.dumps(row) for row in rows) + "\n").encode("utf-8"))
+    paths = [path for root in (producer, home, consumer) for path in root.rglob("*") if path.is_file()]
+    before = {path: path.read_bytes() for path in paths}
+    with pytest.raises(SystemExit, match="code-remediate-report-producer-validation-failed"):
+        VALIDATOR._validate_code_remediate_report_intake(result, consumer, current_contract=True)
+    assert {path: path.read_bytes() for path in before} == before
 
 
 @pytest.fixture

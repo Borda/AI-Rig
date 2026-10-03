@@ -1,9 +1,4 @@
-"""Pin every pre-change user question and approval in the rollout skills to an ask that still happens.
-
-The efficiency rollout changed test selection, waits, and helpers in code-review, implement, investigate, and challenge-
-resolve. None of those changes may remove a user question, replace an answer with a default, or drop a runtime approval;
-each row below names one pre-change ask site and the phrase that still triggers it.
-"""
+"""Preserve actual missing-decision and runtime boundaries without forcing historical routine questions."""
 
 from __future__ import annotations
 
@@ -51,13 +46,13 @@ def _text(relative: str) -> str:
         ),
         pytest.param(
             "skills/code-review/SKILL.md",
-            "ask for the capacity or scope decision needed to resume",
-            id="review-capacity-decision",
+            "ask only for a concrete missing independent-route decision",
+            id="review-missing-independent-route-decision",
         ),
         pytest.param(
             "skills/code-review/SKILL.md",
-            "ask once through User Questions: `Do you approve investigating and repairing this validation mismatch?`",
-            id="review-validator-repair",
+            "Only a genuinely missing decision about expanded scope or a sensitive/protected effect warrants a question",
+            id="review-protected-repair-decision",
         ),
         pytest.param(
             "skills/code-review/SKILL.md",
@@ -88,8 +83,8 @@ def _text(relative: str) -> str:
         ),
     ],
 )
-def test_pre_change_ask_site_still_happens(relative: str, phrase: str) -> None:
-    """Keep each pre-change question or approval present in the current contract."""
+def test_required_decision_boundary_remains(relative: str, phrase: str) -> None:
+    """Keep missing input and permissions explicit without making routine recovery a decision."""
     assert phrase in _text(relative)
 
 

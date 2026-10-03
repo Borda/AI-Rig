@@ -364,6 +364,28 @@ def sync_codex(
     else:
         print(f"  [warn] marketplace source: {requested_ref or 'default branch'}; revision unavailable", file=stdout)
 
+    home = _codex_home(environ)
+    if not args.no_codex_global_agents:
+        plugin_root = root / "plugins" / "codex-rig"
+        installer = plugin_root / "scripts" / "install_global_agents.py"
+        template = plugin_root / "assets" / "AGENTS.md"
+        if installer.is_symlink() or template.is_symlink() or not installer.is_file() or not template.is_file():
+            raise SyncError("installed global-instruction payload is incomplete or linked")
+        preflight = _run(
+            run,
+            [sys.executable, str(installer), "--check", "--source", str(template), "--codex-home", str(home)],
+            required=False,
+        )
+        # A stale authenticated template is the only diagnostic the ordinary install can safely repair.
+        upgradeable = (
+            preflight.returncode == 4
+            and preflight.stderr.strip() == "global-agents-check: stale-managed-template"
+            and not preflight.stdout.strip()
+        )
+        if (preflight.returncode or preflight.stderr.strip()) and not upgradeable:
+            detail = (preflight.stderr or preflight.stdout or "instruction check failed").strip()[:512]
+            raise SyncError(f"global instruction preflight blocked ({preflight.returncode}): {detail}")
+
     if not args.no_clean:
         _remove_managed_plugins(run, stdout)
 
@@ -378,7 +400,6 @@ def sync_codex(
     version = versions[f"codex-rig@{MARKETPLACE}"]
     if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", version) is None:
         raise SyncError("installed Codex Rig version is invalid")
-    home = _codex_home(environ)
     installed_root = home / "plugins" / "cache" / MARKETPLACE / "codex-rig" / version
     _run_github_profile_installer(
         run,
@@ -389,11 +410,6 @@ def sync_codex(
     if args.no_codex_global_agents:
         print("  [skip] global instructions unchanged", file=stdout)
     else:
-        plugin_root = root / "plugins" / "codex-rig"
-        installer = plugin_root / "scripts" / "install_global_agents.py"
-        template = plugin_root / "assets" / "AGENTS.md"
-        if installer.is_symlink() or template.is_symlink() or not installer.is_file() or not template.is_file():
-            raise SyncError("installed global-instruction payload is incomplete or linked")
         result = _run(
             run,
             [

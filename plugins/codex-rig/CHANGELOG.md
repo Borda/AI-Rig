@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.32.3
+
+- Check global-policy installability before removing or installing plugins and updating the GitHub profile; preserve legitimate managed-template upgrades and explicit prefix migration safeguards.
+- Admit complete authentic fast native waves without claiming overlap; reject interrupted free-capacity dispatch and retain strict historical routes.
+- Preserve producer session and selected evidence home through completed local/native report intake.
+- Ask only for missing decisions or protected effects; keep authorized internal work moving and preserve scope, native-answer and runtime boundaries.
+- Recover proved reader-path failures after exact page prefixes with one complete independent replacement; preserve original and sibling evidence.
+- Offer eligible prior-review reuse before creating a new run; complete disclosed parent nonapproval fallback and preserve failed configured checks.
+- Reject unmet explicit independence and copied candidates masquerading as completed report intake; add failing-before composition regressions and remove unconditional historical repair-question expectations.
+
 ## 0.32.2
 
 - Give bounded local implementation and management tasks a parent-only path with relevant project checks.

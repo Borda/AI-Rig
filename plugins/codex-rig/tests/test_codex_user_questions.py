@@ -13,6 +13,17 @@ SKILLS = sorted((PLUGIN_ROOT / "skills").glob("*/SKILL.md"))
 
 
 @pytest.mark.installed_plugin
+def test_question_necessity_precedes_transport_discovery() -> None:
+    """Keep an authorized internal recovery from opening a blocking consent form."""
+    compact = (PLUGIN_ROOT / QUESTION_REFERENCE).read_text(encoding="utf-8")
+    details = (PLUGIN_ROOT / "shared/codex-user-questions-details.md").read_text(encoding="utf-8")
+
+    assert compact.index("Ask only for a genuinely missing decision") < compact.index("discover deferred")
+    assert "Routine preparation, internal recovery and completing authorized work need no new consent" in details
+    assert details.index("### Decide whether to ask") < details.index("### Choose the control")
+
+
+@pytest.mark.installed_plugin
 def test_question_checkpoint_discovers_deferred_native_tools_before_async() -> None:
     """Prevent visible async input from bypassing a deferred native provider in Default mode."""
     compact = (PLUGIN_ROOT / QUESTION_REFERENCE).read_text(encoding="utf-8")
@@ -101,7 +112,7 @@ def test_every_codex_skill_loads_local_question_guidance() -> None:
         "Do not replay already-delivered report context",
         "A higher-priority host instruction that explicitly mandates plain text remains binding.",
         "Record each control's exposure, permission and input-fit evidence",
-        "For every user-facing choice",
+        "For each genuinely missing user decision",
         "Use complete actionable values",
         "If no independent work remains, yield",
         "This preference applies to optional and required questions.",

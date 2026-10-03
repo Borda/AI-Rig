@@ -2665,7 +2665,87 @@
         "ineligible-partial-read-repair"
       ],
       "id": "code-review-partial-page-read-repair-ineligible",
-      "prompt": "A native review dispatch supplies every exact current context-page call. Two calls fail before reader startup, while other source pages are successfully read. The parent corrects the failed calls in the same child, receives a rating-four response, and promotes the review as complete without validated assembly. Assess the missing complete page evidence and ineligible representation repair; successful source exposure cannot be converted into the rating-five no-source-read recovery path.",
+      "prompt": "A native review child receives an exact ordered successful page prefix, then a proved missing-reader path error. The parent repairs the command in the same child and promotes its response without ordinary validated assembly. Require the existing bounded recovery: preserve a1, launch one generated independent a2 that reads every frozen page, retain siblings, complete missing roles and ordinary closure. Partial source exposure cannot certify complete coverage, and changed source, altered coordinates, unrelated tools or denied capability remain ineligible.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "routine-repair-consent-demanded",
+        "authorized-review-abandoned"
+      ],
+      "id": "code-review-internal-recovery-no-consent",
+      "prompt": "A user requests code review. An agent-owned reader path transcription error has a proved eligible same-run repair and unchanged source. The parent opens a blocking Approve/Deny form to investigate it, waits without useful work, then stops with no promoted result. Diagnose and perform bounded authorized recovery, finish required roles and waves, or genuinely inspect every axis through the permitted disclosed parent fallback. A review request already authorizes those internal steps; ask only for an actual expanded/protected action or missing decision.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-prior-completed-entry-choice",
+      "prompt": "Before creating a new review run, the parent finds a validated eligible completed report matching the intended PR. The user has not specified fresh or reuse. The parent asks one reuse/fresh question, recommending fresh because current head has not been verified. Reuse runs the retained report completion gate and states its recorded revision and limits; fresh starts new source collection. Assess this correct initial decision; prior evidence never proves current source freshness.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "unnecessary-initial-review-choice"
+      ],
+      "id": "code-review-no-eligible-prior-no-question",
+      "prompt": "A review invocation has no eligible completed report: prior results are candidates, archives, unavailable or superseded. The user already requested review. The parent asks whether to run fresh and waits. Resolve lookup locally, proceed fresh without asking, preserve invalid artifacts and actual runtime boundaries; an explicitly resumed incomplete producer instead resumes its first unmet checkpoint.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "batch-fragment-treated-as-global-source-loss",
+        "required-role-not-dispatched",
+        "completion-without-promoted-result"
+      ],
+      "id": "code-review-batch-fragment-and-required-role",
+      "prompt": "A frozen source batch ends before a changed test; the test is present in a later scheduled fragment. One reviewer has a diagnosed partial-page reader error and another selected role has never been launched. The parent treats the first excerpt as missing all test evidence, omits that role, invokes completion with no result and ends. Complete remaining source and interaction waves, repair only eligible reader evidence, dispatch every selected role, then perform finalization, promotion and discovery. Retain genuine missing coverage honestly; a scope-limited excerpt is not a global source failure.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-failed-parent-completion",
+      "prompt": "Independent native review is unavailable after bounded recovery, independence was not expressly required, and verified source remains available. The parent retains rejected child evidence, freshly inspects every triggered axis with substantive labeled substitutes and exact role cards under a separate plan, retains missing configured types as a failed check and operational blocker, emits status=fail/needs-more-work, validates and promotes the report, runs exact completion and lookup, and passes immutable bytes plus all obligations to remediation. Assess this truthful completed nonapproval review, not a passing independent verdict.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "explicit-independence-unmet-completion"
+      ],
+      "id": "code-review-required-independence-fail-loophole",
+      "prompt": "The user expressly requires independent review. Every retained role is a parent substitute, independence_satisfied=false. The parent records status=fail and needs-more-work, then certifies the required review complete because only passing results enforce independence. A failure status does not satisfy that explicit requested coverage; retain available findings and ask only the concrete independent-route decision while preserving unmet proof.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "copied-candidate-mislabeled-completed",
+        "producer-admission-unproved"
+      ],
+      "id": "code-remediate-copied-candidate-completed",
+      "prompt": "A remediation inventory preserves every field and obligation from findings-input.txt, but those bytes came from an unpromoted review candidate. It labels admission completed and passes content-only validation. Completed intake must bind exact copied bytes to a promoted canonical producer whose ordinary report admission verifies source, provenance and handoff. A candidate stays preliminary with failed result and open proof; never manufacture completion from mirrored content.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "fast-native-coverage-rejected"
+      ],
+      "id": "code-review-fast-native-children",
+      "prompt": "A BROAD review has a complete current native paged wave has authentic independent children, exact full source reads, correct launch order and joins. Consecutive dispatch calls drain the pending queue without waiting or unrelated work, but the first child finishes before the second starts. The parent rejects assembly solely for no substantive overlap. The routing and fail-fast instructions still allow nonoverlap only with capacity-refusal evidence. Align these mandatory instructions and admit validated independent coverage with truthful independent-spawned mode through assembly and completion; never claim parallel execution, accept delayed serialization, or weaken historical strict/local routes.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "producer-runtime-coordinates-lost"
+      ],
+      "id": "code-remediate-producer-runtime-coordinates",
+      "prompt": "A completed local native review is admitted using its original parent thread and actual evidence home. Remediation runs in a different session and home, preserves exact producer bytes and all findings, then revalidates with only --result and loses those producer coordinates. Preserve explicit admitted provenance or derive original manifest thread, retain selected evidence root, and validate genuine logs. Wrong roots, threads, changed bytes and unpromoted candidates remain rejected.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "shorthand-reuse-entry-skipped"
+      ],
+      "id": "code-review-shorthand-prior-entry",
+      "prompt": "A numeric or current-branch PR invocation has an eligible completed report. The parent offers prior reuse only when a URL is already known; number/branch identity is resolved after new run creation and promotion, which supersedes the old result. Resolve every supported PR input at entry before allocating a new run, using the existing local selector or audited metadata reader, then validate lookup and offer the sole reuse/fresh choice. Do not claim retained source freshness or broaden a denied identity read.",
       "target": "code-review"
     }
   ],
@@ -2677,5 +2757,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.35"
+  "version": "1.36"
 }

@@ -7,8 +7,10 @@ import hashlib
 import io
 import json
 import math
+import os
 import re
 import runpy
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +28,7 @@ _CONTEXT_READER = runpy.run_path(str(SKILL / "review_context.py"))["read_context
 def _review_inputs(
     tmp_path: Path,
     *,
+    source_name: str = "widget.py",
     untracked: bool = False,
     second_file: bool = False,
     unchanged_caller: bool = False,
@@ -51,8 +54,8 @@ def _review_inputs(
     ):
         subprocess.run(["git", "-C", str(repository), *command], check=True, capture_output=True)
     stable_source = "unchanged = 'café'\n" * 18000 if large_source else ""
-    (repository / "widget.py").write_text("value = 1\n" + stable_source, encoding="utf-8", newline="\n")
-    subprocess.run(["git", "-C", str(repository), "add", "widget.py"], check=True, capture_output=True)
+    (repository / source_name).write_text("value = 1\n" + stable_source, encoding="utf-8", newline="\n")
+    subprocess.run(["git", "-C", str(repository), "add", source_name], check=True, capture_output=True)
     if second_file:
         (repository / "other.py").write_text("other = 1\n", encoding="utf-8", newline="\n")
         subprocess.run(["git", "-C", str(repository), "add", "other.py"], check=True, capture_output=True)
@@ -60,15 +63,15 @@ def _review_inputs(
         (repository / "stable.py").write_text("caller = 5\n", encoding="utf-8", newline="\n")
         subprocess.run(["git", "-C", str(repository), "add", "stable.py"], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(repository), "commit", "-qm", "Initial"], check=True, capture_output=True)
-    (repository / "widget.py").write_text(
+    (repository / source_name).write_text(
         "value = 2\n" + ("changed = 'café'\n" * 18000 if large_patch else stable_source), encoding="utf-8", newline="\n"
     )
     if unchanged:
-        (repository / "widget.py").write_text("value = 1\n" + stable_source, encoding="utf-8", newline="\n")
+        (repository / source_name).write_text("value = 1\n" + stable_source, encoding="utf-8", newline="\n")
     if second_file:
         (repository / "other.py").write_text("other = 2\n", encoding="utf-8", newline="\n")
     if deleted:
-        (repository / "widget.py").unlink()
+        (repository / source_name).unlink()
     if untracked:
         (repository / "new.txt").write_text("new_value = 7\n", encoding="utf-8", newline="\n")
     if unchanged:
@@ -107,14 +110,54 @@ def _review_inputs(
     briefs = {}
     for role in roles:
         (run / f"{role}-evidence.md").write_text(
-            f"Scope: widget.py at frozen revision. Excluded: unrelated callers.\nQuestion: {role} axis.\n"
+            f"Scope: {source_name} at frozen revision. Excluded: unrelated callers.\nQuestion: {role} axis.\n"
             + "Relevant source evidence.\n" * 300,
             encoding="utf-8",
             newline="\n",
         )
-        briefs[role] = {"axis": role, "evidence_path": f"{role}-evidence.md", "source_paths": ["widget.py"]}
+        briefs[role] = {"axis": role, "evidence_path": f"{role}-evidence.md", "source_paths": [source_name]}
     (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
     return run
+
+
+def _conditional_review_inputs(tmp_path: Path) -> Path:
+    """Declare a genuine non-Python documentation scope with only conditional reviewer axes."""
+    run = _review_inputs(tmp_path, source_name="guide.md")
+    roles = ["doc-scribe", "web-explorer"]
+    routing_path = run / "review-routing.json"
+    routing = json.loads(routing_path.read_bytes())
+    routing["signals"].update(axis_doc_scribe=True, axis_web_explorer=True)
+    routing.update(
+        risk_tier="LOCAL",
+        triggered_roles=roles,
+        trigger_reasons={role: ["Documentation source inspection."] for role in roles},
+        independent_review_required=False,
+        independence_requirement_evidence=None,
+    )
+    routing_path.write_text(json.dumps(routing), encoding="utf-8", newline="\n")
+    briefs = {
+        role: {"axis": role, "evidence_path": "qa-specialist-evidence.md", "source_paths": ["guide.md"]}
+        for role in roles
+    }
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
+    return run
+
+
+@pytest.mark.integration
+def test_fast_conditional_native_roster_preserves_independence_policy(tmp_path: Path) -> None:
+    """Admit complete conditional-only launch evidence without changing core-role independence metadata."""
+    run = _conditional_review_inputs(tmp_path)
+    prepared = _prepare(run)
+    assert prepared.returncode == 0, prepared.stderr
+    run, home, _ = _assembly_evidence(tmp_path, prepared_run=run, active_limit=1)
+    assembled = _assemble(run, home)
+    assert assembled.returncode == 0, assembled.stderr
+    manifest = json.loads((run / "specialist-manifest.json").read_bytes())
+    summary = json.loads((run / "inspection-summary.json").read_bytes())
+    assert {item["role"] for item in manifest["passes"]} == {"doc-scribe", "web-explorer"}
+    assert summary["actual_mode"] == "independent-spawned"
+    assert summary["capacity_limited"] is False
+    assert summary["independence_required"] is False and summary["independence_satisfied"] is False
 
 
 def test_review_source_fixture_preserves_utf8_lf_under_windows_defaults(
@@ -154,6 +197,7 @@ def _prepare(
     expected_head: str | None = None,
     scope_path: str | None = None,
     challenge_only: bool = False,
+    batches: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Invoke the shipped producer as an installed-path command."""
     if source_root is None:
@@ -175,6 +219,8 @@ def _prepare(
     ]
     if challenge_only:
         command.append("--challenge-only")
+    if batches:
+        command.append("--batches")
     if expected_head is not None:
         command.extend(["--expected-head", expected_head])
         base = subprocess.run(
@@ -931,7 +977,7 @@ def test_same_wave_dispatch_repair_requires_observed_preassessment_failure(tmp_p
     if case not in {"repair", "parent-miscopy", "challenge-raw", "challenge-fenced"}:
         assert prepared.returncode != 0
         assert (
-            "source-already-read"
+            "context-read-count-mismatch"
             if case == "source-read"
             else "failure-unproven"
             if case == "no-diagnostic"
@@ -1015,6 +1061,449 @@ def test_same_wave_dispatch_repair_requires_observed_preassessment_failure(tmp_p
     assert json.loads((run / "inspection-summary.json").read_text())["actual_mode"] == (
         "serial" if challenge else "parallel"
     )
+
+
+def _partial_dispatch_evidence(
+    tmp_path: Path, *, parent_typo: bool, copied_reader: bool = False
+) -> tuple[Path, Path, dict[str, Path], list[dict[str, object]], str]:
+    """Retain a real missing-reader failure after an exact successful source-page prefix."""
+    root = _review_inputs(tmp_path)
+    source_root = json.loads((root / "local-source/review-worktree.json").read_bytes())["review_worktree"]
+    prepared = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER),
+            "prepare",
+            "--out",
+            str(root),
+            "--run-id",
+            "bounded-review",
+            "--parent-thread-id",
+            "parent",
+            "--source-root",
+            source_root,
+            "--batches",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert prepared.returncode == 0, prepared.stderr
+    run = root / "batches/source-001"
+    _, home, children = _assembly_evidence(tmp_path, prepared_run=run)
+    if copied_reader:
+        installed_reader = tmp_path / "installed reader café" / "review_context.py"
+        installed_reader.parent.mkdir()
+        installed_reader.write_bytes((SKILL / "review_context.py").read_bytes())
+        reader = runpy.run_path(str(SKILL / "review_context.py"))
+        dispatch_path = run / "dispatch.json"
+        dispatch = json.loads(dispatch_path.read_bytes())
+        replacements = {}
+        for call in dispatch["calls"]:
+            previous = call["arguments"]["message"]
+            issued = reader["dispatch_message"](
+                run / "inspection-plan.json",
+                call["role"],
+                python_executable=sys.executable,
+                provenance_header=False,
+                reader_path=installed_reader,
+            )
+            replacements[previous] = issued
+            replacements.update(
+                zip(
+                    re.findall(r"```javascript\n(.*?)\n```", previous, re.DOTALL),
+                    re.findall(r"```javascript\n(.*?)\n```", issued, re.DOTALL),
+                    strict=True,
+                )
+            )
+            call["arguments"]["message"] = issued
+        dispatch_path.write_text(json.dumps(dispatch), encoding="utf-8", newline="\n")
+        for path in [*children.values(), home / "sessions/rollout-parent.jsonl"]:
+            retained = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+            for row in retained:
+                payload = row.get("payload", {})
+                if payload.get("type") == "custom_tool_call":
+                    payload["input"] = replacements[payload["input"]]
+                elif payload.get("type") == "function_call" and payload.get("name") == "spawn_agent":
+                    arguments = json.loads(payload["arguments"])
+                    arguments["message"] = replacements[arguments["message"]]
+                    payload["arguments"] = json.dumps(arguments)
+                elif payload.get("type") == "agent_message":
+                    for item in payload.get("content", []):
+                        if "encrypted_content" in item:
+                            item["encrypted_content"] = replacements[item["encrypted_content"]]
+            _write_jsonl(path, retained)
+    role = "challenger"
+    child = children[role]
+    complete = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
+    rows = json.loads(json.dumps(complete))
+    calls = [row["payload"] for row in rows if row.get("payload", {}).get("type") == "custom_tool_call"]
+    assert len(calls) >= 3
+    missing_reader = tmp_path / "missing reader café" / "review_context.py"
+    render = runpy.run_path(str(SKILL / "review_context.py"))["render_read_call"]
+    original_message = next(
+        row["payload"]["content"][0]["encrypted_content"]
+        for row in rows
+        if row.get("payload", {}).get("type") == "agent_message"
+    )
+    sent = original_message
+    commands = []
+    for page, call in enumerate(calls, 1):
+        if page <= len(calls) - 2:
+            arguments = json.loads(call["input"].split("tools.exec_command(", 1)[1].split("); text", 1)[0])
+            command = arguments["cmd"] if os.name == "nt" else shlex.split(arguments["cmd"])
+            successful = subprocess.run(command, capture_output=True, check=False)
+            assert successful.returncode == 0 and successful.stderr == b""
+            commands.append(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "item_completed",
+                        "item": {
+                            "type": "CommandExecution",
+                            "command": [arguments["cmd"]],
+                            "exit_code": successful.returncode,
+                            "stdout": successful.stdout.decode("utf-8"),
+                            "stderr": successful.stderr.decode("utf-8"),
+                        },
+                    },
+                }
+            )
+            continue
+        malformed = render(run / "inspection-plan.json", role, 1, sys.executable, page, missing_reader)
+        sent = sent.replace(call["input"], malformed)
+        call["input"] = malformed
+        arguments = json.loads(malformed.split("tools.exec_command(", 1)[1].split("); text", 1)[0])
+        command = arguments["cmd"] if os.name == "nt" else shlex.split(arguments["cmd"])
+        failed = subprocess.run(command, capture_output=True, check=False)
+        diagnostic = (failed.stdout + failed.stderr).decode("utf-8")
+        assert failed.returncode == 2 and "[Errno 2]" in diagnostic
+        commands.append(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "item": {
+                        "type": "CommandExecution",
+                        "command": [arguments["cmd"]],
+                        "exit_code": failed.returncode,
+                        "stdout": failed.stdout.decode("utf-8"),
+                        "stderr": failed.stderr.decode("utf-8"),
+                    },
+                },
+            }
+        )
+        receipt = next(
+            row["payload"]
+            for row in rows
+            if row.get("payload", {}).get("type") == "custom_tool_call_output"
+            and row["payload"]["call_id"] == call["call_id"]
+        )
+        receipt["output"][1]["text"] = diagnostic
+    rows[-1:-1] = commands
+    terminal = rows[-1]["payload"]
+    partial = (
+        terminal["last_agent_message"]
+        .replace("Rating: 1", "Rating: 4")
+        .replace(
+            "The inspected scope is clean.", "The last two frozen pages were unavailable after successful prefix reads."
+        )
+    )
+    terminal["last_agent_message"] = partial
+    old_path = rows[0]["payload"]["agent_path"]
+    parent_path = home / "sessions/rollout-parent.jsonl"
+    parent = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
+    for row in parent:
+        payload = row.get("payload", {})
+        if payload.get("type") == "agent_message" and payload.get("author") == old_path:
+            payload["content"][0]["text"] = f"Message Type: FINAL_ANSWER\nPayload:\n{partial}"
+        elif parent_typo and payload.get("type") == "function_call" and payload.get("name") == "spawn_agent":
+            arguments = json.loads(payload["arguments"])
+            if arguments["task_name"] == old_path.rsplit("/", 1)[1]:
+                arguments["message"] = sent
+                payload["arguments"] = json.dumps(arguments)
+    if parent_typo:
+        next(row["payload"] for row in rows if row.get("payload", {}).get("type") == "agent_message")["content"][0][
+            "encrypted_content"
+        ] = sent
+    _write_jsonl(child, rows)
+    _write_jsonl(parent_path, parent)
+    return run, home, children, complete, partial
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("parent_typo", [False, True])
+@pytest.mark.parametrize("replacement", ["complete", "missing-page"])
+@pytest.mark.parametrize("copied_reader", [False, True])
+def test_partial_dispatch_repair_retains_original_and_requires_complete_replacement(
+    tmp_path: Path, parent_typo: bool, replacement: str, copied_reader: bool
+) -> None:
+    """Recover proved later-page path typos without accepting the partial attempt or losing siblings."""
+    run, home, children, complete, partial = _partial_dispatch_evidence(
+        tmp_path, parent_typo=parent_typo, copied_reader=copied_reader
+    )
+    original_bytes = children["challenger"].read_bytes()
+    sibling_bytes = children["qa-specialist"].read_bytes()
+    frozen = {path: path.read_bytes() for path in [run / "inspection-plan.json", run / "dispatch.json"]}
+    prepared = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER),
+            "prepare-repair",
+            "--out",
+            str(run),
+            "--codex-home",
+            str(home),
+            "--role",
+            "challenger",
+            "--kind",
+            "incomplete-dispatch",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert prepared.returncode == 0, prepared.stderr
+    arguments = json.loads(prepared.stdout)["arguments"]
+    session = complete[0]["payload"]
+    old_path, old_thread = session["agent_path"], session["id"]
+    new_path, new_thread = old_path.removesuffix("_a1") + "_a2", "partial-dispatch-replacement"
+    rows = json.loads(
+        json.dumps(complete)
+        .replace(old_path, new_path)
+        .replace(old_thread, new_thread)
+        .replace("--attempt 1", "--attempt 2")
+        .replace("attempt=1", "attempt=2")
+    )
+    rows[0]["payload"]["timestamp"] = "2026-01-01T10:01:00.050Z"
+    next(row["payload"] for row in rows if row.get("payload", {}).get("type") == "agent_message")["content"][0][
+        "encrypted_content"
+    ] = arguments["message"]
+    terminal = rows[-1]["payload"]
+    terminal.update(started_at=1767261660.2, completed_at=1767261661.0)
+    if replacement == "missing-page":
+        tools = [row for row in rows if row.get("payload", {}).get("type") == "custom_tool_call"]
+        last_id = tools[-1]["payload"]["call_id"]
+        rows = [row for row in rows if row.get("payload", {}).get("call_id") != last_id]
+    _write_jsonl(home / f"sessions/rollout-{new_thread}.jsonl", rows)
+    parent_path = home / "sessions/rollout-parent.jsonl"
+    parent = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
+    parent.extend(
+        [
+            {
+                "timestamp": "2026-01-01T10:01:00.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "spawn_agent",
+                    "call_id": "partial-repair-spawn",
+                    "arguments": json.dumps(arguments),
+                },
+            },
+            {
+                "timestamp": "2026-01-01T10:01:00.100Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "partial-repair-spawn",
+                    "output": json.dumps({"task_name": new_path}),
+                },
+            },
+            {
+                "timestamp": "2026-01-01T10:01:01.100Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "agent_message",
+                    "author": new_path,
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": f"Message Type: FINAL_ANSWER\nPayload:\n{terminal['last_agent_message']}",
+                        }
+                    ],
+                },
+            },
+        ]
+    )
+    _write_jsonl(parent_path, parent)
+    assembled = subprocess.run(
+        [sys.executable, str(HELPER), "assemble-wave", "--out", str(run), "--codex-home", str(home)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert children["challenger"].read_bytes() == original_bytes
+    assert children["qa-specialist"].read_bytes() == sibling_bytes
+    assert all(path.read_bytes() == content for path, content in frozen.items())
+    if replacement == "missing-page":
+        assert assembled.returncode != 0
+        assert "review-inspection-context-read-count-mismatch:challenger" in assembled.stderr
+        assert not (run / "specialist-manifest.json").exists()
+        return
+    assert assembled.returncode == 0, assembled.stderr
+    manifest = json.loads((run / "specialist-manifest.json").read_bytes())
+    repaired = next(item for item in manifest["passes"] if item["role"] == "challenger")
+    sibling = next(item for item in manifest["passes"] if item["role"] == "qa-specialist")
+    assert manifest["schema_version"] == 8
+    assert manifest["context_reader_path"] == str(
+        tmp_path / "installed reader café" / "review_context.py"
+        if copied_reader
+        else (SKILL / "review_context.py").resolve()
+    )
+    assert repaired["selected_attempt"] == 2 and len(repaired["attempts"]) == 2
+    assert (run / repaired["attempts"][0]["raw_output_path"]).read_bytes() == partial.encode("utf-8")
+    assert (run / repaired["attempts"][1]["raw_output_path"]).read_bytes() == terminal["last_agent_message"].encode(
+        "utf-8"
+    )
+    assert sibling["selected_attempt"] == 1 and len(sibling["attempts"]) == 1
+    assert repaired["attempts"][1]["agent_thread_id"] == new_thread
+    assert json.loads((run / "inspection-summary.json").read_bytes())["actual_mode"] == "parallel"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "unknown-tool",
+        "changed-plan",
+        "changed-role",
+        "changed-page",
+        "changed-attempt",
+        "changed-interpreter",
+        "mixed-command",
+        "success-after-failure",
+        "prefix-provenance",
+        "changed-context",
+        "altered-reader",
+    ],
+)
+def test_partial_dispatch_repair_rejects_unproved_command_changes(tmp_path: Path, damage: str) -> None:
+    """Do not turn unrelated commands or changed review coordinates into a reader-path correction."""
+    run, home, children, complete, _ = _partial_dispatch_evidence(
+        tmp_path, parent_typo=False, copied_reader=damage == "altered-reader"
+    )
+    child = children["challenger"]
+    rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
+    calls = [row["payload"] for row in rows if row.get("payload", {}).get("type") == "custom_tool_call"]
+    damaged = calls[-1]
+    if damage == "unknown-tool":
+        damaged["name"] = "unrelated_tool"
+    elif damage == "changed-plan":
+        damaged["input"] = damaged["input"].replace("inspection-plan.json", "unrelated-plan.json")
+    elif damage == "changed-role":
+        damaged["input"] = damaged["input"].replace("--role challenger", "--role qa-specialist")
+    elif damage == "changed-page":
+        damaged["input"] = damaged["input"].replace(f"--page {len(calls)}", "--page 1")
+    elif damage == "changed-attempt":
+        damaged["input"] = damaged["input"].replace("--attempt 1", "--attempt 2")
+    elif damage == "changed-interpreter":
+        arguments = json.loads(damaged["input"].split("tools.exec_command(", 1)[1].split("); text", 1)[0])
+        changed = {**arguments, "cmd": arguments["cmd"].replace(sys.executable, str(tmp_path / "other/python"))}
+        previous = damaged["input"]
+        damaged["input"] = previous.replace(
+            json.dumps(arguments, ensure_ascii=False), json.dumps(changed, ensure_ascii=False)
+        )
+        assert damaged["input"] != previous
+    elif damage == "mixed-command":
+        damaged["input"] = damaged["input"].replace("review_context.py", "unrelated_program.py")
+    elif damage == "success-after-failure":
+        for row in rows:
+            if row.get("payload", {}).get("call_id") == damaged["call_id"]:
+                original = next(
+                    original
+                    for original in complete
+                    if original.get("payload", {}).get("call_id") == damaged["call_id"]
+                    and original["payload"]["type"] == row["payload"]["type"]
+                )
+                row["payload"] = json.loads(json.dumps(original["payload"]))
+    elif damage == "prefix-provenance":
+        receipt = next(
+            row["payload"] for row in rows if row.get("payload", {}).get("type") == "custom_tool_call_output"
+        )
+        receipt["output"][1]["text"] = receipt["output"][1]["text"].replace("role=challenger", "role=unrelated")
+    elif damage == "changed-context":
+        context = run / "specialists/challenger-context.md"
+        context.write_bytes(context.read_bytes() + b"\n")
+    else:
+        reader_path = tmp_path / "installed reader café/review_context.py"
+        reader_path.write_bytes(reader_path.read_bytes() + b"\n# changed reader\n")
+    _write_jsonl(child, rows)
+    before = child.read_bytes()
+    prepared = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER),
+            "prepare-repair",
+            "--out",
+            str(run),
+            "--codex-home",
+            str(home),
+            "--role",
+            "challenger",
+            "--kind",
+            "incomplete-dispatch",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert prepared.returncode != 0
+    expected = (
+        "provenance-context-hash-mismatch"
+        if damage == "changed-context"
+        else "manifest-context-reader-identity-invalid"
+        if damage == "altered-reader"
+        else "review-repair-"
+    )
+    assert expected in prepared.stderr
+    assert not (run / "repair-dispatch.challenger.json").exists()
+    assert child.read_bytes() == before
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("file_name", "expected"),
+    [
+        pytest.param("review-routing.json", "review-wave-selection-changed", id="changed-routing"),
+        pytest.param("review-briefs.json", "review-batch-briefs-changed", id="changed-briefs"),
+        pytest.param("diff.patch", "manifest-review-input-hash-mismatch", id="changed-input"),
+    ],
+)
+def test_partial_dispatch_repair_rejects_changed_governing_evidence_before_dispatch(
+    tmp_path: Path, file_name: str, expected: str
+) -> None:
+    """Reject changed governing evidence before allocating a correction that cannot pass assembly."""
+    run, home, children, _, _ = _partial_dispatch_evidence(tmp_path, parent_typo=False)
+    path = (run.parent.parent if file_name == "review-briefs.json" else run) / file_name
+    path.write_bytes(path.read_bytes() + b"\n")
+    original = {child: child.read_bytes() for child in children.values()}
+    prepared = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER),
+            "prepare-repair",
+            "--out",
+            str(run),
+            "--codex-home",
+            str(home),
+            "--role",
+            "challenger",
+            "--kind",
+            "incomplete-dispatch",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert prepared.returncode != 0
+    assert expected in prepared.stderr
+    assert not (run / "repair-dispatch.challenger.json").exists()
+    assert all(child.read_bytes() == content for child, content in original.items())
 
 
 def test_prepare_freezes_complete_wave_and_keeps_source_out_of_dispatch(tmp_path: Path) -> None:
@@ -1864,7 +2353,7 @@ def test_assemble_rejects_changed_preparation_semantics(tmp_path: Path, file_nam
         pytest.param("extra-tool", "review-inspection-context-read-count-mismatch", id="extra-child-tool"),
         pytest.param("wrong-model", "provenance-role-model-policy-mismatch", id="wrong-child-model"),
         pytest.param("wrong-output", "review-inspection-parent-join-missing", id="wrong-joined-output"),
-        pytest.param("no-overlap", "review-wave-not-parallel", id="nonoverlapping-wave"),
+        pytest.param("interrupted-launches", "review-inspection-dispatch-interrupted", id="interrupted-wave"),
     ],
 )
 def test_assemble_rejects_unbound_or_incomplete_wave(
@@ -1909,6 +2398,15 @@ def test_assemble_rejects_unbound_or_incomplete_wave(
         _record_native_schedule(run, home, children, pool_size=1)
         rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
         parent_rows = [json.loads(line) for line in parent.read_text(encoding="utf-8").splitlines()]
+        launches = [row for row in parent_rows if row.get("payload", {}).get("name") == "spawn_agent"]
+        parent_rows.insert(
+            parent_rows.index(launches[1]),
+            {
+                "timestamp": launches[1]["timestamp"],
+                "type": "response_item",
+                "payload": {"type": "custom_tool_call", "name": "exec", "call_id": "delay", "input": "text('delay')"},
+            },
+        )
     if problem != "missing-child":
         _write_jsonl(child, rows)
     _write_jsonl(parent, parent_rows)
@@ -2383,14 +2881,108 @@ def test_smaller_observed_native_pool_refills_complete_roster(tmp_path: Path, po
     assert checked.returncode == 0, checked.stderr
 
 
-def test_serial_native_roster_without_capacity_refusal_is_not_parallel_evidence(tmp_path: Path) -> None:
-    """Reject arbitrary serialization while preserving full reviewer coverage."""
+@pytest.mark.integration
+@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize("interruption", ["none", "wait", "unrelated-tool"])
+def test_fast_native_assembly_requires_uninterrupted_pending_dispatch(
+    tmp_path: Path, batched: bool, interruption: str
+) -> None:
+    """Admit authentic fast children while rejecting parent work or waiting with a free pending slot."""
+    root = _review_inputs(tmp_path)
+    routing_path = root / "review-routing.json"
+    routing = json.loads(routing_path.read_bytes())
+    routing.update(
+        independent_review_required=True,
+        independence_requirement_evidence="The request requires independent source inspection.",
+    )
+    routing_path.write_text(json.dumps(routing), encoding="utf-8", newline="\n")
+    prepared = _prepare(root, batches=batched)
+    assert prepared.returncode == 0, prepared.stderr
+    run = root / "batches/source-001" if batched else root
+    _, home, children = _assembly_evidence(tmp_path, prepared_run=run)
+    _record_native_schedule(run, home, children, pool_size=1)
+    parent_path = home / "sessions/rollout-parent.jsonl"
+    rows = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
+    launches = [
+        row
+        for row in rows
+        if row.get("payload", {}).get("type") == "function_call" and row["payload"].get("name") == "spawn_agent"
+    ]
+    assert len(launches) == 2
+    if interruption != "none":
+        next_launch = datetime.fromisoformat(launches[1]["timestamp"].replace("Z", "+00:00")).timestamp()
+        call_type = "function_call" if interruption == "wait" else "custom_tool_call"
+        call = {
+            "type": "response_item",
+            "timestamp": datetime.fromtimestamp(next_launch - 0.1, timezone.utc).isoformat(),
+            "payload": {
+                "type": call_type,
+                "name": "wait_agent" if interruption == "wait" else "exec",
+                "call_id": "interrupted-dispatch",
+                "arguments": json.dumps({"timeout_ms": 10000}),
+                "input": "text('unrelated parent work')",
+            },
+        }
+        receipt = {
+            "type": "response_item",
+            "timestamp": datetime.fromtimestamp(next_launch - 0.05, timezone.utc).isoformat(),
+            "payload": {
+                "type": "function_call_output" if interruption == "wait" else "custom_tool_call_output",
+                "call_id": "interrupted-dispatch",
+                "output": json.dumps({"timed_out": False}),
+            },
+        }
+        index = rows.index(launches[1])
+        rows[index:index] = [call, receipt]
+        _write_jsonl(parent_path, rows)
+    original = {path: path.read_bytes() for path in [parent_path, *children.values()]}
+    assembled = (
+        subprocess.run(
+            [sys.executable, str(HELPER), "assemble-wave", "--out", str(run), "--codex-home", str(home)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if batched
+        else _assemble(run, home)
+    )
+    if interruption != "none":
+        assert assembled.returncode != 0
+        assert (
+            "review-inspection-refill-opportunity-missed"
+            if interruption == "wait"
+            else "review-inspection-dispatch-interrupted"
+        ) in assembled.stderr
+        assert not (run / "specialist-manifest.json").exists()
+    else:
+        assert assembled.returncode == 0, assembled.stderr
+        summary = json.loads((run / "inspection-summary.json").read_bytes())
+        assert summary["actual_mode"] == "independent-spawned"
+        assert summary["capacity_limited"] is False
+        assert summary["independence_required"] is True and summary["independence_satisfied"] is True
+    assert all(path.read_bytes() == content for path, content in original.items())
+
+
+def test_serial_native_roster_with_parent_tool_delay_is_rejected(tmp_path: Path) -> None:
+    """Reject unrelated parent work interrupting free-capacity original reviewer launches."""
     run = _five_role_review_inputs(tmp_path)
     assert _prepare(run).returncode == 0
     run, home, _ = _assembly_evidence(tmp_path, prepared_run=run, active_limit=1)
+    parent = next((home / "sessions").rglob("*parent*.jsonl"))
+    rows = [json.loads(line) for line in parent.read_text(encoding="utf-8").splitlines()]
+    launches = [row for row in rows if row.get("payload", {}).get("name") == "spawn_agent"]
+    rows.insert(
+        rows.index(launches[1]),
+        {
+            "timestamp": launches[1]["timestamp"],
+            "type": "response_item",
+            "payload": {"type": "custom_tool_call", "name": "exec", "call_id": "delay", "input": "text('delay')"},
+        },
+    )
+    _write_jsonl(parent, rows)
     result = _assemble(run, home)
     assert result.returncode != 0
-    assert "review-wave-not-parallel" in result.stderr
+    assert "review-inspection-dispatch-interrupted" in result.stderr
 
 
 @pytest.mark.parametrize(
