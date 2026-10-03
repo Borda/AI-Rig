@@ -487,9 +487,7 @@ def assemble_wave(out: Path, codex_home: Path) -> dict[str, Any]:
         **producer.manifest_header(plan),
         "reviewer_findings_version": 1,
         "manifest_kind": "native-wave",
-        "dispatch_protocol": "paged-context-v7",
-        "context_reader_path": str(Path(review_context.__file__).resolve()),
-        "context_reader_sha256": validator._sha256(Path(review_context.__file__)),
+        **producer._retained_reader_identity(out, dispatch),
         "context_reader_python": dispatch["context_reader_python"],
         "passes": passes,
         "inspection_execution": {"plan_path": "inspection-plan.json", "plan_sha256": dispatch["plan_sha256"]},
@@ -509,7 +507,12 @@ def assemble_wave(out: Path, codex_home: Path) -> dict[str, Any]:
         require_role_card_receipts=True,
         runtime_summary=summary,
     )
-    if len(roles) > 1 and summary["actual_mode"] != "parallel" and not summary.get("capacity_limited"):
+    if (
+        len(roles) > 1
+        and summary["actual_mode"] != "parallel"
+        and not summary.get("capacity_limited")
+        and not validator._native_independent_wave(manifest, summary)
+    ):
         raise ValueError("review-wave-not-parallel")
     producer._freeze(
         {
@@ -1034,7 +1037,12 @@ def validate_aggregate(
             retained_role_cards=retained_role_cards,
             runtime_summary=summary,
         )
-        if len(passes) > 1 and summary["actual_mode"] != "parallel" and not summary.get("capacity_limited"):
+        if (
+            len(passes) > 1
+            and summary["actual_mode"] != "parallel"
+            and not summary.get("capacity_limited")
+            and not validator._native_independent_wave(wave, summary)
+        ):
             raise ValueError("review-batch-wave-not-parallel")
         capacity_limited = capacity_limited or summary.get("capacity_limited") is True
         starts, ends = [], []

@@ -10,8 +10,107 @@ from pathlib import Path
 
 import pytest
 
+import test_review_batches as batches
 import test_review_prepare as preparation
-from test_review_completion_gate import FINDER, PLUGIN_ROOT, _assessed_pr, _module
+from test_review_completion_gate import FINDER, PLUGIN_ROOT, _assessed_pr, _finalize_parent_fallback, _module
+
+
+@pytest.mark.integration
+def test_parent_fallback_promotes_and_preserves_failed_gate_obligations_at_intake(tmp_path: Path) -> None:
+    """Carry a failed parent review through finalization, discovery, and lossless consumer admission."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    finalized = _finalize_parent_fallback(run)
+    assert finalized.returncode == 0, finalized.stdout + finalized.stderr
+    assert json.loads(finalized.stdout)["promoted"] is True
+    result_path = run / "result.json"
+    result = json.loads(result_path.read_bytes())
+    assert result["status"] == "fail"
+    assert result["checks_failed"] == ["types"]
+    assert result["metadata"]["execution_mode"] == "serial-fallback"
+    assert result["metadata"]["independence_required"] is False
+    assert result["metadata"]["independence_satisfied"] is False
+    assert {item["role"] for item in result["metadata"]["specialist_passes"]} == {"challenger", "qa-specialist"}
+    assert all(
+        item["mode"] == "substituted" and not item.get("attempts") for item in result["metadata"]["specialist_passes"]
+    )
+    before = {path.relative_to(run): path.read_bytes() for path in run.rglob("*") if path.is_file()}
+    completed = subprocess.run(
+        [sys.executable, str(FINDER), "--complete-run", str(run), "--parent-thread-id", "thread"],
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr.decode()
+    assert completed.stdout == before[Path("final.md")]
+    for arguments in (
+        ["--target", "https://github.com/acme/widgets/pull/123", "--reports-dir", str(run.parent.parent)],
+        ["--result", str(result_path)],
+    ):
+        admitted = subprocess.run(
+            [sys.executable, str(FINDER), *arguments], capture_output=True, text=True, check=False
+        )
+        assert admitted.returncode == 0, admitted.stderr
+        assert admitted.stdout == str(result_path) + "\n"
+        assert admitted.stderr == ""
+
+    consumer = tmp_path / "remediation"
+    consumer.mkdir()
+    (consumer / "findings-input.txt").write_bytes(result_path.read_bytes())
+    original = result["metadata"]
+    blocker = original["operational_blockers"][0]
+    blocker_body = "\n".join([blocker["title"], blocker["required_change"], *blocker["evidence"], "types"])
+    items = [
+        {
+            "input_item_id": blocker["id"],
+            "item_type": "review-gate",
+            "selectable": True,
+            "triage_status": "valid",
+            "sources": [{"kind": "report", "source_id": f"{result_path}#{blocker['id']}", "body": blocker_body}],
+        },
+        {
+            "input_item_id": "INDEPENDENT-COVERAGE",
+            "item_type": "confidence-gap",
+            "selectable": True,
+            "triage_status": "valid",
+            "sources": [
+                {
+                    "kind": "report",
+                    "source_id": f"{result_path}#confidence",
+                    "body": "\n".join(
+                        original["confidence_gaps"] + original["confidence_recovery"]["remaining_limits"]
+                    ),
+                }
+            ],
+        },
+    ]
+    metadata = {
+        "resolution_scope": {"presentation_version": 4},
+        "final_resolution_table": {"items": items},
+        "review_report_intake": {
+            "schema_version": 1,
+            "requested_report": True,
+            "admission_status": "completed",
+            "report_items_total": 2,
+            "review_gate_items_total": 2,
+            "review_gate_items_selectable": 2,
+            "report_items_marked_out_of_scope": 0,
+        },
+    }
+    (consumer / "action-items.md").write_text("## Review Report Intake\n", encoding="utf-8")
+    (consumer / "resolution-scope.md").write_text("Review-gate obligations remain selectable.\n", encoding="utf-8")
+    validator = _module(PLUGIN_ROOT / "shared/validate-artifacts.py")
+    validator._validate_code_remediate_report_intake(
+        {"status": "fail", "metadata": metadata}, consumer, current_contract=True
+    )
+    assert (consumer / "findings-input.txt").read_bytes() == before[Path("result.json")]
+    assert {path.relative_to(run): path.read_bytes() for path in run.rglob("*") if path.is_file()} == before
+
+    items[0]["sources"][0]["body"] = blocker_body.removesuffix("\ntypes")
+    with pytest.raises(SystemExit, match="code-remediate-report-obligation-omitted:checks_failed"):
+        validator._validate_code_remediate_report_coverage(metadata, consumer)
+    items[0]["sources"][0]["body"] = blocker_body
+    items.pop()
+    with pytest.raises(SystemExit, match="code-remediate-report-obligation-omitted:confidence_gaps"):
+        validator._validate_code_remediate_report_coverage(metadata, consumer)
 
 
 @pytest.mark.integration
@@ -84,17 +183,28 @@ def test_native_assembly_finalization_and_separate_intake_preserve_proof(tmp_pat
     run, home, children = preparation._assembly_evidence(tmp_path, prepared_run=run)
     assembled = preparation._assemble(run, home)
     assert assembled.returncode == 0, assembled.stderr
+    _finalize_native_review(tmp_path, run, home, children, failure)
+
+
+def _finalize_native_review(
+    tmp_path: Path, run: Path, home: Path, children: dict[str, Path], failure: str = "none"
+) -> None:
+    """Prove promotion, complete discovery, and intake preserve assembled native reviewer evidence."""
     manifest_path = run / "specialist-manifest.json"
     manifest = json.loads(manifest_path.read_bytes())
     summary = json.loads((run / "inspection-summary.json").read_bytes())
-    plan = json.loads((run / "inspection-plan.json").read_bytes())
+    plan = (
+        json.loads((run / "batch-inventory.json").read_bytes())["plan"]
+        if manifest.get("manifest_kind") == "batched-review"
+        else json.loads((run / "inspection-plan.json").read_bytes())
+    )
     assert manifest["passes"] and all(item["mode"] == "inspection" for item in manifest["passes"])
     assert {item["role"] for item in manifest["passes"]} == set(children)
     validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
     gap = "Synthetic offline native receipts; no live reviewer launched."
     metadata = {
         "scope": "working-tree",
-        "risk_tier": "HIGH_RISK",
+        "risk_tier": json.loads((run / "review-routing.json").read_bytes())["risk_tier"],
         "finding_records_version": 1,
         "review_findings": [],
         "operational_blockers": [],
@@ -136,6 +246,8 @@ def test_native_assembly_finalization_and_separate_intake_preserve_proof(tmp_pat
             "remaining_limits": [gap],
         },
     }
+    if manifest.get("manifest_kind") == "batched-review":
+        metadata["source_findings"] = manifest["source_findings"]
     (run / "review-notes.md").write_text(
         "\n\n".join(f"## {section}\n\nFrozen fixture source inspected." for section in validator.REQUIRED_SECTIONS),
         encoding="utf-8",
@@ -278,11 +390,11 @@ def test_native_assembly_finalization_and_separate_intake_preserve_proof(tmp_pat
     if failure != "none":
         assert finalized.returncode == 1 and outcome["promoted"] is False, outcome
         assert outcome["steps"][-1]["step"] == "review-validate", outcome
-        expected = (
-            "review-inspection-context-read-call-mismatch:challenger:2"
-            if failure == "malformed-proof"
-            else "provenance-rollout-count:parent:0"
-        )
+        expected = {
+            "malformed-proof": "review-inspection-context-read-call-mismatch:challenger:2",
+            "missing-home": "provenance-rollout-count:parent:0",
+            "conditional-requirement": "independent-review-required-for-pass:",
+        }[failure]
         assert expected in json.dumps(outcome), outcome
         assert not result_path.exists()
         assert completed.returncode == 1 and completed.stdout == b""
@@ -313,3 +425,96 @@ def test_native_assembly_finalization_and_separate_intake_preserve_proof(tmp_pat
         assert admitted.stdout == str(result_path) + "\n"
         assert {path: path.read_bytes() for path in after_finalization} == after_finalization
     assert {path: path.read_bytes() for path in before} == before
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("batched", [False, True])
+def test_fast_native_review_completes_and_enters_intake(tmp_path: Path, batched: bool) -> None:
+    """Carry authentic fast independent children through every completion and consumer gate."""
+    if batched:
+        run, home = batches._completed_batches(tmp_path, fast_reviewers=True, independent_required=True)
+        assembled = batches._batch_command(run, "assemble-batches", home)
+        final = json.loads((run / "batches/interactions/specialist-manifest.json").read_bytes())
+        children = {
+            item["role"]: home / "sessions" / f"rollout-{item['attempts'][0]['agent_thread_id']}.jsonl"
+            for item in final["passes"]
+        }
+    else:
+        run = preparation._review_inputs(tmp_path)
+        routing_path = run / "review-routing.json"
+        routing = json.loads(routing_path.read_bytes())
+        routing.update(
+            independent_review_required=True,
+            independence_requirement_evidence="The request requires independent source inspection.",
+        )
+        routing_path.write_text(json.dumps(routing), encoding="utf-8", newline="\n")
+        prepared = preparation._prepare(run)
+        assert prepared.returncode == 0, prepared.stderr
+        run, home, children = preparation._assembly_evidence(tmp_path, prepared_run=run, active_limit=1)
+        assembled = preparation._assemble(run, home)
+    assert assembled.returncode == 0, assembled.stderr
+    summary = json.loads((run / "inspection-summary.json").read_bytes())
+    assert summary["actual_mode"] == "independent-spawned"
+    assert summary["capacity_limited"] is False
+    assert summary["independence_required"] is True and summary["independence_satisfied"] is True
+    _finalize_native_review(tmp_path, run, home, children)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("batched", [False, True])
+def test_fast_conditional_review_completes_with_existing_policy(tmp_path: Path, batched: bool) -> None:
+    """Complete conditional-only native exposure and later batch waves without rewriting independence policy."""
+    if batched:
+        run, home = batches._completed_batches(
+            tmp_path, fast_reviewers=True, independent_required=True, conditional_tail=True
+        )
+        schedule = json.loads((run / "batch-dispatch.json").read_bytes())
+        conditional_waves = []
+        for wave in schedule["waves"]:
+            directory = run / wave["directory"]
+            manifest = json.loads((directory / "specialist-manifest.json").read_bytes())
+            if {item["role"] for item in manifest["passes"]} == {"doc-scribe", "web-explorer"}:
+                summary = json.loads((directory / "inspection-summary.json").read_bytes())
+                assert summary["actual_mode"] == "independent-spawned"
+                assert summary["independence_satisfied"] is False
+                conditional_waves.append(wave["wave"])
+        assert conditional_waves and min(conditional_waves) > 1
+        assembled = batches._batch_command(run, "assemble-batches", home)
+        final = json.loads((run / "batches/interactions/specialist-manifest.json").read_bytes())
+        validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
+        children = {
+            item["role"]: validator._find_rollout(home, item["attempts"][0]["agent_thread_id"])
+            for item in final["passes"]
+        }
+    else:
+        run = preparation._conditional_review_inputs(tmp_path)
+        prepared = preparation._prepare(run)
+        assert prepared.returncode == 0, prepared.stderr
+        run, home, children = preparation._assembly_evidence(tmp_path, prepared_run=run, active_limit=1)
+        assembled = preparation._assemble(run, home)
+    assert assembled.returncode == 0, assembled.stderr
+    summary = json.loads((run / "inspection-summary.json").read_bytes())
+    assert summary["actual_mode"] == "independent-spawned"
+    assert summary["independence_required"] is batched and summary["independence_satisfied"] is batched
+    _finalize_native_review(tmp_path, run, home, children)
+
+
+@pytest.mark.integration
+def test_conditional_native_roster_does_not_satisfy_explicit_core_independence(tmp_path: Path) -> None:
+    """Keep the existing explicit independence closure requirement separate from native roster admission."""
+    run = preparation._conditional_review_inputs(tmp_path)
+    routing_path = run / "review-routing.json"
+    routing = json.loads(routing_path.read_bytes())
+    routing.update(
+        independent_review_required=True,
+        independence_requirement_evidence="The request explicitly requires independent source inspection.",
+    )
+    routing_path.write_text(json.dumps(routing), encoding="utf-8", newline="\n")
+    prepared = preparation._prepare(run)
+    assert prepared.returncode == 0, prepared.stderr
+    run, home, children = preparation._assembly_evidence(tmp_path, prepared_run=run, active_limit=1)
+    assembled = preparation._assemble(run, home)
+    assert assembled.returncode == 0, assembled.stderr
+    summary = json.loads((run / "inspection-summary.json").read_bytes())
+    assert summary["independence_required"] is True and summary["independence_satisfied"] is False
+    _finalize_native_review(tmp_path, run, home, children, "conditional-requirement")

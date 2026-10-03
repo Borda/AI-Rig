@@ -129,7 +129,8 @@ def require_assessed_review_result(
     """Validate assessed artifacts before explicit or discovered report intake.
 
     Local intake reuses the producer completion boundary and its optional evidence-location and thread overrides. It
-    returns only the selected path, never the producer's final text.
+    recovers the producer thread from its manifest for every assessed scope when no override is supplied. It returns
+    only the selected path, never the producer's final text.
     """
     if result_path.name == CANDIDATE_RESULT_NAME:
         raise LookupError(f"matching-review-candidate-unpromoted:{result_path}")
@@ -145,18 +146,15 @@ def require_assessed_review_result(
     payload = json.loads(result_path.read_text(encoding="utf-8"))
     if payload.get("schema_version") != 3:
         raise LookupError("historical-review-unverified-archive:use --archive-result for read-only access")
-    if payload["metadata"]["scope"] == "pr":
-        # Intake can run in a later session. Revalidate the recorded producer's evidence, not the consumer's identity.
-        manifest_path = result_path.parent / "specialist-manifest.json"
-        if parent_thread_id is None and manifest_path.is_file():
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            producer = manifest.get("parent_thread_id") if isinstance(manifest, dict) else None
-            if not isinstance(producer, str) or not producer.strip():
-                raise LookupError("review-validation-failed:missing-producer-thread")
-            parent_thread_id = producer
-        complete_review_run(result_path.parent, codex_home=codex_home, parent_thread_id=parent_thread_id)
-    else:
-        complete_review_run(result_path.parent, codex_home=codex_home, parent_thread_id=parent_thread_id)
+    # Every assessed scope can be consumed in a later session with a different current thread.
+    manifest_path = result_path.parent / "specialist-manifest.json"
+    if parent_thread_id is None and manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        producer = manifest.get("parent_thread_id") if isinstance(manifest, dict) else None
+        if not isinstance(producer, str) or not producer.strip():
+            raise LookupError("review-validation-failed:missing-producer-thread")
+        parent_thread_id = producer
+    complete_review_run(result_path.parent, codex_home=codex_home, parent_thread_id=parent_thread_id)
     return result_path
 
 

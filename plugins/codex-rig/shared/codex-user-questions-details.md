@@ -1,10 +1,16 @@
 # Codex User Questions: Detailed Rules
 
-Before asking for missing input, a preference, follow-up, or workflow decision, inspect the tools and restrictions actually exposed in this session. This applies to generated questions as well as literal templates; internal self-review and specialist evidence requests retain their own output contracts.
+Establish that a user decision is actually missing before inspecting question tools. This applies to generated questions as well as literal templates; internal self-review and specialist evidence requests retain their own output contracts.
+
+### Decide whether to ask
+
+Routine preparation, internal recovery and completing authorized work need no new consent. Resolve implementation and workflow details from the user's request, retained answers and verified evidence. Do not manufacture a flow choice merely because a helper failed or a template contains a question. Preserve required runtime permission, sensitive/protected actions, exact-token confirmation and genuinely ambiguous scope or missing material input; authorization to review does not authorize editing source, installing permissions or publishing.
+
+For code review, ask the initial reuse/fresh choice only when an eligible validated completed review exists and the user has not already supplied that choice. No eligible report means proceed fresh. Resuming an incomplete run means recover its first unmet checkpoint under existing authorization, not ask whether to continue or recreate the run. Reuse states the recorded reviewed revision and evidence limits; it never establishes current source freshness.
 
 ### Choose the control
 
-For every user-facing choice, including generated scope expansions, finding selection, commit modes, merge recovery, verification repairs, audit fixes, configuration modes, and follow-ups, select the control in this order. A workflow's quoted question, fenced menu, or slash-separated choices specifies content; it never directs plain-chat delivery.
+For each genuinely missing user decision, including scope expansions, finding selection, commit modes, merge recovery, protected repairs and follow-ups, select the control in this order. A workflow's quoted question, fenced menu, or slash-separated choices specifies content; it never establishes that consent is missing or directs plain-chat delivery.
 
 Before choosing async or plain chat, complete the native discovery checkpoint. Inspect the current tool catalog and available tool search; a deferred tool's absence from the short visible list is not evidence of unavailability. When `functions.exec` exposes `ALL_TOOLS`, find the current plugin's `ask_user` entry and inspect matching metadata, including its complete description and callable schema. Invoke that discovered tool through the documented `tools` surface. Do not guess a callable name or invoke a form merely to probe the UI. If this catalog is not exposed, use the host's supported discovery mechanism. Record the selected tool and the evidence allowing its use before invocation in existing workflow notes or conversation context: native-route exposure, purpose/mode permission, input fit, and any actual failure or restriction. No new registry or artifact lifecycle is required. Async additionally requires affirmative current-host evidence of usable rendering and lifetime; unknown usability means unsuitable, even when the tool is exposed.
 

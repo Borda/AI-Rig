@@ -53,7 +53,7 @@ import os
 import re
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, NamedTuple
 
 
@@ -2147,8 +2147,10 @@ def _validate_context_read(
     attempt: dict[str, Any],
     manifest: dict[str, Any],
     context: str,
+    *,
+    incomplete_dispatch: bool = False,
 ) -> None:
-    """Require every bounded reader call and unmodified result in page order."""
+    """Require exact page reads, or prove a successful prefix followed only by missing-reader failures."""
     tool_rows = [
         row["payload"]
         for row in child_rows
@@ -2158,11 +2160,16 @@ def _validate_context_read(
         in {"custom_tool_call", "function_call", "custom_tool_call_output", "function_call_output"}
     ]
     page_count = len(context_pages(context))
-    if len(tool_rows) != 2 * page_count:
+    if (not incomplete_dispatch and len(tool_rows) != 2 * page_count) or (
+        incomplete_dispatch and (len(tool_rows) % 2 or not 4 <= len(tool_rows) <= 2 * page_count)
+    ):
         raise SystemExit(f"review-inspection-context-read-count-mismatch:{role}")
     expected_commands: list[str] = []
     expected_outputs: list[str] = []
-    for page in range(1, page_count + 1):
+    expected_exits: list[int] = []
+    failed = False
+    successful = 0
+    for page in range(1, len(tool_rows) // 2 + 1):
         call, output = tool_rows[2 * (page - 1) : 2 * page]
         expected_call = render_read_call(
             _native_recipe_plan(manifest, plan_path),
@@ -2184,23 +2191,73 @@ def _validate_context_read(
             attempt["attempt"],
             page,
         )
-        if call.get("name") != "exec" or call.get("input") not in {expected_call, expected_call + "\n"}:
-            raise SystemExit(f"review-inspection-context-read-call-mismatch:{role}:{page}")
+        canonical_call = call.get("name") == "exec" and call.get("input") in {expected_call, expected_call + "\n"}
         if output.get("call_id") != call.get("call_id") or not isinstance(call.get("call_id"), str):
             raise SystemExit(f"review-inspection-context-read-receipt-mismatch:{role}:{page}")
         receipt = output.get("output")
-        if (
+        valid_receipt = not (
             not isinstance(receipt, list)
             or len(receipt) != 2
             or not isinstance(receipt[0], dict)
             or receipt[0].get("type") != "input_text"
             or not isinstance(receipt[0].get("text"), str)
             or not receipt[0]["text"].startswith("Script completed\n")
-            or receipt[1] != {"type": "input_text", "text": expected_output}
-        ):
+        )
+        canonical_output = valid_receipt and receipt[1] == {"type": "input_text", "text": expected_output}
+        exit_code = 0
+        if incomplete_dispatch and not (canonical_call and canonical_output):
+            diagnostic = receipt[1].get("text") if valid_receipt and isinstance(receipt[1], dict) else None
+            missing = (
+                re.fullmatch(
+                    r"(.+?): can't open file '(.+)': \[Errno 2\] No such file or directory\r?\n?",
+                    diagnostic,
+                )
+                if isinstance(diagnostic, str)
+                else None
+            )
+            missing_path = Path(missing[2]) if missing else None
+            if (
+                missing_path is None
+                or not (PurePosixPath(missing[1]).is_absolute() or PureWindowsPath(missing[1]).is_absolute())
+                or not (
+                    PurePosixPath(missing[1]).name.lower().startswith("python")
+                    or PureWindowsPath(missing[1]).name.lower().startswith("python")
+                )
+                or not missing_path.is_absolute()
+                or missing_path.name != "review_context.py"
+                or missing_path.exists()
+                or missing_path == Path(manifest["context_reader_path"])
+            ):
+                raise SystemExit(f"review-repair-dispatch-cause-unproven:{role}:{page}")
+            malformed = render_read_call(
+                _native_recipe_plan(manifest, plan_path),
+                role,
+                attempt["attempt"],
+                manifest["context_reader_python"],
+                page,
+                missing_path,
+                _include_workdir=manifest.get("schema_version") == 6
+                or manifest.get("context_reader_sha256") in LEGACY_WORKDIR_READER_SHA256S,
+            )
+            if call.get("name") != "exec" or call.get("input") not in {malformed, malformed + "\n"}:
+                raise SystemExit(f"review-repair-dispatch-cause-unproven:{role}:{page}")
+            failed = True
+            expected_command = json.loads(malformed.split("tools.exec_command(", 1)[1].split("); text", 1)[0])["cmd"]
+            expected_output = diagnostic
+            exit_code = 2
+        elif not canonical_call:
+            raise SystemExit(f"review-inspection-context-read-call-mismatch:{role}:{page}")
+        elif not canonical_output:
             raise SystemExit(f"review-inspection-context-read-output-mismatch:{role}:{page}")
+        elif failed:
+            raise SystemExit(f"review-repair-dispatch-read-after-failure:{role}:{page}")
+        else:
+            successful += 1
         expected_commands.append(expected_command)
         expected_outputs.append(expected_output)
+        expected_exits.append(exit_code)
+    if incomplete_dispatch and (not successful or not failed):
+        raise SystemExit(f"review-repair-dispatch-cause-unproven:{role}")
     commands = [
         row["payload"]["item"]
         for row in child_rows
@@ -2211,16 +2268,18 @@ def _validate_context_read(
         and row["payload"]["item"].get("type") == "CommandExecution"
     ]
     if commands:
-        if len(commands) != page_count:
+        if len(commands) != len(expected_commands):
             raise SystemExit(f"review-inspection-context-command-mismatch:{role}")
-        for page, (command, expected_command, expected_output) in enumerate(
-            zip(commands, expected_commands, expected_outputs), start=1
+        for page, (command, expected_command, expected_output, exit_code) in enumerate(
+            zip(commands, expected_commands, expected_outputs, expected_exits), start=1
         ):
             if (
                 not isinstance(command.get("command"), list)
                 or expected_command not in command["command"]
-                or command.get("exit_code") != 0
-                or command.get("stdout") != expected_output
+                or command.get("exit_code") != exit_code
+                or command.get("stdout") != (expected_output if exit_code == 0 else "")
+                or exit_code == 2
+                and command.get("stderr") != expected_output
             ):
                 raise SystemExit(f"review-inspection-context-command-mismatch:{role}:{page}")
     remaining = [
@@ -2643,6 +2702,29 @@ def _validate_native_schedule(
         if any(started <= allocation["start"] < _returned for allocation in allocations):
             raise SystemExit("review-inspection-schedule-wait-invalid")
 
+    # A fast child may finish before the next spawn. Functional parent work, rather than elapsed host time,
+    # distinguishes an interrupted free-capacity queue from consecutive generated launches.
+    first_index = min(index for _started, index in first_launches.values())
+    last_index = max(index for _started, index in first_launches.values())
+    launch_indices = {allocation["launch_index"] for allocation in allocations if allocation["attempt"] == 1}
+    refusal_indices = {entry["call_index"] for entry in capacity_refusals if entry["attempt"] == 1}
+    for index in range(first_index + 1, last_index):
+        row = parent_rows[index]
+        payload = row.get("payload")
+        if (
+            row.get("type") != "response_item"
+            or not isinstance(payload, dict)
+            or payload.get("type") not in {"function_call", "custom_tool_call"}
+            or index in launch_indices | refusal_indices
+        ):
+            continue
+        called_at = _parent_timestamp(row)
+        active = sum(allocation["start"] <= called_at < allocation["end"] for allocation in allocations)
+        refusals = [entry for entry in capacity_refusals if entry["call_index"] < index]
+        full_pool = max(refusals, key=lambda entry: entry["call_index"])["active"] if refusals else 4
+        if active < full_pool:
+            raise SystemExit("review-inspection-dispatch-interrupted")
+
     events = sorted(
         (event for item in allocations for event in ((item["start"], 1), (item["end"], -1))),
         key=lambda event: (event[0], event[1]),
@@ -2654,6 +2736,16 @@ def _validate_native_schedule(
     if peak > 4:
         raise SystemExit("review-inspection-active-capacity-exceeded")
     return capacity_limited
+
+
+def _native_independent_wave(manifest: dict[str, Any], summary: dict[str, Any]) -> bool:
+    """Admit a current native launch queue after full runtime validation, independent of core-role policy flags."""
+    return (
+        manifest.get("schema_version") in {7, 8}
+        and manifest.get("manifest_kind") == "native-wave"
+        and manifest.get("dispatch_protocol") == "paged-context-v7"
+        and summary.get("actual_mode") == "independent-spawned"
+    )
 
 
 def _validate_instruction_bounded_review(
@@ -2818,15 +2910,24 @@ def _validate_instruction_bounded_review(
             raise SystemExit(f"review-inspection-parent-join-missing:{role}")
         if manifest.get("schema_version") not in {7, 8}:
             intervals.append((started_at, completed_at))
-        if item.get("recovery") == {"kind": "closure-evidence-shape"}:
+        if item.get("recovery") is not None:
             original = item["attempts"][0]
             original_rows = _read_jsonl(_find_rollout(codex_home, original["agent_thread_id"]))
-            original_terminal = next(
-                event
-                for event in _event_payloads(original_rows, "task_complete")
-                if event.get("turn_id") == original["turn_id"]
+            inspected_source = item["recovery"] == {"kind": "closure-evidence-shape"} or any(
+                "codex-review-provenance" in json.dumps(row.get("payload", {}).get("output"))
+                for row in original_rows
+                if row.get("type") == "response_item"
             )
-            selected_intervals.append((original_terminal["started_at"], original_terminal["completed_at"]))
+            if inspected_source:
+                # Already validated original reads prove actual source concurrency; only a2 supplies accepted coverage.
+                original_terminal = next(
+                    event
+                    for event in _event_payloads(original_rows, "task_complete")
+                    if event.get("turn_id") == original["turn_id"]
+                )
+                selected_intervals.append((original_terminal["started_at"], original_terminal["completed_at"]))
+            else:
+                selected_intervals.append((started_at, completed_at))
         else:
             selected_intervals.append((started_at, completed_at))
 
@@ -3065,7 +3166,7 @@ def _original_dispatch_message(
     attempt: dict[str, Any],
     parent_rows: list[dict[str, Any]],
 ) -> str:
-    """Permit only a malformed reader-call block inside the otherwise exact first dispatch."""
+    """Preserve exact dispatch instructions while retaining separately audited malformed page blocks."""
     canonical = _native_dispatch_message(manifest, plan_path, role, 1)
     calls = [
         row["payload"]
@@ -3082,13 +3183,14 @@ def _original_dispatch_message(
         raise SystemExit(f"review-repair-original-dispatch-invalid:{role}") from error
     if actual == canonical:
         return canonical
-    expected_block = re.search(r"```javascript\n(.*?)\n```", canonical, re.DOTALL)
-    actual_block = re.search(r"```javascript\n(.*?)\n```", actual, re.DOTALL) if isinstance(actual, str) else None
-    if (
-        actual_block is None
-        or expected_block is None
-        or (actual[: actual_block.start(1)] + expected_block[1] + actual[actual_block.end(1) :] != canonical)
-    ):
+    expected_blocks = list(re.finditer(r"```javascript\n(.*?)\n```", canonical, re.DOTALL))
+    actual_blocks = (
+        list(re.finditer(r"```javascript\n(.*?)\n```", actual, re.DOTALL)) if isinstance(actual, str) else []
+    )
+    normalized = actual
+    for expected, observed in reversed(list(zip(expected_blocks, actual_blocks))):
+        normalized = normalized[: observed.start(1)] + expected[1] + normalized[observed.end(1) :]
+    if not expected_blocks or len(actual_blocks) != len(expected_blocks) or normalized != canonical:
         raise SystemExit(f"review-repair-original-dispatch-invalid:{role}")
     return actual
 
@@ -3138,16 +3240,56 @@ def _recovery_arguments(
             "exactly. Use no tools and perform no source reassessment. Return exactly this validated correction:\n"
             + expected
         )
-    else:
-        outputs = [row.get("payload", {}).get("output") for row in rows if row.get("type") == "response_item"]
-        if any("codex-review-provenance" in json.dumps(output) for output in outputs):
-            raise SystemExit(f"review-repair-source-already-read:{role}")
+    elif any(
+        "codex-review-provenance" in json.dumps(row.get("payload", {}).get("output"))
+        for row in rows
+        if row.get("type") == "response_item"
+    ):
+        _validate_context_read(rows, plan_path, role, original, manifest, context, incomplete_dispatch=True)
         calls = [
             row["payload"]
             for row in rows
             if row.get("type") == "response_item"
             and row.get("payload", {}).get("type") in {"custom_tool_call", "function_call"}
         ]
+        canonical = _native_dispatch_message(manifest, plan_path, role, 1)
+        actual = _original_dispatch_message(manifest, plan_path, role, original, parent_rows)
+        expected_blocks = re.findall(r"```javascript\n(.*?)\n```", canonical, re.DOTALL)
+        actual_blocks = re.findall(r"```javascript\n(.*?)\n```", actual, re.DOTALL)
+        if any(
+            observed != expected
+            and (
+                page >= len(calls)
+                or observed not in {calls[page].get("input"), calls[page].get("input", "").rstrip("\n")}
+            )
+            for page, (expected, observed) in enumerate(zip(expected_blocks, actual_blocks))
+        ):
+            raise SystemExit(f"review-repair-original-dispatch-invalid:{role}")
+        if _retained_reviewer_rating(
+            _resolve_path(out_dir, original["output_path"]),
+            local_reviewer_wave=False,
+            main=False,
+            role=role,
+            structured_native=_load_json(plan_path)["consumer_policy"]["consumer_id"] == "challenge-resolve",
+        ) not in {4, 5}:
+            raise SystemExit(f"review-repair-incomplete-assessment-missing:{role}")
+        message = _native_dispatch_message(manifest, plan_path, role, 2)
+    else:
+        calls = [
+            row["payload"]
+            for row in rows
+            if row.get("type") == "response_item"
+            and row.get("payload", {}).get("type") in {"custom_tool_call", "function_call"}
+        ]
+        canonical = _native_dispatch_message(manifest, plan_path, role, 1)
+        actual = _original_dispatch_message(manifest, plan_path, role, original, parent_rows)
+        expected_blocks = re.findall(r"```javascript\n(.*?)\n```", canonical, re.DOTALL)
+        actual_blocks = re.findall(r"```javascript\n(.*?)\n```", actual, re.DOTALL)
+        if actual_blocks[1:] != expected_blocks[1:] or (
+            actual_blocks[0] != expected_blocks[0]
+            and not any(actual_blocks[0] == call.get("input", "").rstrip("\n") for call in calls)
+        ):
+            raise SystemExit(f"review-repair-original-dispatch-invalid:{role}")
         expected_call = render_read_call(
             plan_path,
             role,
@@ -4060,8 +4202,9 @@ def _validate_inspection_independence(
     required_independent = bool(evidence.runtime_summary.get("independence_satisfied"))
     if metadata.get("independence_requirement_evidence") != requirement_evidence:
         raise SystemExit("metadata-independence-requirement-evidence-mismatch")
-    if independence_required and status == "pass" and not required_independent:
-        raise SystemExit("independent-review-required-for-pass:" + ",".join(sorted(triggered_required)))
+    if independence_required and not required_independent:
+        boundary = "pass" if status == "pass" else "completion"
+        raise SystemExit(f"independent-review-required-for-{boundary}:" + ",".join(sorted(triggered_required)))
     return independence_required, required_independent
 
 
@@ -4097,6 +4240,9 @@ def _validate_independence_requirement(
         )
     else:
         independence_required, required_independent = _validate_legacy_independence(evidence, status, risk_tier)
+    native_wave = evidence.manifest
+    if evidence.manifest.get("manifest_kind") == "batched-review":
+        native_wave = _load_json(out_dir / "batches/interactions/specialist-manifest.json")
     if (
         evidence.manifest.get("schema_version") in {3, 4, 5, 6, 7, 8}
         and status == "pass"
@@ -4109,6 +4255,7 @@ def _validate_independence_requirement(
                     and evidence.runtime_summary.get("actual_mode") == "independent-spawned"
                     and evidence.runtime_summary.get("capacity_limited") is True
                 )
+                and not _native_independent_wave(native_wave, evidence.runtime_summary)
             )
             or any(item["mode"] not in {"inspection", "spawned", "app-server"} for item in evidence.passes)
         )

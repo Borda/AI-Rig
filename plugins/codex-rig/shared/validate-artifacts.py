@@ -1257,6 +1257,7 @@ def _validate_code_remediate_report_intake(
         return
     if current_contract:
         _validate_code_remediate_report_coverage(metadata, out_dir)
+        _validate_code_remediate_completed_report_producer(intake, out_dir)
 
     report_items_total = intake["report_items_total"]
     review_gate_items_total = intake["review_gate_items_total"]
@@ -1294,6 +1295,51 @@ def _validate_code_remediate_user_source(source: dict[str, Any], out_dir: Path) 
         raise SystemExit("code-remediate-user-source-evidence-invalid")
     if " ".join(source["body"].split()) not in " ".join(path.read_text(encoding="utf-8").split()):
         raise SystemExit("code-remediate-user-source-body-mismatch")
+
+
+def _validate_code_remediate_completed_report_producer(intake: dict[str, Any], out_dir: Path) -> None:
+    """Revalidate the admitted producer and bind its promoted result to the exact copied bytes."""
+    copied = out_dir / "findings-input.txt"
+    original_bytes = copied.read_bytes()
+    report = _load_json(copied)
+    evidence = intake.get("admission_evidence", {})
+    if not isinstance(evidence, dict):
+        raise SystemExit("code-remediate-report-producer-path-invalid")
+    # A producer-relative artifact_path loses its origin when copied into the consumer run.
+    raw_path = evidence.get("producer_result_path", report.get("artifact_path"))
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise SystemExit("code-remediate-report-producer-path-invalid")
+    if "producer_result_path" not in evidence and Path(raw_path).parent == Path("."):
+        raise SystemExit("code-remediate-report-producer-origin-missing")
+    candidates = _anchored_candidates(out_dir, Path(raw_path))
+    matching = {
+        path.resolve()
+        for path in candidates
+        if path.name == "result.json"
+        and not path.is_symlink()
+        and path.is_file()
+        and path.read_bytes() == original_bytes
+    }
+    if len(matching) != 1:
+        raise SystemExit("code-remediate-report-producer-bytes-mismatch-or-missing")
+    producer = matching.pop()
+    command = [sys.executable, str(SHARED_DIRECTORY / "find-review-report.py"), "--result", str(producer)]
+    for field, option in (("producer_codex_home", "--codex-home"), ("producer_parent_thread_id", "--parent-thread-id")):
+        if field not in evidence:
+            continue
+        value = evidence[field]
+        if not isinstance(value, str) or not value.strip():
+            raise SystemExit(f"code-remediate-report-producer-evidence-invalid:{field}")
+        command.extend([option, value])
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SystemExit("code-remediate-report-producer-validation-unavailable") from error
+    if completed.returncode or completed.stdout.strip() != str(producer):
+        diagnostic = (completed.stderr or completed.stdout).strip()
+        raise SystemExit(f"code-remediate-report-producer-validation-failed:{diagnostic}")
+    if producer.read_bytes() != original_bytes or copied.read_bytes() != original_bytes:
+        raise SystemExit("code-remediate-report-producer-bytes-changed")
 
 
 def _validate_code_remediate_incomplete_report_admission(

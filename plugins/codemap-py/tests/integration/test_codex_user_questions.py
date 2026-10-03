@@ -42,7 +42,7 @@ def test_every_codex_skill_loads_local_question_guidance() -> None:
         "Do not replay already-delivered report context",
         "A higher-priority host instruction that explicitly mandates plain text remains binding.",
         "Record each control's exposure, permission and input-fit evidence",
-        "For every user-facing choice",
+        "For each genuinely missing user decision",
         "Use complete actionable values",
         "If no independent work remains, yield",
         "This preference applies to optional and required questions.",

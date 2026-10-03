@@ -945,7 +945,7 @@ def test_review_preflight_rejects_unusable_host_before_dispatch(tmp_path: Path, 
     assert "review-host-controls-unavailable-before-dispatch" in completed.stderr
 
 
-def _add_substituted_broad_passes(assessed_pr: Path, tier: str) -> None:
+def _add_substituted_broad_passes(assessed_pr: Path, tier: str, *, independent_required: bool | None = None) -> None:
     """Retain complete role-card proof for a broad parent-substitute review."""
     result_path = assessed_pr / "result.json"
     result = json.loads(result_path.read_text(encoding="utf-8"))
@@ -989,8 +989,186 @@ def _add_substituted_broad_passes(assessed_pr: Path, tier: str) -> None:
         }
         for role in roles
     )
+    if independent_required is not None:
+        requirement = "User explicitly required independent review." if independent_required else None
+        routing.update(independent_review_required=independent_required, independence_requirement_evidence=requirement)
+        plan = {
+            "consumer_policy": {
+                "consumer_id": "code-review",
+                "capability": "instruction-bounded-review",
+                "promotion_status": "promoted",
+                "parent_mutations": "serial",
+                "canonical_gates": "serial",
+            },
+            "review_operation": "inspection-only",
+            "write_policy": {"parent_writes": "none", "approval_requirement": "not-required"},
+            "source_sensitivity": "non-sensitive",
+            **{key: manifest[key] for key in ("review_run_id", "parent_thread_id", "review_input_sha256")},
+            "contexts": [],
+            "independent_review_required": independent_required,
+            "independence_requirement_evidence": requirement,
+        }
+        plan_bytes = (json.dumps(plan) + "\n").encode()
+        (assessed_pr / "parent-inspection-plan.json").write_bytes(plan_bytes)
+        manifest.update(
+            schema_version=5,
+            inspection_execution={
+                "plan_path": "parent-inspection-plan.json",
+                "plan_sha256": hashlib.sha256(plan_bytes).hexdigest(),
+            },
+        )
+        result["metadata"].update(
+            independence_required=independent_required,
+            independence_requirement_evidence=requirement,
+            independence_satisfied=False,
+            execution_mode="serial-fallback",
+            execution_evidence_level="instruction-bounded-review",
+            execution_observed_controls={},
+            write_parallel_eligible=False,
+        )
     for path, payload in ((result_path, result), (routing_path, routing), (manifest_path, manifest)):
         path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _finalize_parent_fallback(run: Path, *, independent_required: bool = False) -> subprocess.CompletedProcess[str]:
+    """Publish genuine parent axis coverage with a retained missing configured type checker."""
+    _add_substituted_broad_passes(run, "HIGH_RISK", independent_required=independent_required)
+    result_path = run / "result.json"
+    result = json.loads(result_path.read_bytes())
+    metadata = result["metadata"]
+    gap = "Parent substitutes did not provide independent coverage."
+    metadata["confidence_gaps"].append(gap)
+    metadata["confidence_gap_closures"].append(
+        {"gap": gap, "status": "unresolved", "rationale": "Every selected axis was inspected by the main agent."}
+    )
+    metadata["confidence_recovery"]["remaining_limits"].append(gap)
+    metadata["review_decision"].update(
+        recommendation="needs-more-work",
+        summary="Parent inspection completed; configured type checking remains unavailable.",
+        rationale="The required checker could not execute, and parent coverage is not independent.",
+    )
+    blocker = {
+        "id": "G-TYPES",
+        "title": "Configured type checker is unavailable",
+        "required_change": "Run the configured mypy check in the project environment.",
+        "evidence": ["configured-check.command.txt", "configured-check.stderr.txt"],
+        "authors": ["QA specialist (parent substitute)"],
+    }
+    metadata["operational_blockers"] = [blocker]
+    gates_path = run / "gates.json"
+    gates = json.loads(gates_path.read_bytes())
+    check = next(check for check in gates["checks"] if check["id"] == "types")
+    check.update(
+        status="missing-command",
+        exit_code=127,
+        reason="mypy: command not found",
+        command_path=blocker["evidence"][0],
+        stderr=blocker["evidence"][1],
+    )
+    (run / check["command_path"]).write_text("mypy widget.py\n", encoding="utf-8", newline="\n")
+    (run / check["stderr"]).write_text("mypy: command not found\n", encoding="utf-8", newline="\n")
+    gates.update(status="fail", checks_failed=["types"], failed_count=1)
+    gates_path.write_text(json.dumps(gates), encoding="utf-8", newline="\n")
+    notes = run / "review-notes.md"
+    notes.write_text(
+        notes.read_text(encoding="utf-8") + "\n\n## Review Findings and Merge Blocks\n\n"
+        "| Finding / area | Author | Required change | Evidence | Status |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        f"| {blocker['id']} | {', '.join(blocker['authors'])} | {blocker['required_change']} | "
+        f"{'; '.join(blocker['evidence'])} | Required |\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    handoff = json.loads((run / "final-handoff.json").read_bytes())
+    handoff["outcome"]["summary"] = "Recommendation: needs-more-work."
+    snapshot = handoff["tables"][0]
+    snapshot.update(reviewers=metadata["reviewer_assessments"], summary=metadata["review_decision"]["summary"])
+    snapshot["rows"][-1]["cells"][1] = "needs work"
+    handoff["tables"].append(
+        {
+            "heading": "Review Findings and Merge Blocks",
+            "layout": "grouped",
+            "columns": ["Finding / area", "Required change", "Evidence", "Status"],
+            "rows": [
+                {
+                    "id": blocker["id"],
+                    "title": blocker["title"],
+                    "authors": blocker["authors"],
+                    "cells": [blocker["id"], blocker["required_change"], "; ".join(blocker["evidence"]), "Required"],
+                    "source_ids": ["gate:types"],
+                }
+            ],
+        }
+    )
+    handoff["source_records"].append({"id": "gate:types", "evidence": "gates.json"})
+    handoff["source_coverage"].update(source_records_total=6, represented_source_records_total=6)
+    drafts = run / "fallback-drafts"
+    drafts.mkdir()
+    (drafts / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8", newline="\n")
+    (drafts / "handoff.json").write_text(json.dumps(handoff), encoding="utf-8", newline="\n")
+    result_path.unlink()
+    return subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/remediation_finalize.py"),
+            "finalize",
+            "--skill",
+            "code-review",
+            "--run",
+            str(run),
+            "--metadata",
+            str(drafts / "metadata.json"),
+            "--handoff",
+            str(drafts / "handoff.json"),
+            "--status",
+            "fail",
+            "--confidence",
+            "0.95",
+            "--artifact-path",
+            str(result_path),
+            "--parent-thread-id",
+            "thread",
+            "--promote",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@pytest.mark.integration
+def test_required_independence_prevents_failed_parent_fallback_completion(assessed_pr: Path) -> None:
+    """A failed nonapproval result must not complete expressly required independent review."""
+    finalized = _finalize_parent_fallback(assessed_pr, independent_required=True)
+    completed = subprocess.run(
+        [sys.executable, str(FINDER), "--complete-run", str(assessed_pr), "--parent-thread-id", "thread"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 1, finalized.stdout + completed.stdout
+    assert completed.stdout == ""
+    assert "independent-review-required" in finalized.stdout + completed.stderr
+
+
+@pytest.mark.integration
+def test_failed_parent_fallback_cannot_complete_with_an_omitted_axis(assessed_pr: Path) -> None:
+    """A failed verdict still requires genuine coverage of every triggered review axis."""
+    finalized = _finalize_parent_fallback(assessed_pr)
+    assert finalized.returncode == 0, finalized.stdout + finalized.stderr
+    manifest_path = assessed_pr / "specialist-manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    manifest["passes"].pop()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8", newline="\n")
+    completed = subprocess.run(
+        [sys.executable, str(FINDER), "--complete-run", str(assessed_pr), "--parent-thread-id", "thread"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 1
+    assert completed.stdout == ""
+    assert "manifest-triggered-role-set-mismatch" in completed.stderr
 
 
 @pytest.mark.parametrize("tier", ["BROAD", "HIGH_RISK"])

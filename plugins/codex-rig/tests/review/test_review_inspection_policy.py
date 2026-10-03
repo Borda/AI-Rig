@@ -16,7 +16,7 @@ def test_review_dispatch_allows_shared_reads_and_preserves_snapshot() -> None:
     assert "dispatch every independent pass in the frozen wave before waiting for any response" in skill
     assert "overlapping reads do not require disjoint file ownership or extra approval" in skill
     assert "keep the reviewed snapshot stable until all passes join" in skill
-    assert "never claim parallelism without observed overlap" in skill
+    assert "never claim parallelism without observed overlap" in skill.casefold()
     shared = (PLUGIN_ROOT / "shared/specialist-orchestration.md").read_text(encoding="utf-8")
     assert "Disjoint ownership constrains edits and shared mutable outputs, not source reads" in shared
     payload = json.loads((PLUGIN_ROOT / "runtime/calibration/behavioral-cases.json").read_text(encoding="utf-8"))

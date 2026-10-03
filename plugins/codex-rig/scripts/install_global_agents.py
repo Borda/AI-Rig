@@ -197,7 +197,8 @@ def check_global_agents(source: Path, codex_home: Path) -> list[str]:
     """
     if source.is_symlink() or not source.is_file():
         raise UnsafeGlobalAgentsState("template must be an ordinary file")
-    block = managed_block(source.read_bytes())
+    template = source.read_bytes()
+    block = managed_block(template)
     reasons: list[str] = []
     target = codex_home / "AGENTS.md"
     if target.is_symlink() or (target.exists() and not target.is_file()):
@@ -205,9 +206,14 @@ def check_global_agents(source: Path, codex_home: Path) -> list[str]:
     elif target.exists():
         existing = target.read_bytes()
         try:
-            _, action = merged_payload(existing, block)
-            unmanaged, _ = stripped_payload(existing)
-            if action != "merged" and GLOBAL_HEADING in unmanaged and GLOBAL_HEADING in block:
+            # Check the same proposed composition as installation, including exact unmarked adoption.
+            template_body = template if template.endswith(b"\n") else template + b"\n"
+            if existing in {template, template_body}:
+                desired, action = block, "adopted"
+            else:
+                desired, action = merged_payload(existing, block)
+            unmanaged, _ = stripped_payload(desired)
+            if GLOBAL_HEADING in unmanaged and GLOBAL_HEADING in block:
                 reasons.append("global-agents-overlap")
             if action == "updated":
                 reasons.append("stale-managed-template")

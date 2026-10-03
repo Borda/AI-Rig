@@ -54,6 +54,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -602,6 +603,43 @@ def observed_pass(
     return selected
 
 
+def _retained_reader_identity(out: Path, dispatch: dict[str, Any]) -> dict[str, Any]:
+    """Recover issued reader coordinates only from a complete dispatch matching a known reader recipe."""
+    try:
+        first = dispatch["calls"][0]["arguments"]["message"]
+        source = re.search(r"```javascript\n(.*?)\n```", first, re.DOTALL)[1]
+        command = json.loads(source.split("tools.exec_command(", 1)[1].split("); text", 1)[0])["cmd"]
+        argv = shlex.split(command, posix=os.name != "nt")
+        reader_path = Path(argv[1].strip('"') if os.name == "nt" else argv[1])
+    except (IndexError, KeyError, TypeError, ValueError) as error:
+        raise ValueError("review-prepared-reader-recipe-invalid") from error
+    current_reader = Path(review_context.__file__).resolve()
+    if (
+        not reader_path.is_absolute()
+        or not reader_path.is_file()
+        or reader_path.name != "review_context.py"
+        or validator._sha256(reader_path)
+        not in {*validator.LEGACY_WORKDIR_READER_SHA256S, validator._sha256(current_reader)}
+    ):
+        raise ValueError("manifest-context-reader-identity-invalid")
+    identity = {
+        "schema_version": 8,
+        "context_reader_python": dispatch["context_reader_python"],
+        "context_reader_path": str(reader_path),
+        "context_reader_sha256": validator._sha256(reader_path),
+    }
+    # Digest admission alone does not certify edited dispatch instructions or an unrelated plan.
+    for protocol in ("paged-context-v7", "paged-context-v6"):
+        identity["dispatch_protocol"] = protocol
+        if all(
+            call["arguments"]["message"]
+            == validator._native_dispatch_message(identity, out / "inspection-plan.json", call["role"], 1)
+            for call in dispatch["calls"]
+        ):
+            return identity
+    raise ValueError("review-prepared-reader-recipe-invalid")
+
+
 def prepare_repair(out: Path, codex_home: Path, role: str, kind: str) -> dict[str, Any]:
     """Freeze exact replacement arguments only after validating the retained original failure."""
     out = out.resolve()
@@ -610,6 +648,20 @@ def prepare_repair(out: Path, codex_home: Path, role: str, kind: str) -> dict[st
     contexts = [entry for entry in plan["contexts"] if entry["role_id"] == role]
     if len(contexts) != 1 or dispatch["plan_sha256"] != validator._sha256(out / "inspection-plan.json"):
         raise ValueError("review-repair-frozen-plan-mismatch")
+    batched = out.parent.name == "batches"
+    if dispatch.get("routing_sha256") != validator._sha256(out / "review-routing.json"):
+        raise ValueError("review-wave-selection-changed" if batched else "review-prepared-routing-changed")
+    briefs = out.parent.parent / "review-briefs.json" if batched else out / "review-briefs.json"
+    expected_briefs = (
+        validator._load_json(out.parent.parent / "batch-inventory.json")["briefs_sha256"]
+        if batched
+        else dispatch.get("briefs_sha256")
+    )
+    if validator._sha256(briefs) != expected_briefs:
+        raise ValueError("review-batch-briefs-changed" if batched else "review-prepared-briefs-changed")
+    if validator._sha256(out / "diff.patch") != plan["review_input_sha256"]:
+        raise ValueError("manifest-review-input-hash-mismatch")
+    reader_identity = _retained_reader_identity(out, dispatch)
     rows = validator._read_jsonl(validator._find_rollout(codex_home, plan["parent_thread_id"]))
     original = _observed_pass(
         out,
@@ -623,10 +675,7 @@ def prepare_repair(out: Path, codex_home: Path, role: str, kind: str) -> dict[st
     manifest = {
         **manifest_header(plan),
         "manifest_kind": "native-wave",
-        "dispatch_protocol": "paged-context-v7",
-        "context_reader_python": dispatch["context_reader_python"],
-        "context_reader_path": str(Path(review_context.__file__).resolve()),
-        "context_reader_sha256": validator._sha256(Path(review_context.__file__)),
+        **reader_identity,
         "inspection_execution": {"plan_path": "inspection-plan.json", "plan_sha256": dispatch["plan_sha256"]},
     }
     original["recovery"] = {"kind": kind}
@@ -681,9 +730,7 @@ def assemble(out: Path, codex_home: Path, challenge_only: bool = False) -> dict[
     manifest = {
         "schema_version": 8,
         "manifest_kind": "native-wave",
-        "dispatch_protocol": "paged-context-v7",
-        "context_reader_path": str(Path(review_context.__file__).resolve()),
-        "context_reader_sha256": validator._sha256(Path(review_context.__file__)),
+        **_retained_reader_identity(out, dispatch),
         **{key: plan[key] for key in ("review_run_id", "parent_thread_id", "review_input_sha256")},
         "context_reader_python": dispatch["context_reader_python"],
         "passes": passes,
@@ -703,7 +750,12 @@ def assemble(out: Path, codex_home: Path, challenge_only: bool = False) -> dict[
         require_role_card_receipts=True,
         runtime_summary=summary,
     )
-    if len(roles) > 1 and summary["actual_mode"] != "parallel" and not summary.get("capacity_limited"):
+    if (
+        len(roles) > 1
+        and summary["actual_mode"] != "parallel"
+        and not summary.get("capacity_limited")
+        and not validator._native_independent_wave(manifest, summary)
+    ):
         raise ValueError("review-wave-not-parallel")
     _freeze(
         {out / "specialist-manifest.json": _json_bytes(manifest), out / "inspection-summary.json": _json_bytes(summary)}
