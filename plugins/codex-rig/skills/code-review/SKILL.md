@@ -519,6 +519,10 @@ Use exactly one recommendation:
 - `Required next work`: pre-merge work or `none`
 - `Confidence`: score plus key gaps
 
+For every `needs-more-work` outcome, distinguish source changes from verification or review work in both `Summary` and `Required next work`. If no source defect was found, say `No source changes identified; required verification remains` and name the missing evidence. Every blocking gap must have one canonical finding or operational-blocker ID, a concrete recovery action, responsible owner, and observable closure evidence; repeated confidence mentions reference that same obligation. Do not imply code edits are needed to repair a reviewer launch or context failure. Preserve closed gaps as evidence, not fresh open work.
+
+For missing independent coverage, name the uncovered axes and the actual permitted reviewer route or its observed capability failure. For unproven historical blueprint isolation, do not request impossible retroactive proof: distinguish the retained historical limitation from a fresh isolated assessment that can establish current coverage under the governing review contract. Never claim a fresh assessment proves the original run was isolated, or declare an unavailable independent route satisfied by parent substitutes. The remediation handoff must state which current acceptance condition remains open and how new evidence can close it.
+
 For assessed `scope=pr` review, immediately before user-facing output, rebuild `PR Snapshot` from current run's `pr.json`, `pr-routing.json`, and `gates.json`; never reuse PR number, author, CI state, or recommendation from invocation or earlier chat. This is refreshed presentation of exact evidence reviewed, not new network fetch after review.
 
 `PR Snapshot` must use this compact Markdown table in `review-notes.md` and reproduce it before findings in final chat:

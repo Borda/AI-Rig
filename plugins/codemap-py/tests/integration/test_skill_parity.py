@@ -806,3 +806,12 @@ def test_integration_surfaces_separate_active_guidance_and_metadata_evidence(con
     assert "metadata-only" in flat
     assert "one" in flat and "artifact" in flat and "reuse" in flat
     assert "installed" in flat and "session" in flat
+
+
+@pytest.mark.parametrize("helper", ["anonymize.py", "join_avoidance.py"])
+def test_codex_debrief_uses_portable_helper_launcher(helper: str) -> None:
+    """Keep documented telemetry helpers runnable without a bare Python executable."""
+    text = (_CODEX_SKILLS_DIR / "debrief-coding" / "SKILL.md").read_text(encoding="utf-8")
+    assert f'"PLUGIN_ROOT/bin/python" "PLUGIN_ROOT/bin/{helper}"' in text
+    assert f"python PLUGIN_ROOT/bin/{helper}" not in text
+    assert "bin/python.cmd" in text

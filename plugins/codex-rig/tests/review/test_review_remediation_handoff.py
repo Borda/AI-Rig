@@ -518,3 +518,18 @@ def test_conditional_native_roster_does_not_satisfy_explicit_core_independence(t
     summary = json.loads((run / "inspection-summary.json").read_bytes())
     assert summary["independence_required"] is True and summary["independence_satisfied"] is False
     _finalize_native_review(tmp_path, run, home, children, "conditional-requirement")
+
+
+def test_review_and_remediation_share_evidence_only_recovery_contract() -> None:
+    """Prevent a needs-work review from turning into a no-op for non-code obligations."""
+    review = (PLUGIN_ROOT / "skills/code-review/SKILL.md").read_text(encoding="utf-8")
+    remediate = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    for contract in (review, remediate):
+        assert "No source changes identified; required verification remains" in contract
+    assert "concrete recovery action, responsible owner, and observable closure evidence" in review
+    assert "do not request impossible retroactive proof" in review
+    assert "instead of ending with `nothing to implement`" in remediate
+    assert "Parent substitutes do not establish independence" in remediate
+    assert "If original-run provenance itself is required" in remediate
+    assert "Original-head CI does not prove a new merge commit passed hosted CI" in remediate
+    assert "Count fresh validation as evidence-only closure, never `implemented`" in remediate

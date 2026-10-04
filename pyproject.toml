@@ -19,6 +19,7 @@ dev = [
 ]
 # Test tooling + benchmark runtime deps (benchmark tests import the run-codemap scripts).
 test = [
+  "mkdocs>=1.6",
   "pytest",
   "pytest-cov",
   # "pytest-randomly",
@@ -30,6 +31,7 @@ test = [
 ]
 # MkDocs site build (source of truth; used by the docs workflow).
 docs = [
+  "mkdocs>=1.6",
   "mkdocs-callouts>=1.13",
   "mkdocs-git-revision-date-localized-plugin>=1.2",
   "mkdocs-material[imaging]>=9.5",

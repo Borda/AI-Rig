@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Install the Codex GitHub-read permission profile and retire legacy helper approvals.
+"""Install bounded local and GitHub workflow permissions and retire legacy helper approvals.
 
 ## Purpose
 
 Keep GitHub evidence access under the plugin's explicit setup and sync lifecycle. Verify the installed package before
-installing an opt-in workspace-derived permission profile; preserve unrelated user configuration and back up edits.
+installing workspace-derived local and opt-in GitHub permission profiles; preserve unrelated user configuration and back
+up edits. Local workflows can write repository metadata without requiring unsandboxed command-prefix grants.
 
 ## Scope
 
 Manage ``config.toml`` profile settings plus only the plugin-owned legacy rule files and exact canonical legacy reader
 entries in ``rules/default.rules``. The profile limits network destinations when selected, while audited helpers and
 workflow instructions constrain GitHub methods and remote writes. Existing default permissions are preserved; a missing
-default becomes ``:workspace``.
+default becomes ``local-workflow``, which allows workspace Git writes and disables network access.
 
 ## Usage
 
@@ -24,10 +25,10 @@ changed permissions.
 Write an ownership-marked opt-in profile and state record, byte-exact backups under ``backups/codex-rig``, and per-file
 status. Repeated setup is idempotent; verified older automatic profiles migrate to opt-in. A root ``workspace-write``
 sandbox setting without a permission default migrates to ``:workspace``. Verified historical profile states migrate to
-schema 3 so default-free installations gain that workspace default. An interrupted legacy migration recovers only when
-its config still matches the validated source recorded in the new state. Each changed file is replaced atomically; a
-multi-file migration is not transactional. Clear retains an ordinary workspace default when surviving user permission
-profiles require one, including a converted legacy workspace setting.
+schema 4 so default-free installations gain local workflow permissions. Historical schemas 1 through 3 remain readable.
+An interrupted legacy migration recovers only when its config matches the validated source recorded in the new state.
+Each changed file is replaced atomically; a multi-file migration is not transactional. Clear retains an ordinary
+workspace default when surviving user permission profiles require one, including a converted legacy workspace setting.
 
 ## Failure
 
@@ -83,8 +84,9 @@ PROFILE_BEGIN = f"{PROFILE_MARKER} profile begin\n"
 PROFILE_END = f"{PROFILE_MARKER} profile end\n"
 ROOT_LINE = f'default_permissions = "github-read" {PROFILE_MARKER}\n'
 WORKSPACE_LINE = f'default_permissions = ":workspace" {PROFILE_MARKER}\n'
+LOCAL_WORKFLOW_LINE = f'default_permissions = "local-workflow" {PROFILE_MARKER}\n'
 NETWORK_LINE = f"network_proxy = true {PROFILE_MARKER}\n"
-PROFILE_BODY = (
+LEGACY_PROFILE_BODY = (
     "[permissions.github-read]\n"
     'extends = ":workspace"\n\n'
     '[permissions.github-read.filesystem.":workspace_roots"]\n'
@@ -95,6 +97,16 @@ PROFILE_BODY = (
     '"api.github.com" = "allow"\n'
     '"github.com" = "allow"\n'
 )
+LOCAL_WORKFLOW_BODY = (
+    "[permissions.local-workflow]\n"
+    'extends = ":workspace"\n\n'
+    '[permissions.local-workflow.filesystem.":workspace_roots"]\n'
+    '".git" = "write"\n\n'
+    "[permissions.local-workflow.network]\n"
+    "enabled = false\n\n"
+)
+PROFILE_BODY = LOCAL_WORKFLOW_BODY + LEGACY_PROFILE_BODY
+LEGACY_PROFILE_BLOCK = PROFILE_BEGIN + LEGACY_PROFILE_BODY + PROFILE_END
 PROFILE_BLOCK = PROFILE_BEGIN + PROFILE_BODY + PROFILE_END
 TABLE = re.compile(r"^\s*\[([^]]+)\]\s*(?:#.*)?$")
 TABLE_KEY = re.compile(r"""\s*(?:([A-Za-z0-9_-]+)|("(?:[^"\\]|\\.)*")|('(?:[^']*)'))\s*(?:\.|$)""")
@@ -357,12 +369,34 @@ def _apply_change(target: Path, payload: bytes | None, existing: bytes | None) -
     return "created" if existing is None else "updated"
 
 
+def _config_lines(content: str) -> list[str]:
+    """Keep complete TOML statements together so nested string contents stay opaque."""
+    if tomllib is None:
+        raise UnsafeRulesState("TOML validation requires tomli on Python 3.10")
+    try:
+        tomllib.loads(content)
+    except ValueError as error:
+        raise UnsafeRulesState("invalid config TOML") from error
+    lines: list[str] = []
+    pending = ""
+    for line in content.splitlines(keepends=True):
+        pending += line
+        try:
+            tomllib.loads(pending)
+        except ValueError:
+            continue
+        # A complete assignment may contain arrays and multiline strings. Retain
+        # its exact bytes as one unit rather than interpreting their lines again.
+        lines.append(pending)
+        pending = ""
+    if pending:
+        raise UnsafeRulesState("config statement could not be safely separated")
+    return lines
+
+
 def _split_config(content: str) -> tuple[list[str], dict[str, list[str]], list[str]]:
     """Extract only profile-owned settings while preserving all other TOML text."""
-    # This line editor cannot distinguish table-like text inside multiline TOML values.
-    if '"""' in content or "'''" in content:
-        raise UnsafeRulesState("multiline TOML strings require manual migration")
-    lines = content.splitlines(keepends=True)
+    lines = _config_lines(content)
     saved: dict[str, list[str]] = {"default_permissions": [], "sandbox_mode": [], "network_proxy": []}
     kept: list[str] = []
     table = ""
@@ -389,22 +423,28 @@ def _split_config(content: str) -> tuple[list[str], dict[str, list[str]], list[s
                     raise UnsafeRulesState("unsupported quoted TOML table key") from error
                 table_parts.append(part)
                 position = key.end()
-            if table_parts[:2] == ["permissions", "github-read"]:
-                raise UnsafeRulesState("github-read profile already exists without owned state")
+            if (
+                len(table_parts) >= 2
+                and table_parts[0] == "permissions"
+                and table_parts[1] in {"github-read", "local-workflow"}
+            ):
+                raise UnsafeRulesState(f"{table_parts[1]} profile already exists without owned state")
         assignment = ASSIGNMENT.match(line)
         raw_key = assignment.group(1) if assignment else ""
         try:
             key = json.loads(raw_key) if raw_key.startswith('"') else raw_key.strip("'")
         except ValueError as error:
             raise UnsafeRulesState("unsupported quoted TOML assignment key") from error
-        if table_parts == ["permissions"] and key == "github-read":
-            raise UnsafeRulesState("github-read profile already exists without owned state")
+        if table_parts == ["permissions"] and key in {"github-read", "local-workflow"}:
+            raise UnsafeRulesState(f"{key} profile already exists without owned state")
         if table == "" and (key in {"features", "permissions"} or re.match(r"^\s*(?:features|permissions)\s*\.", line)):
             raise UnsafeRulesState("inline or dotted feature/permission settings require manual migration")
         owned = (table == "" and key in {"default_permissions", "sandbox_mode"}) or (
             table in {"features", '"features"', "'features'"} and key == "network_proxy"
         )
         if owned:
+            if '"""' in line or "'''" in line:
+                raise UnsafeRulesState("multiline profile-related setting requires manual migration")
             saved[key].append(line)
             if table == "":
                 kept.append(line)
@@ -434,6 +474,7 @@ def _insert_profile_settings(
     select_default: bool = False,
     preserve_root: bool = True,
     ensure_default: bool = True,
+    schema: int = 4,
 ) -> str:
     """Insert the profile and migrate a canonical legacy workspace default."""
     if not preserve_root or select_default:
@@ -458,7 +499,7 @@ def _insert_profile_settings(
         and not select_default
         and not any(originals[key] for key in ("default_permissions", "sandbox_mode"))
     ):
-        root.append(WORKSPACE_LINE)
+        root.append(LOCAL_WORKFLOW_LINE if schema >= 4 else WORKSPACE_LINE)
     if root and first_table and not lines[first_table - 1].endswith("\n"):
         lines[first_table - 1] += "\n"
     lines[first_table:first_table] = root
@@ -483,14 +524,19 @@ def _insert_profile_settings(
         lines[lines.index(originals["sandbox_mode"][0])] = workspace_default
     result = "".join(lines)
     if install:
-        result += ("" if not result or result.endswith("\n") else "\n") + "\n" + PROFILE_BLOCK
+        block = PROFILE_BLOCK if schema >= 4 else LEGACY_PROFILE_BLOCK
+        result += ("" if not result or result.endswith("\n") else "\n") + "\n" + block
     return result
 
 
 def _unmanaged_config(parsed: dict[str, object]) -> dict[str, object]:
     """Remove only profile-owned values before comparing TOML semantics."""
     remaining = {key: value for key, value in parsed.items() if key not in {"default_permissions", "sandbox_mode"}}
-    for table_name, owned_key in (("features", "network_proxy"), ("permissions", "github-read")):
+    for table_name, owned_key in (
+        ("features", "network_proxy"),
+        ("permissions", "github-read"),
+        ("permissions", "local-workflow"),
+    ):
         table = remaining.get(table_name)
         if isinstance(table, dict):
             preserved = {key: value for key, value in table.items() if key != owned_key}
@@ -590,7 +636,7 @@ def _state_payload(
 ) -> bytes:
     """Record installed bytes and, during migration, the validated old config."""
     data = {
-        "schema": 3,
+        "schema": 4,
         "original": original,
         "installed_sha256": hashlib.sha256(installed.encode()).hexdigest(),
         "settings": originals,
@@ -614,7 +660,11 @@ def _read_state(existing: bytes) -> dict[str, object]:
         data = json.loads(body)
     except (ValueError, UnicodeError) as error:
         raise UnsafeRulesState("managed GitHub profile state is invalid") from error
-    if not isinstance(data, dict) or data.get("schema") not in {1, 2, 3} or not isinstance(data.get("settings"), dict):
+    if (
+        not isinstance(data, dict)
+        or data.get("schema") not in {1, 2, 3, 4}
+        or not isinstance(data.get("settings"), dict)
+    ):
         raise UnsafeRulesState("managed GitHub profile state has an unknown schema")
     return data
 
@@ -653,9 +703,10 @@ def _restore_legacy_root_layout(lines: list[str], original: str | None, settings
 
 def _remove_profile_settings(content: str, state: dict[str, object]) -> str | None:
     """Remove only exact owned profile settings and restore original settings."""
-    if content.count(PROFILE_BLOCK) != 1:
+    block = PROFILE_BLOCK if state["schema"] >= 4 else LEGACY_PROFILE_BLOCK
+    if content.count(block) != 1:
         raise UnsafeRulesState("managed GitHub profile block was modified")
-    before, after = content.split(PROFILE_BLOCK)
+    before, after = content.split(block)
     first_after = next(
         (line for line in after.splitlines() if line.strip() and not line.lstrip().startswith("#")), None
     )
@@ -677,15 +728,16 @@ def _remove_profile_settings(content: str, state: dict[str, object]) -> str | No
     if hashlib.sha256(content.encode()).hexdigest() == state.get("installed_sha256"):
         return original
     lines = remaining.splitlines(keepends=True)
+    default_line = LOCAL_WORKFLOW_LINE if state["schema"] >= 4 else WORKSPACE_LINE
     if legacy_default:
         lines.remove(ROOT_LINE)
     lines.remove(NETWORK_LINE)
     if (
-        state["schema"] == 3
+        state["schema"] >= 3
         and not any(settings[key] for key in ("default_permissions", "sandbox_mode"))
-        and WORKSPACE_LINE in lines
+        and default_line in lines
     ):
-        lines.remove(WORKSPACE_LINE)
+        lines.remove(default_line)
     original_features = original is not None and any(
         (match := TABLE.fullmatch(line.rstrip("\r\n")))
         and match.group(1).strip() in {"features", '"features"', "'features'"}
@@ -704,10 +756,10 @@ def _remove_profile_settings(content: str, state: dict[str, object]) -> str | No
                     del lines[features - 1]
     kept, added_settings, _original_lines = _split_config("".join(lines))
     if (
-        state["schema"] == 3
+        state["schema"] >= 3
         and state.get("migration_source_sha256") is not None
         and not any(settings[key] for key in ("default_permissions", "sandbox_mode"))
-        and WORKSPACE_LINE not in remaining.splitlines(keepends=True)
+        and default_line not in remaining.splitlines(keepends=True)
         and not added_settings["default_permissions"]
     ):
         raise UnsafeRulesState("migration source changed or the migrated default was removed; reconcile before retry")
@@ -717,7 +769,7 @@ def _remove_profile_settings(content: str, state: dict[str, object]) -> str | No
         if tomllib is None:
             raise UnsafeRulesState("TOML validation requires tomli on Python 3.10")
         selected = tomllib.loads("".join(added_settings["default_permissions"]))["default_permissions"]
-        if selected == "github-read":
+        if selected in {"github-read", "local-workflow"}:
             raise UnsafeRulesState("the managed GitHub profile is selected as default")
     restored_settings = dict(settings)
     if legacy_default:
@@ -739,7 +791,7 @@ def _remove_profile_settings(content: str, state: dict[str, object]) -> str | No
 
 def _interrupted_legacy_migration(content: str, state: dict[str, object]) -> bool:
     """Recognize the exact validated source left after a migration state write."""
-    if state["schema"] not in {2, 3} or (state["schema"] == 2 and ROOT_LINE not in content):
+    if state["schema"] not in {2, 3, 4} or (state["schema"] == 2 and ROOT_LINE not in content):
         return False
     original = state.get("original")
     if original is not None and not isinstance(original, str):
@@ -747,9 +799,16 @@ def _interrupted_legacy_migration(content: str, state: dict[str, object]) -> boo
     kept, settings, _lines = _split_config(original or "")
     if state.get("settings") != settings:
         raise UnsafeRulesState("managed GitHub profile state does not match original settings")
-    installed = _insert_profile_settings(kept.copy(), settings, install=True, ensure_default=state["schema"] == 3)
+    installed = _insert_profile_settings(
+        kept.copy(), settings, install=True, ensure_default=state["schema"] >= 3, schema=state["schema"]
+    )
     older_installed = _insert_profile_settings(
-        kept.copy(), settings, install=True, preserve_root=False, ensure_default=state["schema"] == 3
+        kept.copy(),
+        settings,
+        install=True,
+        preserve_root=False,
+        ensure_default=state["schema"] >= 3,
+        schema=state["schema"],
     )
     if state.get("installed_sha256") not in {
         hashlib.sha256(installed.encode()).hexdigest(),
@@ -761,9 +820,9 @@ def _interrupted_legacy_migration(content: str, state: dict[str, object]) -> boo
         if not isinstance(source_hash, str) or re.fullmatch(r"[0-9a-f]{64}", source_hash) is None:
             raise UnsafeRulesState("managed GitHub profile state has an invalid migration source")
         return hashlib.sha256(content.encode()).hexdigest() == source_hash
-    if state["schema"] == 3:
+    if state["schema"] >= 3:
         return False
-    legacy = _insert_profile_settings(kept, settings, install=True, select_default=True)
+    legacy = _insert_profile_settings(kept, settings, install=True, select_default=True, schema=1)
     return content == legacy
 
 
@@ -800,7 +859,12 @@ def sync_github_read_profile(home: Path, plugin_root: Path | None = None) -> Ite
                 raise UnsafeRulesState("managed GitHub profile state does not match original settings")
             legacy_default = state["schema"] == 1
             expected_text = _insert_profile_settings(
-                kept.copy(), originals, install=True, select_default=legacy_default, ensure_default=state["schema"] == 3
+                kept.copy(),
+                originals,
+                install=True,
+                select_default=legacy_default,
+                ensure_default=state["schema"] >= 3,
+                schema=state["schema"],
             )
             older_expected_text = _insert_profile_settings(
                 kept.copy(),
@@ -808,7 +872,8 @@ def sync_github_read_profile(home: Path, plugin_root: Path | None = None) -> Ite
                 install=True,
                 select_default=legacy_default,
                 preserve_root=False,
-                ensure_default=state["schema"] == 3,
+                ensure_default=state["schema"] >= 3,
+                schema=state["schema"],
             )
             if state.get("installed_sha256") == hashlib.sha256(older_expected_text.encode()).hexdigest():
                 expected_text = older_expected_text
@@ -826,7 +891,7 @@ def sync_github_read_profile(home: Path, plugin_root: Path | None = None) -> Ite
             restored = (
                 original if interrupted_migration or current == original else _remove_profile_settings(current, state)
             )
-            if state["schema"] < 3:
+            if state["schema"] < 4:
                 kept, originals, _lines = _split_config(restored or "")
                 desired_text = _insert_profile_settings(kept, originals, install=True)
                 desired_state = _state_payload(restored, desired_text, originals, migration_source=current)

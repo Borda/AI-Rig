@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.6
+
+- Run the Codex setup helper through the packaged portable Python launcher while retaining the separate MCP startup prerequisite.
+- Return success for setup help, including help before an empty approval argument; keep malformed arguments failing without starting setup operations.
+- Select native question delivery from the current host contract before asking; keep plain-chat fallback in one final response without repeating the question.
+
 ## 0.6.5
 
 - Probe Python 3.10+ at the portable POSIX and native Windows launch boundary before executing workloads once.

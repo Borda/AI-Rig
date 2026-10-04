@@ -294,8 +294,11 @@ def test_native_windows_installed_launcher_override_and_defaults(override: str, 
     elif override == "missing":
         env["CODEMAP_PYTHON"] = str(tmp_path / "does-not-exist.exe")
     launcher = installed / "bin" / "codemap-py.cmd"
+    cmd = shutil.which("cmd")
+    # cmd parses its own quotes; argv-list serialization adds incompatible CRT escapes.
     result = subprocess.run(
-        [shutil.which("cmd"), "/d", "/s", "/c", f'""{launcher}" doctor --json"'],
+        f'"{cmd}" /d /s /c ""{launcher}" doctor --json"',
+        executable=cmd,
         env=env,
         capture_output=True,
         text=True,

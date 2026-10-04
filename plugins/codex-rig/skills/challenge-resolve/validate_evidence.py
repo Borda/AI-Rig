@@ -223,25 +223,31 @@ def _check_context_material(
         raise ValueError("loop-evidence-review-supporting-source-incomplete")
     if request_text is not None and len(re.findall(r"(?m)^Review request:\n", context_text)) != 1:
         raise ValueError("loop-evidence-review-request-incomplete")
-    # Each material section must end at the next declared label (or context end).
-    # Prefix matching would let reviewer-visible forged bytes follow a valid retained prefix.
-    source_pattern = r"(?m)^Frozen source:\n" + re.escape(source_text) + r"\n(?=Frozen diff:\n)"
-    next_label = r"Supporting source:\n|" if supporting_bytes is not None else ""
-    diff_pattern = r"(?m)^Frozen diff:\n" + re.escape(diff_text) + r"\n(?=" + next_label + r"\Z)"
-    if re.search(source_pattern, context_text) is None:
+
+    def matches_section(label: str, material: str, next_labels: tuple[str, ...]) -> bool:
+        """Compare literal material at its anchored label without compiling it as a regex."""
+        match = re.search(r"(?m)^" + label + "\n", context_text)
+        if match is None or not context_text.startswith(material, match.end()):
+            return False
+        end = match.end() + len(material)
+        if not context_text.startswith("\n", end):
+            return False
+        end += 1
+        return any(
+            context_text.startswith(next_label, end) if next_label else end == len(context_text)
+            for next_label in next_labels
+        )
+
+    # Each material section ends at the next declared label (or context end).
+    # Literal comparisons keep megabyte contexts out of the regex compiler.
+    if not matches_section("Frozen source:", source_text, ("Frozen diff:\n",)):
         raise ValueError("loop-evidence-review-context-incomplete")
-    if (
-        request_text is not None
-        and re.search(r"(?m)^Review request:\n" + re.escape(request_text) + r"\n(?=Frozen source:\n)", context_text)
-        is None
-    ):
+    if request_text is not None and not matches_section("Review request:", request_text, ("Frozen source:\n",)):
         raise ValueError("loop-evidence-review-request-incomplete")
-    if (
-        supporting_text is not None
-        and re.search(r"(?m)^Supporting source:\n" + re.escape(supporting_text) + r"\n(?=\Z)", context_text) is None
-    ):
+    if supporting_text is not None and not matches_section("Supporting source:", supporting_text, ("",)):
         raise ValueError("loop-evidence-review-supporting-source-incomplete")
-    if re.search(diff_pattern, context_text) is None:
+    next_labels = ("Supporting source:\n", "") if supporting_bytes is not None else ("",)
+    if not matches_section("Frozen diff:", diff_text, next_labels):
         raise ValueError("loop-evidence-review-context-incomplete")
     if request_text is not None:
         # New request-bound reviews allow only the role card before evidence. Schema-one

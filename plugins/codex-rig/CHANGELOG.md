@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.32.6
+
+- Validate large frozen contexts with literal comparisons instead of payload-sized regular expressions, preserving exact evidence boundaries and reducing memory overhead.
+- Present remediation scope as All, Required, Suggestions, and Custom selection; keep custom indexes in a separate follow-up and commit/work-plan decisions in separate answer fields.
+- Require blocked remediation headlines to explain the current cause, evidence, and next owner/action.
+- Align review recommendations with remediation actions: distinguish code fixes from missing review evidence, recover current independent coverage, and preserve historical limitations and source-bound closures.
+- Bind recipe preapproval to the three project plugin identities and correct setup guidance for the generated local-workflow default.
+- Classify Git operations by remote effects: allow authorized local operations and remote reads, including guarded pull, while keeping push and remote service mutations prohibited.
+- Apply repository-wide native automatic approval policy to invoked Codex plugin recipes and their populated helper/gate commands, preserving existing base policy and actual restrictions.
+- Deliver remediation scope questions once; retain required independent closure review under the selected scope.
+- Run authorized local skill commands under existing sandbox grants; reuse commit consent and saved allowances instead of requesting escalation for ordinary Git writes, helpers, or checks.
+- Validate multiline commit quoting before execution and recover proven parse failures with one state-checked correction; resume remaining workflow gates without a new request to continue.
+- Install a network-disabled `local-workflow` permission profile for workspace Git writes. Setup state advances from 3 to 4, migrates earlier generated defaults, preserves explicit user defaults and later edits, and retains reversible removal.
+- Distinguish prerequisite failures from code-check failures and keep unaffected authorized work moving.
+
 ## 0.32.5
 
 - Run helper recipes through the packaged launch boundary, preserving `python` command text while probing eligible runtimes on Linux, macOS and native Windows.

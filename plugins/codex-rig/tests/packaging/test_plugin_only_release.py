@@ -661,7 +661,7 @@ def test_commit_contract_preserves_literal_message_and_failure_boundaries() -> N
         "do not silently fall back to a file",
         "normalizing only one terminal lf",
         "raw git output",
-        "on denial, failure, or mismatch, do not retry automatically or change the index",
+        "on an actual user or runtime denial, uncertain execution, hook failure, concurrent changes, or mismatch",
         "do not amend",
         "full message may appear in the runtime command approval",
         "does not promise a fixed number of host approval prompts",
@@ -672,9 +672,8 @@ def test_commit_contract_preserves_literal_message_and_failure_boundaries() -> N
 def test_commit_contract_stages_and_commits_reviewed_paths_in_one_command() -> None:
     """Keep staging and commit behind one owning command with scope guards on both sides.
 
-    Separate staging and commit calls each escalate for `.git` writes, so an unattended remediation run parked on the
-    second approval. The single command is safe only with a pre-command staged-scope guard and a post-commit file-set
-    comparison against the reviewed path list.
+    An authorized commit should use existing Git write grants. The single command needs a pre-command staged-scope guard
+    and a post-commit file-set comparison against the reviewed path list.
     """
     contract = _normalized_text(PLUGIN_ROOT / "shared" / "commit-response-template.md").lower()
     for required in (
@@ -687,7 +686,7 @@ def test_commit_contract_stages_and_commits_reviewed_paths_in_one_command() -> N
         "never `.`, a directory, or a glob",
         "as two argv calls",
         "windows powershell 5.1 has no `&&`",
-        "treat the staging-and-commit command as a one-time state-changing command and omit `prefix_rule`",
+        "reuse any existing matching command allowance",
         "`git --no-pager show --no-renames --name-only -z --format= head`",
         "equal the reviewed path list exactly as a set",
         "a mismatch includes a committed file set that differs from the reviewed paths",
@@ -705,7 +704,7 @@ def _file_free_commit_argvs(transport: str, segments: list[list[str]]) -> list[l
         return [[shutil.which("rtk"), *command] for command in commands]
     if transport == "posix":
         # Match the documented POSIX apostrophe encoding, not shell interpolation, chained with &&.
-        quoted = [" ".join("'" + part.replace("'", "'\"'\"'") + "'" for part in command) for command in commands]
+        quoted = [shlex.join(command) for command in commands]
         return [[shutil.which("sh"), "-c", " && ".join(quoted)]]
     return commands
 
@@ -766,6 +765,51 @@ def test_file_free_commit_preserves_reviewed_message(tmp_path: Path, transport: 
     assert stored.removesuffix("\n") == message
     assert set(committed.split("\0")) - {""} == {"reviewed file.txt"}
     assert sorted(path.name for path in tmp_path.iterdir()) == [".git", "reviewed file.txt", "unrelated.txt"]
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="POSIX shell unavailable")
+@pytest.mark.parametrize("already_staged", [False, True])
+def test_file_free_commit_recovers_parse_failure_without_duplicate_commit(tmp_path: Path, already_staged: bool) -> None:
+    """Recover a failed syntax preflight from unchanged or exactly reviewed staged state."""
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True, env=env, capture_output=True)
+    (tmp_path / "reviewed.txt").write_bytes(b"reviewed\n")
+    if already_staged:
+        subprocess.run(["git", "add", "--", "reviewed.txt"], cwd=tmp_path, env=env, capture_output=True, check=True)
+    index = tmp_path / ".git" / "index"
+    before_index = index.read_bytes() if index.exists() else None
+    message = "test(cli): preserve author's text\n\nCo-authored-by: Codex <codex@openai.com>"
+    broken = "git add -- reviewed.txt && git commit -m '" + message.replace("'", "'''") + "'"
+    failed = subprocess.run([shutil.which("sh"), "-n", "-c", broken], cwd=tmp_path, env=env, capture_output=True)
+    assert failed.returncode != 0
+    assert (index.read_bytes() if index.exists() else None) == before_index
+    assert not (tmp_path / ".git" / "MERGE_HEAD").exists()
+    before = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=tmp_path, env=env, capture_output=True)
+    assert before.returncode != 0
+    segments = [["git", "add", "--", "reviewed.txt"], ["git", "commit", "--cleanup=verbatim", "-m", message]]
+    if already_staged:
+        staged = subprocess.run(
+            ["git", "diff", "--cached", "--name-only", "-z"], cwd=tmp_path, env=env, capture_output=True, check=True
+        ).stdout
+        content = subprocess.run(
+            ["git", "show", ":reviewed.txt"], cwd=tmp_path, env=env, capture_output=True, check=True
+        ).stdout
+        assert staged == b"reviewed.txt\0"
+        assert content == b"reviewed\n"
+        segments = segments[1:]
+    argv = _file_free_commit_argvs("posix", segments)[0]
+    syntax = subprocess.run([argv[0], "-n", "-c", argv[-1]], cwd=tmp_path, env=env, capture_output=True)
+    assert syntax.returncode == 0, syntax.stderr
+    subprocess.run(argv, cwd=tmp_path, env=env, capture_output=True, check=True)
+    stored = subprocess.run(
+        ["git", "show", "-s", "--format=format:%B", "HEAD"], cwd=tmp_path, env=env, capture_output=True, check=True
+    ).stdout.decode("utf-8")
+    count = subprocess.run(
+        ["git", "rev-list", "--count", "HEAD"], cwd=tmp_path, env=env, capture_output=True, check=True
+    ).stdout.strip()
+    assert stored.removesuffix("\n") == message
+    assert count == b"1"
 
 
 def test_calibration_recurrence_cases_cover_each_escalation_stage() -> None:

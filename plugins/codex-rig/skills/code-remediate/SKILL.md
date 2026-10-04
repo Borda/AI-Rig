@@ -23,7 +23,7 @@ Keep report and reviewer setup subordinate to selected finding closure under the
   "mode": "optional report|pr|auto; infer pr for bare number, #number, or PR URL",
   "target": "optional shorthand target number, issue/PR URL, path, or current branch",
   "pr_target": "optional PR number, PR URL, or current branch PR when mode=pr",
-  "remediation_scope": "optional all|critical|high|medium|low|comma-separated severities|comma-separated selection indexes; ask before editing when omitted",
+  "remediation_scope": "optional all|required|suggestions|critical|high|medium|low|comma-separated severities|comma-separated selection indexes; ask before editing when omitted",
   "target_scope": "required path/module",
   "done_when": "selected findings are fixed/resolved and unselected critical/high findings are explicitly deferred"
 }
@@ -287,6 +287,16 @@ When `REQUESTED_REPORT=true`, include non-code report-origin review obligations:
 
 Report-origin obligations default in scope for `+review`, `+report`, `report`, or review-report path. Never mark `out-of-scope` merely because closure needs independent reviewer, installed tool, CI/full-gate run, or unavailable local environment. Mark `valid`/`needs-clarification`, keep selectable, leave `unresolved`/user-deferred until closure evidence. `out-of-scope` only for item proven unrelated to requested report/PR/target after citing evidence; never use it to silence failed gates/follow-up.
 
+Before selection, reconcile the review recommendation with current work: distinguish source changes, executable verification/review actions, and unavailable external prerequisites. When only evidence obligations remain, say `No source changes identified; required verification remains`, name the actions, and continue selected evidence work instead of ending with `nothing to implement`. Preserve canonical IDs and source bodies; use the existing resolution proposal and closure-evidence fields for this recovery plan, without inventing code changes or new schema fields.
+
+| Report obligation | Remediation action and closure |
+| -- | -- |
+| Missing independent reviewer coverage | Inspect the rejected launch evidence, identify uncovered axes, and run the selected obligation's fresh permitted independent pass with accessible context and validated provenance. Parent substitutes do not establish independence. If the route is unavailable, retain the exact capability failure, owner, and next action rather than retrying equivalent launches. |
+| Original blueprint context isolation unproven | Preserve the historical limitation. A fresh isolated reviewer can establish current coverage when the governing contract permits replacement evidence; provide only the task and required source, then retain its assessment and provenance. Never claim to reconstruct the original context or treat the parent's prior exposure as proof that every fresh reviewer is contaminated. If original-run provenance itself is required, explain why replacement cannot close it and what decision remains. |
+| CI or optional-backend gap already closed | Reuse source-bound closure evidence and mark verified without code changes; do not reopen solely because a historical limits paragraph repeats it. Establish whether later changes invalidate that evidence. Original-head CI does not prove a new merge commit passed hosted CI; retain that distinct obligation when required. |
+
+Zero code edits can still be successful remediation when selected evidence obligations actually close. Count fresh validation as evidence-only closure, never `implemented`; keep historical source reports immutable. Missing evidence remains open, with a specific reason and recovery action, even when local tests pass.
+
 After resolution table, add `## Review Report Intake`: whether report was requested, total report-origin items, report-origin review-gate/follow-up items, selectable review-gate/follow-up items, and report-origin `out-of-scope` count. When `REQUESTED_REPORT=false`, record `requested report: false` and `0` for every report count. The `out-of-scope` count must be `0` unless item is proven unrelated to requested report/PR/target.
 
 Required table columns:
@@ -409,18 +419,21 @@ Read the complete `<run-directory>/resolution-scope.md` through the filesystem t
 
 The `Full report` path must appear immediately after unabridged scope context and target `<run-directory>/action-items.md`, complete normalized resolution report. The link supplements scope context; do not replace context with a `Selectable items:` summary, shortened numbered list, artifact link, or ellipsis. The rendered table must let user choose from full item id/source, severity, summary, and closure evidence without opening another file.
 
-Immediately after the terminal command returns, emit one user-visible assistant message containing the exact unabridged `resolution-scope.md` content and `Full report: <run-directory>/action-items.md`. Then follow User Questions to ask once through a permitted question route. The question tool owns this question and the complete accepted syntax when it can render the needed interaction; only plain-chat fallback appends the question and choices to that same context message:
+Choose the delivery route before emitting the scope context. Immediately after the terminal command returns, use the complete `resolution-scope.md` content and `Full report: <run-directory>/action-items.md` once. With a permitted native question route, emit that context without the question, then let the control own the question and complete accepted syntax; the question tool owns this question. With plain-chat fallback, emit one final response containing the context, report link, and question; never first ask it in commentary. The template below supplies control content, not a second message to print:
 
 ```text
 Which findings should I remediate?
-- all
-- severity group: critical, high, medium, low, or comma-separated groups such as critical,high
-- indexes: comma-separated indexes or ranges such as 1,3,5-7
+- All
+- Required
+- Suggestions
+- Custom selection
 ```
 
-For the packaged `ask_user` route, this is an open-ended selection: omit `options` and put the complete grammar and concrete preset values in `question`, using the native text field. An enum cannot represent arbitrary indexes or ranges. A permitted built-in form with presets plus free text remains preferred when available.
+Explain the obligation-based groups briefly in the control: `All` selects every selectable item; `Required` selects work required by the source review or governing acceptance contract, including required verification and review gaps; `Suggestions` selects explicitly non-blocking optional improvements. Never derive these groups from severity alone: a non-blocking medium finding belongs to Suggestions, while a required low-severity evidence obligation belongs to Required. Preserve each item's severity and source disposition. Before prompting, record each group's exact indexes and source-backed rationale in `action-items.md`; if obligation is ambiguous, retain `needs-clarification` and explain provisional inclusion in Required, never silently downgrade it to optional. Show actual counts, including zero, and never substitute another scope for an empty group. Map labels case-insensitively to the recorded frozen indexes, without adding a serialized field or schema version. Direct severity-group input remains a separate supported custom selection.
 
-Presets: `All <N> findings` → `all`; `<highest populated severity>-severity findings only` → that severity, with subset count or actual IDs. Omit the severity preset when it equals all. Put the custom grammar above in the control; apply shared User Questions for root delivery, recommendation, binding and pending state. Never offer `Choose severity groups or indexes`: it is an input format, not a selection. The built-in free-text entry accepts those values.
+For the packaged `ask_user` route, pass `options=["All", "Required", "Suggestions", "Custom selection"]`; do not collapse the menu into a required free-text field. This workflow's `Custom selection` is an intentional second-stage action, a scoped exception to the shared prohibition on invented generic Custom/Other choices. Custom selection is not a confirmed remediation scope and authorizes no edit. After that answer, use a new decision ID bound to the same frozen inventory and ask `Which finding indexes should I remediate?` with complete grammar: comma-separated indexes or ranges such as `1,3,5-7`, or severity groups such as `critical,high`. For `ask_user`, omit `options` only for that follow-up. Cancellation or invalid input leaves the inventory pending; never infer `all` or reuse the completed menu decision ID for a different question.
+
+A permitted built-in form with presets plus free text remains preferred when available: offer `All`, `Required`, and `Suggestions`, and use its native custom-input entry for the same index/range/severity grammar instead of adding a duplicate Custom option. In plain-chat fallback, show the four choices and accept a concrete custom expression directly. Preserve direct `all`, severity-group, index, and range answers. Apply shared User Questions for root delivery, recommendation, binding and pending state. Never offer `Choose severity groups or indexes` as a preset: it is an input format, not a selection.
 
 For the observed `title`/`options`-only async schema with a `questions` array, each item contains only `title` and optional `options`. Never add `id`, `header`, or `description` under that schema; inspect the active schema because other hosts may differ. Keep the decision key in existing workflow metadata and visible answer syntax when required. After an accepted async scope question, yield immediately when no independent authorized work remains. Do not submit another question, poll, or append even an empty final message; keep the same inventory pending until an explicit valid answer.
 
@@ -430,7 +443,7 @@ If opening the control fails, resume at that question checkpoint, not context re
 
 If the user reports that the scope question was dismissed after a later assistant action, recover at the same frozen selection checkpoint. Record the control as unusable, keep selection unconfirmed, and follow User Questions' remaining native-control check and plain-chat fallback. Deliver only the still-missing question and accepted syntax when the scope context was already visible; leave the fallback as the final response of that turn. Do not treat the dismissed control as user selection or restart PR collection solely to ask again.
 
-If `remediation_scope` supplied, it is user selection: apply without re-asking; still write and print complete `<run-directory>/resolution-scope.md` before edits, but omit question and choices from user-visible message. If omitted and selectable items exist, stop before edits and ask exactly once using the context/control ordering above. An async return or empty sync result leaves selection pending, not confirmed. Never infer `all`, silently select only code-editable items, or use default selection. If runtime cannot ask at all, fail `scope-selection-required` before edit. If none selectable, write and print `none-selectable`, skip implementation, continue gates/artifact.
+If `remediation_scope` supplied, it is user selection: apply without re-asking; still write and print complete `<run-directory>/resolution-scope.md` before edits, but omit question and choices from user-visible message. If omitted and selectable items exist, stop before edits and open the scope menu once using the context/control ordering above; the explicitly selected Custom action permits only its bound follow-up. An async return or empty sync result leaves selection pending, not confirmed. Never infer `all`, silently select only code-editable items, or use default selection. If runtime cannot ask at all, fail `scope-selection-required` before edit. If none selectable, write and print `none-selectable`, skip implementation, continue gates/artifact.
 
 Record in durable ledger and `CODE_REMEDIATE_METADATA.resolution_scope`; do not hand-edit generated `resolution-scope.md`:
 
@@ -445,6 +458,7 @@ Record in durable ledger and `CODE_REMEDIATE_METADATA.resolution_scope`; do not 
 Validate before edit:
 
 - `all` selects every selectable item
+- `required` and `suggestions` select their recorded obligation-based indexes from the frozen inventory; never recompute either group from severity
 - severity group selects every selectable matching severity
 - indexes select only selectable rows
 - invalid index or attempt to select omitted/resolved item => fail before editing
@@ -468,7 +482,7 @@ Collect every decision this run can predict at the scope checkpoint, so steps 06
 Delivery rules:
 
 - The scope context, scope question, accepted grammar, frozen inventory, and rendered `resolution-scope.md` bytes stay exactly as specified above. The packet adds no line to that file and does not change `presentation_version`.
-- When one permitted native control can carry the scope question and every feasible value of each packet question, ask them together; each question keeps its own canonical values and answer mapping. Otherwise ask the commit preference first, through User Questions with all five values, and the scope question last, so the final answer the user gives releases the run; omit the work-plan question in this case and apply the workflow default. Never hide a feasible commit value behind Other.
+- Never combine scope, commit, and work-plan decisions in one question or answer field. A control can carry them together only when its schema provides a separate answer field for each decision and preserves every feasible value. The packaged `ask_user` form has one answer field, so it always uses the sequential fallback: ask the commit preference first, through User Questions with all five values, and the scope question last, so the final answer the user gives releases the run; omit the work-plan question in this case and apply the workflow default. Never hide a feasible commit value behind Other. A scope answer such as `all` supplies no commit or work-plan preference.
 - Recommendations: `decide after verification` for the commit preference, so step 12 offers the opt-in commit with the verified results exactly as it does without a packet; the commit modes are explicit opt-in shortcuts only. `proceed automatically` for the work plan, matching the existing workflow default.
 - A commit preference that is unanswered, dismissed, cancelled, or declined, including in the sequential fallback, means `decide after verification`: step 12 asks its normal question. It never authorizes a commit, and the scope question still follows.
 - Explicit `remediation_scope` input asks no packet question: the plan uses the workflow default and the commit decision stays at step 12 unless the request already states it.
@@ -598,6 +612,8 @@ Missing coverage details are an investigation checkpoint, not proof that no fix 
 ### 09: Run Shared Quality Gates
 
 Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gates.py --help`; run every project-relevant closure gate with explicit command/skip reason.
+
+The selected remediation scope authorizes its required local checks and independent closure verification. `+review` selects report intake; it does not forbid the fresh independent pass needed to close a selected review or confidence obligation. The parent's prior inspection cannot make that same context blind, but a fresh reviewer can receive only the task and required source evidence. Use an available permitted reviewer route; preserve paid execution and actual host restrictions. Never use `--skip-review` solely because the user did not separately repeat authorization for a required closure step. If a route is genuinely unavailable, record the observed capability gap and keep that obligation open while completing other gates.
 
 Keep the repository's configured test command unchanged; the targeted-run `-p no:xdist` rule never applies to this gate. The pinned test-runner approval does not cover the gate runner: when the test gate needs escalated pytest, request a one-time escalation for the complete `run_gates.py` command without `prefix_rule`, as [Sandboxed Test Runs](../../shared/native-skill-contract.md#sandboxed-test-runs) defines.
 
@@ -731,6 +747,7 @@ When this run admitted a review report (`<run-directory>/findings-input.txt` exi
 39. A pre-edit scope interaction substitutes compact `Selectable items:` list for unabridged `resolution-scope.md` context => fail: `scope-context-not-rendered`.
 40. The unabridged scope context is not immediately followed by a `Full report` link/path to `<run-directory>/action-items.md` => fail: `scope-report-link-missing`.
 41. The user-visible assistant message does not contain unabridged scope context and `Full report` path before the native question, or plain-chat fallback omits the question/accepted syntax; collapsed tool output does not count => fail: `scope-context-not-visible`.
+    - A selectable scope menu is collapsed into a free-text field, or scope, commit, and work-plan decisions share one answer field => fail: `remediation-scope-menu-collapsed`.
     - A scope-selection question or its choices appear in both prose and a native control => fail: `scope-prompt-duplicated`.
     - Parent-owned or sequential fallback requires an approval question, or proceeds without its concrete ineligibility reason and actual mode recorded under `## Parallel Approval` => fail: `parallel-fallback-not-recorded`.
 42. An explicitly requested remediation commit omits `Co-authored-by: Codex <codex@openai.com>` or shared commit-response template => fail: `codex-coauthor-trailer-missing`.
@@ -799,6 +816,7 @@ The pre-edit scope context and one-channel interaction behavior remain exactly a
 Final chat follows shared ordered frame:
 
 - Start with plain-English explanation of what changed and what remains, using the shared versioned handoff. Do not repeat that explanation under another heading.
+  - Never use bare `Blocked` or a generic incomplete status as the opening outcome. Both `outcome.title` and `outcome.summary` must name the specific current blocker when remediation is blocked. In the summary, cite current-run gate or unresolved-item evidence and state the next owner/action needed to proceed; do not reuse a stale intake-review outcome or substitute a commit-only blocker for the remediation cause.
   - When implemented total is zero, state `No review findings were fixed by a new code change`, then distinguish evidence-only closure, any target integration, and remaining selected work.
   - The machine `Outcome` retains `Remediation Summary` with requested scope; ingested/selected/implemented/unresolved/deferred totals; whether all selected local actionable items closed; and gate status.
   - Passing gates do not close selected items: say remediation remains incomplete when any selected obligation remains open, even if every executed check passed.

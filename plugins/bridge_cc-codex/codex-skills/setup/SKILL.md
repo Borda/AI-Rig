@@ -12,13 +12,13 @@ description: Configure, authenticate, repair, and verify the Codex to Claude Cod
 - Treat a plain invocation as `action=all target=peer scope=auto live=prompt`.
 - Loaded Codex plugin, Codex trust, Codex authentication, and current session are external bootstrap prerequisites. Never replace or restart current invocation surface.
 - Reject a model-controlled workspace override. The deterministic setup CLI uses its trusted host-selected workspace; installed MCP execution separately requires native user-confirmed binding and a current `binding_id`.
-- Require `python --version` >= 3.10.
+- Resolve the active installed plugin root and substitute it for `PLUGIN_ROOT`. Setup helpers use the packaged launcher; on native Windows use `bin/python.cmd` with host-shell quoting. MCP startup still requires Python 3.10+ as `python` on the host's PATH; the helper launcher does not satisfy or change that separate prerequisite.
 - Parse only `action=all|check|configure|authenticate|repair|verify-live`, `target=peer|codex|claude`, `scope=auto|user|project|local`, and `live=prompt|skip|required`, plus one-release compatibility forms `--live` and `--direction codex|claude`; reject ambiguous or unknown arguments.
 
 For one resolved target, invoke:
 
 ```bash
-python "${PLUGIN_ROOT}/bin/bridge_setup.py" --current-host codex --workspace "<launch-workspace>" --action "<action>" --target "<target>" --scope "<scope>" --live "<live>"
+"PLUGIN_ROOT/bin/python" "PLUGIN_ROOT/bin/bridge_setup.py" --current-host codex --workspace "<launch-workspace>" --action "<action>" --target "<target>" --scope "<scope>" --live "<live>"
 ```
 
 Credential-free planner returns setup result JSON defined by `schemas/setup-result.schema.json`.

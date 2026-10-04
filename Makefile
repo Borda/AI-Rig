@@ -1,5 +1,5 @@
 # Install AI-Rig plugins for Claude Code and/or Codex from the GitHub remote.
-# Codex sync also mirrors this checkout's normal-session model defaults and personal policy into $CODEX_HOME.
+# Codex sync also mirrors this checkout's model defaults, workflow approval policy, and personal policy into $CODEX_HOME.
 # Remote installs use pushed state — commit and push before running.
 #
 # Run from the project root:

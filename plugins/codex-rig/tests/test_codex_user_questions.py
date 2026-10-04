@@ -13,6 +13,19 @@ SKILLS = sorted((PLUGIN_ROOT / "skills").glob("*/SKILL.md"))
 
 
 @pytest.mark.installed_plugin
+def test_scope_question_selects_delivery_before_printing_context() -> None:
+    """Prevent a plain scope question in commentary followed by another in the final answer."""
+    skill = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    details = (PLUGIN_ROOT / "shared/codex-user-questions-details.md").read_text(encoding="utf-8")
+    assert "Choose the delivery route before emitting the scope context" in skill
+    assert "one final response containing the context, report link, and question" in skill
+    assert "template below supplies control content, not a second message" in skill
+    assert "explicit current-host tool contract" in details
+    assert "does not establish that the particular call rendered" in details
+    assert "Never emit the same plain-chat question in commentary and final" in details
+
+
+@pytest.mark.installed_plugin
 def test_native_question_discovery_includes_direct_tools_and_one_delivery_owner() -> None:
     """Prevent catalog-only discovery and a prose approval followed by a duplicate form."""
     guide = (PLUGIN_ROOT / QUESTION_REFERENCE).read_text(encoding="utf-8")

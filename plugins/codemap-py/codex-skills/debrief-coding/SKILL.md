@@ -13,7 +13,7 @@ NOT for: installation/integration health (use `$codemap-py:integration audit`); 
 
 ## Runtime note
 
-Codex has no `bin/` PATH entry or plugin-root variable. Resolve installed root once, substitute for `PLUGIN_ROOT`, retain in reasoning; shell state doesn't persist. Telemetry otherwise matches Claude: local JSONL under `.cache/codemap/logs/`.
+Codex has no `bin/` PATH entry or plugin-root variable. Resolve installed root once, substitute for `PLUGIN_ROOT`, retain in reasoning; shell state doesn't persist. Invoke Python helpers through the quoted packaged launcher; on native Windows use `bin/python.cmd` with host-shell quoting. Telemetry otherwise matches Claude: local JSONL under `.cache/codemap/logs/`.
 
 ## Flags
 
@@ -35,7 +35,7 @@ No files: stop: "No codemap telemetry found. Run any `$codemap-py:*` skill or `c
 ### 2. Anonymize when requested
 
 ```bash
-python PLUGIN_ROOT/bin/anonymize.py --input .cache/codemap/logs --out-dir .cache/codemap/export
+"PLUGIN_ROOT/bin/python" "PLUGIN_ROOT/bin/anonymize.py" --input .cache/codemap/logs --out-dir .cache/codemap/export
 ```
 
 Use only anonymized copies after this step; never mix with raw data. Separated from `.salt`; never target log directory. With no shard, stop: "no CLI or skill logs found — cannot produce an anonymized report." With one layer, anonymize it, report the gap.
@@ -59,7 +59,7 @@ Exclude `source: "bench"` and CLI records with empty `cmd` from organic stats; r
 Join tool searches/reads to a complete, successful, non-stale answer for the same project/version/runtime/session/module within the window. A match is a module-overlap proxy, not confirmed misuse. Source-body/test/diff inspection can be legitimate; intent stays unknown unless the actual commands prove an equivalent structural repetition. Count identical command repetitions separately, never infer saved tokens or workflow time from engine durations.
 
 ```bash
-python PLUGIN_ROOT/bin/join_avoidance.py --logs .cache/codemap/logs --window-min 10 --json
+"PLUGIN_ROOT/bin/python" "PLUGIN_ROOT/bin/join_avoidance.py" --logs .cache/codemap/logs --window-min 10 --json
 ```
 
 The helper scans its entire supplied log tree: run on a filtered copy preserving runtime topology for each requested project/version/date/session cohort, never silently substitute all-history results. Legacy `avoidance_count`/`rate` keys mean `module_overlap_proxy_v3`; version-separated joins and batch logical-answer denominators differ from older metrics. Explicit project identity and successful terminal outcomes are required; missing legacy fields stay unjoinable, never inferred from the log destination or backfilled. Report raw CLI/tool counts, eligible logical answers, failed/unjoinable batch children, unverified outcomes, and join coverage separately; absent skill starts do not prove non-use. Preserve `per_runtime` and `unattributed`. High overlap alone proves neither a broken guard nor redundant work. Never claim measured token savings or live fresh-session activation. Each event carries `kind`: `source_read`, `structural_search`, or `unknown`. Grep/Glob classification uses producer-observed `search_scope`: `file` is `source_read` whichever file it names, `directory` is `structural_search`, missing legacy scope stays `unknown`, never inferred from a pattern or the analysis host filesystem. Report `structural_search_count` and `unknown_count` beside total overlaps (overall and per runtime), not as confirmed misuse; only `unknown_count` separates a legacy cohort from a classified one with zero structural searches. Bash targets cut at 200 characters hide later flags and paths; recursive-looking Bash searches outside own-file inspection stay `unknown`, not `structural_search`.

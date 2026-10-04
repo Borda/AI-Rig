@@ -45,6 +45,8 @@ def test_packet_is_part_of_scope_checkpoint_and_keeps_rendered_scope() -> None:
     assert "Explicit `remediation_scope` input asks no packet question" in packet
     assert "`## Upfront Decisions`" in packet
     assert "An unanswered packet question grants nothing" in packet
+    assert "Never combine scope, commit, and work-plan decisions in one question or answer field" in packet
+    assert "The packaged `ask_user` form has one answer field" in packet
 
 
 def test_packet_lists_the_only_mid_run_questions() -> None:

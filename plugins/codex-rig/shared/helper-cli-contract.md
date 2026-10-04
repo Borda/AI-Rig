@@ -2,6 +2,10 @@
 
 Invoke packaged helpers through `PLUGIN_ROOT/bin/python`; on native Windows use `PLUGIN_ROOT/bin/python.cmd`. Quote resolved launcher and script paths for the host shell (PowerShell uses `&` before a quoted executable path). The launcher selects an available Python 3.10+ and preserves helper arguments and exit status.
 
+Apply [Authorized Workflow Execution](native-skill-contract.md#authorized-workflow-execution) to every helper: use current grants without a new approval merely because a packaged launcher owns the command. Missing launchers are package evidence, not a permission denial. Diagnose installed package identity and the missing file; never silently select another cache or edit an install target. Continue authorized repository work through its declared environment and checks when that is the user's task, while reporting any unavailable installed-skill gate accurately.
+
+Before submitting a gate command, choose one test transport: free-form `--tests`, or import-bound `--pytest-python` with imports and JSON arguments. Never combine them, including an inherited `TESTS_CMD` in import-bound mode. An argument-validation failure is an agent-owned construction error; correct it under existing authorization after confirming that no gate executed. An unavailable required review remains open, not `not-applicable` merely because its reviewer or environment needs recovery.
+
 Helper option schemas live in `--help`, not skills. In plugin, derive `PLUGIN_ROOT` from selected `SKILL.md` path and require every helper in `package-manifest.json`; never choose cache with glob/latest/mtime logic or use source-tree fallback. The list below is full release closure: run entry only when current package manifest contains it. Before creating or changing invocation, run relevant packaged command:
 
 - `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/create_run.py --help`

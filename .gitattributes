@@ -2,6 +2,7 @@
 # Prevents CRLF contamination on Windows checkouts — critical for bash shebangs
 # and Python/JS scripts that are also invoked on POSIX systems.
 *.sh   text eol=lf
+*.cmd  text eol=lf
 *.py   text eol=lf
 *.js   text eol=lf
 *.md   text eol=lf

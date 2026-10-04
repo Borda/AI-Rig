@@ -59,6 +59,39 @@ def _completed(
     return subprocess.CompletedProcess(argv, returncode, stdout, stderr)
 
 
+@pytest.mark.parametrize(
+    "argv, expected_exit, help_output",
+    [
+        pytest.param(["--help"], 0, True, id="ordinary-help"),
+        pytest.param(["--help", "--approve"], 0, True, id="help-before-empty-approval"),
+        pytest.param(["--unknown-option"], 2, False, id="invalid-arguments"),
+        pytest.param(["--unknown-option", "--approve"], 2, False, id="invalid-before-empty-approval"),
+    ],
+)
+def test_parser_exit_preserves_help_success_without_native_calls(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    expected_exit: int,
+    help_output: bool,
+) -> None:
+    """Help succeeds and syntax errors fail before any native setup operation."""
+    setup = _setup_module()
+    calls = _install_native_boundary(setup, monkeypatch)
+
+    assert setup.main(argv) == expected_exit
+
+    captured = capsys.readouterr()
+    assert calls == []
+    if help_output:
+        assert "usage:" in captured.out
+        assert "--current-host" in captured.out
+        assert captured.err == ""
+    else:
+        assert captured.out == ""
+        assert "error:" in captured.err
+
+
 def _install_native_boundary(
     setup: Any,
     monkeypatch: pytest.MonkeyPatch,

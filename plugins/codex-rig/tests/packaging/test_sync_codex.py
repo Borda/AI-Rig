@@ -737,7 +737,7 @@ def test_sync_executes_profile_setup_and_clear_in_isolated_home(tmp_path: Path) 
     )
     managed = home / "config.toml"
     payload = tomllib.loads(managed.read_text(encoding="utf-8"))
-    assert payload["default_permissions"] == ":workspace"
+    assert payload["default_permissions"] == "local-workflow"
     assert payload["permissions"]["github-read"]["extends"] == ":workspace"
     assert payload["features"]["network_proxy"] is True
     assert not (home / "rules" / "codex-rig-github-read.rules").exists()

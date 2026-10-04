@@ -1054,8 +1054,8 @@ def main(argv: list[str] | None = None) -> int:
         # action, policy, and workspace rather than fabricated defaults.
         try:
             args = _parse_args(raw_argv[:-1])
-        except SystemExit:
-            return 2
+        except SystemExit as error:
+            return 0 if error.code == 0 else 2
         workspace = _canonical_workspace(args.workspace)
         return _emit(
             _Terminal(
@@ -1065,9 +1065,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     try:
         args = _parse_args(raw_argv)
-    except SystemExit:
-        # argparse has already written a possible non-secret usage error; retain its exit status.
-        return 2
+    except SystemExit as error:
+        # Help is successful; malformed arguments remain a nonzero usage error.
+        return 0 if error.code == 0 else 2
     workspace = _canonical_workspace(args.workspace)
     requested = _requested(args)
     action = requested["action"]

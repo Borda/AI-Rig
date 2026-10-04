@@ -8,6 +8,7 @@ import json
 import re
 import subprocess
 import sys
+import tracemalloc
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -820,6 +821,22 @@ def test_final_native_accepts_current_nonempty_git_patch(tmp_path: Path) -> None
     assert (run / "round-1.diff").read_bytes()
 
     evidence["validator"].validate_loop_evidence(run, fixture["sessions"])
+
+
+def test_context_material_validation_has_bounded_scratch_memory() -> None:
+    """Large literal evidence must not allocate a regex compiler object per character."""
+    validator = _validator()
+    source = ("Unicode π and literal escape \\n.\n" * 10000).encode("utf-8")
+    context = b"Frozen source:\n" + source + b"\nFrozen diff:\n\n"
+    re.purge()
+    tracemalloc.start()
+    try:
+        validator._check_context_material(context, source, b"", None, None)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    # Allow decoding and several full-size buffers, but not material-sized regex compilation.
+    assert peak < 16 * len(context)
 
 
 def test_empty_diff_context_rejects_injected_patch() -> None:

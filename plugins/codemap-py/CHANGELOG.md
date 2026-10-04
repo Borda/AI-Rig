@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.40.6
+
+- Run Codex telemetry helpers through the packaged portable Python launcher, including native Windows guidance.
+- Select native question delivery from the current host contract before asking; keep plain-chat fallback in one final response without repeating the question.
+
 ## 0.40.5
 
 - Probe portable POSIX and native Windows Python launchers before executing workloads; hook entry points require Python 3.11–3.14 and dispatch only supported hook basenames.

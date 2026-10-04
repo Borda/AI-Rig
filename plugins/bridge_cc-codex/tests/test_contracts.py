@@ -609,3 +609,12 @@ def test_mcp_python_constants_match_the_shipped_transport_config(name: str) -> N
     verb = bridge_mcp.TOOL_NAMES[name]
     schema_maximum = schema["$defs"][name]["properties"]["timeout_seconds"]["maximum"]
     assert bridge_mcp.MAX_MCP_TIMEOUT_SECONDS_BY_VERB[verb] == schema_maximum
+
+
+def test_codex_setup_uses_portable_helper_launcher() -> None:
+    """Allow setup diagnosis without confusing its launcher with the MCP prerequisite."""
+    text = (PLUGIN_ROOT / "codex-skills/setup/SKILL.md").read_text(encoding="utf-8")
+    assert '"PLUGIN_ROOT/bin/python" "PLUGIN_ROOT/bin/bridge_setup.py"' in text
+    assert 'python "${PLUGIN_ROOT}/bin/bridge_setup.py"' not in text
+    assert "bin/python.cmd" in text
+    assert "MCP startup still requires" in text

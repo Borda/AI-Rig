@@ -264,9 +264,12 @@ def test_native_windows_python_launcher_preserves_workload(tmp_path: Path) -> No
     )
     launcher = tmp_path / "python.cmd"
     shutil.copy2(PLUGINS_DIR / "codex-rig" / "bin" / "python.cmd", launcher)
-    command = f'""{launcher}" "{script}" "space argument""'
+    cmd = shutil.which("cmd")
+    # cmd parses its own quotes; argv-list serialization adds incompatible CRT escapes.
+    command = f'"{cmd}" /d /s /c ""{launcher}" "{script}" "space argument""'
     result = subprocess.run(
-        [shutil.which("cmd"), "/d", "/s", "/c", command],
+        command,
+        executable=cmd,
         input="payload",
         env={**os.environ, "PATH": str(Path(sys.executable).parent)},
         capture_output=True,
@@ -274,3 +277,29 @@ def test_native_windows_python_launcher_preserves_workload(tmp_path: Path) -> No
         check=False,
     )
     assert (result.returncode, result.stdout, result.stderr) == (23, "space argument\npayload\n", "error\n")
+
+
+@pytest.mark.integration
+def test_windows_checkout_preserves_shared_launcher_bytes(tmp_path: Path) -> None:
+    """Windows-style Git checkout must preserve shared bytes and package hash identities."""
+    repository = tmp_path / "checkout"
+    repository.mkdir()
+    shutil.copy2(REPO_ROOT / ".gitattributes", repository / ".gitattributes")
+    launchers = sorted(PLUGINS_DIR.glob("*/bin/python.cmd"))
+    assert len(launchers) >= 2
+    expected = (PLUGINS_DIR / "cc_foundry/bin/python.cmd").read_bytes()
+    assert b"\r\n" not in expected
+    for source in launchers:
+        target = repository / source.relative_to(REPO_ROOT)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(expected)
+    for arguments in (["init", "-q"], ["add", "."], ["checkout-index", "--all", "--prefix=export/"]):
+        subprocess.run(
+            ["git", "-c", "core.autocrlf=true", *arguments],
+            cwd=repository,
+            capture_output=True,
+            check=True,
+        )
+    for source in launchers:
+        exported = repository / "export" / source.relative_to(REPO_ROOT)
+        assert exported.read_bytes() == expected, source.relative_to(REPO_ROOT).as_posix()

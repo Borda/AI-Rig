@@ -75,6 +75,27 @@ def _config(home: Path) -> dict[str, object]:
     return tomllib.loads((home / "config.toml").read_text(encoding="utf-8"))
 
 
+def test_setup_supplies_local_workflow_without_network_or_execpolicy(tmp_path: Path) -> None:
+    """Allow routine workspace Git writes without granting network or unsandboxed commands."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    result = _run(home, "--plugin-root", str(root))
+    assert result.returncode == 0, result.stderr
+    config = _config(home)
+    assert config["default_permissions"] == "local-workflow"
+    assert config["permissions"]["local-workflow"] == {
+        "extends": ":workspace",
+        "filesystem": {":workspace_roots": {".git": "write"}},
+        "network": {"enabled": False},
+    }
+    assert not (home / "rules").exists()
+    before = (home / "config.toml").read_bytes()
+    assert _run(home, "--plugin-root", str(root)).returncode == 0
+    assert (home / "config.toml").read_bytes() == before
+    assert _run(home, "--remove").returncode == 0
+    assert not (home / "config.toml").exists()
+
+
 def test_windows_legacy_single_path_rules_are_validated(monkeypatch: pytest.MonkeyPatch) -> None:
     """Accept owned legacy rules using the former single native Windows path."""
     monkeypatch.syspath_prepend(str(SCRIPT.parent))
@@ -456,8 +477,8 @@ def test_setup_rejects_preexisting_global_github_read_default(tmp_path: Path, se
     assert config.read_bytes() == original.encode()
 
 
-def test_setup_rejects_multiline_user_instructions_before_write(tmp_path: Path) -> None:
-    """Unsafe line edits inside a TOML string must leave config unchanged."""
+def test_setup_preserves_multiline_user_instructions(tmp_path: Path) -> None:
+    """Preserve table-looking instruction text through setup, re-entry, and removal."""
     home = tmp_path / "home"
     root = _installed_plugin(home)
     config = home / "config.toml"
@@ -466,9 +487,68 @@ def test_setup_rejects_multiline_user_instructions_before_write(tmp_path: Path) 
 
     result = _run(home, "--plugin-root", str(root))
 
-    assert result.returncode != 0
+    assert result.returncode == 0, result.stderr
+    assert _config(home)["developer_instructions"] == tomllib.loads(original)["developer_instructions"]
+    installed = config.read_bytes()
+    assert original.encode() in installed
+    assert _run(home, "--plugin-root", str(root)).returncode == 0
+    assert config.read_bytes() == installed
+    assert _run(home, "--remove").returncode == 0
     assert config.read_bytes() == original.encode("utf-8")
-    assert not (home / "codex-rig-github-read-profile.json").exists()
+
+
+@pytest.mark.parametrize("delimiter", ['"""', "'''"])
+@pytest.mark.integration
+def test_profile_and_session_sync_preserve_primary_policy_end_to_end(tmp_path: Path, delimiter: str) -> None:
+    """Keep unrelated nested strings and main policy intact across both sync producers and clear."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    config = home / "config.toml"
+    content = '[features]\nnetwork_proxy = false\n[permissions.local-workflow]\nmodel = "inside"\n'
+    nested = f"notes = [\n{delimiter}\n{content}{delimiter}\n]\n"
+    policy = f"policy = {delimiter}\nKeep the existing approval policy.\n{content}{delimiter}\n"
+    original = f'model = "old"\nreview_model = "old"\n{nested}[auto_review]\n{policy}'
+    config.write_text(original, encoding="utf-8", newline="\n")
+    installed = _run(home, "--plugin-root", str(root))
+    assert installed.returncode == 0, installed.stderr
+
+    source = tmp_path / "source.toml"
+    source.write_text(
+        'model = "new"\nreview_model = "new"\napprovals_reviewer = "auto_review"\n'
+        '[auto_review]\nextra_policy = "Invoked workflow recipes are preapproved."\n',
+        encoding="utf-8",
+    )
+    session_script = Path(__file__).resolve().parents[4] / "scripts" / "sync_codex_session_policy.py"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(session_script),
+            "--source-config",
+            str(source),
+            "--source-policy",
+            str(tmp_path / "unused"),
+            "--codex-home",
+            str(home),
+            "--skip-policy",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    updated = config.read_bytes()
+    assert nested.encode() in updated
+    assert policy.encode() in updated
+    assert _config(home)["approvals_reviewer"] == "auto_review"
+    assert _run(home, "--plugin-root", str(root)).returncode == 0
+    assert config.read_bytes() == updated
+    assert _run(home, "--remove").returncode == 0
+    final = _config(home)
+    assert final["notes"] == tomllib.loads(original)["notes"]
+    assert final["auto_review"]["policy"] == tomllib.loads(original)["auto_review"]["policy"]
+    assert final["auto_review"]["extra_policy"] == "Invoked workflow recipes are preapproved."
+    assert final["model"] == "new"
+    assert "permissions" not in final
 
 
 def test_setup_rejects_multiline_default_permissions_before_write(tmp_path: Path) -> None:
@@ -601,7 +681,7 @@ def test_clear_rejects_later_selection_of_managed_profile(tmp_path: Path) -> Non
     assert _run(home, "--plugin-root", str(root)).returncode == 0
     config = home / "config.toml"
     selected = config.read_text(encoding="utf-8").replace(
-        'default_permissions = ":workspace"', 'default_permissions = "github-read"'
+        'default_permissions = "local-workflow"', 'default_permissions = "github-read"'
     )
     config.write_text(selected, encoding="utf-8", newline="\n")
     state_path = home / "codex-rig-github-read-profile.json"
@@ -667,7 +747,7 @@ def test_setup_and_clear_without_original_config(tmp_path: Path) -> None:
     root = _installed_plugin(home)
     assert _run(home, "--plugin-root", str(root)).returncode == 0
     installed = _config(home)
-    assert installed["default_permissions"] == ":workspace"
+    assert installed["default_permissions"] == "local-workflow"
     assert installed["features"]["network_proxy"] is True
     assert installed["permissions"]["github-read"]["network"]["domains"] == {
         "api.github.com": "allow",
@@ -712,7 +792,7 @@ def test_first_write_interruption_leaves_only_state(tmp_path: Path, monkeypatch:
 
     assert not config.exists()
     state = json.loads(state_bytes.split(b"\n", 1)[1])
-    assert state["schema"] == 3
+    assert state["schema"] == 4
     assert state["original"] is None
 
 
@@ -728,7 +808,7 @@ def test_resume_after_interrupted_first_write_converges(tmp_path: Path, monkeypa
     assert result.returncode == 0, result.stderr
     assert state_path.read_bytes() == state_bytes
     installed = _config(home)
-    assert installed["default_permissions"] == ":workspace"
+    assert installed["default_permissions"] == "local-workflow"
     assert installed["features"]["network_proxy"] is True
     assert installed["permissions"]["github-read"]["extends"] == ":workspace"
     assert _run(home, "--remove").returncode == 0
@@ -819,7 +899,7 @@ def test_setup_migrates_verified_automatic_profile_to_opt_in(tmp_path: Path) -> 
     result = _run(home, "--plugin-root", str(root))
 
     assert result.returncode == 0, result.stderr
-    assert _config(home)["default_permissions"] == ":workspace"
+    assert _config(home)["default_permissions"] == "local-workflow"
     assert _config(home)["model"] == "gpt-6-luna"
     assert "github-read" in _config(home)["permissions"]
     assert _run(home, "--plugin-root", str(root)).returncode == 0
@@ -950,16 +1030,16 @@ def _write_interrupted_legacy_migration(
 
 
 @pytest.mark.parametrize("trailing_table", [False, True])
-def test_interrupted_legacy_migration_writes_schema3_state(
+def test_interrupted_legacy_migration_writes_schema4_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trailing_table: bool
 ) -> None:
-    """A config write failure right after migrating a legacy profile leaves schema-3 state."""
+    """A config write failure right after migrating a legacy profile leaves schema-4 state."""
     home, _root, config, _state_path, current_legacy, migrated = _write_interrupted_legacy_migration(
         tmp_path, monkeypatch, trailing_table
     )
 
     assert config.read_text(encoding="utf-8") == current_legacy
-    assert migrated["schema"] == 3
+    assert migrated["schema"] == 4
     assert migrated["migration_source_sha256"] == hashlib.sha256(current_legacy.encode()).hexdigest()
 
 
@@ -1002,7 +1082,7 @@ def test_setup_completes_interrupted_legacy_migration(
 
     assert result.returncode == 0, result.stderr
     installed = _config(home)
-    assert installed["default_permissions"] == ":workspace"
+    assert installed["default_permissions"] == "local-workflow"
     assert installed["permissions"]["github-read"]["extends"] == ":workspace"
     assert installed.get("profiles", {}) == expected_profiles
 
@@ -1182,7 +1262,7 @@ def test_setup_accepts_config_without_final_newline(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert _config(home)["model"] == "gpt-6-sol"
-    assert _config(home)["default_permissions"] == ":workspace"
+    assert _config(home)["default_permissions"] == "local-workflow"
     assert _run(home, "--remove").returncode == 0
     assert config.read_text(encoding="utf-8") == 'model = "gpt-6-sol"'
 
@@ -1203,13 +1283,13 @@ def test_setup_rejects_inline_features_before_writing(tmp_path: Path) -> None:
     assert not (home / "codex-rig-github-read-profile.json").exists()
 
 
-def test_setup_rejects_existing_user_profile_collision(tmp_path: Path) -> None:
+@pytest.mark.parametrize("managed_name", ["github-read", "local-workflow"])
+def test_setup_rejects_existing_user_profile_collision(tmp_path: Path, managed_name: str) -> None:
     """Never overwrite a profile with the name reserved for GitHub evidence."""
     home = tmp_path / "home"
     root = _installed_plugin(home)
     first = _run(home, "--plugin-root", str(root))
     assert first.returncode == 0, first.stderr
-    managed_name = "github-read"
     assert _run(home, "--remove").returncode == 0
     config = home / "config.toml"
     original = f'[permissions."{managed_name}"]\nextends = ":workspace"\n'.encode()
@@ -1276,7 +1356,7 @@ def test_setup_removes_validated_old_managed_rules(tmp_path: Path) -> None:
     assert not old.exists()
     assert not pr.exists()
     assert unrelated.read_bytes() == original
-    assert _config(home)["default_permissions"] == ":workspace"
+    assert _config(home)["default_permissions"] == "local-workflow"
 
 
 def test_setup_preserves_explicit_collector_deny_rule(tmp_path: Path) -> None:
@@ -1444,6 +1524,51 @@ def _write_schema2_profile(home: Path, *, original: str | None = None, edit: boo
     return installed
 
 
+@pytest.mark.parametrize("explicit_default", [None, ":workspace", ":read-only"])
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_schema3_migration_preserves_user_defaults_and_later_edits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit_default: str | None, interrupted: bool
+) -> None:
+    """Upgrade the previous installed profile without broadening an explicit choice or losing later edits."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    original = f'default_permissions = "{explicit_default}"\n' if explicit_default else None
+    installed = _write_schema2_profile(home, original=original)
+    if explicit_default is None:
+        installed = 'default_permissions = ":workspace" # codex-rig:github-read\n' + installed
+    state_path = home / "codex-rig-github-read-profile.json"
+    state = json.loads(state_path.read_bytes().split(b"\n", 1)[1])
+    state["schema"] = 3
+    state["settings"]["default_permissions"] = [original] if original else []
+    state["installed_sha256"] = hashlib.sha256(installed.encode()).hexdigest()
+    body = json.dumps(state, sort_keys=True, ensure_ascii=False).encode()
+    state_path.write_bytes(
+        b"# codex-rig:github-read-profile sha256=" + hashlib.sha256(body).hexdigest().encode() + b"\n" + body + b"\n"
+    )
+    config = home / "config.toml"
+    extra = '\n[profiles.personal]\nmodel_reasoning_effort = "high"\n'
+    config.write_text(installed + extra, encoding="utf-8", newline="\n")
+    if interrupted:
+        _interrupted_first_write(home, root, monkeypatch)
+
+    result = _run(home, "--plugin-root", str(root))
+
+    assert result.returncode == 0, result.stderr
+    updated = _config(home)
+    assert updated["default_permissions"] == (explicit_default or "local-workflow")
+    assert updated["profiles"]["personal"] == {"model_reasoning_effort": "high"}
+    assert updated["permissions"]["local-workflow"]["network"] == {"enabled": False}
+    assert json.loads(state_path.read_bytes().split(b"\n", 1)[1])["schema"] == 4
+    frozen = config.read_bytes()
+    assert _run(home, "--plugin-root", str(root)).returncode == 0
+    assert config.read_bytes() == frozen
+    assert _run(home, "--remove").returncode == 0
+    restored = _config(home)
+    assert restored.get("default_permissions") == explicit_default
+    assert restored["profiles"]["personal"] == {"model_reasoning_effort": "high"}
+    assert "permissions" not in restored
+
+
 @pytest.mark.parametrize("edit", [False, True])
 @pytest.mark.parametrize("original", [None, 'model = "gpt-6-sol"\n'])
 def test_setup_repairs_schema2_missing_default(tmp_path: Path, original: str | None, edit: bool) -> None:
@@ -1453,7 +1578,7 @@ def test_setup_repairs_schema2_missing_default(tmp_path: Path, original: str | N
     _write_schema2_profile(home, original=original, edit=edit)
     result = _run(home, "--plugin-root", str(root))
     assert result.returncode == 0, result.stderr
-    assert _config(home)["default_permissions"] == ":workspace"
+    assert _config(home)["default_permissions"] == "local-workflow"
     config = home / "config.toml"
     installed = config.read_bytes()
     assert _run(home, "--plugin-root", str(root)).returncode == 0
@@ -1483,7 +1608,7 @@ def test_schema2_repair_recovers_interrupted_write(
     result = _run_migration_mode(home, root, mode)
     assert result.returncode == 0, result.stderr
     if mode == "setup":
-        assert _config(home)["default_permissions"] == ":workspace"
+        assert _config(home)["default_permissions"] == "local-workflow"
     else:
         assert not state_path.exists()
         assert config.exists() == edit
@@ -1499,7 +1624,7 @@ def test_clear_preserves_user_replacement_of_generated_default(tmp_path: Path) -
     config = home / "config.toml"
     config.write_text(
         config.read_text(encoding="utf-8").replace(
-            'default_permissions = ":workspace"', 'default_permissions = ":read-only"'
+            'default_permissions = "local-workflow"', 'default_permissions = ":read-only"'
         ),
         encoding="utf-8",
         newline="\n",
@@ -1528,7 +1653,7 @@ def test_installed_permissions_load_in_codex(tmp_path: Path, historical: bool) -
     assert _run(home, "--plugin-root", str(root)).returncode == 0
     result = subprocess.run([_CODEX, "features", "list"], cwd=tmp_path, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert _config(home)["default_permissions"] == ":workspace"
+    assert _config(home)["default_permissions"] == "local-workflow"
 
 
 def test_setup_rejects_later_default_deletion(tmp_path: Path) -> None:
@@ -1538,7 +1663,7 @@ def test_setup_rejects_later_default_deletion(tmp_path: Path) -> None:
     assert _run(home, "--plugin-root", str(root)).returncode == 0
     config = home / "config.toml"
     edited = config.read_text(encoding="utf-8").replace(
-        'default_permissions = ":workspace" # codex-rig:github-read\n', ""
+        'default_permissions = "local-workflow" # codex-rig:github-read\n', ""
     )
     config.write_text(edited, encoding="utf-8", newline="\n")
     result = _run(home, "--plugin-root", str(root))

@@ -172,10 +172,10 @@ def test_scope_selection_question_keeps_options_with_visible_context() -> None:
     )[0]
 
     assert scope_contract.count("Which findings should I remediate?") == 1
-    assert "one user-visible assistant message containing" in scope_contract
-    assert "the exact unabridged `resolution-scope.md` content" in scope_contract
-    assert "Then follow User Questions to ask once through a permitted question route" in scope_contract
-    assert "only plain-chat fallback appends the question and choices" in scope_contract
+    assert "Choose the delivery route before emitting the scope context" in scope_contract
+    assert "complete `resolution-scope.md` content" in scope_contract
+    assert "let the control own the question and complete accepted syntax" in scope_contract
+    assert "one final response containing the context, report link, and question" in scope_contract
     assert "Do not repeat the question/options in both prose and a native control" in scope_contract
     assert "immutable item/source inventory" in scope_contract
     assert "An async return or empty sync result leaves selection pending" in scope_contract
@@ -185,6 +185,15 @@ def test_scope_selection_question_keeps_options_with_visible_context() -> None:
     assert "Never add `id`, `header`, or `description` under that schema" in scope_contract
     assert "inspect the active schema because other hosts may differ" in scope_contract
     assert "Never offer `Choose severity groups or indexes`" in scope_contract
+    assert '`options=["All", "Required", "Suggestions", "Custom selection"]`' in scope_contract
+    assert "Never derive these groups from severity alone" in scope_contract
+    assert "a non-blocking medium finding belongs to Suggestions" in scope_contract
+    assert "a required low-severity evidence obligation belongs to Required" in scope_contract
+    assert "record each group's exact indexes and source-backed rationale" in scope_contract
+    assert "Custom selection is not a confirmed remediation scope" in scope_contract
+    assert "Which finding indexes should I remediate?" in scope_contract
+    assert "omit `options` only for that follow-up" in scope_contract
+    assert "use a new decision ID bound to the same frozen inventory" in scope_contract
     assert "After an accepted async scope question, yield immediately" in scope_contract
     assert "even an empty final message" in scope_contract
     assert "dismissed after a later assistant action" in scope_contract
@@ -221,3 +230,25 @@ def test_parent_only_fallback_is_recorded_without_requesting_user_approval() -> 
     assert "workflow-default parent-owned or sequential fallback is missing" in skill
     assert "code-remediate-parallel-fallback-invalid" in skill
     assert "parent-only/sequential fallback recorded with its concrete ineligibility reason" in quality_gates
+
+
+def test_blocked_opening_requires_current_cause_and_recovery() -> None:
+    """Prevent abstract blocked headlines despite an otherwise detailed ledger."""
+    for path in (CODE_REMEDIATE_SKILL, PLUGIN_ROOT / "shared" / "final-handoff-code-remediate.md"):
+        contract = path.read_text(encoding="utf-8")
+        assert "Never use bare `Blocked`" in contract
+        assert "Both `outcome.title` and `outcome.summary` must name the specific current blocker" in contract
+        assert "cite current-run gate or unresolved-item evidence" in contract
+        assert "state the next owner/action needed to proceed" in contract
+        assert "do not reuse a stale intake-review outcome" in contract
+
+
+def test_scope_validation_preserves_obligation_groups() -> None:
+    """Keep downstream validation from reclassifying optional medium or required low items."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    validation = skill.split("Validate before edit:", 1)[1].split("Each `out-of-scope`", 1)[0]
+    assert "recorded obligation-based indexes" in validation
+    assert "never recompute either group from severity" in validation
+    assert "severity group selects every selectable matching severity" in validation
+    assert "critical/high/medium" not in validation
+    assert "selectable low items" not in validation

@@ -48,7 +48,9 @@ def _text(relative: str) -> str:
         ),
         pytest.param(SKILL, "ask for that specific commit decision", id="03-partial-merge-commit"),
         pytest.param(
-            SKILL, "stop before edits and ask exactly once using the context/control ordering above", id="05-scope"
+            SKILL,
+            "stop before edits and open the scope menu once using the context/control ordering above",
+            id="05-scope",
         ),
         pytest.param(SKILL, "Each `out-of-scope` item needs user justification/confirmation", id="05-out-of-scope"),
         pytest.param(SKILL, "Do not ask the user to approve parent-owned or sequential execution", id="06-no-new-ask"),
@@ -70,7 +72,7 @@ def _text(relative: str) -> str:
         ),
         pytest.param(
             COMMIT_TEMPLATE,
-            "one-time state-changing command and omit `prefix_rule`",
+            "If an actual missing capability requires runtime approval",
             id="template-commit-runtime-approval",
         ),
         pytest.param(NATIVE, "Before every intentional approval request", id="native-approval-brief"),

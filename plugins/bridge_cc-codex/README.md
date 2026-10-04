@@ -1,5 +1,7 @@
 # 🌉 bridge_CC-Codex — Claude Code ↔ Codex
 
+Codex setup helper recipes use the quoted packaged Python launcher (`bin/python`, or `bin/python.cmd` on native Windows). Direct MCP startup retains its separate Python 3.10+ host-PATH prerequisite.
+
 Codex asks only for a genuinely missing decision, material input or protected action. Authorized preparation, internal recovery and completion need no new consent; transport discovery follows that necessity check. Existing answers, scope/digest confirmation and runtime permission remain authoritative. When a decision is missing, Codex questions prefer permitted synchronous input, then this plugin's packaged native terminal form (`ask_user`, served by `bin/user_questions_mcp.py`). The local form waits for the answer, binds it to the decision ID and frozen scope digest, and does not emit a second assistant question message. Closed choices use a selectable list; open-ended indexes, ranges, severity combinations and exact-token confirmations use native text input with the complete grammar. It performs no commands, repository writes, credential reads, network access or permission changes. Async questions are used only where current host evidence establishes usable controls; tool acceptance alone is insufficient. Explicit Approve/Deny replies bind to one unchanged, unambiguous conversational decision without demanding its displayed key again. Ambiguity, supersession, exact-token/digest and runtime-permission rules remain enforced. No answer, cancellation or unsupported input grants consent. Each plugin ships its own provider; no sibling installation or user-settings change is required. Headless hosts retain an explicit unresolved-input fallback. Claude-specific question behavior is unchanged.
 
 Rejected question calls resume at the pending decision without replaying delivered report context. A synchronous mode error does not establish async unavailability; explicit higher-priority host requirements for plain text remain binding and are reported as policy restrictions, not missing tools.
@@ -215,7 +217,7 @@ Session continuation is also limited to Claude Code → Codex `implement`:
 
 ## 📦 Install for Codex
 
-> Codex questions use a [short shared guide](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/rules/codex-user-questions.md), shipped locally by this plugin. The root uses a permitted question route with meaningful presets and built-in custom input; children hand decisions back to the root. Detailed approval/recovery rules load only when needed. Host restrictions still apply; this does not override a plain-text-only host. Before fallback, discover deferred native question tools through the current catalog or tool search, including `functions.exec` `ALL_TOOLS` when exposed, and record route eligibility. Unknown async usability is unsuitable. A text-delivered async question stays pending without a second control or repeated menu.
+> Codex questions use a [short shared guide](rules/codex-user-questions.md), shipped locally by this plugin. The root uses a permitted question route with meaningful presets and built-in custom input; children hand decisions back to the root. Detailed approval/recovery rules load only when needed. Host restrictions still apply; this does not override a plain-text-only host. Before fallback, discover deferred native question tools through the current catalog or tool search, including `functions.exec` `ALL_TOOLS` when exposed, and record route eligibility. An explicit current host contract establishing rendered controls, text input, and answer lifetime permits first use; tool acceptance alone does not prove delivery. Unknown async usability is unsuitable. Select the route before asking, and deliver a plain-chat fallback once in the final response, never in both commentary and final. A text-delivered async question stays pending without a second control or repeated menu.
 
 Register the repository marketplace and add the Codex plugin:
 
@@ -323,7 +325,7 @@ Artifact handling:
 
 > Artifacts are evidence, not authority. Read the envelope, source changes, tests, permissions, and remaining limits before accepting consequential work. Delete `.temp/bridge/` only under your project's normal retention policy and only after preserving any incident or review evidence you still need.
 
-For an `output-limit` incident, use the [bounded-work recovery steps](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/docs/operations.md#output-limit-recovery). A compact final answer alone does not cap tool output, and the Bridge does not automatically retry this fault.
+For an `output-limit` incident, use the [bounded-work recovery steps](docs/operations.md#output-limit-recovery). A compact final answer alone does not cap tool output, and the Bridge does not automatically retry this fault.
 
 <a id="-privacy-and-security-boundaries"></a>
 
@@ -382,13 +384,13 @@ Run `action=verify-live ... live=required` only after explicitly accepting the s
 
 ## 📚 Maintainer documentation
 
-- [Architecture and transport](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/docs/architecture.md) explains both request directions, process boundaries, permissions, and exactly where MCP is required.
-- [Security and privacy](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/docs/security.md) defines authority, data flow, artifacts, result integrity, recovery, and cancellation boundaries.
-- [Operations and troubleshooting](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/docs/operations.md) covers prerequisites, diagnosis, foreground calls, detached jobs, common failures, and artifact inspection.
-- [Development and release verification](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/docs/development.md) records the package layout, local gates, installed-shape validation, and release responsibilities.
+- [Architecture and transport](docs/architecture.md) explains both request directions, process boundaries, permissions, and exactly where MCP is required.
+- [Security and privacy](docs/security.md) defines authority, data flow, artifacts, result integrity, recovery, and cancellation boundaries.
+- [Operations and troubleshooting](docs/operations.md) covers prerequisites, diagnosis, foreground calls, detached jobs, common failures, and artifact inspection.
+- [Development and release verification](docs/development.md) records the package layout, local gates, installed-shape validation, and release responsibilities.
 
 <a id="-license-and-attribution"></a>
 
 ## 📄 License and attribution
 
-This plugin is distributed under the Apache License, Version 2.0; see [LICENSE](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/LICENSE). Repository attribution is in [NOTICE](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/NOTICE). The bridge's implementation is maintained as a self-contained package and does not require a sibling plugin.
+This plugin is distributed under the Apache License, Version 2.0; see [LICENSE](LICENSE). Repository attribution is in [NOTICE](NOTICE). The bridge's implementation is maintained as a self-contained package and does not require a sibling plugin.

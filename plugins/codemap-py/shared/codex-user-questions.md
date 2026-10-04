@@ -1,6 +1,6 @@
 # Codex User Questions
 
-Read once; reuse unchanged.
+Read once; reuse.
 
 1. Ask only for a genuinely missing decision, material input or protected action. Authorized preparation and internal recovery need no new consent. The root owns user questions. Children return context, question, choices, custom syntax and answer mapping; never open controls or user-facing fallback.
 2. Reuse unambiguous answers. Otherwise freeze scope, map labels/aliases to canonical values; one pending decision per workflow. Bind through host identity or an unambiguous conversational answer for the sole unchanged decision; ambiguity requires visible key.
@@ -8,6 +8,6 @@ Read once; reuse unchanged.
 4. Show context once; the selected control owns question/choices, never print them before or after it. Closed choices use distinct actionable options, evidence-backed `(Recommended)` first. Open syntax needs free text and complete grammar; `ask_user` omits options. Preserve every required action. Never invent `Other`/`Custom` or force two presets.
 5. Explain approval/denial effects; use `Approve`/`Deny` or exact action labels. Preapproval brief is context: missing required consent uses native control; existing consent skips reconfirmation. Runtime permission uses dedicated runtime mechanism, never question tools.
 6. Bind answers to frozen scope; verify `ask_user` decision ID/digest before consuming answered receipt. Unsupported, cancelled or declined forms grant no consent. Required work stays pending. Tool acceptance, silence, preselection, examples and unrelated text grant no consent. Idle accepted async: yield without final/status, including empty final. Clear Approve/Deny binds one unchanged decision; supersession/exact-token rules remain. Optional defaults require permission, response opportunity and stated assumption. Never replay completed decisions.
-7. Use plain text when no form works or the host requires it; explain why. Dismissal makes that control unsuitable; see details. Async text stays pending for typed reply. No widget probes or settings changes.
+7. Use plain text when no form works or the host requires it; explain why, ask once in final. Dismissal makes that control unsuitable; details cover host-contract evidence. Async text stays pending for typed reply. No widget probes or settings changes.
 
 For exact-token/digest confirmation, uncertain binding, changed scope, delayed answers, resumption, control failure, or text/headless fallback, read [detailed rules](codex-user-questions-details.md). Keep decisions pending while resolving uncertainty.

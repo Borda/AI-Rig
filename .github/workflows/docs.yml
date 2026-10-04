@@ -1,17 +1,11 @@
 name: docs
 
-# Triggers: plugin README changes, docs source changes, or manual dispatch.
+# Linked repository guides and assets are discovered during the build, so every
+# main-branch update can change the site, even without a docs/ or README edit.
 # Required repo setup: Settings → Pages → Source = "GitHub Actions" (not a branch).
 on:
   push:
     branches: [main]
-    paths:
-      - "plugins/*/README.md"
-      - "docs/**"
-      - "overrides/**"
-      - ".github/workflows/docs.yml"
-      - "mkdocs.yml"
-      - "pyproject.toml"
   workflow_dispatch:
 
 # Build steps read repository and Pages metadata; only deployment requests OIDC.

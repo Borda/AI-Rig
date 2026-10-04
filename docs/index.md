@@ -34,7 +34,7 @@ Seven independently installable packages serve two runtimes: six marketplace plu
 | 🤖 Codex Rig       | `assess`, `audit`, `calibrate`, `code-remediate`, `code-review`, `implement`, `investigate`, `kaggle`, `manage`, `optimize`, `release`, `research`, `sync`, `agent-shims` |
 | 🌉 bridge_CC-Codex | `implement`, `advise`, `review`, `setup`, plus Claude-side detached-job `status`, `result`, `cancel`                                                                      |
 
-The package pages document every skill's arguments, prerequisites, outputs, stopping conditions, fallbacks, and known boundaries. The repository's [Claude guide](https://github.com/Borda/AI-Rig/blob/main/.claude/README.md) also inventories all Claude agents, rules, and hooks; the [Codex Rig role-card reference](https://github.com/Borda/AI-Rig/blob/main/plugins/codex-rig/roles/README.md) inventories all Codex specialist roles.
+The package pages document every skill's arguments, prerequisites, outputs, stopping conditions, fallbacks, and known boundaries. The repository's [Claude guide](../.claude/README.md) also inventories all Claude agents, rules, and hooks; the [Codex Rig role-card reference](../plugins/codex-rig/roles/README.md) inventories all Codex specialist roles.
 
 ## Install for Claude Code
 
