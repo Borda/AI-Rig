@@ -41,7 +41,7 @@ Rules:
 - `Verification:` includes only final checks that materially validate the committed surfaces or their acceptance contract, each with a concrete result. Consolidate closely related checks and report a required broad gate once using its final outcome. Do not list exploratory probes, failure-first reproductions, setup or environment diagnostics, repeated reruns, superseded failures, or unrelated repository-wide gates. State an exact not-run reason only for a material change-specific acceptance gate; never imply that an unexecuted check passed.
 - `Residual limits:` must list warnings, deferred work, and remaining uncertainty, or contain exactly `- None known` when no material limit remains.
 - Extensive means complete and auditable, not padded: omit pure lint/format churn, generated cache, typo-only edits, and verification chronology unless they are whole change; combine tightly related details without hiding distinct effects.
-- Keep `---` before trailer. End with exactly:
+- Keep `---` before trailers. When Claude shaped the committed diff (code, review, diagnosis, or work Codex commits on Claude's behalf), put `Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>` on the line before the Codex trailer. End with exactly:
 
 `Co-authored-by: Codex <codex@openai.com>`
 

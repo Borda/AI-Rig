@@ -57,6 +57,23 @@ Scripts, hooks, `bin/` entry points, and CI steps all run on Linux, macOS, and n
 - Green macOS is absence of regression, not Windows support: prove Windows semantics with `PureWindowsPath` or `ntpath`, since monkeypatching `os.name` does not change `pathlib`.
 - Recurrent defect guard: a test simulating another OS must explicitly supply every host-only API and constant it exercises instead of assuming the runner exports them. For absent surfaces such as `os.killpg` or `signal.SIGKILL`, install test doubles with `monkeypatch.setattr(..., raising=False)` and use `monkeypatch.delattr(..., raising=False)` in the regression to prove the missing-attribute case; keep the simulated branch running on every host rather than adding an OS skip.
 
+## Interpreter Commands — Fix the Launcher, Not the Call Site
+
+Shipped commands name `python`: skill recipes, `bin/` call sites, `Bash(python:*)` allow rules, and blueprint digests all match that exact text. A host without `python` is fixed once, at the layer that starts the process, never by rewriting call sites.
+
+- Never replace a shipped `python` with `python3`, `$(command -v python || command -v python3)`, a resolved absolute path, or per-call selection logic. Changed command text misses allow rules and blueprint digests, so every call prompts.
+- Never add interpreter-selection prose to skills, agents, modes, templates, or shared guidance. It repeats in every file, costs tokens on every load, and cannot be enforced.
+- Fix each launch layer once:
+
+| Launch layer      | Mechanism                                                                                                                                                                                                                         |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Bash tool  | each plugin's `bin/python` fallback (byte-identical via `propagate_shared.py`); plugin `bin/` follows the system directories on PATH, so a real `python` always wins                                                              |
+| Claude hooks      | the hook command itself: Python hooks `if command -v python …; then exec python …; else exec python3 …; fi`; JS hooks probe `node`, `/opt/homebrew/bin/node`, `/usr/local/bin/node`, then exit 0, plus one `SessionStart` warning |
+| Codex MCP servers | direct exec with one `command` and no shell, so the command stays `python`; `sync_codex.py install` writes `~/.local/bin/python` when only `python3` exists                                                                       |
+| Codex hooks       | `python3` in `command`, `python` in `commandWindows`                                                                                                                                                                              |
+
+- Guards: `tests/test_hook_interpreter_fallback.py` and `plugins/codex-rig/tests/packaging/test_sync_codex.py`. Extend them when adding a launch layer.
+
 ## Benchmark Isolation
 
 - Benchmark task IDs, target repositories, prompt wording, expected answers, and task-specific source or symbol examples are test evidence, not production content.

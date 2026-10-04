@@ -28,7 +28,7 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "3a2d5869b9201f52c5d09b4603a21d773e05a59dff4e84c883bd38530e1628b4"
+      "sha256": "c2f14b08335205ec927503d4f4ba7358f7b02a5fc5a346efaac9259c57ea25a2"
     },
     {
       "mode": "0644",
@@ -38,7 +38,7 @@
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "57f9e96f0ed90b2df8635f9d36924f42d6714600cd3900e9ab7e7208943d8306"
+      "sha256": "404314e37f84c6bb0dc8596067372ae48a38bce89bd923a23c930aaf2739d867"
     },
     {
       "mode": "0644",
@@ -53,12 +53,12 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "32d9fbda924a32691315766177a0061723357d73a3ad39ab8b07e7dcc61f25f6"
+      "sha256": "b9e0c1c65d6eaad20c0197bfa93854c8bc26a9850d54e7644b35eba3bb19e7e2"
     },
     {
       "mode": "0644",
       "path": "assets/AGENTS.md",
-      "sha256": "9582e731603d56d40890713469d0fbb0879ad47d21b881390a3be30ad24cabce"
+      "sha256": "7067e0dcaef8ae1b12b47b1f0aba937d509e7203eee2ec3e5d04070e60adef88"
     },
     {
       "mode": "0644",
@@ -248,7 +248,7 @@
     {
       "mode": "0644",
       "path": "scripts/README.md",
-      "sha256": "2fd83a3a17167592332111e6608a7b7fe2bba6958fa8501cd41b73a13296acfe"
+      "sha256": "5dd898b7c65f690b39a5da2a703b52e6d9f6b44492e2fdb2dcad8e4ac980daeb"
     },
     {
       "mode": "0644",
@@ -308,7 +308,7 @@
     {
       "mode": "0644",
       "path": "scripts/install_github_read_rules.py",
-      "sha256": "24087c00ed190f554938ddf4729760a7d7dee3760a83c9889a5bdfe2b20f6747"
+      "sha256": "9bdec5830acdc3b3cfb214cead8a5718a7d456216856cfa7e013bc1a8e75390f"
     },
     {
       "mode": "0644",
@@ -323,7 +323,7 @@
     {
       "mode": "0755",
       "path": "scripts/sync_codex.py",
-      "sha256": "88fa67314b93753d30980dd9e3636fe087f852a400f4ef707cef1f20e3b22868"
+      "sha256": "caae282c865579fc6ac1f22fd4cfedd33e92a1516ef6bf95a8fb31785ffd818b"
     },
     {
       "mode": "0755",
@@ -388,7 +388,7 @@
     {
       "mode": "0644",
       "path": "shared/commit-response-template.md",
-      "sha256": "60aabaf25f2278c132c615ca49da95a453b65d7da62cf0de04e3db667e6f6a49"
+      "sha256": "a3fee6f68908616c15bcab20fbb530832a685412cdca5f896ac9349777f543aa"
     },
     {
       "mode": "0755",
@@ -453,7 +453,7 @@
     {
       "mode": "0644",
       "path": "shared/native-skill-contract.md",
-      "sha256": "7dc275d367838d855eeceaf2df963fbcff5f1675349748a48b77da51f6ffbd9e"
+      "sha256": "a93cbbd95d9aa0c94c29e0e8cc8e6f099c2b048434fb6ed48d6e80330e730979"
     },
     {
       "mode": "0644",
@@ -783,7 +783,7 @@
     {
       "mode": "0644",
       "path": "skills/sync/SKILL.md",
-      "sha256": "aa730f1480871e767958af3a2b9c19ef2c1102df2e6542a31f05025df7672ec5"
+      "sha256": "bc59d689bd2204ab9d4b41ae69405275d23c984bb5307cf6a0f000586f95a4c2"
     },
     {
       "mode": "0644",
@@ -933,7 +933,7 @@
     {
       "mode": "0644",
       "path": "tests/packaging/test_github_read_profile_installer.py",
-      "sha256": "8ffbea7804fd2b9a889a39ae3386a6432d4fc86d698e7d578aac74311d158083"
+      "sha256": "65c4c62af717ff643fa346ba8838c6dff0a365f088817f9a037b1628f430874a"
     },
     {
       "mode": "0644",
@@ -998,7 +998,7 @@
     {
       "mode": "0644",
       "path": "tests/packaging/test_sync_codex.py",
-      "sha256": "563c1d05fb5a8cf38f7ca12f008a28fea81d50a9e9fc0785a46a84cc7f7cf572"
+      "sha256": "dbf90c9571f8113c354c34818f015c152c2a0a97f5149459dbae66d9277f6313"
     },
     {
       "mode": "0644",
@@ -1233,7 +1233,7 @@
     {
       "mode": "0644",
       "path": "tests/review/test_review_prepare.py",
-      "sha256": "fdba5a84e44b60ab3f1293545c3ef4a163499bd2731a225abc13f65ed8011379"
+      "sha256": "34e154fdf86b6651142e1cba3b284e897c8a5ab9c32c5ef019e7521ca05c34c9"
     },
     {
       "mode": "0644",
@@ -1288,7 +1288,7 @@
     {
       "mode": "0644",
       "path": "tests/test_portable_workflow_helpers.py",
-      "sha256": "0fbcdda1131275f984c8849ec3596b4ed5ab03a5c52e453a38f3295061118c5c"
+      "sha256": "fd959d69e660c7535a386268e6d9ffffcbad2e9c852187162be49d1b235cc038"
     },
     {
       "mode": "0644",
@@ -1563,5 +1563,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.32.3"
+  "version": "0.32.4"
 }

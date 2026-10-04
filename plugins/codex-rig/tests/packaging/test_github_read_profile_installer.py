@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path, PureWindowsPath
@@ -429,7 +431,7 @@ def test_setup_accepts_safe_existing_permission_profile(
     assert installed["features"]["network_proxy"] is True
     assert installed["permissions"]["personal"]["network"] == {"enabled": network_enabled}
     assert _run(home, "--remove").returncode == 0
-    assert config.read_bytes() == original.encode()
+    assert config.read_bytes() == b'default_permissions = ":workspace"\n' + original.encode()
 
 
 @pytest.mark.parametrize(
@@ -598,7 +600,9 @@ def test_clear_rejects_later_selection_of_managed_profile(tmp_path: Path) -> Non
     root = _installed_plugin(home)
     assert _run(home, "--plugin-root", str(root)).returncode == 0
     config = home / "config.toml"
-    selected = 'default_permissions = "github-read"\n' + config.read_text(encoding="utf-8")
+    selected = config.read_text(encoding="utf-8").replace(
+        'default_permissions = ":workspace"', 'default_permissions = "github-read"'
+    )
     config.write_text(selected, encoding="utf-8", newline="\n")
     state_path = home / "codex-rig-github-read-profile.json"
     state = state_path.read_bytes()
@@ -663,7 +667,7 @@ def test_setup_and_clear_without_original_config(tmp_path: Path) -> None:
     root = _installed_plugin(home)
     assert _run(home, "--plugin-root", str(root)).returncode == 0
     installed = _config(home)
-    assert "default_permissions" not in installed
+    assert installed["default_permissions"] == ":workspace"
     assert installed["features"]["network_proxy"] is True
     assert installed["permissions"]["github-read"]["network"]["domains"] == {
         "api.github.com": "allow",
@@ -708,7 +712,7 @@ def test_first_write_interruption_leaves_only_state(tmp_path: Path, monkeypatch:
 
     assert not config.exists()
     state = json.loads(state_bytes.split(b"\n", 1)[1])
-    assert state["schema"] == 2
+    assert state["schema"] == 3
     assert state["original"] is None
 
 
@@ -724,7 +728,7 @@ def test_resume_after_interrupted_first_write_converges(tmp_path: Path, monkeypa
     assert result.returncode == 0, result.stderr
     assert state_path.read_bytes() == state_bytes
     installed = _config(home)
-    assert "default_permissions" not in installed
+    assert installed["default_permissions"] == ":workspace"
     assert installed["features"]["network_proxy"] is True
     assert installed["permissions"]["github-read"]["extends"] == ":workspace"
     assert _run(home, "--remove").returncode == 0
@@ -815,7 +819,7 @@ def test_setup_migrates_verified_automatic_profile_to_opt_in(tmp_path: Path) -> 
     result = _run(home, "--plugin-root", str(root))
 
     assert result.returncode == 0, result.stderr
-    assert "default_permissions" not in _config(home)
+    assert _config(home)["default_permissions"] == ":workspace"
     assert _config(home)["model"] == "gpt-6-luna"
     assert "github-read" in _config(home)["permissions"]
     assert _run(home, "--plugin-root", str(root)).returncode == 0
@@ -946,16 +950,16 @@ def _write_interrupted_legacy_migration(
 
 
 @pytest.mark.parametrize("trailing_table", [False, True])
-def test_interrupted_legacy_migration_writes_schema2_state(
+def test_interrupted_legacy_migration_writes_schema3_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trailing_table: bool
 ) -> None:
-    """A config write failure right after migrating a legacy profile leaves schema-2 state."""
+    """A config write failure right after migrating a legacy profile leaves schema-3 state."""
     home, _root, config, _state_path, current_legacy, migrated = _write_interrupted_legacy_migration(
         tmp_path, monkeypatch, trailing_table
     )
 
     assert config.read_text(encoding="utf-8") == current_legacy
-    assert migrated["schema"] == 2
+    assert migrated["schema"] == 3
     assert migrated["migration_source_sha256"] == hashlib.sha256(current_legacy.encode()).hexdigest()
 
 
@@ -998,7 +1002,7 @@ def test_setup_completes_interrupted_legacy_migration(
 
     assert result.returncode == 0, result.stderr
     installed = _config(home)
-    assert "default_permissions" not in installed
+    assert installed["default_permissions"] == ":workspace"
     assert installed["permissions"]["github-read"]["extends"] == ":workspace"
     assert installed.get("profiles", {}) == expected_profiles
 
@@ -1178,7 +1182,7 @@ def test_setup_accepts_config_without_final_newline(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert _config(home)["model"] == "gpt-6-sol"
-    assert "default_permissions" not in _config(home)
+    assert _config(home)["default_permissions"] == ":workspace"
     assert _run(home, "--remove").returncode == 0
     assert config.read_text(encoding="utf-8") == 'model = "gpt-6-sol"'
 
@@ -1272,7 +1276,7 @@ def test_setup_removes_validated_old_managed_rules(tmp_path: Path) -> None:
     assert not old.exists()
     assert not pr.exists()
     assert unrelated.read_bytes() == original
-    assert "default_permissions" not in _config(home)
+    assert _config(home)["default_permissions"] == ":workspace"
 
 
 def test_setup_preserves_explicit_collector_deny_rule(tmp_path: Path) -> None:
@@ -1408,3 +1412,235 @@ def test_edited_old_managed_rule_blocks_profile_change(tmp_path: Path, mode: str
     assert result.returncode != 0
     assert managed.read_bytes() == original
     assert not (home / "config.toml").exists()
+
+
+def _write_schema2_profile(home: Path, *, original: str | None = None, edit: bool = False) -> str:
+    """Reproduce the historical default-free renderer and its authenticated state."""
+    installed = (original or "") + (
+        "\n[features]\nnetwork_proxy = true # codex-rig:github-read\n\n"
+        "# codex-rig:github-read profile begin\n"
+        "[permissions.github-read]\n"
+        'extends = ":workspace"\n\n'
+        '[permissions.github-read.filesystem.":workspace_roots"]\n'
+        '".git" = "write"\n\n'
+        "[permissions.github-read.network]\nenabled = true\n\n"
+        "[permissions.github-read.network.domains]\n"
+        '"api.github.com" = "allow"\n"github.com" = "allow"\n'
+        "# codex-rig:github-read profile end\n"
+    )
+    state = {
+        "schema": 2,
+        "original": original,
+        "installed_sha256": hashlib.sha256(installed.encode()).hexdigest(),
+        "settings": {"default_permissions": [], "sandbox_mode": [], "network_proxy": []},
+    }
+    body = json.dumps(state, sort_keys=True, ensure_ascii=False).encode()
+    (home / "codex-rig-github-read-profile.json").write_bytes(
+        b"# codex-rig:github-read-profile sha256=" + hashlib.sha256(body).hexdigest().encode() + b"\n" + body + b"\n"
+    )
+    if edit:
+        installed += '[profiles.personal]\nmodel_reasoning_effort = "high"\n'
+    (home / "config.toml").write_text(installed, encoding="utf-8", newline="\n")
+    return installed
+
+
+@pytest.mark.parametrize("edit", [False, True])
+@pytest.mark.parametrize("original", [None, 'model = "gpt-6-sol"\n'])
+def test_setup_repairs_schema2_missing_default(tmp_path: Path, original: str | None, edit: bool) -> None:
+    """Repair historical profiles while retaining their original config and later edits."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    _write_schema2_profile(home, original=original, edit=edit)
+    result = _run(home, "--plugin-root", str(root))
+    assert result.returncode == 0, result.stderr
+    assert _config(home)["default_permissions"] == ":workspace"
+    config = home / "config.toml"
+    installed = config.read_bytes()
+    assert _run(home, "--plugin-root", str(root)).returncode == 0
+    assert config.read_bytes() == installed
+    assert _run(home, "--remove").returncode == 0
+    if edit:
+        restored = _config(home)
+        assert "default_permissions" not in restored
+        assert restored["profiles"]["personal"]["model_reasoning_effort"] == "high"
+    elif original is None:
+        assert not config.exists()
+    else:
+        assert config.read_bytes() == original.encode()
+
+
+@pytest.mark.parametrize("mode", ["setup", "clear"])
+@pytest.mark.parametrize("edit", [False, True])
+def test_schema2_repair_recovers_interrupted_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, edit: bool
+) -> None:
+    """Recover a validated historical config after its new state landed first."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    old = _write_schema2_profile(home, edit=edit)
+    config, state_path, _state = _interrupted_first_write(home, root, monkeypatch)
+    assert config.read_text(encoding="utf-8") == old
+    result = _run_migration_mode(home, root, mode)
+    assert result.returncode == 0, result.stderr
+    if mode == "setup":
+        assert _config(home)["default_permissions"] == ":workspace"
+    else:
+        assert not state_path.exists()
+        assert config.exists() == edit
+        if edit:
+            assert "default_permissions" not in _config(home)
+
+
+def test_clear_preserves_user_replacement_of_generated_default(tmp_path: Path) -> None:
+    """Retain a later explicit default instead of restoring the initially absent setting."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    assert _run(home, "--plugin-root", str(root)).returncode == 0
+    config = home / "config.toml"
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            'default_permissions = ":workspace"', 'default_permissions = ":read-only"'
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    assert _run(home, "--plugin-root", str(root)).returncode == 0
+    assert _run(home, "--remove").returncode == 0
+    assert _config(home) == {"default_permissions": ":read-only"}
+
+
+_CODEX = shutil.which("codex")
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(_CODEX is None, reason="Codex executable is unavailable")
+@pytest.mark.parametrize("historical", [False, True])
+def test_installed_permissions_load_in_codex(tmp_path: Path, historical: bool) -> None:
+    """Load installed permission tables through Codex without a default override."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    env = {**os.environ, "CODEX_HOME": str(home)}
+    if historical:
+        _write_schema2_profile(home)
+        before = subprocess.run([_CODEX, "features", "list"], cwd=tmp_path, env=env, capture_output=True, text=True)
+        assert before.returncode != 0
+        assert "default_permissions" in before.stderr
+    assert _run(home, "--plugin-root", str(root)).returncode == 0
+    result = subprocess.run([_CODEX, "features", "list"], cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert _config(home)["default_permissions"] == ":workspace"
+
+
+def test_setup_rejects_later_default_deletion(tmp_path: Path) -> None:
+    """Never report an edited managed config as usable when its required default disappeared."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    assert _run(home, "--plugin-root", str(root)).returncode == 0
+    config = home / "config.toml"
+    edited = config.read_text(encoding="utf-8").replace(
+        'default_permissions = ":workspace" # codex-rig:github-read\n', ""
+    )
+    config.write_text(edited, encoding="utf-8", newline="\n")
+    result = _run(home, "--plugin-root", str(root))
+    assert result.returncode != 0
+    assert "require default_permissions" in result.stderr
+    assert config.read_text(encoding="utf-8") == edited
+    assert _run(home, "--remove").returncode == 0
+
+
+@pytest.mark.parametrize("mode", ["setup", "clear"])
+def test_schema2_interrupted_repair_rejects_later_edits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    """Reject a changed migration source instead of silently replacing its later edits."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    old = _write_schema2_profile(home)
+    config, state_path, state = _interrupted_first_write(home, root, monkeypatch)
+    edited = "# user edit\n" + old
+    config.write_text(edited, encoding="utf-8", newline="\n")
+    result = _run_migration_mode(home, root, mode)
+    assert result.returncode != 0
+    assert config.read_text(encoding="utf-8") == edited
+    assert state_path.read_bytes() == state
+
+
+@pytest.mark.parametrize(
+    "origin", ["fresh", "schema1", "schema2", "interrupted", "workspace", "existing-profiles", "explicit"]
+)
+def test_clear_keeps_default_required_by_remaining_profiles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, origin: str
+) -> None:
+    """Every teardown route retains a usable default when user permission profiles survive."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    config = home / "config.toml"
+    user_profile = '\n[permissions.personal]\nextends = ":read-only"\n'
+    if origin in {"schema1", "schema2", "interrupted"}:
+        installed = _write_schema2_profile(home)
+        if origin == "schema1":
+            installed = 'default_permissions = "github-read" # codex-rig:github-read\n' + installed
+            state_path = home / "codex-rig-github-read-profile.json"
+            state = json.loads(state_path.read_bytes().split(b"\n", 1)[1])
+            state["schema"] = 1
+            state["installed_sha256"] = hashlib.sha256(installed.encode()).hexdigest()
+            body = json.dumps(state, sort_keys=True, ensure_ascii=False).encode()
+            state_path.write_bytes(
+                b"# codex-rig:github-read-profile sha256="
+                + hashlib.sha256(body).hexdigest().encode()
+                + b"\n"
+                + body
+                + b"\n"
+            )
+        config.write_text(installed + user_profile, encoding="utf-8", newline="\n")
+        if origin == "interrupted":
+            _interrupted_first_write(home, root, monkeypatch)
+    else:
+        if origin == "workspace":
+            config.write_text('sandbox_mode = "workspace-write" # retained choice\n', encoding="utf-8", newline="\n")
+        elif origin == "existing-profiles":
+            config.write_text(user_profile, encoding="utf-8", newline="\n")
+        elif origin == "explicit":
+            config.write_text('default_permissions = ":read-only"\n', encoding="utf-8", newline="\n")
+        assert _run(home, "--plugin-root", str(root)).returncode == 0
+        if origin != "existing-profiles":
+            config.write_text(config.read_text(encoding="utf-8") + user_profile, encoding="utf-8", newline="\n")
+    result = _run(home, "--remove")
+    assert result.returncode == 0, result.stderr
+    restored = _config(home)
+    assert restored["permissions"] == {"personal": {"extends": ":read-only"}}
+    assert restored["default_permissions"] == (":read-only" if origin == "explicit" else ":workspace")
+    assert "sandbox_mode" not in restored
+    assert "# codex-rig:github-read" not in config.read_text(encoding="utf-8")
+    assert not (home / "codex-rig-github-read-profile.json").exists()
+    restored_bytes = config.read_bytes()
+    assert _run(home, "--remove").returncode == 0
+    assert config.read_bytes() == restored_bytes
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(_CODEX is None, reason="Codex executable is unavailable")
+@pytest.mark.parametrize("workspace", [False, True])
+def test_cleared_config_with_user_profile_loads_in_codex(tmp_path: Path, workspace: bool) -> None:
+    """Load the public clear result through Codex when a later permission profile remains."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    config = home / "config.toml"
+    if workspace:
+        config.write_text('sandbox_mode = "workspace-write"\n', encoding="utf-8", newline="\n")
+    assert _run(home, "--plugin-root", str(root)).returncode == 0
+    config.write_text(
+        config.read_text(encoding="utf-8") + '\n[permissions.personal]\nextends = ":read-only"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    result = _run(home, "--remove")
+    assert result.returncode == 0, result.stderr
+    loaded = subprocess.run(
+        [_CODEX, "features", "list"],
+        cwd=tmp_path,
+        env={**os.environ, "CODEX_HOME": str(home)},
+        capture_output=True,
+        text=True,
+    )
+    assert loaded.returncode == 0, loaded.stderr

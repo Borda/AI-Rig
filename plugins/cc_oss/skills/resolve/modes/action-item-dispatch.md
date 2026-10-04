@@ -1238,7 +1238,7 @@ trap 'rm -f "$COMMIT_MSG"' EXIT  # RETURN never fires at top level of a Bash-too
     printf '[resolve group] PR %s — items %s\n\n' "$PR_REF" "${_COMMITTED_IDS[*]}"
     printf -- '---\n'
     printf 'Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>\n'
-    [ "${CODEX_AVAILABLE:-false}" = "true" ] && printf 'Co-authored-by: OpenAI Codex <codex@openai.com>\n'
+    [ "${CODEX_AVAILABLE:-false}" = "true" ] && printf 'Co-authored-by: Codex <codex@openai.com>\n'
 } > "$COMMIT_MSG"
 _GROUP_FILES=()
 while IFS= read -r _f; do [ -n "$_f" ] && _GROUP_FILES+=("$_f"); done < "$IMPL_DIR/group-files.txt"

@@ -68,10 +68,20 @@ def _seed_defective_plugin(root: Path) -> Path:
 
 
 @pytest.fixture(scope="module")
-def seeded_results(tmp_path_factory: pytest.TempPathFactory) -> dict[str, dict]:
-    """Run all native checkers once against the shared, immutable seeded plugin."""
-    plugins = _seed_defective_plugin(tmp_path_factory.mktemp("seeded-audit"))
-    return {result["check"]: result for result in aud.run_checks(plugins)}
+def seeded_jsonl(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Run all native checkers through the CLI once and retain their JSONL output."""
+    root = tmp_path_factory.mktemp("seeded-audit")
+    plugins = _seed_defective_plugin(root)
+    out = root / "static.jsonl"
+    assert aud.main(["--scan-dir", str(plugins), "--jsonl", str(out)]) == 1
+    return out
+
+
+@pytest.fixture(scope="module")
+def seeded_results(seeded_jsonl: Path) -> dict[str, dict]:
+    """Read the shared native-checker results for the seeded-defect assertions."""
+    results = [json.loads(line) for line in seeded_jsonl.read_text(encoding="utf-8").splitlines()]
+    return {result["check"]: result for result in results}
 
 
 @pytest.mark.parametrize(
@@ -115,15 +125,12 @@ def test_clean_scope_passes_scope_aware_checks(tmp_path: Path) -> None:
         assert results[check]["status"] in {"pass", "skipped"}, f"{check} false-positived: {results[check]}"
 
 
-def test_jsonl_output_written(tmp_path: Path) -> None:
+def test_jsonl_output_written(seeded_jsonl: Path) -> None:
     """Verify command-line option behavior.
 
     --jsonl writes one parseable JSON object per check.
     """
-    plugins = _seed_defective_plugin(tmp_path)
-    out = tmp_path / "static.jsonl"
-    aud.main(["--scan-dir", str(plugins), "--jsonl", str(out)])
-    lines = out.read_text(encoding="utf-8").strip().splitlines()
+    lines = seeded_jsonl.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == len(aud.CHECKS)
     for line in lines:
         obj = json.loads(line)

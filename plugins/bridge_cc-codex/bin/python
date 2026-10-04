@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Stand in for a missing ``python`` command by running the newest Python 3.10+ ``python3`` on PATH.
+
+Purpose:
+    Plugin skills, agents and allow rules invoke ``python``. Stock macOS and some Linux images ship only ``python3``,
+    so every such call fails with ``python: command not found``. Claude Code appends each plugin's ``bin/`` to the
+    Bash PATH after the system directories, so this file is reached only when no real ``python`` exists earlier on
+    PATH; a real interpreter always wins and this fallback never shadows it.
+Scope:
+    Selects an interpreter and replaces this process with it. Arguments, stdin, stdout, stderr and the exit status
+    belong to the selected interpreter. It never resolves ``python`` itself, so it cannot recurse.
+Usage:
+    ``python <args>`` exactly as for a real interpreter.
+Selection:
+    The interpreter running this file when it is 3.10 or newer; otherwise ``python3.20`` down to ``python3.10`` on
+    PATH; otherwise a bare ``python3`` that reports 3.10 or newer. Runs under any Python 3 that ``env python3`` finds,
+    including an older system Python, so the syntax stays compatible with it.
+Failure:
+    No Python 3.10+ found: one stderr line and exit status 127, the shell's command-not-found status.
+Used by:
+    Every Claude plugin in this marketplace ships a byte-identical copy so each plugin stands alone
+    (see plugins/cc_foundry/bin/propagate_shared.py).
+"""
+
+import os
+import shutil
+import subprocess
+import sys
+
+MINIMUM = (3, 10)
+NEWEST_MINOR = 20
+
+
+def _select():
+    """Return the path of the first Python 3.10+ interpreter in selection order, or ``None``."""
+    if sys.version_info >= MINIMUM and sys.executable:
+        return sys.executable
+    for minor in range(NEWEST_MINOR, MINIMUM[1] - 1, -1):
+        found = shutil.which("python3.%d" % minor)
+        if found:
+            return found
+    found = shutil.which("python3")
+    if found:
+        probe = "import sys; sys.exit(sys.version_info < %r)" % (MINIMUM,)
+        quiet = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+        if subprocess.call([found, "-c", probe], **quiet) == 0:
+            return found
+    return None
+
+
+def main():
+    """Replace this process with the selected interpreter, or report that none exists."""
+    selected = _select()
+    if selected is None:
+        sys.stderr.write(
+            "python: no Python 3.10+ found on PATH (python3.10-python3.%d, python3); install one\n" % NEWEST_MINOR
+        )
+        return 127
+    os.execv(selected, [selected] + sys.argv[1:])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -116,14 +116,14 @@ def test_codex_flag_adds_trailer(fake_git: list[list[str]]) -> None:
     """Include the Codex co-author trailer when requested."""
     cai.main(["42", "3", "1", "0", "--codex"])
     msg = _commit_calls(fake_git)[0][3]
-    assert "Co-authored-by: OpenAI Codex" in msg
+    assert "Co-authored-by: Codex <codex@openai.com>" in msg
 
 
 def test_no_codex_flag_omits_trailer(fake_git: list[list[str]]) -> None:
-    """Without ``--codex``, OpenAI Codex trailer absent from message."""
+    """Without ``--codex``, Codex trailer absent from message."""
     cai.main(["42", "3", "1", "0"])
     msg = _commit_calls(fake_git)[0][3]
-    assert "OpenAI Codex" not in msg
+    assert "Co-authored-by: Codex" not in msg
 
 
 def test_summaries_file_content_in_message(fake_git: list[list[str]], tmp_path: Path) -> None:
@@ -182,7 +182,7 @@ def test_golden_all_mode_invocation_constructs_expected_commit(fake_git: list[li
     msg = commit_calls[0][3]
     assert "PR #42" in msg
     assert "3 as-suggested, 1 self-resolved, 0 rejected" in msg
-    assert "Co-authored-by: OpenAI Codex" in msg
+    assert "Co-authored-by: Codex <codex@openai.com>" in msg
 
 
 def test_build_commit_message_pure() -> None:
@@ -193,4 +193,4 @@ def test_build_commit_message_pure() -> None:
     assert "2 self-resolved" in msg
     assert "1 rejected" in msg
     assert "Co-authored-by: claude[bot]" in msg
-    assert "OpenAI Codex" not in msg
+    assert "Co-authored-by: Codex" not in msg

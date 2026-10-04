@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -56,7 +57,11 @@ def _hooks(plugin: str) -> dict:
 
 def _scripts(entry: dict) -> list[str]:
     """Return the script basenames one registration entry runs."""
-    return [hook.get("command", "").rstrip('"').split("/")[-1] for hook in entry.get("hooks", [])]
+    return [
+        match.group(1)
+        for hook in entry.get("hooks", [])
+        if (match := re.search(r"\$\{CLAUDE_PLUGIN_ROOT\}/hooks/([^\"'\s]+\.js)", hook.get("command", "")))
+    ]
 
 
 @pytest.mark.parametrize("plugin", PLUGINS)

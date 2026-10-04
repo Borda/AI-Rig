@@ -5,7 +5,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"; done; exit 0",
             "type": "command"
           }
         ]
@@ -13,7 +13,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/lint-on-save.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/lint-on-save.js\"; done; exit 0",
             "type": "command"
           }
         ]
@@ -21,7 +21,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/artifact-guard.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/artifact-guard.js\"; done; exit 0",
             "type": "command"
           }
         ]
@@ -29,7 +29,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/batch-nudge.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/batch-nudge.js\"; done; exit 0",
             "type": "command"
           }
         ]
@@ -37,7 +37,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"; done; exit 0",
             "type": "command"
           }
         ],
@@ -48,7 +48,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"; done; exit 0",
             "type": "command"
           }
         ]
@@ -56,7 +56,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"; done; exit 0",
             "type": "command"
           }
         ],
@@ -67,7 +67,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"; done; exit 0",
             "type": "command"
           }
         ]
@@ -77,7 +77,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-router.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-router.js\"; done; exit 0",
             "type": "command"
           }
         ],
@@ -86,7 +86,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"; done; exit 0",
             "statusMessage": "Logging tool",
             "type": "command"
           }
@@ -95,7 +95,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/batch-nudge.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/batch-nudge.js\"; done; exit 0",
             "type": "command"
           }
         ]
@@ -103,7 +103,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/rtk-rewrite.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/rtk-rewrite.js\"; done; exit 0",
             "type": "command"
           }
         ],
@@ -112,7 +112,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/commit-guard.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/commit-guard.js\"; done; exit 0",
             "type": "command"
           }
         ],
@@ -121,7 +121,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/allow-dispatch.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/allow-dispatch.js\"; done; exit 0",
             "type": "command"
           }
         ],
@@ -130,7 +130,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/md-compress.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/md-compress.js\"; done; exit 0",
             "type": "command"
           }
         ],
@@ -139,7 +139,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/write-guard.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/write-guard.js\"; done; exit 0",
             "type": "command"
           }
         ],
@@ -148,7 +148,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/write-guard.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/write-guard.js\"; done; exit 0",
             "type": "command"
           }
         ],
@@ -157,7 +157,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/write-guard.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/write-guard.js\"; done; exit 0",
             "type": "command"
           }
         ],
@@ -166,7 +166,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/enforce-audit-header.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/enforce-audit-header.js\"; done; exit 0",
             "type": "command"
           }
         ],
@@ -175,7 +175,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/enforce-profile-header.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/enforce-profile-header.js\"; done; exit 0",
             "type": "command"
           }
         ],
@@ -186,7 +186,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"; done; exit 0",
             "timeout": 15,
             "type": "command"
           }
@@ -195,7 +195,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"; done; exit 0",
             "timeout": 15,
             "type": "command"
           }
@@ -203,6 +203,14 @@
       }
     ],
     "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exit 0; done; echo \"foundry plugin hooks are inactive: Node.js not found on PATH, in /opt/homebrew/bin or in /usr/local/bin; install Node.js\" >&2; exit 1",
+            "type": "command"
+          }
+        ]
+      },
       {
         "hooks": [
           {
@@ -215,7 +223,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/commit-guard.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/commit-guard.js\"; done; exit 0",
             "type": "command"
           }
         ]
@@ -223,7 +231,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-restore.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/session-restore.js\"; done; exit 0",
             "type": "command"
           }
         ],
@@ -232,7 +240,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"; done; exit 0",
             "type": "command"
           }
         ]
@@ -240,7 +248,15 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/stale-plugin-check.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/stale-plugin-check.js\"; done; exit 0",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/rules-check.js\"; done; exit 0",
             "type": "command"
           }
         ]
@@ -250,7 +266,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"; done; exit 0",
             "type": "command"
           }
         ]
@@ -260,7 +276,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"; done; exit 0",
             "statusMessage": "Tracking agent",
             "type": "command"
           }
@@ -271,7 +287,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"; done; exit 0",
             "statusMessage": "Completing agent",
             "type": "command"
           }
@@ -282,7 +298,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/teammate-quality.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/teammate-quality.js\"; done; exit 0",
             "statusMessage": "Quality gate",
             "type": "command"
           }
@@ -293,7 +309,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"; done; exit 0",
             "type": "command"
           }
         ]
@@ -303,7 +319,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/teammate-quality.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/teammate-quality.js\"; done; exit 0",
             "statusMessage": "Quality gate",
             "type": "command"
           }
@@ -314,7 +330,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"; done; exit 0",
             "type": "command"
           }
         ]
@@ -322,7 +338,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/commit-guard.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/commit-guard.js\"; done; exit 0",
             "type": "command"
           }
         ]
@@ -330,7 +346,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/batch-nudge.js\"",
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/batch-nudge.js\"; done; exit 0",
             "type": "command"
           }
         ]

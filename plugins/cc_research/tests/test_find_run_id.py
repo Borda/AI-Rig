@@ -118,16 +118,15 @@ class TestFindRunIdNoFilter:
         _make_run(tmp_path, "survivor", "completed")
         vanished = _make_run(tmp_path, "vanished", "completed")
         real_stat = Path.stat
-        seen: set[Path] = set()
+        real_is_dir = Path.is_dir
 
         def _flaky_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
             """Expose the vanished directory only during the later sort-key stat."""
-            # Let the first stat (is_dir during enumeration) pass; fail the sort-key stat.
-            if self == vanished and self in seen:
+            if self == vanished:
                 raise FileNotFoundError(self)
-            seen.add(self)
             return real_stat(self, *args, **kwargs)  # type: ignore[arg-type]
 
+        monkeypatch.setattr(Path, "is_dir", lambda self: True if self == vanished else real_is_dir(self))
         monkeypatch.setattr(Path, "stat", _flaky_stat)
         # No exception; the surviving completed run is still resolved.
         assert find_run_id(tmp_path) == "survivor"

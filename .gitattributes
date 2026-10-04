@@ -18,6 +18,10 @@ plugins/codemap-py/bin/* text eol=lf
 plugins/codemap-py/LICENSE text eol=lf
 plugins/codemap-py/NOTICE  text eol=lf
 
+# Every plugin's extensionless `bin/python` fallback is a shebang script propagated byte-identically
+# from foundry; CRLF would break both the shebang and the propagation check.
+plugins/*/bin/python text eol=lf
+
 # Extensionless Codex Rig package text participates in exact hash identity.
 plugins/codex-rig/LICENSE text eol=lf
 plugins/codex-rig/NOTICE  text eol=lf

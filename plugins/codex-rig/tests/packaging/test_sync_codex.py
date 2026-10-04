@@ -53,6 +53,110 @@ def test_sync_checks_python310_tomli_before_local_changes(monkeypatch: pytest.Mo
         module.sync_codex(module.parse_args([action]), run=forbidden_run, environ={}, stdout=io.StringIO())
 
 
+@pytest.mark.parametrize("action", ["install", "clear"])
+def test_sync_rejects_python39_before_tomli_check(monkeypatch: pytest.MonkeyPatch, action: str) -> None:
+    """An unsupported interpreter must be named as such, not misreported as a missing tomli on Python 3.10."""
+    module = _load_sync()
+    monkeypatch.setattr(module.sys, "version_info", (3, 9, 6))
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+
+    def forbidden_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Fail if sync reaches a local mutation or marketplace inspection."""
+        raise AssertionError("sync command ran before Python version check")
+
+    with pytest.raises(module.SyncError, match=r"Python 3\.10 or newer; found Python 3\.9\.6") as raised:
+        module.sync_codex(module.parse_args([action]), run=forbidden_run, environ={}, stdout=io.StringIO())
+    assert "tomli" not in str(raised.value)
+
+
+_POSIX_SHIM_ONLY = pytest.mark.skipif(sys.platform == "win32", reason="the python shim is written only on POSIX hosts")
+
+
+def _python_host(tmp_path: Path, *names: str) -> dict[str, str]:
+    """Return an environ whose PATH holds exactly ``names``, each linked to this interpreter."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in names:
+        (bin_dir / name).symlink_to(sys.executable)
+    return {"HOME": str(tmp_path / "home"), "PATH": str(bin_dir)}
+
+
+def _probe_run(returncode: int) -> Callable[..., subprocess.CompletedProcess[str]]:
+    """Answer the interpreter version probe with ``returncode`` and reject every other command."""
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Return the scripted probe result for a ``python3 -c`` call."""
+        assert command[1] == "-c", command
+        return subprocess.CompletedProcess(command, returncode, "", "")
+
+    return run
+
+
+@_POSIX_SHIM_ONLY
+def test_python_shim_targets_absolute_python3_and_runs(tmp_path: Path) -> None:
+    """A host with only python3 gets an executable python shim pinned to the python3 found during sync."""
+    module = _load_sync()
+    environ = _python_host(tmp_path, "python3")
+    out = io.StringIO()
+
+    module._ensure_python_command(_probe_run(0), environ, out)
+
+    shim = tmp_path / "home" / ".local" / "bin" / "python"
+    assert f'exec "{tmp_path / "bin" / "python3"}" "$@"' in shim.read_text(encoding="utf-8")
+    ran = subprocess.run([str(shim), "-c", "print('shim-ok')"], capture_output=True, text=True, check=False)
+    assert (ran.returncode, ran.stdout) == (0, "shim-ok\n")
+    assert "[ok] python shim" in out.getvalue()
+    assert 'export PATH="$HOME/.local/bin:$PATH"' in out.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("names", "probe_code", "message"),
+    [
+        pytest.param(("python", "python3"), 0, "", id="python-present"),
+        pytest.param(("python3",), 1, "cannot start", id="python3-too-old"),
+        pytest.param((), 0, "cannot start", id="no-interpreter"),
+    ],
+)
+@_POSIX_SHIM_ONLY
+def test_python_shim_is_not_written_without_a_usable_gap(
+    tmp_path: Path, names: tuple[str, ...], probe_code: int, message: str
+) -> None:
+    """An existing python, or no Python 3.10+ python3 to point at, leaves the home untouched."""
+    module = _load_sync()
+    out = io.StringIO()
+
+    module._ensure_python_command(_probe_run(probe_code), _python_host(tmp_path, *names), out)
+
+    assert not (tmp_path / "home").exists()
+    assert message in out.getvalue() if message else out.getvalue() == ""
+
+
+@_POSIX_SHIM_ONLY
+def test_python_shim_never_replaces_a_foreign_python(tmp_path: Path) -> None:
+    """A ``~/.local/bin/python`` that sync did not write survives, and the conflict is reported."""
+    module = _load_sync()
+    environ = _python_host(tmp_path, "python3")
+    foreign = tmp_path / "home" / ".local" / "bin" / "python"
+    foreign.parent.mkdir(parents=True)
+    foreign.write_text('#!/bin/sh\nexec /opt/custom/python "$@"\n', encoding="utf-8")
+    out = io.StringIO()
+
+    module._ensure_python_command(_probe_run(0), environ, out)
+
+    assert foreign.read_text(encoding="utf-8") == '#!/bin/sh\nexec /opt/custom/python "$@"\n'
+    assert "is not a sync shim; left unchanged" in out.getvalue()
+
+
+def test_python_shim_needs_home_and_path() -> None:
+    """Without a host environment to inspect, the step neither probes nor writes."""
+    module = _load_sync()
+    out = io.StringIO()
+
+    module._ensure_python_command(_probe_run(0), {}, out)
+
+    assert out.getvalue() == ""
+
+
 def _load_sync() -> ModuleType:
     """Load the packaged sync entrypoint without package imports."""
     if str(SCRIPTS_DIR) not in sys.path:
@@ -652,7 +756,7 @@ def test_sync_executes_profile_setup_and_clear_in_isolated_home(tmp_path: Path) 
     )
     managed = home / "config.toml"
     payload = tomllib.loads(managed.read_text(encoding="utf-8"))
-    assert "default_permissions" not in payload
+    assert payload["default_permissions"] == ":workspace"
     assert payload["permissions"]["github-read"]["extends"] == ":workspace"
     assert payload["features"]["network_proxy"] is True
     assert not (home / "rules" / "codex-rig-github-read.rules").exists()

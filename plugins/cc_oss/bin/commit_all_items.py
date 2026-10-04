@@ -147,7 +147,7 @@ def build_commit_message(fields: CommitSummaryFields) -> str:
         >>> "Co-authored-by: claude[bot]" in msg
         True
     """
-    codex_trailer = "\nCo-authored-by: OpenAI Codex <codex@openai.com>" if fields.include_codex else ""
+    codex_trailer = "\nCo-authored-by: Codex <codex@openai.com>" if fields.include_codex else ""
     body_section = f"\n{fields.bullet_list}\n" if fields.bullet_list.strip() else "\n"
     return (
         f"Resolve review items for PR {fields.pr_number}\n"

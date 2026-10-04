@@ -553,7 +553,7 @@ Scientist handoffs should state the paper or method, core idea, actual contribut
 
 ### Registered hooks and shared helper behavior
 
-Hooks register from `hooks/hooks.json` when the plugin is enabled; no settings edit is needed for registration:
+Hooks register from `hooks/hooks.json` when the plugin is enabled; no settings edit is needed for registration. Each hook runs `node` from PATH, then `/opt/homebrew/bin/node` or `/usr/local/bin/node`; when none exists, the hooks skip without blocking and one `SessionStart` check reports once per session that they are inactive. The plugin's `bin/python` stands in for a missing `python` command by running the newest Python 3.10+ `python3`; a real `python` always wins because plugin `bin/` follows the system directories on PATH.
 
 | Hook                      | Event                                                                         | Behavior                                                                                                                                                                                                                                                                                   |
 | ------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

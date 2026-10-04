@@ -1068,6 +1068,10 @@
       "kind": "block",
       "src": "skills/analyse/modes/codemap-signals.md:85"
     },
+    "2828e07a7569094e2b37547e55bf91ee8ff5ff8ba6c5f9ebe34ddb489761f475": {
+      "kind": "command",
+      "src": "skills/resolve/modes/action-item-dispatch.md:1194"
+    },
     "283124066d2acd85f86d000e5fa195c5a67a200d65adfe8e441be985106b8994": {
       "kind": "command",
       "src": "skills/setup/SKILL.md:121"
@@ -6228,10 +6232,6 @@
       "kind": "command",
       "src": "skills/analyse/modes/ecosystem.md:45"
     },
-    "e4b9825811afa4e0b06fd58a2ea12be37412eac96251f39a730efb55ba164112": {
-      "kind": "command",
-      "src": "skills/resolve/modes/action-item-dispatch.md:1194"
-    },
     "e4ff19fec6057c6a0de8224b1de5b8691017de7321df9d7a9638ad908e9f28af": {
       "kind": "command",
       "src": "skills/review/SKILL.md:396"
@@ -6941,6 +6941,6 @@
       "src": "skills/resolve/SKILL.md:151"
     }
   },
-  "plugin": "cc_oss@0.44.2",
+  "plugin": "cc_oss@0.44.3",
   "schema": 1
 }

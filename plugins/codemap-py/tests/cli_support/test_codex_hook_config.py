@@ -63,3 +63,21 @@ def test_claude_manifest_and_hook_runtime_remain_unchanged() -> None:
     assert manifest["hooks"] == "./hooks/claude-hooks.json"
     assert "CODEMAP_RUNTIME=codex" not in claude_config
     assert "record-exhausted.py" in claude_config
+
+
+def test_claude_hook_commands_fall_back_to_python3_when_python_is_absent() -> None:
+    """Each Claude hook prefers ``python`` but must still run on hosts that ship only ``python3``.
+
+    Stock macOS has no ``python`` command, so a bare ``python`` hook fails with ``python: command not found``.
+    ``python`` stays first because a Windows ``python3`` may be the Microsoft Store stub.
+    """
+    config = _load("hooks/claude-hooks.json")
+    commands = [hook["command"] for entries in config["hooks"].values() for entry in entries for hook in entry["hooks"]]
+
+    assert commands
+    for command in commands:
+        script = command.split("exec python ", 1)[1].split(";", 1)[0]
+        assert (
+            command
+            == f"if command -v python >/dev/null 2>&1; then exec python {script}; else exec python3 {script}; fi"
+        )

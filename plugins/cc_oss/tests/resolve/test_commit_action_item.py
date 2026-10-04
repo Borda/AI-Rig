@@ -384,7 +384,7 @@ def test_build_each_message_structure() -> None:
     assert "[resolve No.7] Review by octocat (PR #42):" in msg
     assert "Challenge: evidence=VALID suggestion=REJECT resolution=self-resolved" in msg
     assert "Co-authored-by: claude[bot]" in msg
-    assert "Co-authored-by: OpenAI Codex" not in msg
+    assert "Co-authored-by: Codex" not in msg
 
 
 def test_build_each_message_truncates_comment_to_72_chars() -> None:
@@ -398,7 +398,7 @@ def test_build_each_message_truncates_comment_to_72_chars() -> None:
 def test_build_each_message_codex_trailer_opt_in() -> None:
     """Append the Codex co-author trailer."""
     msg = cai.build_each_message(cai.EachMessageFields("s", "1", "a", "9", "c", "evidence=VALID", include_codex=True))
-    assert "Co-authored-by: OpenAI Codex <codex@openai.com>" in msg
+    assert "Co-authored-by: Codex <codex@openai.com>" in msg
 
 
 def test_build_each_message_strips_newlines_from_comment() -> None:

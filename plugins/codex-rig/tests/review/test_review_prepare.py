@@ -1182,7 +1182,8 @@ def _partial_dispatch_evidence(
         )
         diagnostic = (failed.stdout + failed.stderr).decode("utf-8")
         assert failed.returncode == 2 and "[Errno 2]" in diagnostic
-        assert str(missing_reader) in diagnostic
+        # The interpreter reports a missing script with repr(), which doubles Windows path separators.
+        assert repr(str(missing_reader)) in diagnostic
         commands.append(
             {
                 "type": "event_msg",

@@ -55,7 +55,7 @@ def _resolve(cmd: str) -> str:
 
     Examples:
         >>> import os
-        >>> os.path.isabs(_resolve("python"))
+        >>> os.path.isabs(_resolve(sys.executable))
         True
     """
     resolved = shutil.which(cmd)

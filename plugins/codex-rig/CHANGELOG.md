@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.32.4
+
+- Supply a workspace default when installing opt-in permission profiles, repair verified older installations, and preserve explicit user defaults and reversible cleanup.
+- Report an unsupported Python interpreter by its actual version before the TOML parser check; sync no longer misreports Python 3.9 as Python 3.10 missing tomli.
+- Install writes a `~/.local/bin/python` shim to a Python 3.10+ `python3` when no `python` exists, so the `python`-launched Codex MCP servers start on stock macOS; an existing `python` is never replaced and Windows gets a warning only.
+
 ## 0.32.3
 
 - Check global-policy installability before removing or installing plugins and updating the GitHub profile; preserve legitimate managed-template upgrades and explicit prefix migration safeguards.

@@ -84,7 +84,7 @@ def _resolve(cmd: str) -> str:
 
     Examples:
         >>> import shutil
-        >>> _resolve("python") == shutil.which("python")
+        >>> _resolve(sys.executable) == shutil.which(sys.executable)
         True
     """
     p = which(cmd)

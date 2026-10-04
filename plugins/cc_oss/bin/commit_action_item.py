@@ -155,10 +155,10 @@ def build_each_message(fields: EachMessageFields) -> str:
         'Fix typo'
         >>> "[resolve No.3] Review by octocat (PR #42):" in msg
         True
-        >>> "Co-authored-by: OpenAI Codex" in msg
+        >>> "Co-authored-by: Codex <codex@openai.com>" in msg
         False
         >>> codex_fields = EachMessageFields("s", "1", "a", "9", "c", "evidence=VALID", True)
-        >>> "Co-authored-by: OpenAI Codex" in build_each_message(codex_fields)
+        >>> "Co-authored-by: Codex <codex@openai.com>" in build_each_message(codex_fields)
         True
     """
     summary = _sanitize_field(fields.summary)
@@ -167,7 +167,7 @@ def build_each_message(fields: EachMessageFields) -> str:
     pr = _sanitize_field(fields.pr)
     challenge = _sanitize_field(fields.challenge)
     quoted = _sanitize_field(fields.comment)[:72]
-    codex_trailer = "\nCo-authored-by: OpenAI Codex <codex@openai.com>" if fields.include_codex else ""
+    codex_trailer = "\nCo-authored-by: Codex <codex@openai.com>" if fields.include_codex else ""
     return (
         f"{summary}\n"
         f"\n"

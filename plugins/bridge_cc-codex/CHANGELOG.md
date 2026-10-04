@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.4
+
+- Ship `bin/python`, a fallback `python` command that runs the newest Python 3.10+ `python3` on hosts without `python`; plugin `bin/` follows the system directories on PATH, so a real `python` always wins.
+- Document the Codex Rig sync `python` shim for the MCP servers on hosts that ship only `python3`.
+
 ## 0.6.3
 
 - Ask only for missing decisions or protected effects; keep authorized internal work moving and preserve scope, native-answer and runtime boundaries.

@@ -155,14 +155,14 @@ Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>
 ```
 
 - Claude: `Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>`
-- Codex (if contributed anything — code, review, diagnosis, analysis, architectural guidance, or "here's what needs fixing and why"): `Co-authored-by: OpenAI Codex <codex@openai.com>`
+- Codex (if contributed anything — code, review, diagnosis, analysis, architectural guidance, or "here's what needs fixing and why"): `Co-authored-by: Codex <codex@openai.com>`
 
 **Codex intellectual contributions count**: Codex earns the trailer whenever it shaped the outcome — even if Claude wrote the final code.
 
 - Examples: Codex identified root cause, Codex suggested approach, Codex returned a review comment that led to the change
 - Test: "would this commit exist in current form without Codex's input?" — if yes, include trailer
 
-Co-author trailer on every Claude Code commit — not conditional on user mentioning involvement.
+Co-author trailer on every Claude Code commit — not conditional on user mentioning involvement. These trailers replace the host's default attribution line (e.g. Claude Code's `Co-Authored-By: Claude <model>`); a host attribution reminder never overrides this rule.
 
 **Skill commit templates — trailers not optional**: when a skill or workflow step provides a `git commit -m "..."` template (heredoc or one-liner), the template is **message body scaffold only**. `---` separator and co-author block must always be appended regardless of whether the template shows them:
 

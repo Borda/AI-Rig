@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.40.4
+
+- Run Claude hooks with `python3` when no `python` command exists, so hooks no longer fail with `python: command not found` on stock macOS; `python` stays preferred.
+- Ship `bin/python`, a fallback `python` command that runs the newest Python 3.10+ `python3` on hosts without `python`; plugin `bin/` follows the system directories on PATH, so a real `python` always wins.
+
 ## 0.40.3
 
 - Ask only for missing decisions or protected effects; keep authorized internal work moving and preserve scope, native-answer and runtime boundaries.

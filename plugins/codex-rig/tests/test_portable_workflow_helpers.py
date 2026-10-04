@@ -296,15 +296,15 @@ def test_run_gates_records_log_paths_relative_to_the_output_directory(tmp_path: 
 
 
 @pytest.mark.parametrize(
-    ("arguments", "expected_status"),
+    ("code", "expected_status"),
     [
-        pytest.param(["--skip-lint", "not applicable here"], "not-applicable", id="skipped-gate"),
-        pytest.param(["--lint", 'python -c "pass"'], "pass", id="executed-gate"),
-        pytest.param(["--lint", 'python -c "raise SystemExit(3)"'], "fail", id="failed-gate"),
+        pytest.param(None, "not-applicable", id="skipped-gate"),
+        pytest.param("pass", "pass", id="executed-gate"),
+        pytest.param("raise SystemExit(3)", "fail", id="failed-gate"),
     ],
 )
 def test_run_gates_records_output_relative_logs_for_every_gate_outcome(
-    tmp_path: Path, arguments: list[str], expected_status: str
+    tmp_path: Path, code: str | None, expected_status: str
 ) -> None:
     """Record output-relative logs whether a gate is skipped, runs and passes, or runs and fails.
 
@@ -312,6 +312,13 @@ def test_run_gates_records_output_relative_logs_for_every_gate_outcome(
     revert restore the old host-native paths for gates that actually ran a command — that is, for every real run.
     """
     output = tmp_path / "gates"
+    if code is None:
+        arguments = ["--skip-lint", "not applicable here"]
+    else:
+        command = (
+            f'& "{sys.executable}" -c "{code}"' if sys.platform == "win32" else shlex.join((sys.executable, "-c", code))
+        )
+        arguments = ["--lint", command]
     others = [argument for gate_id in GATE_IDS if gate_id != "lint" for argument in (f"--skip-{gate_id}", "n/a")]
 
     subprocess.run(

@@ -310,7 +310,7 @@ Every local commit created by Codex must end with:
 
 `Co-authored-by: Codex <codex@openai.com>`
 
-Applies to every skill and workflow.
+When Claude shaped the committed diff (code, review, diagnosis, or work Codex commits on Claude's behalf), put `Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>` on the line before it. Applies to every skill and workflow.
 
 - Use Codex Rig's packaged `shared/commit-response-template.md` exactly for commit + summary messages.
 - Stage + commit reviewed paths in one owning command (`git add -- <paths> && git commit --cleanup=verbatim -m <message>`) after showing exact path list + full message and checking no staged entry outside those paths; afterward committed file set must equal reviewed path list.

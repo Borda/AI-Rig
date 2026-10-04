@@ -28,6 +28,7 @@ per-plugin `rules/quality-gates.md`) must NOT be listed here.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -302,6 +303,19 @@ MANIFEST: list[dict[str, object]] = [
         ],
     },
     {
+        # Fallback `python` command: plugin bin/ sits after the system dirs on the Bash
+        # PATH, so this runs only where no real `python` exists. Every plugin whose
+        # skills call `python` ships it, so none depends on another plugin for it.
+        "canonical": "plugins/cc_foundry/bin/python",
+        "copies": [
+            "plugins/cc_oss/bin/python",
+            "plugins/cc_develop/bin/python",
+            "plugins/cc_research/bin/python",
+            "plugins/codemap-py/bin/python",
+            "plugins/bridge_cc-codex/bin/python",
+        ],
+    },
+    {
         # Bridge availability detector. Every consumer gates its bridge dispatch on this,
         # so every consumer must ship it: a shared file resolved through
         # ${CLAUDE_PLUGIN_ROOT} points at the *calling* plugin's bin/, and the caller is
@@ -434,7 +448,10 @@ MANIFEST: list[dict[str, object]] = [
 
 
 def _differs(a: Path, b: Path) -> bool:
-    """Return True if files differ or either is unreadable/missing.
+    """Return True if files differ in bytes or executable bit, or either is unreadable/missing.
+
+    The executable bit is compared on POSIX only: a copied ``bin/`` executable that lost it no longer runs from PATH,
+    while native Windows does not record the bit reliably.
 
     Args:
         a: First file path.
@@ -448,7 +465,9 @@ def _differs(a: Path, b: Path) -> bool:
         True
     """
     try:
-        return a.read_bytes() != b.read_bytes()
+        if a.read_bytes() != b.read_bytes():
+            return True
+        return os.name != "nt" and bool(a.stat().st_mode & 0o111) != bool(b.stat().st_mode & 0o111)
     except OSError:
         return True
 
@@ -496,6 +515,7 @@ def apply(root: Path, manifest: list[dict[str, object]]) -> list[str]:
             if _differs(canonical, copy):
                 copy.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(canonical, copy)
+                shutil.copymode(canonical, copy)
                 updated.append(str(rel))
     return updated
 

@@ -819,9 +819,16 @@ def test_invalid_utf8_cannot_expand_retained_transcript_budget() -> None:
 
 
 @pytest.mark.parametrize("invalid", ["nested", "integer"])
-def test_unparseable_event_does_not_hide_later_final_result(invalid: str) -> None:
+def test_unparseable_event_does_not_hide_later_final_result(invalid: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep parser resource exceptions from crashing normalization after bounded capture."""
+    if invalid == "nested":
+        # The accelerated decoder can accept this depth on newer Python; the stdlib recursive scanner cannot.
+        decoder = json.JSONDecoder()
+        decoder.scan_once = json.scanner.py_make_scanner(decoder)
+        monkeypatch.setattr(json, "_default_decoder", decoder)
     value = "[" * 10_000 + "0" + "]" * 10_000 if invalid == "nested" else "1" * 10_000
+    with pytest.raises(RecursionError if invalid == "nested" else ValueError):
+        json.loads(value)
     line = (
         '{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"x","extra":' + value + "}}\n"
     )
@@ -851,8 +858,12 @@ def test_output_limit_incident_records_real_partial_write(tmp_path: Path, monkey
     assert (tmp_path / "landed.txt").read_text() == "once"
 
 
-def test_deeply_nested_command_event_does_not_crash_reader() -> None:
+def test_deeply_nested_command_event_does_not_crash_reader(monkeypatch: pytest.MonkeyPatch) -> None:
     """Retain bounded raw JSONL when parser recursion limits prevent compaction."""
+    # Exercise a real parser resource failure independently of the accelerated decoder's evolving depth limit.
+    decoder = json.JSONDecoder()
+    decoder.scan_once = json.scanner.py_make_scanner(decoder)
+    monkeypatch.setattr(json, "_default_decoder", decoder)
     line = (
         '{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"x","extra":'
         + "[" * 10_000
@@ -861,6 +872,9 @@ def test_deeply_nested_command_event_does_not_crash_reader() -> None:
         + "}}\n"
     ).encode("utf-8")
     output = bridge_call._ChildOutputBuffer()
+
+    with pytest.raises(RecursionError):
+        json.loads(line.decode("utf-8"))
 
     output.append("stdout", line)
 
