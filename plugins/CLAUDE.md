@@ -86,7 +86,7 @@ Worked before/after example, recurring casualties of a compression pass (modals,
 ## File Layout
 
 - `.claude-plugin/plugin.json` — version + metadata; `agents/`, `skills/`, `README.md`, `CLAUDE.md` (optional); `rules/`, `hooks/` — foundry only (exception: `bridge_cc-codex/rules/` = packaged contract docs pinned by its tests, not Claude-loaded rules)
-- `bin/` — standalone executables (`.py`, ≥3.10 — never `.sh`, see §Installability), auto-added to Bash `PATH`, invoked via `python "${CLAUDE_PLUGIN_ROOT}/bin/<script>.py"`. Scope: deterministic transforms only — decision flow/branching/agent-dispatch stays in SKILL.md prose. Full language policy: `AUTHORING.md` §bin/ Language Policy.
+- `bin/` — standalone executables (`.py`, ≥3.10, see §Installability), auto-added to Bash `PATH`, invoked via `python "${CLAUDE_PLUGIN_ROOT}/bin/<script>.py"`. Scope: deterministic transforms only — decision flow/branching/agent-dispatch stays in SKILL.md prose. Full language policy: `AUTHORING.md` §bin/ Language Policy. Narrow bootstrap exception: shared POSIX `bin/python`, native Windows `bin/python.cmd`, and Codemap runtime launchers select and validate Python before Python code can run; application logic stays in Python, with arguments, streams, and exit status preserved and no workload retries.
 - Inline SKILL.md blocks: bash default; Python only when bash needs JSON parsing, multi-line strings, or numeric computation (`Bash(python:*)` not allow-listed — prompts every call).
 - `references/<agent>/*.md` — agent sidecar fragments, loaded via `cat`. **Never nest under `agents/`** (registers as an uncontrolled dispatchable agent) or `bin/` (PATH-scanned); `skills/<name>/` is safe. Mechanism: `AUTHORING.md` §references/<agent> Nesting Mechanism.
 

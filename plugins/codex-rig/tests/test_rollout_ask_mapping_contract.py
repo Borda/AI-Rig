@@ -107,7 +107,7 @@ def test_loop_skills_run_targeted_tests_and_the_full_suite_once() -> None:
     native = _text("shared/native-skill-contract.md")
     remediate = _text("skills/code-remediate/SKILL.md")
 
-    assert "python PLUGIN_ROOT/shared/test_targets.py --help" in native
+    assert "PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/test_targets.py --help" in native
     assert "Never run the full suite per finding, per fix, or per loop iteration" in native
     assert "never run the full suite per finding or per group" in remediate
     assert "The full suite runs exactly once, at the step 09 gate, with the repository's own settings" in remediate

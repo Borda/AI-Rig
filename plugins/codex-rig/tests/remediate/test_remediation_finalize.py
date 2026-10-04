@@ -240,7 +240,7 @@ def test_skill_routes_bookkeeping_through_the_derivation_helper() -> None:
     assert "repair every listed error in one round from its hint, then rerun `finalize`" in skill
     assert "Never hand-copy a derived field." in skill
     assert "one `remediation_finalize.py finalize --promote` call" in skill
-    assert "python PLUGIN_ROOT/shared/remediation_finalize.py --help" in contract
+    assert "PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/remediation_finalize.py --help" in contract
     assert "`--all-errors`" in contract
 
 

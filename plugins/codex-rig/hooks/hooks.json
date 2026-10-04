@@ -5,8 +5,8 @@
       {
         "hooks": [
           {
-            "command": "python3 \"$PLUGIN_ROOT/hooks/session_start.py\"",
-            "commandWindows": "python \"$env:PLUGIN_ROOT\\hooks\\session_start.py\"",
+            "command": "\"$PLUGIN_ROOT/bin/python\" \"$PLUGIN_ROOT/hooks/session_start.py\"",
+            "commandWindows": "& \"$env:PLUGIN_ROOT\\bin\\python.cmd\" \"$env:PLUGIN_ROOT\\hooks\\session_start.py\"; exit $LASTEXITCODE",
             "statusMessage": "Checking Codex Rig shim health",
             "timeout": 30,
             "type": "command"

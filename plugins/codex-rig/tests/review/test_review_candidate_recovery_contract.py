@@ -61,7 +61,9 @@ def test_review_and_remediation_routes_remain_distinct_during_incomplete_handoff
     assert "it does not call `gh pr checkout`" in prompt
     assert "continue current-online/user findings" in incomplete_handoff
     assert "requested report obligation open" in incomplete_handoff
-    assert "continue independently authorized current-online/user findings" in readme.lower()
+    assert "missing requested pr review decision" in incomplete_handoff
+    assert "only after an explicit continue choice" in incomplete_handoff
+    assert "fresh review" in readme.lower()
     assert "requested report obligation open" in readme.lower()
     assert "silently switch to online-only remediation" not in readme.lower()
 
@@ -162,7 +164,10 @@ def test_execution_failure_cannot_be_reclassified_as_inapplicable() -> None:
     assert "execution failure never makes an applicable check `not-applicable`" in quality
     assert "archive runner-owned receipts under `gate-attempts/<NNN>`" in quality
     assert "reject failed-to-skipped reclassification" in quality
-    assert "rerun the full review from remediation, or fall back to an older assessed report" in remediation
+    assert (
+        "rerun the full review without the explicit authorization below, or fall back to an older assessed report"
+        in remediation
+    )
     assert "continue independently authorized source-verified remediation" in remediation
 
 

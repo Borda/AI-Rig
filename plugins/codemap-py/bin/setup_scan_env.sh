@@ -12,4 +12,4 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec python3 "${SCRIPT_DIR}/setup_scan_env.py" "$@"
+exec "${SCRIPT_DIR}/python" "${SCRIPT_DIR}/setup_scan_env.py" "$@"

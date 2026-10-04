@@ -12,10 +12,11 @@ The contract has three parts:
   non-blocking.
 * Each plugin with node hooks registers one ``SessionStart`` check that reports a missing Node.js once per session, so
   the silent skip never hides that the guards are inactive.
-* Python hooks prefer ``python`` (a Windows ``python3`` may be the Microsoft Store stub) and fall back to ``python3``.
+* Codemap hooks share its validated CPython launchers; native Windows uses ``codemap-py.cmd``.
+* Standalone plugin ``bin/python`` and ``bin/python.cmd`` validate Python 3.10+ before executing the workload once.
 
-Codex hook files (``codex-hooks.json``, Codex-only plugins) are out of scope: Codex runs ``python3`` on POSIX and a
-separate ``commandWindows`` form.
+Codex hook registrations use separate POSIX and native Windows forms. Codemap config coverage lives in its plugin tests;
+the standalone launchers include the Codex Rig copy here.
 """
 
 from __future__ import annotations
@@ -25,20 +26,18 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGINS_DIR = REPO_ROOT / "plugins"
+_POSIX_SHELL = shutil.which("sh")
 
 _NODE_PROBE = 'for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v "$n" >/dev/null 2>&1 && '
 _NODE_HOOK = re.compile(
     re.escape(_NODE_PROBE) + r'exec "\$n" "\$\{CLAUDE_PLUGIN_ROOT\}/hooks/[^"\s]+\.js"; done; exit 0'
-)
-_PYTHON_HOOK = re.compile(
-    r'if command -v python >/dev/null 2>&1; then exec python (?P<s>"\$\{CLAUDE_PLUGIN_ROOT\}/hooks/[^"\s]+\.py"); '
-    r"else exec python3 (?P=s); fi"
 )
 _NODE_CHECK = re.compile(
     re.escape(_NODE_PROBE)
@@ -86,8 +85,11 @@ def test_every_script_hook_uses_an_interpreter_fallback(hook_file: Path) -> None
     offenders = [
         command
         for _, command in _commands(hook_file)
-        if "${CLAUDE_PLUGIN_ROOT}/hooks/" in command
-        and not (_NODE_HOOK.fullmatch(command) or _PYTHON_HOOK.fullmatch(command))
+        if ("${CLAUDE_PLUGIN_ROOT}/hooks/" in command or "${CLAUDE_PLUGIN_ROOT}/bin/codemap-py" in command)
+        and not (
+            _NODE_HOOK.fullmatch(command)
+            or re.fullmatch(r'exec "\$\{CLAUDE_PLUGIN_ROOT\}/bin/codemap-py" --run-hook [a-z-]+\.py', command)
+        )
     ]
     assert offenders == []
 
@@ -174,3 +176,101 @@ def test_python_fallback_is_checked_out_with_lf_on_every_host() -> None:
     if result.returncode != 0:
         pytest.skip("not a git checkout")
     assert result.stdout.splitlines() == [f"{shim}: eol: lf" for shim in shims]
+
+
+@pytest.mark.skipif(_POSIX_SHELL is None, reason="needs a POSIX shell")
+@pytest.mark.parametrize(
+    "plugin", ["cc_foundry", "cc_oss", "cc_develop", "cc_research", "codemap-py", "bridge_cc-codex", "codex-rig"]
+)
+def test_python_fallback_finds_versioned_only_runtime(plugin: str, tmp_path: Path) -> None:
+    """An installed shim starts without bare python3 and rejects a lying candidate name."""
+    runtime = tmp_path / "python3.12"
+    runtime.write_text(f'#!/bin/sh\nexec "{Path(sys.executable).as_posix()}" "$@"\n', encoding="utf-8", newline="\n")
+    runtime.chmod(0o755)
+    old = tmp_path / "python3.20"
+    old.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8", newline="\n")
+    old.chmod(0o755)
+    result = subprocess.run(
+        [
+            _POSIX_SHELL,
+            (PLUGINS_DIR / plugin / "bin" / "python").as_posix(),
+            "-c",
+            "import sys; print(sys.argv[1]); print(sys.stdin.read()); print('error', file=sys.stderr); sys.exit(23)",
+            "space argument",
+        ],
+        input="payload",
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PATH": tmp_path.as_posix()},
+    )
+    assert result.returncode == 23, result.stderr
+    assert result.stdout == "space argument\npayload\n"
+    assert result.stderr == "error\n"
+
+
+@pytest.mark.skipif(_POSIX_SHELL is None, reason="needs a POSIX shell")
+def test_python_fallback_skips_self_and_does_not_leak_probe_guard(tmp_path: Path) -> None:
+    """Self discovery terminates, and private probe state never reaches the workload."""
+    shutil.copy2(PLUGINS_DIR / "cc_foundry" / "bin" / "python", tmp_path / "python")
+    runtime = tmp_path / "python3.12"
+    runtime.write_text(f'#!/bin/sh\nexec "{Path(sys.executable).as_posix()}" "$@"\n', encoding="utf-8", newline="\n")
+    runtime.chmod(0o755)
+    result = subprocess.run(
+        [
+            _POSIX_SHELL,
+            (tmp_path / "python").as_posix(),
+            "-c",
+            "import os; print(os.environ.get('AI_RIG_PYTHON_PROBE', 'absent'))",
+        ],
+        env={**os.environ, "PATH": tmp_path.as_posix()},
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert (result.returncode, result.stdout, result.stderr) == (0, "absent\n", "")
+
+
+@pytest.mark.skipif(_POSIX_SHELL is None, reason="needs a POSIX shell")
+def test_python_fallback_no_runtime_has_bounded_diagnostic(tmp_path: Path) -> None:
+    """An empty PATH fails without a bootstrap traceback or repeated workload."""
+    result = subprocess.run(
+        [
+            _POSIX_SHELL,
+            (PLUGINS_DIR / "cc_foundry" / "bin" / "python").as_posix(),
+            "-c",
+            "raise AssertionError('must not run')",
+        ],
+        env={**os.environ, "PATH": tmp_path.as_posix()},
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 127
+    assert result.stdout == ""
+    assert result.stderr == "python: no Python 3.10+ found on PATH (python3, python3.10-python3.20); install one\n"
+
+
+@pytest.mark.skipif(shutil.which("cmd") is None, reason="needs native Windows cmd")
+def test_native_windows_python_launcher_preserves_workload(tmp_path: Path) -> None:
+    """A real cmd process runs the installed launcher without any POSIX shell."""
+    script = tmp_path / "work load.py"
+    script.write_text(
+        "import sys\nprint(sys.argv[1]); print(sys.stdin.read()); print('error', file=sys.stderr); sys.exit(23)\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    launcher = tmp_path / "python.cmd"
+    shutil.copy2(PLUGINS_DIR / "codex-rig" / "bin" / "python.cmd", launcher)
+    command = f'""{launcher}" "{script}" "space argument""'
+    result = subprocess.run(
+        [shutil.which("cmd"), "/d", "/s", "/c", command],
+        input="payload",
+        env={**os.environ, "PATH": str(Path(sys.executable).parent)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode, result.stdout, result.stderr) == (23, "space argument\npayload\n", "error\n")

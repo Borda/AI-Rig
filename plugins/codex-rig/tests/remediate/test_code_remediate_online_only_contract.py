@@ -50,16 +50,18 @@ def test_missing_findings_source_does_not_fail_bare_pr_route() -> None:
         in skill
     )
     assert "Explain that first" in skill
-    assert "Inspect that run's classified error and retained checkout diagnostics, perform permitted recovery" in skill
+    assert "Inspect that run's classified error and retained checkout diagnostics" in skill
 
 
 def test_requested_review_does_not_replace_primary_remediation() -> None:
-    """Prevent unavailable report intake from authorizing another review wave."""
+    """Require the user's review decision before replacing requested PR evidence."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     intake = skill.split("### 02: Normalize input", maxsplit=1)[1].split("### 03:", maxsplit=1)[0]
 
     assert "`+review` requests existing review evidence; it does not authorize a fresh code review" in intake
-    assert "Continue independently authorized current-online or user-supplied findings" in intake
+    assert "Missing requested PR review decision" in intake
+    assert "before online/user/preliminary finding intake, selection, or edits" in intake
+    assert "Do not silently continue remediation with the requested review obligation open" in intake
     assert "Remediation resumes only after the producer completes" not in intake
     assert "or switch to online-only intake" not in intake
     assert "complete its ordered artifact closure before intake" not in intake
@@ -78,11 +80,50 @@ def test_preliminary_findings_keep_source_and_completion_boundaries() -> None:
     assert "Do not manufacture an assessed JSON report" in skill
 
 
-def test_missing_report_asks_only_for_missing_findings_or_selection() -> None:
-    """Keep auxiliary reviewer setup out of the user's remediation decision."""
+def test_missing_report_blocks_until_the_fresh_review_decision() -> None:
+    """Prevent available online comments from bypassing the requested-review decision."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     fail_fast = skill.split("## Fail-fast Rules", maxsplit=1)[1].split("## Quality Gates", maxsplit=1)[0]
 
     assert "ask only for the missing finding evidence or selection" in skill
     assert "run `$code-review <target>` first or provide a report path" not in fail_fast
-    assert "missing requested report stops only dependent report intake" in fail_fast
+    assert "Missing requested PR review decision" in fail_fast
+    assert "before any available-finding continuation" in fail_fast
+
+
+def test_missing_requested_pr_review_has_explicit_yes_no_and_pending_routes() -> None:
+    """Keep review authorization, declined review and unanswered review distinct."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    decision = skill.split("### Missing requested PR review decision", maxsplit=1)[1].split(
+        "### Preliminary finding intake", maxsplit=1
+    )[0]
+
+    assert "`mode=pr` and `REQUESTED_REPORT=true`" in decision
+    assert "explicit PR report paths" in decision
+    assert "Run a fresh code review now before remediation?" in decision
+    assert "Run fresh code review (Recommended)" in decision
+    assert "Continue with available findings" in decision
+    assert "single question/menu" in decision
+    assert "do not duplicate them in context prose" in decision
+    assert "normal full `code-review` workflow" in decision
+    assert "both artifact validators, promotion and `--complete-run`" in decision
+    assert "resume this same remediation run" in decision
+    assert "only after an eligible completed result is admitted" in decision
+    assert "`requested_report=true`" in decision
+    assert "missing/cancelled answer leaves this decision pending" in decision
+    assert "Tool acceptance, silence or an unrelated answer does not authorize continuation" in decision
+    assert "Bare PR online-only intake does not ask this question" in decision
+
+
+def test_requested_review_sibling_routes_cannot_bypass_decision() -> None:
+    """Make incomplete, unavailable and candidate evidence pass the same checkpoint."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    incomplete = skill.split("- `matching-review-incomplete:", maxsplit=1)[1].split("\n- ", maxsplit=1)[0]
+    missing = skill.split("- When `REQUESTED_REPORT=true`", maxsplit=1)[1].split("\n- ", maxsplit=1)[0]
+    candidate = skill.split("For `matching-review-candidate-unpromoted:", maxsplit=1)[1].split(
+        "### Missing requested PR review decision", maxsplit=1
+    )[0]
+
+    for route in (incomplete, missing, candidate):
+        assert "Missing requested PR review decision" in route
+    assert "then continue available current-online/user finding intake" not in missing

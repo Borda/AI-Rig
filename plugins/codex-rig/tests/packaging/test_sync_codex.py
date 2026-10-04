@@ -69,94 +69,6 @@ def test_sync_rejects_python39_before_tomli_check(monkeypatch: pytest.MonkeyPatc
     assert "tomli" not in str(raised.value)
 
 
-_POSIX_SHIM_ONLY = pytest.mark.skipif(sys.platform == "win32", reason="the python shim is written only on POSIX hosts")
-
-
-def _python_host(tmp_path: Path, *names: str) -> dict[str, str]:
-    """Return an environ whose PATH holds exactly ``names``, each linked to this interpreter."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    for name in names:
-        (bin_dir / name).symlink_to(sys.executable)
-    return {"HOME": str(tmp_path / "home"), "PATH": str(bin_dir)}
-
-
-def _probe_run(returncode: int) -> Callable[..., subprocess.CompletedProcess[str]]:
-    """Answer the interpreter version probe with ``returncode`` and reject every other command."""
-
-    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        """Return the scripted probe result for a ``python3 -c`` call."""
-        assert command[1] == "-c", command
-        return subprocess.CompletedProcess(command, returncode, "", "")
-
-    return run
-
-
-@_POSIX_SHIM_ONLY
-def test_python_shim_targets_absolute_python3_and_runs(tmp_path: Path) -> None:
-    """A host with only python3 gets an executable python shim pinned to the python3 found during sync."""
-    module = _load_sync()
-    environ = _python_host(tmp_path, "python3")
-    out = io.StringIO()
-
-    module._ensure_python_command(_probe_run(0), environ, out)
-
-    shim = tmp_path / "home" / ".local" / "bin" / "python"
-    assert f'exec "{tmp_path / "bin" / "python3"}" "$@"' in shim.read_text(encoding="utf-8")
-    ran = subprocess.run([str(shim), "-c", "print('shim-ok')"], capture_output=True, text=True, check=False)
-    assert (ran.returncode, ran.stdout) == (0, "shim-ok\n")
-    assert "[ok] python shim" in out.getvalue()
-    assert 'export PATH="$HOME/.local/bin:$PATH"' in out.getvalue()
-
-
-@pytest.mark.parametrize(
-    ("names", "probe_code", "message"),
-    [
-        pytest.param(("python", "python3"), 0, "", id="python-present"),
-        pytest.param(("python3",), 1, "cannot start", id="python3-too-old"),
-        pytest.param((), 0, "cannot start", id="no-interpreter"),
-    ],
-)
-@_POSIX_SHIM_ONLY
-def test_python_shim_is_not_written_without_a_usable_gap(
-    tmp_path: Path, names: tuple[str, ...], probe_code: int, message: str
-) -> None:
-    """An existing python, or no Python 3.10+ python3 to point at, leaves the home untouched."""
-    module = _load_sync()
-    out = io.StringIO()
-
-    module._ensure_python_command(_probe_run(probe_code), _python_host(tmp_path, *names), out)
-
-    assert not (tmp_path / "home").exists()
-    assert message in out.getvalue() if message else out.getvalue() == ""
-
-
-@_POSIX_SHIM_ONLY
-def test_python_shim_never_replaces_a_foreign_python(tmp_path: Path) -> None:
-    """A ``~/.local/bin/python`` that sync did not write survives, and the conflict is reported."""
-    module = _load_sync()
-    environ = _python_host(tmp_path, "python3")
-    foreign = tmp_path / "home" / ".local" / "bin" / "python"
-    foreign.parent.mkdir(parents=True)
-    foreign.write_text('#!/bin/sh\nexec /opt/custom/python "$@"\n', encoding="utf-8")
-    out = io.StringIO()
-
-    module._ensure_python_command(_probe_run(0), environ, out)
-
-    assert foreign.read_text(encoding="utf-8") == '#!/bin/sh\nexec /opt/custom/python "$@"\n'
-    assert "is not a sync shim; left unchanged" in out.getvalue()
-
-
-def test_python_shim_needs_home_and_path() -> None:
-    """Without a host environment to inspect, the step neither probes nor writes."""
-    module = _load_sync()
-    out = io.StringIO()
-
-    module._ensure_python_command(_probe_run(0), {}, out)
-
-    assert out.getvalue() == ""
-
-
 def _load_sync() -> ModuleType:
     """Load the packaged sync entrypoint without package imports."""
     if str(SCRIPTS_DIR) not in sys.path:
@@ -297,6 +209,8 @@ def test_native_sync_refreshes_latest_and_installs_global_instructions(tmp_path:
     )
 
     assert result == 0
+    assert calls[0] == ("python", "--version")
+    assert calls.count(("python", "--version")) == 1
     for _display_name, plugin_id in module.MANAGED_PLUGINS:
         remove_call = ("codex", "plugin", "remove", plugin_id)
         add_call = ("codex", "plugin", "add", plugin_id)
@@ -385,6 +299,71 @@ def test_native_sync_rejects_bridge_python_below_minimum(tmp_path: Path) -> None
         )
 
     assert not any(call[-2:] == ("--direction", "claude") for call in calls)
+    assert calls == [("python", "--version")]
+
+
+@pytest.mark.parametrize(
+    ("version", "returncode"),
+    [
+        pytest.param("", 127, id="python-unavailable"),
+        pytest.param("unrecognized version", 0, id="python-version-invalid"),
+        pytest.param("Python 3.9.19", 0, id="python-too-old"),
+    ],
+)
+def test_sync_mcp_python_prerequisite_precedes_marketplace_mutations(
+    tmp_path: Path, version: str, returncode: int
+) -> None:
+    """Fail install before marketplace writes without creating a home interpreter."""
+    module = _load_sync()
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Reject any operation beyond the fixed MCP interpreter version probe."""
+        calls.append(command)
+        assert command == ["python", "--version"]
+        return subprocess.CompletedProcess(command, returncode, version, "")
+
+    home = tmp_path / "home"
+    with pytest.raises(module.SyncError, match="Python 3.10 or newer"):
+        module.sync_codex(module.parse_args([]), run=run, environ={"HOME": str(home)}, stdout=io.StringIO())
+    assert calls == [["python", "--version"]]
+    assert not home.exists()
+
+
+def test_sync_missing_python_executable_stops_before_marketplace() -> None:
+    """Treat an absent MCP launcher as a prerequisite failure without a fallback."""
+    module = _load_sync()
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Simulate an unavailable python command at the real process boundary."""
+        calls.append(command)
+        raise FileNotFoundError("python")
+
+    with pytest.raises(module.SyncError, match="Python 3.10 or newer"):
+        module.sync_codex(module.parse_args([]), run=run, environ={}, stdout=io.StringIO())
+    assert calls == [["python", "--version"]]
+
+
+def test_sync_python310_version_on_stderr_satisfies_mcp_prerequisite(tmp_path: Path) -> None:
+    """Allow the minimum supported launcher without creating a home shim."""
+    module = _load_sync()
+    root = _marketplace_fixture(tmp_path)
+    calls: list[tuple[str, ...]] = []
+    external = _fake_runner(root, calls)
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Return the minimum supported version through stderr, then perform sync."""
+        if command == ["python", "--version"]:
+            calls.append(tuple(command))
+            return subprocess.CompletedProcess(command, 0, "", "Python 3.10.0\n")
+        return external(command, **kwargs)
+
+    home = tmp_path / "home"
+    assert module.sync_codex(module.parse_args([]), run=run, environ={"HOME": str(home)}, stdout=io.StringIO()) == 0
+    assert calls[0] == ("python", "--version")
+    assert calls.count(("python", "--version")) == 1
+    assert not home.exists()
 
 
 def test_native_sync_rejects_failed_bridge_static_diagnosis(tmp_path: Path) -> None:
@@ -631,6 +610,8 @@ def test_native_sync_requires_both_managed_plugins_after_install(tmp_path: Path)
         """Return deterministic marketplace and plugin-list responses for restore checks."""
         rendered = tuple(str(item) for item in command)
         calls.append(rendered)
+        if rendered == ("python", "--version"):
+            return subprocess.CompletedProcess(command, 0, "Python 3.12.0\n", "")
         if rendered[1:5] == ("plugin", "marketplace", "list", "--json"):
             payload = {"marketplaces": [{"name": "borda-ai-rig", "root": str(root)}]}
             return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")

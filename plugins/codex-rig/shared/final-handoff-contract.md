@@ -9,7 +9,7 @@
 | `challenge-resolve` | [Challenge handoff](final-handoff-challenge-resolve.md) |
 | `release` | [Release handoff](final-handoff-release.md) |
 
-The post-gate presentation checkpoint makes the workflow's final user-facing structure executable. Artifact workflows must write `<run-directory>/final-handoff.json`, render it with `python PLUGIN_ROOT/shared/final_handoff.py render --handoff <run-directory>/final-handoff.json --out-final <run-directory>/final.md --out-validation <run-directory>/final-handoff.validation.json`, bind returned digests under `result.metadata.final_handoff`, pass all skill-specific and shared artifact validators, promote the candidate, then emit validated `final.md` bytes verbatim. Never manually reconstruct or summarize the response after validation.
+The post-gate presentation checkpoint makes the workflow's final user-facing structure executable. Artifact workflows must write `<run-directory>/final-handoff.json`, render it with `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/final_handoff.py render --handoff <run-directory>/final-handoff.json --out-final <run-directory>/final.md --out-validation <run-directory>/final-handoff.validation.json`, bind returned digests under `result.metadata.final_handoff`, pass all skill-specific and shared artifact validators, promote the candidate, then emit validated `final.md` bytes verbatim. Never manually reconstruct or summarize the response after validation.
 
 Rendered section and table labels use portable Markdown bold text such as `**Outcome**` and `**Verification**`. Never emit ATX/Setext headings, ANSI color escapes, or renderer-specific HTML styling; final reports must stay compact and readable in monochrome terminals, saved Markdown, plain logs.
 

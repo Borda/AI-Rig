@@ -12,32 +12,49 @@ if not defined CODEMAP_PYTHON goto :defaults
 set "OVERRIDE_CALL="
 if /I "%CODEMAP_PYTHON:~-4%"==".bat" set "OVERRIDE_CALL=call"
 if /I "%CODEMAP_PYTHON:~-4%"==".cmd" set "OVERRIDE_CALL=call"
-%OVERRIDE_CALL% "%CODEMAP_PYTHON%" -c "%PROBE%" >nul 2>&1
+%OVERRIDE_CALL% "%CODEMAP_PYTHON%" -c "%PROBE%" <nul >nul 2>&1
 if errorlevel 1 goto :nointerp
 %OVERRIDE_CALL% "%CODEMAP_PYTHON%" "%ENTRY%" %*
 exit /b %errorlevel%
 
-:defaults
-py -3 -c "%PROBE%" >nul 2>&1
-if not errorlevel 1 goto :run_py3
-python.exe -c "%PROBE%" >nul 2>&1
-if not errorlevel 1 goto :run_python
-python3.exe -c "%PROBE%" >nul 2>&1
-if not errorlevel 1 goto :run_python3
-goto :nointerp
 
+:defaults
+for %%V in (3.14 3.13 3.12 3.11) do (
+    py -%%V -c "%PROBE%" <nul >nul 2>&1
+    if not errorlevel 1 (
+        set "PY_VERSION=%%V"
+        goto :run_py_version
+    )
+)
+py -3 -c "%PROBE%" <nul >nul 2>&1
+if not errorlevel 1 goto :run_py3
+python.exe -c "%PROBE%" <nul >nul 2>&1
+if not errorlevel 1 goto :run_python
+python3.exe -c "%PROBE%" <nul >nul 2>&1
+if not errorlevel 1 goto :run_python3
+for %%V in (3.14 3.13 3.12 3.11) do (
+    python%%V.exe -c "%PROBE%" <nul >nul 2>&1
+    if not errorlevel 1 (
+        set "PY_VERSION=%%V"
+        goto :run_python_version
+    )
+)
+goto :nointerp
+:run_py_version
+py -%PY_VERSION% "%ENTRY%" %*
+exit /b %errorlevel%
+:run_python_version
+python%PY_VERSION%.exe "%ENTRY%" %*
+exit /b %errorlevel%
 :run_py3
 py -3 "%ENTRY%" %*
 exit /b %errorlevel%
-
 :run_python
 python.exe "%ENTRY%" %*
 exit /b %errorlevel%
-
 :run_python3
 python3.exe "%ENTRY%" %*
 exit /b %errorlevel%
-
 :nointerp
 echo codemap-py: no eligible CPython ^>=3.11,^<3.15 interpreter ^(set CODEMAP_PYTHON^) 1>&2
 exit /b 127

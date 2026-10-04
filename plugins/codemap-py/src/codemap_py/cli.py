@@ -107,9 +107,9 @@ def candidate_interpreters(env: Mapping[str, str], platform: str) -> list[list[s
 
     Examples:
         >>> candidate_interpreters({}, "linux")
-        [['python3'], ['python']]
-        >>> candidate_interpreters({}, "win32")
-        [['py', '-3'], ['python.exe'], ['python3.exe']]
+        [['python3'], ['python'], ['python3.14'], ['python3.13'], ['python3.12'], ['python3.11']]
+        >>> candidate_interpreters({}, "win32")[0]
+        ['py', '-3.14']
         >>> candidate_interpreters({"CODEMAP_PYTHON": "/x/py"}, "linux")
         [['/x/py']]
     """
@@ -117,8 +117,13 @@ def candidate_interpreters(env: Mapping[str, str], platform: str) -> list[list[s
     if override:
         return [[override]]
     if platform == "win32":
-        return [["py", "-3"], ["python.exe"], ["python3.exe"]]
-    return [["python3"], ["python"]]
+        return [["py", f"-3.{minor}"] for minor in range(14, 10, -1)] + [
+            ["py", "-3"],
+            ["python.exe"],
+            ["python3.exe"],
+            *[[f"python3.{minor}.exe"] for minor in range(14, 10, -1)],
+        ]
+    return [["python3"], ["python"], *[[f"python3.{minor}"] for minor in range(14, 10, -1)]]
 
 
 def _probe_version(executable: Sequence[str]) -> ProbeResult | None:

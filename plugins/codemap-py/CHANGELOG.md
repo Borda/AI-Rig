@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.40.5
+
+- Probe portable POSIX and native Windows Python launchers before executing workloads; hook entry points require Python 3.11–3.14 and dispatch only supported hook basenames.
+- Keep one user-question delivery owner and inspect directly exposed tools alongside deferred native forms; verified host rendering and lifetime gate async use.
+
 ## 0.40.4
 
 - Run Claude hooks with `python3` when no `python` command exists, so hooks no longer fail with `python: command not found` on stock macOS; `python` stays preferred.

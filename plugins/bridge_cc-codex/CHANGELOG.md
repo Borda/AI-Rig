@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.5
+
+- Probe Python 3.10+ at the portable POSIX and native Windows launch boundary before executing workloads once.
+- Keep one user-question delivery owner and discover directly exposed tools as well as deferred native forms before fallback.
+
 ## 0.6.4
 
 - Ship `bin/python`, a fallback `python` command that runs the newest Python 3.10+ `python3` on hosts without `python`; plugin `bin/` follows the system directories on PATH, so a real `python` always wins.

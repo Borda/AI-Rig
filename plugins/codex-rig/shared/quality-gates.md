@@ -86,10 +86,10 @@ Configured agents require:
 
 ## Execution helpers
 
-- Use `python PLUGIN_ROOT/shared/run_gates.py` to execute five checks consistently.
+- Use `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gates.py` to execute five checks consistently.
 - Use executable `PLUGIN_ROOT/shared/write-result.py` to write canonical JSON result payloads.
 - Use `PLUGIN_ROOT/shared/final_handoff.py` and `final-handoff-contract.md` after gates to validate and render exact final-response structure. This checkpoint is not sixth gate; its failure blocks result promotion.
-- Use `python PLUGIN_ROOT/shared/collect_diff.py` to collect scope-aware git diff artifacts consistently.
+- Use `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/collect_diff.py` to collect scope-aware git diff artifacts consistently.
 - `github_read.py` is plugin-wide GitHub data boundary. Use it for all issue/release/repository reads and explicit GraphQL query for Discussions; use `collect_pr.py --checkout` for complete PR evidence. Never invoke `gh` directly. The broker prefers authenticated `gh` but never inspects credentials; it permits only audited built-in view groups (`gist`, `issue`, `pr`, `project`, `release`, `repo`, `ruleset`, `run`, `workflow`), REST GET, GraphQL query argv, persists no CLI failure output. Its public `api.github.com` fallback is unauthenticated, cannot replace private-only evidence, so complete PR collection fails closed if its review-thread query cannot run. `gh pr checkout` changes only local checkout. Codex Git marketplace add/upgrade remains separately authorized lifecycle operation.
 - Apply `native-skill-contract.md` Networked CLI Approval to each intentional shell-network path: keep persistent workspace networking disabled and approve complete owning command, not only nested executable.
 - PR checkout/update artifacts never record `git`/`gh` `--force`; force needs stop-and-ask confirmation with overwrite-risk rationale first.

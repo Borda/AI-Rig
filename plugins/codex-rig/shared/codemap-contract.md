@@ -23,7 +23,7 @@ Independent read-only queries may run concurrently as separate standalone comman
 Invocation:
 
 ```
-python PLUGIN_ROOT/shared/codemap_adapter.py context --category <analysis|implementation|review|audit> \
+PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category <analysis|implementation|review|audit> \
   [--query-kind <skip|central|callers|blast|dependencies|test-impact|coupling|standard>] \
   [--target <qname>] [--root <path>] --out <run-directory>/codemap-context.json
 ```

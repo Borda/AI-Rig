@@ -51,9 +51,9 @@ If mode is unsupported, explain which supplied value is invalid and list accepte
 
 ### 03: Capture scope and source inventory before drawing conclusions
 
-Use `python PLUGIN_ROOT/shared/collect_diff.py --help`; collect `working-tree` into `<run-directory>/baseline`. Scan references separately; record failed diff collection.
+Use `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/collect_diff.py --help`; collect `working-tree` into `<run-directory>/baseline`. Scan references separately; record failed diff collection.
 
-**Structural context (optional)**: for `local`/`ecosystem` scope naming Python module or symbol, probe codemap-py once: `python PLUGIN_ROOT/shared/codemap_adapter.py context --category analysis [--target <qname>] --out <run-directory>/codemap-context.json`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with evidence above. Persist result once here; step 05 specialist fan-out consumes `<run-directory>/codemap-context.json`, never fresh query.
+**Structural context (optional)**: for `local`/`ecosystem` scope naming Python module or symbol, probe codemap-py once: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category analysis [--target <qname>] --out <run-directory>/codemap-context.json`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with evidence above. Persist result once here; step 05 specialist fan-out consumes `<run-directory>/codemap-context.json`, never fresh query.
 
 ### 04: Gather evidence with a ledger. Write `<run-directory>/evidence.md` with one row per claim:
 

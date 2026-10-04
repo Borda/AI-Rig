@@ -92,13 +92,13 @@ codex '$codemap-py:query-code rdeps mypackage.auth'
 <details>
 <summary><strong>Show package identity, architecture, and health behavior</strong></summary>
 
-Codex Rig is the independently packaged `codex-rig` product. The selected source manifest identifies the version and fifteen capabilities (fourteen workflow skills plus `agent-shims`), fifteen role cards, parallel blank-agent injection, inline fallback, quality gates, optional Codemap-py context, authenticated cleanup for prior shims, and an optional SessionStart diagnostic. The manifest does not register native persistent agents or an MCP server.
+Codex Rig is the independently packaged `codex-rig` product. The selected source manifest identifies the version and fifteen capabilities (fourteen workflow skills plus `agent-shims`), fifteen role cards, parallel blank-agent injection, inline fallback, quality gates, optional Codemap-py context, authenticated cleanup for prior shims, and an optional SessionStart diagnostic. The manifest registers the local native-question MCP provider and does not register native persistent agents.
 
 Its shipped tree is organized as `.codex-plugin/plugin.json`, `skills/`, `roles/`, `shared/`, `runtime/calibration/`, `hooks/`, `scripts/`, `tests/`, and `package-manifest.json`. The installed cache is immutable input: workflows resolve their own installed root and do not patch the cache or copy repository source into it.
 
-`hooks/hooks.json` declares a read-only `SessionStart` command for `startup|resume`. It invokes the package's shim-health diagnostic with `python3` on POSIX and `python` on Windows, and does not install, update, or remove files. Declining hook trust leaves the diagnostic inactive without disabling skills.
+`hooks/hooks.json` declares a read-only `SessionStart` command for `startup|resume`. It invokes the package's shim-health diagnostic through bundled `bin/python` on POSIX and `bin/python.cmd` on native Windows, and does not install, update, or remove files. Declining hook trust leaves the diagnostic inactive without disabling skills.
 
-Codemap-py is a separate `codemap-py` package. Its selected Codex manifest identifies the version, the `codex-skills/` entry point, and six structural-analysis capabilities. Codex receives those skills but no Codemap hook manifest: there is no ambient preamble, hook-seeded session correlation, or redundant-scan guard. Codemap remains optional and Codex Rig starts without it.
+Codemap-py is a separate `codemap-py` package. Its selected Codex manifest identifies the version, the `codex-skills/` entry point, and six structural-analysis capabilities. Codex receives those skills plus hooks for ambient preamble, session correlation, redundant-scan guarding and tool records; native Windows commands use `bin/codemap-py.cmd`, and POSIX commands use `bin/codemap-py`. Codemap remains optional and Codex Rig starts without it.
 
 bridge_CC-Codex is a separate `bridge` package shared by Claude Code and Codex. Its Codex half contributes four skills and a stdio MCP declaration. The MCP server is mandatory for Codex → Claude Code because it runs in the host context that owns normal Claude authentication; it does not accept model-controlled workspace, background, or session authority.
 

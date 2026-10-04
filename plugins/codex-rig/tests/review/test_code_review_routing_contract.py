@@ -29,7 +29,7 @@ class TestPrArtifactPathContract:
     def test_promotes_after_authoritative_collection(self) -> None:
         """Prevent path promotion before current-branch PR identity is known."""
         skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
-        collection = "For PR scope, inspect `python PLUGIN_ROOT/shared/collect_pr.py --help`"
+        collection = "For PR scope, inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/collect_pr.py --help`"
         promotion = "create_run.py --skill code-review --promote-pr-run <run-directory>"
 
         assert skill.index(collection) < skill.index(promotion)
@@ -1058,7 +1058,7 @@ def test_schema_three_binds_pass_to_the_exact_packaged_role_card(tmp_path: Path)
 def test_skill_requires_deterministic_routing_synchronization_before_specialists() -> None:
     """Keep the producer workflow bound to the same mechanical evidence used by validation."""
     skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
-    invocation = "python PLUGIN_ROOT/skills/code-review/review_routing.py --out <run-directory>"
+    invocation = "PLUGIN_ROOT/bin/python PLUGIN_ROOT/skills/code-review/review_routing.py --out <run-directory>"
 
     assert invocation in skill
     manifest_path = "`<run-directory>/specialist-manifest.json`"

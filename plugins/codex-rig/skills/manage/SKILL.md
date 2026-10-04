@@ -55,9 +55,9 @@ The frozen `<run-directory>/execution-plan.json` must include exact `consumer_po
 
 Bootstrap exception: run-directory creation (Step 01), the `inventory.txt`/`references.txt`/`ownership.md` writes from Step 03, and the `write-approval.json` write itself are exempt from requiring a prior approved plan digest — these precursor writes must exist before a plan digest can be computed or approved.
 
-Before dispatch, run `python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer manage --plan <run-directory>/execution-plan.json --approval <run-directory>/write-approval.json`; append `--execution=<mode>` only for explicit invocation value. Omit `--approval` when no parent writes are planned or effective execution is serial and no approval was supplied. Resolve host fallback before deciding whether the parallel route needs a receipt. A nonzero result stops route.
+Before dispatch, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer manage --plan <run-directory>/execution-plan.json --approval <run-directory>/write-approval.json`; append `--execution=<mode>` only for explicit invocation value. Omit `--approval` when no parent writes are planned or effective execution is serial and no approval was supplied. Resolve host fallback before deciding whether the parallel route needs a receipt. A nonzero result stops route.
 
-After every spawned child reaches a terminal handoff, run `python PLUGIN_ROOT/shared/parallel_execution.py validate-runtime --consumer manage --manifest <run-directory>/execution-manifest.json --plan <run-directory>/execution-plan.json --parent-rollout <authoritative-parent-rollout> --sessions-dir <authoritative-sessions-directory> --run-dir <run-directory> --roles-dir PLUGIN_ROOT/roles`. Require `runtime_promotion_eligible=true`, `consumer_id=manage`, and `write_parallel_eligible=false`. Run the same preflight again after the terminal join and before the first parent mutation. Any plan, approval, consumer, runtime, or join drift stops mutation and requires a new frozen plan plus exact approval.
+After every spawned child reaches a terminal handoff, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py validate-runtime --consumer manage --manifest <run-directory>/execution-manifest.json --plan <run-directory>/execution-plan.json --parent-rollout <authoritative-parent-rollout> --sessions-dir <authoritative-sessions-directory> --run-dir <run-directory> --roles-dir PLUGIN_ROOT/roles`. Require `runtime_promotion_eligible=true`, `consumer_id=manage`, and `write_parallel_eligible=false`. Run the same preflight again after the terminal join and before the first parent mutation. Any plan, approval, consumer, runtime, or join drift stops mutation and requires a new frozen plan plus exact approval.
 
 ### Serial parent decisions
 
@@ -130,7 +130,7 @@ For broad changes with separable config, docs, calibration, or verification work
 
 ### 07: Run shared quality gates
 
-Inspect `python PLUGIN_ROOT/shared/run_gates.py --help`. Supply real affected-surface commands and explicit reasons for every inapplicable gate; never use `true` as skip reason. Review includes clean diff check.
+Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gates.py --help`. Supply real affected-surface commands and explicit reasons for every inapplicable gate; never use `true` as skip reason. Review includes clean diff check.
 
 ### 08: Write mandatory result artifact
 

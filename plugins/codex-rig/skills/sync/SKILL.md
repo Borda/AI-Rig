@@ -81,7 +81,7 @@ The native sync wrapper verifies selected source package hashes/closure and requ
 After successful managed-plugin installation, resolve active installed Codex Rig cache root and invoke the packaged profile helper:
 
 ```bash
-python <installed-codex-rig-cache-root>/scripts/install_github_read_rules.py \
+<installed-codex-rig-cache-root>/bin/python <installed-codex-rig-cache-root>/scripts/install_github_read_rules.py \
   --plugin-root <installed-codex-rig-cache-root> --codex-home <CODEX_HOME>
 ```
 

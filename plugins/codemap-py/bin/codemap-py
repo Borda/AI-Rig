@@ -3,7 +3,7 @@
 # single Python entry. No install, no Bash dependency, no shell-command mode.
 set -u
 
-HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
+HERE="$(CDPATH= cd -- "${0%/*}" && pwd -P)"
 ROOT="$(CDPATH= cd -- "$HERE/.." && pwd -P)"
 ENTRY="$ROOT/scripts/codemap_py_entry.py"
 PROBE='import sys;v=sys.version_info;raise SystemExit(0 if sys.implementation.name=="cpython" and v.major==3 and 11<=v.minor<15 else 127)'
@@ -13,12 +13,12 @@ PROBE='import sys;v=sys.version_info;raise SystemExit(0 if sys.implementation.na
 # single argv element so a path containing spaces is not word-split (F9); the
 # multi-word `py -3` form applies only to the Windows built-ins in the .cmd.
 if [ -n "${CODEMAP_PYTHON:-}" ]; then
-  if "$CODEMAP_PYTHON" -c "$PROBE" >/dev/null 2>&1; then
+  if "$CODEMAP_PYTHON" -c "$PROBE" </dev/null >/dev/null 2>&1; then
     exec "$CODEMAP_PYTHON" "$ENTRY" "$@"
   fi
 else
-  for PY in python3 python; do
-    if command -v "$PY" >/dev/null 2>&1 && "$PY" -c "$PROBE" >/dev/null 2>&1; then
+  for PY in python3 python python3.14 python3.13 python3.12 python3.11; do
+    if command -v "$PY" >/dev/null 2>&1 && "$PY" -c "$PROBE" </dev/null >/dev/null 2>&1; then
       exec "$PY" "$ENTRY" "$@"
     fi
   done

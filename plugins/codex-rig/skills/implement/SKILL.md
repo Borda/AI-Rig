@@ -61,9 +61,9 @@ The frozen `<run-directory>/execution-plan.json` must include exact `consumer_po
 
 Bootstrap exception: run-directory creation (Step 01), baseline diff/branch persistence (Step 02), and the `write-approval.json` write itself are exempt from requiring a prior approved plan digest — these precursor writes must exist before a plan digest can be computed or approved.
 
-Before dispatch, run `python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer implement --plan <run-directory>/execution-plan.json --approval <run-directory>/write-approval.json`; append `--execution=<mode>` only for explicit invocation value. Omit `--approval` when no parent writes are planned or effective execution is serial and no approval was supplied. Resolve host fallback before deciding whether the parallel route needs a receipt. A nonzero result stops route.
+Before dispatch, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer implement --plan <run-directory>/execution-plan.json --approval <run-directory>/write-approval.json`; append `--execution=<mode>` only for explicit invocation value. Omit `--approval` when no parent writes are planned or effective execution is serial and no approval was supplied. Resolve host fallback before deciding whether the parallel route needs a receipt. A nonzero result stops route.
 
-After every spawned child reaches a terminal handoff, run `python PLUGIN_ROOT/shared/parallel_execution.py validate-runtime --consumer implement --manifest <run-directory>/execution-manifest.json --plan <run-directory>/execution-plan.json --parent-rollout <authoritative-parent-rollout> --sessions-dir <authoritative-sessions-directory> --run-dir <run-directory> --roles-dir PLUGIN_ROOT/roles`. Require `runtime_promotion_eligible=true`, `consumer_id=implement`, and `write_parallel_eligible=false`. Run the same preflight again after the terminal join and before the first parent mutation. Any plan, approval, consumer, runtime, or join drift stops mutation and requires a new frozen plan plus exact approval.
+After every spawned child reaches a terminal handoff, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py validate-runtime --consumer implement --manifest <run-directory>/execution-manifest.json --plan <run-directory>/execution-plan.json --parent-rollout <authoritative-parent-rollout> --sessions-dir <authoritative-sessions-directory> --run-dir <run-directory> --roles-dir PLUGIN_ROOT/roles`. Require `runtime_promotion_eligible=true`, `consumer_id=implement`, and `write_parallel_eligible=false`. Run the same preflight again after the terminal join and before the first parent mutation. Any plan, approval, consumer, runtime, or join drift stops mutation and requires a new frozen plan plus exact approval.
 
 ### Serial parent decisions
 
@@ -95,7 +95,7 @@ Run `create_run.py --skill implement` per `../../shared/helper-cli-contract.md`.
 
 Run `git rev-parse --abbrev-ref HEAD` as argv command and write stdout to `<run-directory>/branch.txt`.
 
-Inspect `python PLUGIN_ROOT/shared/collect_diff.py --help`; collect `working-tree` into `<run-directory>/baseline`.
+Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/collect_diff.py --help`; collect `working-tree` into `<run-directory>/baseline`.
 
 ### 03: Route the change type and define ownership
 
@@ -109,7 +109,7 @@ Modes:
 
 Define narrowest reversible change, owners, acceptance. For 3+ steps/design tradeoffs, update plan before edit.
 
-**Structural context (optional)**: select one task-neutral route at decision point, then invoke adapter once: `python PLUGIN_ROOT/shared/codemap_adapter.py context --category implementation --query-kind <kind> [--target <qname>] --out <run-directory>/codemap-context.json`. Use `skip` for exact localized edit with no unresolved structural fact, matching single route (`central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling`) for one unresolved fact, and `standard` for broad or unknown scope. Map direct, all, or production caller questions to `callers`; use `blast` only for explicitly transitive caller questions. An explicit user or tool request for structural evidence overrides `skip`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with routing above. Persist result once here, before step 05 implementation; step 06 specialist fan-out consumes `<run-directory>/codemap-context.json`, never fresh query.
+**Structural context (optional)**: select one task-neutral route at decision point, then invoke adapter once: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category implementation --query-kind <kind> [--target <qname>] --out <run-directory>/codemap-context.json`. Use `skip` for exact localized edit with no unresolved structural fact, matching single route (`central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling`) for one unresolved fact, and `standard` for broad or unknown scope. Map direct, all, or production caller questions to `callers`; use `blast` only for explicitly transitive caller questions. An explicit user or tool request for structural evidence overrides `skip`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with routing above. Persist result once here, before step 05 implementation; step 06 specialist fan-out consumes `<run-directory>/codemap-context.json`, never fresh query.
 
 ### 04: Run the anti-rationalization gate before editing
 
@@ -174,7 +174,7 @@ Required sections:
 
 ### 08: Run shared quality gates
 
-Inspect `python PLUGIN_ROOT/shared/run_gates.py --help`, then run all project-relevant gates with explicit commands or skip reasons.
+Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gates.py --help`, then run all project-relevant gates with explicit commands or skip reasons.
 
 ### 09: Review the changed files and the gate output before deciding pass/fail
 

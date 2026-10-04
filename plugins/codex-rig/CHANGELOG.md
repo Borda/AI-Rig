@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.32.5
+
+- Run helper recipes through the packaged launch boundary, preserving `python` command text while probing eligible runtimes on Linux, macOS and native Windows.
+- Keep one native user-question control responsible for each live question and choices; inspect directly exposed and deferred tools, and require verified async rendering and lifetime before fallback.
+- Ask once when a requested PR review is missing: run a fresh review before remediation or continue with available findings while preserving the open review obligation; unanswered decisions keep dependent work pending.
+- Handle Windows batch launchers safely during Codex sync and preserve native subprocess exit behavior.
+
 ## 0.32.4
 
 - Supply a workspace default when installing opt-in permission profiles, repair verified older installations, and preserve explicit user defaults and reversible cleanup.

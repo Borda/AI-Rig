@@ -313,6 +313,18 @@ MANIFEST: list[dict[str, object]] = [
             "plugins/cc_research/bin/python",
             "plugins/codemap-py/bin/python",
             "plugins/bridge_cc-codex/bin/python",
+            "plugins/codex-rig/bin/python",
+        ],
+    },
+    {
+        "canonical": "plugins/cc_foundry/bin/python.cmd",
+        "copies": [
+            "plugins/cc_oss/bin/python.cmd",
+            "plugins/cc_develop/bin/python.cmd",
+            "plugins/cc_research/bin/python.cmd",
+            "plugins/codemap-py/bin/python.cmd",
+            "plugins/bridge_cc-codex/bin/python.cmd",
+            "plugins/codex-rig/bin/python.cmd",
         ],
     },
     {

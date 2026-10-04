@@ -21,6 +21,7 @@ Examples:
 from __future__ import annotations
 
 import sys
+import os
 from pathlib import Path
 
 # Interpreter bound is duplicated (not imported) so the gate runs *before* any
@@ -65,6 +66,20 @@ def main() -> int:
         return _INTERPRETER_EXIT
 
     root = Path(__file__).resolve().parents[1]
+    if len(sys.argv) >= 2 and sys.argv[1] == "--run-hook":
+        # Only shipped hooks enter this path; no arbitrary script execution API.
+        hooks = {
+            "record-exhausted.py",
+            "log-tool-use.py",
+            "log-skill-start.py",
+            "guard-redundant-scan.py",
+            "seed-session.py",
+            "inject-preamble.py",
+        }
+        if len(sys.argv) != 3 or sys.argv[2] not in hooks:
+            sys.stderr.write("codemap-py: --run-hook requires a shipped hook basename\n")
+            return 2
+        os.execv(sys.executable, [sys.executable, str(root / "hooks" / sys.argv[2])])
     src = root / "src"
     if src.is_dir():
         entry = str(src)

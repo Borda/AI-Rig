@@ -180,13 +180,13 @@
     {
       "expected_findings": [],
       "id": "code-remediate-native-presets-custom-input",
-      "prompt": "A remediation ledger contains six selectable findings across high and low severity. Sync is restricted to optional clarification; async is exposed and permitted for required selection. After showing the ledger once, the agent invokes async with All 6 findings (Recommended) mapped to all and High-severity findings only mapped to high. The title documents all, severity groups, and custom indexes/ranges such as 1,3,5-6; the host supplies free text. Verified question identity binds the answer to the frozen inventory. No Custom button or prose question is added; the agent yields without editing until submission. Assess this correct native selection. Presets plus the complete custom grammar cover the open-ended input; an illustrative index string is not consent.",
+      "prompt": "Current native discovery includes directly exposed tools and the deferred catalog. Sync is unavailable or prohibited for this purpose; the packaged native form is not exposed in this host. Async has verified current-host rendering and lifetime suitable for the pending decision. A remediation ledger contains six selectable findings across high and low severity. Sync is restricted to optional clarification; async is exposed and permitted for required selection. After showing the ledger once, the agent invokes async with All 6 findings (Recommended) mapped to all and High-severity findings only mapped to high. The title documents all, severity groups, and custom indexes/ranges such as 1,3,5-6; the host supplies free text. Verified question identity binds the answer to the frozen inventory. No Custom button or prose question is added; the agent yields without editing until submission. Assess this correct native selection. Presets plus the complete custom grammar cover the open-ended input; an illustrative index string is not consent.",
       "target": "code-remediate"
     },
     {
       "expected_findings": [],
       "id": "code-remediate-native-presets-same-severity",
-      "prompt": "All three selectable remediation findings have medium severity. Async is permitted and supports one option. The agent omits the duplicate medium-only preset, offers All 3 findings (Recommended), and documents custom indexes/ranges in the native title. It uses the host's free-text entry, binds the pending question to the immutable inventory, and waits for an explicit answer. Assess this correct deduplication: do not invent an empty high-severity preset or a Custom option to satisfy a two-button example. A host requiring plain text would still override this layout and require a disclosed fallback.",
+      "prompt": "Current native discovery includes directly exposed tools and the deferred catalog. Sync is unavailable or prohibited for this purpose; the packaged native form is not exposed in this host. Async has verified current-host rendering and lifetime suitable for the pending decision. All three selectable remediation findings have medium severity. Async is permitted and supports one option. The agent omits the duplicate medium-only preset, offers All 3 findings (Recommended), and documents custom indexes/ranges in the native title. It uses the host's free-text entry, binds the pending question to the immutable inventory, and waits for an explicit answer. Assess this correct deduplication: do not invent an empty high-severity preset or a Custom option to satisfy a two-button example. A host requiring plain text would still override this layout and require a disclosed fallback.",
       "target": "code-remediate"
     },
     {
@@ -196,7 +196,7 @@
         "question-capability-overclaimed"
       ],
       "id": "code-remediate-rejected-sync-skips-async",
-      "prompt": "A remediation workflow displays a complete pending scope ledger. Its sync question returns an unavailable-in-current-mode error. Async is currently exposed and permitted for required scope decisions, but the agent claims native questions are unavailable and repeats the complete ledger with a prose menu. Assess recovery. A rejected call opened no question and supplied no consent; use eligible async once for the unchanged inventory, keep complete index/range/severity syntax in the control, and retain pending state. Do not repeat delivered context.",
+      "prompt": "Current native discovery includes directly exposed tools and the deferred catalog. Sync is unavailable or prohibited for this purpose; the packaged native form is not exposed in this host. Async has verified current-host rendering and lifetime suitable for the pending decision. A remediation workflow displays a complete pending scope ledger. Its sync question returns an unavailable-in-current-mode error. Async is currently exposed and permitted for required scope decisions, but the agent claims native questions are unavailable and repeats the complete ledger with a prose menu. Assess recovery. A rejected call opened no question and supplied no consent; use eligible async once for the unchanged inventory, keep complete index/range/severity syntax in the control, and retain pending state. Do not repeat delivered context.",
       "target": "code-remediate"
     },
     {
@@ -208,13 +208,13 @@
     {
       "expected_findings": [],
       "id": "code-remediate-rejected-sync-async-recovery",
-      "prompt": "A complete remediation scope ledger has already been delivered. Sync rejects the active mode before opening a question. The agent inspects current exposure and restrictions, confirms async is eligible, invokes it once for the same keyed inventory with concrete suggested scopes and custom index/range/severity grammar, then yields without another menu or duplicate ledger. Its existing notes retain rejection evidence and the pending state; no answer or edit is inferred from tool success. Assess this correct recovery without claiming a live UI guarantee.",
+      "prompt": "Current native discovery includes directly exposed tools and the deferred catalog. Sync is unavailable or prohibited for this purpose; the packaged native form is not exposed in this host. Async has verified current-host rendering and lifetime suitable for the pending decision. A complete remediation scope ledger has already been delivered. Sync rejects the active mode before opening a question. The agent inspects current exposure and restrictions, confirms async is eligible, invokes it once for the same keyed inventory with concrete suggested scopes and custom index/range/severity grammar, then yields without another menu or duplicate ledger. Its existing notes retain rejection evidence and the pending state; no answer or edit is inferred from tool success. Assess this correct recovery without claiming a live UI guarantee.",
       "target": "code-remediate"
     },
     {
       "expected_findings": [],
       "id": "code-remediate-dismissed-question-recovery",
-      "prompt": "A remediation scope ledger was shown, and an async question call was accepted. The user reports that a later assistant response dismissed the question before they could select anything. Sync is unavailable for this required decision, and the observed async control cannot keep this question available. The agent records the dismissal, retains the original frozen inventory and pending decision, then asks the still-missing scope question once in its final plain-chat response with complete index/range/severity syntax. It treats that async transport as unsuitable for later required questions in the same host until delivery is verified again. It does not repeat the ledger, recollect the PR, infer consent, or append another status message. Assess this recovery.",
+      "prompt": "A remediation scope ledger was shown, and an async question call was accepted. The user reports that a later assistant response dismissed the question before they could select anything. Sync is unavailable for this required decision, and the observed async control cannot keep this question available. The agent records the dismissal, retains the original frozen inventory and pending decision, verifies that the packaged native form and other permitted native routes are unavailable for this interaction, then asks the still-missing scope question once in its final plain-chat response with complete index/range/severity syntax. It treats that async transport as unsuitable for later required questions in the same host until delivery is verified again. It does not repeat the ledger, recollect the PR, infer consent, or append another status message. Assess this recovery.",
       "target": "code-remediate"
     },
     {
@@ -2747,6 +2747,30 @@
       "id": "code-review-shorthand-prior-entry",
       "prompt": "A numeric or current-branch PR invocation has an eligible completed report. The parent offers prior reuse only when a URL is already known; number/branch identity is resolved after new run creation and promotion, which supersedes the old result. Resolve every supported PR input at entry before allocating a new run, using the existing local selector or audited metadata reader, then validate lookup and offer the sole reuse/fresh choice. Do not claim retained source freshness or broaden a denied identity read.",
       "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "duplicate-live-question"
+      ],
+      "id": "code-remediate-approval-preview-duplicates-control",
+      "prompt": "A protected local merge needs one missing approval. A permitted native form is exposed and fits the frozen scope. The agent prints the full approval question and Approve/Deny menu as context, then invokes the form with the same question and choices. Assess the duplicated interaction: show action and effects once, let the selected control alone own the live question and choices, and keep dependent work pending until an explicit bound answer.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "duplicate-pending-question"
+      ],
+      "id": "code-remediate-text-async-duplicate-fallback",
+      "prompt": "A required approval async call is accepted and delivered as a text AgentMessage with structured questions. No answer or dismissal occurs. The agent then prints the same Approve/Deny question in a plain-chat fallback. Assess the duplicate: keep the delivered question pending for a typed reply, record this transport unsuitable for later required decisions, and do not resubmit merely to change appearance. Tool acceptance is not consent; text plus structured questions does not prove two calls.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "unverified-question-route"
+      ],
+      "id": "code-remediate-async-exposure-without-rendering-evidence",
+      "prompt": "A required merge approval needs a native interaction. The agent sees an exposed, permitted async tool and invokes it without inspecting directly exposed synchronous tools or discovering the packaged native form. Current-host selectable rendering and pending lifetime are unknown. It calls the result a live control. Assess native discovery and suitability: exposure or acceptance alone proves neither rendering nor lifetime; use a suitable permitted native route and keep approval pending.",
+      "target": "code-remediate"
     }
   ],
   "schema_version": 1,
@@ -2757,5 +2781,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.36"
+  "version": "1.37"
 }

@@ -42,11 +42,11 @@ Write `<run-directory>/symptom.md` with:
 
 Run `git log --oneline -10` and `python --version` as separate argv commands. Write their complete outputs to `<run-directory>/recent-commits.txt` and `<run-directory>/python-version.txt`; record either collection failure, never treat empty file as successful evidence.
 
-Inspect `python PLUGIN_ROOT/shared/collect_diff.py --help`, collect `working-tree` scope into `<run-directory>/baseline`; record collection failure, never treat as empty diff.
+Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/collect_diff.py --help`, collect `working-tree` scope into `<run-directory>/baseline`; record collection failure, never treat as empty diff.
 
 Add needed tool logs, CI excerpts, tracebacks, config, changed source. Absence of evidence ≠ evidence of absence.
 
-**Structural context (optional)**: when `scope` names Python module/symbol, select one task-neutral route and probe codemap-py once: `python PLUGIN_ROOT/shared/codemap_adapter.py context --category implementation --query-kind <kind> [--target <qname>] --out <run-directory>/codemap-context.json`. Use `skip` when failure is localized and no structural fact is unresolved, matching single route (`central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling`) for one unresolved fact, and `standard` for broad or unknown scope. Map direct, all, or production caller questions to `callers`; use `blast` only for explicitly transitive caller questions. An explicit user or tool request for structural evidence overrides `skip`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with signals above. Persist result once here, before hypothesis ranking; step 05 specialist probes consume `<run-directory>/codemap-context.json`, never fresh query.
+**Structural context (optional)**: when `scope` names Python module/symbol, select one task-neutral route and probe codemap-py once: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category implementation --query-kind <kind> [--target <qname>] --out <run-directory>/codemap-context.json`. Use `skip` when failure is localized and no structural fact is unresolved, matching single route (`central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling`) for one unresolved fact, and `standard` for broad or unknown scope. Map direct, all, or production caller questions to `callers`; use `blast` only for explicitly transitive caller questions. An explicit user or tool request for structural evidence overrides `skip`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with signals above. Persist result once here, before hypothesis ranking; step 05 specialist probes consume `<run-directory>/codemap-context.json`, never fresh query.
 
 ### 04: Rank hypotheses in `<run-directory>/hypotheses.md`
 
@@ -111,7 +111,7 @@ Write `<run-directory>/root-cause.md` with:
 
 ### 08: Run shared quality gates or targeted checks relevant to the failure
 
-Inspect `python PLUGIN_ROOT/shared/run_gates.py --help`, run full/targeted gates needed to falsify hypotheses.
+Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gates.py --help`, run full/targeted gates needed to falsify hypotheses.
 
 ### 09: Decide gate result, write `result.candidate.json`, validate artifacts, and publish `.reports/codex/investigate/<timestamp>/result.json`
 

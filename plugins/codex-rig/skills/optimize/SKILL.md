@@ -68,7 +68,7 @@ For `campaign`, noisy metrics, GPU/ML performance, or correctness-sensitive code
 
 No fan-out for one small measured change with stable metric/guard. Never let specialist change metric/guard scripts unless explicitly in `scope_files` and measurement-integrity risk recorded.
 
-**Structural context (optional)**: when `scope_files` resolves to Python module/symbol, select one task-neutral route and probe codemap-py once before first iteration: `python PLUGIN_ROOT/shared/codemap_adapter.py context --category implementation --query-kind <kind> [--target <qname>] --out <run-directory>/codemap-context.json`. Use `skip` for exact localized optimization with no unresolved structural fact, matching single route (`central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling`) for one unresolved fact, `standard` for broad or unknown scope. Map direct, all, or production caller questions to `callers`; use `blast` only for explicitly transitive caller questions. An explicit user or tool request for structural evidence overrides `skip`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with hypothesis above. Persist result once here, before step 04 applies any change; any triggered specialist consumes `<run-directory>/codemap-context.json`, never fresh query.
+**Structural context (optional)**: when `scope_files` resolves to Python module/symbol, select one task-neutral route and probe codemap-py once before first iteration: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category implementation --query-kind <kind> [--target <qname>] --out <run-directory>/codemap-context.json`. Use `skip` for exact localized optimization with no unresolved structural fact, matching single route (`central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling`) for one unresolved fact, `standard` for broad or unknown scope. Map direct, all, or production caller questions to `callers`; use `blast` only for explicitly transitive caller questions. An explicit user or tool request for structural evidence overrides `skip`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with hypothesis above. Persist result once here, before step 04 applies any change; any triggered specialist consumes `<run-directory>/codemap-context.json`, never fresh query.
 
 Initialize machine-readable iteration log:
 
@@ -118,7 +118,7 @@ Append one JSON object/iteration to `<run-directory>/experiments.jsonl`:
 
 ### 08: Run shared quality gates
 
-Inspect `python PLUGIN_ROOT/shared/run_gates.py --help`. Tests runs configured test or guard command; give real commands or explicit reasons for other gates.
+Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gates.py --help`. Tests runs configured test or guard command; give real commands or explicit reasons for other gates.
 
 ### 09: Write and validate the mandatory result artifact
 

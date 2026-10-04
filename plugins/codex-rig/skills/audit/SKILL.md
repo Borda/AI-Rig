@@ -104,13 +104,13 @@ For material prompt compression, `challenger` must independently inspect obligat
 
 ### 06: Run shared quality gates
 
-Follow `../../shared/helper-cli-contract.md` and `python PLUGIN_ROOT/shared/run_gates.py --help`. Use project-configured lint, format, type, test commands for discovered surfaces, explicit reasons for inapplicable gates, clean diff review.
+Follow `../../shared/helper-cli-contract.md` and `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gates.py --help`. Use project-configured lint, format, type, test commands for discovered surfaces, explicit reasons for inapplicable gates, clean diff review.
 
 ### 07: Detect drift and broken references
 
 Run `rg -n` for `config_file|skills/|roles/|quality-gates|run_gates.py|write-result.py` over existing `AGENTS.md`, `.codex`, `.agents`, and optional target. Write results to `<run-directory>/reference-scan.txt`; record missing inputs or command failure explicitly.
 
-**Structural context (optional)**: when audited scope contains Python package, also probe codemap-py once for undocumented public surface and externally-uncalled modules: `python PLUGIN_ROOT/shared/codemap_adapter.py context --category audit --out <run-directory>/codemap-context.json`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with reference scan above, using persisted evidence as additional signal, never replacement for it.
+**Structural context (optional)**: when audited scope contains Python package, also probe codemap-py once for undocumented public surface and externally-uncalled modules: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category audit --out <run-directory>/codemap-context.json`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with reference scan above, using persisted evidence as additional signal, never replacement for it.
 
 ### 08: Audit spawn-pattern coverage and overlap in `AGENTS.md` (instruction-level check)
 

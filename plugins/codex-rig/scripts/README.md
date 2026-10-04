@@ -1,5 +1,7 @@
 # 🧰 Codex Rig Scripts
 
+Packaged script examples use the explicit launcher described in [Helper CLI Contract](../shared/helper-cli-contract.md).
+
 `scripts/` holds every executable and library module Codex Rig plugin needs to build, validate, install, and run itself. It contains seven public/maintainer CLI entry points, one import-only role generator, and nine underscore-prefixed internal helpers.
 
 <details open>
@@ -48,7 +50,7 @@ usage: build_package.py [-h] (--check | --update)
 **How-to:**
 
 ```bash
-python3 plugins/codex-rig/scripts/build_package.py --update
+plugins/codex-rig/bin/python plugins/codex-rig/scripts/build_package.py --update
 ```
 
 **When-to-use:** After adding, removing, or editing any packaged file (a `ROLE.md`, skill, script) — run `--update` to refresh manifest, then `--check` in CI or pre-commit to confirm manifest still matches tree. The repository's `codex-rig-package-manifest` pre-commit hook also runs `--update` for matching plugin changes.
@@ -73,7 +75,7 @@ Takes no flags beyond `-h`; it always runs full validation pass.
 **How-to:**
 
 ```bash
-python3 plugins/codex-rig/scripts/validate_package.py
+plugins/codex-rig/bin/python plugins/codex-rig/scripts/validate_package.py
 ```
 
 **When-to-use:** Before release, or any time `build_package.py --check` alone isn't enough reassurance — this catches closure problems (manifest entry pointing at file that doesn't exist, role card with mismatched hash) that plain hash-diff would miss.
@@ -104,7 +106,7 @@ usage: install_global_agents.py [-h] [--source SOURCE] --codex-home CODEX_HOME
 **How-to:**
 
 ```bash
-python3 plugins/codex-rig/scripts/install_global_agents.py \
+plugins/codex-rig/bin/python plugins/codex-rig/scripts/install_global_agents.py \
     --source plugins/codex-rig/assets/AGENTS.md --codex-home ~/.codex
 ```
 
@@ -128,9 +130,9 @@ This helper installs the managed Codex-home `github-read` permission profile des
 **Usage:**
 
 ```bash
-python3 <installed-codex-rig-cache-root>/scripts/install_github_read_rules.py \
+<installed-codex-rig-cache-root>/bin/python <installed-codex-rig-cache-root>/scripts/install_github_read_rules.py \
     --plugin-root <installed-codex-rig-cache-root> --codex-home ~/.codex
-python3 <installed-codex-rig-cache-root>/scripts/install_github_read_rules.py \
+<installed-codex-rig-cache-root>/bin/python <installed-codex-rig-cache-root>/scripts/install_github_read_rules.py \
     --remove --codex-home ~/.codex
 ```
 
@@ -164,8 +166,8 @@ Each action returns one deterministic JSON object on stdout. `doctor` and `statu
 **How-to:**
 
 ```bash
-python3 plugins/codex-rig/scripts/manage_role_agents.py doctor
-python3 plugins/codex-rig/scripts/manage_role_agents.py remove
+plugins/codex-rig/bin/python plugins/codex-rig/scripts/manage_role_agents.py doctor
+plugins/codex-rig/bin/python plugins/codex-rig/scripts/manage_role_agents.py remove
 ```
 
 **When-to-use:** Run `doctor` any time you want read-only health check of shim roster (this is also what plugin's `startup`/`resume` hook runs automatically). Run `remove` to clean up thin shims left behind by prior development, especially before or after uninstalling plugin.
@@ -196,9 +198,9 @@ usage: sync_codex.py [-h] [--codex-ref CODEX_REF] [--no-clean]
 **How-to:**
 
 ```bash
-python3 plugins/codex-rig/scripts/sync_codex.py install
-python3 plugins/codex-rig/scripts/sync_codex.py install --no-clean
-python3 plugins/codex-rig/scripts/sync_codex.py clear
+plugins/codex-rig/bin/python plugins/codex-rig/scripts/sync_codex.py install
+plugins/codex-rig/bin/python plugins/codex-rig/scripts/sync_codex.py install --no-clean
+plugins/codex-rig/bin/python plugins/codex-rig/scripts/sync_codex.py clear
 ```
 
 **When-to-use:** The top-level entry point for getting Codex Rig, Codemap, and Bridge onto machine or off it — this is what repo's `Makefile` calls for Codex side of installation. Python 3.10 requires `tomli` in the invoking interpreter; sync checks this before either action can change local state. Install refreshes or registers canonical Git marketplace, verifies selected-source package hashes/closure and helper availability, then removes managed plugins by default, reinstalls them, and installs the `github-read` profile. Unsupported configured pins stop before marketplace/plugin mutation; newly registered sources are inspected before plugin removal/add. Clear removes the owned profile and managed global-instruction block before managed plugins. Use `--no-clean` to retain installed plugins before reinstalling without suppressing marketplace refresh, `--codex-ref` to pin specific marketplace ref instead of tracking default branch, and `--no-codex-global-agents` when you manage `CODEX_HOME/AGENTS.md` yourself and don't want `sync_codex.py` touching that file; it does not skip profile installation or removal. These remain `sync_codex.py`'s own CLI flags — Makefile's `install-codex-plugins` target simply calls it without passing any of them. Restart existing Codex sessions after sync.
@@ -225,7 +227,7 @@ All seven value flags are required. On success stdout starts with a protocol-1 o
 **How-to:** Internal — not invoked directly by maintainer. Every generated shim TOML already embeds its exact `argv` for this script; Codex itself runs that `argv` before trusting role. To reproduce shim's exact invocation for debugging, copy the `argv` JSON array out of shim's `developer_instructions` block and run it as-is:
 
 ```bash
-python3 plugins/codex-rig/scripts/verify_role_link.py --plugin-root /path/to/codex-rig \
+plugins/codex-rig/bin/python plugins/codex-rig/scripts/verify_role_link.py --plugin-root /path/to/codex-rig \
     --role sw-engineer --role-sha256 <sha> --manifest-sha256 <sha> --helper-sha256 <sha> \
     --codex-binary /path/to/codex --codex-sha256 <sha>
 ```
@@ -246,8 +248,8 @@ python3 plugins/codex-rig/scripts/verify_role_link.py --plugin-root /path/to/cod
 **Usage** (contract; the progress rendering is exercised by the adversarial-loop test suite):
 
 ```bash
-python3 plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --append --progress
-python3 plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --actions <run-directory>/loop-actions.json
+plugins/codex-rig/bin/python plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --append --progress
+plugins/codex-rig/bin/python plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --actions <run-directory>/loop-actions.json
 ```
 
 The progress table has exactly `Iteration | Critical | High | Medium | Low | Nits | Weighted score`. Every numeric cell is literal `old + new`: currently open signatures seen in any prior round, including signatures that were closed and later reopened, plus signatures first seen in the current round. Only `open` and `fixed-pending-verification` count; security and critical combine in the display, while scoring retains weights `20/10/6/4/2/1`. Invoke after each newly completed validated round; an empty ledger prints no progress table or unreviewed zero row. Feasible structural or repeated findings may continue when score and authority permit; plateau, nonconvergence, unavailable evidence, the third occurrence of the same open signature and stricter caller budgets still stop their affected routes. No arbitrary three-review cap applies to strictly decreasing unchanged-scope integer scores.

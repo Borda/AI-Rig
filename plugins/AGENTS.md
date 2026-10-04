@@ -73,6 +73,7 @@ Root `AGENTS.md` already applies here and is not restated: edit scope, core prin
 ## Python and `bin/` Policy
 
 - Python is the default `bin/` language and requires Python 3.10+, type hints, a module docstring, an `if __name__ == "__main__"` guard, and ruff-format at 120 columns.
+- Interpreter bootstrap exception: the shared `bin/python` POSIX shell launcher and native Windows `bin/python.cmd`, plus Codemap runtime launchers, may select and validate Python before any Python code can run. Keep application logic in Python; bootstrap preserves arguments, streams, and exit status without workload retries.
 - Pure functions use doctests; code that performs I/O, subprocesses, environment reads, or argv parsing uses pytest coverage in the adjacent `tests/` directory.
 - Use `bin/` only for deterministic transforms such as argument parsing, path resolution, or one-value computation.
 - Keep decision flow, branching prompts, and agent dispatch in SKILL.md prose.

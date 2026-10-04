@@ -12,6 +12,8 @@ Workflow helpers expose their current options through packaged `--help`. Skills 
 
 Review completion requires the full ordered closure after manifest preflight: render the handoff, write the candidate, pass review-specific and shared validation, promote the result, then pass the completion lookup before emitting its bound output. `+review` can discover the result after that closure succeeds; notes and unpromoted candidates remain ineligible. A failed applicable check remains failed until an equivalent canonical rerun succeeds; a launcher failure or direct-check receipt cannot justify `not-applicable`. Incomplete reviews resume at the first unmet checkpoint with retained evidence.
 
+When PR remediation explicitly requests a review report (including `+review`) and no eligible completed report exists, Codex asks whether to run a fresh review before continuing. Approval runs review through completion and resumes remediation; declining explicitly continues with available findings while retaining the missing-report obligation. An unanswered or dismissed question stays pending. Native question controls own the question and choices; commentary does not duplicate their menu.
+
 Frozen review context pages preserve exact UTF-8 bytes, including CRLF source, through dispatch, native stdout, and receipt validation on every supported host. Paged native review accepts an opaque launch message only when the exact recorded value binds uniquely to delivery in the correct child; launch controls, lineage, source-page reads and final-answer joins remain mandatory. Integer-second task starts retain their recorded precision when compared with fractional launch timestamps; floating-point starts retain strict comparison.
 
 Attached remediation checkout protects ignored local files against incoming file and directory replacements, including alternate spellings that identify the same filesystem entry. Distinct names on case-sensitive filesystems and unrelated hardlinks or symlinks remain permitted. Blocked checkout evidence remains eligible for an actionable unavailable-review handoff; it never certifies an assessed review.
@@ -442,7 +444,7 @@ Use `$codex-rig:assess` (or `$assess` when the alias is available) for evidence-
 The packaged runner supports plugin layout directly:
 
 ```bash
-python3 plugins/codex-rig/runtime/calibration/run.py --layout plugin --root .
+plugins/codex-rig/bin/python plugins/codex-rig/runtime/calibration/run.py --layout plugin --root .
 ```
 
 It validates packaged skills, role cards, shared contracts, behavior fixtures, accepted routing evidence, confidence scoring, and known workflow leaks. Plugin-layout calibration checks that all fifteen roles have a distinct related task cue in their `Trigger` lines; this verifies declared routing, while live use requires live observations. In a source checkout, calibration compares the shipped behavioral case file's integer `schema_version` with its own `HEAD` version; a new version family starts at 1 and an uncommitted edit may advance only one step. An installed cache reports that version check as skipped because its packaged fixture is immutable; source layout reports a missing `.codex` fixture as skipped. The offline CI harness shadows network and LLM commands, uses isolated home, and writes compact failure artifacts without contacting LLM.
@@ -620,14 +622,14 @@ Pure helper docstrings include deterministic doctests for calibration, telemetry
 From repository root:
 
 ```bash
-python3 plugins/codex-rig/scripts/build_package.py --update
-python3 plugins/codex-rig/scripts/build_package.py --check
-python3 plugins/codex-rig/scripts/validate_package.py
+plugins/codex-rig/bin/python plugins/codex-rig/scripts/build_package.py --update
+plugins/codex-rig/bin/python plugins/codex-rig/scripts/build_package.py --check
+plugins/codex-rig/bin/python plugins/codex-rig/scripts/validate_package.py
 python3 -m pytest -q plugins/codex-rig
 NO_MKDOCS_2_WARNING=1 python3 -m mkdocs build --strict
 ```
 
-On Windows, use `python` in place of `python3`; `build_package.py --check`, package validation, calibration, and tests are native. Authoritative manifest regeneration (`--update`) remains POSIX-only because released mode bits are part of package contract.
+Packaged helper recipes use the explicit launcher described in [Helper CLI Contract](https://github.com/Borda/AI-Rig/blob/main/plugins/codex-rig/shared/helper-cli-contract.md). On Windows, `build_package.py --check`, package validation, calibration, and tests are native. Authoritative manifest regeneration (`--update`) remains POSIX-only because released mode bits are part of package contract.
 
 The repository's `codex-rig-changelog-version` pre-commit hook requires an exact `## <version>` heading in `CHANGELOG.md` for the current `.codex-plugin/plugin.json` version. The heading may appear anywhere; the hook checks presence, not release-note content. This guard is pre-commit-only, not part of package validation or pytest.
 
@@ -639,7 +641,7 @@ The denial gate is deterministic and offline: it validates local JSON Lines tran
 
 ```bash
 python3 -m pytest -q plugins/codex-rig/tests/review/test_local_reviewer_denial_protocol.py
-python3 plugins/codex-rig/tests/local_reviewer_denial_probe.py --help
+plugins/codex-rig/bin/python plugins/codex-rig/tests/local_reviewer_denial_probe.py --help
 ```
 
 The installed-package-safe gate copies only manifest-declared payload into disposable cache and runs explicit package-safe test selection without checkout context (`Makefile`, `.github`, and `.git`). Run it with:
@@ -668,4 +670,4 @@ Audit optimization acceptance now validates retained schema-2 cost evidence, mat
 
 Review preparation requires an explicit complete nested boolean `signals` mapping and rejects malformed routing before rewriting it. Coverage failures report the exact missing diff and source paths so agent-owned input repairs can preserve the full requested scope. Large contexts use bounded source waves, interaction inspection and consolidation; each context includes its role card and stays within 65,536 UTF-8 bytes. Batched native replies use explicit individual-finding profile version one, including an empty inventory when clean. Assembly validates receipt-bound records, binds declared source coordinates to frozen hashes, generates global origin identities and retains every source, intermediate interaction and final finding in `source_findings`. Each unresolved individual maps through `source_finding_mapping` to an exact canonical obligation with original role attribution and source references; only exact duplicate obligations may share an action with every origin explicitly accounted for. A later clean assessment never removes a finding. Independent source-backed disposition witnesses are bounded; a witness that does not fit leaves the finding actionable. Ordinary unbatched native responses retain their existing format. Each wave binds the advisory choices for its actual roles while retaining the immutable global choice. Source intervals, constituent runtime provenance and interaction obligations remain validated. Context capacity does not silently narrow the review or turn a remediation request into reviewer setup.
 
-The native question provider requires Python 3.10 or newer available as `python` on the executable search path, matching its portable MCP command. A host with only `python3` and no `python` command cannot start this provider; retain the unresolved decision and use another permitted input route. Codex Rig sync (`sync_codex.py install`, run by `make sync-all`) writes `~/.local/bin/python` pointing at a Python 3.10+ `python3` when `python` is missing on macOS or Linux; it never replaces an existing `python`, and `~/.local/bin` must be on the search path Codex inherits.
+The native question provider requires Python 3.10 or newer available as `python` on the executable search path inherited by Codex, matching its direct MCP command. Bundled shell and hook launchers do not change that search path. Codex Rig sync validates this prerequisite and does not install a global interpreter shim. If the host cannot start the provider, keep the required decision unresolved and use another permitted input route only when available.

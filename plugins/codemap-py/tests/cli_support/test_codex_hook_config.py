@@ -31,8 +31,8 @@ def _command(script: str) -> dict:
     """
     return {
         "type": "command",
-        "command": f'env CODEMAP_RUNTIME=codex python3 "$PLUGIN_ROOT/hooks/{script}"',
-        "commandWindows": f"$env:CODEMAP_RUNTIME='codex'; python \"$env:PLUGIN_ROOT\\hooks\\{script}\"",
+        "command": f'CODEMAP_RUNTIME=codex "$PLUGIN_ROOT/bin/codemap-py" --run-hook {script}',
+        "commandWindows": f"$env:CODEMAP_RUNTIME='codex'; & \"$env:PLUGIN_ROOT\\bin\\codemap-py.cmd\" --run-hook {script}; exit $LASTEXITCODE",
     }
 
 
@@ -65,19 +65,11 @@ def test_claude_manifest_and_hook_runtime_remain_unchanged() -> None:
     assert "record-exhausted.py" in claude_config
 
 
-def test_claude_hook_commands_fall_back_to_python3_when_python_is_absent() -> None:
-    """Each Claude hook prefers ``python`` but must still run on hosts that ship only ``python3``.
-
-    Stock macOS has no ``python`` command, so a bare ``python`` hook fails with ``python: command not found``.
-    ``python`` stays first because a Windows ``python3`` may be the Microsoft Store stub.
-    """
+def test_claude_hooks_share_validated_codemap_launcher() -> None:
+    """Every hook validates the scanner's runtime before importing any handler."""
     config = _load("hooks/claude-hooks.json")
     commands = [hook["command"] for entries in config["hooks"].values() for entry in entries for hook in entry["hooks"]]
-
     assert commands
     for command in commands:
-        script = command.split("exec python ", 1)[1].split(";", 1)[0]
-        assert (
-            command
-            == f"if command -v python >/dev/null 2>&1; then exec python {script}; else exec python3 {script}; fi"
-        )
+        assert command.startswith('exec "${CLAUDE_PLUGIN_ROOT}/bin/codemap-py" --run-hook ')
+        assert command.endswith(".py")

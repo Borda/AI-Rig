@@ -5,11 +5,11 @@
       {
         "hooks": [
           {
-            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/record-exhausted.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/record-exhausted.py\"; fi",
+            "command": "exec \"${CLAUDE_PLUGIN_ROOT}/bin/codemap-py\" --run-hook record-exhausted.py",
             "type": "command"
           },
           {
-            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/log-tool-use.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/log-tool-use.py\"; fi",
+            "command": "exec \"${CLAUDE_PLUGIN_ROOT}/bin/codemap-py\" --run-hook log-tool-use.py",
             "type": "command"
           }
         ],
@@ -18,7 +18,7 @@
       {
         "hooks": [
           {
-            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/log-tool-use.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/log-tool-use.py\"; fi",
+            "command": "exec \"${CLAUDE_PLUGIN_ROOT}/bin/codemap-py\" --run-hook log-tool-use.py",
             "type": "command"
           }
         ],
@@ -27,7 +27,7 @@
       {
         "hooks": [
           {
-            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/record-exhausted.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/record-exhausted.py\"; fi",
+            "command": "exec \"${CLAUDE_PLUGIN_ROOT}/bin/codemap-py\" --run-hook record-exhausted.py",
             "type": "command"
           }
         ],
@@ -38,7 +38,7 @@
       {
         "hooks": [
           {
-            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/log-skill-start.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/log-skill-start.py\"; fi",
+            "command": "exec \"${CLAUDE_PLUGIN_ROOT}/bin/codemap-py\" --run-hook log-skill-start.py",
             "type": "command"
           }
         ],
@@ -47,7 +47,7 @@
       {
         "hooks": [
           {
-            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/guard-redundant-scan.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard-redundant-scan.py\"; fi",
+            "command": "exec \"${CLAUDE_PLUGIN_ROOT}/bin/codemap-py\" --run-hook guard-redundant-scan.py",
             "type": "command"
           }
         ],
@@ -58,7 +58,7 @@
       {
         "hooks": [
           {
-            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/seed-session.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/seed-session.py\"; fi",
+            "command": "exec \"${CLAUDE_PLUGIN_ROOT}/bin/codemap-py\" --run-hook seed-session.py",
             "type": "command"
           }
         ]
@@ -68,7 +68,7 @@
       {
         "hooks": [
           {
-            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/inject-preamble.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/inject-preamble.py\"; fi",
+            "command": "exec \"${CLAUDE_PLUGIN_ROOT}/bin/codemap-py\" --run-hook inject-preamble.py",
             "type": "command"
           }
         ]

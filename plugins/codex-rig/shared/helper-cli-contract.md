@@ -1,38 +1,40 @@
 # Helper CLI Contract
 
+Invoke packaged helpers through `PLUGIN_ROOT/bin/python`; on native Windows use `PLUGIN_ROOT/bin/python.cmd`. Quote resolved launcher and script paths for the host shell (PowerShell uses `&` before a quoted executable path). The launcher selects an available Python 3.10+ and preserves helper arguments and exit status.
+
 Helper option schemas live in `--help`, not skills. In plugin, derive `PLUGIN_ROOT` from selected `SKILL.md` path and require every helper in `package-manifest.json`; never choose cache with glob/latest/mtime logic or use source-tree fallback. The list below is full release closure: run entry only when current package manifest contains it. Before creating or changing invocation, run relevant packaged command:
 
-- `python PLUGIN_ROOT/shared/create_run.py --help`
-- `python PLUGIN_ROOT/shared/run_gates.py --help`
-- `python PLUGIN_ROOT/shared/release_evidence.py --help` — explicit `record-demo` executes an authorized local demo and retains script/output receipts; ordinary release validation never executes it
-- `python PLUGIN_ROOT/shared/collect_diff.py --help`
-- `python PLUGIN_ROOT/shared/github_read.py --help`
-- `python PLUGIN_ROOT/shared/collect_pr.py --help`
-- `python PLUGIN_ROOT/shared/escalation_ledger.py --help`
-- `python PLUGIN_ROOT/shared/adversarial_loop.py --help` — validates convergence ledger consistency, not reviewer authenticity; `--append` adds the staged `loop-rounds.jsonl.rec` round
-- `python PLUGIN_ROOT/shared/codemap_adapter.py --help` — optional structural-context probe; `context` accepts closed `--query-kind` vocabulary (`skip`, `central`, `callers`, `blast`, `dependencies`, `test-impact`, `coupling`, `standard`); see `codemap-contract.md`
-- `python PLUGIN_ROOT/runtime/calibration/run.py --help`
-- `python PLUGIN_ROOT/runtime/calibration/run_live_ab.py --help`
-- `python PLUGIN_ROOT/runtime/calibration/score_behavioral.py --help`
-- `python PLUGIN_ROOT/shared/find-review-report.py --help`
-- `python PLUGIN_ROOT/shared/local_reviewer_wave.py --help` — explicit paid review route; `--check-host` verifies setup without model turn, not review completion
-- `python PLUGIN_ROOT/shared/select-git-remote.py --help`
-- `python PLUGIN_ROOT/shared/write-result.py --help`
-- `python PLUGIN_ROOT/shared/final_handoff.py --help`
-- `python PLUGIN_ROOT/shared/validate-artifacts.py --help` — `--all-errors` reports every failed check group with a repair hint in one pass
-- `python PLUGIN_ROOT/shared/test_targets.py --help` — changed-file pytest targets (codemap-py test impact, else name/import heuristics) and the sandbox-safe flag decision for loop and reproduction runs, never a final gate
-- `python PLUGIN_ROOT/shared/remediation_finalize.py --help` — code-remediate and code-review (`--skill code-review` derives only shared handoff fields and also runs the review validator): derives copied metadata, workplan sections, and handoff fields, then renders, writes, validates, and optionally promotes in one call
-- `python PLUGIN_ROOT/skills/code-review/validate_artifacts.py --help`
-- `python PLUGIN_ROOT/skills/code-review/review_prepare.py --help` — deterministic native-wave preparation and assembly; inspect selected subcommand help
-- `python PLUGIN_ROOT/skills/code-review/review_context.py --help` — audited frozen-context delivery to a native reviewer
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/create_run.py --help`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gates.py --help`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/release_evidence.py --help` — explicit `record-demo` executes an authorized local demo and retains script/output receipts; ordinary release validation never executes it
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/collect_diff.py --help`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/github_read.py --help`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/collect_pr.py --help`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/escalation_ledger.py --help`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/adversarial_loop.py --help` — validates convergence ledger consistency, not reviewer authenticity; `--append` adds the staged `loop-rounds.jsonl.rec` round
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py --help` — optional structural-context probe; `context` accepts closed `--query-kind` vocabulary (`skip`, `central`, `callers`, `blast`, `dependencies`, `test-impact`, `coupling`, `standard`); see `codemap-contract.md`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/runtime/calibration/run.py --help`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/runtime/calibration/run_live_ab.py --help`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/runtime/calibration/score_behavioral.py --help`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/find-review-report.py --help`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/local_reviewer_wave.py --help` — explicit paid review route; `--check-host` verifies setup without model turn, not review completion
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/select-git-remote.py --help`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/write-result.py --help`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/final_handoff.py --help`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/validate-artifacts.py --help` — `--all-errors` reports every failed check group with a repair hint in one pass
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/test_targets.py --help` — changed-file pytest targets (codemap-py test impact, else name/import heuristics) and the sandbox-safe flag decision for loop and reproduction runs, never a final gate
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/remediation_finalize.py --help` — code-remediate and code-review (`--skill code-review` derives only shared handoff fields and also runs the review validator): derives copied metadata, workplan sections, and handoff fields, then renders, writes, validates, and optionally promotes in one call
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/skills/code-review/validate_artifacts.py --help`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/skills/code-review/review_prepare.py --help` — deterministic native-wave preparation and assembly; inspect selected subcommand help
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/skills/code-review/review_context.py --help` — audited frozen-context delivery to a native reviewer
 
 For the selected workflow path, identify helpers whose invocation is already known, including its required start and closing gates. Run their independent `--help` commands in one tool batch when the host supports it; keep each command's exit status and complete output available. Return a compact labeled index of each helper's usage and relevant option descriptions, targeting at most 16 KiB of aggregate text; retain full help in the tool session or run artifacts so it can be inspected without rerunning the command. If the index exceeds that bound, return status and usage for every helper and inspect needed option details from retained output. If an option's meaning is absent or ambiguous in the index, inspect that helper's retained full help before invoking it. When top-level help lists only subcommands, inspect the selected subcommand's `--help` before using its options. Never silently truncate a failed help check or infer an option from a partial response. Do not run the full release roster on every skill invocation. Inspect a conditional helper when its branch is selected, and batch any helpers newly known at that point. Reuse help already observed for the same packaged helper bytes and invocation within the run; a changed package or unknown option requires fresh help. A failed help check blocks that helper's invocation, not unrelated work. Batching never combines approval boundaries or authorizes a networked or paid operation.
 
-Create every skill run with `python PLUGIN_ROOT/shared/create_run.py --skill <skill-id>`. Retain its single printed path, pass that literal path explicitly to every later helper and artifact operation. Never persist path in shell variable or assume state survives between command/tool calls.
+Create every skill run with `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/create_run.py --skill <skill-id>`. Retain its single printed path, pass that literal path explicitly to every later helper and artifact operation. Never persist path in shell variable or assume state survives between command/tool calls.
 
 Artifact namespaces use `.reports/codex/<skill>/<canonical-safe-identity>/run-<NNN>/` only when the skill defines and validates a bounded canonical safe identity; otherwise they use the generated timestamp. Never serialize raw prompts, paths, URLs, refs, credentials, or arbitrary arguments into directory names. PR review is the first identity-indexed workflow, with the normalized authoritative identity `pr-<number>`.
 
-Local reviews and non-PR workflows normally keep the initial `.reports/codex/<skill>/<timestamp>/` path. Bounded challenge-resolve chunks are the exception: each child uses `create_run.py --skill challenge-resolve --root <coordinator-run>/chunks/runs`, keeping its ordinary skill/timestamp suffix under the coordinator. A PR review initially uses timestamped code-review path because current-branch input may not reveal PR number before collection. After successful authoritative `pr.json` collection, invoke `python PLUGIN_ROOT/shared/create_run.py --skill code-review --promote-pr-run <run-directory>`, capture single printed final path, use that literal `.reports/codex/code-review/pr-<number>/run-<NNN>/` path for every remaining operation. Promotion derives PR number from collected artifact, allocates next numeric run index; callers never construct either value. A pre-identity collection failure stays in its timestamped unavailable-diagnostic path, never assessed PR review. Existing flat code-review artifacts remain valid lookup inputs, require no migration.
+Local reviews and non-PR workflows normally keep the initial `.reports/codex/<skill>/<timestamp>/` path. Bounded challenge-resolve chunks are the exception: each child uses `create_run.py --skill challenge-resolve --root <coordinator-run>/chunks/runs`, keeping its ordinary skill/timestamp suffix under the coordinator. A PR review initially uses timestamped code-review path because current-branch input may not reveal PR number before collection. After successful authoritative `pr.json` collection, invoke `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/create_run.py --skill code-review --promote-pr-run <run-directory>`, capture single printed final path, use that literal `.reports/codex/code-review/pr-<number>/run-<NNN>/` path for every remaining operation. Promotion derives PR number from collected artifact, allocates next numeric run index; callers never construct either value. A pre-identity collection failure stays in its timestamped unavailable-diagnostic path, never assessed PR review. Existing flat code-review artifacts remain valid lookup inputs, require no migration.
 
 Also run each skill-specific local CLI's `--help`. Never copy full flags/templates into `SKILL.md`; state only:
 

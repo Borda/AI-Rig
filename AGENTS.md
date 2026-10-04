@@ -59,18 +59,18 @@ Scripts, hooks, `bin/` entry points, and CI steps all run on Linux, macOS, and n
 
 ## Interpreter Commands — Fix the Launcher, Not the Call Site
 
-Shipped commands name `python`: skill recipes, `bin/` call sites, `Bash(python:*)` allow rules, and blueprint digests all match that exact text. A host without `python` is fixed once, at the layer that starts the process, never by rewriting call sites.
+Claude recipe commands retain `python` identities used by allow rules and blueprint digests. Codex does not add plugin `bin/` to shell PATH: its packaged helper recipes explicitly use the plugin's portable launcher, a narrow exception to the fixed-command rule.
 
-- Never replace a shipped `python` with `python3`, `$(command -v python || command -v python3)`, a resolved absolute path, or per-call selection logic. Changed command text misses allow rules and blueprint digests, so every call prompts.
-- Never add interpreter-selection prose to skills, agents, modes, templates, or shared guidance. It repeats in every file, costs tokens on every load, and cannot be enforced.
-- Fix each launch layer once:
+- Preserve explicit project interpreters, managed-environment commands, and recorded command identities. Never add per-call interpreter selection or repeat interpreter-selection instructions across skills.
+- Portable launchers validate the runtime before executing the workload, preserve arguments and exit status, and never retry a failed workload with another interpreter.
+- Fix each launch layer at its owning boundary:
 
-| Launch layer      | Mechanism                                                                                                                                                                                                                         |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Bash tool  | each plugin's `bin/python` fallback (byte-identical via `propagate_shared.py`); plugin `bin/` follows the system directories on PATH, so a real `python` always wins                                                              |
-| Claude hooks      | the hook command itself: Python hooks `if command -v python …; then exec python …; else exec python3 …; fi`; JS hooks probe `node`, `/opt/homebrew/bin/node`, `/usr/local/bin/node`, then exit 0, plus one `SessionStart` warning |
-| Codex MCP servers | direct exec with one `command` and no shell, so the command stays `python`; `sync_codex.py install` writes `~/.local/bin/python` when only `python3` exists                                                                       |
-| Codex hooks       | `python3` in `command`, `python` in `commandWindows`                                                                                                                                                                              |
+| Launch layer                   | Mechanism                                                                                                                         |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Bash tool               | Byte-identical plugin `bin/python` fallback, propagated by `propagate_shared.py`; real system `python` keeps its PATH precedence. |
+| Claude hooks                   | Plugin-owned hook launchers; JavaScript hooks retain their existing Node probe and SessionStart diagnostic.                       |
+| Codex helper recipes and hooks | Explicit plugin `bin/python` on POSIX or `bin/python.cmd` on native Windows; quote paths for the host shell.                      |
+| Codex MCP servers              | Fixed `python` executable prerequisite, checked during setup; no global shim installation or automatic PATH modification.         |
 
 - Guards: `tests/test_hook_interpreter_fallback.py` and `plugins/codex-rig/tests/packaging/test_sync_codex.py`. Extend them when adding a launch layer.
 

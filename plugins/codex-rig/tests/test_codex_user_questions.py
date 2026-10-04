@@ -13,6 +13,35 @@ SKILLS = sorted((PLUGIN_ROOT / "skills").glob("*/SKILL.md"))
 
 
 @pytest.mark.installed_plugin
+def test_native_question_discovery_includes_direct_tools_and_one_delivery_owner() -> None:
+    """Prevent catalog-only discovery and a prose approval followed by a duplicate form."""
+    guide = (PLUGIN_ROOT / QUESTION_REFERENCE).read_text(encoding="utf-8")
+    details = (PLUGIN_ROOT / "shared/codex-user-questions-details.md").read_text(encoding="utf-8")
+    assert "directly exposed tools" in guide
+    assert "directly exposed tools" in details
+    assert "one delivery owner" in details
+    assert "Do not print the live question or choices before invoking a control" in details
+    assert "Absence from `ALL_TOOLS` alone does not establish" in details
+
+
+@pytest.mark.parametrize(
+    "case_id",
+    [
+        "code-remediate-native-presets-custom-input",
+        "code-remediate-native-presets-same-severity",
+        "code-remediate-rejected-sync-skips-async",
+        "code-remediate-rejected-sync-async-recovery",
+    ],
+)
+def test_async_calibration_requires_native_discovery_and_verified_host_delivery(case_id: str) -> None:
+    """Reject positive async examples that silently bypass a suitable native form."""
+    fixture = json.loads((PLUGIN_ROOT / "runtime/calibration/behavioral-cases.json").read_text(encoding="utf-8"))
+    case = next(case for case in fixture["cases"] if case["id"] == case_id)
+    assert "packaged native form" in case["prompt"]
+    assert "verified current-host rendering and lifetime" in case["prompt"]
+
+
+@pytest.mark.installed_plugin
 def test_question_necessity_precedes_transport_discovery() -> None:
     """Keep an authorized internal recovery from opening a blocking consent form."""
     compact = (PLUGIN_ROOT / QUESTION_REFERENCE).read_text(encoding="utf-8")

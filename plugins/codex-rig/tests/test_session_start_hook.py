@@ -85,8 +85,8 @@ def test_default_hook_config_is_exact_and_diagnostic_only() -> None:
     assert group["hooks"] == [
         {
             "type": "command",
-            "command": 'python3 "$PLUGIN_ROOT/hooks/session_start.py"',
-            "commandWindows": 'python "$env:PLUGIN_ROOT\\hooks\\session_start.py"',
+            "command": '"$PLUGIN_ROOT/bin/python" "$PLUGIN_ROOT/hooks/session_start.py"',
+            "commandWindows": '& "$env:PLUGIN_ROOT\\bin\\python.cmd" "$env:PLUGIN_ROOT\\hooks\\session_start.py"; exit $LASTEXITCODE',
             "timeout": 30,
             "statusMessage": "Checking Codex Rig shim health",
         }

@@ -77,7 +77,7 @@ Results are compact envelopes rather than transcripts:
 - Claude Code with plugin support for the Claude half.
 - OpenAI Codex CLI for Claude → Codex calls, available as `codex` on `PATH` and authenticated for the requested model.
 - Claude Code CLI for Codex → Claude calls, available as `claude` on `PATH` and authenticated for the requested model.
-- A `python` executable on `PATH` that reports Python 3.10 or newer for the bridge's Python entry points; the same launcher is used on POSIX and Windows. When only `python3` exists, the plugin's `bin/python` fallback covers Claude Code shell calls, and Codex Rig sync (`sync_codex.py install`) writes a `~/.local/bin/python` shim for the MCP servers; neither replaces an existing `python`.
+- A `python` executable on `PATH` that reports Python 3.10 or newer for the bridge's Python entry points; the same launcher is used on POSIX and Windows. The plugin's `bin/python` and native Windows `bin/python.cmd` probe candidates for Python 3.10+ before running Claude Code shell workloads once, preserving an eligible system `python`. The direct MCP command still requires Python 3.10+ available as `python` on the host search path; Codex Rig sync validates this prerequisite without installing a global interpreter shim, and a missing eligible runtime keeps the affected interaction unresolved.
 - A writable project-local `.temp/bridge/` directory for bridge state and transcripts.
 - A writable platform user-state directory for the host-held approval-integrity key, one-use approval receipts, per-target mutation locks, and sanitized setup records; setup never stores provider credentials or raw login output there.
 

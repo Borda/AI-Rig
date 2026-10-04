@@ -4,13 +4,13 @@
       {
         "hooks": [
           {
-            "command": "env CODEMAP_RUNTIME=codex python3 \"$PLUGIN_ROOT/hooks/record-exhausted.py\"",
-            "commandWindows": "$env:CODEMAP_RUNTIME='codex'; python \"$env:PLUGIN_ROOT\\hooks\\record-exhausted.py\"",
+            "command": "CODEMAP_RUNTIME=codex \"$PLUGIN_ROOT/bin/codemap-py\" --run-hook record-exhausted.py",
+            "commandWindows": "$env:CODEMAP_RUNTIME='codex'; & \"$env:PLUGIN_ROOT\\bin\\codemap-py.cmd\" --run-hook record-exhausted.py; exit $LASTEXITCODE",
             "type": "command"
           },
           {
-            "command": "env CODEMAP_RUNTIME=codex python3 \"$PLUGIN_ROOT/hooks/log-tool-use.py\"",
-            "commandWindows": "$env:CODEMAP_RUNTIME='codex'; python \"$env:PLUGIN_ROOT\\hooks\\log-tool-use.py\"",
+            "command": "CODEMAP_RUNTIME=codex \"$PLUGIN_ROOT/bin/codemap-py\" --run-hook log-tool-use.py",
+            "commandWindows": "$env:CODEMAP_RUNTIME='codex'; & \"$env:PLUGIN_ROOT\\bin\\codemap-py.cmd\" --run-hook log-tool-use.py; exit $LASTEXITCODE",
             "type": "command"
           }
         ],
@@ -19,8 +19,8 @@
       {
         "hooks": [
           {
-            "command": "env CODEMAP_RUNTIME=codex python3 \"$PLUGIN_ROOT/hooks/log-tool-use.py\"",
-            "commandWindows": "$env:CODEMAP_RUNTIME='codex'; python \"$env:PLUGIN_ROOT\\hooks\\log-tool-use.py\"",
+            "command": "CODEMAP_RUNTIME=codex \"$PLUGIN_ROOT/bin/codemap-py\" --run-hook log-tool-use.py",
+            "commandWindows": "$env:CODEMAP_RUNTIME='codex'; & \"$env:PLUGIN_ROOT\\bin\\codemap-py.cmd\" --run-hook log-tool-use.py; exit $LASTEXITCODE",
             "type": "command"
           }
         ],
@@ -29,8 +29,8 @@
       {
         "hooks": [
           {
-            "command": "env CODEMAP_RUNTIME=codex python3 \"$PLUGIN_ROOT/hooks/record-exhausted.py\"",
-            "commandWindows": "$env:CODEMAP_RUNTIME='codex'; python \"$env:PLUGIN_ROOT\\hooks\\record-exhausted.py\"",
+            "command": "CODEMAP_RUNTIME=codex \"$PLUGIN_ROOT/bin/codemap-py\" --run-hook record-exhausted.py",
+            "commandWindows": "$env:CODEMAP_RUNTIME='codex'; & \"$env:PLUGIN_ROOT\\bin\\codemap-py.cmd\" --run-hook record-exhausted.py; exit $LASTEXITCODE",
             "type": "command"
           }
         ],
@@ -41,8 +41,8 @@
       {
         "hooks": [
           {
-            "command": "env CODEMAP_RUNTIME=codex python3 \"$PLUGIN_ROOT/hooks/guard-redundant-scan.py\"",
-            "commandWindows": "$env:CODEMAP_RUNTIME='codex'; python \"$env:PLUGIN_ROOT\\hooks\\guard-redundant-scan.py\"",
+            "command": "CODEMAP_RUNTIME=codex \"$PLUGIN_ROOT/bin/codemap-py\" --run-hook guard-redundant-scan.py",
+            "commandWindows": "$env:CODEMAP_RUNTIME='codex'; & \"$env:PLUGIN_ROOT\\bin\\codemap-py.cmd\" --run-hook guard-redundant-scan.py; exit $LASTEXITCODE",
             "type": "command"
           }
         ],
@@ -53,8 +53,8 @@
       {
         "hooks": [
           {
-            "command": "env CODEMAP_RUNTIME=codex python3 \"$PLUGIN_ROOT/hooks/inject-preamble.py\"",
-            "commandWindows": "$env:CODEMAP_RUNTIME='codex'; python \"$env:PLUGIN_ROOT\\hooks\\inject-preamble.py\"",
+            "command": "CODEMAP_RUNTIME=codex \"$PLUGIN_ROOT/bin/codemap-py\" --run-hook inject-preamble.py",
+            "commandWindows": "$env:CODEMAP_RUNTIME='codex'; & \"$env:PLUGIN_ROOT\\bin\\codemap-py.cmd\" --run-hook inject-preamble.py; exit $LASTEXITCODE",
             "type": "command"
           }
         ]

@@ -103,7 +103,7 @@ ______________________________________________________________________
 
 ## 📦 Install
 
-**Prerequisites**: Claude Code with plugin support; Python 3.10+ and `git` (setup runs from a project repository); `jq` on PATH for setup/audit JSON work; and Node.js for the plugin's hooks. Each hook runs `node` from PATH, then `/opt/homebrew/bin/node` or `/usr/local/bin/node`; when none exists, the hooks skip without blocking and one `SessionStart` check reports once per session that they are inactive. The plugin's `bin/python` stands in for a missing `python` command by running the newest Python 3.10+ `python3`; a real `python` always wins because plugin `bin/` follows the system directories on PATH.
+**Prerequisites**: Claude Code with plugin support; Python 3.10+ and `git` (setup runs from a project repository); `jq` on PATH for setup/audit JSON work; and Node.js for the plugin's hooks. Each hook runs `node` from PATH, then `/opt/homebrew/bin/node` or `/usr/local/bin/node`; when none exists, the hooks skip without blocking and one `SessionStart` check reports once per session that they are inactive. The plugin's `bin/python` and native Windows `bin/python.cmd` preserve the shipped `python` command and probe candidate runtimes for Python 3.10+ before executing the workload once. Plugin `bin/` follows system directories on PATH, so an eligible system `python` takes precedence; missing eligible runtimes produce a clear diagnostic.
 
 ```bash
 claude plugin marketplace add Borda/AI-Rig
