@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -290,6 +291,69 @@ def test_run_gh_read_rejects_extensions_and_file_backed_fields(argv: list[str]) 
 
     with pytest.raises(module.GitHubReadError, match="unsafe-gh-command:unsafe"):
         module.run_gh_read(_runner, argv, timeout=5, label="unsafe")
+
+
+@pytest.mark.parametrize(
+    "fallback_error",
+    [
+        pytest.param(OSError("network unavailable secret-token"), id="socket-error"),
+        pytest.param(URLError("DNS failure secret-token"), id="url-error"),
+    ],
+)
+def test_failed_public_fallback_preserves_primary_network_diagnostic(fallback_error: OSError) -> None:
+    """Keep the actionable CLI reason when fallback fails in the same network category."""
+    module = _load_reader()
+
+    def runner(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Simulate a DNS failure from the credential broker."""
+        return subprocess.CompletedProcess(command, 1, stdout=b"", stderr=b"could not resolve host api.github.com")
+
+    def offline(*args: Any, **kwargs: Any) -> None:
+        """Fail the independent HTTPS transport without making a network request."""
+        raise fallback_error
+
+    with pytest.raises(module.GitHubReadError, match="github-network:gh-pr-view") as error:
+        module.read_with_fallback(
+            runner,
+            ["gh", "pr", "view", "7"],
+            timeout=5,
+            label="gh-pr-view",
+            fallback_url="https://api.github.com/repos/example/project/pulls/7",
+            open_url=offline,
+        )
+
+    assert error.value.diagnostics == {
+        "exit_code": 1,
+        "failure_class": "github-network",
+        "failure_reason": "dns",
+        "label": "gh-pr-view",
+    }
+    assert "secret-token" not in str(error.value)
+
+
+def test_public_fallback_keeps_distinct_http_failure_authoritative() -> None:
+    """Do not replace a definitive fallback access failure with the earlier network error."""
+    module = _load_reader()
+
+    def runner(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Simulate the primary network failure."""
+        return subprocess.CompletedProcess(command, 1, stdout=b"", stderr=b"connection reset by peer")
+
+    def forbidden(*args: Any, **kwargs: Any) -> None:
+        """Return a forbidden response without exposing its body."""
+        raise HTTPError("https://api.github.com", 403, "secret-token", None, None)
+
+    with pytest.raises(module.GitHubReadError, match="github-permission:gh-pr-view") as error:
+        module.read_with_fallback(
+            runner,
+            ["gh", "pr", "view", "7"],
+            timeout=5,
+            label="gh-pr-view",
+            fallback_url="https://api.github.com/repos/example/project/pulls/7",
+            open_url=forbidden,
+        )
+    assert error.value.diagnostics is None
+    assert "secret-token" not in str(error.value)
 
 
 def test_public_fallback_rejects_tokenized_url_and_normalizes_transport_error() -> None:

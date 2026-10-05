@@ -424,3 +424,53 @@ def test_malformed_stdin_passes_through(tmp_path: Path) -> None:
     )
 
     assert (proc.returncode, proc.stdout.strip()) == (0, "")
+
+
+# ── Stop: delivery still checked when the follow-up question is skipped ──────
+
+
+def _stop_payload(**overrides: object) -> dict:
+    """Build a Stop payload whose final message lacks the header, applying `overrides`."""
+    payload: dict = {"hook_event_name": "Stop", "stop_hook_active": False, "last_assistant_message": "done"}
+    payload.update(overrides)
+    return payload
+
+
+@_skip_node_unavailable
+def test_stop_blocks_undelivered_report_once(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
+    """A turn ending without the report delivery is kept going once; the same report never re-blocks."""
+    run_dir, _, cwd = audit_run
+    (run_dir / "summary.jsonl").write_text(
+        json.dumps({"sev": "high", "one_line": "broken ref"}) + "\n", encoding="utf-8"
+    )
+    result = _run(
+        tmp_path,
+        _stop_payload(
+            cwd=cwd,
+        ),
+    )
+
+    assert result.get("decision") == "block"
+    assert "foundry:audit" in result["reason"]
+    assert (
+        _run(
+            tmp_path,
+            _stop_payload(
+                cwd=cwd,
+            ),
+        )
+        == {}
+    )
+
+
+@_skip_node_unavailable
+def test_stop_passes_delivery_in_final_message(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
+    """The Stop payload's final message proves delivery even without a transcript."""
+    run_dir, _, cwd = audit_run
+    (run_dir / "summary.jsonl").write_text(
+        json.dumps({"sev": "high", "one_line": "broken ref"}) + "\n", encoding="utf-8"
+    )
+    assert _run(tmp_path, _stop_payload(cwd=cwd, last_assistant_message=DELIVERED)) == {}
+
+
+DELIVERED = "## Audit Report\nTotal: 1\n- broken ref\n"

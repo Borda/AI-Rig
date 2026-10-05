@@ -75,11 +75,11 @@
 
 <!-- format per quality-gates.md: Score 0.N, Gaps bullets, Refinements N passes (omit if 0) -->
 
-**Score**: 0.N — [high ≥0.9 | moderate 0.85–0.9 | low \<0.85 ⚠]
+**Score**: 0.NN — [high ≥0.9 | moderate 0.85–0.9 | low \<0.85 ⚠]
 
 **Gaps**:
 
-- [specific limitation]
+- (-0.NN) [specific limitation]
 
 **Refinements**: N passes.
 

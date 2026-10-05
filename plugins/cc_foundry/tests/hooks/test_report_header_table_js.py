@@ -311,3 +311,107 @@ def test_reminder_names_the_skill_and_print_step() -> None:
 
     assert "oss:review" in reminder
     assert "Step 5b (print report header)" in reminder
+
+
+# ── stopBlockReason ────────────────────────────────────────────────────────
+
+_HEADER = "---\nTitle: Current review\nOutcome: PASS\nPath: .reports/x/report.md\n---\n"
+_TABLE = (
+    "| Field | Value |\n| --- | --- |\n| Title | Current review |\n| Outcome | PASS |\n| Path | .reports/x/report.md |"
+)
+
+
+def _stop_payload(**overrides: object) -> dict:
+    """Build a Stop payload with no transcript and an empty final message, applying `overrides`."""
+    payload: dict = {"hook_event_name": "Stop", "stop_hook_active": False, "last_assistant_message": ""}
+    payload.update(overrides)
+    return payload
+
+
+@pytest.fixture(name="stop_run")
+def _stop_run(tmp_path: Path) -> tuple[Path, Path]:
+    """Stage a workflow sentinel and its written report."""
+    sentinel = tmp_path / "wf-report-dir-test-session-1234"
+    sentinel.write_text("x\n", encoding="utf-8")
+    report = tmp_path / "report.md"
+    report.write_text(_HEADER, encoding="utf-8")
+    return sentinel, report
+
+
+@_skip_node_unavailable
+def test_stop_blocks_undelivered_report_once(stop_run: tuple[Path, Path]) -> None:
+    """A turn ending without the header is kept going once; the same report never re-blocks."""
+    sentinel, report = stop_run
+
+    reason = _call("stopBlockReason", str(sentinel), str(report), _stop_payload(), "oss:review")
+
+    assert isinstance(reason, str)
+    assert "oss:review" in reason
+    assert "Path" in reason
+    assert _call("stopBlockReason", str(sentinel), str(report), _stop_payload(), "oss:review") is None
+
+
+@_skip_node_unavailable
+def test_stop_accepts_table_in_final_message_without_transcript(stop_run: tuple[Path, Path]) -> None:
+    """The Stop payload's final message counts as delivery even when the transcript lags."""
+    sentinel, report = stop_run
+
+    assert (
+        _call("stopBlockReason", str(sentinel), str(report), _stop_payload(last_assistant_message=_TABLE), "x") is None
+    )
+
+
+@_skip_node_unavailable
+def test_stop_rechecks_rewritten_report(stop_run: tuple[Path, Path]) -> None:
+    """A delivered report that is later rewritten must be delivered again."""
+    sentinel, report = stop_run
+    assert (
+        _call("stopBlockReason", str(sentinel), str(report), _stop_payload(last_assistant_message=_TABLE), "x") is None
+    )
+
+    report.write_text(_HEADER.replace("PASS", "NEEDS_WORK"), encoding="utf-8")
+
+    assert _call("stopBlockReason", str(sentinel), str(report), _stop_payload(), "x") is not None
+
+
+@_skip_node_unavailable
+def test_stop_never_blocks_a_forced_continuation(stop_run: tuple[Path, Path]) -> None:
+    """`stop_hook_active` means a Stop hook already forced this turn on — never loop."""
+    sentinel, report = stop_run
+
+    assert _call("stopBlockReason", str(sentinel), str(report), _stop_payload(stop_hook_active=True), "x") is None
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize("content", [None, ""])
+def test_stop_ignores_unwritten_report(stop_run: tuple[Path, Path], content: str | None) -> None:
+    """Missing or empty report means the producer has not finished — nothing to deliver yet."""
+    sentinel, report = stop_run
+    report.unlink()
+    if content is not None:
+        report.write_text(content, encoding="utf-8")
+
+    assert _call("stopBlockReason", str(sentinel), str(report), _stop_payload(), "x") is None
+
+
+@_skip_node_unavailable
+def test_stop_audit_reason_names_findings_not_header(tmp_path: Path) -> None:
+    """Audit delivers a findings aggregate, so its Stop reason must not ask for a header table."""
+    sentinel = tmp_path / "run-dir"
+    sentinel.write_text("x\n", encoding="utf-8")
+    summary = tmp_path / "summary.jsonl"
+    summary.write_text(json.dumps({"sev": "high", "one_line": "broken ref"}) + "\n", encoding="utf-8")
+
+    reason = _call("stopBlockReason", str(sentinel), str(summary), _stop_payload(), "foundry:audit")
+
+    assert "Audit Report" in reason
+    assert "Field | Value" not in reason
+
+
+@_skip_node_unavailable
+def test_delivered_marker_keeps_session_token_terminal(tmp_path: Path) -> None:
+    """The marker name ends with the sentinel's own CSID-suffixed name, beside it."""
+    marker = Path(_call("deliveredMarkerPath", str(tmp_path / "oss-review-report-dir-abc")))
+
+    assert marker.parent == tmp_path
+    assert marker.name == "report-delivered-oss-review-report-dir-abc"

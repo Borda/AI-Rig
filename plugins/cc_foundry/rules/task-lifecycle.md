@@ -12,6 +12,8 @@ paths:
 
 Sequence: `TaskUpdate(completed)` → emit output. Never the reverse.
 
+**Exception — report-print tasks** (e.g. `Step 5b: Print report header`): their `completed` means "the table is visible", so it goes after the table text, in the same response. A lost update costs only a stale status; delivery itself is hook-checked on `Stop`. Marking it first is how an incident shipped a reply with no header table.
+
 This is the **one** sanctioned bookkeeping-only response. Everywhere else, a `TaskCreate`/`TaskUpdate` rides along with the next substantive tool call — zero bookkeeping-only turns (`CLAUDE.md` §Task Management ▸ In-session task tracking, with the measured turn cost). Ordering rule, not a licence.
 
 ### Frozen plan during build

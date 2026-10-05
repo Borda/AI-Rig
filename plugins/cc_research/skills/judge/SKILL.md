@@ -428,9 +428,9 @@ Read full review: `<RUN_DIR>/scientific-review.md`
 [BLOCKED] Fundamental design flaw — the experiment as designed cannot produce valid results. Fix items 1-N before proceeding.
 
 ## Confidence
-**Score**: 0.N — [high|moderate|low]
+**Score**: 0.NN — [high|moderate|low]
 **Gaps**:
-- [specific limitation]
+- (-0.NN) [specific limitation]
 ```
 
 **Terminal summary** (compact):

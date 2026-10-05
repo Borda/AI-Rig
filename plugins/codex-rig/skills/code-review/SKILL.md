@@ -42,6 +42,8 @@ Never write to remote. PR review fetches evidence and creates a detached worktre
 
 For allowed GitHub reads, run the direct collector under current effective network and filesystem grants or request runtime approval for the complete owning command when required capability is unavailable. No separate workflow consent is needed. Apply [GitHub Read Execution](../../shared/native-skill-contract.md#github-read-execution); runtime permission and denial remain authoritative.
 
+**Permission recovery precedes terminal reporting:** Before collection, resolve required network and write access using GitHub Read Execution. Missing or unknown access with requests allowed requires the five-field brief and a runtime approval request for the complete collector, not profile setup or an unavailable report. A `github-network` error alone does not prove denial: inspect current grants and safe diagnostics, request missing capability if permitted and not already denied, then resume collection after approval. Preserve the failed attempt in its run directory and use a fresh run directory for approved recollection. An actual denied request or non-overridable restriction stops this route; never request equivalent access again or broaden destinations. Apply the unavailable gate only after permitted recovery is exhausted or unavailable.
+
 When runtime permissions show network access enabled and the helper's required paths writable, omit `sandbox_permissions` and `justification` on the direct helper call; give no approval brief. Apply GitHub Read Execution even when the active profile name is omitted. A missing label or failed lookup does not mean disabled access; do not run `codex execpolicy list` to detect a profile. Preserve explicit destination restrictions and check report, `.git`, and checkout paths separately where applicable. Use the ordinary approval boundary only for unavailable required capability, and stop on denial.
 
 ### Entry: resume or previous completed review
@@ -78,7 +80,7 @@ After successful authoritative `pr.json` collection, run `create_run.py --skill 
 
 If collection fails before authoritative PR identity exists, keep the timestamped run as an unavailable diagnostic. It is not an assessed PR review and must not be promoted. Existing flat timestamped runs remain discoverable historical artifacts; do not migrate them.
 
-Run the direct owning collector under current effective grants per GitHub Read Execution or with runtime approval for unavailable required capability. Its nested GitHub CLI, HTTPS fallback, checkout, and Git fetch traffic remain bound by the collector contract. An unexpected runtime restriction or denial stops the collection attempt; diagnose the active permissions and exact command without broadening access or retrying the denied command. Report core collection failure through the existing unavailable-evidence gate.
+Run the direct owning collector under current effective grants per GitHub Read Execution or with runtime approval for unavailable required capability. Its nested GitHub CLI, HTTPS fallback, checkout, and Git fetch traffic remain bound by the collector contract. An explicit runtime denial or non-overridable restriction stops the collection attempt; diagnose the active permissions and exact command without broadening access or retrying the denied command. Report core collection failure through the existing unavailable-evidence gate.
 
 PR evidence has two tiers.
 

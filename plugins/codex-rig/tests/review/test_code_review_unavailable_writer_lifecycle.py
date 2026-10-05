@@ -68,7 +68,7 @@ def _write_unavailable_pr_evidence(run_dir: Path) -> dict[str, object]:
         "Source findings: not assessed\n\n"
         "Merge decision: not made\n\n"
         "Process diagnostic: `github-network:gh-pr-view`. This is a workflow/integration failure, not a PR finding or merge block.\n\n"
-        "Recovery: Retry the unchanged collector later; no review or merge decision was made.\n\n"
+        "Recovery: Check effective runtime access; if required access is missing or unknown and requests are allowed, request runtime approval for the complete collector. Respect an explicit denial or non-overridable restriction; retry only after approval or an evidenced state change.\n\n"
         "Evidence: `pr-error.txt`.\n",
         encoding="utf-8",
     )

@@ -41,7 +41,8 @@ Over budget: [agent count] | Broken refs: [reference count] | Duplicates found: 
 
 ### Confidence
 **Score**: [score] — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
-**Gaps**: [gaps]
+**Gaps**:
+- (-0.NN) [gap]
 
 **Refinements**: [pass count] passes. [improvements by pass]
 ```

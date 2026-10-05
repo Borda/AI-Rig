@@ -702,11 +702,19 @@ def _restore_legacy_root_layout(lines: list[str], original: str | None, settings
 
 
 def _remove_profile_settings(content: str, state: dict[str, object]) -> str | None:
-    """Remove only exact owned profile settings and restore original settings."""
-    block = PROFILE_BLOCK if state["schema"] >= 4 else LEGACY_PROFILE_BLOCK
-    if content.count(block) != 1:
+    """Remove exact owned settings while preserving unrelated tables before the closing marker."""
+    body = PROFILE_BODY if state["schema"] >= 4 else LEGACY_PROFILE_BODY
+    if content.count(PROFILE_BEGIN) != 1 or content.count(PROFILE_END) != 1:
         raise UnsafeRulesState("managed GitHub profile block was modified")
-    before, after = content.split(block)
+    before, profile = content.split(PROFILE_BEGIN)
+    if PROFILE_END not in profile:
+        raise UnsafeRulesState("managed GitHub profile block was modified")
+    owned, after = profile.split(PROFILE_END)
+    if not owned.startswith(body):
+        raise UnsafeRulesState("managed GitHub profile block was modified")
+    # TOML writers can insert unrelated tables ahead of the trailing comment.
+    # Keep those bytes, but require a table boundary so added domain grants still fail.
+    after = owned[len(body) :] + after
     first_after = next(
         (line for line in after.splitlines() if line.strip() and not line.lstrip().startswith("#")), None
     )

@@ -147,7 +147,7 @@ Write(file_path=".temp/output-profile-<branch>-<YYYY-MM-DD>.md", content=<full r
 
 Where `<branch>` = `$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')`.
 
-Backed by `hooks/enforce-profile-header.js`: while Step 1 state is live, Step 5's workflow follow-up requires a saved report and its matching header table in the current parent reply. Missing/unreadable delivery evidence blocks that transition; print it again before retrying. Diagnostic/recovery questions remain available under their own question header, not `profile`.
+Backed by `hooks/enforce-profile-header.js`: on `Stop` it keeps a turn going once per report when it ends without the matching header table, so skipping the follow-up does not skip delivery; while Step 1 state is live, Step 5's workflow follow-up requires a saved report and its matching header table in the current parent reply. Missing/unreadable delivery evidence blocks that transition; print it again before retrying. Diagnostic/recovery questions remain available under their own question header, not `profile`.
 
 ## Step 5: Follow-up gate
 

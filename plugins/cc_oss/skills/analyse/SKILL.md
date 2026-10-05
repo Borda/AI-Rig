@@ -319,7 +319,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:
 
 ### 6a — Follow-up gate
 
-**Hook-enforced**: `hooks/enforce-analyse-header.js` blocks only this workflow's follow-up question until the current report exists and every `---` header field appears in one matching two-column table in the parent reply since the last human turn. Missing/unreadable transcript evidence blocks this transition; reprint the header, then retry. Diagnostic/recovery questions remain available; use their own question header, not `oss-analyse`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
+**Hook-enforced**: on `Stop`, `hooks/enforce-analyse-header.js` keeps a turn going once per report when it ends without the matching header table — skipping the follow-up question does not skip delivery. It also blocks only this workflow's follow-up question until the current report exists and every `---` header field appears in one matching two-column table in the parent reply since the last human turn. Missing/unreadable transcript evidence blocks this transition; reprint the header, then retry. Diagnostic/recovery questions remain available; use their own question header, not `oss-analyse`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
 
 Invoke `AskUserQuestion`. Options depend on mode:
 

@@ -160,6 +160,15 @@ if (require.main === module) {
   process.stdin.on("end", () => {
     try {
       const data = JSON.parse(raw);
+      if (data.hook_event_name === "Stop") {
+        // Skipped follow-up question skips the PreToolUse gate; Stop still checks delivery once per report.
+        const sentinel = findSentinel(sentinelDir(), csidCandidates(process.env, data, process.ppid));
+        const active = sentinel ? activeReportDir(sentinel, Date.now()) : null;
+        const { stopBlockReason } = require("./report-header-table.js");
+        const reason = active && stopBlockReason(sentinel, path.join(active, REPORT_FILENAME), data, "oss:review");
+        if (reason) process.stdout.write(JSON.stringify({ decision: "block", reason }));
+        process.exit(0);
+      }
       if (data.hook_event_name && data.hook_event_name !== "PreToolUse") process.exit(0);
       if (data.tool_name !== "AskUserQuestion") process.exit(0);
       const { isWorkflowFollowUp, deliveryProblem } = require("./report-header-table.js");

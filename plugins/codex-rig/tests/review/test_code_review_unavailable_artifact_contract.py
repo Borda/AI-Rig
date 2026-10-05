@@ -36,6 +36,18 @@ def _load_module(path: Path, name: str) -> object:
     return module
 
 
+def test_network_recovery_requests_missing_access_instead_of_blind_retry() -> None:
+    """Keep unavailable-review recovery actionable without authorizing denial bypass."""
+    validator = _load_module(REVIEW_VALIDATOR_PATH, "permission_recovery_validator")
+    recovery = validator._unavailable_recovery_action("github-network:gh-pr-view", False)
+
+    assert "request runtime approval for the complete collector" in recovery
+    assert "missing or unknown" in recovery
+    assert "denial" in recovery
+    assert "non-overridable" in recovery
+    assert "Retry the unchanged collector later" not in recovery
+
+
 def _write_unavailable_artifact(
     out_dir: Path,
     *,
@@ -69,7 +81,7 @@ def _write_unavailable_artifact(
     (out_dir / "pr-target.txt").write_text("123\n", encoding="utf-8")
     if checkout_state is not None:
         (out_dir / "checkout-state.json").write_text(json.dumps(checkout_state), encoding="utf-8")
-    recovery_action = "Retry the unchanged collector later; no review or merge decision was made."
+    recovery_action = "Check effective runtime access; if required access is missing or unknown and requests are allowed, request runtime approval for the complete collector. Respect an explicit denial or non-overridable restriction; retry only after approval or an evidenced state change."
     if checkout_state is not None:
         recovery_action += " Inspect the local checkout state before retrying."
     notes = (
@@ -454,7 +466,10 @@ def test_blocked_preflight_receipt_reaches_actionable_unavailable_finalization(
     (tmp_path / "pr-error.txt").write_text(code + "\n", encoding="utf-8", newline="\n")
     notes_path = tmp_path / "review-notes.md"
     notes = notes_path.read_text(encoding="utf-8").replace("github-network:gh-pr-view", code)
-    notes = notes.replace("Retry the unchanged collector later; no review or merge decision was made.", action)
+    notes = notes.replace(
+        "Check effective runtime access; if required access is missing or unknown and requests are allowed, request runtime approval for the complete collector. Respect an explicit denial or non-overridable restriction; retry only after approval or an evidenced state change.",
+        action,
+    )
     notes_path.write_text(notes, encoding="utf-8", newline="\n")
     metadata = result["metadata"]
     metadata["collection_failure"]["code"] = code

@@ -410,9 +410,9 @@ End plan document with:
 
 ```markdown
 ## Confidence
-**Score**: 0.N — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
+**Score**: 0.NN — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
 **Gaps**:
-- [specific limitation or unverified assumption]
+- (-0.NN) [specific limitation or unverified assumption]
 
 **Refinements**: N passes.
 - Pass 1: [what was addressed]

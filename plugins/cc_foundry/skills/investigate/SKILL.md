@@ -288,7 +288,7 @@ End with a `## Confidence` block:
 ## Confidence
 **Score**: [score] — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
 **Gaps**:
-- [confidence gaps]
+- (-0.NN) [confidence gap]
 
 **Refinements**: [pass count] passes.
 - Pass 1: [gap addressed]

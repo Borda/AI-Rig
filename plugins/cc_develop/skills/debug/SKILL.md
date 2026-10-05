@@ -566,9 +566,9 @@ Evidence: [key signals]
 → Handed off to /develop:fix --diagnosis $DIAG_FILE
 
 ## Confidence
-**Score**: 0.N — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
+**Score**: 0.NN — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
 **Gaps**:
-- [e.g., unverified alternative hypotheses, hypothesis only — not confirmed via test reproduction]
+- (-0.NN) [e.g., unverified alternative hypotheses, hypothesis only — not confirmed via test reproduction]
 
 **Refinements**: N passes.
 ```

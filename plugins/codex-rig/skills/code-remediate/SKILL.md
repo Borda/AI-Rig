@@ -116,7 +116,7 @@ On resume, inspect an existing `<run-directory>/remediation-branch.json` before 
 
 Apply [PR Collection Runtime Boundary](../../shared/native-skill-contract.md#pr-collection-runtime-boundary) before collector execution. Do not create or modify runtime approval rules files.
 
-Run the direct owning collector under current effective grants per GitHub Read Execution or with runtime approval for unavailable required capability. Its nested GitHub CLI, HTTPS fallback, checkout, and Git fetch traffic remain bound by the collector contract. An unexpected runtime restriction or denial stops the collection attempt; diagnose the active permissions and exact command without broadening access or retrying the denied command. Apply the existing core collection-failure path.
+Run the direct owning collector under current effective grants per GitHub Read Execution or with runtime approval for unavailable required capability. Its nested GitHub CLI, HTTPS fallback, checkout, and Git fetch traffic remain bound by the collector contract. An explicit runtime denial or non-overridable restriction stops the collection attempt; diagnose the active permissions and exact command without broadening access or retrying the denied command. Apply the existing core collection-failure path.
 
 `github_read.py` is plugin-wide GitHub data boundary: do not invoke `gh` outside it.
 

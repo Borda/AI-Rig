@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.32.7
+
+- Resolve missing runtime access through owning-helper approval before terminal review reporting; distinguish network failure from actual denial and preserve safe diagnostics when public fallback fails identically.
+
+- Preserve unrelated TOML tables inserted before the managed permission profile closing comment during setup, migration, and removal; continue rejecting changed or extended permission grants.
+
 ## 0.32.6
 
 - Validate large frozen contexts with literal comparisons instead of payload-sized regular expressions, preserving exact evidence boundaries and reducing memory overhead.

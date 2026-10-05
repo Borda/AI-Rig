@@ -70,7 +70,7 @@ def test_github_reads_use_profile_or_owning_command_approval(skill_name: str, he
     assert helper in skill
     assert "current effective" in skill
     assert "native-skill-contract.md#github-read-execution" in skill
-    assert "Runtime denial stops" in skill or "runtime restriction or denial stops" in skill
+    assert "Runtime denial stops" in skill or "runtime denial or non-overridable restriction stops" in skill
 
 
 @pytest.mark.installed_plugin
@@ -284,9 +284,26 @@ def test_pr_collector_uses_profile_and_stops_on_denial() -> None:
     boundary = contract.split("## PR Collection Runtime Boundary\n", 1)[1].split("\n## ", 1)[0]
 
     assert "Run the owning collector directly" in boundary
-    assert "An unexpected restriction or denial stops collection" in boundary
+    assert "An explicit denial or non-overridable restriction stops collection" in boundary
     assert "without broadening access or retrying the denied command" in boundary
     assert "Collection does not authorize remote mutation" in boundary
+
+
+def test_permission_recovery_precedes_terminal_review_reporting() -> None:
+    """Prevent terminal artifact instructions from superseding available capability approval."""
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    contract = SHARED_CONTRACT.read_text(encoding="utf-8")
+    instructions = GLOBAL_INSTRUCTIONS.read_text(encoding="utf-8")
+
+    assert skill.index("**Permission recovery precedes terminal reporting:") < skill.index(
+        "**Terminal review-unavailable output gate:"
+    )
+    assert "resume collection after approval" in skill
+    assert "use a fresh run directory for approved recollection" in skill
+    assert "never request equivalent access again" in skill
+    assert "A `github-network` error or ordinary sandbox capability failure alone is not an approval denial" in contract
+    assert "before declaring evidence unavailable" in contract
+    assert "without requiring profile installation" in instructions
 
 
 def test_missing_kaggle_cli_remains_user_owned_setup() -> None:

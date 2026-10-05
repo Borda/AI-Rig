@@ -179,7 +179,7 @@ Prompt for each subagent:
 >
 > `<input from that problem>`
 >
-> End your response with a `## Confidence` block: **Score**: 0.N (high >=0.9 / moderate 0.8-0.9 / low \<0.8) and **Gaps**: what limited thoroughness.
+> End your response with a `## Confidence` block: **Score**: 0.NN (high >=0.9 / moderate 0.8-0.9 / low \<0.8) and **Gaps**: what limited thoroughness, each gap a bullet opening with its deduction `- (-0.NN) <gap>`, deductions summing to 1.0 - Score.
 >
 > You have approximately `<PHASE_TIMEOUT_MIN>` minutes. If time is running short, submit your partial findings — do not delay output waiting for full coverage.
 >

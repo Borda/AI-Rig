@@ -559,9 +559,9 @@ eval "$TEST_CMD"
 - [any remaining items that need manual review]
 
 ## Confidence
-**Score**: 0.N — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
+**Score**: 0.NN — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
 **Gaps**:
-- [e.g., coverage tool unavailable, some tests skipped]
+- (-0.NN) [e.g., coverage tool unavailable, some tests skipped]
 
 **Refinements**: N passes.
 ```

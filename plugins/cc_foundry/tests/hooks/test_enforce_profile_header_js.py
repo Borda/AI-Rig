@@ -400,3 +400,49 @@ def test_malformed_stdin_passes_through(tmp_path: Path) -> None:
     )
 
     assert (proc.returncode, proc.stdout.strip()) == (0, "")
+
+
+# ── Stop: delivery still checked when the follow-up question is skipped ──────
+
+
+def _stop_payload(**overrides: object) -> dict:
+    """Build a Stop payload whose final message lacks the header, applying `overrides`."""
+    payload: dict = {"hook_event_name": "Stop", "stop_hook_active": False, "last_assistant_message": "done"}
+    payload.update(overrides)
+    return payload
+
+
+@_skip_node_unavailable
+def test_stop_blocks_undelivered_report_once(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
+    """A turn ending without the report delivery is kept going once; the same report never re-blocks."""
+    report_dir, _, cwd = profile_run
+    (report_dir / "report.md").write_text("---\nTitle: x\nPR: #1\nDate: y\n---\n", encoding="utf-8")
+    result = _run(
+        tmp_path,
+        _stop_payload(
+            cwd=cwd,
+        ),
+    )
+
+    assert result.get("decision") == "block"
+    assert "foundry:profile" in result["reason"]
+    assert (
+        _run(
+            tmp_path,
+            _stop_payload(
+                cwd=cwd,
+            ),
+        )
+        == {}
+    )
+
+
+@_skip_node_unavailable
+def test_stop_passes_delivery_in_final_message(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
+    """The Stop payload's final message proves delivery even without a transcript."""
+    report_dir, _, cwd = profile_run
+    (report_dir / "report.md").write_text("---\nTitle: x\nPR: #1\nDate: y\n---\n", encoding="utf-8")
+    assert _run(tmp_path, _stop_payload(cwd=cwd, last_assistant_message=DELIVERED)) == {}
+
+
+DELIVERED = "| Field | Value |\n| --- | --- |\n| Title | x |\n| PR | #1 |\n| Date | y |\n"

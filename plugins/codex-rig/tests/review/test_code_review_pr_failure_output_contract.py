@@ -66,7 +66,7 @@ def test_pr_review_uses_effective_grants_before_terminal_network_failure() -> No
         "Run the direct owning collector under current effective grants per GitHub Read Execution or with runtime approval"
         in skill
     )
-    assert "An unexpected runtime restriction or denial stops the collection attempt" in skill
+    assert "An explicit runtime denial or non-overridable restriction stops the collection attempt" in skill
     assert "without broadening access or retrying the denied command" in skill
     assert skill.index("Run the direct owning collector") < skill.index("**Terminal review-unavailable output gate:**")
 
@@ -80,7 +80,7 @@ def test_pr_remediation_uses_effective_grants_before_terminal_network_failure() 
         "Run the direct owning collector under current effective grants per GitHub Read Execution or with runtime approval"
         in skill
     )
-    assert "An unexpected runtime restriction or denial stops" in skill
+    assert "An explicit runtime denial or non-overridable restriction stops" in skill
     assert "without broadening access or retrying the denied command" in skill
     assert skill.index("Run the direct owning collector") < skill.index("Findings intake:")
 

@@ -491,6 +491,7 @@ End response with `## Confidence` block per CLAUDE.md output standards.
 - Follow-up chains:
   - Recall < 0.70 or borderline: pick "Apply proposals" from gate → `/calibrate <agent>` to verify improvement — stop, escalate to user if recall still < 0.70 after this cycle (max 1 apply cycle per run)
   - Calibration bias > 0.15: add adjusted threshold to MEMORY.md, note in next audit
+  - Confidence-format change (per-gap deductions, foundry 0.64.6): benchmark prompt now asks for them — compare calibration bias across that boundary as a re-baseline, not a trend
   - Routing accuracy < 0.90 or hard accuracy < 0.80: update descriptions for confused pairs → `/calibrate routing` to verify improvement
   - Recommended cadence: run before and after any significant agent instruction change; run `/calibrate routing` after any agent description change; run `/calibrate communication` after any protocol or handoff change
 - **Internal Quality Loop suppressed during benchmarking**: Phase 2 prompt explicitly tells target agents not to self-review before answering. Ensures calibration measures raw instruction quality — not `(agent + loop)` composite. Loop enabled: inflates recall and confidence by unknown ratio, masks real instruction gaps, makes improvement attribution impossible.

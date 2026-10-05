@@ -447,7 +447,7 @@ When `--adversarial` and `--efficiency` both run in the same invocation: each mo
 
 ## Follow-up gate
 
-**Always fires** unless `--skip-gate` passed (programmatic callers). Call `AskUserQuestion` — do NOT write options as plain text first. Map options directly into tool-call arguments.
+**Always fires** unless `--skip-gate` passed (programmatic callers). Delivery is checked regardless: on `Stop`, `hooks/enforce-audit-header.js` keeps a turn going once per aggregate when it ends without the Step 7 findings report. Call `AskUserQuestion` — do NOT write options as plain text first. Map options directly into tool-call arguments.
 
 When user picks fix option (a–c): run Steps 8–10 inline via `modes/fix.md` (state on disk in `summary.jsonl`); no recursive `/audit` call.
 

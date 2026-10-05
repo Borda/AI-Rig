@@ -56,7 +56,7 @@ cat "$_RESEARCH_SHARED/agent-resolution.md"
 
 **Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase — paper collection, researcher analysis, report generation — all in the same response as the first real tool call. Mark in_progress/completed throughout. Every later `TaskUpdate` rides with the next real tool call — never a bookkeeping-only turn; the one standalone call is a `completed` right before a long report.
 
-- Always create **"Print report header"** as its own task (all paths — single-agent Step 3, `--team`, `plan`) — `in_progress` right after the report file is written (by the lead directly, or by a spawned consolidator's returned envelope); `completed` only once the `---` header has actually appeared in this response.
+- Always create **"Print report header"** as its own task (all paths — single-agent Step 3, `--team`, `plan`) — `in_progress` right after the report file is written (by the lead directly, or by a spawned consolidator's returned envelope); `completed` only once the `---` header has actually appeared in this response — after the table text, never before it (task-lifecycle's report-print exception).
 - This task exists because a sibling skill (oss:review) had an incident: report written correctly but terminal print step silently skipped while the hard-enforced `AskUserQuestion` fired anyway — tracking the print as its own task makes it as trackable as the tool calls around it.
 - The shared `## Follow-up gate` below must not fire while this task is `pending`/`in_progress`.
 
@@ -271,7 +271,7 @@ Confidence:  [aggregate score] — [key gaps]
 ---
 ```
 
-**Hook-enforced**: `hooks/enforce-topic-header.js` blocks only this workflow's follow-up question until the current report exists and every `---` header field appears in one matching two-column table in the parent reply since the last human turn. Missing/unreadable transcript evidence blocks this transition; reprint the header, then retry. Diagnostic/recovery questions remain available; use their own question header, not `topic`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
+**Hook-enforced**: on `Stop`, `hooks/enforce-topic-header.js` keeps a turn going once per report when it ends without the matching header table — skipping the follow-up question does not skip delivery. It also blocks only this workflow's follow-up question until the current report exists and every `---` header field appears in one matching two-column table in the parent reply since the last human turn. Missing/unreadable transcript evidence blocks this transition; reprint the header, then retry. Diagnostic/recovery questions remain available; use their own question header, not `topic`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
 
 End response with `## Confidence` block per CLAUDE.md output standards.
 

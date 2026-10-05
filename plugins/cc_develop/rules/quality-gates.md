@@ -22,9 +22,10 @@ Every analysis agent **must** end with:
 
 ```markdown
 ## Confidence
-**Score**: 0.N — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
+**Score**: 0.NN — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
 **Gaps**:
-- [specific limitation]
+- (-0.NN) [specific limitation]
+- (-0.NN) residual — [uncertainty no named gap explains]   ← only when needed
                           ← blank line required; Refinements is a peer field, not a sub-bullet
 **Refinements**: N passes.
 - Pass 1: [what gap was addressed — must name the gap, not just say "re-checked"]
@@ -32,10 +33,11 @@ Every analysis agent **must** end with:
 
 > **Never skip** — missing Confidence block = rule violation.
 
-- Omit **Refinements** if 0 passes (don't write "0 passes") — omit individual **Gaps** bullets if none, but keep the **Gaps** header
+- Omit **Refinements** if 0 passes (don't write "0 passes") — omit individual **Gaps** bullets only at Score 1.0, but keep the **Gaps** header
 - **Score**, **Gaps**, **Refinements** = peer top-level fields — never nest Refinements under Gaps; blank line before **Refinements** required
 - Score < 0.85 → ⚠ on the score line AND on the line immediately after (standalone, not a Gaps bullet): "orchestrator may re-run with the specific gap addressed"
 - Gaps = primary signal — surfaces implicit limitations for re-run decisions
+- **Each Gap opens with its deduction** `- (-0.NN) <gap>`: its share of the `1.0 - Score` shortfall — an attribution, approximate when gaps overlap. Deductions sum to exactly `1.0 - Score`, so a reader can drop or re-weigh a gap and re-assess the score. A cap, floor, or band that set the score is itself a gap: name it, carry its delta. A limitation that did not lower the score stays as `(-0.00)`. Uncertainty no named gap explains goes in one `residual` bullet — never spread silently across gaps. ASCII `-`, two decimals. Score below 1.0 with no Gaps bullets = rule violation
 
 ## Internal Quality Loop (analysis tasks only)
 

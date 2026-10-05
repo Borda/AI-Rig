@@ -181,7 +181,12 @@ CLOSED_FORBIDDEN_ARTIFACTS = {"codemap-context.json", "review-routing.json", "sp
 PR_THREAD_CONFIDENCE_GAP = "PR review-thread resolution status was unavailable; online review triage may be incomplete."
 PR_PUBLIC_FALLBACK_MAX_CONFIDENCE = 0.89
 UNAVAILABLE_RECOVERY_ACTIONS = {
-    "retry": "Retry the unchanged collector later; no review or merge decision was made.",
+    "network": (
+        "Check effective runtime access; if required access is missing or unknown and requests are allowed, "
+        "request runtime approval for the complete collector. Respect an explicit denial or non-overridable "
+        "restriction; retry only after approval or an evidenced state change."
+    ),
+    "retry": "Diagnose the transport failure or rate limit; retry only after an evidenced state change.",
     "auth": "Repair local gh access privately, verify repository access, then retry.",
     "install": "Install or repair gh locally, then retry.",
     "identity": "Confirm the canonical PR URL and repository identity, then retry.",
@@ -1159,8 +1164,10 @@ def _unavailable_recovery_action(code: str, checkout_started: bool, command_reas
         return recovery_action + (CHECKOUT_STATE_RECOVERY_SUFFIX if checkout_started else "")
     category = code.split(":", maxsplit=1)[0]
     action_key = (
-        "retry"
-        if category in {"github-network", "github-rate-limit", "command-timeout"}
+        "network"
+        if category == "github-network"
+        else "retry"
+        if category in {"github-rate-limit", "command-timeout"}
         else "auth"
         if category in {"github-auth", "github-permission"}
         else "install"

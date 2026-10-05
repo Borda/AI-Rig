@@ -711,8 +711,9 @@ def test_collect_pr_keeps_ambiguous_or_permission_limited_metadata_fail_closed(
     assert (output / "pr-error.txt").read_text(encoding="utf-8") == f"{expected_error}\n"
 
 
+@pytest.mark.parametrize("failure_class", ["github-not-found", "github-network"])
 def test_collect_pr_fails_closed_when_public_fallback_cannot_read_pr(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_class: str
 ) -> None:
     """Do not emit partial PR evidence when a canonical URL is private or unavailable publicly."""
     module = _load_collector()
@@ -728,7 +729,7 @@ def test_collect_pr_fails_closed_when_public_fallback_cannot_read_pr(
 
     def _public_get(*args: Any, **kwargs: Any) -> bytes:
         """Return the expected public-read failure without creating partial evidence."""
-        raise reader.GitHubReadError("github-not-found:gh-pr-view")
+        raise reader.GitHubReadError(f"{failure_class}:gh-pr-view")
 
     _configure_collector(monkeypatch, module, _unavailable_gh)
     monkeypatch.setattr(reader, "public_github_get", _public_get)
@@ -742,8 +743,18 @@ def test_collect_pr_fails_closed_when_public_fallback_cannot_read_pr(
         )
         == 2
     )
-    assert (output / "pr-error.txt").read_text(encoding="utf-8") == "github-not-found:gh-pr-view\n"
+    assert (output / "pr-error.txt").read_text(encoding="utf-8") == f"{failure_class}:gh-pr-view\n"
     assert not (output / "pr.json").exists()
+    diagnostic_path = output / "command-failure.json"
+    if failure_class == "github-network":
+        assert json.loads(diagnostic_path.read_text(encoding="utf-8")) == {
+            "exit_code": 1,
+            "failure_class": "github-network",
+            "failure_reason": "connection-reset",
+            "label": "gh-pr-view",
+        }
+    else:
+        assert not diagnostic_path.exists()
 
 
 def test_collect_pr_keeps_graphql_missing_pr_out_of_public_fallback(

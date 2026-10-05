@@ -1164,20 +1164,25 @@ def test_clear_preserves_later_root_sandbox_choice(tmp_path: Path) -> None:
     assert _config(home) == {"sandbox_mode": "workspace-write"}
 
 
-def test_setup_rejects_domain_appended_after_profile_marker(tmp_path: Path) -> None:
+@pytest.mark.parametrize("placement", ["before", "after"])
+@pytest.mark.parametrize("mode", ["setup", "clear"])
+def test_lifecycle_rejects_domain_appended_at_profile_marker(tmp_path: Path, placement: str, mode: str) -> None:
     """A later TOML assignment must not silently broaden the managed domain table."""
     home = tmp_path / "home"
     root = _installed_plugin(home)
     assert _run(home, "--plugin-root", str(root)).returncode == 0
     config = home / "config.toml"
-    config.write_text(
-        config.read_text(encoding="utf-8") + '"outside.example" = "allow"\n', encoding="utf-8", newline="\n"
-    )
+    original = config.read_text(encoding="utf-8")
+    extra = '"outside.example" = "allow"\n'
+    marker = "# codex-rig:github-read profile end\n"
+    edited = original.replace(marker, extra + marker) if placement == "before" else original + extra
+    config.write_text(edited, encoding="utf-8", newline="\n")
 
-    result = _run(home, "--plugin-root", str(root))
+    result = _run(home, "--plugin-root", str(root)) if mode == "setup" else _run(home, "--remove")
 
     assert result.returncode != 0
-    assert "profile block was extended" in result.stderr
+    assert "profile block" in result.stderr
+    assert config.read_text(encoding="utf-8") == edited
 
 
 def test_clear_preserves_later_unrelated_toml_table(tmp_path: Path) -> None:
@@ -1522,6 +1527,56 @@ def _write_schema2_profile(home: Path, *, original: str | None = None, edit: boo
         installed += '[profiles.personal]\nmodel_reasoning_effort = "high"\n'
     (home / "config.toml").write_text(installed, encoding="utf-8", newline="\n")
     return installed
+
+
+@pytest.mark.parametrize("schema", [3, 4])
+@pytest.mark.parametrize("mode", ["setup", "clear"])
+def test_lifecycle_preserves_hook_tables_before_profile_end(tmp_path: Path, schema: int, mode: str) -> None:
+    """Keep hook trust records inserted before the closing ownership comment during sync or clear."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    config = home / "config.toml"
+    if schema == 3:
+        installed = _write_schema2_profile(home)
+        installed = 'default_permissions = ":workspace" # codex-rig:github-read\n' + installed
+        state_path = home / "codex-rig-github-read-profile.json"
+        state = json.loads(state_path.read_bytes().split(b"\n", 1)[1])
+        state["schema"] = 3
+        state["installed_sha256"] = hashlib.sha256(installed.encode()).hexdigest()
+        body = json.dumps(state, sort_keys=True, ensure_ascii=False).encode()
+        state_path.write_bytes(
+            b"# codex-rig:github-read-profile sha256="
+            + hashlib.sha256(body).hexdigest().encode()
+            + b"\n"
+            + body
+            + b"\n"
+        )
+    else:
+        assert _run(home, "--plugin-root", str(root)).returncode == 0
+        installed = config.read_text(encoding="utf-8")
+    extra = '\n[hooks.state]\n\n[hooks.state."example:session_start"]\ntrusted_hash = "sha256:example"\n'
+    marker = "# codex-rig:github-read profile end\n"
+    edited = installed.replace(marker, extra + marker)
+    config.write_text(edited, encoding="utf-8", newline="\n")
+    hooks = tomllib.loads(extra)["hooks"]
+
+    result = _run(home, "--plugin-root", str(root)) if mode == "setup" else _run(home, "--remove")
+
+    assert result.returncode == 0, result.stderr
+    assert _config(home)["hooks"] == hooks
+    assert extra.lstrip("\n") in config.read_text(encoding="utf-8")
+    if mode == "setup":
+        parsed = _config(home)
+        assert parsed["permissions"]["github-read"]["network"] == {
+            "enabled": True,
+            "domains": {"api.github.com": "allow", "github.com": "allow"},
+        }
+        assert parsed["permissions"]["local-workflow"]["network"] == {"enabled": False}
+        frozen = config.read_bytes()
+        assert _run(home, "--plugin-root", str(root)).returncode == 0
+        assert config.read_bytes() == frozen
+        assert _run(home, "--remove").returncode == 0
+    assert _config(home) == {"hooks": hooks}
 
 
 @pytest.mark.parametrize("explicit_default", [None, ":workspace", ":read-only"])

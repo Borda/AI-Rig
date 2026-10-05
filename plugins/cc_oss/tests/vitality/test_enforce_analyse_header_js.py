@@ -323,3 +323,51 @@ def test_malformed_stdin_passes_through(tmp_path: Path) -> None:
     )
 
     assert (proc.returncode, proc.stdout.strip()) == (0, "")
+
+
+# ── Stop: delivery still checked when the follow-up question is skipped ──────
+
+
+def _stop_payload(**overrides: object) -> dict:
+    """Build a Stop payload whose final message lacks the header, applying `overrides`."""
+    payload: dict = {"hook_event_name": "Stop", "stop_hook_active": False, "last_assistant_message": "done"}
+    payload.update(overrides)
+    return payload
+
+
+@_skip_node_unavailable
+def test_stop_blocks_undelivered_report_once(tmp_path: Path, repo: Path, analyse_run: Path) -> None:
+    """A turn ending without the report delivery is kept going once; the same report never re-blocks."""
+    report = repo / MODE_REPORTS["thread"]
+    report.parent.mkdir(parents=True)
+    report.write_text("---\nTitle: x\nPR: #1\nDate: y\n---\n", encoding="utf-8")
+    result = _run(
+        tmp_path,
+        _stop_payload(
+            cwd=str(repo),
+        ),
+    )
+
+    assert result.get("decision") == "block"
+    assert "oss:analyse" in result["reason"]
+    assert (
+        _run(
+            tmp_path,
+            _stop_payload(
+                cwd=str(repo),
+            ),
+        )
+        == {}
+    )
+
+
+@_skip_node_unavailable
+def test_stop_passes_delivery_in_final_message(tmp_path: Path, repo: Path, analyse_run: Path) -> None:
+    """The Stop payload's final message proves delivery even without a transcript."""
+    report = repo / MODE_REPORTS["thread"]
+    report.parent.mkdir(parents=True)
+    report.write_text("---\nTitle: x\nPR: #1\nDate: y\n---\n", encoding="utf-8")
+    assert _run(tmp_path, _stop_payload(cwd=str(repo), last_assistant_message=DELIVERED)) == {}
+
+
+DELIVERED = "| Field | Value |\n| --- | --- |\n| Title | x |\n| PR | #1 |\n| Date | y |\n"

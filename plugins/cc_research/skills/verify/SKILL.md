@@ -362,9 +362,9 @@ Path:        → .reports/research/verify-<branch>-<date>.md
 Full audit: <RUN_DIR>/audit-raw.md
 
 ## Confidence
-**Score**: 0.N — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
+**Score**: 0.NN — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
 **Gaps**:
-- [e.g., implementation details not directly verifiable from paper alone]
+- (-0.NN) [e.g., implementation details not directly verifiable from paper alone]
 
 **Refinements**: N passes.
 ```

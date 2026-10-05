@@ -638,9 +638,9 @@ eval "$TEST_CMD"
 - [no test runner → `rm <test_file>` — no test suite will re-execute it; it served the gate, now expendable. **Exception**: test introduced this session and definitively wrong → delete it. Never delete pre-existing regression tests — they represent captured behavior predating this session.]
 
 ## Confidence
-**Score**: 0.N — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
+**Score**: 0.NN — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
 **Gaps**:
-- [e.g., could not reproduce locally, partial traceback only, fix not runtime-tested]
+- (-0.NN) [e.g., could not reproduce locally, partial traceback only, fix not runtime-tested]
 
 **Refinements**: N passes.
 ```

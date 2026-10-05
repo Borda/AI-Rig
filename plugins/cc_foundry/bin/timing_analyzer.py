@@ -662,10 +662,11 @@ def _render_confidence() -> list[str]:
         "## Confidence",
         "**Score**: 0.85 — moderate",
         "**Gaps**:",
-        "- Subagent internal tool calls invisible to main-process hook → "
+        # Deductions sum to 1.0 - Score (0.15), per the Confidence Block rule.
+        "- (-0.07) Subagent internal tool calls invisible to main-process hook → "
         "reasoning bucket underestimates when subagents dominate",
-        "- `model` field 100% null in source logs → no per-model-tier breakdown",
-        "- Background agent join via (agent, desc) substring match; concurrent same-type/same-desc "
+        "- (-0.03) `model` field 100% null in source logs → no per-model-tier breakdown",
+        "- (-0.05) Background agent join via (agent, desc) substring match; concurrent same-type/same-desc "
         "spawns may pair wrong",
         "",
         "**Refinements**: 0 passes.",

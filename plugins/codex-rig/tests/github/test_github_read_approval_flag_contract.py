@@ -49,7 +49,7 @@ def test_reader_runtime_boundary_preserves_narrow_command_and_remote_write_ban()
         'Only when required capability is unavailable and runtime policy permits approval, give the required brief and request external access for the complete reader with `sandbox_permissions="require_escalated"`'
         in boundary
     )
-    assert "An unexpected restriction or denial stops" in boundary
+    assert "An explicit denial or non-overridable restriction stops" in boundary
     assert "remote publication or other remote mutation" in boundary
     assert "Do not wrap this command in `rtk`" in boundary
     assert "--approve-gh" not in boundary

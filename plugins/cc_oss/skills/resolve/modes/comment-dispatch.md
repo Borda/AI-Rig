@@ -124,8 +124,10 @@ Then print:
 **Next**: review diff and commit | reply to reviewer with Codex's explanation
 
 ## Confidence
-**Score**: [0.N]
-**Gaps**: [e.g. Codex partial completion, ambiguous comment intent]
+**Score**: [0.NN]
+**Gaps**:
+- (-0.NN) [e.g. Codex partial completion, ambiguous comment intent]
+
 **Refinements**: N passes.
 ```
 

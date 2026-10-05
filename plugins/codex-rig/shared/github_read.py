@@ -443,7 +443,7 @@ def read_with_fallback(
     fallback_url: FallbackUrl | None = None,
     open_url: OpenUrl = urlopen,
 ) -> tuple[bytes, str]:
-    """Prefer authenticated gh and use a public unauthenticated GET only as a last resort."""
+    """Prefer authenticated gh, retaining safe diagnostics when public fallback fails identically."""
     try:
         return run_gh_read(run, argv, timeout=timeout, label=label), "gh"
     except GitHubReadError as error:
@@ -452,10 +452,16 @@ def read_with_fallback(
         resolved_fallback_url = fallback_url() if callable(fallback_url) else fallback_url
         if resolved_fallback_url is None:
             raise
-        return (
-            public_github_get(resolved_fallback_url, timeout=timeout, label=label, open_url=open_url),
-            "public-https-fallback",
-        )
+        try:
+            return (
+                public_github_get(resolved_fallback_url, timeout=timeout, label=label, open_url=open_url),
+                "public-https-fallback",
+            )
+        except GitHubReadError as fallback_error:
+            # Keep the classified CLI reason without masking a different fallback outcome.
+            if str(fallback_error) == str(error) and error.diagnostics:
+                raise error from fallback_error
+            raise
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

@@ -5,6 +5,8 @@
 // human turn. Audit uses its pre-question findings aggregate instead.
 // Missing/unreadable delivery evidence denies the transition, not the session.
 // Transcript inspection is bounded to 200 KB; earlier output must be reprinted.
+// The same check also runs on Stop (stopBlockReason), because a skipped
+// follow-up question would otherwise skip delivery enforcement entirely.
 // This is a workflow guard, not proof of UI rendering or semantic correctness.
 // Canonical copy: cc_foundry; propagate_shared.py distributes identical local
 // copies to independently installed cc_oss, cc_develop, and cc_research.
@@ -12,6 +14,7 @@
 "use strict";
 
 const fs = require("fs");
+const path = require("path");
 
 // Below this many data rows a pipe-table match is treated as noise (a stray
 // `|` in prose), not a rendered report header. The smallest report this
@@ -134,7 +137,60 @@ module.exports = {
   MIN_TABLE_ROWS,
   isWorkflowFollowUp,
   deliveryProblem,
+  stopBlockReason,
+  deliveredMarkerPath,
 };
+
+/**
+ * Marker beside a workflow sentinel recording the report version Stop already checked; CSID stays terminal.
+ * Skills never delete it: its stamp binds it to one report version, so a leftover marker is inert and
+ * shares the sentinel's TMPDIR lifetime.
+ */
+function deliveredMarkerPath(sentinelPath) {
+  return path.join(path.dirname(sentinelPath), "report-delivered-" + path.basename(sentinelPath));
+}
+
+/**
+ * Stop-event reason to keep the turn going because it is ending with the current report
+ * undelivered, or null to let it end. The follow-up question is the PreToolUse gate's only
+ * trigger; when a skill skips that question, this is the only delivery check left.
+ * Fires at most once per report version (path, mtime, size): the marker is written whether
+ * or not delivery passed, so the forced continuation and later human turns never re-block.
+ */
+function stopBlockReason(sentinelPath, reportFile, payload, skillLabel) {
+  if (!sentinelPath || !reportFile || !payload) return null;
+  let stamp;
+  try {
+    const stats = fs.statSync(reportFile);
+    if (!stats.isFile() || stats.size === 0) return null; // producer not done — nothing to deliver yet
+    stamp = `${reportFile}\n${stats.mtimeMs}\n${stats.size}`;
+  } catch (_) {
+    return null;
+  }
+  const marker = deliveredMarkerPath(sentinelPath);
+  try {
+    if (fs.readFileSync(marker, "utf8") === stamp) return null;
+  } catch (_) {
+    // no marker yet — first Stop for this report version
+  }
+  const problem = deliveryProblem(reportFile, payload.transcript_path, payload.last_assistant_message);
+  try {
+    fs.writeFileSync(marker, stamp);
+  } catch (_) {
+    if (problem) return null; // cannot record the nudge — never risk re-blocking every turn
+  }
+  if (!problem || payload.stop_hook_active) return null;
+  // Audit delivers its findings aggregate (summary.jsonl), not a `---` header.
+  const deliverable = reportFile.endsWith("summary.jsonl")
+    ? "the audit findings report (Audit Report heading, Total count, every finding line) is required"
+    : "the report header as one two-column `| Field | Value |` table (every field, file order, " +
+      "including Path to the full report) comes first and is required";
+  return (
+    `${skillLabel} report delivery gate — this turn is ending, but ${problem}. ` +
+    `Deliver it now, in this reply: ${deliverable}; limitations or other context may follow, kept short. ` +
+    "Then end the turn. This check fires once per report."
+  );
+}
 
 /** Recognize only the documented follow-up question; recovery questions stay usable. */
 function isWorkflowFollowUp(toolInput, skill) {
@@ -167,15 +223,20 @@ function isWorkflowFollowUp(toolInput, skill) {
   });
 }
 
-/** Check current report content against the parent-visible delivery, not just arbitrary table presence. */
-function deliveryProblem(reportFile, transcriptPath) {
+/**
+ * Check current report content against the parent-visible delivery, not just arbitrary table presence.
+ * `lastAssistantMessage` (Stop payload) is appended because the transcript is written asynchronously
+ * and may not yet hold the turn's final text.
+ */
+function deliveryProblem(reportFile, transcriptPath, lastAssistantMessage) {
   let content;
   try {
     content = fs.readFileSync(reportFile, "utf8");
   } catch (_) {
     return "report is unreadable; recover its producer before following up";
   }
-  const text = assistantTextSinceLastUserTurn(transcriptPath);
+  const finalText = typeof lastAssistantMessage === "string" ? lastAssistantMessage : "";
+  const text = [assistantTextSinceLastUserTurn(transcriptPath), finalText].filter(Boolean).join("\n");
   if (!text) return "report delivery is unverified; print the report in this turn before following up";
   const normalize = (value) => value.replace(/\s+/g, " ").trim();
   const delivered = normalize(text);

@@ -63,7 +63,7 @@ def _write_complete_unavailable_v2_artifact(out_dir: Path, checkout_state: dict[
     (out_dir / "pr-error.txt").write_text(code + "\n", encoding="utf-8")
     (out_dir / "pr-target.txt").write_text("123\n", encoding="utf-8")
     (out_dir / "checkout-state.json").write_text(json.dumps(checkout_state), encoding="utf-8")
-    recovery_action = "Retry the unchanged collector later; no review or merge decision was made."
+    recovery_action = "Check effective runtime access; if required access is missing or unknown and requests are allowed, request runtime approval for the complete collector. Respect an explicit denial or non-overridable restriction; retry only after approval or an evidenced state change."
     recovery_action += " Inspect the local checkout state before retrying."
     (out_dir / "review-notes.md").write_text(
         "# PR Review Availability: unavailable\n\n"

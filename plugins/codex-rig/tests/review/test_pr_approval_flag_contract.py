@@ -35,7 +35,7 @@ def test_pr_skills_use_collector_runtime_boundary(skill_path: Path) -> None:
 
     assert "native-skill-contract.md#pr-collection-runtime-boundary" in skill
     assert "Do not create or modify runtime approval rules files" in skill
-    assert "runtime restriction or denial stops the collection attempt" in skill
+    assert "runtime denial or non-overridable restriction stops the collection attempt" in skill
     if skill_path == CODE_REMEDIATE_SKILL:
         assert "Continue normal remediation scope selection" in skill
     else:
@@ -63,7 +63,7 @@ def test_pr_collector_binds_canonical_target_before_runtime_approval() -> None:
         'Only when required capability is unavailable and runtime policy permits approval, give the required brief and request external access for the complete collector with `sandbox_permissions="require_escalated"`'
         in boundary
     )
-    assert "An unexpected restriction or denial stops" in boundary
+    assert "An explicit denial or non-overridable restriction stops" in boundary
     assert "remote mutation" in boundary
     assert "--approve-gh" not in boundary
 
@@ -79,7 +79,7 @@ def test_shared_read_execution_has_no_workflow_consent_gate() -> None:
         in execution
     )
     assert "need no separate workflow consent" in execution
-    assert "unexpected restriction or denial stops the attempt" in execution
+    assert "explicit denial or non-overridable restriction stops the attempt" in execution
     assert "If a required capability is explicitly disabled or a required write is outside allowed roots" in execution
     assert "use the existing owning-command approval boundary only if runtime policy permits" in execution
     assert "Local-only work stays local" in execution

@@ -674,9 +674,9 @@ Metric, Guard, Status from `results.jsonl`; Delta from Full = `delta_pct` from `
 Full artifacts: <FORTIFY_DIR>/
 
 ## Confidence
-**Score**: 0.N — [high|moderate|low]
+**Score**: 0.NN — [high|moderate|low]
 **Gaps**:
-- [specific limitation]
+- (-0.NN) [specific limitation]
 ```
 
 ## Step F8: Terminal summary

@@ -344,11 +344,12 @@ Full retrospective: <RUN_DIR>/retrospective.md
 Next hypotheses queue: <RUN_DIR>/hypotheses.jsonl
 
 ## Confidence
-**Score**: 0.N — [high|moderate|low]
+**Score**: 0.NN — [high|moderate|low]
+**Finding confidence** (dead windows, suspicious jumps, classification errors, pattern detection): [high|moderate|low] — independent of statistical test availability
+**Statistical test** (Wilcoxon p-value): [available: p=X | unavailable: scipy not installed — descriptive stats only]
 **Gaps**:
-- Finding confidence (dead windows, suspicious jumps, classification errors, pattern detection): [high|moderate|low] — independent of statistical test availability
-- Statistical confidence (Wilcoxon p-value): [available: p=X | unavailable: scipy not installed — descriptive stats only]
-- [other specific limitations]
+- (-0.NN) [degraded rating above, only when moderate/low or test unavailable — named with its cause]
+- (-0.NN) [other specific limitations]
 ```
 
 ### Step T7: Terminal summary and follow-up gate

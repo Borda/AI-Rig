@@ -193,6 +193,8 @@ When reporting clean attribution (no issues found): produce `## Attribution Audi
 
 First-order papers not requiring fetch include widely known works such as BERT and CLIP. When issue also has text-confirmation (excerpt itself shows problem), apply zero fetch penalty regardless of prior paper recall.
 
+**Gaps attribution**: a tier's distance from 1.0 is a Gaps bullet naming that tier's condition (e.g. `- (-0.08) text-confirmed, fetch not needed`), never `residual`; an applied fetch penalty is its own bullet with that delta.
+
 **Note**: these tiers calibrate citation-verification confidence only. Zero fetch penalty never exempts the agent from quality-gates rules — Internal Quality Loop (gap-triggered second pass, cap 2) and Pre-Handover Check (triggered by a specific unproven claim, never by a score) govern as written there.
 
 - **Over-flagging in well-attributed work**: paper's abstract correctly cites prior art, all methods trace to correct originating authors → report positively. "Nothing wrong found" is valid, informative result. Rate severity honestly: missing secondary reference (e.g., follow-on paper extending original method) is LOW severity; only method misattribution or contribution omission from abstract rises to MEDIUM or HIGH.

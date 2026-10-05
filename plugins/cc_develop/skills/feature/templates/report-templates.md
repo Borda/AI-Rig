@@ -38,9 +38,9 @@
 - [deferred items, known limitations, suggested next steps]
 
 ## Confidence
-**Score**: 0.N — [high >=0.9 | moderate 0.85-0.9 | low <0.85 warn]
+**Score**: 0.NN — [high >=0.9 | moderate 0.85-0.9 | low <0.85 warn]
 **Gaps**:
-- [e.g., review cycle incomplete, edge cases unexplored]
+- (-0.NN) [e.g., review cycle incomplete, edge cases unexplored]
 
 **Refinements**: N passes.
 ```
