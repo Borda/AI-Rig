@@ -56,7 +56,6 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, NamedTuple
 
-
 # Keep the installed skill helper importable when pytest loads this validator by file path.
 SKILL_DIRECTORY = Path(__file__).resolve().parent
 PLUGIN_ROOT = SKILL_DIRECTORY.parents[1]
@@ -66,10 +65,11 @@ SHARED_DIRECTORY = PLUGIN_ROOT / "shared"
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
-from parallel_execution import _SECRET_PATTERNS, validate_inspection_contexts, validate_read_only_runtime  # noqa: E402
-from local_reviewer_wave import ReviewRouteError, validate_evidence as validate_local_reviewer_evidence  # noqa: E402
-from review_routing import ROUTING_SIGNALS, derive_mechanical_risk  # noqa: E402
-from review_context import context_pages, dispatch_message, render_read_call, render_read_output  # noqa: E402
+from local_reviewer_wave import ReviewRouteError
+from local_reviewer_wave import validate_evidence as validate_local_reviewer_evidence
+from parallel_execution import _SECRET_PATTERNS, validate_inspection_contexts, validate_read_only_runtime
+from review_context import context_pages, dispatch_message, render_read_call, render_read_output
+from review_routing import ROUTING_SIGNALS, derive_mechanical_risk
 
 REQUIRED_SECTIONS = (
     "Decision Summary",

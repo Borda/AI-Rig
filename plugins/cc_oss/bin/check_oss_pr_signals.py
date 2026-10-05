@@ -49,7 +49,6 @@ from fnmatch import fnmatch
 from pathlib import Path
 from shutil import which
 
-
 # CLEAN_ARGS is a numeric PR identifier — accept digits only to guard against
 # argv injection into the gh diff path glob. Mirrors Step 1 PR-number validation.
 _PR_NUMBER_RE = re.compile(r"^[0-9]+$")
@@ -131,7 +130,7 @@ def _run(cmd: list[str], timeout: int) -> str:
         No doctest — subprocess-dependent; covered by pytest.
     """
     try:
-        proc = subprocess.run(  # noqa: S603
+        proc = subprocess.run(
             cmd,
             capture_output=True,
             text=True,

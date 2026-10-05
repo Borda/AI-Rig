@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 #: Directories holding vendored copies, captured benchmark evidence, or build output — their

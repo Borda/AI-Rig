@@ -11,7 +11,6 @@ from pathlib import Path
 from _bench_query.models import TimingStats
 from _bench_query.sources import module_to_grep_pattern, module_to_package
 
-
 # ---- COLD BASELINE ----
 
 

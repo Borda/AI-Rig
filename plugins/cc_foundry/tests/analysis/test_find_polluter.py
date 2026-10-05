@@ -20,10 +20,9 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 # Loaded by conftest.py — `find_polluter` is registered in sys.modules there.
 import find_polluter
+import pytest
 
 
 class _FakeResult:

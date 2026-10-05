@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-
 _MOD_PATH = Path(__file__).resolve().parent.parent.parent / "bin" / "check_plugin_version_sync.py"
 _spec = importlib.util.spec_from_file_location("check_plugin_version_sync", _MOD_PATH)
 assert _spec and _spec.loader

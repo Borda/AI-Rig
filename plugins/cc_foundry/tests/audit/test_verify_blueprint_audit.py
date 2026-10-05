@@ -24,9 +24,7 @@ import time
 from pathlib import Path
 
 import pytest
-
 import verify_blueprint_audit as verifier
-
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "audit"
 LOGS = FIXTURES / "logs"

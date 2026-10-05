@@ -10,10 +10,8 @@ import json
 import os
 from pathlib import Path
 
-import pytest
-
-
 import extract_code_blocks as ecb
+import pytest
 
 
 @pytest.fixture(name="md_dir")

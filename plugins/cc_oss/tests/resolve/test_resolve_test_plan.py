@@ -12,7 +12,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 import resolve_test_plan as rtp
 
 _skip_no_git = pytest.mark.skipif(shutil.which("git") is None, reason="git CLI not available")

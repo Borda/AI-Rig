@@ -10,61 +10,22 @@ import shlex
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
 from types import SimpleNamespace
+from typing import Any
 
-
-from _bench_common.artifact_hashing import runner_sha256
-from _bench_common.change_impact_contracts import source_fingerprint as change_impact_source_fingerprint
-from _bench_common.claude_transport import MODEL_TIMEOUT, MODELS, parse_result_usage
 from _bench_common import presentation
-from _bench_common.presentation import (
-    format_artifact_block,
-    format_paid_command_block,
-    format_quality,
-    fmt_time,
-    fmt_tok,
-)
 
 # Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
 from _bench_common.agentic_contracts import (
     AgenticOracle,  # noqa: F401
     AnswerScore,  # noqa: F401
 )
-from _bench_common.provider_parity_contracts import (
-    ARM_CONTRACTS,
-    fresh_input_tokens,
-    token_accounting_inconsistent,
-    treatment_adherence,
-)
-from _bench_common.edit_patch_contracts import (
-    EditExecution,
-    EditTaskContract,
-    build_patch_answer,
-    score_edit_execution,
-    validate_patch_index_bundle,
-)
-from _bench_common.mutation_isolation import (
-    PATCH_PYTEST_ENV,
-    create_patch_task_agent_workspace,
-    create_executable_agent_workspace,
-    execute_patch_task_answer,
-    execute_fix_multi_patch,
-    execute_fix_single_patch,
-    patch_test_runtime_identity,
-    relocate_frozen_index_for_worktree,
-)
-from _bench_common.paid_lifecycle import (
-    PaidStageCallbacks,
-    paid_approval_matches,
-    paid_approval_token,
-    run_paid_stage,
-    write_checksums,
-)
+from _bench_common.artifact_hashing import runner_sha256
+from _bench_common.change_impact_contracts import source_fingerprint as change_impact_source_fingerprint
 
 # Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
 # Every name it defines is re-exported here, including ones this file no longer calls itself: callers and tests
@@ -92,6 +53,44 @@ from _bench_common.claude_stages import (
     resolve_claude_patch_scope,
     resolve_readcrop_scope,
 )
+from _bench_common.claude_transport import MODEL_TIMEOUT, MODELS, parse_result_usage
+from _bench_common.edit_patch_contracts import (
+    EditExecution,
+    EditTaskContract,
+    build_patch_answer,
+    score_edit_execution,
+    validate_patch_index_bundle,
+)
+from _bench_common.mutation_isolation import (
+    PATCH_PYTEST_ENV,
+    create_executable_agent_workspace,
+    create_patch_task_agent_workspace,
+    execute_fix_multi_patch,
+    execute_fix_single_patch,
+    execute_patch_task_answer,
+    patch_test_runtime_identity,
+    relocate_frozen_index_for_worktree,
+)
+from _bench_common.paid_lifecycle import (
+    PaidStageCallbacks,
+    paid_approval_matches,
+    paid_approval_token,
+    run_paid_stage,
+    write_checksums,
+)
+from _bench_common.presentation import (
+    fmt_time,
+    fmt_tok,
+    format_artifact_block,
+    format_paid_command_block,
+    format_quality,
+)
+from _bench_common.provider_parity_contracts import (
+    ARM_CONTRACTS,
+    fresh_input_tokens,
+    token_accounting_inconsistent,
+    treatment_adherence,
+)
 
 from _bench_claude.agentic.config import (
     BENCHMARKS_DIR,
@@ -102,13 +101,13 @@ from _bench_claude.agentic.config import (
     RUNNER_PATH,
     _console,
 )
-from _bench_claude.agentic.provenance import _repository_fingerprint, _sha256_file, _validate_parity_runtime
 from _bench_claude.agentic.discovery import find_index
 from _bench_claude.agentic.evidence import (
     _benchmark_evidence_roots,
     _claude_evidence_settings_file,
     _staged_codemap_runtime,
 )
+from _bench_claude.agentic.provenance import _repository_fingerprint, _sha256_file, _validate_parity_runtime
 from _bench_claude.agentic.runner import ModelRunner
 
 
@@ -796,7 +795,7 @@ def _format_claude_stage_row(row: Mapping[str, Any], completed: int, total: int)
         input_text = f">{input_text}" if row["input_tokens"] else "?"
     output_text = fmt_tok(int(row["output_tokens"])) if usage_complete else "?"
     base = (
-        f"({completed}/{total}) {mark}  {str(row['task_id']):<6} {str(row['arm']):<8} "
+        f"({completed}/{total}) {mark}  {row['task_id']!s:<6} {row['arm']!s:<8} "
         f"in={input_text:>6} out={output_text:>5} "
         f"cmd={int(row['command_calls']):>2} time={fmt_time(float(row['elapsed_s'])):>5} quality={quality_text}"
     )

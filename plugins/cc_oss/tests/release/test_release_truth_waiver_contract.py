@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 import release_append_marker as ram
 
-
 _RELEASE = Path(__file__).resolve().parents[2] / "skills/release"
 _skip_shell_unavailable = pytest.mark.skipif(shutil.which("bash") is None, reason="Release setup uses Bash.")
 

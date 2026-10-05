@@ -14,7 +14,6 @@ from typing import Any
 
 import pytest
 
-
 GENERIC_TITLES = ("bug", "question", "help", "feature request", "feature", "issue", "error")
 
 

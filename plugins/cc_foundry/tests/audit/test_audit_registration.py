@@ -22,10 +22,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 import propagate_shared
-
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PLUGINS = ("cc_foundry", "cc_oss", "cc_develop", "cc_research")

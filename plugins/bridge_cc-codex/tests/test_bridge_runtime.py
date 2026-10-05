@@ -7,7 +7,6 @@ import contextlib
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import stat
 import subprocess
@@ -15,19 +14,19 @@ import sys
 import tempfile
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-
 BIN_ROOT = Path(__file__).resolve().parents[1] / "bin"
 if str(BIN_ROOT) not in sys.path:
     sys.path.insert(0, str(BIN_ROOT))
 
-import bridge_call  # noqa: E402  (loaded from the installed-plugin-equivalent bin directory)
-import bridge_diagnose  # noqa: E402  (shares bridge_call's local import seam)
-import bridge_mcp  # noqa: E402  (shares bridge_call's local import seam)
+import bridge_call
+import bridge_diagnose
+import bridge_mcp
 
 
 def _supports_directory_symlinks() -> bool:

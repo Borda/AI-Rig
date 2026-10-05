@@ -2,25 +2,23 @@
 
 import copy
 import hashlib
-from io import StringIO
 import json
-from pathlib import Path
 import subprocess
 import sys
+from io import StringIO
+from pathlib import Path
 
 import pytest
 from _platform import FILE_SYMLINKS_AVAILABLE
+from markdown_it import MarkdownIt
 from rich.console import Console
 from rich.markdown import Markdown
-from markdown_it import MarkdownIt
-
-from test_final_handoff import FINALIZER, _handoff_payload, _load_finalizer
-from test_code_remediate_final_outcome_validation import VALIDATOR
-from test_code_remediate_final_outcome_validation import _metadata as resolution_metadata, _write_action_items
-from test_final_handoff import _write_schema_v2_assess
+from test_code_remediate_final_outcome_validation import VALIDATOR, _write_action_items
+from test_code_remediate_final_outcome_validation import _metadata as resolution_metadata
 from test_code_remediate_work_bucket_validation import _write_workplan
-from test_review_finding_identity import _load_validator, _metadata, _result
+from test_final_handoff import FINALIZER, _handoff_payload, _load_finalizer, _write_schema_v2_assess
 from test_review_completion_gate import _assessed_pr
+from test_review_finding_identity import _load_validator, _metadata, _result
 
 
 def _selection() -> dict:

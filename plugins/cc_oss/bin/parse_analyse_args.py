@@ -103,7 +103,7 @@ _DRY_RUN = False
 
 def _set_dry_run(enabled: bool) -> None:
     """Enable or disable dry-run mode for this process."""
-    global _DRY_RUN  # noqa: PLW0603 — one process-wide switch, set once from argv
+    global _DRY_RUN
     _DRY_RUN = enabled
 
 
@@ -313,8 +313,7 @@ def _run_vitality(clean_args: str, timeout: int) -> int:
     out_args = clean_args
     if clean_args.startswith(_VITALITY_KEYWORD):
         extra = clean_args[len(_VITALITY_KEYWORD) :]
-        if extra.startswith(" "):
-            extra = extra[1:]
+        extra = extra.removeprefix(" ")
         slug = repo_from_argument(extra) if extra else repo_from_context(timeout)
         gh_owner = cut_field(slug, 1)
         gh_repo = cut_field(slug, 2)

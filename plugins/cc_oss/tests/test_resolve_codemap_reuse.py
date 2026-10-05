@@ -12,9 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 import codemap_cache
+import pytest
 
 
 @pytest.mark.integration

@@ -25,7 +25,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 _ALLOWED_FLAGS = {"--arg", "--argjson", "--indent"}
 # Hostile jq filters can exhaust CPU/memory (CWE-400); cap wall-clock at 30s.
 _JQ_TIMEOUT_SECONDS = 30

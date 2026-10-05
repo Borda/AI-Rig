@@ -1,7 +1,7 @@
 """Production policy call shapes."""
 
-from impactlib.policy import check
 import impactlib.policy as policy_api
+from impactlib.policy import check
 
 
 def validate_request() -> bool:

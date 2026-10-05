@@ -48,7 +48,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 SKILL_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 TIMESTAMP_RUN_ID = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{6}Z\Z")
 PROMOTED_RUN_ID = re.compile(r"run-(\d{3,})\Z")

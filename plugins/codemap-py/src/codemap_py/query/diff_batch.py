@@ -1,12 +1,14 @@
 """Composite verbs: diff impact against git, and batched sub-queries."""
 
 from __future__ import annotations
+
 import argparse
 import json
 import re
 import subprocess
 import sys
 from pathlib import Path
+
 from codemap_py import query_state as state
 
 # Transitional seam: exclusion rules live in codemap_py.scanner, but this
@@ -18,11 +20,10 @@ from codemap_py import query_state as state
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
-from .coverage import _cmd_coverage  # noqa: E402
-from .errors import _EXIT_BAD_INPUT, _EXIT_GENERIC, _die_json  # noqa: E402
-from .index_io import _GIT_TIMEOUT_S  # noqa: E402
-from .output import _print  # noqa: E402
-
+from .coverage import _cmd_coverage
+from .errors import _EXIT_BAD_INPUT, _EXIT_GENERIC, _die_json
+from .index_io import _GIT_TIMEOUT_S
+from .output import _print
 
 # Reverse-dependency count thresholds mapping a module to a blast-radius risk tier.
 # Matches the develop plugin's convention so a diff-impact tier reads the same as the
@@ -480,7 +481,7 @@ def _run_subquery(
     state._capture = buf
     # Imported here, not at module scope: cli imports this module for cmd_batch, so a
     # top-level import back into cli is a circular import at package load.
-    from .cli import _dispatch_command  # noqa: PLC0415
+    from .cli import _dispatch_command
 
     try:
         _dispatch_command(index, sub_args, parser, project_root)

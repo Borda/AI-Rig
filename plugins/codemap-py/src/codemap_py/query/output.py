@@ -1,11 +1,13 @@
 """Emit one command's result as JSON or TSV, honouring batch capture."""
 
 from __future__ import annotations
+
 import csv
 import io
 import json
 import sys
 from pathlib import Path
+
 from codemap_py import query_state as state
 
 # Transitional seam: exclusion rules live in codemap_py.scanner, but this
@@ -17,7 +19,7 @@ from codemap_py import query_state as state
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
-from .errors import _builtin_print, _die_json  # noqa: E402
+from .errors import _builtin_print, _die_json
 
 
 def _print(*args: object, **kwargs: object) -> None:

@@ -12,30 +12,16 @@ import hashlib
 import json
 import re
 import shlex
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Sequence
-from _bench_common.claude_transport import parse_result_usage  # noqa: E402
-from _bench_common.python_source import resolve_relative_base  # noqa: E402,F401
-from _bench_common.agentic_contracts import (  # noqa: E402
+from typing import Any
+
+from _bench_common.agentic_contracts import (
     AgenticOracle,  # noqa: F401
     AnswerScore,  # noqa: F401
 )
-from _bench_common.provider_parity_contracts import (  # noqa: E402
-    canonical_task_hash,
-    fresh_input_tokens,
-    load_task_suite,
-    prompt_hash,
-    semantic_suite_hash,
-    token_accounting_inconsistent,
-)
-from _bench_common.readcrop_contracts import (  # noqa: E402
-    ReadcropUsage,
-    build_readcrop_contract,
-    parse_readcrop_answer,
-    score_readcrop_answer,
-)
-from _bench_common.edit_patch_contracts import (  # noqa: E402
+from _bench_common.claude_transport import parse_result_usage
+from _bench_common.edit_patch_contracts import (
     EditTaskContract,
     FixMultiContract,
     FixSingleContract,
@@ -45,7 +31,21 @@ from _bench_common.edit_patch_contracts import (  # noqa: E402
     build_fix_single_contract,
     stage_contract_sha256,
 )
-
+from _bench_common.provider_parity_contracts import (
+    canonical_task_hash,
+    fresh_input_tokens,
+    load_task_suite,
+    prompt_hash,
+    semantic_suite_hash,
+    token_accounting_inconsistent,
+)
+from _bench_common.python_source import resolve_relative_base  # noqa: F401
+from _bench_common.readcrop_contracts import (
+    ReadcropUsage,
+    build_readcrop_contract,
+    parse_readcrop_answer,
+    score_readcrop_answer,
+)
 
 #: This module sits one level below the benchmarks directory, so every suite and manifest path is derived from
 #: that parent rather than from this file's own directory.

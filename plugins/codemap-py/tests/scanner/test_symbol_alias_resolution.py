@@ -14,11 +14,9 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from codemap_py.graph import incremental_scan, scan
 from codemap_py.query import _COMPACT_ALIAS_LIMITATION_LIMIT
 from codemap_py.schema import SCAN_VERSION
-
 
 _SOURCES = {
     "pkg/__init__.py": "from .api import target\n",

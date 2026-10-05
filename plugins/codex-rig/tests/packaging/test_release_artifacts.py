@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import importlib.util
 import hashlib
+import importlib.util
 import json
 import subprocess
 import sys
@@ -12,7 +12,6 @@ from types import ModuleType
 from typing import Any
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 

@@ -13,10 +13,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 # Loaded by conftest.py — `extract_keep_flag` is registered in sys.modules there.
 import extract_keep_flag as ekf
+import pytest
 
 
 @pytest.fixture

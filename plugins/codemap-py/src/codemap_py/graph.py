@@ -28,7 +28,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from codemap_py import index_paths, rwgate
-from codemap_py.schema import SCAN_VERSION
 from codemap_py.scanner import (
     _GLOB_META_RE,
     _STDLIB_MODULES,
@@ -52,6 +51,7 @@ from codemap_py.scanner import (
     scan_mkdocs_xrefs,
     scan_rst_xrefs,
 )
+from codemap_py.schema import SCAN_VERSION
 from codemap_py.telemetry import CliInvocation
 
 _WINDOWS_REPLACE_RETRIES = 8
@@ -1610,7 +1610,7 @@ def _run_scan(invocation: CliInvocation) -> None:
 
     if args.timeout > 0 and hasattr(signal, "SIGALRM"):
 
-        def _timeout_handler(signum: int, frame: object) -> None:  # noqa: ARG001
+        def _timeout_handler(signum: int, frame: object) -> None:
             """Retain the handled timeout outcome before unwinding the scan."""
             invocation.result = {"error": "timeout", "timeout_seconds": args.timeout}
             print(f"scan-index: timed out after {args.timeout}s", file=sys.stderr)

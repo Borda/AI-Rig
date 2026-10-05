@@ -20,10 +20,10 @@ import argparse
 import hashlib
 import json
 import re
-from collections import deque
-from pathlib import Path
 import subprocess
 import sys
+from collections import deque
+from pathlib import Path
 from typing import Any, TypedDict
 
 # Keep sibling imports valid when repository-wide doctest collection imports this
@@ -32,7 +32,7 @@ _BIN_DIRECTORY = str(Path(__file__).resolve().parent)
 if _BIN_DIRECTORY not in sys.path:
     sys.path.insert(0, _BIN_DIRECTORY)
 
-from bridge_call import BridgePaths, DEFAULT_EFFORT, DEFAULT_MODEL, DEFAULT_TIMEOUTS, Request, run_request  # noqa: E402
+from bridge_call import DEFAULT_EFFORT, DEFAULT_MODEL, DEFAULT_TIMEOUTS, BridgePaths, Request, run_request
 
 
 class PayloadIdentity(TypedDict):

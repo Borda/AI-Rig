@@ -120,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
     git = _resolve("git")
-    changed_proc = subprocess.run(  # noqa: S603
+    changed_proc = subprocess.run(
         [git, "diff", "HEAD", "--name-only"],
         capture_output=True,
         text=True,
@@ -131,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     if not changed:
         print("[lint] no changed files to commit")
         return 0
-    subprocess.run([git, "add", "--"] + changed, check=True, timeout=3)  # noqa: S603
+    subprocess.run([git, "add", "--"] + changed, check=True, timeout=3)
     sentinel = _sentinel_path(git)
     sentinel.touch()
     atexit.register(lambda: sentinel.unlink(missing_ok=True))
@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     # duration is unbounded by design (ruff, mypy, custom checks routinely exceed a
     # few seconds). A short timeout would kill git mid-hook, leaving a partial commit.
     # Matches commit_action_item.py; short timeouts stay only on cheap plumbing calls.
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         [git, "commit", "-m", _COMMIT_MESSAGE],
         check=False,
     )

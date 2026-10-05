@@ -180,8 +180,8 @@ def check_cli_validate(plugin_dir: Path, *, timeout: float) -> int:
         _emit("⚠ SKIPPED: Check 8e — claude CLI not in PATH")
         return 0
     try:
-        result = subprocess.run(  # noqa: S603 — fixed argv, plugin_dir is a local path
-            ["claude", "plugin", "validate", f"./{plugin_dir.as_posix()}"],  # noqa: S607
+        result = subprocess.run(
+            ["claude", "plugin", "validate", f"./{plugin_dir.as_posix()}"],
             capture_output=True,
             text=True,
             timeout=timeout,

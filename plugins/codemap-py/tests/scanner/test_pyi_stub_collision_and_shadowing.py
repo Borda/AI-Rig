@@ -19,8 +19,8 @@ _SRC = _PLUGIN_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from codemap_py.graph import _resolve_stub_shadowing, scan  # noqa: E402  (needs the src path insert above)
-from codemap_py.scanner import _load_exclusions, get_file_hashes  # noqa: E402
+from codemap_py.graph import _resolve_stub_shadowing, scan
+from codemap_py.scanner import _load_exclusions, get_file_hashes
 
 # The five authoritative modules derived from .py files (stub-free module set).
 _PY_MODULES = {"nested", "nested.core", "pkg", "pkg.shadowed", "typed"}

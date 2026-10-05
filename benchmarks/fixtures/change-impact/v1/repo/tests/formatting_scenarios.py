@@ -1,6 +1,6 @@
 """Formatting scenarios representing test-side callsites."""
 
-import impactlib.formatting as formatting
+from impactlib import formatting
 from impactlib.formatting import render as render_text
 
 

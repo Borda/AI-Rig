@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SKILL = "skills/code-remediate/SKILL.md"
 COMMIT_TEMPLATE = "shared/commit-response-template.md"

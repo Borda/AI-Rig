@@ -13,7 +13,6 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
-
 from _platform import FILE_SYMLINKS_AVAILABLE, POSIX_FILE_MODES_AVAILABLE
 
 _requires_posix_file_modes = pytest.mark.skipif(

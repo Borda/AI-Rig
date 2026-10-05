@@ -126,8 +126,7 @@ def parse_resolve_args(arguments: str) -> dict[str, str]:
         else:
             # Only now strip a single leading '#'; comment dispatch may carry it
             # as a Markdown header anchor.
-            if out_args.startswith("#"):
-                out_args = out_args[1:]
+            out_args = out_args.removeprefix("#")
 
     return {
         "PR_NUMBER": pr_number,

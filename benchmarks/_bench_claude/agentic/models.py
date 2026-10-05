@@ -1,39 +1,33 @@
 """Result records for one agentic run, its quality grade, and its tool tally."""
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
-
-# Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
-from _bench_common.python_source import resolve_relative_base  # noqa: E402,F401
-from _bench_common.agentic_contracts import (  # noqa: E402
+from _bench_common.agentic_contracts import (
     AgenticOracle,  # noqa: F401
     AnswerScore,  # noqa: F401
-)
-from _bench_common.provider_parity_contracts import (  # noqa: E402
-    ARM_CONTRACTS,
 )
 
 # Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
 # Every name it defines is re-exported here, including ones this file no longer calls itself: callers and tests
 # reach these through the runner module, so pruning an apparently unused re-export breaks patch.object targets.
-from _bench_common.claude_stages import (  # noqa: E402,F401
-    FIX_MULTI_TASKS_PATH,
-    FIX_SINGLE_ARMS,
-    FIX_SINGLE_TASKS_PATH,
-    FixMultiContract,
-    FixSingleContract,
-    PARITY_MANIFEST_PATH,
-    PATCH_TASKS_PATH,
-    PurePosixPath,
-    READCROP_ARMS,
-    READCROP_TASKS_PATH,
-    ReadcropUsage,
-    StageIdentity,
+from _bench_common.claude_stages import (  # noqa: F401
     _FIX_MULTI_QUERY_ARGUMENTS,
     _FIX_SINGLE_QUERY_ARGUMENTS,
     _PATCH_QUERY_ARGUMENTS,
     _READCROP_ANSWER_RE,
+    FIX_MULTI_TASKS_PATH,
+    FIX_SINGLE_ARMS,
+    FIX_SINGLE_TASKS_PATH,
+    PARITY_MANIFEST_PATH,
+    PATCH_TASKS_PATH,
+    READCROP_ARMS,
+    READCROP_TASKS_PATH,
+    FixMultiContract,
+    FixSingleContract,
+    PurePosixPath,
+    ReadcropUsage,
+    StageIdentity,
     _absolute_codemap_launchers,
     _claude_codemap_evidence,
     _claude_event_summary,
@@ -78,7 +72,12 @@ from _bench_common.claude_stages import (  # noqa: E402,F401
     score_readcrop_answer,
     stage_contract_sha256,
 )
+from _bench_common.provider_parity_contracts import (
+    ARM_CONTRACTS,
+)
 
+# Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
+from _bench_common.python_source import resolve_relative_base  # noqa: F401
 
 # fmt_tok comes from presentation (shared with run-claude-structural).
 
@@ -123,20 +122,20 @@ class QualityScore:
     erec_top10_k: int = 0  # actual k used (min(10, |expected|)); equals |expected| when ≤10
 
     # ── Skill result coverage (codemap arm only; None when not applicable) ──
-    skill_coverage: Optional[float] = None
-    skill_returned: Optional[int] = None
+    skill_coverage: float | None = None
+    skill_returned: int | None = None
 
     # ── Semble-native lens (semble / combined arms only; None when not applicable) ──
     # chunk_hit_rate: fraction of expected rdep modules whose module/file appears in ANY semble
     # search chunk the arm retrieved. A fair semantic-search axis that does not require semble to
     # emit an exhaustive dotted rdep list; erec/rrec stay the codemap-native lens.
-    chunk_hit_rate: Optional[float] = None
+    chunk_hit_rate: float | None = None
 
     # ── Targeted-test correctness signal (fix tasks that declare a test_target; None otherwise) ──
     # test_passed: outcome of running the task's declared pytest node on the post-edit sandbox.
     # A stronger correctness signal than keyword recall — recorded alongside erec, never replacing
     # it. None when the task declares no test or the test could not be launched.
-    test_passed: Optional[bool] = None
+    test_passed: bool | None = None
 
     # ── Legacy fields (backward compat — leaf-name matching on output_text) ──
     precision: float = 0.0
@@ -248,7 +247,7 @@ class BenchmarkRun:
     agent_diff: str = field(default="", repr=False)  # unified diff of agent's edits vs original codebase
     # Transient carrier for the declared targeted-test outcome (run in the sandbox, before cleanup);
     # excluded from JSON — the persisted signal lives in quality.test_passed.
-    targeted_test_passed: Optional[bool] = field(default=None, repr=False)
+    targeted_test_passed: bool | None = field(default=None, repr=False)
     # Internal fields excluded from JSON serialisation (see _save_snapshot)
     skill_result_text: str = field(default="", repr=False)  # all codemap:query rdeps results joined (for sc)
     codemap_results: list[str] = field(default_factory=list, repr=False)  # ALL codemap skill results (for erec)

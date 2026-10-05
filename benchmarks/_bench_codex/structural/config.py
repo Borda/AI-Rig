@@ -5,7 +5,6 @@ from __future__ import annotations
 import itertools
 from pathlib import Path
 
-
 #: This package sits at ``benchmarks/_bench_codex/structural/``; sibling paths are anchored here
 #: rather than off each module's own ``__file__``, which moves with the module.
 PACKAGE_DIR = Path(__file__).resolve().parent

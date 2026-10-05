@@ -9,9 +9,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 import check_gitignored_refs as cgr
+import pytest
 
 
 @pytest.fixture(name="repo")

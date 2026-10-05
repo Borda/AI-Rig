@@ -9,18 +9,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from dataclasses import replace
-from pathlib import Path, PurePath
 import re
 import shlex
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import replace
+from pathlib import Path, PurePath
 from types import ModuleType
-from collections.abc import Iterable
-from typing import Any, Callable, Mapping
+from typing import Any
 from uuid import uuid4
-
 
 BENCHMARKS = Path(__file__).resolve().parents[1]
 ROOT = BENCHMARKS.parent
@@ -76,32 +75,32 @@ _PATCH_QUERY_ARGUMENTS = {
 
 sys.path.insert(0, str(BENCHMARKS))
 
-from _bench_common.edit_patch_contracts import (  # noqa: E402
+from _bench_common.edit_patch_contracts import (
     EditExecution,
     EditTaskContract,
     StageIdentity,
     assess_patch_answer,
     build_edit_task_contract,
-    build_patch_answer,
     build_fix_multi_contract,
     build_fix_single_contract,
+    build_patch_answer,
     score_edit_execution,
     stage_contract_sha256,
-    validate_patch_index_bundle,
-    validate_provider_binding,
     validate_fix_multi_binding,
     validate_fix_single_binding,
+    validate_patch_index_bundle,
+    validate_provider_binding,
 )
-from _bench_common.mutation_isolation import (  # noqa: E402
+from _bench_common.mutation_isolation import (
     PATCH_PYTEST_ENV,
     create_executable_agent_workspace,
-    execute_patch_task_answer,
     execute_fix_multi_patch,
     execute_fix_single_patch,
+    execute_patch_task_answer,
     patch_test_runtime_identity,
     stage_patch_task_agent_workspace,
 )
-from _bench_common.paid_lifecycle import (  # noqa: E402
+from _bench_common.paid_lifecycle import (
     PaidStageCallbacks,
     paid_approval_matches,
     paid_approval_token,
@@ -109,13 +108,14 @@ from _bench_common.paid_lifecycle import (  # noqa: E402
     verify_checksums,
     write_checksums,
 )
-from _bench_common.presentation import format_paid_command_block, format_quality  # noqa: E402
-from . import runtime  # noqa: E402
-from _bench_common.provider_parity_contracts import (  # noqa: E402
+from _bench_common.presentation import format_paid_command_block, format_quality
+from _bench_common.provider_parity_contracts import (
     fresh_input_tokens,
     load_task_suite,
     token_accounting_inconsistent,
 )
+
+from . import runtime
 
 
 def _structural() -> ModuleType:

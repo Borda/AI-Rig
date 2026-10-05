@@ -11,10 +11,8 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 import build_codemap_batch as bcb
-
+import pytest
 
 # ---------- Pure request builder ----------
 
@@ -87,7 +85,7 @@ class TestMain:
 
     def test_no_changed_files_still_writes_central_request(self, tmp_path, monkeypatch, capsys):
         """Empty diff → central-only request, empty stdout line, exit 0."""
-        monkeypatch.setattr(bcb, "_git_diff_files", lambda: [])
+        monkeypatch.setattr(bcb, "_git_diff_files", list)
         out = tmp_path / "batch.json"
         assert bcb.main([str(out)]) == 0
         assert capsys.readouterr().out.strip() == ""
@@ -138,7 +136,7 @@ class TestMain:
         A caller naming exact query families asked for exactly those — an implicit central item would re-bill baseline
         context it never reads.
         """
-        monkeypatch.setattr(bcb, "_git_diff_files", lambda: [])
+        monkeypatch.setattr(bcb, "_git_diff_files", list)
         out = tmp_path / "batch.json"
         assert bcb.main([str(out), "--modules", "pkg.a pkg.b", "--queries", "rdeps"]) == 0
         req = json.loads(out.read_text(encoding="utf-8"))

@@ -1,11 +1,11 @@
 """Decide which paths a scan walks, from built-in, config and ignore-file rules."""
 
 from __future__ import annotations
+
 import fnmatch
 import re
 from dataclasses import dataclass
 from pathlib import Path
-
 
 # Built-in directory names pruned from every scan. Never project source, but can hold
 # worktree copies of the whole repo (.claude/, .codex/) that would otherwise inflate the

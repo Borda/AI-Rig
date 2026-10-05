@@ -62,7 +62,7 @@ repos:
         exclude: ^benchmarks/(manifests|suites|tests/fixtures)/.*\.json$
 
   - repo: https://github.com/JoC0de/pre-commit-prettier
-    rev: v3.9.4 # using tag; previously pinned SHA when tags were not persistent
+    rev: v3.9.9 # using tag; previously pinned SHA when tags were not persistent
     hooks:
       - id: prettier
         name: "🎨 prettier"
@@ -72,7 +72,7 @@ repos:
         args: ["--print-width=120"]
 
   - repo: https://github.com/pre-commit/mirrors-eslint
-    rev: v10.6.0
+    rev: v10.12.0
     hooks:
       - id: eslint
         name: "🛡️ eslint"
@@ -82,7 +82,7 @@ repos:
           - "@eslint/js@9.21.0"
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.20
+    rev: v0.16.10
     hooks:
       - id: ruff-check
         name: "🦀 ruff-check"
@@ -102,7 +102,7 @@ repos:
         exclude: ^(?:benchmarks/tests/test_run_all\.py|plugins/codex-rig/tests/remediate/test_code_remediate_(?:final_outcome|work_bucket)_validation\.py)$
 
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.2
+    rev: v2.4.3
     hooks:
       - id: codespell
         name: "✏️ codespell"
@@ -163,7 +163,7 @@ repos:
           - mdformat-web
 
   - repo: https://github.com/lycheeverse/lychee.git
-    rev: lychee-v0.24.2
+    rev: nightly
     hooks:
       - id: lychee
         name: "🔗 lychee"
@@ -174,7 +174,7 @@ repos:
         types_or: [markdown, toml]
 
   - repo: https://github.com/tox-dev/pyproject-fmt
-    rev: v2.25.3
+    rev: v2.30.1
     hooks:
       - id: pyproject-fmt
         name: "📐 pyproject-fmt"
@@ -182,7 +182,7 @@ repos:
           - "tomli>=2.0.1"
 
   - repo: https://github.com/abravalheri/validate-pyproject
-    rev: v0.25
+    rev: "0.26"
     hooks:
       - id: validate-pyproject
         name: "🔍 validate-pyproject"

@@ -17,7 +17,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from _launcher_capability import _private_filesystem_available
 
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
@@ -26,22 +25,21 @@ sys.path.insert(0, str(BENCHMARKS_DIR))
 # Patch seams live in the package modules the runner shim re-exports from: patching the shim
 # would leave each package module's own global binding untouched. Inside the package every seam
 # below is reached through its defining module, so this is the single place to patch it.
-from _bench_codex.structural import arms as codex_arms  # noqa: E402
-from _bench_codex.structural import cli as codex_cli  # noqa: E402
-from _bench_codex.structural import config as codex_config  # noqa: E402
-from _bench_codex.structural import diff_impact as codex_diff_impact  # noqa: E402
-from _bench_codex.structural import manifest as codex_manifest  # noqa: E402
-from _bench_codex.structural import provenance as codex_provenance  # noqa: E402
-from _bench_codex.structural import provisioning as codex_provisioning  # noqa: E402
-from _bench_codex.structural import rescore as codex_rescore  # noqa: E402
-from _bench_codex.structural import runner as codex_structural_runner  # noqa: E402
-from _bench_codex.structural import scoring as codex_scoring  # noqa: E402
-from _bench_codex.structural import tasks as codex_tasks  # noqa: E402
+from _bench_codex import runtime as codex_runtime
+from _bench_codex.structural import arms as codex_arms
+from _bench_codex.structural import cli as codex_cli
+from _bench_codex.structural import config as codex_config
+from _bench_codex.structural import diff_impact as codex_diff_impact
+from _bench_codex.structural import manifest as codex_manifest
+from _bench_codex.structural import provenance as codex_provenance
+from _bench_codex.structural import provisioning as codex_provisioning
+from _bench_codex.structural import rescore as codex_rescore
+from _bench_codex.structural import runner as codex_structural_runner
+from _bench_codex.structural import scoring as codex_scoring
+from _bench_codex.structural import tasks as codex_tasks
+from _bench_common.presentation import LEGEND_CLOSE_RULE, LEGEND_OPEN_RULE
 
-from _bench_codex import runtime as codex_runtime  # noqa: E402
-from _bench_common.presentation import LEGEND_CLOSE_RULE, LEGEND_OPEN_RULE  # noqa: E402
-from benchmarks._bench_common import provider_parity_contracts as core  # noqa: E402
-
+from benchmarks._bench_common import provider_parity_contracts as core
 
 SCRIPT_PATH = BENCHMARKS_DIR / "run-codex-structural.py"
 SUITE_PATH = BENCHMARKS_DIR / "suites" / "tasks-bench.json"
@@ -2299,7 +2297,6 @@ def test_main_dry_run_never_requires_or_writes_output(
 
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             """Initialize fixture state."""
-            pass
 
         def probe_arm(self, _arm: str) -> dict[str, bool]:
             """Report the arm's fixture availability."""
@@ -2331,7 +2328,6 @@ def test_dry_run_prints_the_manifest_driven_per_cell_timeout_without_global_dead
 
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             """Initialize fixture state."""
-            pass
 
         def probe_arm(self, _arm: str) -> dict[str, bool]:
             """Report the arm's fixture availability."""
@@ -2545,7 +2541,6 @@ def test_main_records_cell_failures_and_continues_after_smoke(
 
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             """Initialize fixture state."""
-            pass
 
         def run(self, task: dict[str, Any], arm: str, **_kwargs: Any) -> Any:
             """Return a fixture result without provider calls."""
@@ -2918,7 +2913,6 @@ def test_main_closes_runner_when_setup_raises_before_the_first_cell(
 
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             """Initialize fixture state."""
-            pass
 
         def create_input_snapshot(self, *_args: Any, **_kwargs: Any) -> dict[str, str]:
             """Supply snapshot evidence or interrupt at the configured snapshot boundary."""
@@ -3054,7 +3048,6 @@ def test_main_dry_run_routes_plan_through_shared_plan_renderer(
 
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             """Initialize fixture state."""
-            pass
 
         def probe_arm(self, _arm: str) -> dict[str, bool]:
             """Report the arm's fixture availability."""
@@ -3599,7 +3592,6 @@ def test_main_filters_locked_tasks_in_suite_order_and_rejects_invalid_ids(
 
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             """Initialize fixture state."""
-            pass
 
         def probe_arm(self, _arm: str) -> dict[str, bool]:
             """Report the arm's fixture availability."""
@@ -3672,7 +3664,6 @@ def test_main_plans_every_preregistered_pilot_coordinate_once(
 
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             """Initialize fixture state."""
-            pass
 
         def probe_arm(self, arm: str) -> dict[str, bool]:
             """Report the arm's fixture availability."""
@@ -4582,7 +4573,7 @@ def test_expected_query_preflight_runs_unique_b_queries_once_and_never_replays_c
 
         def cleanup(self) -> None:
             """Provide fixture cleanup."""
-            return None
+            return
 
     def _prepare(arm: str) -> Home:
         """Prepare and record an isolated arm home."""
@@ -4641,7 +4632,7 @@ def test_expected_query_preflight_rejects_malformed_or_failed_b_queries(
 
         def cleanup(self) -> None:
             """Provide fixture cleanup."""
-            return None
+            return
 
     monkeypatch.setattr(runner, "_prepare_verified_home", lambda _arm: Home())
 
@@ -4866,10 +4857,9 @@ def test_diff_impact_stager_wraps_all_arms_and_restores_on_success_or_failure(
 
     failing = script_run_codex._diff_impact_stager(repo, task)
     assert failing is not None
-    with pytest.raises(RuntimeError):
-        with failing:
-            assert target.read_text(encoding="utf-8") == "BASE\nSTAGED\n"
-            raise RuntimeError("arm failure")
+    with pytest.raises(RuntimeError), failing:
+        assert target.read_text(encoding="utf-8") == "BASE\nSTAGED\n"
+        raise RuntimeError("arm failure")
     assert target.read_text(encoding="utf-8") == "BASE\n"
 
 
@@ -5125,7 +5115,6 @@ def test_main_dry_run_calls_diff_impact_preflight_and_can_suppress_legend(
 
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             """Initialize fixture state."""
-            pass
 
         def probe_arm(self, _arm: str) -> dict[str, bool]:
             """Report the arm's fixture availability."""

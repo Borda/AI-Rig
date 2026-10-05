@@ -2,27 +2,26 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
-from contextvars import ContextVar
-from dataclasses import dataclass, field
 import hashlib
 import json
 import math
 import os
-from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shlex
 import sys
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, TextIO
 from uuid import uuid4
-
-from rich.console import Console
-from rich.panel import Panel
 
 from _bench_common import presentation
 from _bench_common.paid_lifecycle import paid_approval_token
 from _bench_common.presentation import fmt_time, fmt_tok
+from rich.console import Console
+from rich.panel import Panel
 
 SUPPORTED_CODEX_MODELS = ("gpt-6.1-sol", "gpt-6-luna", "gpt-6-sol", "gpt-6-astra")
 

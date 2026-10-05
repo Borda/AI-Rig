@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import dev_parse_args
+import pytest
 from dev_parse_args import (
     SKILL_SPECS,
     FlagSpec,
@@ -17,7 +16,6 @@ from dev_parse_args import (
     run,
     write_skill_files,
 )
-
 
 # ---------------------------------------------------------------------------
 # parse_specs

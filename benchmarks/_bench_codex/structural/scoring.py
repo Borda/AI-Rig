@@ -6,19 +6,18 @@ import hashlib
 import importlib.util
 import inspect
 import re
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import sys
-
-from _bench_codex import runtime
 from _bench_common.provider_parity_contracts import (
     EvaluationResult,
 )
 
+from _bench_codex import runtime
 from _bench_codex.structural.config import BENCHMARKS_DIR
 from _bench_codex.structural.models import CodexRun
 

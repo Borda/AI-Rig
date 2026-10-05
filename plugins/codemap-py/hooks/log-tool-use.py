@@ -43,7 +43,7 @@ _HOOKS_DIR = Path(__file__).resolve().parent
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 
-import _hookutil  # noqa: E402  (needs the sys.path insert above)
+import _hookutil
 
 _LOG_MAX_BYTES = 10 * 1024 * 1024
 _BASH_SEARCH = re.compile(r"(^|[|;&(]\s*)(rg|grep|egrep|fgrep)\s")

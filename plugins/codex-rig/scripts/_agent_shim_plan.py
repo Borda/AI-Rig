@@ -44,8 +44,7 @@ from dataclasses import dataclass
 from typing import Any, NoReturn
 
 from _agent_shim_lifecycle import LifecycleDataError, TargetObservation, classify_targets, parse_state
-from generate_roles import GeneratedRole, GeneratedRoster, ROLE_IDS, SEMVER_PATTERN, roster_identity_hash
-
+from generate_roles import ROLE_IDS, SEMVER_PATTERN, GeneratedRole, GeneratedRoster, roster_identity_hash
 
 DIGEST = re.compile(r"[0-9a-f]{64}")
 MAX_OPERATION_ROLES = 256
@@ -300,9 +299,7 @@ def _operation(
     before_exists = observation.kind == "regular"
     before_hash = observation.file_hash if before_exists else None
     before_mode = "0600" if before_exists else None
-    if intent in {"remove", "retire"}:
-        after_exists, after_hash, after_mode = False, None, None
-    elif intent == "noop" and not before_exists:
+    if intent in {"remove", "retire"} or intent == "noop" and not before_exists:
         after_exists, after_hash, after_mode = False, None, None
     elif intent == "noop":
         after_exists, after_hash, after_mode = True, before_hash, before_mode

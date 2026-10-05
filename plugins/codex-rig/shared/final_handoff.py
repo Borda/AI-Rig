@@ -49,7 +49,6 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-
 SCHEMA_VERSION = 1
 GATE_IDS = ("lint", "format", "types", "tests", "review")
 GATE_STATUSES = {"pass", "fail", "missing-command", "not-applicable", "timeout"}

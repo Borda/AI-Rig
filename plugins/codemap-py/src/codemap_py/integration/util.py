@@ -1,13 +1,14 @@
 """Hashing, canonical JSON, timestamps and report paths shared by every mode."""
 
 from __future__ import annotations
+
 import hashlib
 import json
 import re
 import time
 from pathlib import Path
-from .types import ConsumerTarget
 
+from .types import ConsumerTarget
 
 _GIT_TIMEOUT_S = 5
 

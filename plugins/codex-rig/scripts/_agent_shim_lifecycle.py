@@ -47,7 +47,6 @@ from typing import Any, NoReturn
 
 from generate_roles import ROLE_IDS
 
-
 STATE_BYTES = 1_048_576
 MARKER_BYTES = 1_024
 DIGEST = re.compile(r"[0-9a-f]{64}")

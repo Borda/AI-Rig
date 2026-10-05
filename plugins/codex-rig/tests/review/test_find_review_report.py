@@ -9,9 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from test_review_completion_gate import _assessed_pr, _module
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 FINDER_PATH = PLUGIN_ROOT / "shared" / "find-review-report.py"

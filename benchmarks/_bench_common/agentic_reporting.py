@@ -7,14 +7,13 @@ module reads no files and cannot rewrite historical artifacts.
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from collections.abc import Mapping, Sequence
-import math
 from statistics import median
 from typing import Any
 
 from _bench_common.agentic_contracts import AGENTIC_ARMS
-
 
 REPORTING_VERSION = "agentic-graded-v2"
 EFFICIENCY_FIELDS = ("input_tokens", "fresh_input_tokens", "output_tokens", "elapsed_s")

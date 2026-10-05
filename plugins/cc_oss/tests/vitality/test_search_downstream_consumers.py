@@ -11,7 +11,6 @@ import io
 from typing import Any
 
 import pytest
-
 import search_downstream_consumers as sdc  # type: ignore[import-not-found]
 
 

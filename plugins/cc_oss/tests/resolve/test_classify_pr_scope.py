@@ -6,9 +6,8 @@ override and CLI plumbing.
 
 from __future__ import annotations
 
-import pytest
-
 import classify_pr_scope as cps  # type: ignore[import-not-found]
+import pytest
 
 
 class TestClassify:

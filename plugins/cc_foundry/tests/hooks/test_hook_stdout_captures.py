@@ -25,14 +25,12 @@ from __future__ import annotations
 import base64
 import json
 import shutil
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
-
-import pytest
 
 import build_blueprint_manifest as bbm
+import pytest
 from _audit_harness import install
-
 
 CAPTURES = json.loads(
     (Path(__file__).resolve().parent.parent / "fixtures" / "hook_stdout_captures.json").read_text(encoding="utf-8")

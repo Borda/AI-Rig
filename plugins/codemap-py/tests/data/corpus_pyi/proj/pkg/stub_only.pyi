@@ -1,7 +1,6 @@
 # Scenario: stub-only module (no stub_only.py sibling).
 # Expected: indexed once with stub_only=true; contributes declarations + imports
 # (Marker, describe, PROTOCOL_VERSION) but NO executable body / call edges.
-from __future__ import annotations
 
 from typing import Protocol
 

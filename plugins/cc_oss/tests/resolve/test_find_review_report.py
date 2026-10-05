@@ -9,9 +9,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import pytest
-
 import find_review_report as frr
+import pytest
 
 
 class _FakeCompleted:

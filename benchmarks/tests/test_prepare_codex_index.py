@@ -5,12 +5,11 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-from pathlib import Path, PureWindowsPath
 import subprocess
+from pathlib import Path, PureWindowsPath
 from types import ModuleType
 
 import pytest
-
 
 SCRIPT = Path(__file__).resolve().parent.parent / "prepare-codex-index.py"
 

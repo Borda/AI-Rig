@@ -17,9 +17,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import _runtime_log as rl
+import pytest
 
 
 @pytest.fixture(autouse=True)

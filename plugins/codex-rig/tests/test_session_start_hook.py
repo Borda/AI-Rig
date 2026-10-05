@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from _platform import POSIX_FILE_MODES_AVAILABLE
 
 _posix_doctor_only = pytest.mark.skipif(

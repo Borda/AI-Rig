@@ -18,6 +18,7 @@ Wrapper mounts project read-only, `.experiments` read-write, runs under `python:
 
 ```python
 import os, torch
+
 expected_hw = os.environ.get("COLAB_HW", "")  # falls back to colab_hw from state.json injected at call site
 actual = torch.cuda.get_device_name(0)
 if expected_hw and expected_hw not in actual:

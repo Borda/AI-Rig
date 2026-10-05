@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import importlib.util
 import hashlib
+import importlib.util
 import json
 import sys
 from dataclasses import replace
@@ -11,19 +11,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from _launcher_capability import _private_filesystem_available
-
 
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCHMARKS_DIR))
 
 # The structural runner is a re-export shim over a package; its seams are reached through
 # the defining module, so patching the shim would leave those bindings untouched.
-from _bench_codex.structural import diff_impact as codex_diff_impact  # noqa: E402
-from _bench_codex.structural import provisioning as codex_provisioning  # noqa: E402
-
-from _bench_common.presentation import LEGEND_CLOSE_RULE, LEGEND_OPEN_RULE  # noqa: E402
+from _bench_codex.structural import diff_impact as codex_diff_impact
+from _bench_codex.structural import provisioning as codex_provisioning
+from _bench_common.presentation import LEGEND_CLOSE_RULE, LEGEND_OPEN_RULE
 
 #: Task ids read from the shipped suite rather than counted out here, so adding a task to the suite changes the
 #: expected scope instead of failing every scope assertion in this module.
@@ -249,8 +246,6 @@ def test_dry_run_preflights_snapshot_bound_c_admission_without_auth_or_model(
 
         def close(self) -> None:
             """Match the production runner cleanup protocol."""
-            pass
-
     monkeypatch.setattr(agentic, "AgenticCodexRunner", SnapshotAdmissionProbe)
 
     with pytest.raises(RuntimeError, match="fixture later C snapshot admission"):
@@ -1118,7 +1113,7 @@ def test_native_runner_refreshes_auth_and_fails_postflight_contamination(
 
         def close(self) -> None:
             """Implement the adapter cleanup boundary for the enclosing lifecycle test."""
-            return None
+            return
 
     runner = object.__new__(agentic.AgenticCodexRunner)
     runner.repo_path = tmp_path

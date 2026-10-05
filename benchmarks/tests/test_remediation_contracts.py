@@ -13,7 +13,6 @@ import pytest
 
 from benchmarks._bench_common import provider_parity_contracts as core
 
-
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 SUITE_PATH = BENCHMARKS_DIR / "suites" / "tasks-bench.json"
 CODEX_RUNNER_PATH = BENCHMARKS_DIR / "run-codex-structural.py"

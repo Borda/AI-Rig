@@ -8,18 +8,17 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-
-from _bench_codex import runtime
 from _bench_common.provider_parity_contracts import (
     ARM_CONTRACTS,
     canonical_task_hash,
 )
 
+from _bench_codex import runtime
 from _bench_codex.structural.config import (
-    CODEX_STRUCTURAL_ARMS,
-    PARITY_MANIFEST_PATH,
     _COUNTERBALANCED_ARM_ORDERS,
     _PROVENANCE_KEY,
+    CODEX_STRUCTURAL_ARMS,
+    PARITY_MANIFEST_PATH,
 )
 
 

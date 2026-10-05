@@ -9,9 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import parse_release_envelopes as pre
+import pytest
 
 
 @pytest.fixture

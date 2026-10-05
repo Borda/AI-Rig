@@ -11,8 +11,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-from resolve_plugin_root import main  # noqa: E402
+from resolve_plugin_root import main
 
 
 def _make_install(home: Path, version: str, *, name: str = "foundry") -> Path:

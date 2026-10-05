@@ -1,8 +1,10 @@
 """Record types for one parsed symbol and one call edge."""
 
 from __future__ import annotations
+
 import ast
 from dataclasses import dataclass
+
 from codemap_py.schema import Resolution, SymbolType
 
 

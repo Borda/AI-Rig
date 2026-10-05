@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from compute_commit_sentinel import get_sentinel_path, main, to_slug
 
 
@@ -118,12 +117,14 @@ class TestGetSentinelPath:
         assert path == str(tmp_path / "claude-commit-auth-project-main")
 
     def test_git_failure_raises(self) -> None:
-        with patch(
-            "compute_commit_sentinel.subprocess.check_output",
-            side_effect=subprocess.CalledProcessError(128, "git"),
+        with (
+            patch(
+                "compute_commit_sentinel.subprocess.check_output",
+                side_effect=subprocess.CalledProcessError(128, "git"),
+            ),
+            pytest.raises(subprocess.CalledProcessError),
         ):
-            with pytest.raises(subprocess.CalledProcessError):
-                get_sentinel_path()
+            get_sentinel_path()
 
 
 class TestMain:

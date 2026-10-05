@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from assemble_vitality_scores import assemble_scores, load_weights, main
 
 

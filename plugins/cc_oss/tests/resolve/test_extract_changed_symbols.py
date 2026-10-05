@@ -10,9 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import extract_changed_symbols as ecs
+import pytest
 
 
 class _FakeCompleted:

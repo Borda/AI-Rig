@@ -9,22 +9,21 @@ from __future__ import annotations
 
 import ast
 import copy
-from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 import os
-from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import asdict, dataclass, field
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from types import MappingProxyType, SimpleNamespace
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from .provider_parity_contracts import canonical_task_hash, prompt_hash
 from .subprocess_env import minimal_child_env
-
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}$")
 _GIT_COMMIT_RE = re.compile(r"[0-9a-f]{40}$")
@@ -905,15 +904,15 @@ def _nearest_ungated_assignment_value(
     for node in ast.walk(method):
         if _is_decision_gated(node, parents) or getattr(node, "lineno", 0) >= call.lineno:
             continue
-        if isinstance(node, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id == name for target in node.targets
-        ):
-            assignments.append((node.lineno, node.value))
-        elif (
-            isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and node.target.id == name
-            and node.value
+        if (
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == name for target in node.targets)
+            or (
+                isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and node.target.id == name
+                and node.value
+            )
         ):
             assignments.append((node.lineno, node.value))
     return max(assignments, default=(-1, None), key=lambda assignment: assignment[0])[1]
@@ -1106,8 +1105,7 @@ def assess_patch_answer(text: str) -> PatchAnswer:
     # source line is encoded as ``" \n"`` and ``strip()`` would silently turn
     # an otherwise valid hunk into a corrupt patch.
     diff = diff[1:]
-    if diff.endswith("\n"):
-        diff = diff[:-1]
+    diff = diff.removesuffix("\n")
     return build_patch_answer(diff)
 
 

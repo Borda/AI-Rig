@@ -223,7 +223,7 @@ def _conflicted_files(git: str) -> list[str]:
     Returns:
         Conflicted file paths (``git diff --diff-filter=U``), empty if none.
     """
-    proc = subprocess.run(  # noqa: S603
+    proc = subprocess.run(
         [git, "diff", "--name-only", "--diff-filter=U"],
         capture_output=True,
         text=True,
@@ -272,9 +272,7 @@ def run_plan(entries: list[PlanEntry], commit_mode: CommitMode, base_sha: str | 
     git = _resolve("git")
     applied: list[str] = []
     for i, entry in enumerate(entries):
-        pick = subprocess.run(  # noqa: S603
-            [git, "cherry-pick", "--end-of-options", entry.sha], check=False, timeout=30
-        )
+        pick = subprocess.run([git, "cherry-pick", "--end-of-options", entry.sha], check=False, timeout=30)
         if pick.returncode != 0:
             return {
                 "applied": applied,
@@ -294,11 +292,9 @@ def run_plan(entries: list[PlanEntry], commit_mode: CommitMode, base_sha: str | 
             # run left as real commits on top of `base_sha`. Gating on `applied` (as the HEAD~n
             # fallback below still must) left that one call the only one that could ever collapse the
             # run refusing to, stranding real commits in `stage` mode with no recovery route.
-            subprocess.run([git, "reset", "--soft", "--end-of-options", base_sha], check=False, timeout=3)  # noqa: S603
+            subprocess.run([git, "reset", "--soft", "--end-of-options", base_sha], check=False, timeout=3)
         elif applied:
-            subprocess.run(  # noqa: S603
-                [git, "reset", "--soft", "--end-of-options", f"HEAD~{len(applied)}"], check=False, timeout=3
-            )
+            subprocess.run([git, "reset", "--soft", "--end-of-options", f"HEAD~{len(applied)}"], check=False, timeout=3)
     return {"applied": applied, "conflict": None, "remaining": []}
 
 

@@ -1,6 +1,7 @@
 """Extract pytest and subprocess structure: fixtures, conftest paths, spawned scripts."""
 
 from __future__ import annotations
+
 import ast
 import sys
 from pathlib import Path

@@ -27,7 +27,6 @@ from enum import Enum
 from pathlib import Path
 
 import pytest
-
 from codemap_py import integration
 
 _PATH_CLASSES = {"normal": "repo", "spaces_nonascii": "a repo café"}

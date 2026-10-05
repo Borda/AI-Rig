@@ -12,7 +12,6 @@ from pathlib import Path, PureWindowsPath
 import pytest
 from _platform import DIRECTORY_SYMLINKS_AVAILABLE, FILE_SYMLINKS_AVAILABLE
 
-
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "install_github_read_rules.py"
 
 

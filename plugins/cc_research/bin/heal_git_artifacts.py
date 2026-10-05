@@ -391,7 +391,7 @@ def _git(args: list[str], cwd: Path | None = None) -> str:
         No doctest — requires a git repository; covered by pytest.
     """
     try:
-        completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        completed = subprocess.run(
             ["git", *args],
             cwd=str(cwd) if cwd else None,
             capture_output=True,

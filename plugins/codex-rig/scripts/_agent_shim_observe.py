@@ -47,6 +47,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from _agent_shim_journal import Journal, JournalDataError, parse_journal, validate_successor
 from _agent_shim_lifecycle import (
     STATE_BYTES,
     LifecycleDataError,
@@ -57,9 +58,7 @@ from _agent_shim_lifecycle import (
     parse_marker,
     parse_state,
 )
-from _agent_shim_journal import Journal, JournalDataError, parse_journal, validate_successor
 from generate_roles import ROLE_IDS
-
 
 SHIM_BYTES = 262_144
 JOURNAL_BYTES = 4_194_304

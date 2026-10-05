@@ -17,9 +17,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-import pytest
-
 import health_monitor_start
+import pytest
 
 SCRIPT = Path(health_monitor_start.__file__)
 

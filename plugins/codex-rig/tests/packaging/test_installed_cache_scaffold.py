@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from _platform import (
     POSIX_DESCRIPTOR_PRIMITIVES_AVAILABLE,
     POSIX_EXECUTABLE_SCRIPTS_AVAILABLE,

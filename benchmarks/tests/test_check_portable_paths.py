@@ -11,7 +11,6 @@ from typing import Any
 import pytest
 import yaml
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "benchmarks" / "check-portable-paths.py"
 

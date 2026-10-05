@@ -66,7 +66,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 SCHEMA_VERSION = 3
 #: Historical single-file schema with every cycle inline; validated only as an archive, never as an active ledger.
 HISTORICAL_SCHEMA_VERSION = 2
@@ -284,9 +283,7 @@ def validate_ledger(ledger: dict[str, Any], *, historical: bool = False) -> None
     advisory = ledger.get("advisory")
     recovery = ledger.get("recovery")
     handoff = ledger.get("human_handoff")
-    if outcome in {"advisory", "recovery"}:
-        _validate_advisory(advisory)
-    elif advisory is not None:
+    if outcome in {"advisory", "recovery"} or advisory is not None:
         _validate_advisory(advisory)
 
     if recovery is not None:

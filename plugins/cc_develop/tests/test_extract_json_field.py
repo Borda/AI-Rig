@@ -9,11 +9,9 @@ from __future__ import annotations
 import json
 import sys
 
-import pytest
-
 import extract_json_field  # type: ignore[import-not-found]
+import pytest
 from extract_json_field import format_field, recover_json_object
-
 
 # ---------------------------------------------------------------------------
 # recover_json_object

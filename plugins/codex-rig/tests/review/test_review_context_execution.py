@@ -11,7 +11,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 import test_review_prepare as preparation
 
 
@@ -43,7 +42,7 @@ def test_generated_pages_execute_from_unrelated_cwd_with_exact_context(tmp_path:
     header = (
         f"<!-- codex-review-provenance role={role} run={plan['review_run_id']} "
         f"input={plan['review_input_sha256']} context={entry['context_sha256']} attempt=1 -->"
-    ).encode("utf-8")
+    ).encode()
     delivered = []
     for page, source in enumerate(sources, 1):
         arguments = json.loads(source.split("tools.exec_command(", 1)[1].split("); text", 1)[0])
@@ -55,7 +54,7 @@ def test_generated_pages_execute_from_unrelated_cwd_with_exact_context(tmp_path:
         assert completed.stderr == b""
         provenance, position, body = completed.stdout.split(b"\n", 2)
         assert provenance == header
-        assert position == f"<!-- codex-review-context-page {page}/{len(sources)} -->".encode("utf-8")
+        assert position == f"<!-- codex-review-context-page {page}/{len(sources)} -->".encode()
         delivered.append(body)
     assert delivered[3] and delivered[8]
     reconstructed = b"".join(delivered)

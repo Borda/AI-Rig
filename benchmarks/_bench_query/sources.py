@@ -6,9 +6,7 @@ import ast
 import os
 from pathlib import Path
 
-
-from _bench_common.python_source import extract_import_targets, resolve_relative_base  # noqa: E402
-
+from _bench_common.python_source import extract_import_targets, resolve_relative_base
 
 # ---- HELPERS ----
 
@@ -55,10 +53,9 @@ def path_to_module(path: str, repo_root: str) -> str | None:
         return ".".join(reversed(parts))
 
     rel = os.path.relpath(file_path, root).replace(os.sep, "/")
-    if rel.startswith("src/"):
-        rel = rel[4:]
+    rel = rel.removeprefix("src/")
     mod = rel[:-3].replace("/", ".")
-    return mod[:-9] if mod.endswith(".__init__") else mod
+    return mod.removesuffix(".__init__")
 
 
 def module_to_grep_pattern(module: str) -> str:
@@ -160,8 +157,7 @@ def _file_base_package(file_path: Path, repo_root: Path) -> str:
         file sits at the repository root or under a bare ``src/`` layout root).
     """
     rel = os.path.relpath(str(file_path), str(repo_root)).replace(os.sep, "/")
-    if rel.startswith("src/"):
-        rel = rel[4:]
+    rel = rel.removeprefix("src/")
     directory = os.path.dirname(rel)
     return directory.replace("/", ".").strip(".")
 

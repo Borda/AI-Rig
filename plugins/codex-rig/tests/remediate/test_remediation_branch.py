@@ -9,9 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from test_collect_pr_git_recovery import _collect, _git, _load_collector, _setup_repositories
-
 
 HELPER = Path(__file__).resolve().parents[2] / "shared" / "remediation_branch.py"
 

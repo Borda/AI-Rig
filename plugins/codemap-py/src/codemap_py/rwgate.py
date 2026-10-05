@@ -73,24 +73,25 @@ import os
 import sys
 import threading
 import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import IO, Any, Callable, Iterator, Optional
+from typing import IO, Any
 from uuid import uuid4
 
 from codemap_py.index_paths import coordination_root
 
 __all__ = [
-    "read_lease",
-    "read_index",
-    "write_index",
-    "writer_active",
-    "atomic_publish",
-    "publish_stream",
-    "IndexBusy",
     "CoordinationUnavailable",
+    "IndexBusy",
     "IndexUnreadable",
     "VersionSkewRefused",
+    "atomic_publish",
+    "publish_stream",
+    "read_index",
+    "read_lease",
     "set_instrument",
+    "write_index",
+    "writer_active",
 ]
 
 # ── tunables (internal 0.25.0 choices; never exposed as CLI/env config) ────────
@@ -212,11 +213,11 @@ def _sleep_until(deadline: float) -> bool:
 
 
 # ── instrumentation (event-order oracles) ──────────────────────────────────
-_INSTRUMENT: Optional[Callable[[str, dict], None]] = None
+_INSTRUMENT: Callable[[str, dict], None] | None = None
 _SEQ = itertools.count()
 
 
-def set_instrument(callback: Optional[Callable[[str, dict], None]]) -> None:
+def set_instrument(callback: Callable[[str, dict], None] | None) -> None:
     """Install (or clear with ``None``) an in-process event callback.
 
     The callback receives ``(event_name, fields)``. Cross-process tests instead
@@ -302,7 +303,7 @@ class _Registry:
     def __init__(self, coord: Path, pid: int) -> None:
         self.coord = coord
         self.pid = pid
-        self._reg_fd: Optional[int] = None
+        self._reg_fd: int | None = None
         self._reg_lock = threading.Lock()
         self._owned: dict[str, int] = {}
         self._owned_lock = threading.Lock()
@@ -338,7 +339,7 @@ class _Registry:
         with self._owned_lock:
             self._owned[str(path)] = fd
 
-    def pop_owned(self, path: Path) -> Optional[int]:
+    def pop_owned(self, path: Path) -> int | None:
         with self._owned_lock:
             return self._owned.pop(str(path), None)
 
@@ -435,7 +436,7 @@ def _init_registry_file(coord: Path) -> None:
         os.close(fd)
 
 
-def _create_owned(reg: _Registry, path: Path, payload: bytes) -> Optional[int]:
+def _create_owned(reg: _Registry, path: Path, payload: bytes) -> int | None:
     """Create, lock, and register a token/intent file owned by this process.
 
     Returns:
@@ -473,7 +474,7 @@ _PROBE_GONE = "gone"  # file absent → token drained or already reclaimed
 _PROBE_PENDING = "pending"  # Windows pending-delete / sharing violation → retry next poll
 
 
-def _open_foreign_token(path: Path) -> tuple[Optional[int], str]:
+def _open_foreign_token(path: Path) -> tuple[int | None, str]:
     """Open a FOREIGN token/intent file for a non-blocking liveness probe.
 
     Foreign-file opens are the only places that observe another process mid
@@ -634,7 +635,7 @@ def read_lease(path: os.PathLike[str] | str, *, timeout: float = DEFAULT_TIMEOUT
 
 
 @contextlib.contextmanager
-def read_index(path: os.PathLike[str] | str, *, timeout: float = DEFAULT_TIMEOUT) -> Iterator[Optional[dict]]:
+def read_index(path: os.PathLike[str] | str, *, timeout: float = DEFAULT_TIMEOUT) -> Iterator[dict | None]:
     """Acquire a shared-reader lease and yield the parsed index (or ``None``).
 
     A convenience wrapper over :func:`read_lease` for callers with no loader of
@@ -670,7 +671,7 @@ def read_index(path: os.PathLike[str] | str, *, timeout: float = DEFAULT_TIMEOUT
         yield data
 
 
-def _load_index(index_path: Path) -> Optional[dict]:
+def _load_index(index_path: Path) -> dict | None:
     """Read and parse the index JSON, or ``None`` when the file is absent.
 
     Raises:
@@ -731,7 +732,7 @@ def write_index(
     build_fn: Callable[[Path], Any],
     *,
     timeout: float = DEFAULT_TIMEOUT,
-    writer_version: Optional[int] = None,
+    writer_version: int | None = None,
 ) -> Any:
     """Run *build_fn* under an exclusive, writer-preferred lease.
 
@@ -870,7 +871,7 @@ def _clean_orphan_temps(index_path: Path) -> None:
             _safe_unlink(parent / name)
 
 
-def _refuse_incompatible_generation(index_path: Path, writer_version: Optional[int]) -> None:
+def _refuse_incompatible_generation(index_path: Path, writer_version: int | None) -> None:
     """Refuse to overwrite an index whose schema generation is newer than the writer's.
 
     Runs inside the exclusive phase, immediately before ``build_fn`` — the writer

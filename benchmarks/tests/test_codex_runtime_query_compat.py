@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import importlib.util
 import hashlib
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -14,16 +14,15 @@ import pytest
 
 from benchmarks._bench_common import provider_parity_contracts as core
 
-
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 
 # Patch seams live in the package modules the runner shim re-exports from: patching the shim
 # would leave each package module's own global binding untouched. Inside the package every seam
 # below is reached through its defining module, so this is the single place to patch it.
-from _bench_codex.structural import arms as codex_arms  # noqa: E402
-from _bench_codex.structural import manifest as codex_manifest  # noqa: E402
-from _bench_codex.structural import runner as codex_structural_runner  # noqa: E402
-from _bench_codex.structural import tasks as codex_tasks  # noqa: E402
+from _bench_codex.structural import arms as codex_arms
+from _bench_codex.structural import manifest as codex_manifest
+from _bench_codex.structural import runner as codex_structural_runner
+from _bench_codex.structural import tasks as codex_tasks
 
 SCRIPT_PATH = BENCHMARKS_DIR / "run-codex-structural.py"
 SUITE_PATH = BENCHMARKS_DIR / "suites" / "tasks-bench.json"

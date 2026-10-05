@@ -6,17 +6,17 @@ that cleanup is attempted on every ordinary exit and that a cleanup failure cann
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
 import contextlib
 import hashlib
 import json
 import os
-from pathlib import Path
 import shlex
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, TypeVar
 
 from .edit_patch_contracts import (
@@ -29,7 +29,6 @@ from .edit_patch_contracts import (
     run_fix_multi_oracle,
     run_fix_single_oracle,
 )
-
 
 ResultT = TypeVar("ResultT")
 
@@ -47,7 +46,7 @@ PATCH_PYTEST_ENV = "CODEMAP_BENCH_PATCH_PYTEST"
 class PatchTaskAgentWorkspace:
     """Editable patch-task worktree with a staged immutable target-test fixture."""
 
-    workspace: "ExecutableAgentWorkspace"
+    workspace: ExecutableAgentWorkspace
     contract: EditTaskContract
     fixture_sha256_by_path: Mapping[str, str]
     baseline_target_failed: bool
@@ -504,7 +503,7 @@ def execute_fix_multi_patch(repo_path: Path, contract: FixMultiContract, diff: s
 
 def stage_patch_task_agent_workspace(
     source: Path,
-    workspace: "ExecutableAgentWorkspace",
+    workspace: ExecutableAgentWorkspace,
     contract: EditTaskContract,
     *,
     runtime_identity: Mapping[str, str] | None = None,

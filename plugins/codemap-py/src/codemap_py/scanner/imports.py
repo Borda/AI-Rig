@@ -1,9 +1,9 @@
 """Extract a module's imports, exports and symbol aliases from its AST."""
 
 from __future__ import annotations
+
 import ast
 import sys
-
 
 _STDLIB_MODULES: frozenset[str] = frozenset(sys.stdlib_module_names)  # Python 3.10+; project requires 3.10+
 
@@ -457,9 +457,11 @@ def extract_dynamic_imports(tree: ast.Module) -> list[dict]:
         if arg0 is None or not (isinstance(arg0, ast.Constant) and isinstance(arg0.value, str)):
             continue
         # importlib.import_module("X") or pkgutil.import_module("X")
-        if isinstance(func, ast.Attribute) and func.attr == "import_module":
-            results.append({"literal": arg0.value, "line": node.lineno})
-        # __import__("X")
-        elif isinstance(func, ast.Name) and func.id == "__import__":
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "import_module"
+            or isinstance(func, ast.Name)
+            and func.id == "__import__"
+        ):
             results.append({"literal": arg0.value, "line": node.lineno})
     return results

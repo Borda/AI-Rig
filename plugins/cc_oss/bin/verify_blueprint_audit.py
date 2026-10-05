@@ -219,9 +219,12 @@ def _detail_findings_after(detail: dict, record: dict) -> list[str]:
     # Tested as strings first: an unhashable value on either side raises out of the `in` test and ends the run, and
     # a record carrying one is exactly the malformed input this function exists to classify.
     status, event = detail.get("status"), detail.get("event")
-    if not isinstance(status, str) or not isinstance(event, str):
-        findings.append("after-row needs a known status and event")
-    elif status not in CLOSE_STATUSES or event not in CLOSE_EVENTS:
+    if (
+        not isinstance(status, str)
+        or not isinstance(event, str)
+        or status not in CLOSE_STATUSES
+        or event not in CLOSE_EVENTS
+    ):
         findings.append("after-row needs a known status and event")
     if {"decision", "lane", "verdicts", "rank", "src", "digest", "reason"} & set(detail):
         findings.append("decision fields are forbidden on an after-row")

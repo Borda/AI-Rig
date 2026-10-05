@@ -29,8 +29,8 @@ from __future__ import annotations
 
 import json
 import math
-from pathlib import Path
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -39,18 +39,17 @@ import pytest
 BENCHMARKS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARKS))
 
-from _bench_common.presentation import (  # noqa: E402
+# Patch seams live in the package modules the runner shim re-exports from: patching the shim
+# would leave each package module's own global binding untouched.
+from _bench_claude.structural import cli as bench_cli
+from _bench_claude.structural import config as bench_config
+from _bench_claude.structural import report as bench_report
+from _bench_claude.structural import tasks as bench_tasks
+from _bench_common.presentation import (
     BENCHMARK_OUTPUT_WIDTH,
     LEGEND_CLOSE_RULE,
     LEGEND_OPEN_RULE,
 )
-
-# Patch seams live in the package modules the runner shim re-exports from: patching the shim
-# would leave each package module's own global binding untouched.
-from _bench_claude.structural import cli as bench_cli  # noqa: E402
-from _bench_claude.structural import config as bench_config  # noqa: E402
-from _bench_claude.structural import report as bench_report  # noqa: E402
-from _bench_claude.structural import tasks as bench_tasks  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers shared across test classes
@@ -218,7 +217,7 @@ class TestProviderParityIntegration:
 
             def print(self, _message: str, **_options: Any) -> None:
                 """Handle console output through the test double instead of a live terminal."""
-                return None
+                return
 
         class Progress:
             """Provide the small Rich progress surface used by the run loop."""
@@ -231,15 +230,15 @@ class TestProviderParityIntegration:
 
             def update(self, *_args: Any, **_kwargs: Any) -> None:
                 """Accept progress updates without rendering a terminal display."""
-                return None
+                return
 
             def remove_task(self, *_args: Any, **_kwargs: Any) -> None:
                 """Accept task removal without maintaining a live progress display."""
-                return None
+                return
 
             def advance(self, *_args: Any, **_kwargs: Any) -> None:
                 """Accept task advancement without rendering a terminal display."""
-                return None
+                return
 
         task = {"id": "FN-02", "type": "fixture", "scoreable": False}
         loop = script_run_bench._StructuralRunLoop(
@@ -627,7 +626,6 @@ class TestProviderParityIntegration:
         class ProgressReached(RuntimeError):
             """Stop the no-model test once the header and legend have been emitted."""
 
-            pass
 
         def _stop_before_the_first_cell(_console: Any) -> None:
             """Fail the run at progress construction, after the header block is printed."""
@@ -690,7 +688,6 @@ class TestProviderParityIntegration:
         class RunnerReached(RuntimeError):
             """Stop the no-model test after runner construction."""
 
-            pass
 
         def _capture_runner(*_args: Any, **kwargs: Any) -> None:
             """Record the timeout then stop execution at runner construction."""

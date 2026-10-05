@@ -22,10 +22,10 @@ _ENTRY = _SCRIPTS / "codemap_py_entry.py"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-import codemap_py_cli as cli  # noqa: E402  (needs the scripts/ path insert above)
+import codemap_py_cli as cli
 
 _RUNNING_SUPPORTED = cli.is_supported(sys.implementation.name, sys.version_info.major, sys.version_info.minor)
-_NO_INTERPRETER_EXIT = 127  #
+_NO_INTERPRETER_EXIT = 127
 _POSIX_SHELL = shutil.which("sh")
 
 

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import errno
+import hashlib
 import json
 import os
 import shlex
@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 
 # Every test here drives ``run-all.sh`` through ``/bin/bash`` with executable
 # shell stubs, so the whole module is POSIX-only — same boundary the shared
@@ -32,9 +31,8 @@ _PLATFORM_TESTS_DIR = BENCHMARKS_DIR.parent / "plugins" / "codex-rig" / "tests"
 if str(_PLATFORM_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PLATFORM_TESTS_DIR))
 
-from _platform import POSIX_BASH  # noqa: E402
-
-from _bench_common.presentation import LEGEND_CLOSE_RULE, LEGEND_OPEN_RULE  # noqa: E402
+from _bench_common.presentation import LEGEND_CLOSE_RULE, LEGEND_OPEN_RULE
+from _platform import POSIX_BASH
 
 REAL_GIT = shutil.which("git")
 ACTIVE_MANIFEST = BENCHMARKS_DIR / "manifests" / "codex-integration.json"

@@ -11,9 +11,8 @@ import argparse
 import json
 from pathlib import Path
 
-import pytest
-
 import audit_hook_coverage as ahc
+import pytest
 
 
 def _write_transcript(path: Path, records: list[dict]) -> Path:

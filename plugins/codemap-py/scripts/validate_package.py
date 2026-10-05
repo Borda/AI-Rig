@@ -181,7 +181,7 @@ def _load_json(path: Path) -> dict:
 
 def _pointer_path(pointer: str) -> str:
     """Normalize a ``"./dir/"`` manifest pointer to a package-relative path."""
-    trimmed = pointer[2:] if pointer.startswith("./") else pointer
+    trimmed = pointer.removeprefix("./")
     return trimmed.rstrip("/")
 
 

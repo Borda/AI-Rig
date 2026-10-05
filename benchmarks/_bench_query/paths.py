@@ -8,14 +8,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 from _bench_common.codemap_discovery import (
     git_toplevel,
+)
+from _bench_common.codemap_discovery import (
     resolve_index_path as _util_resolve_index_path,
 )
 
 from _bench_query.output import log
-
 
 # ---- MAIN ----
 

@@ -32,7 +32,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from codemap_py import query
 
 
@@ -71,7 +70,7 @@ def _literal_cap(source: str, name: str) -> int:
     """
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
-            return int(eval(compile(ast.Expression(node.value), "<cap>", "eval")))  # noqa: S307
+            return int(eval(compile(ast.Expression(node.value), "<cap>", "eval")))
     raise AssertionError(f"{name} not assigned at module level")
 
 
@@ -327,14 +326,14 @@ class TestGitFailureIsUndetermined:
     def test_coverage_marks_staleness_undetermined(self, reset_query_caches, monkeypatch) -> None:
         """The coverage block carries the undetermined flag instead of a bare stale=False."""
         self._fail_git(monkeypatch, FileNotFoundError("git"))
-        monkeypatch.setattr(query.index_io, "_untracked_py_files", lambda: [])
+        monkeypatch.setattr(query.index_io, "_untracked_py_files", list)
         base = query._coverage({"modules": [], "file_shas": {"a.py": "deadbeef"}})
         assert base["stale_undetermined"] is True
 
     def test_undetermined_staleness_vetoes_completeness(self, reset_query_caches, monkeypatch) -> None:
         """An unmeasurable index cannot yield a complete answer."""
         self._fail_git(monkeypatch, FileNotFoundError("git"))
-        monkeypatch.setattr(query.index_io, "_untracked_py_files", lambda: [])
+        monkeypatch.setattr(query.index_io, "_untracked_py_files", list)
         base = query._coverage({"modules": [], "file_shas": {"a.py": "deadbeef"}})
         verdict = query._query_complete(base, command="central", module_status=None, module_name=None)
         assert verdict == (False, "stale_undetermined")
@@ -342,7 +341,7 @@ class TestGitFailureIsUndetermined:
     def test_absent_repository_keeps_the_legacy_block(self, reset_query_caches, monkeypatch) -> None:
         """Without a repository the coverage block gains no new key (non-git trees unchanged)."""
         monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: None)
-        monkeypatch.setattr(query.index_io, "_untracked_py_files", lambda: [])
+        monkeypatch.setattr(query.index_io, "_untracked_py_files", list)
         base = query._coverage({"modules": [], "file_shas": {"a.py": "deadbeef"}})
         assert "stale_undetermined" not in base
 

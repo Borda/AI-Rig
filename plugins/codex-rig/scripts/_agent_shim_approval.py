@@ -48,7 +48,6 @@ from _agent_shim_observe import FilesystemObservation, RootIdentity, RootObserva
 from _agent_shim_plan import CandidateError, CandidatePlan, Operation, build_candidate
 from generate_roles import GeneratedRoster
 
-
 DIGEST = re.compile(r"[0-9a-f]{64}")
 MODE = re.compile(r"0[0-7]{3}")
 

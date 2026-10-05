@@ -5,8 +5,8 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -15,12 +15,11 @@ import pytest
 BENCHMARKS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARKS))
 
-from _bench_common import paid_lifecycle  # noqa: E402
-from _bench_common.artifact_hashing import runner_sha256  # noqa: E402
-
 # Patch seams live in the package modules the runner shim re-exports from: patching the shim
 # would leave each package module's own global binding untouched.
-from _bench_claude.agentic import paid as agentic_paid  # noqa: E402
+from _bench_claude.agentic import paid as agentic_paid
+from _bench_common import paid_lifecycle
+from _bench_common.artifact_hashing import runner_sha256
 
 
 def _readcrop_row() -> dict[str, Any]:
@@ -237,7 +236,7 @@ def test_paid_patch_scope_and_snapshot_close_over_shared_runtime_bytes(
         path = plugin / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(relative, encoding="utf-8")
-    contract = SimpleNamespace(task_id="PT-01", baseline_commit="a" * 40, provider_binding=lambda: {})
+    contract = SimpleNamespace(task_id="PT-01", baseline_commit="a" * 40, provider_binding=dict)
     loaded = [{"task": {"id": "PT-01"}, "contract": contract}]
     coordinates = {"PT-01": {"baseline_commit": "a" * 40, "index_sha256": "b" * 64, "raw_index_sha256": "b" * 64}}
     monkeypatch.setattr(agentic_paid, "_validate_parity_runtime", lambda *_args: None)
@@ -554,7 +553,6 @@ def test_paid_readcrop_fake_stream_persists_native_events_and_null_tool_usage(
 
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             """Initialize the test double's fixture-controlled state."""
-            pass
 
         def run_stage_events(self, **_kwargs: Any) -> tuple[list[dict[str, Any]], float, None]:
             """Return synthetic native events and elapsed time without starting Claude."""
@@ -616,7 +614,6 @@ def test_paid_claude_rows_forward_to_the_shared_rich_renderer(
 
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             """Initialize the test double's fixture-controlled state."""
-            pass
 
         def run_stage_events(self, **_kwargs: Any) -> tuple[list[dict[str, Any]], float, None]:
             """Return synthetic native events and elapsed time without starting Claude."""
@@ -879,7 +876,6 @@ def test_paid_executable_stage_preserves_canonical_diff_oracle_and_workspace_cle
 
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             """Initialize the test double's fixture-controlled state."""
-            pass
 
         def run_stage_events(
             self, *, arm: str, writable: bool = False, **_kwargs: Any

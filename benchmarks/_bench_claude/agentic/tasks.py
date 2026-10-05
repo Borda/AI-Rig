@@ -5,12 +5,18 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 # Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
 from _bench_common.agentic_contracts import (
     AGENTIC_ARMS,
     AgenticOracle,  # noqa: F401
     AnswerScore,  # noqa: F401
+)
+
+# Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
+# Every name it defines is re-exported here, including ones this file no longer calls itself: callers and tests
+# reach these through the runner module, so pruning an apparently unused re-export breaks patch.object targets.
+from _bench_common.claude_stages import (
+    PARITY_MANIFEST_PATH,
 )
 from _bench_common.provider_parity_contracts import (
     canonical_task_hash,
@@ -19,13 +25,6 @@ from _bench_common.provider_parity_contracts import (
     load_task_suite,
     semantic_suite_hash,
     token_accounting_inconsistent,
-)
-
-# Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
-# Every name it defines is re-exported here, including ones this file no longer calls itself: callers and tests
-# reach these through the runner module, so pruning an apparently unused re-export breaks patch.object targets.
-from _bench_common.claude_stages import (
-    PARITY_MANIFEST_PATH,
 )
 
 from _bench_claude.agentic.models import BenchmarkRun, Task

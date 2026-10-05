@@ -76,8 +76,7 @@ def parse_repository_url(raw_url: str) -> RepositoryIdentity:
     if len(parts) < 2 or not host:
         raise ValueError(f"unrecognized-repository-url:{raw_url}")
     repository = "/".join(parts[:2])
-    if repository.endswith(".git"):
-        repository = repository[:-4]
+    repository = repository.removesuffix(".git")
     return RepositoryIdentity(host=host.lower(), repository=repository.lower())
 
 

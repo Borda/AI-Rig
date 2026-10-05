@@ -10,10 +10,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import commit_action_item as cai
-
+import pytest
 
 # ---------------------------------------------------------------------------
 # --help + argparse migration (argv → variable mapping only; git logic untouched)

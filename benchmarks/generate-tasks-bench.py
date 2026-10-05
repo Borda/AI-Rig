@@ -27,9 +27,10 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterable, Mapping
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 import fire
 
@@ -37,13 +38,16 @@ import fire
 # regardless of how this script is launched (direct path, symlink, or any cwd).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _bench_common.benchmark_paths import TASKS_BENCH_FILE as TASKS_FILE, gt_is_pending  # noqa: E402
+from _bench_common.benchmark_paths import TASKS_BENCH_FILE as TASKS_FILE
+from _bench_common.benchmark_paths import gt_is_pending
 from _bench_common.codemap_discovery import (
     find_codemap_bin,
     git_toplevel,
+)
+from _bench_common.codemap_discovery import (
     resolve_index_path as _util_resolve_index_path,
-)  # noqa: E402
-from _bench_common.python_source import module_from_init_chain, prune_walk_dirs, walk_py_modules  # noqa: E402
+)
+from _bench_common.python_source import module_from_init_chain, prune_walk_dirs, walk_py_modules
 
 
 class TaskType(str, Enum):

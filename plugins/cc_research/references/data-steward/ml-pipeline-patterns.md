@@ -104,9 +104,7 @@ def worker_init_fn(worker_id):
     random.seed(worker_seed)
 
 
-loader = DataLoader(
-    dataset, worker_init_fn=worker_init_fn, generator=torch.Generator().manual_seed(42)
-)
+loader = DataLoader(dataset, worker_init_fn=worker_init_fn, generator=torch.Generator().manual_seed(42))
 ```
 
 </dataloader-patterns>

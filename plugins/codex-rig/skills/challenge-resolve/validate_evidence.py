@@ -59,16 +59,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 SKILL_DIRECTORY = Path(__file__).resolve().parent
 PLUGIN_ROOT = SKILL_DIRECTORY.parents[1]
 SHARED_DIRECTORY = PLUGIN_ROOT / "shared"
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
-from adversarial_loop import ledger_digest, load_ledger, summarize_ledger, validate_ledger  # noqa: E402
-from collect_diff import capture_source_snapshot  # noqa: E402
-
+from adversarial_loop import ledger_digest, load_ledger, summarize_ledger, validate_ledger
+from collect_diff import capture_source_snapshot
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _FINDING_KEYS = {"signature", "tier", "structural", "disposition", "evidence"}

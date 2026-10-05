@@ -114,7 +114,7 @@ def search_consumers(package: str, symbols: list[str]) -> tuple[int, set[str]]:
     successes = 0
     for sym in symbols:
         try:
-            proc = subprocess.run(  # noqa: S603
+            proc = subprocess.run(
                 [
                     gh,
                     "api",

@@ -1,6 +1,7 @@
 """Verbs over documentation cross-references and dead symbols or modules."""
 
 from __future__ import annotations
+
 import argparse
 import json
 import sys
@@ -15,14 +16,15 @@ from pathlib import Path
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
-from codemap_py.schema import (  # noqa: E402
+from codemap_py.schema import (
     DEAD_SYMBOL_MIN_VER,
     SPHINX_XREFS_MIN_VER,
 )
-from .coverage import _cmd_coverage  # noqa: E402
-from .docs_coverage import _is_public_symbol, _symbol_loc  # noqa: E402
-from .index_io import _get_rev_graph, _get_symbol_map, _require_feature, _require_sphinx_xref_count  # noqa: E402
-from .output import _print  # noqa: E402
+
+from .coverage import _cmd_coverage
+from .docs_coverage import _is_public_symbol, _symbol_loc
+from .index_io import _get_rev_graph, _get_symbol_map, _require_feature, _require_sphinx_xref_count
+from .output import _print
 
 
 def _iter_all_xrefs(index: dict):

@@ -15,7 +15,6 @@ import pytest
 
 from benchmarks._bench_common import agentic_contracts
 
-
 _AGENTIC_TASK_IDS = (
     "BA-01",
     "BA-02",

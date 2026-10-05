@@ -198,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     # Capture combined stdout+stderr so we can tail it; mirrors `2>&1 | tail -N`.
     # Read incrementally with a byte cap so adversarial test output cannot exhaust memory
     # before tail_n truncation is applied.
-    proc = subprocess.Popen(  # noqa: S603 — allowlisted cmd + resolved binary, no shell.
+    proc = subprocess.Popen(
         [*parts, "--tb=short", *targets, "-v"],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -213,14 +213,14 @@ def main(argv: list[str] | None = None) -> int:
         if remaining <= 0:
             truncated = True
             # Drain remaining output without buffering so the child can exit cleanly.
-            for _ in iter(lambda: proc.stdout.read(64 * 1024), ""):  # noqa: B023 — intentional rebinding per loop.
+            for _ in iter(lambda: proc.stdout.read(64 * 1024), ""):
                 pass
             break
         if len(chunk) > remaining:
             chunks.append(chunk[:remaining])
             total += remaining
             truncated = True
-            for _ in iter(lambda: proc.stdout.read(64 * 1024), ""):  # noqa: B023 — intentional rebinding per loop.
+            for _ in iter(lambda: proc.stdout.read(64 * 1024), ""):
                 pass
             break
         chunks.append(chunk)

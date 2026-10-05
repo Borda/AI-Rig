@@ -13,7 +13,6 @@ from types import ModuleType
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 LIFECYCLE_PATH = PLUGIN_ROOT / "shared" / "parallel_worktrees.py"
 VALIDATOR_PATH = PLUGIN_ROOT / "shared" / "validate-artifacts.py"

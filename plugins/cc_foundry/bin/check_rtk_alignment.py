@@ -98,8 +98,8 @@ def main() -> int:
         return 0
 
     try:
-        result = subprocess.run(  # noqa: S603 — fixed argv, no user input
-            ["rtk", "--help"],  # noqa: S607
+        result = subprocess.run(
+            ["rtk", "--help"],
             capture_output=True,
             text=True,
             timeout=args.timeout,

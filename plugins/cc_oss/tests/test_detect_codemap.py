@@ -7,12 +7,11 @@ Covers: missing ``--prefix`` exit 2, ``--force-off``, codemap-py query present/a
 from __future__ import annotations
 
 import subprocess
-import unittest.mock as mock
 from pathlib import Path
-
-import pytest
+from unittest import mock
 
 import detect_codemap  # type: ignore[import-not-found]
+import pytest
 
 
 class TestMain:

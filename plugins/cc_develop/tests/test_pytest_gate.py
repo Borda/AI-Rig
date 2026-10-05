@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 import pytest_gate  # type: ignore[import-not-found]
 
 _RUNNER_DETECTION = Path(__file__).parents[1] / "skills" / "_shared" / "runner-detection.md"

@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pytest
 
-
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _REPO_ROOT = _PLUGIN_ROOT.parents[1]
 _BIN = _PLUGIN_ROOT / "bin"
@@ -24,8 +23,8 @@ for _p in (_BIN, _SRC):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-import _index_identity  # noqa: E402  (needs the bin path insert above)
-from codemap_py import graph, index_paths  # noqa: E402  (needs the src path insert above)
+import _index_identity
+from codemap_py import graph, index_paths
 
 
 def _seed_plugin_cache(home: Path, entries: dict[str, str]) -> Path:

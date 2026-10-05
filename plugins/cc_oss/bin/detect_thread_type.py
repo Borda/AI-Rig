@@ -201,7 +201,7 @@ def _gh_issue_lookup(gh: str, number: str, timeout: int) -> dict | None:
         Parsed JSON object on success; ``None`` otherwise.
     """
     try:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             [gh, "api", f"repos/{{owner}}/{{repo}}/issues/{number}"],
             capture_output=True,
             text=True,
@@ -230,7 +230,7 @@ def _gh_discussion_lookup(gh: str, number: str, timeout: int) -> dict | None:
         Dict with ``title`` and ``updatedAt`` on success; ``None`` otherwise.
     """
     try:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             [
                 gh,
                 "api",

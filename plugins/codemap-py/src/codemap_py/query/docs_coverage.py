@@ -1,6 +1,7 @@
 """Verbs reporting docstring and line-coverage gaps."""
 
 from __future__ import annotations
+
 import argparse
 import json
 import sys
@@ -16,15 +17,16 @@ from pathlib import Path
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
-from codemap_py.schema import (  # noqa: E402
+from codemap_py.schema import (
     COVERAGE_MIN_VER,
     DOCSTRING_MIN_VER,
     UNCOVERED_MIN_VER,
 )
-from .coverage import _cmd_coverage  # noqa: E402
-from .errors import _die_module_not_indexed, _exit_error  # noqa: E402
-from .index_io import _require_feature  # noqa: E402
-from .output import _print  # noqa: E402
+
+from .coverage import _cmd_coverage
+from .errors import _die_module_not_indexed, _exit_error
+from .index_io import _require_feature
+from .output import _print
 
 
 def _is_public_symbol(name: str) -> bool:

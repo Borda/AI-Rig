@@ -5,14 +5,13 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = PLUGIN_ROOT / "shared" / "adversarial_loop.py"

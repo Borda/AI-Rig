@@ -8,19 +8,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
-from _bench_common.benchmark_paths import TASKS_BENCH_FILE as TASKS_FILE  # noqa: E402
-from _bench_common.presentation import (  # noqa: E402
+from _bench_common.benchmark_paths import TASKS_BENCH_FILE as TASKS_FILE
+from _bench_common.presentation import (
     benchmark_console,
 )
-from _bench_common.provider_parity_contracts import (  # noqa: E402
+from _bench_common.provider_parity_contracts import (
     ARM_CONTRACTS,
     deterministic_arm_order,
     load_task_policies,
     load_task_suite,
     semantic_suite_hash,
 )
-
 
 _USE_COLOR = sys.stdout.isatty()
 _GREEN = "\033[32m" if _USE_COLOR else ""

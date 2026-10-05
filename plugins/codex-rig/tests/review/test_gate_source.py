@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 RUN_GATES = PLUGIN_ROOT / "shared" / "run_gates.py"
 GATE_IDS = ("lint", "format", "types", "tests", "review")

@@ -24,8 +24,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 import join_avoidance as ja
+import pytest
 
 _HOOK = Path(__file__).parent.parent.parent / "hooks" / "log-tool-use.py"
 

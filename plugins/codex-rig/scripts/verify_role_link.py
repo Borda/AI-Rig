@@ -49,7 +49,6 @@ import time
 from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
-
 PLUGIN_ID = "codex-rig@borda-ai-rig"
 PLUGIN_NAME = "codex-rig"
 MARKETPLACE = "borda-ai-rig"

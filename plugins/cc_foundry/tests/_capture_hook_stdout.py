@@ -26,8 +26,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 _TESTS_DIR = Path(__file__).resolve().parent
 _PLUGIN_DIR = _TESTS_DIR.parent
@@ -37,7 +37,7 @@ _BIN_DIR = _PLUGIN_DIR / "bin"
 if str(_BIN_DIR) not in sys.path:
     sys.path.insert(0, str(_BIN_DIR))
 
-import build_blueprint_manifest as bbm  # noqa: E402  (path set above)
+import build_blueprint_manifest as bbm
 
 BLUEPRINT_HOOK = "blueprint-allow.js"
 SENTINEL_HOOK = "sentinel-read-allow.js"

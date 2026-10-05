@@ -35,7 +35,7 @@ _HOOKS_DIR = Path(__file__).resolve().parent
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 
-import _hookutil  # noqa: E402  (needs the sys.path insert above)
+import _hookutil
 
 # Re-exported from the shared helper so this reader and ``record-exhausted.py``, the
 # sentinel's writer, cannot derive different paths from the same event.

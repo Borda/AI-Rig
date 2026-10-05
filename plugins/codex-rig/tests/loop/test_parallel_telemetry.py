@@ -12,7 +12,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from shared.parallel_telemetry import (  # noqa: E402
+from shared import parallel_telemetry
+from shared.parallel_telemetry import (
     TelemetryError,
     aggregate_wave_telemetry,
     build_retained_wave_evidence,
@@ -23,8 +24,6 @@ from shared.parallel_telemetry import (  # noqa: E402
     hmac_identifier,
     normalize_workload_key,
 )
-from shared import parallel_telemetry  # noqa: E402
-
 
 SECRET = b"telemetry-test-secret"
 

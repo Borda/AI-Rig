@@ -5,10 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-
-from parse_scan_args import main, parse_scan_args as parse  # noqa: E402
-
+from parse_scan_args import main
+from parse_scan_args import parse_scan_args as parse
 
 # ---------------------------------------------------------------------------
 # parse_scan_args() — pure function; returns list[str] of unquoted tokens

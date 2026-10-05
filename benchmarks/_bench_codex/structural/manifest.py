@@ -9,7 +9,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-
 from _bench_common.artifact_hashing import runner_sha256
 
 from _bench_codex.structural.config import PACKAGE_DIR, PARITY_MANIFEST_PATH, RUNNER_PATH

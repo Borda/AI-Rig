@@ -8,10 +8,9 @@ import subprocess
 import time
 from pathlib import Path
 
-from _bench_query.models import ScenarioResult, THRESHOLDS, Task, TimingStats
-from _bench_query.tasks import load_oss_tasks, load_tasks
-from _bench_query.sources import module_to_grep_pattern, module_to_package, verify_importer
 from _bench_query.cold import count_cold_calls_deps, count_cold_calls_rdeps, time_command, time_commands
+from _bench_query.models import THRESHOLDS, ScenarioResult, Task, TimingStats
+from _bench_query.output import log
 from _bench_query.queries import (
     codemap_rdeps_result,
     grep_importers_boundary,
@@ -20,8 +19,8 @@ from _bench_query.queries import (
     run_scan_query_result,
 )
 from _bench_query.scoring import score_rdeps_accuracy
-from _bench_query.output import log
-
+from _bench_query.sources import module_to_grep_pattern, module_to_package, verify_importer
+from _bench_query.tasks import load_oss_tasks, load_tasks
 
 # ---- SUITE: CALLS ----
 

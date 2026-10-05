@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import check_bridge
 import pytest
-
-import check_bridge  # noqa: E402
 
 
 def _write_manifest(home: Path) -> None:

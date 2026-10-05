@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import measure_config_size as mcs
+import pytest
 
 
 def _write(path: Path, size: int) -> None:

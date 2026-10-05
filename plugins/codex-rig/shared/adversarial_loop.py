@@ -68,7 +68,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 SCHEMA_VERSION = 2
 #: Historical single-file schema with every round inline; readable archives, never a current result.
 HISTORICAL_SCHEMA_VERSION = 1

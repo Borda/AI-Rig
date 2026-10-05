@@ -9,9 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import issue_fetch  # type: ignore[import-not-found]
 import pytest
-
-import issue_fetch  # type: ignore[import-not-found]  # noqa: E402
 
 
 class _FakeCompleted:

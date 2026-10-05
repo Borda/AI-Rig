@@ -42,7 +42,6 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-
 MAX_PATH_BYTES = 16_384
 _READ_CHUNK_BYTES = 65_536
 _REPARSE_POINT = 0x400

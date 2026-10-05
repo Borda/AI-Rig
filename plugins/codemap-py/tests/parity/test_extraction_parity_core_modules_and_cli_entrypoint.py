@@ -35,18 +35,17 @@ for _p in (_SRC, _BIN, _SCRIPTS):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-import codemap_py.index_paths as index_paths_pkg  # noqa: E402  (needs the sys.path insert above)
-import codemap_py.runtime_log as runtime_log_pkg  # noqa: E402
-import codemap_py.rwgate as rwgate_pkg  # noqa: E402
-import codemap_py.schema as schema_pkg  # noqa: E402
-import codemap_py.telemetry as telemetry_pkg  # noqa: E402
-
-import _index_identity  # noqa: E402  (bin/ shim — aliases codemap_py.index_paths)
-import _runtime_log  # noqa: E402  (bin/ shim — aliases codemap_py.runtime_log)
-import _rwgate  # noqa: E402  (bin/ shim — aliases codemap_py.rwgate)
-import _schema  # noqa: E402  (bin/ shim — aliases codemap_py.schema)
-import _telemetry  # noqa: E402  (bin/ shim — aliases codemap_py.telemetry)
-import codemap_py_cli  # noqa: E402  (scripts/ shim — aliases codemap_py.cli)
+import _index_identity
+import _runtime_log
+import _rwgate
+import _schema
+import _telemetry
+import codemap_py.index_paths as index_paths_pkg
+import codemap_py.runtime_log as runtime_log_pkg
+import codemap_py.rwgate as rwgate_pkg
+import codemap_py.schema as schema_pkg
+import codemap_py.telemetry as telemetry_pkg
+import codemap_py_cli
 
 # Path classes exercised by every parametrized case below: a plain directory
 # name, and one with spaces and non-ASCII characters (repo convention for

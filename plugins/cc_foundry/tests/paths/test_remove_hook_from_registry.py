@@ -11,9 +11,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-import remove_hook_from_registry as rhfr  # noqa: E402
-
+import remove_hook_from_registry as rhfr
 
 _SAMPLE_REGISTRY: dict = {
     "permissions": {"allow": ["Bash(jq:*)"]},

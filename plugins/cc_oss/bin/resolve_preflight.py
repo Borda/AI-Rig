@@ -38,8 +38,8 @@ from shutil import which
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import check_bridge  # noqa: E402 — sibling script in this plugin's bin/, not an installed module
-import get_plugin_install_path  # noqa: E402 — sibling script in this plugin's bin/, not an installed module
+import check_bridge
+import get_plugin_install_path
 
 _PREFLIGHT_TTL = 14400  # 4 hours in seconds
 _PREFLIGHT_DIR = Path(".temp/state/preflight")
@@ -125,7 +125,7 @@ def _check_gh() -> int | None:
     if _preflight_ok("gh"):
         print("gh: ok (cached)", file=sys.stderr)
     elif gh:
-        auth_proc = subprocess.run(  # noqa: S603
+        auth_proc = subprocess.run(
             [gh, "auth", "status"],
             capture_output=True,
             text=True,
@@ -159,7 +159,7 @@ def _sync_git_state(git: str) -> int | None:
     Returns:
         ``1`` when ``git pull`` hit conflicts (error already printed); ``None`` otherwise.
     """
-    remote_proc = subprocess.run(  # noqa: S603
+    remote_proc = subprocess.run(
         [git, "remote", "-v"],
         capture_output=True,
         text=True,
@@ -172,14 +172,14 @@ def _sync_git_state(git: str) -> int | None:
     # Always fetch all remotes so origin/$BASE_REF is current before Step 5 merges it.
     # Conditional fetch (gated on current branch having @{u}) left origin/$BASE_REF stale
     # when invoked from a branch with no upstream tracking ref.
-    subprocess.run(  # noqa: S603
+    subprocess.run(
         [git, "fetch", "origin"],
         capture_output=True,
         check=False,
         timeout=30,
     )
 
-    upstream_proc = subprocess.run(  # noqa: S603
+    upstream_proc = subprocess.run(
         [git, "rev-parse", "--abbrev-ref", "@{u}"],
         capture_output=True,
         text=True,
@@ -187,7 +187,7 @@ def _sync_git_state(git: str) -> int | None:
         timeout=3,
     )
     if upstream_proc.returncode == 0 and upstream_proc.stdout.strip():
-        log_proc = subprocess.run(  # noqa: S603
+        log_proc = subprocess.run(
             [git, "log", "HEAD..@{u}", "--oneline"],
             capture_output=True,
             text=True,
@@ -197,7 +197,7 @@ def _sync_git_state(git: str) -> int | None:
         remote_ahead = len([ln for ln in log_proc.stdout.splitlines() if ln.strip()])
         if remote_ahead > 0:
             print(f"Remote is {remote_ahead} commit(s) ahead — running git pull...", file=sys.stderr)
-            pull_proc = subprocess.run(  # noqa: S603
+            pull_proc = subprocess.run(
                 [git, "pull"],
                 check=False,
                 timeout=60,

@@ -87,7 +87,7 @@ def invocation_id() -> str:
         >>> invocation_id() == invocation_id()
         True
     """
-    global _INVOCATION  # noqa: PLW0603 - per-process cache, reset only across forks
+    global _INVOCATION
     pid = os.getpid()
     if _INVOCATION is None or _INVOCATION[0] != pid:
         _INVOCATION = (pid, f"{pid}-{time.time_ns()}")
@@ -96,7 +96,7 @@ def invocation_id() -> str:
 
 def plugin_version() -> str:
     """Return the installed plugin version, or ``"?"`` when it cannot be read."""
-    global _PLUGIN_VERSION  # noqa: PLW0603 - read-once telemetry metadata cache
+    global _PLUGIN_VERSION
     if _PLUGIN_VERSION is None:
         try:
             manifest = Path(__file__).resolve().parents[2] / ".claude-plugin" / "plugin.json"

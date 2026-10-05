@@ -5,9 +5,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 import _launcher_capability
+import pytest
 from _launcher_capability import _pinned_frozen_checkout_is_available
 
 

@@ -14,10 +14,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import docker_sandbox_run as ds
-
+import pytest
 
 # ---------- Pure builders ----------
 

@@ -15,7 +15,6 @@ from urllib.parse import quote
 import pytest
 import release_append_marker as marker_api
 
-
 _SCRIPT = Path(__file__).resolve().parents[2] / "bin/release_append_publish.py"
 _SPEC = importlib.util.spec_from_file_location("release_append_publish", _SCRIPT)
 assert _SPEC and _SPEC.loader

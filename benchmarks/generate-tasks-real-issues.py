@@ -41,11 +41,11 @@ import json
 import re
 import subprocess
 import sys
-
-import fire
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import fire
 
 REPO = "Lightning-AI/pytorch-lightning"
 REPO_URL = f"https://github.com/{REPO}"
@@ -378,7 +378,7 @@ def difficulty_for(file_count: int) -> str:
     """
     if file_count <= 1:
         return "simple"
-    if file_count <= 3:  # noqa: PLR2004 - inline difficulty boundary documented in docstring
+    if file_count <= 3:
         return "medium"
     return "hard"
 
@@ -396,8 +396,7 @@ def module_for(path: str) -> str:
         Dotted module name (e.g. ``lightning.pytorch.x``).
     """
     cleaned = path
-    if cleaned.startswith("src/"):
-        cleaned = cleaned[len("src/") :]
+    cleaned = cleaned.removeprefix("src/")
     if cleaned.endswith("/__init__.py"):
         cleaned = cleaned[: -len("/__init__.py")]
     elif cleaned.endswith(".py"):

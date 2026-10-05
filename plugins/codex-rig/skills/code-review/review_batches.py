@@ -48,25 +48,25 @@ SKILL_DIRECTORY = Path(__file__).resolve().parent
 if str(SKILL_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SKILL_DIRECTORY))
 
-import review_context  # noqa: E402
+import review_context
 
 CONTEXT_LIMIT = 65536
 BATCH_FINDINGS_INSTRUCTION = (
-    "\n## Required batch response profile 1\nReturn only ## Reviewer Findings, one fenced json array, optional "
-    "## Finding Dispositions, then ## Reviewer Confidence (one fenced json object), then ## Reviewer Assessment with Rating: <1-5> and Rationale: <one line>. "
-    "Each finding object has exactly id (unique reviewer-local identifier), severity (critical|high|medium|low), "
-    "title, summary (exact claim), required_change (one nonempty string), "
-    "closure_evidence (one nonempty string, never an array), and evidence "
-    "(array of {path,start_line,end_line} frozen project coordinates; empty only when evidence is unavailable). "
-    "Declare every distinct obligation, including minor findings, in the array; use [] only for no findings. "
-    "Do not place findings in prose or invent hashes/global IDs. Keep missing evidence honest. "
-    "Confidence has exactly score (number 0..1), scope (nonempty inspected boundary), and gaps "
-    "(array of {gap,status,rationale}; status closed|unresolved|deferred with nonempty evidence or rationale). "
-    "Name every material gap; a completion claim requires score >=0.90. "
-    "Dispositions use only Source disposition <original ID>: closed|rejected; Evidence: <path>:<start>-<end> - "
-    "Existing behavior: <specific frozen behavior> or False positive: <specific mistaken assumption>. "
-    "A clean assessment never silently dismisses earlier findings.\n"
-).encode()
+    b"\n## Required batch response profile 1\nReturn only ## Reviewer Findings, one fenced json array, optional "
+    b"## Finding Dispositions, then ## Reviewer Confidence (one fenced json object), then ## Reviewer Assessment with Rating: <1-5> and Rationale: <one line>. "
+    b"Each finding object has exactly id (unique reviewer-local identifier), severity (critical|high|medium|low), "
+    b"title, summary (exact claim), required_change (one nonempty string), "
+    b"closure_evidence (one nonempty string, never an array), and evidence "
+    b"(array of {path,start_line,end_line} frozen project coordinates; empty only when evidence is unavailable). "
+    b"Declare every distinct obligation, including minor findings, in the array; use [] only for no findings. "
+    b"Do not place findings in prose or invent hashes/global IDs. Keep missing evidence honest. "
+    b"Confidence has exactly score (number 0..1), scope (nonempty inspected boundary), and gaps "
+    b"(array of {gap,status,rationale}; status closed|unresolved|deferred with nonempty evidence or rationale). "
+    b"Name every material gap; a completion claim requires score >=0.90. "
+    b"Dispositions use only Source disposition <original ID>: closed|rejected; Evidence: <path>:<start>-<end> - "
+    b"Existing behavior: <specific frozen behavior> or False positive: <specific mistaken assumption>. "
+    b"A clean assessment never silently dismisses earlier findings.\n"
+)
 
 
 def _digest(content: bytes) -> str:

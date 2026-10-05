@@ -49,7 +49,6 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-
 LOGGER = logging.getLogger(__name__)
 _GENERATED_PREFIX = (".reports", "codex", "develop")
 _CODE_REMEDIATE_PREFIX = (".reports", "codex", "code-remediate")

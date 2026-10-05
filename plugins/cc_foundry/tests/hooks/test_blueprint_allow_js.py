@@ -33,12 +33,11 @@ import json
 import os
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
-
-import pytest
 
 import build_blueprint_manifest as bbm
+import pytest
 
 HOOK = Path(__file__).resolve().parent.parent.parent / "hooks" / "blueprint-allow.js"
 VECTORS = json.loads(

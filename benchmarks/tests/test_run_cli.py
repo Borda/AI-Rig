@@ -22,15 +22,13 @@ import math
 import os
 import subprocess
 import sys
-from types import SimpleNamespace
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from _launcher_capability import _raw_codemap_launchers_are_runnable
 
 # Patch seams live in the package modules the runner shim re-exports from: patching the shim
 # would leave each package module's own global binding untouched.
@@ -38,6 +36,7 @@ from _bench_query import cold as query_cold
 from _bench_query import report as query_report
 from _bench_query import suites as query_suites
 from _bench_query import tasks as query_tasks
+from _launcher_capability import _raw_codemap_launchers_are_runnable
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 PYTORCH_LIGHTNING_REPO = Path(os.environ.get("PL_REPO_PATH", str(REPO_ROOT / ".sandbox" / "pytorch-lightning")))
@@ -278,9 +277,8 @@ class TestLoadTasks:
         """TASKS_FILE containing invalid JSON raises json.JSONDecodeError."""
         bad = tmp_path / "bad.json"
         bad.write_text("{not valid json", encoding="utf-8")
-        with patch.object(query_tasks, "TASKS_FILE", bad):
-            with pytest.raises(json.JSONDecodeError):
-                script_run_cli.load_tasks()
+        with patch.object(query_tasks, "TASKS_FILE", bad), pytest.raises(json.JSONDecodeError):
+            script_run_cli.load_tasks()
 
 
 # ===========================================================================

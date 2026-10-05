@@ -28,11 +28,10 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-import pytest
-
-import _rwgate as rw
 import _index_identity as ii
 import _runtime_log as rl
+import _rwgate as rw
+import pytest
 
 _BIN = Path(__file__).resolve().parents[2] / "bin"
 SCAN_INDEX = _BIN / "scan-index"

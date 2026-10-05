@@ -7,7 +7,6 @@ import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pytest
-
 from _bench_common.edit_patch_contracts import (
     EditExecution,
     StageIdentity,

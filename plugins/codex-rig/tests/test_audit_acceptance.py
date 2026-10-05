@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from test_gate_source import _python_command
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]

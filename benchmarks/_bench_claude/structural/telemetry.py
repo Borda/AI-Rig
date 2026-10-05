@@ -7,10 +7,8 @@ import os
 import re
 import shlex
 from pathlib import Path
-from typing import Optional
 
-
-from _bench_common.codemap_discovery import codemap_bin_on_path  # noqa: E402
+from _bench_common.codemap_discovery import codemap_bin_on_path
 
 
 def _subprocess_env(index_path: Path) -> dict[str, str]:
@@ -89,7 +87,7 @@ _SCAN_QUERY_SUBCOMMANDS: frozenset[str] = frozenset(
 _BATCH_SUBCOMMAND = "batch"
 
 
-def _parse_scan_query_subcommand(command: str) -> Optional[str]:
+def _parse_scan_query_subcommand(command: str) -> str | None:
     """Extract the scan-query subcommand from a Bash command line.
 
     The first non-flag token following ``scan-query`` (after skipping the

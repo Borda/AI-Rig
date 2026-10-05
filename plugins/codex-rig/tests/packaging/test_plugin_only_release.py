@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections import Counter
-from dataclasses import replace
 import hashlib
 import importlib.util
 import json
@@ -13,11 +11,12 @@ import shlex
 import shutil
 import subprocess
 import sys
+from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY_ROOT = PLUGIN_ROOT.parents[1]

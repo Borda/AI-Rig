@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import build_analyse_paths as bap
+import pytest
 
 
 class _FakeCompleted:

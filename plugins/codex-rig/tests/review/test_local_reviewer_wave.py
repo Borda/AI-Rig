@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-import importlib.util
 import hashlib
+import importlib.util
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from types import ModuleType
 
 import pytest
 from _platform import DIRECTORY_SYMLINKS_AVAILABLE
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CANONICAL_ROLES = PLUGIN_ROOT / "roles"
@@ -2242,7 +2241,7 @@ def _replace_context_to_size(plan_path: Path, role_index: int, size: int) -> str
     prefix = role_card + b"\nFrozen source:\n" + source + b"\nFrozen diff:\n" + diff
     remaining = size - len(prefix)
     assert remaining >= 0
-    pattern = "😀\x00x".encode("utf-8")
+    pattern = "😀\x00x".encode()
     suffix = pattern * (remaining // len(pattern)) + b"x" * (remaining % len(pattern))
     _replace_context_bytes(plan_path, role_index, suffix)
     return (prefix + suffix).decode("utf-8")
@@ -2277,7 +2276,7 @@ def review_evidence_files(
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    diff = f"diff --git a/{source_path} b/{source_path}\n".encode("utf-8")
+    diff = f"diff --git a/{source_path} b/{source_path}\n".encode()
     (tmp_path / "source.json").write_bytes(source)
     (tmp_path / "diff.patch").write_bytes(diff)
     nodes: list[dict[str, object]] = []

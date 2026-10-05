@@ -102,9 +102,7 @@ def _run(cmd: list[str], *, timeout: int = 10, text: bool = True) -> str:
     Examples:
         No doctest — subprocess-dependent; covered by pytest.
     """
-    result = subprocess.run(  # noqa: S603
-        cmd, capture_output=True, text=text, check=False, timeout=timeout
-    )
+    result = subprocess.run(cmd, capture_output=True, text=text, check=False, timeout=timeout)
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
@@ -260,9 +258,7 @@ def _check_gh_auth(gh: str | None) -> int:
     if gh is None:
         print("gh not authenticated — run 'gh auth login' first")
         return 2
-    auth_proc = subprocess.run(  # noqa: S603
-        [gh, "auth", "status"], capture_output=True, text=True, check=False, timeout=10
-    )
+    auth_proc = subprocess.run([gh, "auth", "status"], capture_output=True, text=True, check=False, timeout=10)
     combined = auth_proc.stdout + auth_proc.stderr
     if combined:
         print(combined, end="")
@@ -354,7 +350,7 @@ def _check_code_signals() -> None:
     pip_audit = which("pip-audit")
     if pip_audit:
         parse_script = Path(__file__).parent / "parse_audit_json.py"
-        audit_proc = subprocess.run(  # noqa: S603
+        audit_proc = subprocess.run(
             [pip_audit, "--format=json"],
             capture_output=True,
             text=True,
@@ -362,7 +358,7 @@ def _check_code_signals() -> None:
             timeout=120,
         )
         if audit_proc.returncode == 0 and parse_script.is_file():
-            parse_proc = subprocess.run(  # noqa: S603
+            parse_proc = subprocess.run(
                 [sys.executable, str(parse_script)],
                 input=audit_proc.stdout,
                 capture_output=True,

@@ -8,14 +8,10 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
-
 # Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
 from _bench_common.agentic_contracts import (
     AgenticOracle,  # noqa: F401
     AnswerScore,  # noqa: F401
-)
-from _bench_common.mutation_isolation import (
-    verify_index_relocation,
 )
 
 # Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
@@ -24,11 +20,13 @@ from _bench_common.mutation_isolation import (
 from _bench_common.claude_stages import (
     PARITY_MANIFEST_PATH,
 )
+from _bench_common.mutation_isolation import (
+    verify_index_relocation,
+)
 
-from _bench_claude.agentic.models import ToolCounts
 from _bench_claude.agentic.ground_truth import GroundTruth
+from _bench_claude.agentic.models import ToolCounts
 from _bench_claude.agentic.scoring import score_fix, score_read_crop
-
 
 # ---------------------------------------------------------------------------
 # Utilities

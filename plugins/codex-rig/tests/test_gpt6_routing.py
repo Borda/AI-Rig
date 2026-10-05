@@ -1,15 +1,14 @@
 """Verify the agreed GPT-6 model and effort assignments in active source routing."""
 
-import json
 import importlib.util
-from pathlib import Path
+import json
 import re
 import sys
+from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
 import pytest
-
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 ROLES = REPOSITORY_ROOT / "plugins" / "codex-rig" / "roles"

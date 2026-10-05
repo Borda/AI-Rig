@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import check_rtk_alignment as cra
+import pytest
 
 _HOOK_SRC = """
 const RTK_PREFIXES = [

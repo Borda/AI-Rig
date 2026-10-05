@@ -10,9 +10,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 from _platform import FILE_SYMLINKS_AVAILABLE
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 

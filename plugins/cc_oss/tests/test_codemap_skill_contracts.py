@@ -12,9 +12,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
 import codemap_cache  # type: ignore[import-not-found]
+import pytest
 
 _OSS_ROOT = Path(__file__).resolve().parents[1]
 _SKILL_MD = sorted(_OSS_ROOT.joinpath("skills").rglob("*.md"))

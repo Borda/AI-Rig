@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-
 SELECTOR = Path(__file__).resolve().parents[2] / "shared" / "select-git-remote.py"
 
 

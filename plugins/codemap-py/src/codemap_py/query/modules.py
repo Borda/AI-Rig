@@ -1,6 +1,7 @@
 """Module-level verbs: dependencies, centrality, coupling, paths and packages."""
 
 from __future__ import annotations
+
 import json
 import sys
 from collections import deque
@@ -16,14 +17,15 @@ from pathlib import Path
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
-from codemap_py.schema import (  # noqa: E402
+from codemap_py.schema import (
     IMPORT_GROUPS_MIN_VER,
     EntityType,
 )
-from .coverage import _IMPORT_GRAPH_NOT_COVERED, _cmd_coverage  # noqa: E402
-from .errors import _die_module_not_indexed  # noqa: E402
-from .index_io import _require_feature, build_module_map  # noqa: E402
-from .output import _print  # noqa: E402
+
+from .coverage import _IMPORT_GRAPH_NOT_COVERED, _cmd_coverage
+from .errors import _die_module_not_indexed
+from .index_io import _require_feature, build_module_map
+from .output import _print
 
 
 def cmd_deps(

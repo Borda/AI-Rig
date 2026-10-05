@@ -39,9 +39,9 @@ paths:
 - Group topic-related tests into class; class name carries unit (and optionally condition) so method names describe expected outcome only. The shared prefix moves into the class name and comes out of every method name — the method reads as the assertion, not as a restatement of its subject:
 
 ```python
-class TestParseArgs:                  # subject stated once
-    def test_rejects_unknown_flag(self): ...      # not test_parse_args_rejects_unknown_flag
-    def test_defaults_to_install(self): ...       # not test_parse_args_defaults_to_install
+class TestParseArgs:  # subject stated once
+    def test_rejects_unknown_flag(self): ...  # not test_parse_args_rejects_unknown_flag
+    def test_defaults_to_install(self): ...  # not test_parse_args_defaults_to_install
 ```
 
 ## Test Selection — Markers
@@ -108,7 +108,7 @@ def test_rejects_unknown_flag(self):
 Decorator or context manager — never hand-assigned attributes (`mod.fn = fake`), which leak into every later test in the session when an assertion fails before restore.
 
 ```python
-@mock.patch("pkg.mod.fetch", return_value={"ok": True})   # patch WHERE USED, not where defined
+@mock.patch("pkg.mod.fetch", return_value={"ok": True})  # patch WHERE USED, not where defined
 def test_x(mock_fetch): ...
 ```
 
@@ -131,7 +131,7 @@ def config(tmp_path):
     return tmp_path / "cfg.toml"
 
 
-def test_loads_name(config):        # Arrange is one parameter
+def test_loads_name(config):  # Arrange is one parameter
     assert load(config).name == "demo"
 ```
 

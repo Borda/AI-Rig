@@ -127,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     parts = shlex.split(pytest_cmd)
     parts[0] = _resolve(parts[0])
     # stdout/stderr inherited from caller — full output streams as bash version did.
-    result = subprocess.run(  # noqa: S603 — allowlisted cmd + resolved binary, no shell.
+    result = subprocess.run(
         [*parts, "--tb=short", target, "-v"],
         check=False,
         timeout=120,  # 2-min cap; pytest_gate is the inner-loop fast-iteration variant

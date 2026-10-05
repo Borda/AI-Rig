@@ -7,12 +7,13 @@ import sys
 import tempfile
 from pathlib import Path
 
-import pytest
-
 import parse_deprecate_args
+import pytest
 from parse_deprecate_args import (
     format_shell_assignments,
     main,
+)
+from parse_deprecate_args import (
     parse_deprecate_args as parse,
 )
 

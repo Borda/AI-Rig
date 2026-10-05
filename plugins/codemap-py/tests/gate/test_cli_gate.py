@@ -30,10 +30,10 @@ if str(_BIN) not in sys.path:
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-import _index_identity  # noqa: E402  (needs the bin/ path insert above)
-import _rwgate  # noqa: E402  (needs the bin/ path insert above)
-import _schema  # noqa: E402  (needs the bin/ path insert above)
-import codemap_py_cli as _cli  # noqa: E402  (needs the scripts/ path insert above)
+import _index_identity
+import _rwgate
+import _schema
+import codemap_py_cli as _cli
 
 # These tests exercise resolver equality and gate wiring THROUGH the launcher, so
 # they need an eligible interpreter on the cell. The unsupported-interpreter

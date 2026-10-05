@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-
-from _bench_common.benchmark_paths import TASKS_BENCH_FILE as OSS_TASKS_FILE, unwrap_tasks
+from _bench_common.benchmark_paths import TASKS_BENCH_FILE as OSS_TASKS_FILE
+from _bench_common.benchmark_paths import unwrap_tasks
 
 from _bench_query.models import TASKS_FILE, Task
 

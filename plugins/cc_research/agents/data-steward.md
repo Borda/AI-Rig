@@ -104,7 +104,10 @@ Use `pandera` (or equivalent) at data loading time to catch: new classes in test
 
 ```python
 import pandera as pa
-schema = pa.DataFrameSchema({"label": pa.Column(int, pa.Check.isin(train_classes)), "value": pa.Column(float, pa.Check.between(lo, hi))})
+
+schema = pa.DataFrameSchema(
+    {"label": pa.Column(int, pa.Check.isin(train_classes)), "value": pa.Column(float, pa.Check.between(lo, hi))}
+)
 schema.validate(df)  # raises SchemaError on violation — call at dataset load time, not after split
 ```
 

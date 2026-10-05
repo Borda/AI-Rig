@@ -1,6 +1,7 @@
 """Function-level verbs over the call graph, including test impact and mocks."""
 
 from __future__ import annotations
+
 import json
 import sys
 from collections import deque
@@ -15,13 +16,14 @@ from pathlib import Path
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
-from codemap_py.schema import (  # noqa: E402
+from codemap_py.schema import (
     MOCK_PATCHES_MIN_VER,
     VALID_CALL_RESOLUTIONS,
 )
-from .coverage import _CALL_GRAPH_NOT_COVERED, _cmd_coverage  # noqa: E402
-from .errors import _exit_error, _exit_symbol_not_found  # noqa: E402
-from .index_io import (  # noqa: E402
+
+from .coverage import _CALL_GRAPH_NOT_COVERED, _cmd_coverage
+from .errors import _exit_error, _exit_symbol_not_found
+from .index_io import (
     _get_rev_graph,
     _get_rev_import_graph,
     _get_symbol_map,
@@ -30,7 +32,7 @@ from .index_io import (  # noqa: E402
     _resolve_symbol_alias,
     build_module_map,
 )
-from .output import _print  # noqa: E402
+from .output import _print
 
 
 def cmd_fn_deps(index: dict, qname: str) -> None:

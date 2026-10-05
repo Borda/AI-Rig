@@ -107,9 +107,7 @@ def test_evaluate_does_not_change_model_mode():
     model = MyModel()
     model.train()
     evaluate(model, loader, criterion)
-    assert not model.training, (
-        "evaluate() must call model.eval() and not restore train mode"
-    )
+    assert not model.training, "evaluate() must call model.eval() and not restore train mode"
 
 
 def test_evaluate_does_not_modify_parameters():
@@ -118,7 +116,5 @@ def test_evaluate_does_not_modify_parameters():
     params_before = {k: v.clone() for k, v in model.named_parameters()}
     evaluate(model, loader, criterion)
     for k, v in model.named_parameters():
-        torch.testing.assert_close(
-            v, params_before[k], msg=f"Parameter {k} changed during evaluate()"
-        )
+        torch.testing.assert_close(v, params_before[k], msg=f"Parameter {k} changed during evaluate()")
 ```

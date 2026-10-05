@@ -45,7 +45,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from resolve_skill_subdir import _validate_token, resolve  # noqa: E402
+from resolve_skill_subdir import _validate_token, resolve
 
 _BREAKING_HINT = "run /foundry:setup first"
 

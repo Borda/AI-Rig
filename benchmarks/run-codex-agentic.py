@@ -23,16 +23,48 @@ import stat
 import sys
 import tempfile
 import time
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Iterable, Iterator, Mapping, NoReturn, Sequence
+from typing import Any, NoReturn
 
 _BENCHMARKS_DIR = Path(__file__).resolve().parent
 if str(_BENCHMARKS_DIR) not in sys.path:
     sys.path.insert(0, str(_BENCHMARKS_DIR))
 
-from _bench_common.presentation import (  # noqa: E402
+from _bench_codex import runtime as codex_runtime
+from _bench_codex.fixture_runtime import FixtureCodexRuntime
+from _bench_common.agentic_contracts import (
+    AGENTIC_ARMS,
+    DEFAULT_REPETITIONS,
+    answer_failure_details,
+    assess_answer_response,
+    build_oracle,
+    materialize_agentic_prompt,
+    score_answer,
+    score_evidence_metrics,
+    validate_answer_contract,
+)
+from _bench_common.agentic_contracts import (
+    parse_labeled_answer as parse_labeled_answer,
+)
+from _bench_common.agentic_reporting import (
+    REPORTING_VERSION,
+    cell_failure_details,
+    cell_passes,
+    cell_quality,
+    summarize_agentic,
+)
+from _bench_common.agentic_reporting import (
+    summary_lines as _summary_lines,
+)
+from _bench_common.change_impact_stage import run_stage as run_change_impact_stage
+from _bench_common.mutation_isolation import (
+    load_index_relocation,
+    verify_index_relocation,
+)
+from _bench_common.presentation import (
     LEGEND_CLOSE_RULE,
     LEGEND_OPEN_RULE,
     benchmark_console,
@@ -42,34 +74,7 @@ from _bench_common.presentation import (  # noqa: E402
     print_arm_row,
     print_legend,
 )
-from _bench_codex import runtime as codex_runtime  # noqa: E402
-from _bench_codex.fixture_runtime import FixtureCodexRuntime  # noqa: E402
-from _bench_common.change_impact_stage import run_stage as run_change_impact_stage  # noqa: E402
-from _bench_common.mutation_isolation import (  # noqa: E402
-    load_index_relocation,
-    verify_index_relocation,
-)
-from _bench_common.agentic_contracts import (  # noqa: E402
-    AGENTIC_ARMS,
-    DEFAULT_REPETITIONS,
-    answer_failure_details,
-    assess_answer_response,
-    build_oracle,
-    materialize_agentic_prompt,
-    parse_labeled_answer as parse_labeled_answer,
-    score_answer,
-    score_evidence_metrics,
-    validate_answer_contract,
-)
-from _bench_common.agentic_reporting import (  # noqa: E402
-    cell_quality,
-    REPORTING_VERSION,
-    cell_failure_details,
-    cell_passes,
-    summarize_agentic,
-    summary_lines as _summary_lines,
-)
-from _bench_common.provider_parity_contracts import (  # noqa: E402
+from _bench_common.provider_parity_contracts import (
     ARM_CONTRACTS,
     canonical_result_rows,
     canonical_task_hash,
@@ -78,7 +83,6 @@ from _bench_common.provider_parity_contracts import (  # noqa: E402
     token_accounting_inconsistent,
     treatment_adherence,
 )
-
 
 _TASKS_PATH = _BENCHMARKS_DIR / "suites" / "tasks-agentic.json"
 _MANIFEST_PATH = _BENCHMARKS_DIR / "manifests" / "codex-agentic.json"
@@ -1523,12 +1527,11 @@ def _emit_run_line(run_log: Path, line: str, *, arm: str | None = None) -> None:
         print(line)
     else:
         print_arm_row(line, arm, console=benchmark_console())
-    with run_log.open("a", encoding="utf-8") as handle:
-        with contextlib.redirect_stdout(handle):
-            if arm is None:
-                print(line)
-            else:
-                print_arm_row(line, arm, console=benchmark_console(file=handle))
+    with run_log.open("a", encoding="utf-8") as handle, contextlib.redirect_stdout(handle):
+        if arm is None:
+            print(line)
+        else:
+            print_arm_row(line, arm, console=benchmark_console(file=handle))
 
 
 def _initial_metadata(
@@ -1855,7 +1858,7 @@ def _require_dry_run_admission_arguments(**arguments: Any) -> None:
         _cli_error(f"Codex agentic dry-run admission requires {' '.join(missing)}")
 
 
-def main(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag with a default (0 required)
+def main(
     dry_run: bool = False,
     resolve_scope: bool = False,
     replay_telemetry_path: Path | None = None,

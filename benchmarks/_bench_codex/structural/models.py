@@ -5,12 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-
 from _bench_common.provider_parity_contracts import (
     PARITY_TIMEOUT_SECONDS,
 )
 
-from _bench_codex.structural.config import PARITY_CODEX_REASONING_EFFORT, _NATIVE_ITEM_TELEMETRY_CONTRACT_ID
+from _bench_codex.structural.config import _NATIVE_ITEM_TELEMETRY_CONTRACT_ID, PARITY_CODEX_REASONING_EFFORT
 
 
 @dataclass

@@ -3,7 +3,6 @@
 import math
 
 import pytest
-
 from _bench_common.agentic_reporting import cell_passes, summarize_agentic, summary_lines
 
 

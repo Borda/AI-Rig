@@ -58,11 +58,11 @@ def test_capture_source_snapshot_binds_worktree_contents_and_index(tmp_path: Pat
     new_content = f"new source{newline}"
     (source / "module.py").write_bytes(base_content.encode("utf-8"))
     (source / "staged.py").write_bytes(base_content.encode("utf-8"))
-    (repository / "removed.py").write_bytes(f"removed = True{newline}".encode("utf-8"))
+    (repository / "removed.py").write_bytes(f"removed = True{newline}".encode())
     _git(repository, "add", "source", "removed.py")
     _git(repository, "commit", "-qm", "fixture")
 
-    (source / "staged.py").write_bytes(f"value = 'staged'{newline}".encode("utf-8"))
+    (source / "staged.py").write_bytes(f"value = 'staged'{newline}".encode())
     _git(repository, "add", "source/staged.py")
     (source / "staged.py").write_bytes(base_content.encode("utf-8"))
     (source / "nested").mkdir()

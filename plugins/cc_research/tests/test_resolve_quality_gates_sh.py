@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-
 SCRIPT = Path(__file__).parent.parent / "bin" / "resolve-quality-gates.sh"
 
 

@@ -191,7 +191,7 @@ def heuristic_tests(path: str, all_tests: list[str], repo: Path) -> list[str]:
     named = {f"test_{stem}.py", f"{stem}_test.py"}
     importer = re.compile(
         rf"^\s*(from\s+{re.escape(dotted)}\b|import\s+{re.escape(dotted)}\b|from\s+\S+\s+import\s+.*\b{re.escape(leaf)}\b)",
-        re.M,
+        re.MULTILINE,
     )
     hits = []
     for test in all_tests:
@@ -278,7 +278,9 @@ def _makefile_target(repo: Path) -> str | None:
         ``"make test"`` or ``None``.
     """
     makefile = repo / "Makefile"
-    if makefile.is_file() and re.search(r"^test\s*:", makefile.read_text(encoding="utf-8", errors="replace"), re.M):
+    if makefile.is_file() and re.search(
+        r"^test\s*:", makefile.read_text(encoding="utf-8", errors="replace"), re.MULTILINE
+    ):
         return "make test"
     return None
 

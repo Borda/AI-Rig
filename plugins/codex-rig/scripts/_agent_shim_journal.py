@@ -45,7 +45,6 @@ from typing import NoReturn
 
 from _agent_shim_lifecycle import LifecycleDataError, parse_json_object
 
-
 MAX_JOURNAL_BYTES = 4_194_304
 MAX_JOURNAL_OPERATIONS = 256
 DIGEST = re.compile(r"[0-9a-f]{64}")

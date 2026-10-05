@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import importlib.util
-import errno
 import os
 import stat
 import sys
@@ -13,7 +13,6 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = PLUGIN_ROOT / "scripts" / "_agent_shim_posix.py"

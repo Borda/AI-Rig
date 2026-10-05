@@ -10,9 +10,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 import check_bin_test_coverage as cbtc
+import pytest
 
 
 def _plugin(root: Path, name: str = "cc_demo") -> Path:

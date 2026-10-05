@@ -33,10 +33,10 @@ import re
 import statistics
 import sys
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
 
 _LOCAL_TOOLS = frozenset(
     {

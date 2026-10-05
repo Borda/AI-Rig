@@ -32,7 +32,7 @@ _REPO = str(Path(__file__).resolve().parents[4])
 if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
-import _rwgate  # noqa: E402  (path set above; also re-imported in spawn children)
+import _rwgate
 
 _SPAWN = multiprocessing.get_context("spawn")
 WIN = sys.platform == "win32"
@@ -442,9 +442,8 @@ def test_single_registry_handle_serializes_in_process(index: Path) -> None:
     assert holding.wait(2.0)
     fd_before = reg._registry_fd()
     # a second thread's acquire must not proceed while A holds (bounded → IndexBusy)
-    with pytest.raises(_rwgate.IndexBusy):
-        with reg.mutex(time.monotonic() + 0.3):
-            order.append("b_in")
+    with pytest.raises(_rwgate.IndexBusy), reg.mutex(time.monotonic() + 0.3):
+        order.append("b_in")
     release.set()
     ta.join(5.0)
     assert "b_in" not in order and order == ["a_in", "a_out"]
@@ -549,9 +548,8 @@ def test_readonly_root_refused(tmp_path: Path) -> None:
     ro.mkdir()
     os.chmod(ro, 0o500)
     try:
-        with pytest.raises(_rwgate.CoordinationUnavailable):
-            with _rwgate.read_index(ro / "idx.json", timeout=1.0):
-                pass
+        with pytest.raises(_rwgate.CoordinationUnavailable), _rwgate.read_index(ro / "idx.json", timeout=1.0):
+            pass
     finally:
         os.chmod(ro, 0o700)  # restore so pytest can clean up
 

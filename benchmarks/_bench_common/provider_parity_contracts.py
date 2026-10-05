@@ -10,12 +10,12 @@ import hashlib
 import json
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from functools import partial
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
-
 
 Task = Mapping[str, Any]
 Evaluator = Callable[[Task, str], "EvaluationResult"]

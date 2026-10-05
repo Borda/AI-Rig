@@ -13,9 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import fix_jupytext_blank_md as gate
+import pytest
 
 
 class TestFixText:

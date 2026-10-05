@@ -7,19 +7,19 @@ extraction, and legacy result rendering; they pass an already parsed answer mapp
 from __future__ import annotations
 
 import ast
+import json
+import re
 from collections import defaultdict, deque
 from collections.abc import Mapping
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from functools import lru_cache
-import json
 from pathlib import Path
-import re
 from types import MappingProxyType
 from typing import Any
 
 from .provider_parity_contracts import materialize_task_prompt
 from .python_source import extract_import_targets
-
 
 AGENTIC_ARMS = ("A_plain", "B_auto", "C_strict")
 DEFAULT_REPETITIONS = 1
@@ -944,9 +944,7 @@ def _expected_values(
     for field in contract["fields"]:
         if field == "production_importers":
             expected[field] = production
-        elif field == "test_importer_count":
-            expected[field] = len(tests)
-        elif field == "excluded_test_importer_count":
+        elif field == "test_importer_count" or field == "excluded_test_importer_count":
             expected[field] = len(tests)
         elif field == "production_importer_count":
             expected[field] = len(production)

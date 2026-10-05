@@ -18,14 +18,13 @@ from pathlib import Path
 
 import pytest
 
-
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _BUILDER = _PLUGIN_ROOT / "scripts" / "build_package.py"
 if str(_BUILDER.parent) not in sys.path:
     sys.path.insert(0, str(_BUILDER.parent))
 
-import build_package as builder  # noqa: E402  (needs the scripts path insert above)
-import validate_package as validator  # noqa: E402
+import build_package as builder
+import validate_package as validator
 
 _QUESTION_ASSETS = (
     "shared/codex-user-questions.md",

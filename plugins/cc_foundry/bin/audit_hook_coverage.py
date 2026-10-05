@@ -57,7 +57,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from build_blueprint_manifest import normalize, sha256_text  # noqa: E402
+from build_blueprint_manifest import normalize, sha256_text
 
 PLUGIN_CACHE = Path.home() / ".claude" / "plugins" / "cache" / "borda-ai-rig"
 TRANSCRIPT_ROOT = Path.home() / ".claude" / "projects"

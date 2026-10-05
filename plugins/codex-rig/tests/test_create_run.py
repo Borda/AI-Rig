@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 CREATE_RUN = PLUGIN_ROOT / "shared" / "create_run.py"
 

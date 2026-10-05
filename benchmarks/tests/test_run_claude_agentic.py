@@ -23,17 +23,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCHMARKS_DIR))
 
-from _bench_common.presentation import BENCHMARK_OUTPUT_WIDTH  # noqa: E402
-
 # Patch seams live in the package modules the runner shim re-exports from: patching the shim
 # would leave each package module's own global binding untouched.
-from _bench_claude.agentic import cli as agentic_cli  # noqa: E402
-from _bench_claude.agentic import paid as agentic_paid  # noqa: E402
-from _bench_claude.agentic import runner as agentic_runner  # noqa: E402
+from _bench_claude.agentic import cli as agentic_cli
+from _bench_claude.agentic import paid as agentic_paid
+from _bench_claude.agentic import runner as agentic_runner
+from _bench_common.presentation import BENCHMARK_OUTPUT_WIDTH
 
 AGENTIC_SUITE_PATH = BENCHMARKS_DIR / "suites" / "tasks-agentic.json"
 CLAUDE_RUNNER_PATH = BENCHMARKS_DIR / "run-claude-agentic.py"
@@ -2456,9 +2454,8 @@ class TestCheckSembleMcp:
         must raise RuntimeError with an actionable install message (per
         Raises: docstring).
         """
-        with patch.dict(sys.modules, {"semble": None}):
-            with pytest.raises((RuntimeError, ImportError)):
-                script_run_agentic.check_semble_mcp()
+        with patch.dict(sys.modules, {"semble": None}), pytest.raises((RuntimeError, ImportError)):
+            script_run_agentic.check_semble_mcp()
 
     def test_raises_runtime_error_when_claude_mcp_get_fails(self, script_run_agentic: Any) -> None:
         """check_semble_mcp raises RuntimeError when 'claude mcp get semble' fails.
@@ -4432,8 +4429,9 @@ def test_change_impact_runtime_rejects_stale_fixture_coordinate(script_run_agent
         json.dumps({"scan_version": 2, "scan_root": str(source_root), "modules": []}), encoding="utf-8"
     )
 
-    with pytest.raises(ValueError, match="frozen index fingerprint drifted"):
-        with script_run_agentic.impact_runtime(
+    with (
+        pytest.raises(ValueError, match="frozen index fingerprint drifted"),
+        script_run_agentic.impact_runtime(
             model="sonnet",
             source_root=source_root,
             index_path=index_path,
@@ -4441,8 +4439,9 @@ def test_change_impact_runtime_rejects_stale_fixture_coordinate(script_run_agent
             timeout=600,
             dry_run=True,
             fixture_runtime_coordinate=coordinate,
-        ):
-            pass
+        ),
+    ):
+        pass
 
 
 def test_change_impact_runtime_keeps_completed_nonadherent_c_cell_observed(
@@ -4655,7 +4654,7 @@ def test_installed_claude_sandbox_denies_bash_evidence_via_loopback_model_mock(
         def log_message(self, _format: str, *_args: Any) -> None:
             """Suppress loopback request logs during the focused integration gate."""
 
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             """Return tool use first, then a final text response after the tool result."""
             length = int(self.headers["content-length"])
             requests.append(json.loads(self.rfile.read(length)))

@@ -6,9 +6,8 @@ remote-add and upstream-tracking behaviour can be asserted without touching a re
 
 from __future__ import annotations
 
-import pytest
-
 import derive_fork_remote as dfr
+import pytest
 
 
 class _FakeCompleted:

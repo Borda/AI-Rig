@@ -10,21 +10,19 @@ form when the run's output is redirected into a log, which is what run logs and 
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Sequence
 from pathlib import Path
-import sys
-
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from _bench_common.presentation import (  # noqa: E402
+from _bench_common.presentation import (
     LEGEND_CLOSE_RULE,
     LEGEND_OPEN_RULE,
     benchmark_console,
     print_legend,
     print_section_rule,
 )
-
 
 #: Name the parser reports in its usage and error messages, independent of the invoking path.
 PROGRAM_NAME = "render_cli.py"

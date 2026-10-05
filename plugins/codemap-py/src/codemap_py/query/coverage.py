@@ -1,11 +1,13 @@
 """Decide how complete an answer is and render the coverage block attached to it."""
 
 from __future__ import annotations
+
 import json
 import re
 import sys
 import time
 from pathlib import Path
+
 from codemap_py import query_state as state
 
 # Transitional seam: exclusion rules live in codemap_py.scanner, but this
@@ -17,13 +19,13 @@ from codemap_py import query_state as state
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
-from codemap_py.telemetry import runtime_id  # noqa: E402
+from codemap_py.telemetry import runtime_id
 
 # Reached through the module, not a bound name: tests patch these on the defining
 # module (monkeypatch.setattr(query.index_io, ...)), which a `from .index_io import`
 # binding here would not see.
-from . import index_io  # noqa: E402
-from .index_io import (  # noqa: E402
+from . import index_io
+from .index_io import (
     _SHAS_GIT_ERROR,
     _alias_limitations_for_target,
     _current_file_shas,
@@ -32,7 +34,6 @@ from .index_io import (  # noqa: E402
     _symbol_alias_limitations,
     check_staleness,
 )
-
 
 # Blind spots disclosed in every import-graph result's ``not_covered`` field.
 # Relative imports and known ``from package import submodule`` edges are resolved

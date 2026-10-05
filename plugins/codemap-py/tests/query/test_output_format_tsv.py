@@ -20,7 +20,7 @@ _SRC = Path(__file__).resolve().parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-import codemap_py.query as _query_mod  # noqa: E402  (needs the sys.path insert above)
+import codemap_py.query as _query_mod
 
 _tabular_key = _query_mod._tabular_key
 _to_tsv = _query_mod._to_tsv

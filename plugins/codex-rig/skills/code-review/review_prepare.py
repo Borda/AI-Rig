@@ -64,15 +64,15 @@ SKILL_DIRECTORY = Path(__file__).resolve().parent
 if str(SKILL_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SKILL_DIRECTORY))
 
-import review_context  # noqa: E402
-import review_routing  # noqa: E402
-import review_batches  # noqa: E402
-import validate_artifacts as validator  # noqa: E402
+import review_batches
+import review_context
+import review_routing
+import validate_artifacts as validator
 
 SHARED_DIRECTORY = SKILL_DIRECTORY.parents[1] / "shared"
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
-import collect_diff  # noqa: E402
+import collect_diff
 
 MAX_REVIEW_CONTEXT_BYTES = 262144
 

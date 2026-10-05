@@ -40,20 +40,19 @@ the public validator entrypoint.
 
 from __future__ import annotations
 
-import ast
 import argparse
-from collections import Counter
+import ast
 import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from run_gates import terminate_process
-
 
 _SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _DISPOSITIONS = {"included", "already-released", "internal-only", "reverted", "superseded", "merge-only"}

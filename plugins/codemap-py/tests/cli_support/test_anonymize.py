@@ -25,9 +25,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 import anonymize
+import pytest
 
 _SALT = b"x" * 32
 _BIN = Path(anonymize.__file__)
@@ -492,7 +491,7 @@ def test_salt_file_0600_regardless_of_umask(tmp_path: Path) -> None:
 def test_load_salt_defers_to_existing_salt(tmp_path: Path) -> None:
     """An existing salt is read as-is (never overwritten), so its value stays stable across calls."""
     salt_file = tmp_path / ".salt"
-    salt_file.write_text(("ab" * 32))
+    salt_file.write_text("ab" * 32)
     assert anonymize._load_salt(salt_file) == bytes.fromhex("ab" * 32)
 
 

@@ -15,7 +15,6 @@ from typing import Any
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 REVIEW_TESTS = PLUGIN_ROOT / "tests" / "review"
 VALIDATOR_PATH = PLUGIN_ROOT / "skills" / "challenge-resolve" / "validate_evidence.py"

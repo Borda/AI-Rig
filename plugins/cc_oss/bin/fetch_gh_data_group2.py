@@ -135,7 +135,7 @@ def _gh_call(gh: str, api_path: str, jq: str | None, timeout: int) -> tuple[int,
     if jq is not None:
         cmd += ["--jq", jq]
     try:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,

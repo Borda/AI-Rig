@@ -1,12 +1,13 @@
 """Extract the patch targets a test module installs via ``mock.patch``."""
 
 from __future__ import annotations
+
 import ast
 import sys
 from pathlib import Path
+
 from .calls import resolve_call_chain
 from .imports import _process_ast_import, _process_ast_import_from
-
 
 # Forms a mock patch can take in a test file.
 _MOCK_FORM_DECORATOR = "decorator"

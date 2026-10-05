@@ -27,20 +27,20 @@ _PROPAGATED = {
 
 #: Instruction shapes that make the model poll instead of resuming on a completion notification.
 _POLLING = [
-    re.compile(r"poll every", re.I),
-    re.compile(r"every \d+ ?min(ute)?s? while waiting", re.I),
-    re.compile(r"polling interval", re.I),
-    re.compile(r"liveness probe", re.I),
+    re.compile(r"poll every", re.IGNORECASE),
+    re.compile(r"every \d+ ?min(ute)?s? while waiting", re.IGNORECASE),
+    re.compile(r"polling interval", re.IGNORECASE),
+    re.compile(r"liveness probe", re.IGNORECASE),
     re.compile(r"\bfind\b[^\n`]*-newer"),
     re.compile(r"\bHARD_CUTOFF\b"),
 ]
 #: A line naming a waiting tool is fine only when it forbids it.
 _WAIT_TOOLS = re.compile(r"\b(ScheduleWakeup|ListAgents)\b")
 _FORBIDS = re.compile(
-    r"\bnever\b|\bdo not\b|\bno (?:`?find|periodic|polling|checkpoint|`?sleep|`?ScheduleWakeup)", re.I
+    r"\bnever\b|\bdo not\b|\bno (?:`?find|periodic|polling|checkpoint|`?sleep|`?ScheduleWakeup)", re.IGNORECASE
 )
 _WAIT_RULE = re.compile(r"agent-watch|agent_watch|Agent wait discipline|§Health monitoring|Agent waits")
-_RIDE_RULE = re.compile(r"bookkeeping-only|bookkeeping alone|rides? (in|with) the (response|next)", re.I)
+_RIDE_RULE = re.compile(r"bookkeeping-only|bookkeeping alone|rides? (in|with) the (response|next)", re.IGNORECASE)
 
 
 def _path_params(paths: list[Path]) -> list[object]:
@@ -96,10 +96,11 @@ def test_setup_keeps_its_conflict_question() -> None:
     assert "Otherwise invoke `AskUserQuestion`, listing each conflicting destination and its current state:" in text
 
 
-_TASK_ONLY_BLOCK = re.compile(r"```text\n(.*?)```", re.S)
+_TASK_ONLY_BLOCK = re.compile(r"```text\n(.*?)```", re.DOTALL)
 _TASK_CALL = re.compile(r"\s*(TaskUpdate|TaskCreate)\(|\s*for each .*TaskUpdate\(")
 _RIDES_OR_EXCEPTION = re.compile(
-    r"riding|rides (in|with)|same response|one response|standalone|before (the )?long output|before printing", re.I
+    r"riding|rides (in|with)|same response|one response|standalone|before (the )?long output|before printing",
+    re.IGNORECASE,
 )
 
 

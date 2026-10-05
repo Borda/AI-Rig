@@ -199,8 +199,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"! --nul-output path outside TMPDIR ({_tmpdir}): {nul_output}", file=sys.stderr)
             return 1
         with open(nul_output, "wb") as fh:
-            for token in tokens:
-                fh.write(token.encode() + b"\x00")
+            fh.writelines(token.encode() + b"\x00" for token in tokens)
         return 0
 
     # Default: print shell-quoted tokens on stdout (legacy eval-safe form).

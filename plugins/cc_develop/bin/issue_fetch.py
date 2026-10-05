@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
     # trailing flags (e.g. "123 --repo owner/repo"). Extract only the first token.
     raw_str = positional[0] if positional else ""
     raw = raw_str.split()[0] if raw_str.strip() else ""
-    issue_num = raw[1:] if raw.startswith("#") else raw
+    issue_num = raw.removeprefix("#")
     if not issue_num or not issue_num.isdigit():
         print(f"issue-fetch: invalid issue number: '{issue_num}'", file=sys.stderr)
         return 1
@@ -99,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     if repo:
         cmd += ["--repo", repo]
     # stdout/stderr inherited from caller — caller sees combined output as in bash `2>&1`.
-    result = subprocess.run(cmd, check=False, timeout=30)  # noqa: S603 — resolved binary + fixed argv, no shell.
+    result = subprocess.run(cmd, check=False, timeout=30)
     return result.returncode
 
 

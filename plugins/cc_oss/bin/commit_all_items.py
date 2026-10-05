@@ -264,7 +264,7 @@ def main(argv: list[str] | None = None) -> int:
     sentinel = _sentinel_path(git)
     sentinel.touch()
     atexit.register(lambda: sentinel.unlink(missing_ok=True))
-    cached = subprocess.run([git, "diff", "--cached", "--quiet"], check=False)  # noqa: S603
+    cached = subprocess.run([git, "diff", "--cached", "--quiet"], check=False)
     if cached.returncode == 0:
         print("commit_all_items: staging area empty — no commit created", file=sys.stderr)
         return 0
@@ -272,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
     # duration is unbounded by design (ruff, mypy, custom checks routinely exceed a
     # few seconds). A short timeout would kill git mid-hook, leaving a partial commit.
     # Matches commit_action_item.py; short timeouts stay only on cheap plumbing calls.
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         [git, "commit", "-m", msg],
         check=False,
     )

@@ -49,7 +49,6 @@ from typing import Any
 
 from _package_identity import verify_package
 
-
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = PACKAGE_ROOT / "package-manifest.json"
 PLUGIN_MANIFEST_PATH = PACKAGE_ROOT / ".codex-plugin" / "plugin.json"

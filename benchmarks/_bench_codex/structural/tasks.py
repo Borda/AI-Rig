@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 from _bench_common.provider_parity_contracts import (
     TaskPolicy,
     canonical_task_hash,
@@ -17,7 +16,7 @@ from _bench_common.provider_parity_contracts import (
     semantic_suite_hash,
 )
 
-from _bench_codex.structural.config import PARITY_MANIFEST_PATH, _PROVENANCE_KEY
+from _bench_codex.structural.config import _PROVENANCE_KEY, PARITY_MANIFEST_PATH
 from _bench_codex.structural.manifest import _manifest_revision
 
 

@@ -7,9 +7,7 @@ import json
 from unittest.mock import patch
 
 import pytest
-
 from parse_audit_json import main, summarize
-
 
 # ---------------------------------------------------------------------------
 # summarize() — pure function

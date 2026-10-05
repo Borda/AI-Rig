@@ -9,10 +9,10 @@ import pytest
 # conftest.py registers bin/ scripts as importable modules
 from check_routing_links import (
     CheckResults,
-    Severity,
     R1Finding,
     R2Finding,
     R3Finding,
+    Severity,
     _resolve_computed_abs,
     _resolve_computed_rel,
     extract_bin_refs,

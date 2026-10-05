@@ -7,6 +7,7 @@ import json
 import os
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping
@@ -15,18 +16,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import sys
-
-from _bench_codex import runtime
 from _bench_common.coordination_gate import (
     assert_coordination_root_idle as _assert_coordination_root_idle,
 )
 from _bench_common.process_group import NEW_PROCESS_GROUP, terminate_process_group
 from _bench_common.provider_parity_contracts import (
-    EvaluationResult,
     PARITY_TIMEOUT_SECONDS,
-    capability_strata,
+    EvaluationResult,
     canonical_result_rows,
+    capability_strata,
     fresh_input_tokens,
     materialize_task_prompt,
     prompt_hash,
@@ -34,20 +32,8 @@ from _bench_common.provider_parity_contracts import (
     treatment_adherence,
 )
 
-from _bench_codex.structural import provisioning
-from _bench_codex.structural import provenance
-from _bench_codex.structural import diff_impact
-from _bench_codex.structural.config import (
-    CODEX_STRUCTURAL_ARMS,
-    PARITY_CODEX_REASONING_EFFORT,
-    PARITY_MANIFEST_PATH,
-    RUNNER_PATH,
-    _CODEMAP_PERMISSION_PROFILE,
-    _CODEX_BIN,
-    _FROZEN_MARKETPLACE_NAME,
-    _PROVENANCE_KEY,
-)
-from _bench_codex.structural.provenance import _index_sha
+from _bench_codex import runtime
+from _bench_codex.structural import diff_impact, provenance, provisioning
 from _bench_codex.structural.arms import (
     _arm_contract_hash,
     _arm_envelope,
@@ -55,12 +41,32 @@ from _bench_codex.structural.arms import (
     _raw_task,
     _raw_task_hash,
 )
-from _bench_codex.structural.models import CodexRun
+from _bench_codex.structural.config import (
+    _CODEMAP_PERMISSION_PROFILE,
+    _CODEX_BIN,
+    _FROZEN_MARKETPLACE_NAME,
+    _PROVENANCE_KEY,
+    CODEX_STRUCTURAL_ARMS,
+    PARITY_CODEX_REASONING_EFFORT,
+    PARITY_MANIFEST_PATH,
+    RUNNER_PATH,
+)
 from _bench_codex.structural.diff_impact import (
     DiffImpactStageAdmission,
     _capture_diff_impact_stage,
     _diff_impact_stage_evidence,
     build_codex_command,
+)
+from _bench_codex.structural.models import CodexRun
+from _bench_codex.structural.provenance import _index_sha
+from _bench_codex.structural.provisioning import (
+    ArmHome,
+    _aggregate_file_hashes,
+    _benchmark_evidence_roots,
+    _canonical_index_path,
+    _invoke_plugin_command,
+    _prepare_coordination_root,
+    _RunAuthState,
 )
 from _bench_codex.structural.scoring import (
     _arm_compliance,
@@ -70,15 +76,6 @@ from _bench_codex.structural.scoring import (
     _locked_query_conformance,
     _locked_query_fitness,
     _normalize_locked_query,
-)
-from _bench_codex.structural.provisioning import (
-    ArmHome,
-    _RunAuthState,
-    _aggregate_file_hashes,
-    _benchmark_evidence_roots,
-    _canonical_index_path,
-    _invoke_plugin_command,
-    _prepare_coordination_root,
 )
 
 
@@ -1054,7 +1051,7 @@ class CodexRunner:
         """
         attempt_timeout = self.timeout if timeout is None else timeout
         try:
-            process = subprocess.Popen(  # noqa: S603 - benchmark-owned argv, no shell
+            process = subprocess.Popen(
                 command,
                 cwd=working_directory or self.repo_path,
                 env=dict(env),

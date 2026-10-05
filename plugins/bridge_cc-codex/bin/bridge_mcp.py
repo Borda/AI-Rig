@@ -17,15 +17,14 @@ No persistent binding, permission, settings, or credential writes occur.
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
-from dataclasses import dataclass
 import hashlib
 import json
 import math
-from pathlib import Path
-from pathlib import PurePath
 import sys
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path, PurePath
 from typing import Any, TextIO
 
 # Keep sibling imports valid when repository-wide doctest collection imports this
@@ -34,7 +33,7 @@ _BIN_DIRECTORY = str(Path(__file__).resolve().parent)
 if _BIN_DIRECTORY not in sys.path:
     sys.path.insert(0, _BIN_DIRECTORY)
 
-from bridge_call import (  # noqa: E402
+from bridge_call import (
     CHILD_TIMEOUT_MULTIPLIER,
     DEFAULT_EFFORT,
     DEFAULT_MODEL,
@@ -43,8 +42,8 @@ from bridge_call import (  # noqa: E402
     run_request,
     validate_request_transport_budget,
 )
-from user_questions_mcp import Decision, MAX_DECISIONS, Server as QuestionServer  # noqa: E402
-
+from user_questions_mcp import MAX_DECISIONS, Decision
+from user_questions_mcp import Server as QuestionServer
 
 MCP_HOST_DEADLINE_SECONDS = 900.0
 MCP_RESPONSE_MARGIN_SECONDS = 30.0

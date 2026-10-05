@@ -20,8 +20,8 @@ Examples:
 
 from __future__ import annotations
 
-import sys
 import os
+import sys
 from pathlib import Path
 
 # Interpreter bound is duplicated (not imported) so the gate runs *before* any

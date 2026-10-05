@@ -1,7 +1,7 @@
 """Retry scenarios representing test-side callsites."""
 
-from impactlib.retry import invoke
 import impactlib.retry as retry_api
+from impactlib.retry import invoke
 
 
 def check_process_queue() -> int:

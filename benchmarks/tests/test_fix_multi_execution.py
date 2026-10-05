@@ -5,11 +5,10 @@ from __future__ import annotations
 import difflib
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
-
 from _launcher_capability import _pinned_frozen_checkout_is_available
 
 SUITE_PATH = Path(__file__).resolve().parents[1] / "suites" / "tasks-fix-multi.json"

@@ -53,11 +53,11 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, Sequence, TextIO
-
+from typing import TextIO
 
 APPROVAL_METHOD = "item/commandExecution/requestApproval"
 RESOLVED_METHOD = "serverRequest/resolved"
@@ -1016,9 +1016,12 @@ def _record_turn_error(summary: _PrimaryTurnSummary, source: Mapping[str, object
     if category != "none":
         summary.error_categories_observed.add(category)
     generic_categories = {"none", "unknown", "other"}
-    if category not in generic_categories and summary.error_category in generic_categories:
-        summary.error_category = category
-    elif summary.error_category == "none" and category != "none":
+    if (
+        category not in generic_categories
+        and summary.error_category in generic_categories
+        or summary.error_category == "none"
+        and category != "none"
+    ):
         summary.error_category = category
     will_retry = source.get("willRetry")
     if isinstance(will_retry, bool):

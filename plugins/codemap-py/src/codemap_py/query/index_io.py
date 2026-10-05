@@ -1,6 +1,7 @@
 """Find, load and freshness-check the index, and build the maps every command reads."""
 
 from __future__ import annotations
+
 import calendar
 import json
 import os
@@ -9,7 +10,9 @@ import sys
 import time
 from pathlib import Path
 from typing import NamedTuple
-from codemap_py import index_paths, query_state as state, rwgate
+
+from codemap_py import index_paths, rwgate
+from codemap_py import query_state as state
 from codemap_py.scanner import INDEXED_PATHSPEC
 
 # Transitional seam: exclusion rules live in codemap_py.scanner, but this
@@ -21,16 +24,17 @@ from codemap_py.scanner import INDEXED_PATHSPEC
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
-from _exclusions import Exclusions, _load_exclusions, _match_exclusion, is_excluded  # noqa: E402
-from codemap_py.schema import (  # noqa: E402
+from _exclusions import Exclusions, _load_exclusions, _match_exclusion, is_excluded
+
+from codemap_py.schema import (
     CALL_GRAPH_MIN_VER,
     MODULE_ALIASES_MIN_VER,
     VALID_CALL_RESOLUTIONS,
     validate_index,
 )
-from .errors import _EXIT_NOT_INDEXED, _die_json, _exit_error  # noqa: E402
-from .output import _print  # noqa: E402
 
+from .errors import _EXIT_NOT_INDEXED, _die_json, _exit_error
+from .output import _print
 
 # v5.1: MODULE_ALIASES_MIN_VER is imported for downstream feature gating; no
 # command consumes it directly today — module_aliases is applied internally by

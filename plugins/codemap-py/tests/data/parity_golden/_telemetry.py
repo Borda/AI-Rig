@@ -35,7 +35,7 @@ def plugin_version() -> str:
         >>> isinstance(plugin_version(), str)
         True
     """
-    global _PLUGIN_VERSION  # noqa: PLW0603 — read-once cache; one file read per process
+    global _PLUGIN_VERSION
     if _PLUGIN_VERSION is None:
         try:
             manifest = Path(__file__).resolve().parent.parent / ".claude-plugin" / "plugin.json"

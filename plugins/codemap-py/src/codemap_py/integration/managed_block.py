@@ -1,11 +1,13 @@
 """Render and replace the sentinel-bounded region this plugin owns in a consumer file."""
 
 from __future__ import annotations
+
 import re
+
 from codemap_py import __version__
+
 from .types import PROVIDER_NAME
 from .util import _sha256_bytes, _utc_now_iso
-
 
 PROTOCOL_VERSION = "codemap-py.integration.v2"
 

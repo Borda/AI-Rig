@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from dataclasses import replace
 from pathlib import Path
-import sys
 from types import ModuleType
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 

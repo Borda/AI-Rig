@@ -12,9 +12,8 @@ import io
 import json
 import sys
 
-import pytest
-
 import classify_breaking as cb
+import pytest
 
 
 def _caller(module: str, symbol: str = "f", path: str = "x.py") -> dict:

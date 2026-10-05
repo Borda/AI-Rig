@@ -24,9 +24,8 @@ Behavioural areas covered:
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Callable
 
 import pytest
 from _hook_env import _hook_tmp_base

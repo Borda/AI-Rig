@@ -19,11 +19,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import pytest
-
 import build_blueprint_manifest as bbm
+import pytest
 from _audit_harness import install
-
 
 DISPATCH_HOOK = "allow-dispatch.js"
 SENTINEL_HOOK = "sentinel-read-allow.js"

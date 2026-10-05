@@ -1,12 +1,13 @@
 """Extract documentation cross-references from RST, MkDocs and config files."""
 
 from __future__ import annotations
+
 import ast
 import os
 import re
 from pathlib import Path
-from .exclusions import SKIP_DIRS
 
+from .exclusions import SKIP_DIRS
 
 _CONFIG_SCAN_PATTERNS = ("pyproject.toml", "setup.cfg", "setup.py", "*.yml", "*.yaml")
 

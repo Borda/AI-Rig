@@ -10,9 +10,8 @@ import json
 import os
 from pathlib import Path
 
-import pytest
-
 import codemap_cache  # type: ignore[import-not-found]
+import pytest
 
 # Pinned so two identical _write_index calls produce an identical file stamp; the
 # real clock would make every rewrite look like a new index and every reuse test flaky.

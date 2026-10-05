@@ -9,9 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 import extract_contributors as ec
+import pytest
 
 
 class _FakeCompleted:

@@ -7,13 +7,11 @@ import re
 import subprocess
 from pathlib import Path
 
-from _bench_query.models import Query, ScanResult, ValidationResult
-from _bench_query.sources import path_to_module
-
 # Imported as a module, not a name: ``_run`` is the seam tests patch, and both this module
 # and ``cold`` itself call it — one patch on ``cold._run`` has to reach every caller.
 from _bench_query import cold
-
+from _bench_query.models import Query, ScanResult, ValidationResult
+from _bench_query.sources import path_to_module
 
 # ---- WARM QUERIES ----
 

@@ -11,9 +11,8 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
-import pytest
-
 import local_reviewer_denial_probe as denial_probe
+import pytest
 from _platform import DIRECTORY_SYMLINKS_AVAILABLE
 from local_reviewer_denial_probe import (
     APPROVAL_METHOD,

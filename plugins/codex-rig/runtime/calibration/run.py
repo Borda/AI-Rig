@@ -56,7 +56,6 @@ from typing import Any
 
 from live_contract import Layout, build_prompt, candidate_findings, prompt_sha256, role_context, task_contract_sha256
 
-
 SKILLS = (
     "challenge-resolve",
     "code-review",
@@ -258,7 +257,7 @@ class Paths:
     result: Path
 
     @classmethod
-    def create(cls, layout: str = "plugin", root: Path | None = None) -> "Paths":
+    def create(cls, layout: str = "plugin", root: Path | None = None) -> Paths:
         """Create the output directory and return resolved calibration paths."""
         project_root = (root or Path.cwd()).resolve()
         asset_root = Path(__file__).resolve().parents[2] if layout == "plugin" else project_root / ".codex"
@@ -847,8 +846,8 @@ def _active_policy_statements(text: str) -> list[str]:
     )
     return [
         statement
-        for statement in re.split(boundary, text, flags=re.I)
-        if not re.match(r"\s*(?:[-*] )?(?:Historical|Archived)\b", statement, re.I)
+        for statement in re.split(boundary, text, flags=re.IGNORECASE)
+        if not re.match(r"\s*(?:[-*] )?(?:Historical|Archived)\b", statement, re.IGNORECASE)
     ]
 
 
@@ -861,20 +860,20 @@ def workflow_policy_findings(policy: str, implementation: str) -> list[str]:
     """
     findings: list[str] = []
     active_lines = _active_policy_statements(policy)
-    if any(re.search(r"gpt-[0-5](?:[.\s-]|$)", line, re.I) for line in active_lines):
+    if any(re.search(r"gpt-[0-5](?:[.\s-]|$)", line, re.IGNORECASE) for line in active_lines):
         findings.append("obsolete-runtime-model")
     if re.search(
         r"(?:open structural finding|same open signature in consecutive reviews)[^\n]*stop(?:s)? (?:a )?clean claim",
         "\n".join(active_lines),
-        re.I,
+        re.IGNORECASE,
     ):
         findings.append("blanket-review-stop")
-    section = re.search(r"^## Lightweight Local Work\n(.*?)(?=^## |\Z)", implementation, re.M | re.S)
+    section = re.search(r"^## Lightweight Local Work\n(.*?)(?=^## |\Z)", implementation, re.MULTILINE | re.DOTALL)
     required = ("parent-only", "optional", "tests and documentation for one change do not create separate domains")
     mandatory_roles = re.search(
         r"(?:always require|required roles|must (?:spawn|delegate|use))[^\n]*(?:sw-engineer|qa-specialist|doc-scribe)",
         implementation,
-        re.I,
+        re.IGNORECASE,
     )
     if section is None or any(text not in section[1].lower() for text in required) or mandatory_roles:
         findings.append("lightweight-local-work")
@@ -885,24 +884,24 @@ def workflow_summary_findings(summary: str) -> list[str]:
     """Recognize known public summary contradictions while preserving generic write approvals and archives."""
     summary = "\n".join(_active_policy_statements(summary))
     findings: list[str] = []
-    if re.search(r"regardless of their progress flags", summary, re.I):
+    if re.search(r"regardless of their progress flags", summary, re.IGNORECASE):
         findings.append("productive-summary-contradiction")
     if re.search(
         r"(?:any planned parent|a planned) mutation requires separate approval|every write still needs newly frozen plan|every later live write still requires newly frozen consumer-specific plan",
         summary,
-        re.I,
+        re.IGNORECASE,
     ):
         findings.append("write-summary-contradiction")
     if re.search(
         r"prior open weighted findings must fall by at least half|old-finding residue exceeds half",
         summary,
-        re.I,
+        re.IGNORECASE,
     ):
         findings.append("review-half-score-contradiction")
     if re.search(
         r"Code Review also has separate instruction-bounded native inspection route:[^\n]*instructed not to use child tools|New native specialist manifests use schema 6|Text-only reviewers receive source, diff, and evidence inline",
         summary,
-        re.I,
+        re.IGNORECASE,
     ):
         findings.append("native-review-delivery-contradiction")
     return findings

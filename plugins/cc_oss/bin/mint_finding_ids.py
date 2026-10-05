@@ -102,7 +102,7 @@ def base_id(record: dict) -> str:
     True
     """
     key = f"{normalize_path(str(record.get('file') or ''))}\n{normalize_title(str(record['title']))}"
-    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]  # noqa: S324 - identity hash, not security
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
     return f"{section_slug(str(record['section']))}-{digest}"
 
 
@@ -123,7 +123,7 @@ def _collision_rank(record: dict) -> str:
     must not swap their suffixes.
     """
     text = _WHITESPACE_RE.sub(" ", str(record.get("full_text") or record.get("title") or "").strip().lower())
-    return hashlib.sha1(text.encode("utf-8")).hexdigest()  # noqa: S324 - ordering key, not security
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
 
 
 def mint(records: list[dict]) -> list[dict]:

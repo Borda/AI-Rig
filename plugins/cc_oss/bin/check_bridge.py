@@ -27,7 +27,6 @@ import os
 import sys
 from pathlib import Path
 
-
 TARGET_PLUGIN = "bridge"
 #: Marketplace the bridge is installed from. Overridable so a fork published under
 #: another marketplace name can use this detector unmodified — the selector and the

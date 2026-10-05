@@ -9,9 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import build_triage_batch  # type: ignore[import-not-found]
+import pytest
 
 
 def test_build_queries_module_vs_symbol() -> None:

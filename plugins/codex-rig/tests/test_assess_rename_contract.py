@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 ASSESS_SKILL = PLUGIN_ROOT / "skills" / "assess" / "SKILL.md"
 ASSESS_TEMPLATE = ASSESS_SKILL.with_name("result-template.json")
