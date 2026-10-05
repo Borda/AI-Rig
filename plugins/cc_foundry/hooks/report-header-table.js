@@ -117,12 +117,57 @@ function hasHeaderTable(text) {
   return sawSeparator && dataRows >= MIN_TABLE_ROWS;
 }
 
+// Marker inside every visibilityNote, so callers can tell a delivery problem (worth re-reading the transcript for) from a malformed report.
+const VISIBLE_MARKER = "visible reply text found";
+
+// PreToolUse fires before the in-flight assistant message's text reaches the transcript file, so a table printed in the same message
+// as the question is missing on the first read (seen: resolve + review, retry with no new text passed). Re-read for this long before denying.
+const FLUSH_WAIT_MS = 2000;
+const FLUSH_POLL_MS = 250;
+
+/** Flush wait in ms; `CLAUDE_GATE_FLUSH_WAIT_MS` overrides it (tests set 0), any other value falls back to the default. */
+function flushWaitMs() {
+  const raw = process.env.CLAUDE_GATE_FLUSH_WAIT_MS;
+  const ms = raw === undefined || raw === "" ? NaN : Number(raw);
+  return Number.isFinite(ms) && ms >= 0 ? ms : FLUSH_WAIT_MS;
+}
+
+/** Block the thread for `ms` — hooks are one-shot processes, so a synchronous wait costs nothing. */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** `read()` until `isDone(value)` or the flush wait elapses; returns the last value read, done or not. */
+function pollUntil(read, isDone) {
+  let value = read();
+  const deadline = Date.now() + flushWaitMs();
+  while (!isDone(value) && Date.now() < deadline) {
+    sleepSync(Math.min(FLUSH_POLL_MS, Math.max(1, deadline - Date.now())));
+    value = read();
+  }
+  return value;
+}
+
+/**
+ * Suffix for a delivery problem: how much visible reply text the check found. A report "printed" only in
+ * thinking leaves it at 0; without the number a model blames the hook and retries instead of printing.
+ * The last sentence covers the flush lag above, so a model that did print it re-issues instead of re-printing.
+ */
+function visibilityNote(text) {
+  return (
+    ` (${VISIBLE_MARKER} since the last user turn: ${(text || "").length} chars; ` +
+    "thinking/reasoning and tool output are invisible to the user and do not count. " +
+    "Already printed as visible reply text in this same message? Re-issue the identical call once — the transcript can lag; " +
+    "otherwise print it as reply text first)"
+  );
+}
+
 /** Build the `additionalContext` reminder for a skill whose table check failed. */
 function tableReminder(skillLabel, printStep) {
   return (
     `${skillLabel} report header gate — the report file exists, but no ` +
     `| Field | Value | table (or the ·-separated fallback line) was found in ` +
-    `your reply since the last user turn. quality-gates.md §Report File Format's ` +
+    `your visible reply text since the last user turn (thinking does not count). quality-gates.md §Report File Format's ` +
     `Universal terminal-print rule requires the report's --- YAML block to be ` +
     `rendered as a two-column Markdown table, never printed raw. If ${printStep} ` +
     "hasn't happened yet in this reply, do it now, in this same turn, before anything else."
@@ -137,6 +182,7 @@ module.exports = {
   MIN_TABLE_ROWS,
   isWorkflowFollowUp,
   deliveryProblem,
+  pollUntil,
   stopBlockReason,
   deliveredMarkerPath,
 };
@@ -229,6 +275,14 @@ function isWorkflowFollowUp(toolInput, skill) {
  * and may not yet hold the turn's final text.
  */
 function deliveryProblem(reportFile, transcriptPath, lastAssistantMessage) {
+  const once = () => deliveryProblemOnce(reportFile, transcriptPath, lastAssistantMessage);
+  // A Stop payload carries the final message itself, so only the PreToolUse path (no such string) can see transcript lag.
+  if (typeof lastAssistantMessage === "string") return once();
+  return pollUntil(once, (problem) => !problem || !problem.includes(VISIBLE_MARKER));
+}
+
+/** One read of the transcript — see `deliveryProblem`, which adds the flush-lag re-read. */
+function deliveryProblemOnce(reportFile, transcriptPath, lastAssistantMessage) {
   let content;
   try {
     content = fs.readFileSync(reportFile, "utf8");
@@ -237,7 +291,9 @@ function deliveryProblem(reportFile, transcriptPath, lastAssistantMessage) {
   }
   const finalText = typeof lastAssistantMessage === "string" ? lastAssistantMessage : "";
   const text = [assistantTextSinceLastUserTurn(transcriptPath), finalText].filter(Boolean).join("\n");
-  if (!text) return "report delivery is unverified; print the report in this turn before following up";
+  if (!text) {
+    return "report delivery is unverified; print the report in this turn before following up" + visibilityNote(text);
+  }
   const normalize = (value) => value.replace(/\s+/g, " ").trim();
   const delivered = normalize(text);
   if (reportFile.endsWith("summary.jsonl")) {
@@ -271,7 +327,7 @@ function deliveryProblem(reportFile, transcriptPath, lastAssistantMessage) {
           !delivered.includes(normalize(finding.one_line).replace(/\|/g, "\\|")),
       )
     ) {
-      return "current audit findings were not delivered; emit Step 7 before following up";
+      return "current audit findings were not delivered; emit Step 7 before following up" + visibilityNote(text);
     }
     return null;
   }
@@ -303,7 +359,10 @@ function deliveryProblem(reportFile, transcriptPath, lastAssistantMessage) {
     );
   });
   if (!matches) {
-    return "current report header was not delivered; print every header field as a table before following up";
+    return (
+      "current report header was not delivered; print every header field as a table before following up" +
+      visibilityNote(text)
+    );
   }
   return null;
 }

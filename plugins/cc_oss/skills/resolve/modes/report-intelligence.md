@@ -109,7 +109,7 @@ Print ACTION_ITEMS as a user-facing markdown table (severity descending):
 | 1 | [report][req] | code | 4 | foundry:sw-engineer | pending | rename param x to count | — |
 ```
 
-Summary ≤60 chars. Notes = `—` when empty; carries commit SHA for `addressed` rows and classification verdicts (e.g. deprecation filter output) — never `file:line`, which the `file`/`line` fields already hold. Print before branching on PR# presence so the user can select from the full report in Step 3d.
+Columns exactly as above — never add `File`, `Sev`, `Loc` or any other column. Summary ≤60 chars. Notes = `—` when empty; carries commit SHA for `addressed` rows and classification verdicts (e.g. deprecation filter output) — never `file:line`, which the `file`/`line` fields already hold. Print it once, as the last text of the message that issues Step 3d's AskUserQuestion (SKILL.md Step 3d gate) — never here and again at the gate.
 
 PR# found in report header → use the persisted `PR_NUMBER` from the block above, set `$ARGUMENTS = <N>`, go to Step 3d, skip Step 3e, then Step 4; skip Step 3b. Step 3d chooses `SELECTED_ITEMS`, commit mode, and any over-20 batch before checkout. Continue through the normal post-checkout steps to Step 8.
 

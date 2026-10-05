@@ -1230,20 +1230,12 @@ done
 printf '%s\n' "${_COMMITTED_IDS[@]}" > "$IMPL_DIR/group-ids.txt"  # persisted AFTER exclusion, from the array still live in this Bash call — close-out fence below (separate call) reads only ids that actually contributed
 sort -u "$IMPL_DIR/group-files.txt" -o "$IMPL_DIR/group-files.txt"
 [ -s "$IMPL_DIR/group-files.txt" ] || { echo "! BLOCKED — group '$_TOPIC' has no resolvable files across any of its items"; exit 1; }
-COMBINED_SUMMARY=$(head -5 "$IMPL_DIR/group-summaries.txt" | paste -sd, -)
-COMMIT_MSG=$(mktemp)  # timeout: 3000
-trap 'rm -f "$COMMIT_MSG"' EXIT  # RETURN never fires at top level of a Bash-tool block (not a function/sourced script); EXIT does
-{
-    printf '%s: %s\n\n' "$_TOPIC" "$COMBINED_SUMMARY"
-    printf '[resolve group] PR %s — items %s\n\n' "$PR_REF" "${_COMMITTED_IDS[*]}"
-    printf -- '---\n'
-    printf 'Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>\n'
-    [ "${CODEX_AVAILABLE:-false}" = "true" ] && printf 'Co-authored-by: Codex <codex@openai.com>\n'
-} > "$COMMIT_MSG"
+# message built in Python: item subjects already carry type(scope): — topic never prepended (was "tests: test(x): …")
+_BUILD_ARGS=(--build-group --topic "$_TOPIC" --summaries-file "$IMPL_DIR/group-summaries.txt" --pr "$PR_REF" --items "${_COMMITTED_IDS[*]}")
+[ "${CODEX_AVAILABLE:-false}" = "true" ] && _BUILD_ARGS+=(--codex)
 _GROUP_FILES=()
 while IFS= read -r _f; do [ -n "$_f" ] && _GROUP_FILES+=("$_f"); done < "$IMPL_DIR/group-files.txt"
-if python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_action_item.py" \
-    --message-file "$COMMIT_MSG" \
+if python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_action_item.py" "${_BUILD_ARGS[@]}" \
     --files "${_GROUP_FILES[@]}"; then  # timeout: 10000
     echo ok > "$IMPL_DIR/group-commit-status.txt"
 else
@@ -1269,7 +1261,7 @@ else
 fi
 ```
 
-Commit subject format: `<topic>: <combined summary of items in group>` (≤72 chars total; truncate combined summary with `…` if needed). One commit per unique topic. Print `→ Committed group "<topic>" — items <ids>` after the commit fence. `! BLOCKED` from the close-out fence → group commit failed, no task flipped; investigate before re-running. Otherwise call `TaskUpdate(task_id=<printed task id>, status="completed")` per printed target line.
+Commit subject format: Conventional Commits, built by `commit_action_item.py --build-group` — never `<topic>: <type(scope): …>`. One item with a typed subject → that subject verbatim. Otherwise type and scope = what the items share, else derived from the topic (`tests`→`test`, `logic`→`fix`, `misc`/`config`→`chore`; a file/specialist/custom topic becomes the scope); description = first item's, plus `(+N more)`, ≤72 chars total (word-boundary cut with `…`). Multi-item body lists every item subject. One commit per unique topic. Print `→ Committed group "<topic>" — items <ids>` after the commit fence. `! BLOCKED` from the close-out fence → group commit failed, no task flipped; investigate before re-running. Otherwise call `TaskUpdate(task_id=<printed task id>, status="completed")` per printed target line.
 
 **After loop — `COMMIT_MODE=grouped` only**: once every topic group has committed, assert the index is empty — a group's `<all files changed by items in this group>` substitution silently omitting one of that group's staged files would otherwise leave it stranded, uncommitted, invisible to any later check:
 

@@ -170,7 +170,7 @@ Write THREE files using the Write tool (expand <IMPL_DIR> to the literal path ab
    <N> reviews · <N> inline code comments · <N> recurring findings merged · Report=not used
    Motivation paragraph (2–3 sentences).
    Table header: ### Action Items — PR #<PR_NUMBER>
-   Columns: # | Type | Change | Severity | Author | Status | Summary | Notes
+   Columns: # | Type | Change | Severity | Author | Status | Summary | Notes — exactly these; never add File/Sev/Loc or rename any
    Truncation: Summary ≤60 chars, Notes ≤45 chars (use — when empty). Notes carries commit SHA for `addressed` rows and classification verdicts — never file:line, already held by the file/line fields.
    Status column = item `status` verbatim (`pending` / `resolved` / `addressed`) — the only place resolution shows; Type never carries it, Notes never restates it.
    `location: discussion` rows: append ` · thread (no GH resolve)` verbatim to Status (`pending · thread (no GH resolve)`) — GitHub has no Resolve button for PR main-thread comments, and this suffix is the only place that distinction is visible now that there is no Loc column. The location field itself stays in action-items.jsonl for resolve routing and gets no column.
@@ -215,7 +215,7 @@ fi
 [ "${RESOLVED_THREAD_IDS_COUNT:-0}" = "0" ] && echo "⚠ Could not fetch resolved thread status — some items may already be resolved; review table carefully"  # timeout: 3000
 ```
 
-Read `$IMPL_DIR/pr-intelligence.md`, then put its full contents (Sources block + motivation + every action item table row) in an **assistant user-facing reply**, not Bash/tool stdout, immediately before Step 3d's AskUserQuestion. This is the only ACTION_ITEMS table in pure `pr` mode; Output-Routing `.temp` diversion does **not** apply (selection-driving, read-in-context; canonical exemption in SKILL.md Step 3c). Orchestrator context now holds *classified* table (~500–1000 tokens) rather than raw PR thread (often 5000–20000+ tokens on active PRs). Later steps read per-item details from `$IMPL_DIR/action-items.jsonl` when `full_comment_text` or other fields needed:
+Read `$IMPL_DIR/pr-intelligence.md`, then put its full contents (Sources block + motivation + every action item table row) in an **assistant user-facing reply**, not Bash/tool stdout, once — as the last text of the message that issues Step 3d's AskUserQuestion (Step 3d gate; never printed earlier and again there). This is the only ACTION_ITEMS table in pure `pr` mode; Output-Routing `.temp` diversion does **not** apply (selection-driving, read-in-context; canonical exemption in SKILL.md Step 3c). Orchestrator context now holds *classified* table (~500–1000 tokens) rather than raw PR thread (often 5000–20000+ tokens on active PRs). Later steps read per-item details from `$IMPL_DIR/action-items.jsonl` when `full_comment_text` or other fields needed:
 
 ```bash
 _ID="<id>"

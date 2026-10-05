@@ -145,11 +145,17 @@ function denyReason(ids, text) {
   const missing = missingIds(ids, text);
   if (missing.length === 0) return null;
   const shown = missing.slice(0, 10).join(", ") + (missing.length > 10 ? ", …" : "");
+  // Visible-text length is evidence for the model: a table written only in thinking leaves it at 0,
+  // and without the number the model blamed the hook instead of re-printing (4 denials in a row).
+  const visibleChars = (text || "").length;
   return (
     "oss:resolve selection gate — the user would select blind: no table row since the last user turn shows " +
-    `pending item(s) ${shown}. Print the full ACTION_ITEMS table (every pending row, rendered from ` +
-    `${ITEMS_FILENAME}) in your reply now — after any conflict-resolution output — then re-issue this ` +
-    "AskUserQuestion in the same turn. Bash/tool stdout and a row count do not count."
+    `pending item(s) ${shown}. Visible reply text found since that turn: ${visibleChars} chars. Print the ` +
+    `full ACTION_ITEMS table (every pending row, rendered from ${ITEMS_FILENAME}) as visible reply text now — ` +
+    "after any conflict-resolution output — then re-issue this AskUserQuestion in the same turn. " +
+    "Thinking/reasoning, Bash/tool stdout and a row count do not count — the user sees none of them. " +
+    "Already printed the full table as visible reply text in this same message? Re-issue the identical call once — " +
+    "the transcript can lag behind the message being written."
   );
 }
 
@@ -179,8 +185,13 @@ if (require.main === module) {
       if (!dir) process.exit(0);
       const ids = pendingIds(path.join(dir, ITEMS_FILENAME));
       if (!ids || ids.length === 0) process.exit(0);
-      const { assistantTextSinceLastUserTurn } = require("./report-header-table.js");
-      const reason = denyReason(ids, assistantTextSinceLastUserTurn(data.transcript_path));
+      const { assistantTextSinceLastUserTurn, pollUntil } = require("./report-header-table.js");
+      // The picker is usually issued in the same message as the table; its text may not be in the transcript yet.
+      const text = pollUntil(
+        () => assistantTextSinceLastUserTurn(data.transcript_path),
+        (current) => missingIds(ids, current).length === 0,
+      );
+      const reason = denyReason(ids, text);
       if (!reason) process.exit(0);
       process.stdout.write(
         JSON.stringify({

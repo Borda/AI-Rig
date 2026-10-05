@@ -17,6 +17,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -49,6 +50,12 @@ _TABLE = (
     "| 1 | [report] | medium | guard keeps view |\n"
     "| 2 | [gh][suggest] | low | add test |\n"
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_flush_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the transcript-lag wait so tests expecting a denial stay fast; the wait test sets its own."""
+    monkeypatch.setenv("CLAUDE_GATE_FLUSH_WAIT_MS", "0")
 
 
 def _items(tmp_path: Path, *rows: dict) -> Path:
@@ -115,6 +122,61 @@ class TestSelectionGate:
         _items(tmp_path, *_PENDING, {"id": 4, "type": "[report]"})
         reason = _run(tmp_path, [_BULK], _transcript(tmp_path, _TABLE))
         assert reason is not None and "4" in reason
+
+    def test_table_only_in_thinking_is_denied_with_zero_visible_chars(self, tmp_path: Path) -> None:
+        """A table the model wrote only in thinking is denied, and the reason reports 0 visible reply chars.
+
+        Observed failure: each picker response held thinking + tool_use and no text block, so the user never saw the
+        table; without the char count the model blamed the hook and retried the picker four times.
+        """
+        _items(tmp_path, *_PENDING)
+        transcript = tmp_path / "transcript.jsonl"
+        rows = [
+            {"type": "user", "message": {"content": "ask me with questions"}},
+            {"type": "assistant", "message": {"content": [{"type": "thinking", "thinking": _TABLE}]}},
+        ]
+        transcript.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8", newline="\n")
+        reason = _run(tmp_path, [_BULK], transcript)
+        assert reason is not None and "0 chars" in reason and "Thinking" in reason
+
+    def test_table_flushed_to_transcript_after_the_hook_starts_is_allowed(self, tmp_path: Path) -> None:
+        """A table that reaches the transcript shortly after the hook starts still opens the picker.
+
+        The model prints the table and issues the picker in one assistant message; the hook can fire before that
+        message's text is flushed. A real run was denied once with a full 12-row table on screen and passed on an
+        identical retry, so the hook re-reads the transcript for a short while before denying.
+        """
+        _items(tmp_path, *_PENDING)
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(
+            json.dumps({"type": "user", "message": {"content": "/oss:resolve 42"}}) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "AskUserQuestion",
+            "tool_input": {"questions": [_BULK]},
+            "transcript_path": str(transcript),
+        }
+        env = {
+            **os.environ,
+            "TMPDIR": str(tmp_path),
+            "CLAUDE_CODE_SESSION_ID": CSID,
+            "CLAUDE_GATE_FLUSH_WAIT_MS": "5000",
+        }
+        proc = subprocess.Popen(["node", str(HOOK)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env)
+        assert proc.stdin is not None
+        proc.stdin.write(json.dumps(payload))
+        proc.stdin.close()
+        time.sleep(0.6)
+        row = {"type": "assistant", "message": {"content": [{"type": "text", "text": _TABLE}]}}
+        with transcript.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(row) + "\n")
+        assert proc.stdout is not None
+        out = proc.stdout.read()
+        assert proc.wait(timeout=10) == 0
+        assert out.strip() == ""
 
     def test_ids_mentioned_only_in_prose_are_denied(self, tmp_path: Path) -> None:
         """Item numbers in prose or a count line do not replace the table rows."""

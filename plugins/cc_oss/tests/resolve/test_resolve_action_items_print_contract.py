@@ -31,6 +31,27 @@ class TestActionItemsPrintContract:
         assert "latest assistant user-facing reply contains every ACTION_ITEMS row" in picker
         assert "repeat that table in the reply now" in picker
 
+    def test_table_prints_once_per_selection(self) -> None:
+        """The selection table is printed once, in the picker message, never before and again at the gate.
+
+        A resolve run printed the table, then reprinted it when the selection hook denied the picker because the same-
+        message text had not reached the transcript yet. Repeats are allowed only across a real user turn, and a denial
+        with the table already in the message re-issues the call without a reprint.
+        """
+        skill = _SKILL.read_text(encoding="utf-8")
+        picker = skill[skill.index("## Step 3d: User item selection") : skill.index("**Cap mechanics")]
+        assert "exactly once, as the last text of the message that issues Step 3d's AskUserQuestion" in skill
+        assert "**Print the table exactly once per selection**" in picker
+        assert "Repeat the table only when a real user turn separates it from the picker" in picker
+        assert "re-issue the identical call once, **without** printing the table again" in picker
+
+    def test_table_columns_are_fixed(self) -> None:
+        """The selection table forbids improvised columns such as File or Sev."""
+        skill = _SKILL.read_text(encoding="utf-8")
+        intelligence = _PR_INTELLIGENCE.read_text(encoding="utf-8")
+        assert "never add `File`, `Sev`, `Loc` or any other column" in skill
+        assert "exactly these; never add File/Sev/Loc" in intelligence
+
     def test_step_3c_marks_the_table_print_mandatory(self) -> None:
         """Step 3c's merged-table print is an unconditional imperative, not a suggestion.
 

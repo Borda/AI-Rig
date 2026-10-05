@@ -6,20 +6,26 @@ git-commit.md Gate 1) immediately before ``git commit``, so the pre-commit
 hook approves the commit. Cleans the sentinel afterwards regardless of exit
 status.
 
-Two message-source modes (mutually exclusive):
+Three message-source modes (mutually exclusive):
 
 * ``--message-file <path>`` — caller supplies the fully-formed message (used by
-  the ``grouped``/``all`` commit paths, which assemble bespoke bodies).
+  the ``all`` commit path, which assembles a bespoke body).
 * ``--build`` plus fields — script assembles the canonical per-item ``each``-mode
   message (subject + ``[resolve No.<id>]`` attribution block + co-author trailers),
   so the ``each``-mode template lives in one place instead of being inlined in
   ``action-item-dispatch.md``.
+* ``--build-group`` plus fields — script assembles the ``grouped``-mode message from
+  the group's topic label and the per-item commit subjects. Item subjects already
+  carry a Conventional Commits ``type(scope):`` prefix, so the topic label is never
+  prepended to them (that produced ``tests: test(predict): …`` double prefixes).
 
 Usage:
     commit_action_item.py --message-file <path> --files <file1> [<file2>...]
     commit_action_item.py --build --summary <s> --item-id <id> --author <a> \\
         --pr <n> --comment <text> --challenge <text> [--codex] \\
         --files <file1> [<file2>...]
+    commit_action_item.py --build-group --topic <t> --summaries-file <path> \\
+        --pr <n> --items "<id> <id>..." [--codex] --files <file1> [<file2>...]
 
 Exit codes:
     0 — commit succeeded
@@ -46,6 +52,15 @@ from shutil import which
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+_CC_SUBJECT_RE = re.compile(r"^(?P<type>[a-z]+)(?:\((?P<scope>[^()]*)\))?(?P<bang>!)?: (?P<desc>\S.*)$")
+#: Conventional Commits types accepted as an item subject's own prefix.
+_CC_TYPES = frozenset({"feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert"})
+#: Grouping labels from the ``domain`` auto mapping that are not themselves valid commit types.
+_TOPIC_TYPES = {"tests": "test", "logic": "fix", "misc": "chore", "config": "chore"}
+#: Grouped-subject length cap, matching the documented ``grouped`` contract in action-item-dispatch.md.
+_GROUP_SUBJECT_MAX = 72
+_CLAUDE_TRAILER = "Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>"
+_CODEX_TRAILER = "Co-authored-by: Codex <codex@openai.com>"
 
 
 def _sanitize_field(text: str) -> str:
@@ -180,9 +195,215 @@ def build_each_message(fields: EachMessageFields) -> str:
     )
 
 
+@dataclass(frozen=True)
+class _CCSubject:
+    """A commit subject split into its Conventional Commits parts."""
+
+    type: str
+    scope: str
+    breaking: bool
+    desc: str
+
+
+def _parse_cc_subject(text: str) -> _CCSubject | None:
+    """Split a commit subject into Conventional Commits parts, or return None when it has no valid prefix.
+
+    Only the standard type vocabulary counts, so free text that merely contains a colon
+    (``note: runs on CPU``) is not mistaken for a typed subject.
+
+    Args:
+        text: One commit subject line.
+
+    Returns:
+        Parsed parts, or ``None`` when *text* lacks a recognised ``type(scope)!:`` prefix.
+
+    Examples:
+        >>> _parse_cc_subject("test(predict): harden routing test")
+        _CCSubject(type='test', scope='predict', breaking=False, desc='harden routing test')
+        >>> _parse_cc_subject("note: runs on CPU") is None
+        True
+    """
+    match = _CC_SUBJECT_RE.match(text)
+    if match is None or match["type"] not in _CC_TYPES:
+        return None
+    return _CCSubject(match["type"], match["scope"] or "", bool(match["bang"]), match["desc"].strip())
+
+
+def _fit_words(text: str, width: int) -> str:
+    """Shorten text to at most width characters, cutting at a word boundary and marking the cut with an ellipsis.
+
+    Args:
+        text: Description text to shorten.
+        width: Maximum length of the result, ellipsis included.
+
+    Returns:
+        *text* unchanged when it fits, else a word-boundary prefix ending in ``…``.
+
+    Examples:
+        >>> _fit_words("gate MPS fallback", 40)
+        'gate MPS fallback'
+        >>> _fit_words("gate MPS antialias CPU fallback on torch", 20)
+        'gate MPS antialias…'
+    """
+    if len(text) <= width:
+        return text
+    cut = text[: max(width - 1, 1)]
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(" ,;:") + "…"
+
+
+def _group_type(topic: str, parsed: list[_CCSubject | None]) -> str:
+    """Pick the commit type for a group: the items' shared type, else one derived from the topic label.
+
+    Args:
+        topic: Grouping label (``domain`` auto label, file slug, specialist tag, or typed label).
+        parsed: Parsed item subjects, ``None`` for an item without a typed subject.
+
+    Returns:
+        A Conventional Commits type.
+
+    Examples:
+        >>> _group_type("misc", [_parse_cc_subject("docs(x): a")])
+        'docs'
+        >>> _group_type("logic", [None])
+        'fix'
+        >>> _group_type("my-module", [None])
+        'chore'
+    """
+    types = {p.type for p in parsed if p is not None}
+    if len(types) == 1 and all(p is not None for p in parsed):
+        return types.pop()
+    if topic in _TOPIC_TYPES:
+        return _TOPIC_TYPES[topic]
+    return topic if topic in _CC_TYPES else "chore"
+
+
+def _group_scope(topic: str, parsed: list[_CCSubject | None]) -> str:
+    """Pick the commit scope for a group: the items' shared scope, else a topic label that names a module.
+
+    Args:
+        topic: Grouping label.
+        parsed: Parsed item subjects, ``None`` for an item without a typed subject.
+
+    Returns:
+        Scope text, or ``""`` for no scope.
+
+    Examples:
+        >>> _group_scope("tests", [_parse_cc_subject("test(predict): a"), _parse_cc_subject("test(predict): b")])
+        'predict'
+        >>> _group_scope("my-module", [None])
+        'my-module'
+        >>> _group_scope("tests", [None])
+        ''
+    """
+    scopes = {p.scope for p in parsed if p is not None}
+    if len(scopes) == 1 and all(p is not None for p in parsed) and "" not in scopes:
+        return scopes.pop()
+    return "" if topic in _TOPIC_TYPES or topic in _CC_TYPES else topic
+
+
+def build_group_subject(topic: str, summaries: list[str]) -> str:
+    """Build one Conventional Commits subject for a group of review items, never stacking the topic on a typed subject.
+
+    A single item whose subject is already typed is kept verbatim. Otherwise the type and
+    scope come from what the items share, falling back to the topic label; the first item's
+    description leads, with ``(+N more)`` for the rest, capped at 72 characters.
+
+    Args:
+        topic: Grouping label (``domain`` auto label, file slug, specialist tag, or typed label).
+        summaries: Per-item subjects — Phase 2 commit subjects or free-text summaries.
+
+    Returns:
+        Subject line.
+
+    Examples:
+        >>> build_group_subject("tests", ["test(predict): harden MPS routing test"])
+        'test(predict): harden MPS routing test'
+        >>> build_group_subject("tests", ["test(predict): harden routing", "test(predict): add case"])
+        'test(predict): harden routing (+1 more)'
+        >>> build_group_subject("logic", ["gate MPS fallback"])
+        'fix: gate MPS fallback'
+    """
+    cleaned = [s for s in (_sanitize_field(raw).strip() for raw in summaries) if s] or ["resolve review items"]
+    parsed = [_parse_cc_subject(s) for s in cleaned]
+    if len(cleaned) == 1 and parsed[0] is not None:
+        return cleaned[0]
+    scope = _group_scope(topic, parsed)
+    breaking = "!" if any(p is not None and p.breaking for p in parsed) else ""
+    head = f"{_group_type(topic, parsed)}{f'({scope})' if scope else ''}{breaking}: "
+    suffix = f" (+{len(cleaned) - 1} more)" if len(cleaned) > 1 else ""
+    first_desc = parsed[0].desc if parsed[0] is not None else cleaned[0]
+    return head + _fit_words(first_desc, max(_GROUP_SUBJECT_MAX - len(head) - len(suffix), 10)) + suffix
+
+
+@dataclass(frozen=True)
+class GroupMessageFields:
+    """Fields for the ``grouped``-mode commit message.
+
+    Attributes:
+        topic: Grouping label, already sanitized to ``[a-z0-9-]`` by the caller.
+        summaries: Per-item subjects, in group order.
+        pr: Pre-formatted PR reference embedded verbatim (same contract as ``EachMessageFields.pr``).
+        item_ids: Space-separated item ids that contributed to this commit.
+        include_codex: Whether to add the OpenAI Codex co-author trailer.
+    """
+
+    topic: str
+    summaries: tuple[str, ...]
+    pr: str
+    item_ids: str
+    include_codex: bool = False
+
+
+def build_group_message(fields: GroupMessageFields) -> str:
+    """Build the ``grouped``-mode commit message: typed subject, item list, group marker, trailers.
+
+    The ``[resolve group] PR <ref> — items <ids>`` line is parsed by resolve's straggler gate
+    (token-exact match on ids), so its shape must stay fixed.
+
+    Args:
+        fields: Structured message fields (see :class:`GroupMessageFields`).
+
+    Returns:
+        Full commit message string.
+
+    Examples:
+        >>> msg = build_group_message(GroupMessageFields("tests", ("test(x): a", "test(x): b"), "#9", "3 4"))
+        >>> msg.splitlines()[0]
+        'test(x): a (+1 more)'
+        >>> "[resolve group] PR #9 — items 3 4" in msg
+        True
+    """
+    summaries = [s for s in (_sanitize_field(raw).strip() for raw in fields.summaries) if s]
+    bullets = "".join(f"- {s}\n" for s in summaries) + "\n" if len(summaries) > 1 else ""
+    codex_trailer = f"\n{_CODEX_TRAILER}" if fields.include_codex else ""
+    return (
+        f"{build_group_subject(fields.topic, list(fields.summaries))}\n"
+        f"\n"
+        f"{bullets}"
+        f"[resolve group] PR {_sanitize_field(fields.pr)} — items {_sanitize_field(fields.item_ids)}\n"
+        f"\n---\n"
+        f"{_CLAUDE_TRAILER}"
+        f"{codex_trailer}"
+    )
+
+
 _SINGLE_VALUE_FLAGS = frozenset(
-    {"--message-file", "--summary", "--item-id", "--author", "--pr", "--comment", "--challenge"}
+    {
+        "--message-file",
+        "--summary",
+        "--item-id",
+        "--author",
+        "--pr",
+        "--comment",
+        "--challenge",
+        "--topic",
+        "--summaries-file",
+        "--items",
+    }
 )
+_BUILD_MODES = ("--build", "--build-group")
 
 
 def _parse_args(args: list[str]) -> tuple[dict[str, str | bool], list[str], str | None]:
@@ -211,8 +432,8 @@ def _parse_args(args: list[str]) -> tuple[dict[str, str | bool], list[str], str 
         if a == "--codex":
             opts["--codex"] = True
             i += 1
-        elif a == "--build":
-            opts["--build"] = True
+        elif a in _BUILD_MODES:
+            opts[a] = True
             i += 1
         elif a in _SINGLE_VALUE_FLAGS:
             opts[a] = args[i + 1] if i + 1 < len(args) else ""
@@ -227,11 +448,67 @@ def _parse_args(args: list[str]) -> tuple[dict[str, str | bool], list[str], str 
     return opts, files, None
 
 
-def _resolve_message_file(opts: dict[str, str | bool]) -> tuple[str, str | None]:
-    """Resolve the commit message file from either ``--message-file`` or ``--build``.
+def _render_group_message(opts: dict[str, str | bool]) -> tuple[str, str | None]:
+    """Render the ``--build-group`` message from parsed options, reading item subjects from the summaries file.
 
-    In ``--build`` mode the canonical ``each`` message is rendered and written to a
-    NamedTemporaryFile whose path is returned (cleaned up at process exit).
+    Args:
+        opts: Parsed options dict from :func:`_parse_args`.
+
+    Returns:
+        ``(message, error)`` — ``error`` is ``None`` on success.
+
+    Examples:
+        >>> _render_group_message({"--topic": "tests"})[1]
+        'commit_action_item: --build-group requires --summaries-file'
+    """
+    summaries_file = str(opts.get("--summaries-file", ""))
+    if not summaries_file:
+        return "", "commit_action_item: --build-group requires --summaries-file"
+    if not Path(summaries_file).is_file():
+        return "", f"commit_action_item: summaries file not found: {summaries_file}"
+    summaries = tuple(Path(summaries_file).read_text(encoding="utf-8").splitlines())
+    fields = GroupMessageFields(
+        topic=str(opts.get("--topic", "")),
+        summaries=summaries,
+        pr=str(opts.get("--pr", "")),
+        item_ids=str(opts.get("--items", "")),
+        include_codex=bool(opts.get("--codex", False)),
+    )
+    return build_group_message(fields), None
+
+
+def _render_message(opts: dict[str, str | bool]) -> tuple[str, str | None]:
+    """Render the commit message for whichever build mode the options select.
+
+    Args:
+        opts: Parsed options dict from :func:`_parse_args`; exactly one build mode is set.
+
+    Returns:
+        ``(message, error)`` — ``error`` is ``None`` on success.
+
+    Examples:
+        >>> _render_message({"--build-group": True})[1]
+        'commit_action_item: --build-group requires --summaries-file'
+    """
+    if opts.get("--build-group"):
+        return _render_group_message(opts)
+    each = EachMessageFields(
+        summary=str(opts.get("--summary", "")),
+        item_id=str(opts.get("--item-id", "")),
+        author=str(opts.get("--author", "")),
+        pr=str(opts.get("--pr", "")),
+        comment=str(opts.get("--comment", "")),
+        challenge=str(opts.get("--challenge", "")),
+        include_codex=bool(opts.get("--codex", False)),
+    )
+    return build_each_message(each), None
+
+
+def _resolve_message_file(opts: dict[str, str | bool]) -> tuple[str, str | None]:
+    """Resolve the commit message file from ``--message-file``, ``--build``, or ``--build-group``.
+
+    In a build mode the message is rendered and written to a NamedTemporaryFile whose
+    path is returned (cleaned up at process exit).
 
     Args:
         opts: Parsed options dict from :func:`_parse_args`.
@@ -240,22 +517,15 @@ def _resolve_message_file(opts: dict[str, str | bool]) -> tuple[str, str | None]
         ``(message_file_path, error)`` — ``error`` is ``None`` on success.
 
     Examples:
-        No doctest — ``--build`` path writes a temp file; covered by pytest.
+        No doctest — build paths write a temp file; covered by pytest.
     """
-    if opts.get("--build"):
-        if "--message-file" in opts:
-            return "", "commit_action_item: pass either --build or --message-file, not both"
-        msg = build_each_message(
-            EachMessageFields(
-                summary=str(opts.get("--summary", "")),
-                item_id=str(opts.get("--item-id", "")),
-                author=str(opts.get("--author", "")),
-                pr=str(opts.get("--pr", "")),
-                comment=str(opts.get("--comment", "")),
-                challenge=str(opts.get("--challenge", "")),
-                include_codex=bool(opts.get("--codex", False)),
-            )
-        )
+    modes = [m for m in (*_BUILD_MODES, "--message-file") if m in opts]
+    if len(modes) > 1:
+        return "", f"commit_action_item: pass only one of {', '.join(modes)}, not both"
+    if modes and modes[0] in _BUILD_MODES:
+        msg, err = _render_message(opts)
+        if err is not None:
+            return "", err
         handle = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", encoding="utf-8", newline="\n", delete=False)
         with handle:
             handle.write(msg)

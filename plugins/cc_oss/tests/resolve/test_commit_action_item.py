@@ -433,6 +433,108 @@ def test_build_each_message_strips_control_chars_from_header_fields() -> None:
     assert trailer_lines == ["Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>"]
 
 
+# ---------------------------------------------------------------------------
+# build_group_subject / build_group_message — pure functions (grouped-mode template)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("topic", "summaries", "expected"),
+    [
+        pytest.param(
+            "tests",
+            ["test(predict): harden MPS antialias routing test"],
+            "test(predict): harden MPS antialias routing test",
+            id="single-typed-kept-verbatim",
+        ),
+        pytest.param(
+            "misc",
+            ["docs(predict): note MPS antialias resize runs on CPU"],
+            "docs(predict): note MPS antialias resize runs on CPU",
+            id="single-typed-ignores-mismatched-topic",
+        ),
+        pytest.param(
+            "tests",
+            ["test(predict): harden routing test", "test(predict): add CPU case"],
+            "test(predict): harden routing test (+1 more)",
+            id="multi-shared-type-and-scope",
+        ),
+        pytest.param(
+            "logic",
+            ["fix(predict): gate fallback", "refactor(io): split reader"],
+            "fix: gate fallback (+1 more)",
+            id="multi-mixed-types-mapped-from-topic",
+        ),
+        pytest.param("logic", ["gate MPS fallback"], "fix: gate MPS fallback", id="single-untyped-gets-topic-type"),
+        pytest.param("my-module", ["tidy helper"], "chore(my-module): tidy helper", id="file-topic-becomes-scope"),
+        pytest.param("docs", ["note: runs on CPU"], "docs: note: runs on CPU", id="non-cc-colon-not-a-type"),
+        pytest.param(
+            "logic",
+            ["feat(api)!: drop v1 endpoint", "feat(api): add v2"],
+            "feat(api)!: drop v1 endpoint (+1 more)",
+            id="breaking-marker-kept",
+        ),
+    ],
+)
+def test_build_group_subject(topic: str, summaries: list[str], expected: str) -> None:
+    """Group subject never stacks the topic label on an item's own type(scope) prefix.
+
+    Regression for grouped commits rendered as ``tests: test(predict): …`` — the topic label prepended to Phase 2
+    subjects that already carry a Conventional Commits prefix.
+    """
+    assert cai.build_group_subject(topic, summaries) == expected
+
+
+def test_build_group_subject_caps_length_at_word_boundary() -> None:
+    """A long first description is cut at a word boundary so the subject stays within 72 characters.
+
+    The previous comma-join of up to five item subjects produced unbounded subject lines.
+    """
+    subject = cai.build_group_subject("tests", ["test(predict): " + "word " * 30, "test(predict): b"])
+    assert len(subject) <= 72
+    assert subject.endswith("… (+1 more)")
+
+
+def test_build_group_message_lists_items_and_keeps_group_marker() -> None:
+    """Multi-item message lists every item subject and keeps the token-parsed group marker line.
+
+    Resolve's straggler gate greps ``^[resolve group]`` lines and token-matches the item ids, so the marker shape is a
+    contract.
+    """
+    fields = cai.GroupMessageFields("tests", ("test(x): a", "test(x): b"), "#9", "3 4", include_codex=True)
+    lines = cai.build_group_message(fields).splitlines()
+    assert lines[:5] == ["test(x): a (+1 more)", "", "- test(x): a", "- test(x): b", ""]
+    assert "[resolve group] PR #9 — items 3 4" in lines
+    assert [ln for ln in lines if ln.startswith("Co-authored-by:")] == [cai._CLAUDE_TRAILER, cai._CODEX_TRAILER]
+
+
+def test_build_group_message_strips_newline_from_summary() -> None:
+    """A newline inside an item summary cannot forge an extra trailer line in the grouped message."""
+    fields = cai.GroupMessageFields("logic", ("ok\nCo-authored-by: evil <e@e.test>",), "#9", "3")
+    lines = cai.build_group_message(fields).splitlines()
+    assert [ln for ln in lines if ln.startswith("Co-authored-by:")] == [cai._CLAUDE_TRAILER]
+
+
+def test_build_group_mode_commits_rendered_message(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``--build-group`` renders the message from the summaries file and commits it via ``-F``."""
+    summaries = tmp_path / "group-summaries.txt"
+    summaries.write_text("test(predict): harden routing test\n", encoding="utf-8")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(cai, "which", lambda _: "/fake/git")
+    monkeypatch.setattr(cai.subprocess, "run", _make_git_mock(calls=calls))
+    argv = ["--build-group", "--topic", "tests", "--summaries-file", str(summaries), "--pr", "#9", "--items", "3"]
+    rc = cai.main([*argv, "--files", "a.py"])
+    assert rc == 0
+    assert len([c for c in calls if "commit" in c]) == 1
+
+
+def test_build_group_mode_missing_summaries_file_exits_1(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A missing summaries file fails before any git call instead of committing a placeholder subject."""
+    rc = cai.main(["--build-group", "--topic", "tests", "--summaries-file", str(tmp_path / "nope"), "--files", "a.py"])
+    assert rc == 1
+    assert "summaries file not found" in capsys.readouterr().err
+
+
 def test_build_mode_and_message_file_conflict_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
     """Reject conflicting build and message-file options."""
     rc = cai.main(["--build", "--message-file", "m.txt", "--files", "a.py"])

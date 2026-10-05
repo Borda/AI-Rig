@@ -15,8 +15,10 @@ sentinel/report-dir wiring:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -24,6 +26,12 @@ import pytest
 MODULE = Path(__file__).resolve().parent.parent.parent / "hooks" / "report-header-table.js"
 
 NODE_UNAVAILABLE = shutil.which("node") is None
+
+
+@pytest.fixture(autouse=True)
+def _no_flush_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the PreToolUse transcript-lag wait so tests expecting a denial stay fast; wait tests set their own."""
+    monkeypatch.setenv("CLAUDE_GATE_FLUSH_WAIT_MS", "0")
 
 
 def _call(name: str, *args: object) -> object:
@@ -107,6 +115,91 @@ def test_delivery_rejects_absent_or_unrelated_table(tmp_path: Path, text: str) -
 
 
 @_skip_node_unavailable
+def test_delivery_problem_reports_zero_visible_chars_for_thinking_only_report(tmp_path: Path) -> None:
+    """A header table written only in thinking is rejected, and the reason reports 0 visible reply chars.
+
+    Observed in a resolve run: the model "printed" its table inside reasoning, got denied four times, and blamed the
+    hook. The char count plus the thinking note tells it the problem is its own reply, not the gate.
+    """
+    report = tmp_path / "report.md"
+    report.write_text("---\nTitle: Current review\nOutcome: PASS\nSummary: Verified result\n---\n", encoding="utf-8")
+    table = "| Field | Value |\n| --- | --- |\n| Title | Current review |\n| Outcome | PASS |\n| Summary | Verified result |"
+    transcript = _write_transcript(
+        tmp_path, [{"type": "assistant", "message": {"content": [{"type": "thinking", "thinking": table}]}}]
+    )
+    problem = _call("deliveryProblem", str(report), str(transcript))
+    assert isinstance(problem, str)
+    assert "0 chars" in problem and "thinking" in problem
+
+
+_HEADER_REPORT = "---\nTitle: Current review\nOutcome: PASS\nSummary: Verified result\n---\n"
+_HEADER_TABLE = (
+    "| Field | Value |\n| --- | --- |\n| Title | Current review |\n| Outcome | PASS |\n| Summary | Verified result |"
+)
+
+
+def _delivery_in_subprocess(report: Path, transcript: Path, *extra: object, wait_ms: str) -> subprocess.Popen:
+    """Start deliveryProblem in Node with the given flush wait; the caller writes the transcript while it polls."""
+    return subprocess.Popen(
+        [
+            "node",
+            "-e",
+            "const mod = require(process.argv[1]); process.stdout.write(JSON.stringify(mod.deliveryProblem(...JSON.parse(process.argv[2]))));",
+            str(MODULE),
+            json.dumps([str(report), str(transcript), *extra]),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+        env={**os.environ, "CLAUDE_GATE_FLUSH_WAIT_MS": wait_ms},
+    )
+
+
+@_skip_node_unavailable
+def test_delivery_waits_for_table_written_after_the_hook_starts(tmp_path: Path) -> None:
+    """A table that reaches the transcript shortly after the PreToolUse hook starts is still found.
+
+    The picker or follow-up question is issued in the same assistant message as the table, and that message's text is
+    flushed to the transcript a moment later. Two real runs were denied once despite a full visible table and passed on
+    an identical retry with no new text.
+    """
+    report = tmp_path / "report.md"
+    report.write_text(_HEADER_REPORT, encoding="utf-8")
+    transcript = _write_transcript(tmp_path, [{"type": "user", "message": {"content": "review it"}}])
+    proc = _delivery_in_subprocess(report, transcript, wait_ms="5000")
+    time.sleep(0.6)
+    row = {"type": "assistant", "message": {"content": [{"type": "text", "text": _HEADER_TABLE}]}}
+    with transcript.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(row) + "\n")
+    out, _ = proc.communicate(timeout=10)
+    assert json.loads(out) is None
+
+
+@_skip_node_unavailable
+def test_delivery_does_not_wait_when_stop_payload_carries_the_message(tmp_path: Path) -> None:
+    """A Stop payload already holds the final message, so a missing table there is denied without polling."""
+    report = tmp_path / "report.md"
+    report.write_text(_HEADER_REPORT, encoding="utf-8")
+    transcript = _write_transcript(tmp_path, [{"type": "user", "message": {"content": "review it"}}])
+    started = time.monotonic()
+    proc = _delivery_in_subprocess(report, transcript, "no table here", wait_ms="5000")
+    out, _ = proc.communicate(timeout=10)
+    assert isinstance(json.loads(out), str)
+    assert time.monotonic() - started < 3
+
+
+@_skip_node_unavailable
+def test_delivery_gives_up_after_the_flush_wait(tmp_path: Path) -> None:
+    """A table that never arrives is still denied once the wait elapses, so the gate cannot be waited out."""
+    report = tmp_path / "report.md"
+    report.write_text(_HEADER_REPORT, encoding="utf-8")
+    transcript = _write_transcript(tmp_path, [{"type": "user", "message": {"content": "review it"}}])
+    proc = _delivery_in_subprocess(report, transcript, wait_ms="400")
+    out, _ = proc.communicate(timeout=10)
+    problem = json.loads(out)
+    assert isinstance(problem, str) and "0 chars" in problem
+
+
+@_skip_node_unavailable
 def test_delivery_accepts_bound_header(tmp_path: Path) -> None:
     """The current complete header table permits the follow-up transition."""
     report = tmp_path / "report.md"
@@ -142,9 +235,9 @@ def test_delivery_preserves_literal_header_values(tmp_path: Path, saved: str, de
     if matches:
         assert problem is None
     else:
-        assert (
-            problem
-            == "current report header was not delivered; print every header field as a table before following up"
+        assert isinstance(problem, str)
+        assert problem.startswith(
+            "current report header was not delivered; print every header field as a table before following up"
         )
 
 
@@ -169,7 +262,8 @@ def test_audit_delivery_preserves_literal_finding(tmp_path: Path, delivered: str
     if matches:
         assert problem is None
     else:
-        assert problem == "current audit findings were not delivered; emit Step 7 before following up"
+        assert isinstance(problem, str)
+        assert problem.startswith("current audit findings were not delivered; emit Step 7 before following up")
 
 
 @_skip_node_unavailable
