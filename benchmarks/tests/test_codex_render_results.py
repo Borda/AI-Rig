@@ -18,11 +18,10 @@ sys.path.insert(0, str(BENCHMARKS_DIR))
 # Patch seams live in the package modules the runner shim re-exports from: patching the shim
 # would leave each package module's own global binding untouched. Inside the package every seam
 # below is reached through its defining module, so this is the single place to patch it.
-from _bench_codex.structural import cli as codex_cli  # noqa: E402
-from _bench_codex.structural import manifest as codex_manifest  # noqa: E402
-
-from _bench_codex import runtime as codex_runtime  # noqa: E402
-from _bench_common.presentation import (  # noqa: E402
+from _bench_codex import runtime as codex_runtime
+from _bench_codex.structural import cli as codex_cli
+from _bench_codex.structural import manifest as codex_manifest
+from _bench_common.presentation import (
     BENCHMARK_OUTPUT_WIDTH,
     LEGEND_CLOSE_RULE,
     LEGEND_OPEN_RULE,

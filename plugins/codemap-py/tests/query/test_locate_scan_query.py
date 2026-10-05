@@ -44,7 +44,7 @@ def _make_executable(path: Path) -> Path:
 
 def _no_which(cmd: str) -> None:  # type: ignore[return]
     """Stub for ``shutil.which`` that always returns ``None`` (simulates no PATH hit)."""
-    return None
+    return
 
 
 class TestLocateScanQuery:

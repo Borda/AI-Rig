@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 PLUGINS = ["cc_foundry", "cc_develop", "cc_oss", "cc_research"]
 

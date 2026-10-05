@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
 import importlib.util
 import itertools
+import json
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-
 
 CHUNKER = Path(__file__).resolve().parents[2] / "skills" / "challenge-resolve" / "chunk_diff.py"
 REQUEST_ARGS = ("--goal", "Review changed files", "--specification", "Fixture contract", "--done-when", "Clean review")

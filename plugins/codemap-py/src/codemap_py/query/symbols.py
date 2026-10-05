@@ -1,6 +1,7 @@
 """Symbol lookup verbs: source retrieval, listing and regex search."""
 
 from __future__ import annotations
+
 import argparse
 import ast
 import json
@@ -18,19 +19,18 @@ from pathlib import Path
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
-from codemap_py.schema import (  # noqa: E402
+from codemap_py.schema import (
     Symbol,
 )
-from .coverage import _cmd_coverage  # noqa: E402
-from .errors import _EXIT_BAD_INPUT, _die_json, _die_module_not_indexed, _exit_error  # noqa: E402
 
 # Reached through the module, not a bound name: tests patch these on the defining
 # module (monkeypatch.setattr(query.index_io, ...)), which a `from .index_io import`
 # binding here would not see.
-from . import index_io  # noqa: E402
-from .index_io import build_module_map  # noqa: E402
-from .output import _print  # noqa: E402
-
+from . import index_io
+from .coverage import _cmd_coverage
+from .errors import _EXIT_BAD_INPUT, _die_json, _die_module_not_indexed, _exit_error
+from .index_io import build_module_map
+from .output import _print
 
 # coarse classification of a stale symbol coordinate. The fine-grained
 # ``stale_reason`` is kept for diagnostics; ``stale_category`` gives agents the one

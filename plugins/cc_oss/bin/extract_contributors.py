@@ -224,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
         cmd += ["-C", repo]
     cmd += ["log", git_range, "--no-merges", f"--format={_GIT_FORMAT}"]
 
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)  # noqa: S603
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         print(f"extract_contributors: git log failed: {proc.stderr.strip()}", file=sys.stderr)
         return 2

@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 _RESOLVE = Path(__file__).resolve().parents[2] / "skills" / "resolve"
 _BASH = shutil.which("bash")
 

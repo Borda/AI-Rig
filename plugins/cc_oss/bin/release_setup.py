@@ -84,7 +84,7 @@ def _git(git_path: str, *args: str) -> str:
     Examples:
         No doctest — subprocess-dependent; covered by pytest.
     """
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         [git_path, *args],
         capture_output=True,
         text=True,

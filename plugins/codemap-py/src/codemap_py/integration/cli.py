@@ -1,17 +1,19 @@
 """Parse the ``integrate`` command line and dispatch one mode."""
 
 from __future__ import annotations
+
 import argparse
-from datetime import date
 import json
 import sys
 from collections.abc import Callable, Sequence
+from datetime import date
 from pathlib import Path
+
 from .apply_sync import cmd_apply, cmd_sync
 from .audit import cmd_audit
 from .demo import cmd_demo
 from .plan import cmd_plan
-from .types import IntegrationError, Runtime, Source, _EXIT_USAGE
+from .types import _EXIT_USAGE, IntegrationError, Runtime, Source
 
 
 def _add_runtime_flag(sub: argparse.ArgumentParser) -> None:

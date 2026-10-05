@@ -7,22 +7,25 @@ import dataclasses
 import importlib.util
 import inspect
 import json
-from pathlib import Path, PurePosixPath, PureWindowsPath
 import shlex
 import sys
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 
 BENCHMARKS = Path(__file__).resolve().parent.parent
 FIXTURE_SCOPE_SHA = "f" * 64
 FIXTURE_APPROVAL_TOKEN = FIXTURE_SCOPE_SHA[:16]
 sys.path.insert(0, str(BENCHMARKS))
 
-from _bench_common.edit_patch_contracts import EditExecution, build_edit_task_contract, build_fix_single_contract  # noqa: E402
-from _bench_common.provider_parity_contracts import load_task_suite  # noqa: E402
+from _bench_common.edit_patch_contracts import (
+    EditExecution,
+    build_edit_task_contract,
+    build_fix_single_contract,
+)
+from _bench_common.provider_parity_contracts import load_task_suite
 
 
 @pytest.fixture(name="stage_fix", scope="module")
@@ -168,7 +171,7 @@ def test_patch_scope_and_snapshot_close_over_runtime_and_implementation(stage_fi
     launcher, leaving the shared scorer, mutable-worktree lifecycle, and
     designated pytest runtime outside the immutable study coordinate.
     """
-    task = {"contract": SimpleNamespace(task_id="PT-01", provider_binding=lambda: {})}
+    task = {"contract": SimpleNamespace(task_id="PT-01", provider_binding=dict)}
     index = tmp_path / ".cache" / "codemap" / "patch" / "PT-01.json"
     index.parent.mkdir(parents=True)
     index.write_text("{}", encoding="utf-8")
@@ -220,7 +223,7 @@ def test_dry_run_emits_exact_paid_command_after_preflight(
     stage_fix: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A successful no-model admission must print a copy-paste paid command without creating a run directory."""
-    contract = SimpleNamespace(task_id="FS-01", baseline_commit="baseline", provider_binding=lambda: {})
+    contract = SimpleNamespace(task_id="FS-01", baseline_commit="baseline", provider_binding=dict)
     adapter = SimpleNamespace(close=lambda: None)
     monkeypatch.setattr(stage_fix, "load_fix_single_tasks", lambda *_args: [{"task": {}, "contract": contract}])
     monkeypatch.setattr(stage_fix, "_stage_source_binding", lambda *_args: {"source": "locked"})
@@ -280,7 +283,7 @@ def test_full_study_dry_run_emits_paid_command_without_task_selector(
 ) -> None:
     """The canonical full-study command must preserve omission of ``--tasks``."""
     contracts = [
-        SimpleNamespace(task_id=task_id, baseline_commit="baseline", provider_binding=lambda: {})
+        SimpleNamespace(task_id=task_id, baseline_commit="baseline", provider_binding=dict)
         for task_id in ("FS-01", "FS-02", "FS-03", "FS-04")
     ]
     adapter = SimpleNamespace(close=lambda: None)
@@ -333,8 +336,8 @@ def test_patch_stage_preflights_each_distinct_task_baseline(
     validate the wrong checkout and index for every later task.
     """
     contracts = [
-        SimpleNamespace(task_id="PT-01", baseline_commit="baseline-one", provider_binding=lambda: {}),
-        SimpleNamespace(task_id="PT-02", baseline_commit="baseline-two", provider_binding=lambda: {}),
+        SimpleNamespace(task_id="PT-01", baseline_commit="baseline-one", provider_binding=dict),
+        SimpleNamespace(task_id="PT-02", baseline_commit="baseline-two", provider_binding=dict),
     ]
     adapter = SimpleNamespace(close=lambda: None)
     observed: list[str] = []
@@ -404,8 +407,8 @@ def test_patch_preflight_reports_each_historical_baseline(
     its paid scope, making a correct no-model validation look stalled.
     """
     contracts = [
-        SimpleNamespace(task_id="PT-01", baseline_commit="baseline-one", provider_binding=lambda: {}),
-        SimpleNamespace(task_id="PT-02", baseline_commit="baseline-two", provider_binding=lambda: {}),
+        SimpleNamespace(task_id="PT-01", baseline_commit="baseline-one", provider_binding=dict),
+        SimpleNamespace(task_id="PT-02", baseline_commit="baseline-two", provider_binding=dict),
     ]
     adapter = SimpleNamespace(close=lambda: None)
     monkeypatch.setattr(

@@ -46,7 +46,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-
 RESULT_SCHEMA_VERSION = 2
 FINAL_HANDOFF_SCHEMA_VERSION = 1
 FINAL_HANDOFF_METADATA_FIELDS = {

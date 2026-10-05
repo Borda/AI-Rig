@@ -18,6 +18,6 @@ _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from codemap_py import telemetry as _impl  # noqa: E402  (needs the sys.path insert above)
+from codemap_py import telemetry as _impl
 
 sys.modules[__name__] = _impl

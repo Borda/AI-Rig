@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = PLUGIN_ROOT / "shared" / "codemap-contract.md"
 SKILLS_ROOT = PLUGIN_ROOT / "skills"

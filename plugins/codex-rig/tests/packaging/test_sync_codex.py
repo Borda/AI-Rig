@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
-import hashlib
 import json
 import subprocess
 import sys

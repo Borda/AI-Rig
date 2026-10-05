@@ -7,8 +7,6 @@ import shlex
 from pathlib import Path
 
 import pytest
-
-
 from extract_vitality_vars import emit, extract_vars, main
 
 

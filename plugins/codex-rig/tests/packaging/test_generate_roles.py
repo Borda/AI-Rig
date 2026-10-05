@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import doctest
+import hashlib
 import importlib.util
 import json
 import shutil
@@ -15,7 +15,6 @@ from types import ModuleType
 from unittest.mock import patch
 
 import pytest
-
 from _platform import FILE_SYMLINKS_AVAILABLE, POSIX_DESCRIPTOR_PRIMITIVES_AVAILABLE, POSIX_FILE_MODES_AVAILABLE
 
 try:

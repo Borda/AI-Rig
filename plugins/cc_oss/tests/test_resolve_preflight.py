@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 import resolve_preflight as rp
 
 

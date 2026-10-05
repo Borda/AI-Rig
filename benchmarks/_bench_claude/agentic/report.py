@@ -5,15 +5,7 @@ from collections import defaultdict
 from collections.abc import Mapping
 
 import pandas as pd
-
-
-from _bench_common.claude_transport import MODELS
 from _bench_common import agentic_reporting
-from _bench_common.agentic_reporting import cell_passes, cell_quality, summary_lines
-from _bench_common.presentation import (
-    fmt_time,
-    fmt_tok,
-)
 
 # Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
 from _bench_common.agentic_contracts import (
@@ -21,16 +13,20 @@ from _bench_common.agentic_contracts import (
     AgenticOracle,  # noqa: F401
     AnswerScore,  # noqa: F401
 )
+from _bench_common.agentic_reporting import cell_passes, cell_quality, summary_lines
+from _bench_common.claude_transport import MODELS
+from _bench_common.presentation import (
+    fmt_time,
+    fmt_tok,
+)
 
 # Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
 # Every name it defines is re-exported here, including ones this file no longer calls itself: callers and tests
 # reach these through the runner module, so pruning an apparently unused re-export breaks patch.object targets.
-
 from _bench_claude.agentic.models import BenchmarkRun, Task
 from _bench_claude.agentic.scope import run_cost_usd
-from _bench_claude.agentic.tasks import _canonical_agentic_row
 from _bench_claude.agentic.scoring import aggregate
-
+from _bench_claude.agentic.tasks import _canonical_agentic_row
 
 # ---------------------------------------------------------------------------
 # Report renderer

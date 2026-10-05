@@ -12,7 +12,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from codemap_py import integration
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]

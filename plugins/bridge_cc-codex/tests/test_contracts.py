@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCHEMAS_ROOT = PLUGIN_ROOT / "schemas"
 

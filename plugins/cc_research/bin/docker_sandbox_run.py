@@ -255,7 +255,7 @@ def build_explore_command(
             ...
         ValueError: Absolute script path not allowed: '/etc/passwd'
     """
-    script_raw = arg[2:] if arg.startswith("./") else arg
+    script_raw = arg.removeprefix("./")
     script_path = Path(script_raw)
     # On Windows Path("/etc/passwd").is_absolute() is False (no drive); check posix form too.
     if script_path.is_absolute() or script_path.as_posix().startswith("/"):
@@ -541,9 +541,7 @@ def _kill_container(cidfile: str) -> None:
     with contextlib.suppress(OSError, subprocess.SubprocessError):
         cid = Path(cidfile).read_text(encoding="utf-8").strip()
         if cid:
-            subprocess.run(  # noqa: S603 — fixed binary; cid read from our own cidfile.
-                ["docker", "kill", cid], check=False, timeout=_KILL_TIMEOUT_SEC, capture_output=True
-            )
+            subprocess.run(["docker", "kill", cid], check=False, timeout=_KILL_TIMEOUT_SEC, capture_output=True)
 
 
 def _run_docker(cmd: list[str], timeout: float, cidfile: str) -> int:
@@ -558,7 +556,7 @@ def _run_docker(cmd: list[str], timeout: float, cidfile: str) -> int:
         Exit code from ``docker run``; ``124`` on timeout, ``127`` when docker is not installed.
     """
     try:
-        result = subprocess.run(cmd, check=False, timeout=timeout)  # noqa: S603 — fixed binary, argv-controlled args.
+        result = subprocess.run(cmd, check=False, timeout=timeout)
         return result.returncode
     except FileNotFoundError:
         print("docker_sandbox_run.py: 'docker' binary not found in PATH", file=sys.stderr)

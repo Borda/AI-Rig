@@ -92,8 +92,8 @@ See `research:data-steward` (requires `research` plugin) — contains mmap (`np.
 # PyTorch 2.0+
 model = torch.compile(model)  # default (inductor backend)
 model = torch.compile(model, mode="reduce-overhead")  # small batches
-model = torch.compile(model, mode="max-autotune")     # max speed, slower compile
-model = torch.compile(model, dynamic=True)            # prevents per-shape recompilation
+model = torch.compile(model, mode="max-autotune")  # max speed, slower compile
+model = torch.compile(model, dynamic=True)  # prevents per-shape recompilation
 # helps: repeated forward passes, simple/regular ops, training loops
 # hurts: very dynamic shapes, heavy Python control flow, first inference (JIT cost)
 ```

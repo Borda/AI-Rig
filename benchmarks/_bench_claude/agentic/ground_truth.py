@@ -4,8 +4,6 @@ import json
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional
-
 
 # Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
 from _bench_common.agentic_contracts import (
@@ -13,13 +11,12 @@ from _bench_common.agentic_contracts import (
     AnswerScore,  # noqa: F401
 )
 
+from _bench_claude.agentic.discovery import _scan_repo_importers
+
 # Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
 # Every name it defines is re-exported here, including ones this file no longer calls itself: callers and tests
 # reach these through the runner module, so pruning an apparently unused re-export breaks patch.object targets.
-
 from _bench_claude.agentic.models import QualityScore, Task
-from _bench_claude.agentic.discovery import _scan_repo_importers
-
 
 # ---------------------------------------------------------------------------
 # Quality scoring — deterministic ground truth
@@ -64,7 +61,7 @@ class GroundTruth:
         path_re = re.compile(rf"\bsrc/((?:{alt})(?:/[a-zA-Z_][a-zA-Z0-9_]*)+)\.py\b")
         return module_re, path_re
 
-    def __init__(self, index_path: Path, tasks: list[Task], repo_path: Optional[Path] = None) -> None:
+    def __init__(self, index_path: Path, tasks: list[Task], repo_path: Path | None = None) -> None:
         """Load the index and pre-compute expected rdep sets for each task.
 
         Args:
@@ -281,10 +278,10 @@ class GroundTruth:
         # 2. Agent used Skill tool → tool returns rendered markdown, one module per line →
         #    extract dotted module names via regex (require ≥1 dot to avoid YAML-key false-positives).
         # Prose error text (blocked, permission denied) → None (unscored), not sc=0%.
-        skill_coverage: Optional[float] = None
-        skill_returned: Optional[int] = None
+        skill_coverage: float | None = None
+        skill_returned: int | None = None
         if skill_result_text:
-            returned: Optional[set] = None
+            returned: set | None = None
             # The corpus is usually SEVERAL one-line scan-query JSON objects joined by
             # newlines (one per rdeps call) — whole-text json.loads fails with "Extra data"
             # on the second object, which silently killed sc for every multi-call run.
@@ -322,7 +319,7 @@ class GroundTruth:
         # Module-file granularity: an expected rdep counts as hit if any of its surface forms
         # appears in the concatenated semble search chunks — semantic search need not enumerate
         # exact dotted rdeps to get credit.
-        chunk_hit_rate: Optional[float] = None
+        chunk_hit_rate: float | None = None
         if semble_result_text:
             chunk_hits = sum(1 for r in exp if self._rdep_found(r, semble_result_text))
             chunk_hit_rate = chunk_hits / n_exp

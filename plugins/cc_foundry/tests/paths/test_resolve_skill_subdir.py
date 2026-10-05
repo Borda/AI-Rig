@@ -9,9 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-
-from resolve_skill_subdir import main, resolve  # noqa: E402
+from resolve_skill_subdir import main, resolve
 
 
 @pytest.fixture(name="fake_home")

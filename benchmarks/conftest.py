@@ -14,8 +14,8 @@ doctest modules included — failed collection on a fresh clone.
 
 from __future__ import annotations
 
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -24,7 +24,7 @@ _BENCHMARKS_DIR = Path(__file__).resolve().parent
 if str(_BENCHMARKS_DIR) not in sys.path:
     sys.path.insert(0, str(_BENCHMARKS_DIR))
 
-from _bench_common import manifest_session  # noqa: E402 — needs the sys.path insert above.
+from _bench_common import manifest_session
 
 # This is an isolated input repository, not importable project doctest modules.
 # Dedicated change-impact tests validate it in its own repository context.

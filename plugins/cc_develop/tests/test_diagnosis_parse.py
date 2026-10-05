@@ -9,9 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import diagnosis_parse  # type: ignore[import-not-found]
+import pytest
 
 
 @pytest.mark.parametrize(

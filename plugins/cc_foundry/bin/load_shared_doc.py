@@ -45,9 +45,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from load_mode import validate_file_name  # noqa: E402
-from resolve_shared_path import _validate_plugin, _validate_subdir  # noqa: E402
-from resolve_shared_path import resolve as resolve_shared  # noqa: E402
+from load_mode import validate_file_name
+from resolve_shared_path import _validate_plugin, _validate_subdir
+from resolve_shared_path import resolve as resolve_shared
 
 _NOT_FOUND_TIER = -1
 

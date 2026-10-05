@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
-from _bench_common.codemap_discovery import resolve_index_path  # noqa: E402
-
+from _bench_common.codemap_discovery import resolve_index_path
 
 # ---------------------------------------------------------------------------
 # System prompts

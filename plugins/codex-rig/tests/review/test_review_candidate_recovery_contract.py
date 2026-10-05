@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REVIEW_SKILL = PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md"
 CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"

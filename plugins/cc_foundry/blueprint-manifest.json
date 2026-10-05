@@ -126,7 +126,7 @@
     },
     "0496094423f16daaf2705dcb40c0355dfb36f1f701b99134361a8878fc99637b": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:208"
+      "src": "skills/_shared/bin-authoring-guide.md:209"
     },
     "052d68fed0d6ba7e14d5bfbc9e72ff6fa12070fd7655d2210bb719b1872ea05c": {
       "kind": "command",
@@ -290,7 +290,7 @@
     },
     "0cba65f237b6c77bd1f63b14b483b901d851e7fe7005afe02c1ee58be0d290fd": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:221"
+      "src": "skills/_shared/bin-authoring-guide.md:222"
     },
     "0ccd6b7eed8f54a325f658ccbc6860b01878ebacea8b1a23d9c025a33d890c83": {
       "kind": "command",
@@ -338,7 +338,7 @@
     },
     "0dd9ac8ff15c14af598844862105dd91ef2b31006dc3c63a781e2613d863eac4": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:495"
+      "src": "skills/_shared/bin-authoring-guide.md:498"
     },
     "0de0e50e480c2abed4f7b455300dd83d9fa9d4585ee8676c1aded023d511c1c5": {
       "kind": "command",
@@ -434,7 +434,7 @@
     },
     "13103ceb712530d8967febe68e7d8d9262d3391291bcc941a789f01c4cee56ad": {
       "kind": "command",
-      "src": "agents/qa-specialist.md:255"
+      "src": "agents/qa-specialist.md:253"
     },
     "1315ad2f777d98ab59da604a9d727c56d6074faec10e81b9d54f3f5a9eab89dc": {
       "kind": "block",
@@ -482,11 +482,11 @@
     },
     "15ab1b3f9ef43786da81dd57d77738f11590f1451ad623ef14dc598f8c214924": {
       "kind": "block",
-      "src": "skills/_shared/bin-authoring-guide.md:251"
+      "src": "skills/_shared/bin-authoring-guide.md:252"
     },
     "15b1310b2cbfad91e92deb0a85d4cd5d9c80547dea97aa8aa041798a75b64dec": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:208"
+      "src": "skills/_shared/bin-authoring-guide.md:209"
     },
     "15d433e51196931a593a4896ab72d36a925546845ff347b63405dd9e0e34a32f": {
       "kind": "command",
@@ -534,7 +534,7 @@
     },
     "186a928aaf44179e207b755a6debafa3dc51cfb9a0cc750f2bd438032827fedb": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:221"
+      "src": "skills/_shared/bin-authoring-guide.md:222"
     },
     "18cb622b820f92ff461861a030e02aa7d6595021a7cb1e0f52f7611aa64ad352": {
       "kind": "command",
@@ -654,7 +654,7 @@
     },
     "1c628b2926588ae001ec1cf0b95370c80e1c195905aa1225c0164116833d25a3": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-security.md:72"
+      "src": "skills/audit/templates/checks-security.md:73"
     },
     "1c713f1812e8e2df22fe170dcdc9c09c1b8187762c33b5bfeaf2082c176b5575": {
       "kind": "command",
@@ -1006,7 +1006,7 @@
     },
     "2cb8878af6b113d2d1367369c97c8fe5a04326fc688d692595218934393d25b2": {
       "kind": "block",
-      "src": "skills/_shared/bin-authoring-guide.md:208"
+      "src": "skills/_shared/bin-authoring-guide.md:209"
     },
     "2d832f9807ec4e9b4d842dc0228c6e414f9015660edd84de76acdde4c00af995": {
       "kind": "command",
@@ -1014,7 +1014,7 @@
     },
     "2e3d8ff4db4a83a59f36b64d254a6abd9eca337aca2a2b145ac43199caf47092": {
       "kind": "block",
-      "src": "skills/_shared/bin-authoring-guide.md:366"
+      "src": "skills/_shared/bin-authoring-guide.md:369"
     },
     "2e547f2866c6102bd42f7895b44a55e9a4ace54ee7cbdc50915d8f1643694715": {
       "kind": "command",
@@ -1182,7 +1182,7 @@
     },
     "36a7e680a98c03f05114ae36239b8139d36b07573694ce85c5d77e6445d716fc": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:221"
+      "src": "skills/_shared/bin-authoring-guide.md:222"
     },
     "3707e4d1f787dc4f3bca2334b22201a1c5d0cd3401ec0be2b7574c5e752bb101": {
       "kind": "command",
@@ -1590,7 +1590,7 @@
     },
     "4b369c3dc079ea578d60a1704a56fdcfce7c905bfe9eded73c76412b47515fb9": {
       "kind": "command",
-      "src": "agents/sw-engineer.md:204"
+      "src": "agents/sw-engineer.md:202"
     },
     "4b5c8d5d99e671d1b61297b4eddaf2d93512abc46095e25980d1fcb64f9af561": {
       "kind": "command",
@@ -1746,7 +1746,7 @@
     },
     "52a34a97d7251b4e9b03cdcc471f68e4353815695ba1ac5662f96ba2049185e7": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-security.md:88"
+      "src": "skills/audit/templates/checks-security.md:89"
     },
     "52c48f0f2f447d8b40b2fa99f76bf0619c2ad876f96a0ba89e0de128783b6529": {
       "kind": "block",
@@ -1822,7 +1822,7 @@
     },
     "56b1c21489ea5b09ac02adf7130aa2bb0874d2430d52d3656ff1d77c383a5c96": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:251"
+      "src": "skills/_shared/bin-authoring-guide.md:252"
     },
     "57078f58cfcf042159dd0d4029e668cb11dd7a28a71e672ad6b514a50b66772d": {
       "kind": "command",
@@ -1970,7 +1970,7 @@
     },
     "5bdf8932f827702b1c00e04eca89e0211d69e1456c6b6b65a8bf42d64f4b24ea": {
       "kind": "block",
-      "src": "agents/sw-engineer.md:204"
+      "src": "agents/sw-engineer.md:202"
     },
     "5bedc5ab13939d84080641efa9323b2076758bf779ff80ed4aa3b773250baf43": {
       "kind": "command",
@@ -2114,7 +2114,7 @@
     },
     "618aa6cad747a218dbe4426f5d374aeefca174837e296347c37ab9f6ffbc5c45": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-security.md:72"
+      "src": "skills/audit/templates/checks-security.md:73"
     },
     "61adfc02cdbd8adabfa77ff147fd7bdd9c77d69989c3c8cdf5df2cf78d35d168": {
       "kind": "command",
@@ -2330,7 +2330,7 @@
     },
     "6b57829fd6d3570c4615c076db073ce96031adeaa7c8232ff53bc1603a64812d": {
       "kind": "command",
-      "src": "agents/qa-specialist.md:255"
+      "src": "agents/qa-specialist.md:253"
     },
     "6b9a44da68079e7b5c97fb704171187fce400ac00a99a18c6a38d6cce66aaa80": {
       "kind": "command",
@@ -2434,7 +2434,7 @@
     },
     "718a32de78f24c5fbaab427aa03e51b1b617b9c3e6b3690123383de5be96ee8a": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:239"
+      "src": "skills/_shared/bin-authoring-guide.md:240"
     },
     "7190363eb249d7fbaa6407071acda849b229c50d452de96863232f6801e66200": {
       "kind": "command",
@@ -2646,7 +2646,7 @@
     },
     "7e10a6250c56bd74c0ccbfed81c26df2b52c8aa7c6e6482e88cc5975e22b452a": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-security.md:88"
+      "src": "skills/audit/templates/checks-security.md:89"
     },
     "7e36e9882dd9efc4ea0b998e8b671dd11735f4e9f25d02b1100fdc07649801a8": {
       "kind": "command",
@@ -3006,7 +3006,7 @@
     },
     "8e5242765ee811380fd621c94edc83b07b24b5558e94514b98a30884c576fabe": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:495"
+      "src": "skills/_shared/bin-authoring-guide.md:498"
     },
     "8e7420b36b2a85c3db3e8e66a1e79b75bbb7e28235f1e5dccd0ca590ded65e0f": {
       "kind": "command",
@@ -3154,7 +3154,7 @@
     },
     "95a072144179105d838904c6e40336e6ae7f60851442039c0a7ac26ad9654cd2": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:366"
+      "src": "skills/_shared/bin-authoring-guide.md:369"
     },
     "95a1858adc2a847728db5a13bbba70126ad6beed7bb0171b8614454fb1b9e754": {
       "kind": "command",
@@ -3194,7 +3194,7 @@
     },
     "96ed9493fb007518c931afc247305a4eb0db4df0841540ec627416ab2b03dfe9": {
       "kind": "command",
-      "src": "agents/qa-specialist.md:255"
+      "src": "agents/qa-specialist.md:253"
     },
     "97692aaa0ad5ce1f25e8de7496bad6f1fd0f208aaa711d034ac753b0e40b4e29": {
       "kind": "command",
@@ -3478,7 +3478,7 @@
     },
     "a52a06f693daf0e1a6288462a8ef523f1a4cbb735ef8fa08b2d16f7ff1fb50e0": {
       "kind": "block",
-      "src": "agents/qa-specialist.md:255"
+      "src": "agents/qa-specialist.md:253"
     },
     "a5344e5c95d8385d00432082a06979b85299891856cc5e6c87f928272f18d0cf": {
       "kind": "command",
@@ -3554,7 +3554,7 @@
     },
     "a8ccd091cd82b55c909de5fad38d2d3f0a76556a7ddca35c452eb85e84934851": {
       "kind": "block",
-      "src": "skills/audit/templates/checks-security.md:72"
+      "src": "skills/audit/templates/checks-security.md:73"
     },
     "a8cd41da5a411c4c8db6364aab0b75fdd7dc6f8316b8b564e949dfed61a067d3": {
       "kind": "command",
@@ -3594,7 +3594,7 @@
     },
     "aa82901ae1ffce40f8a0ac89fbc1aecc31589387378748d81e6e8c72e192f520": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:221"
+      "src": "skills/_shared/bin-authoring-guide.md:222"
     },
     "aa98a22a2d89e185717ce0c86236d6a05f0ff5dc732e15059dc9801c1ca5bc81": {
       "kind": "command",
@@ -3602,7 +3602,7 @@
     },
     "aa9dc0dfcbd2a0a68b051c7e0b935af28c3e6e59c02022d41c8561d798d9f85f": {
       "kind": "command",
-      "src": "agents/qa-specialist.md:255"
+      "src": "agents/qa-specialist.md:253"
     },
     "aaa119c822e0efa00114925451744e49be2d60afe81a89b41613b35721d22794": {
       "kind": "command",
@@ -3626,7 +3626,7 @@
     },
     "ab5df625bc76dbd4e163bed2dd888df828f90159bb93556525c31821b6541d46": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:366"
+      "src": "skills/_shared/bin-authoring-guide.md:369"
     },
     "abeb6f16bac3d1bac1b368acab403c80c7098d0aaf5cfc6eb50142638ecdc4ae": {
       "kind": "command",
@@ -3770,7 +3770,7 @@
     },
     "b2805f8f3fa16ed7883ed865c6a33e1e2bdb76ec9384f98c2c5bec4210687f9c": {
       "kind": "block",
-      "src": "skills/_shared/bin-authoring-guide.md:221"
+      "src": "skills/_shared/bin-authoring-guide.md:222"
     },
     "b282449a867f7302be664f92860eb75781fc13f5e20640334c4a637410f1e567": {
       "kind": "command",
@@ -4106,7 +4106,7 @@
     },
     "c3455997dd318fbbc139d570655e57ace1dc503005ef1158ed182b8dc5423b15": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:239"
+      "src": "skills/_shared/bin-authoring-guide.md:240"
     },
     "c37eb7a48e71c3ed99ab237107eef1b1b37d5cf3fd8849fb0b8edc3f46cc0c8d": {
       "kind": "command",
@@ -4138,7 +4138,7 @@
     },
     "c4a46399ac562e460a73ecb28a64596fee7a2d2004d22913da2b3aa1a98e77a4": {
       "kind": "command",
-      "src": "agents/qa-specialist.md:255"
+      "src": "agents/qa-specialist.md:253"
     },
     "c4cb1fec5781f53898c94e8d4c1e6172423b2cdfdd3ec0803297b338b4419ae5": {
       "kind": "command",
@@ -4210,7 +4210,7 @@
     },
     "c96ca7ce14f10ff3c2dacc39faf6eb8244deda40761396b4e22a9bf7d37815d5": {
       "kind": "block",
-      "src": "skills/_shared/bin-authoring-guide.md:202"
+      "src": "skills/_shared/bin-authoring-guide.md:203"
     },
     "c9c0ac0dfa44abe23fb3c035b0b7382b1c589b5e54a736d33d18eb95ce129869": {
       "kind": "command",
@@ -4234,7 +4234,7 @@
     },
     "ca61d526b72786eb59f73e8f466a8fb60e6efcb42ec50b138e50309c088ea516": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-security.md:72"
+      "src": "skills/audit/templates/checks-security.md:73"
     },
     "ca77dc8cba691763cf644d7ca1cba9aef15cd7a44cd1c4a14ee63bb3199c8a1b": {
       "kind": "command",
@@ -4506,7 +4506,7 @@
     },
     "d8f89f3429b9031f8141e7005b02661bfbe200d67a4ef14c42db7de8de63b580": {
       "kind": "block",
-      "src": "skills/audit/templates/checks-security.md:88"
+      "src": "skills/audit/templates/checks-security.md:89"
     },
     "d918abbabbec591cfce498b9bd2cadd369beae982b0c4212b364a2b2dd8cc619": {
       "kind": "command",
@@ -4562,7 +4562,7 @@
     },
     "db88eb8831639539318a36f73e89fecda6271d302cf2fbac76b8efc29f23871b": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:251"
+      "src": "skills/_shared/bin-authoring-guide.md:252"
     },
     "db8fe71bba3ee1b82e2d0c8a66d171c1586c68926199fef0c31fc55ce7eb7eb7": {
       "kind": "command",
@@ -4682,7 +4682,7 @@
     },
     "e1a595f1427fc6ad051da250b99f0181062476c60871446e00999afd9eec9e44": {
       "kind": "block",
-      "src": "skills/_shared/bin-authoring-guide.md:239"
+      "src": "skills/_shared/bin-authoring-guide.md:240"
     },
     "e1a96f9639cbcab046d2e1af3114dcac6ad6f42b7aae1c322880cb4cf83f8feb": {
       "kind": "block",
@@ -4910,7 +4910,7 @@
     },
     "ee682b7fcd6e941e60757462b4e172edbc9db453a032beb8d45c74d822250efd": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:202"
+      "src": "skills/_shared/bin-authoring-guide.md:203"
     },
     "eef0542ed419580f98581404f5d2343643e53bbc35d51f9c4e85b5e2737c115f": {
       "kind": "command",
@@ -4918,7 +4918,7 @@
     },
     "ef64af15b0a0f5b7d0b74ab2ef1a32b18aef6fa1e0e317a961cd30dc1d2ae524": {
       "kind": "block",
-      "src": "skills/_shared/bin-authoring-guide.md:495"
+      "src": "skills/_shared/bin-authoring-guide.md:498"
     },
     "ef6c886a8e47d0d190521bb5a9c08360456ec7d409059a206c890642459cd4ce": {
       "kind": "command",
@@ -4958,7 +4958,7 @@
     },
     "f179bc58e48eeb6dfc80d9f3cfcb43d0077252114b90474e214f4b17759f6235": {
       "kind": "command",
-      "src": "agents/sw-engineer.md:204"
+      "src": "agents/sw-engineer.md:202"
     },
     "f17ca19811986112d31a3df0c78819fb6df3a22ab93911a70a3aaa2a2c3db15d": {
       "kind": "command",

@@ -88,15 +88,16 @@ import os  # noqa: F401
 import re  # noqa: F401
 import signal  # noqa: F401
 import subprocess  # noqa: F401
-import sys  # noqa: F401
+import sys
 import time  # noqa: F401
 from collections import deque  # noqa: F401
 from collections.abc import Callable, Sequence  # noqa: F401
 from enum import Enum  # noqa: F401
-from pathlib import Path  # noqa: F401
+from pathlib import Path
 from typing import NamedTuple  # noqa: F401
 
-from codemap_py import index_paths, query_state as state, rwgate  # noqa: F401
+from codemap_py import index_paths, rwgate  # noqa: F401
+from codemap_py import query_state as state
 from codemap_py.scanner import INDEXED_PATHSPEC  # noqa: F401
 from codemap_py.schema import (  # noqa: F401
     CALL_GRAPH_MIN_VER,
@@ -120,9 +121,9 @@ from codemap_py.telemetry import CliInvocation, runtime_id  # noqa: F401
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
-from _exclusions import Exclusions, _load_exclusions, _match_exclusion, is_excluded  # noqa: E402,F401
+from _exclusions import Exclusions, _load_exclusions, _match_exclusion, is_excluded  # noqa: F401
 
-from .callgraph import (  # noqa: E402,F401
+from .callgraph import (
     _test_impact_via_function_call,
     _test_impact_via_mocks,
     _test_impact_via_module_import,
@@ -133,9 +134,8 @@ from .callgraph import (  # noqa: E402,F401
     cmd_mock_rdeps,
     cmd_test_impact,
 )
-from .cli import (  # noqa: E402,F401
+from .cli import (
     _COMMAND_HANDLERS,
-    _ScanQueryArgumentParser,
     _add_callgraph_subparsers,
     _add_composite_subparsers,
     _add_docs_coverage_subparsers,
@@ -148,9 +148,10 @@ from .cli import (  # noqa: E402,F401
     _dispatch_command,
     _resolve_index_path,
     _run_query,
+    _ScanQueryArgumentParser,
     main,
 )
-from .coverage import (  # noqa: E402,F401
+from .coverage import (
     _CALL_GRAPH_NOT_COVERED,
     _COMPACT_ALIAS_LIMITATION_LIMIT,
     _GLOBAL_IN_DIRECTION_CMDS,
@@ -173,7 +174,7 @@ from .coverage import (  # noqa: E402,F401
     _valid_session_id,
     _wide_complete,
 )
-from .diff_batch import (  # noqa: E402,F401
+from .diff_batch import (
     _NON_NESTABLE_IN_BATCH,
     _RISK_HIGH_MIN_RDEPS,
     _batch_item_argv,
@@ -190,7 +191,7 @@ from .diff_batch import (  # noqa: E402,F401
     cmd_batch,
     cmd_diff_impact,
 )
-from .docs_coverage import (  # noqa: E402,F401
+from .docs_coverage import (
     UncoveredSort,
     _coverage_measurement,
     _find_module,
@@ -204,7 +205,7 @@ from .docs_coverage import (  # noqa: E402,F401
     cmd_uncovered,
     cmd_undocumented,
 )
-from .errors import (  # noqa: E402,F401
+from .errors import (
     _EXIT_BAD_INPUT,
     _EXIT_GENERIC,
     _EXIT_NOT_INDEXED,
@@ -214,9 +215,7 @@ from .errors import (  # noqa: E402,F401
     _exit_error,
     _exit_symbol_not_found,
 )
-from .index_io import (  # noqa: E402,F401
-    _,
-    _FileShas,
+from .index_io import (
     _GIT_TIMEOUT_S,
     _HEAL_MAX_CHANGED_FILES,
     _HEAL_TIMEOUT_S,
@@ -226,6 +225,7 @@ from .index_io import (  # noqa: E402,F401
     _SHAS_GIT_ERROR,
     _SHAS_NO_REPO,
     _SHAS_OK,
+    _,
     _alias_limitations_for_target,
     _autobuild_disabled,
     _build_rev_import_graph_raw,
@@ -239,6 +239,7 @@ from .index_io import (  # noqa: E402,F401
     _exclusions_cache,
     _exclusions_resolved,
     _file_shas_cache,
+    _FileShas,
     _find_index_in_scan_dir,
     _find_index_via_cwd_walk,
     _find_index_via_git_root,
@@ -283,7 +284,7 @@ from .index_io import (  # noqa: E402,F401
     maybe_self_heal,
     warn_if_stale,
 )
-from .modules import (  # noqa: E402,F401
+from .modules import (
     _as_entity,
     _as_module_list,
     _entity_type,
@@ -297,14 +298,14 @@ from .modules import (  # noqa: E402,F401
     cmd_path,
     cmd_rdeps,
 )
-from .output import (  # noqa: E402,F401
+from .output import (
     _emit_tsv,
     _empty_table_key,
     _print,
     _tabular_key,
     _to_tsv,
 )
-from .subprocess_fixtures import (  # noqa: E402,F401
+from .subprocess_fixtures import (
     _FIXTURE_GRAPH_MAX_DEPTH,
     _build_fixture_subtree,
     _collect_fixture_definitions,
@@ -314,7 +315,7 @@ from .subprocess_fixtures import (  # noqa: E402,F401
     cmd_subprocess_deps,
     cmd_subprocess_rdeps,
 )
-from .symbols import (  # noqa: E402,F401
+from .symbols import (
     _ALT_REDOS_RE,
     _DANGEROUS_PATTERN,
     _STALE_CATEGORY,
@@ -329,7 +330,7 @@ from .symbols import (  # noqa: E402,F401
     cmd_symbol,
     cmd_symbols,
 )
-from .xrefs_dead import (  # noqa: E402,F401
+from .xrefs_dead import (
     _SYMBOL_ROLES,
     _dead_symbol_eligible_modules,
     _fn_rdep_count,
@@ -341,8 +342,6 @@ from .xrefs_dead import (  # noqa: E402,F401
 )
 
 __all__ = [
-    "UncoveredSort",
-    "_",
     "_ALT_REDOS_RE",
     "_CALL_GRAPH_NOT_COVERED",
     "_COMMAND_HANDLERS",
@@ -352,7 +351,6 @@ __all__ = [
     "_EXIT_GENERIC",
     "_EXIT_NOT_INDEXED",
     "_FIXTURE_GRAPH_MAX_DEPTH",
-    "_FileShas",
     "_GIT_TIMEOUT_S",
     "_GLOBAL_IN_DIRECTION_CMDS",
     "_HEAL_MAX_CHANGED_FILES",
@@ -370,6 +368,9 @@ __all__ = [
     "_SHAS_OK",
     "_STALE_CATEGORY",
     "_SYMBOL_ROLES",
+    "UncoveredSort",
+    "_",
+    "_FileShas",
     "_ScanQueryArgumentParser",
     "_add_callgraph_subparsers",
     "_add_composite_subparsers",

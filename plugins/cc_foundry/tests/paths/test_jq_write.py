@@ -12,10 +12,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import jq_write
 import pytest
-
-
-import jq_write  # noqa: E402
 
 _HAS_JQ = shutil.which("jq") is not None
 _requires_jq = pytest.mark.skipif(not _HAS_JQ, reason="jq not installed on this host")

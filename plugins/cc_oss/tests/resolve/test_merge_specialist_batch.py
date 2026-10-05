@@ -9,9 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 import merge_specialist_batch as msb
+import pytest
 
 
 class _FakeCompleted:

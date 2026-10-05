@@ -14,10 +14,10 @@ consumers: bin/scan-index, bin/scan-query — imported as Python module; not a s
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import fnmatch
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from pathlib import Path
 
 # Built-in directory names pruned from every scan. Never project source, but can hold
 # worktree copies of the whole repo (.claude/, .codex/) that would otherwise inflate the

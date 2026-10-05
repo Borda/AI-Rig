@@ -63,12 +63,11 @@ import json
 import os
 import re
 import sys
-from copy import deepcopy
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, NamedTuple
-
 
 SCHEMA_VERSION = 1
 RUNTIME_SCHEMA_VERSION = 2

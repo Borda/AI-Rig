@@ -43,16 +43,16 @@ class _FakeKernel32:
         self._last_error = last_error
         self.closed: list[int] = []
 
-    def OpenProcess(self, access: int, inherit: bool, pid: int) -> int:  # noqa: N802 - Win32 name
+    def OpenProcess(self, access: int, inherit: bool, pid: int) -> int:
         """Return the configured fake process handle."""
         return self._handle
 
-    def CloseHandle(self, handle: int) -> bool:  # noqa: N802 - Win32 name
+    def CloseHandle(self, handle: int) -> bool:
         """Record closure of ``handle`` and report Win32 success."""
         self.closed.append(handle)
         return True
 
-    def GetLastError(self) -> int:  # noqa: N802 - Win32 name
+    def GetLastError(self) -> int:
         """Return the configured Win32 last-error value."""
         return self._last_error
 

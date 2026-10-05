@@ -9,9 +9,9 @@ remain explicitly diagnostic because they have no trusted transport, isolation o
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
-import contextlib
 import os
 import shlex
 import shutil
@@ -24,7 +24,10 @@ from pathlib import Path
 from typing import Any
 
 from _bench_codex.runtime import SUPPORTED_CODEX_MODELS
+
 from . import change_impact_contracts as contracts
+from .agentic_reporting import cell_passes, cell_quality, summarize_agentic, summary_lines
+from .edit_patch_contracts import semantic_index_sha256
 from .paid_lifecycle import (
     PaidStageCallbacks,
     paid_approval_matches,
@@ -32,10 +35,7 @@ from .paid_lifecycle import (
     run_paid_stage,
     write_checksums,
 )
-from .agentic_reporting import cell_passes, cell_quality, summarize_agentic, summary_lines
-from .edit_patch_contracts import semantic_index_sha256
 from .presentation import benchmark_console, print_arm_row
-
 
 _BENCHMARKS = Path(__file__).resolve().parents[1]
 _TASKS = _BENCHMARKS / "suites/tasks-change-impact.json"

@@ -46,7 +46,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 MAX_INPUT_BYTES = 65_536
 MAX_OUTPUT_BYTES = 1_048_576
 MAX_REASON_CHARS = 240

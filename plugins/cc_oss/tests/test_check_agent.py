@@ -8,10 +8,10 @@ or ``"false"``; always exits 0. Invalid names trigger exit 2.
 
 from __future__ import annotations
 
-import pytest
+from pathlib import Path
 
 import check_agent  # type: ignore[import-not-found]
-from pathlib import Path
+import pytest
 
 
 def test_missing_both_args_exits_2(capsys: pytest.CaptureFixture[str]) -> None:
@@ -117,7 +117,7 @@ def test_main_prints_true(tmp_path: Path, capsys: pytest.CaptureFixture[str]) ->
     agents_dir.mkdir(parents=True)
     (agents_dir / "sw-engineer.md").write_text("")
     # Monkeypatch Path.home to return tmp_path
-    import unittest.mock as mock
+    from unittest import mock
 
     with mock.patch.object(check_agent.Path, "home", return_value=tmp_path):
         rc = check_agent.main(["foundry", "sw-engineer"])
@@ -127,7 +127,7 @@ def test_main_prints_true(tmp_path: Path, capsys: pytest.CaptureFixture[str]) ->
 
 def test_main_prints_false(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Print ``false`` to stdout when agent absent."""
-    import unittest.mock as mock
+    from unittest import mock
 
     with mock.patch.object(check_agent.Path, "home", return_value=tmp_path):
         rc = check_agent.main(["oss", "missing-agent"])
@@ -137,7 +137,7 @@ def test_main_prints_false(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -
 
 def test_golden_invocation_two_positionals(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Documented call site ``check_agent.py oss shepherd`` (2 positional) prints true/false, exits 0."""
-    import unittest.mock as mock
+    from unittest import mock
 
     agents_dir = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "oss" / "0.1.0" / "agents"
     agents_dir.mkdir(parents=True)

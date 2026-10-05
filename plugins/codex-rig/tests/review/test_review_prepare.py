@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import importlib.util
 import hashlib
+import importlib.util
 import io
 import json
 import math
@@ -13,11 +13,10 @@ import runpy
 import shlex
 import subprocess
 import sys
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SKILL = PLUGIN_ROOT / "skills/code-review"
@@ -2425,13 +2424,13 @@ def test_assemble_rejects_unbound_or_incomplete_wave(
 
 @pytest.mark.parametrize(
     "page, expected_body",
-    [pytest.param(1, b"\r\n" * 3000, id="crlf-page"), pytest.param(2, "é".encode("utf-8"), id="utf8-tail")],
+    [pytest.param(1, b"\r\n" * 3000, id="crlf-page"), pytest.param(2, "é".encode(), id="utf8-tail")],
 )
 def test_context_reader_preserves_native_stdout_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, page: int, expected_body: bytes
 ) -> None:
     """Dispatch and native stdout preserve frozen CRLF and Unicode across a byte boundary."""
-    content = b"\r\n" * 3000 + "é".encode("utf-8")
+    content = b"\r\n" * 3000 + "é".encode()
     (tmp_path / "context.md").write_bytes(content)
     plan = tmp_path / "inspection-plan.json"
     plan.write_text(

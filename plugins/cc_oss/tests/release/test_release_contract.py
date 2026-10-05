@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 _skip_shell_unavailable = pytest.mark.skipif(
     shutil.which("bash") is None or shutil.which("jq") is None,
     reason="The shipped release command requires bash and jq.",

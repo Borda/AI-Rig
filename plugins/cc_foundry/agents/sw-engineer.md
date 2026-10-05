@@ -152,9 +152,7 @@ def load_model(path: Path) -> Model:
     if not path.exists():
         raise FileNotFoundError(f"Model checkpoint not found: {path}")
     if path.suffix not in (".pt", ".safetensors"):
-        raise ConfigurationError(
-            f"Unsupported model format '{path.suffix}'. Expected .pt or .safetensors"
-        )
+        raise ConfigurationError(f"Unsupported model format '{path.suffix}'. Expected .pt or .safetensors")
     return _load(path)
 ```
 

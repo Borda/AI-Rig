@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 import importlib.util
 import json
-from pathlib import Path
 import subprocess
 import sys
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
-
 
 _RUNNER = Path(__file__).resolve().parents[1] / "runtime" / "calibration" / "run.py"
 

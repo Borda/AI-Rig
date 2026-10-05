@@ -67,7 +67,6 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 needs the TOML par
 
 from _package_identity import verify_package
 
-
 CACHE_PARTS = ("plugins", "cache", "borda-ai-rig", "codex-rig")
 RULE_NAME = "codex-rig-github-read.rules"
 MARKER = b"# codex-rig:github-read sha256="
@@ -123,7 +122,7 @@ class UnsafeRulesState(ValueError):
 
 def _rule_bytes(marker: bytes, pattern: list[object]) -> bytes:
     """Render a checksum-protected rule from an exact argument pattern."""
-    body = f'prefix_rule(pattern={json.dumps(pattern)}, decision="allow")\n'.encode("utf-8")
+    body = f'prefix_rule(pattern={json.dumps(pattern)}, decision="allow")\n'.encode()
     return marker + hashlib.sha256(body).hexdigest().encode("ascii") + b"\n" + body
 
 
@@ -913,9 +912,7 @@ def sync_github_read_profile(home: Path, plugin_root: Path | None = None) -> Ite
             raise UnsafeRulesState("managed GitHub profile config would exceed the readable size limit")
     else:
         desired_state = None
-        if state is None:
-            desired_config = existing_config
-        elif current == state.get("original"):
+        if state is None or current == state.get("original"):
             desired_config = existing_config
         else:
             if current is None:

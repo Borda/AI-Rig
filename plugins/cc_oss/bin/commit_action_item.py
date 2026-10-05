@@ -283,13 +283,13 @@ def _compute_commit_sentinel(git: str) -> Path:
     Examples:
         No doctest — requires live git; covered by pytest with monkeypatch.
     """
-    root_proc = subprocess.run(  # noqa: S603
+    root_proc = subprocess.run(
         [git, "rev-parse", "--show-toplevel"],
         capture_output=True,
         text=True,
         check=False,
     )
-    branch_proc = subprocess.run(  # noqa: S603
+    branch_proc = subprocess.run(
         [git, "branch", "--show-current"],
         capture_output=True,
         text=True,
@@ -325,7 +325,7 @@ def _stage_and_commit(git: str, msg_file: str, files: list[str]) -> int:
     Examples:
         No doctest — subprocess-dependent; covered by pytest.
     """
-    add_proc = subprocess.run([git, "add", "--", *files], check=False)  # noqa: S603
+    add_proc = subprocess.run([git, "add", "--", *files], check=False)
     if add_proc.returncode != 0:
         print(f"commit_action_item: git add failed (exit {add_proc.returncode})", file=sys.stderr)
         return add_proc.returncode
@@ -335,7 +335,7 @@ def _stage_and_commit(git: str, msg_file: str, files: list[str]) -> int:
     # OTHER path is staged in the index, which a caller collapsing multiple groups into one staged
     # diff via a combined reset does deliberately; scoping is what lets this group's own emptiness
     # be told apart from "some unrelated group's diff happens to still be staged".
-    cached_proc = subprocess.run(  # noqa: S603
+    cached_proc = subprocess.run(
         [git, "diff", "--cached", "--quiet", "--", *files],
         check=False,
     )
@@ -356,7 +356,7 @@ def _stage_and_commit(git: str, msg_file: str, files: list[str]) -> int:
     # index and working tree identical for these files (a soft reset touches only the index). Any
     # future caller that stages a file via a partial `git add -p` (or a hook rewrites it after
     # `add`) would silently commit content the caller never staged.
-    result = subprocess.run([git, "commit", "-F", msg_file, "--", *files], check=False)  # noqa: S603
+    result = subprocess.run([git, "commit", "-F", msg_file, "--", *files], check=False)
     return result.returncode
 
 

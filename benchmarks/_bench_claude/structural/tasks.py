@@ -9,8 +9,7 @@ from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any, Optional
-
+from typing import Any
 
 from _bench_common.benchmark_paths import TASKS_BENCH_FILE as TASKS_FILE
 from _bench_common.mutation_isolation import (
@@ -25,7 +24,6 @@ from _bench_common.provider_parity_contracts import (
 )
 
 from _bench_claude.structural.config import (
-    PRIMARY_SUITE_HASH,
     _EXTERNAL_TASK_TYPE,
     _INDEX_META_KEYS,
     _PARITY_MANIFEST,
@@ -39,6 +37,7 @@ from _bench_claude.structural.config import (
     _TIER_HAIKU,
     _TIER_OPUS,
     _TIER_SONNET,
+    PRIMARY_SUITE_HASH,
 )
 from _bench_claude.structural.models import BenchQuality, BenchRun
 
@@ -425,7 +424,7 @@ def _is_ri_task(task: dict) -> bool:
     return task.get("type") == _RI_TASK_TYPE
 
 
-def _gate_ri(tasks: list[dict], profile: Optional[str], explicit: bool) -> list[dict]:
+def _gate_ri(tasks: list[dict], profile: str | None, explicit: bool) -> list[dict]:
     """Drop RI tasks unless the release profile is active or they were selected explicitly.
 
     RI runs are ~2M-token outliers; they are excluded from the fast dev / tiered-haiku default
@@ -454,7 +453,7 @@ def _gate_ri(tasks: list[dict], profile: Optional[str], explicit: bool) -> list[
     return [t for t in tasks if not _is_ri_task(t)]
 
 
-def _apply_profile(tasks: list[dict], profile: Optional[str]) -> list[dict]:
+def _apply_profile(tasks: list[dict], profile: str | None) -> list[dict]:
     """Filter *tasks* down to the profile's subset.
 
     ``dev`` keeps only dev-tagged tasks; ``release`` keeps everything (RI included, gated
@@ -557,12 +556,12 @@ class TaskSelection:
     """
 
     all_tasks: list[dict]
-    ids: Optional[set[str]]
-    task_type: Optional[str]
+    ids: set[str] | None
+    task_type: str | None
     run_all: bool
     external_ids: set[str]
     patch_ids: set[str]
-    profile: Optional[str]
+    profile: str | None
     tiered: bool
     model: str
 
@@ -570,7 +569,7 @@ class TaskSelection:
 # gt_is_pending comes from benchmark_paths (shared with generate-tasks-bench).
 
 
-def _base_task_list(sel: TaskSelection) -> Optional[list[dict]]:
+def _base_task_list(sel: TaskSelection) -> list[dict] | None:
     """Apply the explicit/type/subset selection that predates the cost-lever flags.
 
     Args:
@@ -592,7 +591,7 @@ def _base_task_list(sel: TaskSelection) -> Optional[list[dict]]:
     return None
 
 
-def _select_tasks(sel: TaskSelection, results_dir: Path, repo_sha: str, index_sha: str) -> Optional[list[dict]]:
+def _select_tasks(sel: TaskSelection, results_dir: Path, repo_sha: str, index_sha: str) -> list[dict] | None:
     """Resolve the final task list from base selection + profile + RI gating + tiered protocol.
 
     Order: base selection → profile subset → RI gating → tiered subset. The tiered step reads

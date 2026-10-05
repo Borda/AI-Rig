@@ -17,7 +17,7 @@ import pytest
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCHMARKS_DIR))
 
-from _bench_common.coordination_gate import (  # noqa: E402
+from _bench_common.coordination_gate import (
     assert_coordination_root_idle,
     cleanup_coordination_root,
     prepare_coordination_root,

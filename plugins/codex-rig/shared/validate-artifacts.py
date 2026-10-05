@@ -45,12 +45,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-from html import escape
 import json
 import math
 import re
 import subprocess
 import sys
+from html import escape
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, NamedTuple
 
@@ -59,9 +59,10 @@ SHARED_DIRECTORY = Path(__file__).resolve().parent
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
-from adversarial_loop import SCHEMA_VERSION as LOOP_LEDGER_SCHEMA_VERSION, load_ledger  # noqa: E402
-from collect_pr import _github_remote_identity, _head_repository  # noqa: E402
-from release_evidence import validate_release_evidence  # noqa: E402
+from adversarial_loop import SCHEMA_VERSION as LOOP_LEDGER_SCHEMA_VERSION
+from adversarial_loop import load_ledger
+from collect_pr import _github_remote_identity, _head_repository
+from release_evidence import validate_release_evidence
 
 COMMON_RESULT_FIELDS = {
     "status",
@@ -2406,9 +2407,13 @@ def _count_out_of_scope_items(action_text: str) -> int:
     count = 0
     for line in action_text.lower().splitlines():
         stripped = line.strip()
-        if stripped.startswith("|") and "out-of-scope" in stripped and "---" not in stripped:
-            count += 1
-        elif stripped.startswith("- triage status:") and "out-of-scope" in stripped:
+        if (
+            stripped.startswith("|")
+            and "out-of-scope" in stripped
+            and "---" not in stripped
+            or stripped.startswith("- triage status:")
+            and "out-of-scope" in stripped
+        ):
             count += 1
     return count
 

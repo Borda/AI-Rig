@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
-
 import derive_codemap_target
 import parse_target_qname
+import pytest
 from derive_codemap_target import derive_target, main
 
 

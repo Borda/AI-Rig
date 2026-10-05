@@ -9,9 +9,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _bench_query.models import ScenarioResult, THRESHOLDS
+from _bench_query.models import THRESHOLDS, ScenarioResult
 from _bench_query.output import log
-
 
 # ---- DETERMINISTIC CORRECTNESS SUITES (D/B/R/K/U) ----
 #

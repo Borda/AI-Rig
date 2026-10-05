@@ -13,7 +13,6 @@ from typing import Any
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = PLUGIN_ROOT / "shared" / "escalation_ledger.py"
 

@@ -1,7 +1,7 @@
 """Policy scenarios representing test-side callsites."""
 
-from impactlib.policy import check
 import impactlib.policy as policy_api
+from impactlib.policy import check
 
 
 def check_request() -> bool:

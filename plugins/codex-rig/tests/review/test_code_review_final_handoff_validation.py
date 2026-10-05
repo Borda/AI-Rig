@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import importlib.util
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REVIEW_VALIDATOR = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"

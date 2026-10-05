@@ -19,9 +19,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 import _runtime_log as rl
+import pytest
 from codemap_py import telemetry
 
 _HOOKS_DIR = Path(__file__).resolve().parents[2] / "hooks"

@@ -31,7 +31,6 @@ import signal
 import subprocess
 import sys
 
-
 TIMEOUT_EXIT_CODE = 124
 LAUNCH_FAILURE_EXIT_CODE = 127
 TERMINATION_GRACE_SECONDS = 2.0
@@ -78,7 +77,7 @@ def terminate_process_tree(process: subprocess.Popen[bytes], platform: str) -> N
     """Terminate the child process tree within a bounded cleanup window."""
     if platform == "win32":
         try:
-            subprocess.run(  # noqa: S603, S607 - fixed Windows process-tree utility and numeric PID.
+            subprocess.run(
                 ["taskkill", "/PID", str(process.pid), "/T", "/F"],
                 check=False,
                 stdout=subprocess.DEVNULL,
@@ -117,7 +116,7 @@ def run(command: list[str], timeout_seconds: float, label: str, platform: str = 
     """
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if platform == "win32" else 0
     try:
-        process = subprocess.Popen(  # noqa: S603 - caller intentionally supplies literal argv without a shell.
+        process = subprocess.Popen(
             command,
             creationflags=creationflags,
             start_new_session=platform != "win32",

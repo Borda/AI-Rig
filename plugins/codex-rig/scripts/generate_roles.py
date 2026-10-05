@@ -49,7 +49,6 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
 
-
 ROLE_IDS = (
     "challenger",
     "cicd-steward",

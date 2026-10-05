@@ -26,7 +26,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 _SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)\Z")
 
 
@@ -208,7 +207,7 @@ def _version_fields(value: Any, path: tuple[str | int, ...] = ()) -> dict[tuple[
     return fields
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _deleted_sibling_versions(root: Path, plugin_root: str) -> dict[str, frozenset[int]]:
     """Read static version constants from this plugin's Python files HEAD tracks but the working tree no longer does.
 

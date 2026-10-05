@@ -72,7 +72,6 @@ import time
 from pathlib import Path
 from typing import Any, NamedTuple
 
-
 GATE_IDS = ("lint", "format", "types", "tests", "review")
 DEFAULT_TIMEOUT_SECONDS = 900
 CHECKS_DIRNAME = "checks"
@@ -854,7 +853,7 @@ def main() -> int:
     for gate_id in GATE_IDS:
         if not commands[gate_id]:
             commands[gate_id] = defaults[gate_id]
-    if not ((arguments.worktree or Path.cwd()) / "src").is_dir() and not getattr(arguments, "types"):
+    if not ((arguments.worktree or Path.cwd()) / "src").is_dir() and not arguments.types:
         commands["types"] = "$null" if sys.platform == "win32" else ":"
         skip_reasons["types"] = skip_reasons["types"] or "no src directory or typed package target"
     environment = None

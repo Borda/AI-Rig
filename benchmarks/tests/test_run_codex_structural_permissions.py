@@ -19,7 +19,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from _launcher_capability import _private_filesystem_available
 
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
@@ -28,10 +27,9 @@ sys.path.insert(0, str(BENCHMARKS_DIR))
 # Patch seams live in the package modules the runner shim re-exports from: patching the shim
 # would leave each package module's own global binding untouched. Inside the package every seam
 # below is reached through its defining module, so this is the single place to patch it.
-from _bench_codex.structural import diff_impact as codex_diff_impact  # noqa: E402
-from _bench_codex.structural import provisioning as codex_provisioning  # noqa: E402
-
-from _bench_common import mutation_isolation  # noqa: E402
+from _bench_codex.structural import diff_impact as codex_diff_impact
+from _bench_codex.structural import provisioning as codex_provisioning
+from _bench_common import mutation_isolation
 
 SCRIPT_PATH = BENCHMARKS_DIR / "run-codex-structural.py"
 MANIFEST_PATH = BENCHMARKS_DIR / "manifests" / "codex-integration.json"

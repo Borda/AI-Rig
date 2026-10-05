@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
 import os
-from pathlib import Path, PureWindowsPath
 import queue
 import shutil
 import stat
@@ -14,16 +12,19 @@ import sys
 import tempfile
 import threading
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
-from typing import Any, Iterator
+from typing import Any
 
 import pytest
 
 SERVER = Path(__file__).resolve().parents[1] / "bin/bridge_mcp.py"
 if str(SERVER.parent) not in sys.path:
     sys.path.insert(0, str(SERVER.parent))
-import bridge_mcp  # noqa: E402
-import bridge_call  # noqa: E402
+import bridge_call
+import bridge_mcp
 
 
 class Client:

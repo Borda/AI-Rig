@@ -38,8 +38,9 @@ receives recovery-required evidence instead of a success result.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, NoReturn
+from typing import NoReturn
 
 from _agent_shim_journal import (
     Journal,
@@ -51,8 +52,8 @@ from _agent_shim_journal import (
     validate_successor,
 )
 from _agent_shim_posix import (
-    FileIdentity,
     PRIVATE_FILE_MODE,
+    FileIdentity,
     PosixPrimitiveError,
     detach_verified,
     publish_noclobber,
@@ -64,7 +65,6 @@ from _agent_shim_posix import (
     restore_state_from_transaction,
     unlink_verified_at,
 )
-
 
 Checkpoint = Callable[[str], None]
 

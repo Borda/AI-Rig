@@ -1,6 +1,7 @@
 """Find the files a scan covers and the roots and hashes that identify them."""
 
 from __future__ import annotations
+
 import fnmatch
 import functools
 import os
@@ -8,10 +9,11 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from codemap_py.schema import EntityType
-from .docs_xrefs import _iter_doc_files
-from .exclusions import Exclusions, INDEXED_PATHSPEC, SKIP_DIRS, _load_exclusions, _match_exclusion
 
+from codemap_py.schema import EntityType
+
+from .docs_xrefs import _iter_doc_files
+from .exclusions import INDEXED_PATHSPEC, SKIP_DIRS, Exclusions, _load_exclusions, _match_exclusion
 
 _TEST_PATH_RE = re.compile(r"(^|/)tests?/|/test_[^/]+\.py$|/[^/]+_test\.py$|/conftest\.py$")
 

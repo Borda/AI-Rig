@@ -58,7 +58,6 @@ import subprocess
 import sys
 from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 
-
 ARTIFACT_COMMANDS = (
     ("diff.patch", ("diff",)),
     ("files.txt", ("diff", "--name-only")),

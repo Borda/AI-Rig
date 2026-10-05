@@ -58,7 +58,7 @@ _BUILDER = _SCRIPTS / "build_package.py"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from _probe_runtime import (  # noqa: E402  (needs the scripts path insert above)
+from _probe_runtime import (
     RuntimeProof,
     build_from_checkout,
     runtime_proof,

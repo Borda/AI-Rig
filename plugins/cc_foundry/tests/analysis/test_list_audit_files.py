@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import list_audit_files as inventory
+import pytest
 
 
 def _touch(path: Path, text: str = "x\n") -> Path:

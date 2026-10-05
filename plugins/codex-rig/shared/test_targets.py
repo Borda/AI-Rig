@@ -52,7 +52,7 @@ SHARED_DIRECTORY = Path(__file__).resolve().parent
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
-import codemap_adapter  # noqa: E402
+import codemap_adapter
 
 CONFIG_NAMES = {"conftest.py", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini", "noxfile.py", "setup.py"}
 PARALLEL_OPTION = re.compile(r"(?:^|[\s\"'\[,])(?:-n|--numprocesses|--dist|-p\s*xdist)(?:[=\s\"',\]]|$)")

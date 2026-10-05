@@ -6,30 +6,28 @@ import hashlib
 import json
 import os
 import stat
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-import sys
-
-from _bench_codex import runtime
+from _bench_common.artifact_hashing import runner_sha256
 from _bench_common.provider_parity_contracts import (
     load_task_suite,
     semantic_suite_hash,
     treatment_adherence,
 )
 
-from _bench_common.artifact_hashing import runner_sha256
-
+from _bench_codex import runtime
 from _bench_codex.structural.config import CODEX_STRUCTURAL_ARMS, PACKAGE_DIR, RUNNER_PATH
 from _bench_codex.structural.provenance import _index_sha
+from _bench_codex.structural.runner import _canonical_telemetry_path, _utc_now
 from _bench_codex.structural.scoring import (
     _arm_compliance,
     _default_evaluator,
     _locked_query_conformance,
     _locked_query_fitness,
 )
-from _bench_codex.structural.runner import _canonical_telemetry_path, _utc_now
 
 
 def _regular_file_within(path: Path, root: Path, *, description: str) -> Path:

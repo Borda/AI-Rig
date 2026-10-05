@@ -35,7 +35,7 @@ import fire
 BENCHMARKS = Path(__file__).resolve().parent
 sys.path.insert(0, str(BENCHMARKS))
 
-from _bench_common import agentic_contracts  # noqa: E402
+from _bench_common import agentic_contracts
 
 
 def _load_runner_module():

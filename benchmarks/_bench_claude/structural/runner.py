@@ -7,8 +7,7 @@ import os
 import time
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Optional
-
+from typing import Any
 
 from _bench_common.claude_transport import parse_result_usage, stream_claude
 from _bench_common.provider_parity_contracts import (
@@ -20,15 +19,16 @@ from _bench_common.provider_parity_contracts import (
 )
 
 from _bench_claude.structural.config import (
-    LEGACY_EXPERIMENT_REVISION,
-    PARITY_EXPERIMENT_REVISION,
-    PRIMARY_SUITE_HASH,
     _ARM_ALLOWED,
     _ARM_DISALLOWED,
     _CMD,
     _REPO_NAME,
     _SELF_CONSISTENCY_KEY,
+    LEGACY_EXPERIMENT_REVISION,
+    PARITY_EXPERIMENT_REVISION,
+    PRIMARY_SUITE_HASH,
 )
+from _bench_claude.structural.evaluators import _SHARED_EVALUATORS, _arm_contract_hash, _evaluator_provenance
 from _bench_claude.structural.models import BenchQuality, BenchRun, _BenchEvaluationResult
 from _bench_claude.structural.prompts import _build_system_prompt, _transport_arm
 from _bench_claude.structural.tasks import (
@@ -49,8 +49,6 @@ from _bench_claude.structural.telemetry import (
     _parse_scan_query_subcommand,
     _subprocess_env,
 )
-from _bench_claude.structural.evaluators import _SHARED_EVALUATORS, _arm_contract_hash, _evaluator_provenance
-
 
 # ---------------------------------------------------------------------------
 # Runner
@@ -79,7 +77,7 @@ class BenchRunner:
         repo_path: Path,
         index_path: Path,
         timeout: int = 300,
-        resume_cache: Optional[dict[tuple, dict]] = None,
+        resume_cache: dict[tuple, dict] | None = None,
         task_policies: Mapping[str, TaskPolicy] | None = None,
         suite_hash: str | None = None,
         suite_raw_hash: str | None = None,
@@ -133,7 +131,7 @@ class BenchRunner:
         result.headline_eligible_v1 = policy.headline_eligible_v1
         result.scoreable = policy.scoreable
 
-    def run(self, task: dict, arm: str, update_fn: Optional[Any] = None) -> BenchRun:
+    def run(self, task: dict, arm: str, update_fn: Any | None = None) -> BenchRun:
         """Run one task in one arm; parse stream-json for metrics.
 
         When a resume cache is active and holds a matching prior result for this
@@ -173,7 +171,7 @@ class BenchRunner:
         self._stamp_provenance(result, task, task_hash)
         return result
 
-    def _execute(self, task: dict, arm: str, update_fn: Optional[Any] = None) -> BenchRun:
+    def _execute(self, task: dict, arm: str, update_fn: Any | None = None) -> BenchRun:
         """Execute one (task, arm) via the claude subprocess and score the output.
 
         Split out of :meth:`run` so the resume fast-path stays a thin guard. Contains the
@@ -300,7 +298,7 @@ class BenchRunner:
         cmd: list[str],
         result: BenchRun,
         arm: str,
-        update_fn: Optional[Any] = None,
+        update_fn: Any | None = None,
     ) -> None:
         """Launch claude subprocess and parse stream-json events into result.
 
@@ -339,7 +337,7 @@ class BenchRunner:
             result.error = outcome.error
 
     @staticmethod
-    def _extract_codemap_meta(block: dict, result: "BenchRun") -> None:
+    def _extract_codemap_meta(block: dict, result: BenchRun) -> None:
         """Parse a tool_result block for scan-query index metadata.
 
         Extracts ``index.method`` and ``index.not_covered`` from any JSON

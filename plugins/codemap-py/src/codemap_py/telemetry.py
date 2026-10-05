@@ -32,7 +32,8 @@ from pathlib import Path
 from types import TracebackType
 
 from codemap_py.index_paths import canonical_root
-from codemap_py.runtime_log import invocation_id, log_dir_for, plugin_version as runtime_plugin_version, resolve_runtime
+from codemap_py.runtime_log import invocation_id, log_dir_for, resolve_runtime
+from codemap_py.runtime_log import plugin_version as runtime_plugin_version
 
 LOG_MAX_BYTES = 10 * 1024 * 1024
 _SAFE = re.compile(r"[^A-Za-z0-9_-]")

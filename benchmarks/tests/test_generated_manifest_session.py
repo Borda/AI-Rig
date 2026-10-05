@@ -9,9 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from _bench_common import manifest_session
-
 
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = BENCHMARKS_DIR.parent

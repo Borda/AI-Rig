@@ -20,13 +20,11 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import pytest
-
 from _audit_harness import HOOKS_DIR, install
-
 
 LIBRARY = HOOKS_DIR / "lib" / "audit-log.js"
 VECTORS = json.loads(

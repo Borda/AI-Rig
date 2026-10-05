@@ -161,8 +161,20 @@ import fire
 # regardless of how this script is launched (direct path, symlink, or any cwd).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _bench_common.codemap_discovery import find_codemap_bin  # noqa: E402,F401
-from _bench_query.models import (  # noqa: E402,F401
+from _bench_common.codemap_discovery import find_codemap_bin  # noqa: F401
+from _bench_query.cli import main
+from _bench_query.cold import _run, time_command, time_commands  # noqa: F401
+from _bench_query.fixtures import (  # noqa: F401
+    _Checklist,
+    _correctness_scenario,
+    _fixture_git,
+    run_correctness_batch,
+    run_correctness_diff_impact,
+    run_correctness_self_check,
+    run_correctness_src_roots,
+    run_correctness_uncovered_xrefs,
+)
+from _bench_query.models import (  # noqa: F401
     TASKS_FILE,
     THRESHOLDS,
     AccuracyStats,
@@ -174,18 +186,14 @@ from _bench_query.models import (  # noqa: E402,F401
     TimingStats,
     ValidationResult,
 )
-from _bench_query.tasks import load_oss_tasks, load_tasks  # noqa: E402,F401
-from _bench_query.sources import (  # noqa: E402,F401
-    _resolve_relative,
-    file_imports_module,
-    module_to_grep_pattern,
-    module_to_package,
-    module_to_source_file,
-    path_to_module,
-    verify_importer,
+from _bench_query.output import _IS_RICH_AVAILABLE, _OUT, _console, _run_all_suites, emit, log  # noqa: F401
+from _bench_query.paths import (  # noqa: F401
+    _SELF_CONSISTENCY_MIN_VER,
+    _index_scan_version,
+    resolve_index_path,
+    resolve_repo_path,
 )
-from _bench_query.cold import _run, time_command, time_commands  # noqa: E402,F401
-from _bench_query.queries import (  # noqa: E402,F401
+from _bench_query.queries import (  # noqa: F401
     codemap_rdeps_result,
     grep_importers_boundary,
     run_scan_query,
@@ -194,7 +202,13 @@ from _bench_query.queries import (  # noqa: E402,F401
     validate_deps_json,
     validate_rdeps_json,
 )
-from _bench_query.scoring import (  # noqa: E402,F401
+from _bench_query.report import (  # noqa: F401
+    build_summary_envelope,
+    render_report,
+    resolve_report_path,
+    write_report_file,
+)
+from _bench_query.scoring import (  # noqa: F401
     _PRIMARY_SUITES,
     _SELF_CONSISTENCY_SUITES,
     compute_precision_recall,
@@ -202,20 +216,16 @@ from _bench_query.scoring import (  # noqa: E402,F401
     compute_verdict,
     score_rdeps_accuracy,
 )
-from _bench_query.output import _IS_RICH_AVAILABLE, _OUT, _console, _run_all_suites, emit, log  # noqa: E402,F401
-from _bench_query.report import (  # noqa: E402,F401
-    build_summary_envelope,
-    render_report,
-    resolve_report_path,
-    write_report_file,
+from _bench_query.sources import (  # noqa: F401
+    _resolve_relative,
+    file_imports_module,
+    module_to_grep_pattern,
+    module_to_package,
+    module_to_source_file,
+    path_to_module,
+    verify_importer,
 )
-from _bench_query.paths import (  # noqa: E402,F401
-    _SELF_CONSISTENCY_MIN_VER,
-    _index_scan_version,
-    resolve_index_path,
-    resolve_repo_path,
-)
-from _bench_query.suites import (  # noqa: E402,F401
+from _bench_query.suites import (  # noqa: F401
     _a1_scenario,
     _a2_scenario,
     _measure_infeasible_paths,
@@ -225,17 +235,7 @@ from _bench_query.suites import (  # noqa: E402,F401
     run_measure_latency,
     run_measure_query_shape,
 )
-from _bench_query.fixtures import (  # noqa: E402,F401
-    _Checklist,
-    _correctness_scenario,
-    _fixture_git,
-    run_correctness_batch,
-    run_correctness_diff_impact,
-    run_correctness_self_check,
-    run_correctness_src_roots,
-    run_correctness_uncovered_xrefs,
-)
-from _bench_query.cli import main  # noqa: E402,F401
+from _bench_query.tasks import load_oss_tasks, load_tasks  # noqa: F401
 
 if __name__ == "__main__":
     fire.Fire(main)

@@ -518,7 +518,7 @@ For each `no-<component>` variant with `status: "completed"`:
 - Compute **signed delta** (positive = removal hurt metric → component helpful):
 
   ```python
-  signed_delta = (full_metric - ablated_metric) * (1 if direction == 'higher' else -1)
+  signed_delta = (full_metric - ablated_metric) * (1 if direction == "higher" else -1)
   importance = signed_delta / abs(full_metric) * 100 if full_metric != 0 else 0
   ```
 

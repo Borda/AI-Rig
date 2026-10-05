@@ -22,7 +22,6 @@ import hashlib
 import json
 import math
 import os
-from pathlib import Path
 import re
 import shutil
 import signal
@@ -32,9 +31,11 @@ import sys
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field as dataclass_field, replace
-from typing import Any, Iterable, Mapping
-
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, replace
+from dataclasses import field as dataclass_field
+from pathlib import Path
+from typing import Any
 
 DEFAULT_MODEL: str | None = None
 DEFAULT_EFFORT = "medium"
@@ -844,7 +845,7 @@ def _spawn_child(command: list[str], workspace: Path, timeout: float) -> subproc
     else:
         kwargs["start_new_session"] = True
     try:
-        process = subprocess.Popen(_resolved_command(command), **kwargs)  # noqa: S603 - fixed executables, explicit argv.
+        process = subprocess.Popen(_resolved_command(command), **kwargs)
     except OSError as error:
         return ChildOutcome("", "", None, False, str(error))
     if getattr(process, "stdout", None) is None or getattr(process, "stderr", None) is None:
@@ -1268,7 +1269,7 @@ def _next_bridge_depth() -> int:
 def _write_transcript(paths: BridgePaths, stdout: str, stderr: str) -> str:
     """Write one bounded child transcript and return its workspace-relative path."""
     path = paths._member(paths.root / f"raw-{time.time_ns()}-{uuid.uuid4().hex[:8]}.txt")
-    payload = f"stdout:\n{stdout}\n\nstderr:\n{stderr}\n".encode("utf-8")
+    payload = f"stdout:\n{stdout}\n\nstderr:\n{stderr}\n".encode()
     with path.open("xb") as stream:
         stream.write(payload[:MAX_CHILD_TRANSCRIPT_BYTES])
     return paths.relative(path)
@@ -1519,7 +1520,7 @@ def start_background(request: Request) -> dict[str, Any]:
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kwargs["start_new_session"] = True
-    subprocess.Popen(command, **kwargs)  # noqa: S603 - invokes this installed script with explicit arguments.
+    subprocess.Popen(command, **kwargs)
     # The spawned supervisor records its own PID and running state; a launcher
     # write here could race a fast-failing supervisor and clobber its final
     # record with a stale queued-derived copy. The returned status matches the

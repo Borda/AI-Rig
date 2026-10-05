@@ -10,20 +10,18 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-
 from _bench_common.mutation_isolation import (
     IsolatedMutationCell,
     MutationCleanupError,
 )
 
 from _bench_claude.structural.config import (
+    _PYTEST_RESULT_EXIT_CODES,
     PYTEST_EXIT_ALL_PASSED,
     SandboxError,
-    _PYTEST_RESULT_EXIT_CODES,
     _describe_pytest_exit,
     _pin_pytest_interpreter,
 )
-
 
 # ---------------------------------------------------------------------------
 # Diff-impact staging
@@ -140,7 +138,7 @@ class DiffImpactStager:
         self.revert_error = None
         self._touched = []
 
-    def __enter__(self) -> "DiffImpactStager":
+    def __enter__(self) -> DiffImpactStager:
         self._assert_clean()
         try:
             self._apply()

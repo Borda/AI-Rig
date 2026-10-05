@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from test_finding_presentation import VALIDATOR, _write_remediation_candidate
 from test_remediation_finalize import HELPER
 

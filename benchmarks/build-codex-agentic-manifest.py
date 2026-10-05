@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[1]
 BENCHMARKS = ROOT / "benchmarks"
 # Self-named so a rename cannot leave the stale-output hint pointing at a missing script.
@@ -26,9 +25,8 @@ OUTPUT_HUMAN_MANIFEST = MANIFESTS / "codex-agentic.md"
 EXPERIMENT_ID = "codex-agentic"
 EXPERIMENT_REVISION = "codex-agentic-nested-package-imports-2026-09-09"
 sys.path.insert(0, str(BENCHMARKS))
-from _bench_common.agentic_contracts import AGENTIC_ARMS, DEFAULT_REPETITIONS, materialize_agentic_prompt  # noqa: E402
-from _bench_common.provider_parity_contracts import canonical_task_hash, semantic_suite_hash  # noqa: E402
-
+from _bench_common.agentic_contracts import AGENTIC_ARMS, DEFAULT_REPETITIONS, materialize_agentic_prompt
+from _bench_common.provider_parity_contracts import canonical_task_hash, semantic_suite_hash
 
 ARMS = AGENTIC_ARMS
 REPETITIONS = DEFAULT_REPETITIONS

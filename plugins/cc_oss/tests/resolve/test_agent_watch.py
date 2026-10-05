@@ -10,9 +10,8 @@ import json
 import os
 from pathlib import Path
 
-import pytest
-
 import agent_watch as aw
+import pytest
 
 _SPAWNED = 1_000_000.0
 

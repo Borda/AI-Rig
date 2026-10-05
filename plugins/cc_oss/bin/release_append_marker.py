@@ -191,7 +191,7 @@ def _is_valid_commit(sha: str) -> bool:
     git = which("git")
     if git is None:
         return False
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         [git, "merge-base", "--is-ancestor", "--end-of-options", sha, "HEAD"],
         capture_output=True,
         check=False,
@@ -228,7 +228,7 @@ def _tag_advanced_past(marker_sha: str, last_tag: str) -> bool:
     git = which("git")
     if git is None:
         return False
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         [git, "merge-base", "--is-ancestor", "--end-of-options", marker_sha, last_tag],
         capture_output=True,
         check=False,
@@ -314,7 +314,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
 def _range_start_on_endpoint(git: str, start: str, endpoint: str) -> str | None:
     """Resolve a range start and require it to precede the completed endpoint."""
-    resolved = subprocess.run(  # noqa: S603
+    resolved = subprocess.run(
         [git, "rev-parse", "--verify", "--end-of-options", f"{start}^{{commit}}"],
         capture_output=True,
         text=True,
@@ -324,7 +324,7 @@ def _range_start_on_endpoint(git: str, start: str, endpoint: str) -> str | None:
     if resolved.returncode != 0:
         return None
     start_sha = resolved.stdout.strip()
-    ancestor = subprocess.run(  # noqa: S603
+    ancestor = subprocess.run(
         [git, "merge-base", "--is-ancestor", "--end-of-options", start_sha, endpoint],
         capture_output=True,
         check=False,
@@ -335,7 +335,7 @@ def _range_start_on_endpoint(git: str, start: str, endpoint: str) -> str | None:
 
 def unique_root_commit(root: Path, git: str) -> str:
     """Require one root commit as the first release baseline without marker or tag."""
-    roots = subprocess.run(  # noqa: S603
+    roots = subprocess.run(
         [git, "rev-list", "--max-parents=0", "HEAD"],
         cwd=root,
         capture_output=True,
@@ -359,7 +359,7 @@ def _live_baseline(branch: str, last_tag: str, endpoint: str, git: str) -> tuple
     saved_sha = saved if _is_valid_commit(saved) else None
     tag_sha = None
     if last_tag:
-        tag = subprocess.run(  # noqa: S603
+        tag = subprocess.run(
             [git, "rev-parse", "--verify", "--end-of-options", f"{last_tag}^{{commit}}"],
             capture_output=True,
             text=True,
@@ -393,13 +393,13 @@ def _read_range_and_draft(range_file: str, draft_path: str) -> tuple[str, str, b
 
 def _resolve_head_and_endpoint(git: str, branch: str, end: str) -> tuple[str, str] | str:
     """Resolve HEAD and the completed-range endpoint, requiring the current attached branch."""
-    branch_proc = subprocess.run(  # noqa: S603
+    branch_proc = subprocess.run(
         [git, "symbolic-ref", "--quiet", "--short", "HEAD"], capture_output=True, text=True, check=False, timeout=5
     )
-    head = subprocess.run(  # noqa: S603
+    head = subprocess.run(
         [git, "rev-parse", "--verify", "HEAD^{commit}"], capture_output=True, text=True, check=False, timeout=5
     )
-    endpoint = subprocess.run(  # noqa: S603
+    endpoint = subprocess.run(
         [git, "rev-parse", "--verify", "--end-of-options", f"{end}^{{commit}}"],
         capture_output=True,
         text=True,
@@ -483,7 +483,7 @@ def _load_and_validate_receipt(
 
 def _verify_marker_matches_head(git: str, branch: str, receipt: dict, end: str, sha: str) -> str | None:
     """Confirm the attached branch, HEAD, and completed-range endpoint agree with the marker sha."""
-    branch_proc = subprocess.run(  # noqa: S603
+    branch_proc = subprocess.run(
         [git, "symbolic-ref", "--quiet", "--short", "HEAD"],
         capture_output=True,
         text=True,
@@ -492,10 +492,10 @@ def _verify_marker_matches_head(git: str, branch: str, receipt: dict, end: str, 
     )
     if branch_proc.returncode != 0 or branch_proc.stdout.strip() != branch:
         return "release marker requires the current attached branch"
-    head = subprocess.run(  # noqa: S603
+    head = subprocess.run(
         [git, "rev-parse", "--verify", "HEAD^{commit}"], capture_output=True, text=True, check=False, timeout=5
     )
-    endpoint = subprocess.run(  # noqa: S603
+    endpoint = subprocess.run(
         [git, "rev-parse", "--verify", "--end-of-options", f"{end}^{{commit}}"],
         capture_output=True,
         text=True,

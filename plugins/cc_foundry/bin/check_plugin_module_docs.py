@@ -35,7 +35,6 @@ import ast
 import sys
 from pathlib import Path
 
-
 RICH_DOC_PLUGIN = "codex-rig"
 RICH_DOC_SECTIONS = ("## Purpose", "## Scope", "## Usage", "## Outputs", "## Failure", "## Used by")
 RICH_DOC_MINIMUM_CHARACTERS = 700

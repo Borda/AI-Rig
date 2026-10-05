@@ -11,9 +11,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import pytest
-
 import git_state_snapshot as gss
+import pytest
 
 _skip_no_git = pytest.mark.skipif(shutil.which("git") is None, reason="git CLI not available")
 

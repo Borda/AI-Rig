@@ -13,9 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 import compute_effect_size as ces
+import pytest
 
 _SCRIPT = Path(__file__).resolve().parent.parent / "bin" / "compute_effect_size.py"
 

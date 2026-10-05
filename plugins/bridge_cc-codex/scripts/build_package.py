@@ -37,7 +37,6 @@ import shutil
 import sys
 from pathlib import Path
 
-
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 EXCLUDED_DIRECTORIES = frozenset({".plans", ".reports", ".temp", ".pytest_cache", "__pycache__", "tests"})
 EXCLUDED_FILES = frozenset({".coverage", ".DS_Store"})

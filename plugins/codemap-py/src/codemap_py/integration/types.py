@@ -1,10 +1,10 @@
 """The runtimes, consumers and error types the integration boundary is defined in."""
 
 from __future__ import annotations
+
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-
 
 SCHEMA_VERSION = 2
 

@@ -13,13 +13,12 @@ Covers:
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 import sys
-import shlex
 from pathlib import Path
 
 import pytest
-
 from parse_resolve_args import _emit, parse_resolve_args  # loaded by conftest.py
 
 _BIN = Path(__file__).resolve().parents[2] / "bin" / "parse-resolve-args.py"
@@ -260,6 +259,7 @@ def test_emit_shell_round_trip_for_hostile_values(value: str) -> None:
 def test_module_doctests_pass() -> None:
     """Doctest examples embedded in parse-resolve-args.py must not regress."""
     import doctest
+
     import parse_resolve_args as _mod
 
     results = doctest.testmod(_mod, verbose=False)

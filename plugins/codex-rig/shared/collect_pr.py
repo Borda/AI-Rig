@@ -59,14 +59,12 @@ from pathlib import Path
 from typing import Any, NamedTuple
 from urllib.parse import urlparse
 
-
 # Keep this executable helper importable when pytest discovers it as a module.
 SHARED_DIRECTORY = Path(__file__).resolve().parent
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
-from github_read import GitHubReadError, read_with_fallback, run_gh_read  # noqa: E402
-
+from github_read import GitHubReadError, read_with_fallback, run_gh_read
 
 MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 VALID_PR_STATES = frozenset({"OPEN", "MERGED", "CLOSED"})
@@ -335,8 +333,7 @@ def _github_remote_identity(url: str) -> tuple[str, str] | None:
         if len(parts) != 3 or parts[0]:
             return None
         owner, repository = parts[1:]
-    if repository.endswith(".git"):
-        repository = repository[:-4]
+    repository = repository.removesuffix(".git")
     if not GITHUB_PATH_COMPONENT_PATTERN.fullmatch(owner) or not GITHUB_PATH_COMPONENT_PATTERN.fullmatch(repository):
         return None
     return owner, repository

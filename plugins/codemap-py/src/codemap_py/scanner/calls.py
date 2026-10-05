@@ -1,11 +1,13 @@
 """Extract a module's symbols and resolve the call edges between them."""
 
 from __future__ import annotations
+
 import ast
 import builtins
-from codemap_py.schema import Resolution, SymbolType
-from .models import CallEdge, Symbol, _docstring_fields
 
+from codemap_py.schema import Resolution, SymbolType
+
+from .models import CallEdge, Symbol, _docstring_fields
 
 BUILTINS = frozenset(dir(builtins))
 

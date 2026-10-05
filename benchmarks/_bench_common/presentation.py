@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-import re
 from typing import Any
-
 
 #: Label introducing the one command a dry run authorizes for paid execution.
 PAID_COMMAND_LABEL = "PAID_COMMAND:"

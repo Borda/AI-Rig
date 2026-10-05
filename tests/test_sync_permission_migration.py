@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 JQ = shutil.which("jq")
 OLD_RULE = "Bash(gh api repos/*:*)"

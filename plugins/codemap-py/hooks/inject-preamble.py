@@ -44,13 +44,13 @@ _HOOKS_DIR = Path(__file__).resolve().parent
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 
-import _hookutil  # noqa: E402  (needs the sys.path insert above)
+import _hookutil
 
 _SRC_DIR = _HOOKS_DIR.parent / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-from codemap_py import scanner  # noqa: E402  (resolve from the installed plugin)
+from codemap_py import scanner
 
 MAX_PARSE_BYTES = 10 * 1024 * 1024
 LOCK_TTL_MS = 10 * 60 * 1000

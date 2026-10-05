@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import shutil
 import sys
+from pathlib import Path
 
 import pytest
-
 from _launcher_capability import _pinned_frozen_checkout_is_available
 
 SUITE_PATH = Path(__file__).resolve().parents[1] / "suites" / "tasks-fix-multi.json"
@@ -18,8 +17,7 @@ FROZEN_REPO = Path(os.environ.get("PL_REPO_PATH", str(BENCHMARKS.parent / ".sand
 FROZEN_REPO_COMMIT = "be98784a1a03581b7051a355ae1084fd352d7cea"
 sys.path.insert(0, str(BENCHMARKS))
 
-from _bench_common.edit_patch_contracts import build_fix_multi_contract, run_fix_multi_oracle  # noqa: E402
-
+from _bench_common.edit_patch_contracts import build_fix_multi_contract, run_fix_multi_oracle
 
 _requires_frozen_repo = pytest.mark.skipif(
     not _pinned_frozen_checkout_is_available(FROZEN_REPO, FROZEN_REPO_COMMIT),

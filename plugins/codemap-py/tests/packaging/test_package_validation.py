@@ -17,13 +17,12 @@ from pathlib import Path
 
 import pytest
 
-
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPTS = _PLUGIN_ROOT / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-import validate_package as validator  # noqa: E402  (needs the scripts path insert above)
+import validate_package as validator
 
 _CLAUDE_MANIFEST = (
     b'{"name": "codemap-py", "version": "0.25.0", "skills": "./claude-skills/", "hooks": "./hooks/claude-hooks.json"}\n'

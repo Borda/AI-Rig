@@ -5,10 +5,9 @@ from __future__ import annotations
 import json
 from enum import Enum
 
-import pytest
-
 import _schema
-from _schema import EntityType, SCAN_VERSION, Resolution, SymbolType, VALID_CALL_RESOLUTIONS
+import pytest
+from _schema import SCAN_VERSION, VALID_CALL_RESOLUTIONS, EntityType, Resolution, SymbolType
 
 
 class TestSchemaStringEnums:

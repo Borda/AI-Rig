@@ -7,11 +7,14 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-
-from _bench_common.benchmark_paths import RESULTS_DIR, TASKS_BENCH_FILE as TASKS_FILE, gt_is_pending
+from _bench_common.benchmark_paths import RESULTS_DIR, gt_is_pending
+from _bench_common.benchmark_paths import TASKS_BENCH_FILE as TASKS_FILE
 from _bench_common.claude_transport import MODEL_TIMEOUT, MODELS
+from _bench_common.mutation_isolation import (
+    load_index_relocation,
+)
 from _bench_common.presentation import (
     fmt_time,
     fmt_tok,
@@ -19,9 +22,6 @@ from _bench_common.presentation import (
     print_legend,
     print_plan_row,
     print_section_rule,
-)
-from _bench_common.mutation_isolation import (
-    load_index_relocation,
 )
 from _bench_common.provider_parity_contracts import (
     ARM_CONTRACTS,
@@ -31,22 +31,31 @@ from _bench_common.provider_parity_contracts import (
 )
 
 from _bench_claude.structural.config import (
+    _DIFF_IMPACT_TYPE,
+    _PROFILE_DEV,
+    _PROFILES,
+    _RESULT_ARM_WIDTH,
+    _TIER_HAIKU,
     ARMS,
     PARITY_ARMS,
     PATCH_TASKS_FILE,
     PRIMARY_SUITE_HASH,
     PRIMARY_SUITE_RAW_HASH,
     SandboxError,
-    _DIFF_IMPACT_TYPE,
-    _PROFILES,
-    _PROFILE_DEV,
-    _RESULT_ARM_WIDTH,
-    _TIER_HAIKU,
     _arm_orders_by_task,
     _console,
 )
 from _bench_claude.structural.models import BenchRun
 from _bench_claude.structural.prompts import _resolve_index
+from _bench_claude.structural.report import (
+    _effective_recall,
+    _print_report_only,
+    _print_summary,
+    _run_correct_symbol,
+    _save_results,
+)
+from _bench_claude.structural.runner import BenchRunner
+from _bench_claude.structural.sandbox import DiffImpactStager, DirtyTreeError, PatchSandbox, _extract_diff
 from _bench_claude.structural.tasks import (
     TaskSelection,
     _index_sha,
@@ -58,15 +67,6 @@ from _bench_claude.structural.tasks import (
     _validate_primary_runtime,
 )
 from _bench_claude.structural.telemetry import _max_turns_for_task
-from _bench_claude.structural.sandbox import DiffImpactStager, DirtyTreeError, PatchSandbox, _extract_diff
-from _bench_claude.structural.runner import BenchRunner
-from _bench_claude.structural.report import (
-    _effective_recall,
-    _print_report_only,
-    _print_summary,
-    _run_correct_symbol,
-    _save_results,
-)
 
 
 @dataclass(frozen=True)
@@ -139,7 +139,7 @@ class _StructuralRunLoop:
     patch_ids: set[str]
     runs: list[BenchRun] = field(default_factory=list)
 
-    def run_combo(self, task: dict, arm: str, log_fn: Any, update_fn: Optional[Any] = None) -> BenchRun:
+    def run_combo(self, task: dict, arm: str, log_fn: Any, update_fn: Any | None = None) -> BenchRun:
         """Execute one (task, arm) combo, record it, and log its one-line result.
 
         Args:
@@ -251,7 +251,7 @@ class _StructuralRunLoop:
 # ---------------------------------------------------------------------------
 
 
-def main(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag with a default (0 required)
+def main(
     repo_path: Path = None,
     index_path: Path = None,
     tasks: list[str] = None,

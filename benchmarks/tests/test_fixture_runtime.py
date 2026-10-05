@@ -8,9 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-from _bench_common import change_impact_contracts as contracts
 from _bench_codex import fixture_runtime
+from _bench_common import change_impact_contracts as contracts
 
 
 def _fixture_runtime_coordinate(source_root: Path, index_path: Path) -> dict[str, object]:
@@ -109,7 +108,7 @@ def test_fixture_runtime_maps_native_stream_and_rechecks_coordinate(tmp_path: Pa
 
         def close(self) -> None:
             """Satisfy the runtime context close boundary."""
-            return None
+            return
 
     native = SimpleNamespace(
         runtime=__import__("_bench_codex.runtime", fromlist=["runtime"]),

@@ -61,10 +61,10 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, Mapping, TextIO
-
+from typing import Any, TextIO
 
 SCHEMA_VERSION = 2
 LEGACY_PLAN_SCHEMA_VERSION = 1

@@ -9,9 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import check_install_state as cis
+import pytest
 
 _GOOD_SETTINGS = {
     "statusLine": {"command": "node /x/statusline.js"},

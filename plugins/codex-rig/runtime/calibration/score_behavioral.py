@@ -56,7 +56,6 @@ from typing import Any
 
 from live_contract import Layout, build_prompt, candidate_findings, prompt_sha256, role_context, task_contract_sha256
 
-
 LIVE_FIELDS = {
     "cached_input_tokens",
     "campaign_id",
@@ -87,7 +86,7 @@ def _round3(value: float) -> float:
     return round(value, 3)
 
 
-def _safe_div(numerator: int | float, denominator: int | float) -> float:
+def _safe_div(numerator: float, denominator: float) -> float:
     """Divide two numbers, returning 0.0 when the denominator is zero."""
     if denominator == 0:
         return 0.0

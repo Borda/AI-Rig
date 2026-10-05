@@ -39,7 +39,7 @@ _HOOKS_DIR = Path(__file__).resolve().parent
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 
-import _hookutil  # noqa: E402  (needs the sys.path insert above)
+import _hookutil
 
 # Re-exported, not re-implemented: this hook WRITES the sentinel that
 # ``guard-redundant-scan.py`` reads, so a divergence between their two copies of the key

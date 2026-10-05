@@ -9,9 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import parse_analyse_args as paa
+import pytest
 
 
 class _FakeCompleted:

@@ -23,10 +23,10 @@ this correlation and form lifecycle. Cached receipts are process-local and confe
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import json
 import re
 import sys
+from dataclasses import dataclass
 from typing import Any, TextIO
 
 PROTOCOLS = ("2025-06-18", "2025-11-25")

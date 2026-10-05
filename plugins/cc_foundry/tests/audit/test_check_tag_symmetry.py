@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import check_tag_symmetry as cts
+import pytest
 
 
 def _messages(findings: list[cts.Finding]) -> list[str]:

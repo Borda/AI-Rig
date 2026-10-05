@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = PLUGIN_ROOT.parents[1]
 BUILD_SCRIPT = PLUGIN_ROOT / "scripts" / "build_package.py"
@@ -19,7 +18,7 @@ VALIDATE_SCRIPT = PLUGIN_ROOT / "scripts" / "validate_package.py"
 if str(PLUGIN_ROOT / "bin") not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT / "bin"))
 
-import bridge_diagnose  # noqa: E402  (loaded from the installed-plugin-equivalent bin directory)
+import bridge_diagnose
 
 _VALIDATE_SPECIFICATION = importlib.util.spec_from_file_location("bridge_validate_package", VALIDATE_SCRIPT)
 assert _VALIDATE_SPECIFICATION is not None and _VALIDATE_SPECIFICATION.loader is not None

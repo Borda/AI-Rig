@@ -342,10 +342,9 @@ class TestDiffImpactStager:
     def test_revert_runs_even_on_exception(self, script_run_bench: Any, git_repo: Path) -> None:
         original = (git_repo / "src.py").read_text()
         stager = script_run_bench.DiffImpactStager(git_repo, self._spec())
-        with pytest.raises(RuntimeError):
-            with stager:
-                assert "new_arg=None" in (git_repo / "src.py").read_text()
-                raise RuntimeError("arm blew up mid-task")
+        with pytest.raises(RuntimeError), stager:
+            assert "new_arg=None" in (git_repo / "src.py").read_text()
+            raise RuntimeError("arm blew up mid-task")
         assert (git_repo / "src.py").read_text() == original
 
     def test_refuses_dirty_tree(self, script_run_bench: Any, git_repo: Path) -> None:

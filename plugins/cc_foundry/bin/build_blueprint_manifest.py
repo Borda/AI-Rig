@@ -138,7 +138,7 @@ from pathlib import Path, PurePath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from extract_code_blocks import iter_md_files, parse_blocks  # noqa: E402
+from extract_code_blocks import iter_md_files, parse_blocks
 
 #: Plugins that ship a blueprint manifest. ``codemap-py`` is excluded on purpose: its
 #: hooks are Python-only by contract, so it ships no Node PreToolUse hook to consume one.

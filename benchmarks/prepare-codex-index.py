@@ -320,7 +320,7 @@ def _release_worktree(source_root: Path, worktree: Path, task_id: str) -> str:
     return ""
 
 
-def _install_patch_task_index(  # noqa: PLR0913 — 7 immutable coordinates of one task's index; a
+def _install_patch_task_index(
     # config object would only rename them
     *,
     source_root: Path,
@@ -566,7 +566,7 @@ def relocate_index_for_run(
     return {**provenance, "derived_index_path": str(derived_path)}
 
 
-def main(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag with a default (0 required)
+def main(
     index_path: Path = None,
     source_root: Path = None,
     manifest_path: Path = None,

@@ -12,12 +12,12 @@ from pathlib import Path
 import pytest
 
 try:
-    from _bench_common.edit_patch_contracts import assess_patch_answer, build_edit_task_contract
     from _bench_common import mutation_isolation
+    from _bench_common.edit_patch_contracts import assess_patch_answer, build_edit_task_contract
     from _bench_common.mutation_isolation import create_patch_task_agent_workspace, execute_patch_task_answer
 except ModuleNotFoundError:
-    from benchmarks._bench_common.edit_patch_contracts import assess_patch_answer, build_edit_task_contract
     from benchmarks._bench_common import mutation_isolation
+    from benchmarks._bench_common.edit_patch_contracts import assess_patch_answer, build_edit_task_contract
     from benchmarks._bench_common.mutation_isolation import create_patch_task_agent_workspace, execute_patch_task_answer
 
 

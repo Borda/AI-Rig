@@ -13,7 +13,6 @@ from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
-
 import verify_patient_split as vps
 
 _skip_pandas_unavailable = pytest.mark.skipif(find_spec("pandas") is None, reason="requires pandas to read CSV files")

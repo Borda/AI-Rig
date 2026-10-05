@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import importlib.util
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -12,9 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from _platform import FILE_SYMLINKS_AVAILABLE, HARD_LINKS_AVAILABLE
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 FINALIZER = PLUGIN_ROOT / "shared" / "final_handoff.py"
@@ -344,7 +342,7 @@ def test_retained_v2_handoff_checks_original_next_steps_bytes(tmp_path: Path) ->
         "Gap [unresolved]: External CI was not run. — CI is external.\n\n"
         "**Artifact**\n\n"
         "Result: run/result.json\n"
-    ).encode("utf-8")
+    ).encode()
     handoff_path = tmp_path / "final-handoff.json"
     final_path = tmp_path / "final.md"
     validation_path = tmp_path / "final-handoff.validation.json"

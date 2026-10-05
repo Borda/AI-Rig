@@ -17,7 +17,6 @@ import pytest
 from benchmarks._bench_common import agentic_contracts
 from benchmarks._bench_common import provider_parity_contracts as core
 
-
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = BENCHMARKS_DIR / "manifests" / "provider-parity-methodology.json"
 SUITE_PATH = BENCHMARKS_DIR / "suites" / "tasks-bench.json"

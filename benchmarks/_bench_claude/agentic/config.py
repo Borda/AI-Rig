@@ -2,12 +2,8 @@
 
 from pathlib import Path
 
-
-from _bench_common import presentation  # noqa: E402
-
-# Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
-from _bench_common.python_source import resolve_relative_base  # noqa: E402,F401
-from _bench_common.agentic_contracts import (  # noqa: E402
+from _bench_common import presentation
+from _bench_common.agentic_contracts import (
     AgenticOracle,  # noqa: F401
     AnswerScore,  # noqa: F401
 )
@@ -15,23 +11,23 @@ from _bench_common.agentic_contracts import (  # noqa: E402
 # Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
 # Every name it defines is re-exported here, including ones this file no longer calls itself: callers and tests
 # reach these through the runner module, so pruning an apparently unused re-export breaks patch.object targets.
-from _bench_common.claude_stages import (  # noqa: E402,F401
-    FIX_MULTI_TASKS_PATH,
-    FIX_SINGLE_ARMS,
-    FIX_SINGLE_TASKS_PATH,
-    FixMultiContract,
-    FixSingleContract,
-    PARITY_MANIFEST_PATH,
-    PATCH_TASKS_PATH,
-    PurePosixPath,
-    READCROP_ARMS,
-    READCROP_TASKS_PATH,
-    ReadcropUsage,
-    StageIdentity,
+from _bench_common.claude_stages import (  # noqa: F401
     _FIX_MULTI_QUERY_ARGUMENTS,
     _FIX_SINGLE_QUERY_ARGUMENTS,
     _PATCH_QUERY_ARGUMENTS,
     _READCROP_ANSWER_RE,
+    FIX_MULTI_TASKS_PATH,
+    FIX_SINGLE_ARMS,
+    FIX_SINGLE_TASKS_PATH,
+    PARITY_MANIFEST_PATH,
+    PATCH_TASKS_PATH,
+    READCROP_ARMS,
+    READCROP_TASKS_PATH,
+    FixMultiContract,
+    FixSingleContract,
+    PurePosixPath,
+    ReadcropUsage,
+    StageIdentity,
     _absolute_codemap_launchers,
     _claude_codemap_evidence,
     _claude_event_summary,
@@ -77,6 +73,8 @@ from _bench_common.claude_stages import (  # noqa: E402,F401
     stage_contract_sha256,
 )
 
+# Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
+from _bench_common.python_source import resolve_relative_base  # noqa: F401
 
 _console = presentation.benchmark_console()
 

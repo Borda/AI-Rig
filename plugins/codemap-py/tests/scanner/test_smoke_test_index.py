@@ -7,9 +7,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
 from smoke_test_index import SmokeResult, compute_age_hours, main, smoke_test_index
-
 
 # ---------------------------------------------------------------------------
 # compute_age_hours — pure function

@@ -16,7 +16,7 @@ for _MODULE_DIR in (
     if str(_MODULE_DIR) not in sys.path:
         sys.path.insert(0, str(_MODULE_DIR))
 
-from _platform import POSIX_BASH  # noqa: E402
+from _platform import POSIX_BASH
 
 
 @pytest.fixture(params=["\n", "\r\n"])

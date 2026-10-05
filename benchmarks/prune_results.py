@@ -84,7 +84,7 @@ def cited_names(repo_root: Path) -> set[str]:
             everything.
     """
     try:
-        completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        completed = subprocess.run(
             ["git", "grep", "--no-color", "-ohI", "-E", r"results/[A-Za-z0-9._-]+"],
             cwd=str(repo_root),
             capture_output=True,

@@ -18,9 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 import dev_run_dir
+import pytest
 
 SCRIPT = Path(dev_run_dir.__file__)
 TIMESTAMP_RE = re.compile(r"\.developments/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$")

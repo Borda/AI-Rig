@@ -17,9 +17,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import pytest
-
 import join_avoidance as ja
+import pytest
 
 _EXIT_USAGE = 2  # join_avoidance.main's own bare literal (bin/join_avoidance.py:610) — no exported constant to import
 

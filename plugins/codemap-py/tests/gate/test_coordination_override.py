@@ -18,9 +18,8 @@ _BIN = str(Path(__file__).resolve().parent.parent.parent / "bin")
 if _BIN not in sys.path:
     sys.path.insert(0, _BIN)
 
-import _rwgate  # noqa: E402  (path set above)
-
-from codemap_py import index_paths  # noqa: E402  (the shim above puts src/ on sys.path)
+import _rwgate
+from codemap_py import index_paths
 
 
 @pytest.fixture

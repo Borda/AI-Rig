@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path, PurePath
 import sys
+from pathlib import Path, PurePath
 
 import pytest
-
 
 BIN_ROOT = Path(__file__).resolve().parents[1] / "bin"
 if str(BIN_ROOT) not in sys.path:
     sys.path.insert(0, str(BIN_ROOT))
 
-import bridge_mcp  # noqa: E402  (loaded from the installed-plugin-equivalent bin directory)
+import bridge_mcp
 
 # The manifests are the release authority; status must report their version,
 # so the expected value is read from the same source rather than pinned here.

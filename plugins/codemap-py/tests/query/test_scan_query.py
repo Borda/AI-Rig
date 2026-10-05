@@ -18,8 +18,8 @@ import ast
 import json
 import os
 import subprocess
-import uuid
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -2968,7 +2968,7 @@ class TestFixtureGraph:
 # v5.4: shorthand handles for coverage integration tests below. These three moved
 # into codemap_py.graph (cross-module coverage annotation), not codemap_py.scanner
 # (per-file parsing) — a different package module than the extract_* helpers above.
-import codemap_py.graph as _graph_mod  # noqa: E402  (needs the sys.path insert done by _load_scan_index above)
+import codemap_py.graph as _graph_mod
 
 _read_coverage_data = _graph_mod._read_coverage_data
 _compute_symbol_coverage = _graph_mod._compute_symbol_coverage

@@ -98,7 +98,7 @@ def _fetch_one(gh: str, name: str, cmd_args: list[str], output_dir: Path) -> tup
         No doctest — subprocess-dependent; covered by pytest.
     """
     out_path = output_dir / f"{name}.json"
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         [gh, *cmd_args],
         capture_output=True,
         text=True,
@@ -117,7 +117,7 @@ def _build_datasets(
     owner_repo: str,
     cutoff_3y: str,
     cutoff_90d: str,
-    cutoff_180d: str,  # noqa: ARG001 — reserved for future axes
+    cutoff_180d: str,
 ) -> list[tuple[str, list[str]]]:
     """Build the full list of ``(name, gh_command_args)`` for all datasets.
 

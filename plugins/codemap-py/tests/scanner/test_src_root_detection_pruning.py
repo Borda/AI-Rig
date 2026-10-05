@@ -28,7 +28,7 @@ _SRC = Path(__file__).resolve().parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-import codemap_py.scanner as _scanner_mod  # noqa: E402  (needs the sys.path insert above)
+import codemap_py.scanner as _scanner_mod
 
 _detect_src_root_from_init = _scanner_mod._detect_src_root_from_init
 detect_src_root = _scanner_mod.detect_src_root
@@ -105,7 +105,7 @@ def test_detection_is_independent_of_hash_seed(decoy_project: Path) -> None:
         ]
     )
     results = {
-        subprocess.run(  # noqa: S603 - fixed argv, no shell
+        subprocess.run(
             [sys.executable, "-c", program],
             capture_output=True,
             text=True,

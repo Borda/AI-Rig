@@ -16,7 +16,6 @@ from types import ModuleType
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 HEAD_ARTIFACTS = json.loads(Path(__file__).with_name("head_observable_artifacts.json").read_text(encoding="utf-8"))
 

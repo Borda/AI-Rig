@@ -59,7 +59,7 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-from get_plugin_install_path import resolve_install_path  # noqa: E402
+from get_plugin_install_path import resolve_install_path
 
 
 @dataclass(frozen=True)

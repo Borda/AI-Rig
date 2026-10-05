@@ -19,7 +19,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from parse_skill_flags import _emit, _validate_flags, _var_name, parse_skill_flags  # loaded by conftest.py
 
 _BIN = Path(__file__).resolve().parents[1] / "bin" / "parse-skill-flags.py"

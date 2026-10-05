@@ -9,7 +9,6 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 try:  # imported as a package member (benchmarks._bench_common.claude_transport)
     from .process_group import NEW_PROCESS_GROUP, terminate_process_group
@@ -82,9 +81,9 @@ class StreamOutcome:
     """Result of :func:`stream_claude` — mechanics only; callers map to their own run dataclass."""
 
     elapsed_s: float = 0.0
-    returncode: Optional[int] = None  # process exit code (negative → killed by signal)
+    returncode: int | None = None  # process exit code (negative → killed by signal)
     stderr: str = ""  # captured stderr, only when the process was waited on cleanly
-    error: Optional[str] = None  # message from an unexpected exception (not a timeout)
+    error: str | None = None  # message from an unexpected exception (not a timeout)
     exc_timeout: bool = False  # True when proc.wait() raised TimeoutExpired
 
 
@@ -95,14 +94,14 @@ def stream_claude(
     cwd: Path | str,
     env: dict[str, str],
     on_event: Callable[[dict, float], None],
-    update_fn: Optional[Callable[[float], None]] = None,
+    update_fn: Callable[[float], None] | None = None,
 ) -> StreamOutcome:
     """Run a ``claude -p`` stream-json subprocess: kill-timer, line-by-line event parse, timing.
 
     Launches ``cmd``, arms a ``threading.Timer`` that kills the process at ``timeout`` seconds,
     reads stdout line-by-line decoding each JSON event and passing it to ``on_event(event, ts)``,
     and calls ``update_fn(elapsed_s)`` at most every 0.5 s. This is the shared measurement loop;
-    all per-arm/​per-dataclass scoring lives in the caller's ``on_event`` closure. The returned
+    all per-arm/\u200bper-dataclass scoring lives in the caller's ``on_event`` closure. The returned
     :class:`StreamOutcome` reports mechanics (elapsed, returncode, stderr, timeout) — the caller
     maps those onto its own run object, since the error-precedence and any ``incomplete`` flag
     differ per runner.

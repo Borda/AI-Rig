@@ -21,7 +21,7 @@ _BENCH = Path(__file__).resolve().parent.parent
 if str(_BENCH) not in sys.path:
     sys.path.insert(0, str(_BENCH))
 
-import prune_results  # noqa: E402  (needs the sys.path insert above)
+import prune_results
 
 #: Bound before the autouse stub can replace the attribute, so the one test that must
 #: exercise the real git lookup still reaches it.

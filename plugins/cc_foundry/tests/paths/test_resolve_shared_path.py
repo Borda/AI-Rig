@@ -18,7 +18,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 import resolve_shared_path
 
 

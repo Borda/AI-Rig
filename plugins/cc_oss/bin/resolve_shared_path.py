@@ -221,7 +221,7 @@ def _tier1_registry(home: Path, plugin: str, subdir: str, env_root: str | None) 
     if helper is None:
         return None
     try:
-        completed = subprocess.run(  # noqa: S603 — args fully internal
+        completed = subprocess.run(
             [sys.executable, str(helper), _MARKETPLACE, plugin],
             capture_output=True,
             text=True,

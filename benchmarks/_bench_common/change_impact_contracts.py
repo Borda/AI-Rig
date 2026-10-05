@@ -21,15 +21,14 @@ Codemap index, invoke a provider, write fixture files, or implement product heur
 from __future__ import annotations
 
 import ast
+import json
+import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
-import json
 from pathlib import Path, PurePosixPath
-import sys
 from types import MappingProxyType, ModuleType
 from typing import Any
-
 
 _ANSWER_FIELDS = (
     "must_update_callsites",

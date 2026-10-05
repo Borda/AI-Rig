@@ -12,7 +12,6 @@ from typing import Any
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 COLLECTOR = PLUGIN_ROOT / "shared" / "collect_pr.py"
 BASE_OID = "a" * 40
@@ -239,9 +238,7 @@ class FakeRunner:
                 stdout = f"{review}\n".encode()
             elif operation == ["rev-parse", "HEAD"]:
                 stdout = f"{HEAD_OID}\n".encode()
-            elif operation == ["branch", "--show-current"]:
-                stdout = b""
-            elif operation == ["status", "--porcelain", "-z"]:
+            elif operation == ["branch", "--show-current"] or operation == ["status", "--porcelain", "-z"]:
                 stdout = b""
             elif operation[:4] == ["diff", "--name-only", "-z", f"{BASE_OID}...{HEAD_OID}"]:
                 stdout = b"".join(f"{path}\0".encode() for path in self.pr_paths)

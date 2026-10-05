@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import check_bash_persistence as cbp
+import pytest
 
 
 def _skill(tmp_path: Path, content: str) -> Path:

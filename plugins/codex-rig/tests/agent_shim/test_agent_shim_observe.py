@@ -12,10 +12,8 @@ import tempfile
 from pathlib import Path
 from types import ModuleType
 
-import pytest
-
 import _platform
-
+import pytest
 from _platform import (
     DIRECTORY_SYMLINKS_AVAILABLE,
     FILE_SYMLINKS_AVAILABLE,

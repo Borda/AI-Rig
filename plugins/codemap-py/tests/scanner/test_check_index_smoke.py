@@ -15,10 +15,9 @@ import json
 import subprocess
 from typing import Any
 
+import check_index_smoke
 import pytest
-
-import check_index_smoke  # noqa: E402 — bin/ on sys.path via conftest.py
-from check_index_smoke import (  # noqa: E402
+from check_index_smoke import (
     SmokeResult,
     derive_exit_code,
     main,

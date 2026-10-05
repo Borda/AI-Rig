@@ -10,9 +10,8 @@ import base64
 import json
 from pathlib import Path
 
-import pytest
-
 import fetch_gh_data_group2 as fgd
+import pytest
 
 
 class _FakeCompleted:

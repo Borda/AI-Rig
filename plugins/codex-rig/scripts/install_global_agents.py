@@ -50,7 +50,6 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 BEGIN_PREFIX = b"<!-- codex-rig:global-agents begin sha256="
 BEGIN_PATTERN = re.compile(rb"<!-- codex-rig:global-agents begin sha256=([0-9a-f]{64}) -->\n")
 END_MARKER = b"<!-- codex-rig:global-agents end -->\n"

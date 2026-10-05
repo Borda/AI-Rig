@@ -5,30 +5,19 @@ import json
 import os
 import sys
 import tempfile
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
-
-from rich.text import Text as _Text
-
-from _bench_common.benchmark_paths import RESULTS_DIR
-from _bench_common.change_impact_stage import run_stage as run_change_impact_stage
-from _bench_common.claude_transport import MODEL_TIMEOUT, MODELS
 from _bench_common import agentic_reporting
-from _bench_common.agentic_reporting import summary_lines, summarize_agentic
-from _bench_common.presentation import (
-    fmt_time,
-    make_progress,
-)
 
 # Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
 from _bench_common.agentic_contracts import (
     AGENTIC_ARMS,
     DEFAULT_REPETITIONS,
-    AgenticOracle,  # noqa: F401
+    AgenticOracle,
     AnswerScore,  # noqa: F401
     answer_failure_details,
     assess_answer_response,
@@ -36,15 +25,9 @@ from _bench_common.agentic_contracts import (
     score_answer,
     score_evidence_metrics,
 )
-from _bench_common.provider_parity_contracts import (
-    ARM_CONTRACTS,
-    PARITY_TIMEOUT_SECONDS,
-    deterministic_arm_order,
-    treatment_adherence,
-)
-from _bench_common.mutation_isolation import (
-    load_index_relocation,
-)
+from _bench_common.agentic_reporting import summarize_agentic, summary_lines
+from _bench_common.benchmark_paths import RESULTS_DIR
+from _bench_common.change_impact_stage import run_stage as run_change_impact_stage
 
 # Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
 # Every name it defines is re-exported here, including ones this file no longer calls itself: callers and tests
@@ -56,23 +39,38 @@ from _bench_common.claude_stages import (
     PATCH_TASKS_PATH,
     READCROP_TASKS_PATH,
 )
+from _bench_common.claude_transport import MODEL_TIMEOUT, MODELS
+from _bench_common.mutation_isolation import (
+    load_index_relocation,
+)
+from _bench_common.presentation import (
+    fmt_time,
+    make_progress,
+)
+from _bench_common.provider_parity_contracts import (
+    ARM_CONTRACTS,
+    PARITY_TIMEOUT_SECONDS,
+    deterministic_arm_order,
+    treatment_adherence,
+)
+from rich.text import Text as _Text
 
 from _bench_claude.agentic.config import LEGACY_EXPERIMENT_REVISION, _console
+from _bench_claude.agentic.discovery import _unique_path, check_semble_mcp, find_index
+from _bench_claude.agentic.ground_truth import GroundTruth
 from _bench_claude.agentic.models import BenchmarkRun, QualityScore, Task, ToolCounts, parity_arm_identity
+from _bench_claude.agentic.paid import _run_claude_p1_stage, impact_runtime
 from _bench_claude.agentic.provenance import (
     _evaluator_provenance,
     _repository_fingerprint,
     _sha256_file,
     _validate_parity_runtime,
 )
-from _bench_claude.agentic.discovery import _unique_path, check_semble_mcp, find_index
-from _bench_claude.agentic.scope import resolve_agentic_scope
-from _bench_claude.agentic.tasks import _canonical_agentic_row, load_legacy_tasks, load_tasks_with_provenance
-from _bench_claude.agentic.ground_truth import GroundTruth
-from _bench_claude.agentic.scoring import score_fix, score_read_crop
-from _bench_claude.agentic.report import Report, _ARM_STYLE, _FAIL_STYLE, _run_line
-from _bench_claude.agentic.paid import _run_claude_p1_stage, impact_runtime
+from _bench_claude.agentic.report import _ARM_STYLE, _FAIL_STYLE, Report, _run_line
 from _bench_claude.agentic.runner import ModelRunner
+from _bench_claude.agentic.scope import resolve_agentic_scope
+from _bench_claude.agentic.scoring import score_fix, score_read_crop
+from _bench_claude.agentic.tasks import _canonical_agentic_row, load_legacy_tasks, load_tasks_with_provenance
 
 
 def _agentic_arm_order(task: Task, model_short: str, arms: list[str], rep: int) -> tuple[str, ...]:
@@ -228,7 +226,7 @@ class Benchmark:
         total_runs: int,
         print_fn: Callable[[_Text], None],
         metadata: dict,
-        update_fn: Optional[Callable[[float, "BenchmarkRun"], None]] = None,
+        update_fn: Callable[[float, "BenchmarkRun"], None] | None = None,
         repetition: int = 1,
     ) -> BenchmarkRun:
         run_timeout = PARITY_TIMEOUT_SECONDS if parity_arm_identity(arm) else MODEL_TIMEOUT.get(model_short, 300)

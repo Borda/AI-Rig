@@ -51,10 +51,11 @@ import subprocess
 import sys
 import tempfile
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from enum import Enum
 from pathlib import Path
-from typing import Callable, NoReturn
+from typing import NoReturn
 
 
 class ManagerAction(str, Enum):
@@ -955,9 +956,7 @@ def apply_recovery(plan: RecoveryPlan, approved_digest: str) -> Journal | None:
             )
             if journal.journal_state == "STATE_COMMITTED":
                 terminal = finalize_state_committed(journal, handles)
-            elif journal.journal_state == "COMMITTED":
-                terminal = journal
-            elif journal.journal_state == "ROLLED_BACK":
+            elif journal.journal_state == "COMMITTED" or journal.journal_state == "ROLLED_BACK":
                 terminal = journal
             else:
                 terminal = rollback_transaction(journal, handles)

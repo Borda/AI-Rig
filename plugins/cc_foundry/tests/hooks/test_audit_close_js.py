@@ -19,9 +19,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from _audit_harness import install
-
 
 CLOSE_HOOK = "audit-close.js"
 SESSION = "session-under-test"

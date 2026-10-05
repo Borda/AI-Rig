@@ -8,9 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from check_orphaned_bin import OrphanFinding, find_orphans, is_referenced, iter_bin_scripts, main
-
 
 # ---------------------------------------------------------------------------
 # iter_bin_scripts

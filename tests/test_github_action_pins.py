@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
 USES_LINE = re.compile(r"^\s*-?\s*uses:\s*(?P<target>\S+?)(?:\s+#\s*(?P<comment>.+))?\s*$")

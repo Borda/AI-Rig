@@ -10,12 +10,12 @@ import ast
 import hashlib
 import importlib.util
 import json
-from pathlib import Path
 import re
 import sys
 import time
-from typing import Any, Mapping
-
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
 
 BENCHMARKS = Path(__file__).resolve().parents[1]
 ROOT = BENCHMARKS.parent
@@ -27,7 +27,20 @@ _NATIVE_ARMS = {"A_plain": "A_plain", "B_auto": "B_auto", "C_strict": "C_strict"
 _ANSWER_RE = re.compile(r"BEGIN_READ_CROP_JSON\s*(?P<payload>\{.*?\})\s*END_READ_CROP_JSON", re.DOTALL)
 
 sys.path.insert(0, str(BENCHMARKS))
-from _bench_common.provider_parity_contracts import (  # noqa: E402
+from _bench_common.paid_lifecycle import (
+    PaidStageCallbacks,
+    paid_approval_matches,
+    run_paid_stage,
+    verify_checksums,
+    write_checksums,
+)
+from _bench_common.presentation import (
+    fmt_time,
+    fmt_tok,
+    format_artifact_block,
+    format_probe_row,
+)
+from _bench_common.provider_parity_contracts import (
     canonical_task_hash,
     fresh_input_tokens,
     load_task_suite,
@@ -35,28 +48,15 @@ from _bench_common.provider_parity_contracts import (  # noqa: E402
     semantic_suite_hash,
     token_accounting_inconsistent,
 )
-from _bench_common.readcrop_contracts import (  # noqa: E402
+from _bench_common.readcrop_contracts import (
     ReadcropUsage,
     build_readcrop_contract,
     parse_readcrop_answer,
     score_readcrop_answer,
     validate_provider_binding,
 )
-from _bench_common.paid_lifecycle import (  # noqa: E402
-    PaidStageCallbacks,
-    paid_approval_matches,
-    run_paid_stage,
-    verify_checksums,
-    write_checksums,
-)
-from . import runtime  # noqa: E402
-from _bench_common.presentation import (  # noqa: E402
-    format_artifact_block,
-    format_probe_row,
-    fmt_time,
-    fmt_tok,
-)
 
+from . import runtime
 
 _STRUCTURAL_MODULE: Any = None
 

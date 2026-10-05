@@ -12,7 +12,6 @@ import re
 import sys
 from pathlib import Path
 
-
 BENCHMARKS = Path(__file__).resolve().parent
 POLICY_SEED = BENCHMARKS / "policy" / "provider-parity-methodology.json"
 SOURCE_SUFFIXES = frozenset({".json", ".md", ".py", ".sh"})

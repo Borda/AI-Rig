@@ -6,12 +6,9 @@ import ast
 import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Optional
 
 
-def resolve_relative_base(
-    package: str, level: int, module: Optional[str], *, escape_to_none: bool = True
-) -> Optional[str]:
+def resolve_relative_base(package: str, level: int, module: str | None, *, escape_to_none: bool = True) -> str | None:
     """Resolve a relative ``from`` import to its absolute base module.
 
     Ascends ``level - 1`` package components and appends ``module``.
@@ -53,7 +50,7 @@ def resolve_relative_base(
     return combined
 
 
-def _import_target_kept(name: str, keep: Optional[set[str]]) -> bool:
+def _import_target_kept(name: str, keep: set[str] | None) -> bool:
     """Return True when a dotted import target survives the internal-module filter.
 
     Args:
@@ -78,7 +75,7 @@ def extract_import_targets(
     tree: ast.Module,
     *,
     package: str = "",
-    keep: Optional[set[str]] = None,
+    keep: set[str] | None = None,
     credit_submodules: bool = True,
     symbol_when_bare: bool = False,
 ) -> set[str]:
@@ -199,8 +196,8 @@ def walk_py_modules(
     root: Path,
     *,
     skip: frozenset[str] = PY_WALK_SKIP,
-    keep: Optional[Callable[[str], bool]] = None,
-) -> Iterator[tuple[Path, str, "ast.Module"]]:
+    keep: Callable[[str], bool] | None = None,
+) -> Iterator[tuple[Path, str, ast.Module]]:
     """Yield ``(path, rel_path, tree)`` for every parseable ``*.py`` file under ``root``.
 
     Bundles the walk+prune+``.py``-filter+``rel_path``-normalise+``ast.parse``-skip-``SyntaxError``

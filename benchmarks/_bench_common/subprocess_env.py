@@ -8,9 +8,9 @@ is not minimal there — it is broken.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import os
 import sys
+from collections.abc import Mapping
 
 # Windows-only names a freshly spawned CPython needs before it reaches the payload:
 # ``SystemRoot``/``SYSTEMROOT``/``SystemDrive`` locate the CSPRNG used by

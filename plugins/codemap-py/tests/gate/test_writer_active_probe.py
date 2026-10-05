@@ -22,7 +22,7 @@ _SRC = Path(__file__).resolve().parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-import codemap_py.rwgate as rwgate  # noqa: E402  (needs the sys.path insert above)
+from codemap_py import rwgate
 
 _HOLD_SECONDS = 5.0
 _JOIN_TIMEOUT = 30.0
@@ -58,7 +58,7 @@ def _spawn_holder(index_path: Path, hold_seconds: float = _HOLD_SECONDS) -> subp
     A separate process, not a thread: POSIX ``fcntl`` locks are per-process, so an in-process holder would make the
     probe report this process's own ownership instead of exercising the foreign-token path a real second writer takes.
     """
-    proc = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+    proc = subprocess.Popen(
         [sys.executable, "-c", _holder_program(index_path, hold_seconds)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

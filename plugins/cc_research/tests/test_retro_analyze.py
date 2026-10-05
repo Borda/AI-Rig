@@ -12,9 +12,7 @@ import json
 from pathlib import Path
 
 import pytest
-
 import retro_analyze as ra
-
 
 # ---------- Pure function: run_wilcoxon ----------
 

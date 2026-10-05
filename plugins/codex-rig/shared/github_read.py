@@ -56,7 +56,6 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlparse
 from urllib.request import Request, urlopen
 
-
 MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 PUBLIC_GITHUB_API_HOST = "api.github.com"
 VIEW_RESOURCE_COMMANDS = frozenset({"gist", "issue", "pr", "project", "release", "repo", "ruleset", "run", "workflow"})

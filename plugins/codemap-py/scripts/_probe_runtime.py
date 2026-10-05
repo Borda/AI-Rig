@@ -45,7 +45,7 @@ _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-import build_package  # noqa: E402  (needs the scripts path insert above)
+import build_package
 
 _MIN_MINOR, _MAX_MINOR_EXCLUSIVE = 11, 15
 _MAJOR, _PROBE_FIELDS = "3", 3

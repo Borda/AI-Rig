@@ -12,14 +12,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
-from _bench_codex import runtime
 from _bench_common.mutation_isolation import (
     verify_index_relocation,
 )
 
-from _bench_codex.structural.config import PARITY_CODEX_REASONING_EFFORT, PARITY_MANIFEST_PATH, _CODEX_BIN
+from _bench_codex import runtime
 from _bench_codex.structural import provenance
+from _bench_codex.structural.config import _CODEX_BIN, PARITY_CODEX_REASONING_EFFORT, PARITY_MANIFEST_PATH
 
 
 @dataclass(frozen=True)

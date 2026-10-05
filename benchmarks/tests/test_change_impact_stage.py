@@ -2,23 +2,21 @@
 
 from __future__ import annotations
 
-import json
-import importlib.util
-import sys
-import shutil
 import contextlib
-from types import SimpleNamespace
-from types import ModuleType
+import importlib.util
+import json
+import shutil
+import sys
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
-
-from _bench_common import change_impact_stage as stage
 
 # Patch seams live in the package modules the runner shim re-exports from: patching the shim
 # would leave each package module's own global binding untouched.
 from _bench_claude.agentic import cli as agentic_cli
 from _bench_claude.agentic import runner as agentic_runner
+from _bench_common import change_impact_stage as stage
 
 
 def test_paid_impact_lifecycle_uses_isolated_fixture_and_native_rows(

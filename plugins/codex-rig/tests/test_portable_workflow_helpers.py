@@ -15,7 +15,6 @@ from typing import Any
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 COLLECT_DIFF = PLUGIN_ROOT / "shared" / "collect_diff.py"
 CHALLENGE_VALIDATOR = PLUGIN_ROOT / "skills" / "challenge-resolve" / "validate_evidence.py"
@@ -205,7 +204,7 @@ def test_run_gates_terminates_simulated_windows_process_trees_with_taskkill(
 
         def poll(self) -> None:
             """Report a still-running fake process to exercise termination."""
-            return None
+            return
 
         def wait(self, timeout: int | None = None) -> int:
             """Return successful termination after checking the bounded wait timeout."""

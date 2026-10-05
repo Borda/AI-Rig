@@ -71,7 +71,7 @@ def _rev_parse_ok(git: str, ref: str) -> bool:
     Examples:
         No doctest — subprocess-dependent; covered by pytest.
     """
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         [git, "rev-parse", ref],
         capture_output=True,
         check=False,
@@ -120,7 +120,7 @@ def _extract_from_diff(git: str, init_files: list[Path], range_arg: str) -> set[
     """
     symbols: set[str] = set()
     for path in init_files:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             [git, "diff", range_arg, "--", str(path)],
             capture_output=True,
             text=True,

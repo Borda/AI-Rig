@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import join_avoidance as ja
+import pytest
 
 
 def _records(project: str) -> tuple[dict, dict]:

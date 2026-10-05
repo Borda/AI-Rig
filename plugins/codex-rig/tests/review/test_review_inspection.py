@@ -11,7 +11,6 @@ from types import ModuleType
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR_PATH = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
 ROLES = ("qa-specialist", "challenger")

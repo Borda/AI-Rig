@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 import run_pytest_short  # type: ignore[import-not-found]
 
 

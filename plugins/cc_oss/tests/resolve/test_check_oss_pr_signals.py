@@ -11,10 +11,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import check_oss_pr_signals as cops  # type: ignore[import-not-found]
-
+import pytest
 
 # --------------------------------------------------------------------------- #
 # Fake subprocess scaffolding

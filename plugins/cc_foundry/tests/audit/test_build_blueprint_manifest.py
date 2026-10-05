@@ -9,11 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-import pytest
-
-
 import build_blueprint_manifest as bbm
-
+import pytest
 
 PLUGIN_JSON = '{"name": "foundry", "version": "1.2.3"}\n'
 

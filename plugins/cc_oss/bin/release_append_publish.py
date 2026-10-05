@@ -30,7 +30,6 @@ from urllib.parse import quote
 
 from release_append_marker import refuse_legacy, state_relative, unique_root_commit
 
-
 ARTIFACTS = ("DRAFT.md", "SUMMARY.md", "MIGRATION.md")
 
 

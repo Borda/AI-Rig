@@ -56,9 +56,8 @@ import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
-from collect_diff import capture_source_snapshot  # noqa: E402
-from adversarial_loop import ledger_digest, load_ledger, rounds_path, validate_ledger  # noqa: E402
-
+from adversarial_loop import ledger_digest, load_ledger, rounds_path, validate_ledger
+from collect_diff import capture_source_snapshot
 
 DEFAULT_BUDGET_BYTES = 1_000_000
 

@@ -49,7 +49,6 @@ from ctypes import CDLL, c_char_p, c_int, c_uint, get_errno
 from dataclasses import dataclass
 from typing import NoReturn
 
-
 MAX_FILE_BYTES = 4_194_304
 PRIVATE_DIRECTORY_MODE = 0o700
 PRIVATE_FILE_MODE = 0o600

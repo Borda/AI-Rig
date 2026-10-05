@@ -1,7 +1,7 @@
 """Production retry call shapes."""
 
-from impactlib.retry import invoke
 import impactlib.retry as retry_api
+from impactlib.retry import invoke
 
 
 def process_queue() -> int:

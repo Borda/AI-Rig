@@ -14,9 +14,9 @@ import json
 import os
 import sys
 from collections import Counter
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
-
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 BENCHMARKS = ROOT / "benchmarks"
@@ -106,8 +106,8 @@ SUITE_METADATA: dict[str, dict[str, str]] = {
 STATIC_REFERENCE_TYPES = frozenset({"symbol_extraction", "real_issue"})
 
 sys.path.insert(0, str(BENCHMARKS))
-import _bench_common.provider_parity_contracts as core  # noqa: E402
-from _bench_common.artifact_hashing import module_sha256, runner_sha256  # noqa: E402
+import _bench_common.provider_parity_contracts as core
+from _bench_common.artifact_hashing import module_sha256, runner_sha256
 
 
 def _sha256(path: Path) -> str:

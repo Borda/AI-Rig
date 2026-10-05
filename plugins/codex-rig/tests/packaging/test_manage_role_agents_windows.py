@@ -11,7 +11,6 @@ from types import ModuleType
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 MANAGER = PLUGIN_ROOT / "scripts" / "manage_role_agents.py"
 

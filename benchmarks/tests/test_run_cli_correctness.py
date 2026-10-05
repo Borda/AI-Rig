@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from _launcher_capability import _raw_codemap_launchers_are_runnable
 
 REPO_ROOT = Path(__file__).parent.parent.parent

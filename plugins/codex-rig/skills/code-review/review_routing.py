@@ -48,7 +48,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-
 ROUTING_SIGNALS = {
     "behavior_change",
     "bug_fix",

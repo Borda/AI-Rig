@@ -1,8 +1,8 @@
 """Keep isolated benchmark repositories out of project-wide doctest collection."""
 
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 
 def test_change_impact_fixture_is_not_collected_as_project_tests() -> None:

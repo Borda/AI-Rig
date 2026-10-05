@@ -8,9 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from _bench_common import change_impact_contracts as contracts
-
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_ROOT = ROOT / "benchmarks/fixtures/change-impact/v1/repo"

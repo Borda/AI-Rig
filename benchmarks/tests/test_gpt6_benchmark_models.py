@@ -4,26 +4,23 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
 from _bench_codex import runtime
 from _bench_codex.structural.config import PARITY_CODEX_MODEL
 from _bench_codex.structural.diff_impact import build_codex_command
 from _bench_codex.structural.runner import CodexRunner
 from _bench_common import change_impact_stage
 
-
 BENCHMARKS = Path(__file__).resolve().parents[1]
 _PLATFORM_TESTS_DIR = BENCHMARKS.parent / "plugins" / "codex-rig" / "tests"
 if str(_PLATFORM_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PLATFORM_TESTS_DIR))
 
-from _platform import POSIX_BASH  # noqa: E402
-
+from _platform import POSIX_BASH
 
 MODELS = ["gpt-6.1-sol", "gpt-6-luna", "gpt-6-sol", "gpt-6-astra"]
 _requires_bash = pytest.mark.skipif(POSIX_BASH is None, reason="requires a working POSIX Bash executable")
@@ -102,7 +99,7 @@ def test_shell_model_selection_uses_current_declarations(
     # The resolver uses only builtins; an empty PATH exposes accidental bare-name invocation.
     monkeypatch.setenv("PATH", str(tmp_path))
     launcher = (BENCHMARKS / "run-all.sh").read_text(encoding="utf-8")
-    function = re.search(r"^canonical_provider_model\(\) \{.*?^\}", launcher, re.M | re.S)
+    function = re.search(r"^canonical_provider_model\(\) \{.*?^\}", launcher, re.MULTILINE | re.DOTALL)
     assert function is not None
     models = json.loads((BENCHMARKS / "manifests/provider-parity-methodology.json").read_bytes())[
         "agentic_execution_contract"
@@ -163,7 +160,7 @@ def test_shell_rejects_legacy_route_from_custom_declarations(tmp_path: Path, mon
     """Reject historical shell declarations through verified Bash independently of PATH."""
     monkeypatch.setenv("PATH", str(tmp_path))
     launcher = (BENCHMARKS / "run-all.sh").read_text(encoding="utf-8")
-    function = re.search(r"^canonical_provider_model\(\) \{.*?^\}", launcher, re.M | re.S)
+    function = re.search(r"^canonical_provider_model\(\) \{.*?^\}", launcher, re.MULTILINE | re.DOTALL)
     assert function is not None
     result = subprocess.run(
         [

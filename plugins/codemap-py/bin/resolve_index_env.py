@@ -47,7 +47,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-
 _SCRIPT_NAME = "resolve_index_env"
 
 # ``--output-prefix`` must be a single bare token — no path separators — blocking traversal

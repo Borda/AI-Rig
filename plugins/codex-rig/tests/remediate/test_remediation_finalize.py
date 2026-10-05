@@ -11,12 +11,10 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 from test_finding_presentation import VALIDATOR, _write_remediation_candidate
 
 # Importing the fixture function registers the shared `assessed_pr` fixture in this module.
 from test_review_completion_gate import FINDER, _assessed_pr  # noqa: F401
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 DERIVED_HANDOFF_FIELDS = ("verification", "confidence", "artifacts", "tables", "source_records", "source_coverage")

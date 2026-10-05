@@ -14,7 +14,6 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 from _platform import (
     DIRECTORY_SYMLINKS_AVAILABLE,
     FILE_SYMLINKS_AVAILABLE,

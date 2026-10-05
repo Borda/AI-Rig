@@ -115,9 +115,8 @@ class TestLoadIndex:
         idx_file = idx_dir / f"{proj}.json"
         idx_file.write_text("{}")
         oversized = _mod.MAX_INDEX_SIZE + 1
-        with patch("os.path.getsize", return_value=oversized):
-            with pytest.raises(SystemExit) as exc_info:
-                _load_index(str(tmp_path))
+        with patch("os.path.getsize", return_value=oversized), pytest.raises(SystemExit) as exc_info:
+            _load_index(str(tmp_path))
         assert exc_info.value.code == 1
 
     def test_exits_1_on_race_condition_file_disappears(self, tmp_path: Path) -> None:

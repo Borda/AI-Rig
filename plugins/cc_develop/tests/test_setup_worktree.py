@@ -19,7 +19,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 import setup_worktree
 
 SCRIPT = Path(setup_worktree.__file__)

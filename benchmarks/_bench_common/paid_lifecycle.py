@@ -6,14 +6,13 @@ retain transport, prompt parsing, and terminal formatting through callbacks; the
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 import hashlib
 import json
-from pathlib import Path
 import re
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Generic, TypeVar
-
 
 Task = TypeVar("Task")
 Arm = TypeVar("Arm")

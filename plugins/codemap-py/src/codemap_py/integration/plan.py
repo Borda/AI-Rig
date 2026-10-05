@@ -1,12 +1,19 @@
 """Build the plan describing the source writes and runtime syncs a mutation would make."""
 
 from __future__ import annotations
+
 import argparse
 import json
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
+
 from codemap_py import __version__, index_paths
+
+# Reached through the module, not a bound name: tests patch these on the defining
+# module (monkeypatch.setattr(integration.native, ...)), which a `from .native import`
+# binding here would not see.
+from . import native
 from .managed_block import (
     PROTOCOL_VERSION,
     _managed_block_body,
@@ -14,22 +21,17 @@ from .managed_block import (
     _mutate_content,
     _render_managed_block,
 )
-
-# Reached through the module, not a bound name: tests patch these on the defining
-# module (monkeypatch.setattr(integration.native, ...)), which a `from .native import`
-# binding here would not see.
-from . import native
 from .native import _installed_version_lookup, _marketplace_entry
 from .types import (
+    _EXIT_OK,
     CONSUMER_MANAGED_FILE,
-    ConsumerTarget,
     MARKETPLACE_NAME,
     MARKETPLACE_REMOTE,
     PROVIDER_NAME,
-    Runtime,
     SCHEMA_VERSION,
+    ConsumerTarget,
+    Runtime,
     Source,
-    _EXIT_OK,
     _cli_for,
     _runtimes_of,
     resolve_targets,

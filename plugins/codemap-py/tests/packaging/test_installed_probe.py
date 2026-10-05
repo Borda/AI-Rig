@@ -21,7 +21,6 @@ from pathlib import Path
 
 import pytest
 
-
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _REPO_ROOT = _PLUGIN_ROOT.parents[1]
 _SCRIPTS = _PLUGIN_ROOT / "scripts"
@@ -181,7 +180,7 @@ def test_runtime_proof_fails_when_launcher_mode_stripped(tmp_path: Path) -> None
     """Falsification: a non-executable installed launcher makes the runtime proof fail (no fallback)."""
     if str(_SCRIPTS) not in sys.path:
         sys.path.insert(0, str(_SCRIPTS))
-    import _probe_runtime  # noqa: PLC0415  (path insert must precede import)
+    import _probe_runtime
 
     installed = tmp_path / "installed"
     (installed / "bin").mkdir(parents=True)

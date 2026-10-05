@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
-import importlib
 import base64
 import hashlib
+import importlib
 import json
 import os
-from pathlib import Path
 import stat
 import subprocess
 import sys
 import tempfile
 import threading
+from pathlib import Path
 from typing import Any
 
 import pytest
-
 
 BIN_ROOT = Path(__file__).resolve().parents[1] / "bin"
 SETUP_PATH = BIN_ROOT / "bridge_setup.py"

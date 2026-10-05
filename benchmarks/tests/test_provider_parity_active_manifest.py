@@ -17,7 +17,6 @@ import pytest
 from benchmarks._bench_common import provider_parity_contracts as core
 from benchmarks._bench_common.artifact_hashing import module_sha256, runner_sha256
 
-
 ROOT = Path(__file__).resolve().parents[2]
 BENCHMARKS = ROOT / "benchmarks"
 METHODOLOGY_MANIFEST = BENCHMARKS / "manifests" / "provider-parity-methodology.json"

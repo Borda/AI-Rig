@@ -13,7 +13,6 @@ from typing import Any
 
 import pytest
 
-
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 AGENTIC_SUITE_PATH = BENCHMARKS_DIR / "suites" / "tasks-agentic.json"
 PARITY_MANIFEST_PATH = BENCHMARKS_DIR / "manifests" / "provider-parity-methodology.json"

@@ -12,7 +12,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 import resolve_shared
 
 SCRIPT = Path(resolve_shared.__file__)

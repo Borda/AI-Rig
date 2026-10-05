@@ -14,7 +14,6 @@ import pandas as pd
 from _bench_query.models import ScenarioResult, SuiteStats
 from _bench_query.scoring import _PRIMARY_SUITES, _tally, compute_self_consistency, compute_verdict
 
-
 # ---- REPORT ----
 
 

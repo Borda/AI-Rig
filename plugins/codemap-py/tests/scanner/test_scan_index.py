@@ -30,9 +30,9 @@ _SRC = Path(__file__).resolve().parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-import codemap_py.graph as _graph_mod  # noqa: E402  (needs the sys.path insert above)
-import codemap_py.rwgate as _rwgate_mod  # noqa: E402
-import codemap_py.scanner as _scanner_mod  # noqa: E402
+import codemap_py.graph as _graph_mod
+import codemap_py.rwgate as _rwgate_mod
+import codemap_py.scanner as _scanner_mod
 
 extract_dynamic_imports = _scanner_mod.extract_dynamic_imports
 scan_config_refs = _scanner_mod.scan_config_refs

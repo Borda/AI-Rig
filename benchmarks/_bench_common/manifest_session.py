@@ -7,11 +7,11 @@ importable by its own tests.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-import subprocess
-import sys
 
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = BENCHMARKS_DIR.parent

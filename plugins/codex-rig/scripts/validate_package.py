@@ -48,7 +48,6 @@ from typing import Any
 
 from _package_identity import verify_package
 
-
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = PACKAGE_ROOT / "scripts" / "build_package.py"
 EXPECTED_SKILLS = {

@@ -111,12 +111,9 @@ def derive_module_from_path(path: str) -> str:
         'mod'
     """
     s = path.replace("\\", "/")
-    if s.startswith("./"):
-        s = s[2:]
-    if s.startswith("src/"):
-        s = s[4:]
-    if s.endswith(".py"):
-        s = s[:-3]
+    s = s.removeprefix("./")
+    s = s.removeprefix("src/")
+    s = s.removesuffix(".py")
     if s.endswith("/__init__"):
         s = s.removesuffix("/__init__")
     return s.replace("/", ".")
@@ -181,7 +178,7 @@ def derive_modules_from_diff(diff_files: Iterable[str], limit: int) -> list[str]
 def _git_diff_files(timeout: int = 15) -> list[str]:
     """Return ``.py`` file paths from ``git diff HEAD --name-only`` (empty list on failure)."""
     try:
-        out = subprocess.check_output(  # noqa: S603 — fixed argv, no shell.
+        out = subprocess.check_output(
             ["git", "diff", "HEAD", "--name-only"],
             stderr=subprocess.DEVNULL,
             text=True,
@@ -199,7 +196,7 @@ def _git_root(timeout: int = 15) -> Path:
     a consumer that anchored on the process CWD reported a false ``no_index`` whenever a skill ran from a subdirectory.
     """
     try:
-        out = subprocess.check_output(  # noqa: S603 — fixed argv, no shell.
+        out = subprocess.check_output(
             ["git", "rev-parse", "--show-toplevel"],
             stderr=subprocess.DEVNULL,
             text=True,
@@ -270,7 +267,7 @@ def _find_py_files(target: str) -> list[str]:
 def _scan_query(args: list[str], timeout: int = 15) -> None:
     """Invoke ``codemap-py query`` with given args; stream stdout; swallow non-zero exits."""
     try:
-        subprocess.run(  # noqa: S603 — fixed binary name + caller-controlled args.
+        subprocess.run(
             ["codemap-py", "query", *args],
             check=False,
             stderr=subprocess.DEVNULL,

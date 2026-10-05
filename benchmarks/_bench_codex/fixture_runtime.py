@@ -16,13 +16,13 @@ import hashlib
 import json
 import re
 import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
 
 from _bench_common import change_impact_contracts as contracts
 from _bench_common.provider_parity_contracts import treatment_adherence
-
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
@@ -37,7 +37,7 @@ class FixtureRuntimeCoordinate:
     index_scan_root: str
 
     @classmethod
-    def from_mapping(cls, coordinate: Mapping[str, Any]) -> "FixtureRuntimeCoordinate":
+    def from_mapping(cls, coordinate: Mapping[str, Any]) -> FixtureRuntimeCoordinate:
         """Parse one complete fixture runtime coordinate without accepting extra fields."""
         expected = {"source_fingerprint", "raw_index_sha256", "scan_version", "index_scan_root"}
         if set(coordinate) != expected:

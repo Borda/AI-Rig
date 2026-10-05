@@ -33,7 +33,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-
 # Claude launches this hook as `python "<plugin-root>/hooks/seed-session.py"`, which
 # already puts hooks/ on sys.path — but the test suite loads it through
 # `importlib.util.spec_from_file_location`, which does not. Inserting explicitly makes
@@ -42,7 +41,7 @@ _HOOKS_DIR = Path(__file__).resolve().parent
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 
-import _hookutil  # noqa: E402  (needs the sys.path insert above)
+import _hookutil
 
 # This hook WRITES the marker every other layer reads, so its keying is the contract.
 # Re-exported rather than re-implemented: three hooks each carried their own copy of

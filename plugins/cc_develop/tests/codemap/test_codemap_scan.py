@@ -12,10 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import codemap_scan as cs
-
+import pytest
 
 # ---------- Pure helpers ----------
 

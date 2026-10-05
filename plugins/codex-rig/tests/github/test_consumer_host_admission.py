@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from test_parallel_execution import _load_validator
 
 

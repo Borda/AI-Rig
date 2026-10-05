@@ -6,14 +6,13 @@ import hashlib
 import inspect
 import io
 import json
-from pathlib import Path
 import subprocess
 import sys
-from typing import Any
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
-
 
 BENCHMARKS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCHMARKS))
@@ -463,7 +462,6 @@ def test_preflight_probes_every_native_arm(monkeypatch: Any, tmp_path: Path) -> 
 
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             """Initialize the test double's fixture-controlled state."""
-            pass
 
         def probe_arm(self, arm: str) -> None:
             """Record the treatment passed to the preflight probe."""
@@ -471,8 +469,6 @@ def test_preflight_probes_every_native_arm(monkeypatch: Any, tmp_path: Path) -> 
 
         def close(self) -> None:
             """Implement the adapter cleanup boundary for the enclosing lifecycle test."""
-            pass
-
     monkeypatch.setattr(runner._structural(), "CodexRunner", Adapter)
     runner.preflight_isolation(
         repo_path=tmp_path,
@@ -496,7 +492,6 @@ def test_paid_snapshot_binds_the_structural_launcher_and_readcrop_stage(monkeypa
 
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:
             """Initialize the test double's fixture-controlled state."""
-            pass
 
         def create_input_snapshot(self, _run_dir: Path, **kwargs: Any) -> None:
             """Capture snapshot arguments and interrupt before provider execution."""
@@ -505,8 +500,6 @@ def test_paid_snapshot_binds_the_structural_launcher_and_readcrop_stage(monkeypa
 
         def close(self) -> None:
             """Implement the adapter cleanup boundary for the enclosing lifecycle test."""
-            pass
-
     monkeypatch.setattr(runner._structural(), "CodexRunner", Adapter)
     task = {"task": {"id": "RC-01"}, "contract": type("Contract", (), {"task_id": "RC-01"})()}
     with pytest.raises(KeyboardInterrupt):
@@ -561,7 +554,7 @@ def test_preflight_hands_the_run_relocation_to_the_adapter(monkeypatch: pytest.M
 
         def close(self) -> None:
             """Accept teardown without releasing anything."""
-            return None
+            return
 
     monkeypatch.setattr(runner, "_structural", lambda: SimpleNamespace(CodexRunner=_Adapter))
     relocation = {"frozen_index_sha256": "a" * 64}

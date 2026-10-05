@@ -12,7 +12,6 @@ from typing import Any
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 BENCHMARKS = ROOT / "benchmarks"
 BUILDER = BENCHMARKS / "build-codex-agentic-manifest.py"

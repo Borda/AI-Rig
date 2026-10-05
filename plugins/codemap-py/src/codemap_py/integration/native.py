@@ -1,6 +1,7 @@
 """Observe the host CLIs and installed plugin state without mutating anything."""
 
 from __future__ import annotations
+
 import hashlib
 import json
 import os
@@ -8,10 +9,10 @@ import shutil
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from .managed_block import _CODEX_RIG_AGENTS_BEGIN_RE, _CODEX_RIG_AGENTS_END
-from .types import IntegrationError, MARKETPLACE_NAME, Runtime
-from .util import _MAX_JSON_BYTES, _sha256_bytes
 
+from .managed_block import _CODEX_RIG_AGENTS_BEGIN_RE, _CODEX_RIG_AGENTS_END
+from .types import MARKETPLACE_NAME, IntegrationError, Runtime
+from .util import _MAX_JSON_BYTES, _sha256_bytes
 
 _NATIVE_TIMEOUT_S = 30
 

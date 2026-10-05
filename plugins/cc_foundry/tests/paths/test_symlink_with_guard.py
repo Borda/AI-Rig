@@ -19,10 +19,8 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
-
-import symlink_with_guard  # noqa: E402
-from symlink_with_guard import cleanup, create_link, main, scan  # noqa: E402
+import symlink_with_guard
+from symlink_with_guard import cleanup, create_link, main, scan
 
 _MARKER = "borda-ai-rig/foundry/"
 _SKILL_MD = Path(__file__).resolve().parent.parent.parent / "skills" / "setup" / "SKILL.md"

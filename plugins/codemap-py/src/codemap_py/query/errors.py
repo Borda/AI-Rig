@@ -1,9 +1,11 @@
 """Exit codes and the error emitters every command exits through."""
 
 from __future__ import annotations
+
 import json
 import sys
 from pathlib import Path
+
 from codemap_py import query_state as state
 
 # Transitional seam: exclusion rules live in codemap_py.scanner, but this

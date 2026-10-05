@@ -10,9 +10,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-
-import verify_perm  # noqa: E402
+import verify_perm
 
 
 def _write_settings(path: Path, allow: list[str] | None) -> None:

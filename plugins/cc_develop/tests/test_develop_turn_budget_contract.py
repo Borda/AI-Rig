@@ -192,7 +192,7 @@ class TestAgentWatchDeadlines:
     @pytest.mark.parametrize("batch", ["scope", "challenge", "tests", "team", "review", "verify", "consolidate"])
     def test_every_batch_has_a_deadline(self, batch: str) -> None:
         """Each spawn batch named at a spawn site has a row in the deadline table."""
-        assert re.search(rf"^\| `{batch}` \|.*\| \d+ \|$", _AGENT_RESOLUTION.read_text(encoding="utf-8"), re.M)
+        assert re.search(rf"^\| `{batch}` \|.*\| \d+ \|$", _AGENT_RESOLUTION.read_text(encoding="utf-8"), re.MULTILINE)
 
     @pytest.mark.parametrize(
         ("relative", "batch"),

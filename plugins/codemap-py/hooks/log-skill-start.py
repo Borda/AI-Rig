@@ -45,7 +45,7 @@ _HOOKS_DIR = Path(__file__).resolve().parent
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 
-import _hookutil  # noqa: E402  (needs the sys.path insert above)
+import _hookutil
 
 #: Same sanitizer as ``codemap_py.telemetry`` — the shard names must agree to join.
 _UNSAFE_KEY = re.compile(r"[^A-Za-z0-9_-]")

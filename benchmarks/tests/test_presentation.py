@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import io
-from pathlib import Path
 import re
 import sys
-
+from pathlib import Path
 
 BENCHMARKS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARKS))
 
-from _bench_common.presentation import (  # noqa: E402
+from _bench_common.presentation import (
     benchmark_console,
     format_artifact_block,
     format_paid_command_block,

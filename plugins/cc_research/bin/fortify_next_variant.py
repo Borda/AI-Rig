@@ -55,8 +55,7 @@ def normalise_variant_name(raw: str) -> str:
         'variant-dropout'
     """
     slug = raw.replace(" ", "-").lower()
-    if slug.startswith("variant-"):
-        slug = slug[len("variant-") :]
+    slug = slug.removeprefix("variant-")
     return f"variant-{slug}"
 
 

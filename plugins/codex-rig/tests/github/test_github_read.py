@@ -13,7 +13,6 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 MODULE = PLUGIN_ROOT / "shared" / "github_read.py"
 

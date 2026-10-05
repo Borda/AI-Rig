@@ -26,23 +26,21 @@ from __future__ import annotations
 
 import argparse
 import base64
-from collections import deque
-from collections.abc import Callable
-from dataclasses import dataclass
 import hashlib
 import hmac
 import json
 import os
-from pathlib import Path
-from pathlib import PurePath
 import re
-import shutil
 import secrets
+import shutil
 import stat
 import subprocess
 import sys
 import time
-
+from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path, PurePath
 
 PLUGIN_ID = "bridge@borda-ai-rig"
 CAPTURE_TIMEOUT_SECONDS = 20

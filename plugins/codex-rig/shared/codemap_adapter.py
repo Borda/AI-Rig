@@ -57,7 +57,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 PROTOCOL_VERSION = "codemap-py.integration.v1"
 ARTIFACT_SCHEMA_VERSION = 3
 STATUS_AVAILABLE = "available"

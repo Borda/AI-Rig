@@ -9,9 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import build_merge_plan as bmp
+import pytest
 
 
 class TestBuildPlan:

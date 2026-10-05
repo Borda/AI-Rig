@@ -174,9 +174,7 @@ from hypothesis import strategies as st
 import numpy as np
 
 
-@given(
-    st.lists(st.floats(allow_nan=False, allow_infinity=False), min_size=1, max_size=100)
-)
+@given(st.lists(st.floats(allow_nan=False, allow_infinity=False), min_size=1, max_size=100))
 def test_normalize_idempotent(values):
     arr = np.array(values)
     normalized_once = normalize(arr)

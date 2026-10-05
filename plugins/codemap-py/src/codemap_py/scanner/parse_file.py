@@ -1,6 +1,7 @@
 """Turn one source file into its index entry, orchestrating every other extractor."""
 
 from __future__ import annotations
+
 import ast
 import sys
 from pathlib import Path

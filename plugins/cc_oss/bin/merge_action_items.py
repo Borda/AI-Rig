@@ -63,7 +63,7 @@ _BIN_DIR = str(Path(__file__).resolve().parent)
 if _BIN_DIR not in sys.path:
     sys.path.insert(0, _BIN_DIR)
 
-from mint_finding_ids import normalize_path, read_jsonl, section_slug  # noqa: E402
+from mint_finding_ids import normalize_path, read_jsonl, section_slug
 
 #: Numeric resolve severity per review severity word.
 SEVERITY_SCORE: Final = {"critical": 5, "high": 4, "medium": 3, "low": 2, "cosmetic": 1}
