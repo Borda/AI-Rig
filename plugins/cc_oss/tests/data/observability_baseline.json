@@ -498,10 +498,6 @@
         "now": "! BLOCKED \u2014 resumed merge plan not built"
       },
       {
-        "head": "! BLOCKED \u2014 selected action items exceed the 20-item hard cap; Step 3",
-        "now": "! BLOCKED \u2014 selected action items exceed the 20-item hard cap; Step 3"
-      },
-      {
         "head": "! BLOCKED \u2014 selected item",
         "now": "! BLOCKED \u2014 selected item"
       },

@@ -38,7 +38,7 @@ MERGE FINDINGS  (step 3c)
   +--------------------- FAN 2 ----------------------+
   |                                                  |
 CONFLICT RESOLVE  (steps 6, 7)            ◆ SELECTION GATE  (step 3d)
-  ▣ 1 per file  (step 7a)                   which items · over-20 cap
+  ▣ 1 per file  (step 7a)                   which items
   distill intent + base drift  (step 6)     commit mode
   resolve markers, stage                    topic group + typed labels
                                             dispatch width
@@ -74,7 +74,7 @@ Between the selection gate and the push confirmation the run is unattended on th
 | -- | -- | -- | -- |
 | INTEL ‖ BRANCH + TRIAL MERGE | 2 | fixed | MERGE FINDINGS |
 | CONFLICT RESOLVE ‖ SELECTION GATE | 2 | conflicted-file count on one side, one gate on the other | COMMIT MERGE |
-| IMPLEMENT challenge | ≤3 | challenger roster (3 domains) | before specialists |
+| IMPLEMENT challenge | `Σ ceil(n_d/12)` | ≤12 items per chunk over 3 domains; pool caps: opus 5, sonnet 8 | before specialists |
 | IMPLEMENT specialists | `DISPATCH_MODE` | pool caps: opus 5, sonnet 8 | merge-back |
 | VERIFY | 2 | fixed | ship |
 | SHIP comment dispatch | 3 | `BATCH_SIZE`, waves of 3 | end |
@@ -93,7 +93,7 @@ Both top-level fans are free — each rides an idle window the orchestrator alre
 | -- | -- | -- |
 | unknown flag · missing report source · codemap index | conditional | SETUP |
 | more than 20 conflicted files | conditional | trial merge, and aborts it |
-| **SELECTION** (items, commit mode, grouping + labels, dispatch width, over-20 cap, push intent + post-PR action; `enforce-resolve-table.js` denies it until every pending item has a table row in the reply) | **always** | everything past the second join |
+| **SELECTION** (items, commit mode, grouping + labels, dispatch width, push intent + post-PR action; `enforce-resolve-table.js` denies it until every pending item has a table row in the reply) | **always** | everything past the second join |
 | group preview (`DISPATCH_MODE=preview`, elected at SELECTION) | conditional | challenge → specialists |
 | challenge timed out twice (batched per wave) | conditional, error recovery | challenge → specialists |
 | unresolved item status | conditional, error recovery | final report |

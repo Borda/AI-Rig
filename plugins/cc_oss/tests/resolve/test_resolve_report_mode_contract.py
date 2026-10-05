@@ -359,7 +359,7 @@ def test_report_mode_persists_items_and_reaches_shared_selection_before_dispatch
     assert "skip to Step 8" not in route
     selection = skill[skill.index("## Step 3d") : skill.index("## Step 3e")]
     assert "**Commit mode**" in selection
-    assert "**Over-20 selection gate**" in selection
+    assert "**No per-pass item cap**" in selection
     tasks = skill[skill.index("## Step 3e") : skill.index("## Step 4")]
     assert "`report` mode skips Step 3e" in tasks
 

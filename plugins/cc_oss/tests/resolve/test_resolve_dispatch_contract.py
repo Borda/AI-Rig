@@ -174,12 +174,13 @@ def test_step_1_agent_sentinel_reaches_step_8_for_nine_medium_items(
 
 
 @pytest.mark.skipif(_BASH is None, reason="Resolve Step 8 uses Bash")
-@pytest.mark.parametrize(
-    ("count", "allowed"),
-    [pytest.param(20, True, id="hard-cap"), pytest.param(21, False, id="above-hard-cap")],
-)
-def test_step_8_prelude_enforces_hard_cap_before_item_file(tmp_path: Path, count: int, allowed: bool) -> None:
-    """A 21-item selection cannot enter dispatch even if an earlier prompt was skipped."""
+@pytest.mark.parametrize("count", [21, 60])
+def test_step_8_prelude_accepts_selection_above_former_cap(tmp_path: Path, count: int) -> None:
+    """A selection larger than the former 20-item cap enters dispatch in one pass.
+
+    Challenge often rejects many items, so a per-pass cap forced needless reruns; load is now bounded per agent, and the
+    prelude must not block or trim any selection size.
+    """
     dispatch = (_RESOLVE / "modes/action-item-dispatch.md").read_text(encoding="utf-8")
     (tmp_path / "resolve-agent-override-resolve-cap-test").write_text("\n", encoding="utf-8", newline="\n")
     (tmp_path / "resolve-commit-mode-resolve-cap-test").write_text("each\n", encoding="utf-8", newline="\n")
@@ -205,30 +206,45 @@ def test_step_8_prelude_enforces_hard_cap_before_item_file(tmp_path: Path, count
         capture_output=True,
         check=False,
     )
-    assert (result.returncode == 0) is allowed
-    if not allowed:
-        assert b"! BLOCKED" in result.stdout
-        assert b"selected action items exceed the 20-item hard cap" in result.stdout
-        assert (tmp_path / "resolve-impl-dir-resolve-cap-test").read_text(encoding="utf-8").strip() == _bash_path(
-            impl_dir
-        )
-        assert not (impl_dir / "selected-items.txt").exists()
+    assert result.returncode == 0, result.stderr
+    assert b"! BLOCKED" not in result.stdout
+    assert (impl_dir / "selected-items.txt").read_text(encoding="utf-8").strip().split() == [
+        str(item_id) for item_id in range(1, count + 1)
+    ]
 
 
-def test_over20_choice_is_bounded_before_task_creation() -> None:
-    """A bulk selection above the cap needs an explicit scope decision before tasks exist."""
+def test_selection_gate_never_caps_or_trims_the_selection() -> None:
+    """Step 3d passes every selected ID to dispatch and only prints a notice for a very large selection.
+
+    The former over-20 question deferred the remainder to a rerun; its replacement must not ask, trim, or defer.
+    """
     skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
-    gate = skill[skill.index("**Over-20 selection gate**") : skill.index("## Step 3e")]
-    assert "AskUserQuestion" in gate
-    assert "first 20 selected items" in gate
-    assert "rerun for the remaining items" in gate
-    assert "stop without creating tasks" in gate
-    assert skill.index("**Over-20 selection gate**") < skill.index("## Step 7b join")
-    assert "proceed with all" not in gate
+    selection = skill[skill.index("## Step 3d") : skill.index("## Step 7b join")]
+    notice = selection[selection.index("**No per-pass item cap**") :]
+    assert "More than 20 items were selected" not in skill
+    assert "never trim a selection or defer a remainder to a rerun" in notice
+    assert "more than 50 → print one line in the reply" in notice
+    assert "No question, no trim." in notice
+    assert "AskUserQuestion" not in notice
+
+
+def test_challenge_phase_bounds_items_per_agent() -> None:
+    """Phase 1 splits each challenge domain into chunks of at most 12 items, keeping each file in one chunk.
+
+    One challenger per whole domain grew without bound (4 tool calls per item), so a large domain exceeded the agent
+    stall budget; chunk size and file affinity are the contract that keeps every challenger inside it.
+    """
     dispatch = (_RESOLVE / "modes/action-item-dispatch.md").read_text(encoding="utf-8")
-    cap = dispatch[dispatch.index("**Caps**") : dispatch.index("**Parallel specialist-worktree dispatch**")]
-    assert "AskUserQuestion" not in cap
-    assert "Spawn wave cap" in cap
+    caps = dispatch[dispatch.index("**Caps**") : dispatch.index("**Parallel specialist-worktree dispatch**")]
+    phase1 = dispatch[dispatch.index("### Phase 1: Challenge") : dispatch.index("**Challenge double-timeout gate**")]
+    assert "AskUserQuestion" not in caps
+    assert "Spawn wave cap" in caps
+    assert "-le 20" not in dispatch
+    assert "**Chunk each domain group at `CHALLENGE_CHUNK=12` items.**" in phase1
+    assert "`ceil(n_d/12)` chunks" in phase1
+    assert "Keep every file's items in one chunk" in phase1
+    assert "`logic-1`, `logic-2`" in phase1
+    assert "one row per fired chunk" in phase1
 
 
 def test_explicit_agent_bypasses_c1_and_reaches_specialist_dispatch() -> None:
@@ -598,12 +614,6 @@ def test_push_question_lives_in_step_3d_with_fixed_blocks() -> None:
     assert [block in push_step for block in blocks] == [False] * 4
     assert "Push question — multiSelect: FALSE" in selection
     assert "# substitute" not in selection
-    cap = selection[selection.index("**Over-20 selection gate**") :]
-    assert "final selected IDs in every pending-count band" in cap
-    assert "report mode without a PR number" in cap
-    assert "only that band can select more than 20" not in cap
-    assert cap.index("count `SELECTED_ITEMS`") < cap.index("More than 20 items were selected")
-    assert "otherwise ask it alone in another call" in cap
 
 
 @pytest.mark.skipif(_BASH is None, reason="The Step 10 push read-back is Bash")

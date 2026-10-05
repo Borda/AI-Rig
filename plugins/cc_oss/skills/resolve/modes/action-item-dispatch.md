@@ -32,8 +32,7 @@ IMPL_AGENT="${_AGENT_OVERRIDE:-bridge:implement}"
 SELECTED_ITEMS="<space-separated selected ids>"
 case "$SELECTED_ITEMS" in *'<'*'>'*|"") echo "! BLOCKED — SELECTED_ITEMS still holds the placeholder; substitute the Step 3d ids before running this block"; exit 1 ;; esac
 case "$SELECTED_ITEMS" in *[!0-9\ ]*) echo "! BLOCKED — SELECTED_ITEMS must be space-separated digits only, got: $SELECTED_ITEMS"; exit 1 ;; esac
-set -- $SELECTED_ITEMS  # numeric tokens only after the validation above; count actual IDs, not spaces
-[ "$#" -le 20 ] || { echo "! BLOCKED — selected action items exceed the 20-item hard cap; Step 3d's over-20 choice was missed. Stop dispatch, reconcile created item tasks, and restart selection"; exit 1; }
+set -- $SELECTED_ITEMS  # numeric tokens only after the validation above
 for _ID in "$@"; do
     jq -e --argjson id "$_ID" 'select(.id == $id)' "$IMPL_DIR/action-items.jsonl" >/dev/null \
         || { echo "! BLOCKED — selected item $_ID missing from action-items.jsonl"; exit 1; }
@@ -114,7 +113,7 @@ Process items in `SELECTED_ITEMS` (from Step 3e) in priority order (`[req]` firs
   - otherwise → `CHANGE_SCOPE=targeted` (default)
 - Compute `CHANGE_SCOPE` once before the loop; pass to Step 9 via shell variable
 
-**Caps** — Step 3d bounds the selection to 20 before item tasks are created, and the prelude above rejects any over-20 selection if that gate was missed. No further gate for 11–20 items: Phase 2 groups them by specialist (≤5/group, below) and Phase 3's **Spawn wave cap** already paces the resulting groups within the `claude-config.md` §Parallel Spawn Ceilings pools — a selection in this range fires in ordered waves automatically, same as any other count, never through a single serial run. Never silently change the selected scope or dispatch more than 20 items.
+**Caps** — no per-pass item cap: every selected item runs in this pass, never a rerun for a remainder. Load is bounded per agent instead: Phase 1 chunks each challenge domain at ≤12 items/agent (`CHALLENGE_CHUNK=12`, below), Phase 2 groups survivors by specialist at ≤5/group, and both fire in ordered waves within the `claude-config.md` §Parallel Spawn Ceilings pools (**Spawn wave cap**, below), never through a single serial run. Challenge rejections shrink Phase 2 before any worktree opens. Never silently change the selected scope.
 
 **Parallel specialist-worktree dispatch**: C1 Codex-first routing (below) runs one item per call only on the bridge route and only from a clean worktree, so Git can identify paths changed during that call. Later C1 candidates in an uncommitted run fall through to the normal phases. Everything bypassing or falling through C1 splits into three passes: **Phase 1** challenge (read-only, parallel by domain), **Phase 2** implementation (one isolated `git worktree` per specialist, parallel), **Phase 3** merge-back (sequential, orchestrator-owned cherry-pick in original priority order). See Phase 1/2/3 below.
 
@@ -353,9 +352,9 @@ done < <(jq -b -r --arg id "$_BATCH_TAG" 'select(.verdict=="DONE" and .status=="
 
 When `CODEX_AVAILABLE=false` OR `ITEM_EFFORT!=medium`: skip Codex routing; use Phase 1+2 directly. If `IMPL_AGENT=bridge:implement`, this fallback uses the `change` table, not the Skill marker as an Agent type.
 
-> **Agent budget** — Phase 1's domain grouping is roster-bounded (3 challenger types, always ≤3 spawns); `comment-dispatch` batches at `BATCH_SIZE`.
+> **Agent budget** — Phase 1 spawns `Σ ceil(n_d/12)` challengers over the 3 challenger domains (≤3 spawns up to 12 items per domain); `comment-dispatch` batches at `BATCH_SIZE`.
 >
-> - Phase 2's sub-group splitting is not roster-bounded the same way — see its own §Spawn wave cap below.
+> - Phase 1 chunks and Phase 2 sub-groups both pace through §Spawn wave cap below.
 > - What always applies regardless of grouping: each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call.
 > - **Work under ~73 calls total is cheaper inline — spawn nothing**, the common case for a 1–3 item PR.
 > - Merge a single-item group into the nearest domain rather than giving it its own agent.
@@ -385,8 +384,12 @@ Set `DOMAIN_CHALLENGER` from routing table: architecture/API/coupling/default �
 
 Group items by `DOMAIN_CHALLENGER`, preserving each item's original priority-order position within its group (stable partition — needed later so Phase 3's merge plan also respects each specialist's internal commit order).
 
-- One combined challenge call per domain group, covering ALL that group's items.
-- Derive `<domain>` per group as a short kebab-case slug from the group's shared theme (e.g. `logic`, `tests`, `docs-api`) — the delta between groups, reused as `name="challenge-<domain>"`, as the prompt lead, and as the output filename suffix.
+- **Chunk each domain group at `CHALLENGE_CHUNK=12` items.** Per-item budget below is 4 tool calls, so 12 items ≈ 48 calls — inside the ~55–60 stall bound. A domain of `n_d` items splits into `ceil(n_d/12)` chunks of balanced size (sizes differ by at most one where file affinity allows).
+  - Keep every file's items in one chunk — shared file reads amortize, and verdicts on one file stay consistent. Fill chunks by whole files in priority order of each file's first item.
+  - One file with more than 12 items → that file alone is one chunk, over 12 allowed; file affinity wins.
+  - Preserve priority order inside each chunk.
+- One combined challenge call per chunk, covering ALL that chunk's items.
+- Derive `<domain>` per chunk as a short kebab-case slug from the group's shared theme (e.g. `logic`, `tests`, `docs-api`); a domain split into several chunks appends `-<k>` (`logic-1`, `logic-2`). The slug is the delta between chunks, reused as `name="challenge-<domain>"`, as the prompt lead, and as the output filename suffix — every `<domain>` below means this per-chunk slug.
 - `description` = 3–5 words naming that group's theme, never echoing `name` or the shared PR.
 - Compose every group's labels in one pass and confirm the prompt leads differ in their first word — FleetView prints `name` plus the leading chars of prompt line 1, so a shared prefix there yields indistinguishable rows (task-lifecycle.md §Spawn slots):
 
@@ -428,7 +431,7 @@ Return ONLY compact JSON as your FINAL message (nothing after it):
 {\"items\":[{\"id\":N,\"evidence\":\"VALID\"|\"REJECT\",\"evidence_rationale\":\"<one sentence>\",\"suggestion\":\"VALID\"|\"REJECT\",\"suggestion_rationale\":\"<one sentence>\",\"alternative\":\"<brief alternative or null>\"}]}")
 ```
 
-**Fire every domain group's `Agent()` call in the same response turn** — read-only (no working-tree writes), safe to run concurrently regardless of file overlap between domains. In that same response, arm the deadlines (SKILL.md §Agent wait discipline): write `$IMPL_DIR/agent-watch-challenge.tsv` with one row per domain, `challenge-<domain><TAB><IMPL_DIR>/challenge-domain-<domain>.md<TAB>300` (`CHALLENGE_TIMEOUT_S`). Never poll for verdicts — no `ScheduleWakeup`, `ListAgents` or `Monitor` loop; run the watch check at each wake-up. A domain `timed_out`, or one whose notification arrived without its JSON reply → ⏱ now, and every item in it is treated `UNCERTAIN` per the verdict rules below (one single-item retry each, armed in `agent-watch-challenge-retry.tsv`). **No item is ever dropped or implemented by a timeout alone** — the first retry is automatic; what happens after a second timeout is the user's decision.
+**Fire every chunk's `Agent()` call in the same response turn** — read-only (no working-tree writes), safe to run concurrently regardless of file overlap between chunks. More chunks than a tier's pool (§Spawn wave cap: `CAP_OPUS=5` for `foundry:challenger`/`foundry:sw-engineer`, `CAP_SONNET=8` for `foundry:qa-specialist`) → fire the first wave up to each pool, the next wave as earlier chunks return. In that same response, arm the deadlines (SKILL.md §Agent wait discipline): write `$IMPL_DIR/agent-watch-challenge.tsv` with one row per fired chunk, `challenge-<domain><TAB><IMPL_DIR>/challenge-domain-<domain>.md<TAB>300` (`CHALLENGE_TIMEOUT_S`); a later wave rewrites the file with its own rows. Never poll for verdicts — no `ScheduleWakeup`, `ListAgents` or `Monitor` loop; run the watch check at each wake-up. A chunk `timed_out`, or one whose notification arrived without its JSON reply → ⏱ now, and every item in it is treated `UNCERTAIN` per the verdict rules below (one single-item retry each, armed in `agent-watch-challenge-retry.tsv`). **No item is ever dropped or implemented by a timeout alone** — the first retry is automatic; what happens after a second timeout is the user's decision.
 
 **Challenge double-timeout gate** — fires only when a single-item retry also times out (a missing verdict blocked the run before this gate existed; the decision now goes to the user instead). Collect **every** item of this wave whose retry timed out, then ask **once** for all of them — one wait, never one per item. Print the items first in the reply (id · domain · summary), plus `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. ``, then invoke `AskUserQuestion` (actual tool call):
 

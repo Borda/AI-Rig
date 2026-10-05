@@ -41,12 +41,6 @@ _ASKS = [
         '"Phase 2 runs specialists in isolated worktrees. How should the work spread?"',
         id="dispatch-kept",
     ),
-    pytest.param(
-        "SKILL.md",
-        *_SELECTION,
-        "More than 20 items were selected; one resolve pass can handle at most 20",
-        id="over-20-moved-to-3d-follow-up",
-    ),
     pytest.param("SKILL.md", *_SELECTION, "It records **push intent only**", id="push-intent-at-3d"),
     pytest.param(
         "SKILL.md",
@@ -129,7 +123,7 @@ def test_codemap_gate_still_asks() -> None:
         pytest.param(
             "0, closed items present",
             "Q1 bulk · Q2 commit-mode · Q3 topic-group · Q4 dispatch",
-            "Q1 push · Q2 over-20, only when more than 20 IDs are selected",
+            "Q1 push, only when a PR number exists",
             id="closed-only-keeps-explicit-selection-and-implementation-decisions",
         ),
         pytest.param(

@@ -111,7 +111,7 @@ Print ACTION_ITEMS as a user-facing markdown table (severity descending):
 
 Columns exactly as above — never add `File`, `Sev`, `Loc` or any other column. Summary ≤60 chars. Notes = `—` when empty; carries commit SHA for `addressed` rows and classification verdicts (e.g. deprecation filter output) — never `file:line`, which the `file`/`line` fields already hold. Print it once, as the last text of the message that issues Step 3d's AskUserQuestion (SKILL.md Step 3d gate) — never here and again at the gate.
 
-PR# found in report header → use the persisted `PR_NUMBER` from the block above, set `$ARGUMENTS = <N>`, go to Step 3d, skip Step 3e, then Step 4; skip Step 3b. Step 3d chooses `SELECTED_ITEMS`, commit mode, and any over-20 batch before checkout. Continue through the normal post-checkout steps to Step 8.
+PR# found in report header → use the persisted `PR_NUMBER` from the block above, set `$ARGUMENTS = <N>`, go to Step 3d, skip Step 3e, then Step 4; skip Step 3b. Step 3d chooses `SELECTED_ITEMS` and commit mode before checkout. Continue through the normal post-checkout steps to Step 8.
 
 No PR# in header → skip Steps 3b and 4; work on current branch as-is. Set fallback values for variables Step 8 reads: `HEAD_REF=$(git branch --show-current 2>/dev/null || echo "")` and `IS_FORK=false` (no cross-repo context). Run the local report commit reference block below, go to Step 3d, skip Step 3e, then use its selected IDs and commit mode in Step 8.
 
@@ -126,7 +126,7 @@ IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null
 printf '%s\n' 'n/a (local report)' > "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}"
 ```
 
-**Report mode — Step 8 behavior**: use only the `SELECTED_ITEMS` and commit mode produced by Step 3d. If `SELECTED_ITEMS` is empty after the user choice, skip Step 8 and jump to Step 9. Otherwise implement exactly those IDs, including explicitly selected resolved/addressed IDs; never replace the selection with the pending set. Step 3d applies its over-20 decision to selected IDs even without a PR number.
+**Report mode — Step 8 behavior**: use only the `SELECTED_ITEMS` and commit mode produced by Step 3d. If `SELECTED_ITEMS` is empty after the user choice, skip Step 8 and jump to Step 9. Otherwise implement exactly those IDs, including explicitly selected resolved/addressed IDs; never replace the selection with the pending set.
 
 **Challenge Log — Phase 1 not skippable in report mode.** Report-mode items reach Step 8 with `SELECTED_ITEMS` set above, same as any other mode — `action-item-dispatch.md`'s Phase 1 then runs unconditionally; only sanctioned skip is `--no-challenge` (SKILL.md), which omits Challenge Log section entirely. Do not shortcut Phase 1 by reusing a source report's own verdicts or `Recommendation` text as if it were Phase 1 output, even when that source is itself a prior `oss:review` report — a reviewer's own recommendation is exactly the unproven claim Phase 1 exists to independently re-verify (`action-item-dispatch.md`'s Part 1/Part 2 challenge contract). Reusing source verdicts instead of dispatching challenge agents is a spec violation to self-correct on, not a documented report-mode behavior.
 
