@@ -186,7 +186,7 @@ def test_report_without_pr_persists_base_for_step_9(tmp_path: Path) -> None:
     assert producer.returncode == 0, producer.stderr
     assert (tmp_path / f"resolve-base-ref-{session}").read_text(encoding="utf-8") == "develop\n"
     qa = (
-        _bash_block_after(qa_doc, "## Step 9: Lint and QA gate")
+        _bash_block_after(qa_doc, "### 9.1: Lint and QA")
         + 'printf "BASE=%s MERGE=%s\\n" "$BASE_REF" "$BASE_REF_MERGE"\n'
     )
     result = subprocess.run([_BASH, "-c", qa], cwd=tmp_path, env=env, capture_output=True, text=True)
@@ -199,7 +199,7 @@ def test_step_9_blocks_missing_base_ref_state(tmp_path: Path) -> None:
     """The QA range cannot silently become origin/ after a lost base sentinel."""
     qa_doc = (_RESOLVE / "modes" / "lint-qa-gate.md").read_text(encoding="utf-8")
     result = subprocess.run(
-        [_BASH, "-c", _bash_block_after(qa_doc, "## Step 9: Lint and QA gate")],
+        [_BASH, "-c", _bash_block_after(qa_doc, "### 9.1: Lint and QA")],
         cwd=tmp_path,
         env=os.environ | {"CLAUDE_CODE_SESSION_ID": "missing-base-test", "TMPDIR": str(tmp_path)},
         capture_output=True,
@@ -207,6 +207,40 @@ def test_step_9_blocks_missing_base_ref_state(tmp_path: Path) -> None:
     )
     assert result.returncode != 0
     assert "BASE_REF sentinel missing" in result.stdout
+
+
+def test_step_1_clears_prior_pr_head_ref() -> None:
+    """Step 1 empties the head-ref sentinel so a no-PR run never inherits an earlier PR's branch.
+
+    A stale head ref would make the Step 9.0 drift gate treat a local report run as a PR run and merge the default
+    branch into the user's own work.
+    """
+    skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
+    step_1 = skill[skill.index("## Step 1: Pre-flight") : skill.index("## Step 2:")]
+
+    assert ': > "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}"' in step_1
+
+
+@pytest.mark.skipif(_BASH is None, reason="Resolve route uses Bash")
+def test_step_9_drift_gate_skips_without_pr_branch(tmp_path: Path) -> None:
+    """Report mode with no PR branch never re-merges the target before QA.
+
+    The no-PR path merges nothing at Step 5, so the Step 9.0 drift gate must exit cleanly before calling git instead of
+    re-merging the default branch into the user's local work.
+    """
+    qa_doc = (_RESOLVE / "modes" / "lint-qa-gate.md").read_text(encoding="utf-8")
+    session = "no-pr-drift-test"
+    (tmp_path / f"resolve-head-ref-{session}").write_text("", encoding="utf-8", newline="\n")
+    (tmp_path / f"resolve-base-ref-{session}").write_text("develop\n", encoding="utf-8", newline="\n")
+    result = subprocess.run(
+        [_BASH, "-c", _bash_block_after(qa_doc, "### 9.0: Target-branch drift gate")],
+        cwd=tmp_path,
+        env=os.environ | {"CLAUDE_CODE_SESSION_ID": session, "TMPDIR": str(tmp_path)},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "BASE_FRESH=n/a" in result.stdout
 
 
 @pytest.mark.skipif(_BASH is None, reason="Resolve route uses Bash")

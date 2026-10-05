@@ -279,6 +279,7 @@ echo "${PR_NUMBER:-n/a}" > "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}"  # timeou
 # suppress any review's gate.
 case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "report" > "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}" ;; *) echo "$PR_NUMBER" > "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}" ;; esac  # timeout: 3000
 : > "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}"  # Step 4 or report mode must publish this run's base before Step 9
+: > "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}"  # empty = no PR branch; Step 9.0 would otherwise re-merge a prior PR's target into local work
 : > "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}"  # Step 4 or local report mode must publish this run's commit reference
 ```
 
@@ -1147,10 +1148,12 @@ echo "PUSH_AUTH=$PUSH_AUTH"
 IFS= read -r FORK_REMOTE < "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}" 2>/dev/null || FORK_REMOTE=""
 IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""
 IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
+# target may have moved since Step 9 (push question idles for hours); runs first so derive_fork_remote's exit stays the block's
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/check_base_fresh.py" --base-ref "$BASE_REF"  # timeout: 90000
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/derive_fork_remote.py" --fork-remote "$FORK_REMOTE" --head-ref "$HEAD_REF" --base-ref "$BASE_REF"  # timeout: 10000
 ```
 
-The block exits non-zero (`⛔` — fork remote or head ref unresolved, push scope not computable) → never push and never ask about an unknown scope; record `not-attempted` (**Record the push outcome** below) and continue to Step 11. Otherwise branch on the printed `PUSH_AUTH`:
+The block exits non-zero (`⛔` — fork remote or head ref unresolved, push scope not computable) → never push and never ask about an unknown scope; record `not-attempted` (**Record the push outcome** below) and continue to Step 11. Otherwise note the printed `BASE_FRESH` for the push confirmation, then branch on the printed `PUSH_AUTH`:
 
 - `skip` → the user explicitly chose "don't push" at Step 3d: print `` → Push skipped (Step 3d answer) — run `git push` manually when ready. ``, record `skipped-by-user`, and jump to Step 11; the post-PR answer still applies there. No question.
 - `push` → ask the **push confirmation** below — Q1 only; the post-PR action was already answered at Step 3d.
@@ -1165,11 +1168,15 @@ Q1 — push. Must surface:
 - Target remote and branch: `$FORK_REMOTE/$HEAD_REF`
 - Diff stat: `$PUSH_STAT` (e.g. `3 files changed, 47 insertions(+), 12 deletions(-)`)
 - Commit count and last subject: `$PUSH_COUNT commits — last: "$LAST_SUBJECT"`
+- Target drift, only when `BASE_FRESH` is not `yes`: `no` → `⚠ origin/<BASE_REF> advanced <BASE_BEHIND> commits since the last merge — newest: "<first listed subject>"`; `unknown` → `⚠ could not verify origin/<BASE_REF> is merged`
 
 Options:
 
 - (a) **Push** — proceed with `git push` below (default)
 - (b) **Skip push** — stop after Step 9; user pushes manually later
+- (c) **Re-sync target first** — `BASE_FRESH=no` only: run Step 9 again from its drift gate (9.0 re-merges, then lint/QA), then return here and ask Q1 again with the new scope. Not counted against 9.0's 2-re-sync cap — the user chose it.
+
+`PUSH_AUTH=skip` with `BASE_FRESH=no` → still print the drift line beside the skip message, so the manual push is not made blind.
 
 Q2 — `unset` intent only — after the final report: (a) **Open PR in browser** (`gh pr view <PR_NUMBER> --web`) · (b) **Skip**. Run the matching Step 3d post-PR block (`open` or `skip`) — never edit a block's value.
 
@@ -1379,7 +1386,7 @@ Non-calibratable — `disable-model-invocation: true` means skill dispatches to 
 
 <notes>
 
-- **Pre-flight git fetch** — Step 1 always runs `git fetch origin` (unconditional) so all remote tracking refs — including `origin/$BASE_REF` — current before Step 5 merges. Step 5 fetches the target again right before merging and fast-forwards the local `$BASE_REF` branch to it when that branch exists (best effort: skipped with a warning when diverged or checked out in another worktree); the merge itself always uses `origin/$BASE_REF`. Then pulls current branch if upstream tracking ref exists and remote ahead. `git pull` conflicts → exit with message to resolve manually — prevents `git merge --continue` with no in-progress merge
+- **Pre-flight git fetch** — Step 1 always runs `git fetch origin` (unconditional) so all remote tracking refs — including `origin/$BASE_REF` — current before Step 5 merges. Step 5 fetches the target again right before merging and fast-forwards the local `$BASE_REF` branch to it when that branch exists (best effort: skipped with a warning when diverged or checked out in another worktree); the merge itself always uses `origin/$BASE_REF`. The target keeps moving after that merge, so `check_base_fresh.py` re-fetches and checks ancestry twice more: at Step 9 entry (drift → re-merge unattended, then QA; cap 2) and in Step 10's scope block (drift → shown in the push confirmation with a re-sync option). Then pulls current branch if upstream tracking ref exists and remote ahead. `git pull` conflicts → exit with message to resolve manually — prevents `git merge --continue` with no in-progress merge
 - **Branch safety** — `gh pr checkout <PR#>` always lands on PR's HEAD, never `main`/`master`. Never push to default branch — if PR branch = default branch, abort, surface.
 - **Same-repo branch rule** — for non-fork PRs (`isCrossRepository=false`), local branch name MUST equal `headRefName` at all times. Never create `pr<N>` alias or other branch name substitute. Enforced by `--branch "$PR_HEAD_REF"` at checkout + hard assertion post-checkout. Rationale: `git push HEAD:$HEAD_REF` on `pr<N>` alias creates new remote branch instead of pushing to PR head — silent data-loss class bug.
 - **OSS fork support** — `gh pr checkout <PR#>` works same for branches + forks; forks get contributor remote + tracking; plain `git push` targets fork branch automatically.
@@ -1387,7 +1394,7 @@ Non-calibratable — `disable-model-invocation: true` means skill dispatches to 
 - **Contribution motivation before code** — "whose intent wins" lens; PR body + linked issues reveal constraints invisible in diff.
 - **`[question]` items** — answer inline in resolve report only; reclassify before implementing; never silently implement unanswered question.
 - **Push verification** — confirm via `gh pr view --json commits`; exit 0 from `git push` necessary but not sufficient (branch protection can silently reject).
-- **Merge-push sequencing + escape hatch** — not atomic; concurrent push → non-fast-forward rejection; Step 10 never retries it unattended — the user retries the push only (don't re-run full merge). `git merge --abort` = undo conflict state; `git push --force-with-lease` on explicit user request only.
+- **Merge-push sequencing + escape hatch** — not atomic; concurrent push → non-fast-forward rejection; Step 10 never retries it unattended — the user retries the push only (don't re-run full merge). Target-branch races are the other half: a target commit landing between Step 5 and the push leaves the PR behind and conflicting without any push error — caught by the Step 9.0 and Step 10 `check_base_fresh.py` checks, never by the push itself. `git merge --abort` = undo conflict state; `git push --force-with-lease` on explicit user request only.
 - **Impl agent health + effort**: C1 medium-effort bridge implementation calls use `bridge:implement` on the default or explicit bridge route, one item from a clean worktree per call; Git-derived changed paths must match the reply before per-item records. Explicit `--agent foundry:*` sends medium items through Phase 1+2 with the selected specialist. Dirty or non-medium bridge items use the change-to-specialist table. Effort is never `low`, minimum `medium`, typo/doc `medium`, multi-file/new-feature `xhigh`, default `high`.
 - **Two-phase challenge**: evidence = problem exists?; suggestion = fix quality?; evidence reject → skip; suggestion reject → self-resolved via `alternative` field; all in `CHALLENGE_LOG` + Step 11 report.
 - **COMMIT_MODE**: `each` (default); `all`; `stage` (⚠ branch restore skipped); `grouped` (falls back to `each` when labels skipped). Set via the commit-mode menu (Step 3d) — placement per the Step 3d slot table — skipped/discarded only when the bulk action = (d) skip-all. Distinct MENU from the bulk action (item scope vs commit strategy); item scope never implies commit mode; menus may share a call, never options.

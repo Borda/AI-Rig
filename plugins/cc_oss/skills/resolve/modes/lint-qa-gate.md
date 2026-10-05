@@ -2,13 +2,39 @@
 
 <!-- fragment — no <workflow> wrapper; executed inline by SKILL.md -->
 
-<!-- Input: resolve-base-ref-${CSID} sentinel from Step 4 or report mode, current working tree after Step 8; $RUN_DIR optional (created here if unset) -->
+<!-- Input: resolve-base-ref-${CSID} sentinel from Step 4 or report mode, resolve-head-ref-${CSID} (empty in report mode), current working tree after Step 8; $RUN_DIR optional (created here if unset) -->
 
 <!-- $CHANGE_SCOPE: lint-only | targeted | full (default=targeted; set in SKILL.md Step 8 effort classification) -->
 
 <!-- Output: lint fixes committed (if any), or BLOCKING_ISSUES found -->
 
 ## Step 9: Lint and QA gate
+
+### 9.0: Target-branch drift gate
+
+Step 5 merged the target once; it keeps moving while Steps 6–8 run (an hour is common), so a run that skips this check pushes a branch already behind it. PR runs only — report mode with no PR branch merges nothing and skips straight to the QA block below.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""
+IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
+[ -n "$HEAD_REF" ] || { echo "BASE_FRESH=n/a (no PR branch — report mode)"; exit 0; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/check_base_fresh.py" --base-ref "$BASE_REF"  # timeout: 90000
+```
+
+Branch on the printed `BASE_FRESH`:
+
+- `yes` or `n/a` → continue to the QA block below.
+- `no` → the target advanced since the Step 5 merge; print `⚠ origin/<BASE_REF> advanced <BASE_BEHIND> commits since the last merge — re-merging before QA` with the listed subjects. Then re-sync, unattended, no question:
+  - a. Load `conflict-resolution.md` (`cat "$_OSS_RESOLVE/modes/conflict-resolution.md"`, reload `_OSS_RESOLVE` from its sentinel first) and run Step 5's Case B merge block unedited — it reloads its refs from the Step 4 sentinels, fetches again and merges `origin/$BASE_REF` with `--no-commit`.
+  - b. No conflicts → commit the merge there (Step 5 "No conflicts"). Conflicts → Step 5a tasks, Step 6 context, Step 7a agents, Step 7b verify-and-commit — the contribution motivation from Step 3b still applies; the over-20 abort gate still applies.
+  - c. Restart Step 9 from 9.0, so QA covers the re-merged tree.
+  - Cap: 2 re-syncs per run. A third `no` → print `⚠ origin/<BASE_REF> still moving — continuing; the push confirmation shows the drift` and continue to the QA block.
+- `unknown` (exit 1 — no `origin/<BASE_REF>` ref) → print `⚠ cannot verify origin/<BASE_REF> is merged — Step 10 re-checks before push` and continue.
+
+`BASE_FETCH=failed` with a decided `BASE_FRESH` → the verdict compares the last-known `origin/<BASE_REF>`; say so in the warning line.
+
+### 9.1: Lint and QA
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"

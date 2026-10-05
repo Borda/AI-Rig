@@ -57,10 +57,11 @@ IMPLEMENT  (step 8)
   ▣ specialists    parallel, one git worktree each  (step 8 phase 2)
     merge-back     sequential cherry-pick, most-central first  (step 8 phase 3)
   |
-VERIFY  (step 9)  ▣ qa-specialist ‖ ▣ linting-expert  (targeted tests)
+VERIFY  (step 9)  target drift check → re-merge on drift, unattended, ≤2  (step 9.0)
+                  ▣ qa-specialist ‖ ▣ linting-expert  (targeted tests)
   full suite once, background run  (step 9)
   |
-◆ PUSH CONFIRMATION  (step 10)  diff stat + commit count — skipped on an explicit "don't push" intent
+◆ PUSH CONFIRMATION  (step 10)  diff stat + commit count + target drift — skipped on an explicit "don't push" intent
   |
 SHIP  push (step 10) · final report + resolution.jsonl → review dir (step 11) · ▣ comment dispatch (step 12)
 ```
@@ -96,7 +97,7 @@ Both top-level fans are free — each rides an idle window the orchestrator alre
 | group preview (`DISPATCH_MODE=preview`, elected at SELECTION) | conditional | challenge → specialists |
 | challenge timed out twice (batched per wave) | conditional, error recovery | challenge → specialists |
 | unresolved item status | conditional, error recovery | final report |
-| **PUSH CONFIRMATION** (target, diff stat, commit count, last subject; post-PR too when no intent was recorded) | **always**, unless SELECTION recorded an explicit "don't push" | ship |
+| **PUSH CONFIRMATION** (target, diff stat, commit count, last subject, target-branch drift + re-sync option; post-PR too when no intent was recorded) | **always**, unless SELECTION recorded an explicit "don't push" | ship |
 | typed-labels file lost | conditional, error recovery | implement commit |
 
 Normal action-item path costs at most 3 `AskUserQuestion` calls at the selection gate plus the push confirmation. Between them, only the user-elected group preview and the error-recovery gates can ask. The push itself can still stop for a push guard or permission prompt — deliberate user safety controls the skill never bypasses; it records the push status, saves the guard's exact unblock lines, continues to the final report, and ends that report with those lines.

@@ -33,6 +33,12 @@ Skip to Step 7a.
 Pull latest state, both branches, before merging — the source (PR) branch **and** the target branch:
 
 ```bash
+# fresh shell (Check 41): reload refs Step 4 persisted unless the caller bound them; also re-run from Step 9.0
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+[ -n "${BASE_REF:-}" ] || { IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""; }
+[ -n "${HEAD_REF:-}" ] || { IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""; }
+[ -n "${FORK_REMOTE:-}" ] || { IFS= read -r FORK_REMOTE < "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}" 2>/dev/null || FORK_REMOTE=""; }
+[ -n "$BASE_REF" ] && [ -n "$HEAD_REF" ] || { echo "⛔ Step 5: BASE_REF/HEAD_REF unresolved — refusing to merge an unknown target"; exit 1; }
 # 1. update source branch (ff-only; non-ff = force-pushed, use local)
 git pull "${FORK_REMOTE:-origin}" "$HEAD_REF" --ff-only 2>/dev/null \
     || echo "⚠ PR branch not fast-forwardable — proceeding with local state"  # timeout: 6000

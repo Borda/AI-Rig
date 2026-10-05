@@ -193,6 +193,46 @@ def test_merge_block_updates_local_target_and_merges_fresh_target(tmp_path: Path
     assert (clone / "target-new.txt").exists()
 
 
+def _fresh_shell_env(tmp_path: Path, refs: dict[str, str]) -> dict[str, str]:
+    """Build a fresh-shell environment: no bound ref variables, Step 4 sentinels written under TMPDIR."""
+    session = "target-update-fresh-shell"
+    for name, value in refs.items():
+        (tmp_path / f"resolve-{name}-{session}").write_text(f"{value}\n", encoding="utf-8", newline="\n")
+    unbound = {key: value for key, value in _ENV.items() if key not in {"BASE_REF", "HEAD_REF", "FORK_REMOTE"}}
+    return {**unbound, "CLAUDE_CODE_SESSION_ID": session, "TMPDIR": str(tmp_path)}
+
+
+@pytest.mark.integration
+@requires_git_bash
+def test_merge_block_reloads_refs_in_fresh_shell(tmp_path: Path) -> None:
+    """Run unedited from a later step (Step 9.0 re-sync), the block reloads its refs and merges the newest target.
+
+    Each Bash call is a new process, so the variables Step 4 computed are gone; without the sentinel reload the block
+    would fetch an empty ref and the drift re-sync would never happen.
+    """
+    clone, seed = _setup(tmp_path)
+    env = _fresh_shell_env(tmp_path, {"base-ref": "main", "head-ref": "feature", "fork-remote": "origin"})
+
+    result = subprocess.run([_BASH, "-c", _merge_block()], cwd=clone, env=env, capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _git(clone, "rev-parse", "MERGE_HEAD") == _git(seed, "rev-parse", "main")
+
+
+@pytest.mark.integration
+@requires_git_bash
+def test_merge_block_refuses_unresolved_refs(tmp_path: Path) -> None:
+    """Empty Step 4 sentinels stop the block before any fetch or merge touches the tree."""
+    clone, _ = _setup(tmp_path)
+    env = _fresh_shell_env(tmp_path, {"base-ref": "", "head-ref": ""})
+
+    result = subprocess.run([_BASH, "-c", _merge_block()], cwd=clone, env=env, capture_output=True, text=True)
+
+    assert result.returncode == 1
+    assert "BASE_REF/HEAD_REF unresolved" in result.stdout
+    assert not (clone / ".git" / "MERGE_HEAD").exists()
+
+
 @pytest.mark.integration
 @requires_git_bash
 def test_merge_block_keeps_diverged_local_target_and_still_merges_remote(tmp_path: Path) -> None:
