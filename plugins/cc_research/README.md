@@ -682,3 +682,5 @@ The plugin's tests cover path safety, Codemap resolution, effect size, Docker sa
 Research automation design draws on [fcakyon/phd-skills](https://github.com/fcakyon/claude-skills) for hook-first guardrails and [karpathy/autoresearch](https://github.com/karpathy/autoresearch) for metric-driven, commit-preserving iteration contracts. Those influences inform the design; this plugin's current behavior is defined by its shipped skills, agents, hooks, rules, and tests.
 
 Research is licensed under Apache-2.0.
+
+Evidence and real-case acceptance: shipped `rules/quality-gates.md` requires cited proof for factual, causal and completion claims, a representative real case alongside TDD, and unchanged user-authorized behavior. Mocks are supplementary polishing after real behavior is validated; unavailable real acceptance stays explicit.

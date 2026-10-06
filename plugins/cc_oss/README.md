@@ -982,4 +982,4 @@ ______________________________________________________________________
 
 Editing `oss` skills or agents → update this README before commit. Rule in `plugins/CLAUDE.md`: changed trigger, scope, NOT-for, or hook behaviour → update README description. Added/removed agent/skill → update table. Unsynced change = incomplete.
 
-Evidence and real-case acceptance: shipped `rules/quality-gates.md` requires cited proof for factual, causal and completion claims, a representative real case alongside TDD, and unchanged user-authorized behavior. Mocks are supplementary polishing after real behavior is validated; unavailable real acceptance stays explicit.
+Evidence and real-case acceptance: cite inspected sources or recorded proof for factual, causal, and completion claims; label inference explicitly. Keep a representative real case with actual inputs, components, and environment as the acceptance oracle before and after TDD, retaining command, source/environment identity, output, and before/after evidence. If real execution is unavailable, leave that check unmet; mocks are supplementary polishing only. Never weaken tests or change user-authorized behavior to get green.

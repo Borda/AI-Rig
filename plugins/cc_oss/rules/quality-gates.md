@@ -4,6 +4,12 @@ paths:
   - '**'
 ---
 
+## Evidence and real-case acceptance
+
+- Every factual, causal, and completion claim must cite a source actually inspected, a recorded experiment, or other concrete proof at the claim. Label inference and hypothesis explicitly; absent proof means blocked or unverified, never success. Source text proves only what it states; passing unit tests prove only their exercised contract, not an untested workflow or host.
+- Keep a representative real case alongside the TDD loop. Establish the failure and intended result with real inputs, real components, and the actual affected environment before relying on a test double; retain commands, environment/source identity, outputs and before/after evidence. Recheck that real case after the fix and before completion. An unavailable real environment remains an explicit unmet acceptance check; mocks cannot replace it or justify a completion claim.
+- Mocks belong only to subsequent polishing after the real behavior is understood and validated. Use fast regression tests to shorten iteration while the real case remains the acceptance oracle. Never weaken assertions, remove failing coverage, or change expected outputs or user-authorized behavior merely to turn tests green. Correct a mistaken test only from independent specification or real-case evidence, record why, and preserve the intended contract; a changed requirement needs the user's decision.
+
 ## Adversarial Convergence Loop (any review → fix cycle)
 
 <!-- policy-sibling: plugins/cc_foundry/rules/quality-gates.md (canonical), plugins/cc_oss/rules/quality-gates.md, plugins/cc_develop/rules/quality-gates.md, plugins/cc_research/rules/quality-gates.md, AGENTS.md -->

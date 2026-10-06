@@ -6945,6 +6945,6 @@
       "src": "skills/resolve/SKILL.md:151"
     }
   },
-  "plugin": "cc_oss@0.45.0",
+  "plugin": "cc_oss@0.45.1",
   "schema": 1
 }
