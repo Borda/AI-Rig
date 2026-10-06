@@ -309,6 +309,26 @@ def test_current_terminal_writer_promotes_and_completes(tmp_path: Path, disposit
         )
         result_path.write_text(json.dumps(result), encoding="utf-8")
     result = json.loads(result_path.read_text(encoding="utf-8"))
+    if disposition == "unavailable":
+        metadata = result["metadata"]
+        metadata["confidence_gap_closures"][0]["rationale"] = (
+            "(-0.10) " + metadata["confidence_gap_closures"][0]["rationale"]
+        )
+        previous_limit = metadata["confidence_recovery"]["remaining_limits"][0]
+        metadata["confidence_recovery"]["remaining_limits"] = [
+            f"(-0.00) {previous_limit} No additional deduction; "
+            "the canonical source-verification gap accounts for this limitation."
+        ]
+        handoff_path = tmp_path / "final-handoff.json"
+        handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+        handoff["confidence"]["gaps"] = metadata["confidence_gap_closures"]
+        handoff["confidence"]["limits"] = metadata["confidence_recovery"]["remaining_limits"]
+        handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+        validation = _module(PLUGIN_ROOT / "shared/final_handoff.py").render_files(
+            handoff_path, tmp_path / "final.md", tmp_path / "final-handoff.validation.json"
+        )
+        metadata["final_handoff"]["handoff_sha256"] = validation["handoff_sha256"]
+        metadata["final_handoff"]["rendered_sha256"] = validation["rendered_sha256"]
     result_path.unlink()
     candidate = tmp_path / "result.candidate.json"
     written = subprocess.run(
@@ -368,6 +388,10 @@ def test_current_terminal_writer_promotes_and_completes(tmp_path: Path, disposit
 
     assert completed.returncode == 0, completed.stderr.decode()
     assert completed.stdout == (tmp_path / "final.md").read_bytes()
+    if disposition == "unavailable":
+        assert b"0.90 (fair)." in completed.stdout
+        assert b"(-0.10) A local checkout command may have changed state" in completed.stdout
+        assert b"Limits: (-0.00) PR correctness was not assessed" in completed.stdout
 
 
 def test_writer_emits_validated_schema_three_assessed_candidate(assessed_pr: Path) -> None:

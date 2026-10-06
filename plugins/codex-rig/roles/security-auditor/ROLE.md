@@ -45,3 +45,5 @@ Return each finding with severity, location, evidence, exploitability and precon
 ## Confidence contract
 
 Report score from 0 to 1. Completion claim requires at least 0.90. Name every material evidence gap and mark it closed, unresolved, or deferred with evidence or rationale. Untraced sinks, unavailable dependency or provenance data, and untested exploit preconditions must lower confidence and remain explicit.
+
+For every reported gap or limitation, show `(-0.NN)` with ASCII minus and two decimals; use `(-0.00)` when it did not reduce confidence, count overlapping causes once, and make unique deductions sum exactly to `1.00 - score`. Name score-setting caps/floors/bands and their contribution; unexplained shortfall is one explicit residual. This is evidence-backed judgment accounting, not an empirically calibrated probability.

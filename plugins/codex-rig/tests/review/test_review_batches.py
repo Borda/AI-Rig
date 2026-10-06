@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +20,105 @@ def test_batch_response_declares_scalar_closure_evidence() -> None:
     helpers = preparation.runpy.run_path(str(preparation.SKILL / "review_batches.py"))
     instruction = helpers["BATCH_FINDINGS_INSTRUCTION"].decode()
     assert "closure_evidence (one nonempty string, never an array)" in instruction
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "none",
+        "exact",
+        "wrong-role",
+        "wrong-attempt",
+        "wrong-context",
+        "duplicate",
+        "comment",
+        "interior",
+        "prose",
+        "leading-newline",
+        "bom",
+        "trailing-prose",
+        "malformed-body",
+    ],
+)
+@pytest.mark.integration
+def test_batch_native_prefix_preserves_raw_and_strict_body(tmp_path: Path, prefix: str) -> None:
+    """Only a frozen-identity marker may precede an otherwise unchanged strict native batch response."""
+    run = _batch_inputs(tmp_path)
+    assert _batch_command(run, "prepare").returncode == 0
+    wave = run / "batches/source-001"
+    marker = preparation._CONTEXT_READER(wave / "inspection-plan.json", "challenger", 1, 1).splitlines()[0]
+    record = _batch_finding("A", "medium", "Preserve the reviewed obligation.")
+    body = _batch_output([record], 3)
+    response = body if prefix == "none" else marker + "\n" + body
+    if prefix == "wrong-role":
+        response = response.replace("role=challenger", "role=qa-specialist", 1)
+    elif prefix == "wrong-attempt":
+        response = response.replace("attempt=1", "attempt=2", 1)
+    elif prefix == "wrong-context":
+        response = response.replace("context=", "context=invalid", 1)
+    elif prefix == "duplicate":
+        response = marker + "\n" + response
+    elif prefix == "comment":
+        response = "<!-- arbitrary comment -->\n" + body
+    elif prefix == "interior":
+        response = body.replace("## Reviewer Confidence", marker + "\n## Reviewer Confidence")
+    elif prefix == "prose":
+        response = marker + "\nExtra prose.\n" + body
+    elif prefix == "leading-newline":
+        response = "\n" + response
+    elif prefix == "bom":
+        response = "\ufeff" + response
+    elif prefix == "trailing-prose":
+        response += "\nExtra prose."
+    elif prefix == "malformed-body":
+        response = response.replace('"id": "A"', '"id": "bad.id"')
+    _, home, children = preparation._assembly_evidence(
+        tmp_path, prepared_run=wave, findings={"challenger": response}, blocking_counts={"challenger": 1}
+    )
+    before = children["challenger"].read_bytes()
+    result = _batch_command(wave, "assemble-wave", home)
+    if prefix in {"none", "exact"}:
+        assert result.returncode == 0, result.stderr
+        manifest = json.loads((wave / "specialist-manifest.json").read_bytes())
+        item = next(p for p in manifest["passes"] if p["role"] == "challenger")
+        attempt = item["attempts"][0]
+        assert (wave / attempt["raw_output_path"]).read_bytes() == response.encode()
+        assert (wave / item["output_path"]).read_bytes() == (response.strip() + "\n").encode()
+        assert item["reviewer_findings"][0]["summary"] == record["summary"]
+        assert item["blocking_findings"] == 1
+        import review_batches
+        import validate_artifacts
+
+        review_batches.validate_wave_findings(wave, manifest, manifest["passes"])
+        if prefix == "exact":
+            with pytest.raises(SystemExit, match="review-batch-individual-findings-format"):
+                validate_artifacts._batch_reviewer_findings(
+                    wave / attempt["raw_output_path"],
+                    json.loads((run / "batch-inventory.json").read_bytes())["source_snapshot"],
+                    "challenger",
+                )
+            historical = {**manifest, "schema_version": 6}
+            with pytest.raises(SystemExit, match="review-batch-individual-findings-format"):
+                review_batches.validate_wave_findings(wave, historical, historical["passes"])
+            for number in (1, 2):
+                selected = json.loads(json.dumps(item))
+                selected["selected_attempt"] = number
+                selected["attempts"] = [selected["attempts"][0], {**selected["attempts"][0], "attempt": 2}]
+                assert validate_artifacts._batch_provenance_header(wave, manifest, selected) == marker.replace(
+                    "attempt=1", f"attempt={number}"
+                )
+            invalid = json.loads(json.dumps(manifest))
+            invalid["review_input_sha256"] = "a" * 64
+            with pytest.raises(SystemExit, match="review-batch-provenance-identity-invalid"):
+                validate_artifacts._batch_provenance_header(wave, invalid, item)
+    else:
+        assert result.returncode != 0
+        expected = (
+            "review-assessment-content-invalid" if prefix == "trailing-prose" else "review-batch-individual-findings-"
+        )
+        assert expected in result.stderr
+        assert not (wave / "specialist-manifest.json").exists()
+    assert children["challenger"].read_bytes() == before
 
 
 @pytest.mark.parametrize("mutation", ["none", "claim", "severity", "evidence", "second-repair"])
@@ -229,15 +330,309 @@ def test_dispatch_repair_rejects_shell_redirection(tmp_path: Path, redirect: str
     assert not (wave / "repair-dispatch.challenger.json").exists()
 
 
-def _batch_command(run: Path, operation: str, home: Path | None = None) -> subprocess.CompletedProcess[str]:
-    """Run the installed-path batch command with synthetic native receipts."""
+def _verify_unchanged_source_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the real source verification once per call signature for the rest of one test.
+
+    Every aggregate validation re-verifies the checkout with dozens of Git subprocesses. A test that never touches the
+    checkout after its fixtures are built repeats that work over bytes that cannot have changed; for the slowest such
+    test that cut runtime by about a third. Opt in only where the source tree is immutable for the remaining test body;
+    tests that mutate source or exercise drift detection must keep verifying every call.
+    """
+    import copy
+
+    import review_prepare  # on sys.path once a fixture has prepared a run
+
+    verified: dict[tuple[object, ...], tuple[dict[str, object], set[str]]] = {}
+    real = review_prepare._source_snapshot
+
+    def once(out, source_root, expected_head, paths, expected_diff_base, scope_path):
+        key = (out, source_root, expected_head, tuple(paths), expected_diff_base, scope_path)
+        if key not in verified:
+            verified[key] = real(out, source_root, expected_head, paths, expected_diff_base, scope_path)
+        return copy.deepcopy(verified[key])
+
+    monkeypatch.setattr(review_prepare, "_source_snapshot", once)
+
+
+def _batch_command(
+    run: Path, operation: str, home: Path | None = None, *, source_only: bool = False
+) -> subprocess.CompletedProcess[str]:
+    """Run installed commands, preserving absent-topology preparation for historical aggregate fixtures."""
     args = [sys.executable, str(preparation.HELPER), operation, "--out", str(run)]
     if operation == "prepare":
         root = json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
         args.extend(["--run-id", "bounded-review", "--parent-thread-id", "parent", "--source-root", root, "--batches"])
+        if not source_only:
+            script = """import runpy, sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]).parent))
+import review_batches
+original = review_batches.prepare_source_batches
+def historical(out, plan, *args):
+    \"\"\"Reproduce the historical frozen producer shape without a shipped legacy option.\"\"\"
+    plan = dict(plan)
+    plan.pop("review_topology", None)
+    return original(out, plan, *args)
+review_batches.prepare_source_batches = historical
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+            args = [sys.executable, "-c", script, *args[1:]]
     else:
         args.extend(["--codex-home", str(home)])
     return subprocess.run(args, capture_output=True, text=True, encoding="utf-8", check=False)
+
+
+def _completed_source_only(
+    tmp_path: Path, *, retain_finding: bool = False, runtime_test: bool = False
+) -> tuple[Path, Path]:
+    """Admit every bounded source responsibility without creating report-review waves."""
+    run = _batch_inputs(tmp_path)
+    if runtime_test:
+        source = Path(json.loads((run / "local-source/review-worktree.json").read_bytes())["source_worktree"])
+        (source / "test_runtime.py").write_text(
+            "import sys\nfrom pathlib import Path\nsys.path.insert(0, str(Path(__file__).parent))\n"
+            "def test_runtime():\n    import widget\n    assert widget.value == 2\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        original_run = run
+        run = tmp_path / "runtime-review"
+        run.mkdir()
+        for path in original_run.iterdir():
+            if path.is_file():
+                (run / path.name).write_bytes(path.read_bytes())
+        collected = subprocess.run(
+            [
+                sys.executable,
+                str(preparation.PLUGIN_ROOT / "shared/collect_diff.py"),
+                "--review-worktree",
+                "--repository",
+                str(source),
+                "--out",
+                str(run / "local-source"),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert collected.returncode == 0, collected.stderr
+        (run / "diff.patch").write_bytes((run / "local-source/diff.patch").read_bytes())
+        (run / "untracked.txt").write_text("test_runtime.py\n", encoding="utf-8", newline="\n")
+        briefs = json.loads((run / "review-briefs.json").read_bytes())
+        for brief in briefs.values():
+            brief["source_paths"].append("test_runtime.py")
+        (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    (run / "challenger-evidence.md").write_text("Bounded source review.\n" * 3500, encoding="utf-8", newline="\n")
+    prepared = _batch_command(run, "prepare", source_only=True)
+    assert prepared.returncode == 0, prepared.stderr
+    inventory = json.loads((run / "batch-inventory.json").read_bytes())
+    assert inventory["plan"]["review_topology"] == "source-only"
+    home = tmp_path / "codex-home"
+    for wave in json.loads((run / "batch-dispatch.json").read_bytes())["waves"]:
+        directory = run / wave["directory"]
+        roles = [
+            entry["role_id"] for entry in json.loads((directory / "inspection-plan.json").read_bytes())["contexts"]
+        ]
+        preparation._assembly_evidence(
+            tmp_path,
+            prepared_run=directory,
+            home=home,
+            wave_index=wave["wave"],
+            final_header="missing",
+            findings={
+                role: _batch_output([_batch_finding("F_EARLY", "low", "Document the returned value.")], 2)
+                if retain_finding and wave["wave"] == 1 and role == "challenger"
+                else _batch_output(
+                    [],
+                    1,
+                    confidence={
+                        "score": 0.90,
+                        "scope": "Frozen source without execution.",
+                        "gaps": [
+                            {
+                                "gap": "Runtime checks unavailable (-0.10)",
+                                "status": "unresolved",
+                                "rationale": "No execution evidence in source dispatch.",
+                            }
+                        ],
+                    }
+                    if runtime_test
+                    else None,
+                )
+                for role in roles
+            },
+        )
+        admitted = _batch_command(directory, "assemble-wave", home)
+        assert admitted.returncode == 0, admitted.stderr
+    return run, home
+
+
+def test_source_only_review_reaches_ordinary_intake_without_report_review(tmp_path: Path) -> None:
+    """Complete all source parts, preserving judgments at the next ordinary report consumer."""
+    run, home = _completed_source_only(tmp_path)
+    assembled = _batch_command(run, "assemble-batches", home)
+    assert assembled.returncode == 0, assembled.stderr
+    manifest = json.loads((run / "specialist-manifest.json").read_bytes())
+    assert manifest["review_topology"] == "source-only"
+    assert all(item["source_parts"] for item in manifest["passes"])
+    assert not (run / "interaction-dispatch.json").exists()
+    assert not (run / "consolidation-dispatch.json").exists()
+    for operation in ("prepare-interactions", "prepare-consolidation"):
+        refused = _batch_command(run, operation, home)
+        assert refused.returncode != 0
+        assert "review-source-only-parent-reconciliation" in refused.stderr
+    path = _canonical_report(run, [], {}, "accept-as-is")
+    spec = importlib.util.spec_from_file_location(
+        "source_only_intake", preparation.SKILL.parents[1] / "shared/find-review-report.py"
+    )
+    finder = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = finder
+    spec.loader.exec_module(finder)
+    assert finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent") == path
+
+
+@pytest.mark.parametrize("source_only", [True, False])
+@pytest.mark.parametrize("problem", ["missing-parts", "altered-part"])
+def test_ordinary_intake_rejects_duplicate_role_metadata(tmp_path: Path, source_only: bool, problem: str) -> None:
+    """An earlier duplicate cannot hide missing or forged source or historical final responsibility."""
+    run, home = (
+        _completed_source_only(tmp_path)
+        if source_only
+        else _completed_batches(tmp_path, large=True, consolidation_reports=3)
+    )
+    assert _batch_command(run, "assemble-batches", home).returncode == 0
+    manifest = json.loads((run / "specialist-manifest.json").read_bytes())
+    passes = json.loads(json.dumps(manifest["passes"]))
+    assert len({item["role"] for item in passes}) == len(passes) > 1
+    duplicate = json.loads(json.dumps(passes[0]))
+    parts_key = "source_parts" if source_only else "final_parts"
+    if problem == "missing-parts":
+        duplicate.pop(parts_key)
+    else:
+        duplicate[parts_key][0]["output_sha256"] = "0" * 64
+        duplicate[parts_key][0]["confidence"]["score"] = 1.0
+    path = _canonical_report(
+        run, [], {}, "accept-as-is", confidence_metadata={"specialist_passes": [duplicate, *passes]}
+    )
+    spec = importlib.util.spec_from_file_location(
+        "duplicate_role_intake", preparation.SKILL.parents[1] / "shared/find-review-report.py"
+    )
+    finder = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = finder
+    spec.loader.exec_module(finder)
+    with pytest.raises(LookupError, match=f"metadata-specialist-pass-duplicate-role:{duplicate['role']}"):
+        finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
+
+
+def test_source_only_later_clean_part_cannot_erase_earlier_original(tmp_path: Path) -> None:
+    """A later clean source part leaves the earlier finding actionable at ordinary remediation intake."""
+    run, home = _completed_source_only(tmp_path, retain_finding=True)
+    assert _batch_command(run, "assemble-batches", home).returncode == 0
+    manifest = json.loads((run / "specialist-manifest.json").read_bytes())
+    (original,) = manifest["source_findings"]
+    assert original["finding_id"] == "source-001.challenger.F_EARLY"
+    challenger = next(item for item in manifest["passes"] if item["role"] == "challenger")
+    assert len(challenger["source_parts"]) > 1
+    assert challenger["source_parts"][0]["rating"] == 2
+    assert challenger["source_parts"][-1]["rating"] == 1
+    record = {
+        **original["original"],
+        "authors": ["Challenger"],
+        "evidence": [original["manifest_path"], "widget.py:1-1"],
+    }
+    path = _canonical_report(run, [record], {original["finding_id"]: [record["id"]]}, "minor-changes")
+    spec = importlib.util.spec_from_file_location(
+        "earlier_source_intake", preparation.SKILL.parents[1] / "shared/find-review-report.py"
+    )
+    finder = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = finder
+    spec.loader.exec_module(finder)
+    assert finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent") == path
+    assert finder.finding_evidence(path, record["id"])["source_origins"] == [original]
+    path = _canonical_report(run, [], {}, "accept-as-is")
+    with pytest.raises(LookupError, match="review-batch-source-findings-unresolved"):
+        finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
+
+
+@pytest.mark.parametrize(
+    "problem",
+    [
+        "missing-parts",
+        "dropped-part",
+        "output",
+        "rating",
+        "confidence",
+        "attempt",
+        "wave",
+        "origin",
+        "topology",
+        "context-topology",
+    ],
+)
+def test_source_only_intake_rejects_lost_or_altered_source_responsibility(tmp_path: Path, problem: str) -> None:
+    """A final source assessment cannot hide an earlier source part or change frozen producer topology."""
+    run, home = _completed_source_only(tmp_path)
+    assert _batch_command(run, "assemble-batches", home).returncode == 0
+    manifest_path = run / "specialist-manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    passes = json.loads(json.dumps(manifest["passes"]))
+    item = next(item for item in passes if len(item["source_parts"]) > 1)
+    extra = {"specialist_passes": passes}
+    if problem == "missing-parts":
+        item.pop("source_parts")
+    elif problem == "dropped-part":
+        item["source_parts"].pop(0)
+    elif problem in {"output", "rating", "confidence", "attempt"}:
+        part = item["source_parts"][0]
+        if problem == "output":
+            part["output_path"] = "specialists/unreviewed.md"
+        elif problem == "rating":
+            part["rating"] = 5
+        elif problem == "confidence":
+            part["confidence"]["score"] = 1.0
+        else:
+            part["attempt"]["context_sha256"] = "0" * 64
+    elif problem == "wave":
+        manifest["batch_execution"]["waves"].pop(0)
+    elif problem == "origin":
+        manifest["source_findings"] = [{"finding_id": "invented"}]
+    elif problem == "topology":
+        manifest.pop("review_topology")
+    else:
+        inventory_path = run / "batch-inventory.json"
+        inventory = json.loads(inventory_path.read_bytes())
+        inventory["plan"].pop("review_topology")
+        inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+        manifest["batch_execution"]["inventory_sha256"] = hashlib.sha256(inventory_path.read_bytes()).hexdigest()
+    path = _canonical_report(run, [], {}, "accept-as-is", confidence_metadata=extra)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(
+        "source_parts_intake", preparation.SKILL.parents[1] / "shared/find-review-report.py"
+    )
+    finder = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = finder
+    spec.loader.exec_module(finder)
+    with pytest.raises(LookupError, match="(metadata-specialist-pass-mismatch|review-batch)"):
+        finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
+
+
+def test_historical_inventory_cannot_skip_report_coverage_with_an_aggregate_flag(tmp_path: Path) -> None:
+    """Topology absent from the frozen producer requires every historical interaction obligation."""
+    run, home = _completed_batches(tmp_path)
+    assert _batch_command(run, "assemble-batches", home).returncode == 0
+    path = run / "specialist-manifest.json"
+    manifest = json.loads(path.read_bytes())
+    assert "review_topology" not in json.loads((run / "batch-inventory.json").read_bytes())["plan"]
+    manifest["review_topology"] = "source-only"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(
+        "historical_topology_validator", preparation.SKILL / "validate_artifacts.py"
+    )
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
+    with pytest.raises(ValueError, match="review-batch-topology-mismatch"):
+        validator._validate_review_runtime(run, manifest, manifest["passes"], home, "parent")
 
 
 def _batch_inputs(tmp_path: Path, *, large: bool = False, untracked: bool = False, deleted: bool = False) -> Path:
@@ -269,14 +664,23 @@ def _batch_finding(identity: str, severity: str, summary: str) -> dict[str, obje
     }
 
 
-def _batch_output(records: list[dict[str, object]], rating: int, disposition: str | None = None) -> str:
+def _batch_output(
+    records: list[dict[str, object]],
+    rating: int,
+    disposition: str | None = None,
+    *,
+    confidence: dict[str, object] | None = None,
+) -> str:
     """Render the actual batch client response with explicit inventory and optional disposition."""
+    profile = '{"score": 0.95, "scope": "Frozen source and declared interactions.", "gaps": [{"gap": "Synthetic offline client.", "status": "unresolved", "rationale": "Fixture proves admission without a live semantic reviewer (-0.05)."}]}'
     return (
         "## Reviewer Findings\n```json\n"
         + json.dumps(records)
         + "\n```\n\n"
         + ("## Finding Dispositions\n" + disposition + "\n\n" if disposition else "")
-        + '## Reviewer Confidence\n```json\n{"score": 0.95, "scope": "Frozen source and declared interactions.", "gaps": [{"gap": "Synthetic offline client.", "status": "unresolved", "rationale": "Fixture proves admission without a live semantic reviewer."}]}\n```\n\n'
+        + "## Reviewer Confidence\n```json\n"
+        + (json.dumps(confidence) if confidence is not None else profile)
+        + "\n```\n\n"
         + f"## Reviewer Assessment\nRating: {rating}\nRationale: Assessment accounts for every declared obligation."
     )
 
@@ -300,6 +704,12 @@ def _completed_batches(
     fast_reviewers: bool = False,
     independent_required: bool = False,
     conditional_tail: bool = False,
+    consolidation_reports: int = 0,
+    consolidation_adverse: bool = False,
+    consolidation_padding: int = 650,
+    stop_before_consolidation: bool = False,
+    consolidation_confidence: dict[str, object] | None = None,
+    consolidation_prefix: bool = False,
 ) -> tuple[Path, Path]:
     """Record actual context-reader bytes for every source wave and final interaction wave."""
     run = (
@@ -410,6 +820,7 @@ def _completed_batches(
     result = _batch_command(run, "prepare-interactions", home)
     assert result.returncode == 0, result.stderr
     interaction_schedule = json.loads((run / "interaction-dispatch.json").read_text(encoding="utf-8"))
+    padded_reports = 0
     for index, wave in enumerate(interaction_schedule["waves"], len(schedule["waves"]) + 1):
         directory = run / wave["directory"]
         findings = None
@@ -441,6 +852,19 @@ def _completed_batches(
                         )
                     }
                     break
+        if consolidation_reports:
+            findings = findings or {}
+            plan = json.loads((directory / "inspection-plan.json").read_bytes())
+            for entry in plan["contexts"]:
+                if padded_reports >= consolidation_reports:
+                    break
+                role = entry["role_id"]
+                response = findings.get(role, _batch_output([], 1))
+                findings[role] = response.replace(
+                    "Frozen source and declared interactions.",
+                    f"Report {padded_reports}: " + "Complete immutable reviewed claim. " * consolidation_padding,
+                )
+                padded_reports += 1
         preparation._assembly_evidence(
             tmp_path,
             prepared_run=directory,
@@ -452,8 +876,42 @@ def _completed_batches(
         )
         result = _batch_command(directory, "assemble-wave", home)
         assert result.returncode == 0, result.stderr
+    if stop_before_consolidation:
+        return run, home
     result = _batch_command(run, "prepare-consolidation", home)
     assert result.returncode == 0, result.stderr
+    if consolidation_reports:
+        final_schedule = json.loads((run / "consolidation-dispatch.json").read_bytes())
+        for part, wave in enumerate(final_schedule["waves"]):
+            directory = run / wave["directory"]
+            findings = None
+            if consolidation_confidence is not None and part == 0:
+                findings = {"qa-specialist": _batch_output([], 1, confidence=consolidation_confidence)}
+            if consolidation_adverse and part == 0:
+                findings = {
+                    "qa-specialist": _batch_output(
+                        [_batch_finding("F_EARLY", "high", "Retain the early final defect.")], 5
+                    )
+                    .replace('"score": 0.95', '"score": 0.91')
+                    .replace("(-0.05)", "(-0.09)")
+                }
+            if consolidation_prefix and part == 0:
+                findings = findings or {}
+                marker = preparation._CONTEXT_READER(
+                    directory / "inspection-plan.json", "qa-specialist", 1, 1
+                ).splitlines()[0]
+                findings["qa-specialist"] = marker + "\n" + findings.get("qa-specialist", _batch_output([], 1))
+            preparation._assembly_evidence(
+                tmp_path,
+                prepared_run=directory,
+                home=home,
+                wave_index=len(schedule["waves"]) + len(interaction_schedule["waves"]) + part + 1,
+                final_header="missing",
+                findings=findings,
+            )
+            result = _batch_command(directory, "assemble-wave", home)
+            assert result.returncode == 0, result.stderr
+        return run, home
     interactions = run / "batches/interactions"
     preparation._assembly_evidence(
         tmp_path,
@@ -482,6 +940,216 @@ def _completed_batches(
     result = _batch_command(interactions, "assemble-wave", home)
     assert result.returncode == 0, result.stderr
     return run, home
+
+
+def test_bounded_final_union_retains_early_adverse_part(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Admit complete bounded final comparisons without letting a clean last part erase an early defect."""
+    run, home = _completed_batches(
+        tmp_path, large=True, consolidation_reports=3, consolidation_adverse=True, consolidation_prefix=True
+    )
+    _verify_unchanged_source_once(monkeypatch)
+    schedule = json.loads((run / "consolidation-dispatch.json").read_bytes())
+    assert len(schedule["waves"]) > 1
+    for wave in schedule["waves"]:
+        plan = json.loads((run / wave["directory"] / "inspection-plan.json").read_bytes())
+        for entry in plan["contexts"]:
+            context = (run / wave["directory"] / entry["context_path"]).read_bytes()
+            assert len(context) <= 65536
+            assert (
+                b"1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject" in context
+            )
+            assert b"Deductions total exactly 1 minus score" in context
+    assembled = _batch_command(run, "assemble-batches", home)
+    assert assembled.returncode == 0, assembled.stderr
+    manifest = json.loads((run / "specialist-manifest.json").read_bytes())
+    assert manifest["schema_version"] == 9
+    qa = next(item for item in manifest["passes"] if item["role"] == "qa-specialist")
+    assert len(qa["final_parts"]) == len(schedule["waves"])
+    assert max(item["rating"] for item in qa["final_parts"]) == 5
+    assert qa["final_parts"][-1]["rating"] == 1
+    assert any(item["original"]["id"] == "F_EARLY" for item in manifest["source_findings"])
+    assert qa["blocking_findings"] >= 1
+    assert qa["confidence"] == 0.91
+    assert qa["final_parts"][0]["confidence"]["gaps"][0]["status"] == "unresolved"
+    first_output = run / qa["final_parts"][0]["output_path"]
+    assert first_output.read_text(encoding="utf-8").startswith("<!-- codex-review-provenance role=qa-specialist ")
+    import validate_artifacts
+
+    by_role = validate_artifacts._validate_manifest_entries(
+        run,
+        manifest,
+        manifest["passes"],
+        {"challenger", "qa-specialist"},
+        home,
+        "parent",
+        tmp_path,
+        require_role_card_receipts=True,
+    )
+    assert by_role["qa-specialist"] == qa
+    for field, changed, error in (
+        ("confidence", 0.99, "review-batch-final-pass-mismatch"),
+        ("blocking_findings", 0, "review-batch-final-pass-mismatch"),
+        ("final_parts", qa["final_parts"][-1:], "review-batch-final-pass-mismatch"),
+    ):
+        tampered = json.loads(json.dumps(manifest))
+        next(item for item in tampered["passes"] if item["role"] == "qa-specialist")[field] = changed
+        with pytest.raises(ValueError, match=error):
+            validate_artifacts._validate_manifest_entries(
+                run, tampered, tampered["passes"], set(by_role), home, "parent", tmp_path
+            )
+    origin = next(item for item in manifest["source_findings"] if item["original"]["id"] == "F_EARLY")
+    action = {
+        **origin["original"],
+        "authors": ["QA specialist"],
+        "evidence": [origin["manifest_path"], "widget.py:1-1"],
+    }
+    path = _canonical_report(run, [action], {origin["finding_id"]: ["F_EARLY"]}, "needs-more-work")
+    report = json.loads(path.read_bytes())
+    evidence = validate_artifacts._validate_specialist_manifest(
+        run,
+        report,
+        path,
+        report["metadata"],
+        "HIGH_RISK",
+        validate_artifacts._ReviewEnvironment(home, "parent", tmp_path),
+    )
+    validate_artifacts._validate_reviewer_assessments(run, report["metadata"], evidence.by_role, batch_response=True)
+    validate_artifacts._validate_independence_requirement(
+        run,
+        evidence,
+        report["metadata"],
+        "pass",
+        "HIGH_RISK",
+        validate_artifacts._ReviewEnvironment(home, "parent", tmp_path),
+    )
+    report["confidence"] = 0.95
+    with pytest.raises(SystemExit, match="review-consolidation-confidence-inflated"):
+        validate_artifacts._validate_specialist_manifest(
+            run,
+            report,
+            path,
+            report["metadata"],
+            "HIGH_RISK",
+            validate_artifacts._ReviewEnvironment(home, "parent", tmp_path),
+        )
+    report["confidence"] = 0.91
+    report["metadata"]["confidence_gaps"] = []
+    with pytest.raises(SystemExit, match="review-consolidation-confidence-gap-dropped"):
+        validate_artifacts._validate_specialist_manifest(
+            run,
+            report,
+            path,
+            report["metadata"],
+            "HIGH_RISK",
+            validate_artifacts._ReviewEnvironment(home, "parent", tmp_path),
+        )
+    import review_batches
+
+    schedule_path = run / "consolidation-dispatch.json"
+    original_schedule = schedule_path.read_bytes()
+    for mutation in ("tail", "pair", "role", "origin", "interval"):
+        changed = json.loads(original_schedule)
+        if mutation == "tail":
+            changed["waves"].pop()
+        elif mutation == "pair":
+            changed["roles"]["qa-specialist"]["pairs"].pop()
+        elif mutation == "role":
+            changed["waves"][0]["roles"].remove("qa-specialist")
+        elif mutation == "origin":
+            changed["atoms"][0]["sha256"] = "0" * 64
+        else:
+            changed["roles"]["qa-specialist"]["groups"][0].append(0)
+        schedule_path.write_bytes(json.dumps(changed).encode())
+        candidate = json.loads(json.dumps(manifest))
+        candidate["batch_execution"]["consolidation_sha256"] = review_batches._digest(schedule_path.read_bytes())
+        with pytest.raises(ValueError, match="review-consolidation-schedule-mismatch"):
+            review_batches.validate_aggregate(run, candidate, set(by_role), home, "parent")
+    schedule_path.write_bytes(original_schedule)
+    candidate = json.loads(json.dumps(manifest))
+    candidate["batch_execution"]["waves"].pop()
+    with pytest.raises(ValueError, match="review-batch-wave-coverage"):
+        review_batches.validate_aggregate(run, candidate, set(by_role), home, "parent")
+    candidate = json.loads(json.dumps(manifest))
+    candidate["source_findings"] = []
+    with pytest.raises(ValueError, match="review-batch-source-finding-disposition-mismatch"):
+        review_batches.validate_aggregate(run, candidate, set(by_role), home, "parent")
+    context_path = run / schedule["waves"][0]["directory"] / "specialists/qa-specialist-context.md"
+    frozen_context = context_path.read_bytes()
+    context_path.write_bytes(frozen_context + b"\nUnproved extra payload.\n")
+    with pytest.raises(SystemExit, match="(provenance-context-hash-mismatch|review-inspection-contexts-invalid)"):
+        review_batches.validate_aggregate(run, manifest, set(by_role), home, "parent")
+    context_path.write_bytes(frozen_context)
+    native = json.loads((run / schedule["waves"][0]["directory"] / "specialist-manifest.json").read_bytes())
+    native["schema_version"] = 9
+    with pytest.raises(SystemExit, match="manifest-schema-nine-aggregate-only"):
+        validate_artifacts._validate_manifest_entries(
+            run, native, native["passes"], set(by_role), home, "parent", tmp_path
+        )
+
+
+def test_final_union_rejects_oversized_indivisible_report(tmp_path: Path) -> None:
+    """Reject a proved report too large for paired semantic delivery before creating any final dispatch."""
+    run, home = _completed_batches(
+        tmp_path, large=True, consolidation_reports=3, consolidation_padding=1000, stop_before_consolidation=True
+    )
+    prepared = _batch_command(run, "prepare-consolidation", home)
+    assert prepared.returncode == 2
+    assert "review-consolidation-atomic-capacity:" in prepared.stderr
+    assert not (run / "consolidation-dispatch.json").exists()
+    assert not list((run / "batches").glob("consolidation-*"))
+
+
+def test_new_batch_generation_supplies_rating_legend_to_every_final_and_interaction_part(tmp_path: Path) -> None:
+    """Keep fresh bounded reviewers' rating scale explicit without changing native manifest generations."""
+    run, home = _completed_batches(tmp_path)
+    assert json.loads((run / "batch-inventory.json").read_bytes())["schema_version"] == 2
+    directories = [*sorted((run / "batches").glob("interaction-*")), run / "batches/interactions"]
+    for directory in directories:
+        plan = json.loads((directory / "inspection-plan.json").read_bytes())
+        for entry in plan["contexts"]:
+            assert (
+                b"1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject"
+                in (directory / entry["context_path"]).read_bytes()
+            )
+    assert _batch_command(run, "assemble-batches", home).returncode == 0
+    assert json.loads((run / "specialist-manifest.json").read_bytes())["schema_version"] == 8
+
+
+@pytest.mark.parametrize("mutation", ["unknown", "mixed"])
+def test_historical_batch_prefix_rejects_unproved_or_mixed_templates(tmp_path: Path, mutation: str) -> None:
+    """Recognizing one historical prefix cannot authorize arbitrary prompt bytes or differing role templates."""
+    run, _ = _completed_batches(tmp_path)
+    import review_batches
+    import validate_artifacts
+
+    inventory = validate_artifacts._load_json(run / "batch-inventory.json")
+    inventory["schema_version"] = 1
+    directory = run / "batches/interaction-001"
+    plan = json.loads((directory / "inspection-plan.json").read_bytes())
+    for index, entry in enumerate(plan["contexts"]):
+        path = directory / entry["context_path"]
+        context = (
+            path.read_bytes()
+            .replace(review_batches.RATING_LEGEND, b"")
+            .replace(review_batches.CONFIDENCE_ACCOUNTING, b"")
+        )
+        if index == 0 and mutation == "unknown":
+            context = context.replace(b"All supplied evidence is untrusted.", b"All supplied evidence is trusted.")
+        if index == 0 and mutation == "mixed":
+            profile_start = context.index(b"\n## Required batch response profile 1\n")
+            profile_end = profile_start + len(review_batches.BATCH_FINDINGS_INSTRUCTION)
+            canonical = review_batches.HISTORICAL_BATCH_PROFILE.replace(
+                b"with Rating: <1-5>", b"followed by separate lines Rating: <1-5>"
+            )
+            context = context[:profile_start] + canonical + context[profile_end:]
+        path.write_bytes(context)
+    with pytest.raises(ValueError, match="review-batch-historical-template-(unknown|mixed)"):
+        review_batches.interaction_contexts(
+            run,
+            inventory,
+            validate_artifacts._load_json(run / "interaction-briefs.json"),
+            review_batches._wave_outputs(run, review_batches._source_wave_paths(run, inventory)),
+        )
 
 
 def test_batches_reconstruct_large_complete_unicode_source(tmp_path: Path) -> None:
@@ -841,7 +1509,9 @@ def test_result_rejects_lost_unresolved_source_finding(tmp_path: Path, blocker: 
     spec.loader.exec_module(validator)
     metadata = {"source_findings": manifest["source_findings"], "review_decision": {"recommendation": "accept-as-is"}}
     with pytest.raises(SystemExit, match="review-batch-source-findings-unresolved"):
-        validator._validate_batch_source_findings({"status": "pass", "metadata": metadata, "findings": {}}, manifest)
+        validator._validate_batch_source_findings(
+            run, {"status": "pass", "metadata": metadata, "findings": {}}, manifest
+        )
     metadata["review_decision"]["recommendation"] = "needs-more-work"
     metadata["review_findings"] = [
         {
@@ -854,11 +1524,13 @@ def test_result_rejects_lost_unresolved_source_finding(tmp_path: Path, blocker: 
     ]
     metadata["source_finding_mapping"] = {unresolved[0]["finding_id"]: ["F_CANONICAL"]}
     validator._validate_batch_source_findings(
-        {"status": "fail", "metadata": metadata, "findings": {"high": 1}}, manifest
+        run, {"status": "fail", "metadata": metadata, "findings": {"high": 1}}, manifest
     )
     metadata["source_finding_mapping"][unresolved[0]["finding_id"]] = []
     with pytest.raises(SystemExit, match="review-batch-result-source-findings-dropped"):
-        validator._validate_batch_source_findings({"status": "fail", "metadata": metadata, "findings": {}}, manifest)
+        validator._validate_batch_source_findings(
+            run, {"status": "fail", "metadata": metadata, "findings": {}}, manifest
+        )
 
 
 @pytest.mark.parametrize("role", ["security-auditor", "solution-architect"])
@@ -1100,7 +1772,7 @@ def test_low_source_finding_requires_canonical_inventory_despite_zero_blockers(t
     }
     result = {"status": "pass", "metadata": metadata, "findings": {"low": 1}}
     with pytest.raises(SystemExit, match="review-batch-result-source-finding-inventory-dropped"):
-        validator._validate_batch_source_findings(result, manifest)
+        validator._validate_batch_source_findings(run, result, manifest)
     metadata["source_finding_mapping"] = {finding["finding_id"]: ["F_MINOR"]}
     metadata["review_findings"] = [
         {
@@ -1111,10 +1783,10 @@ def test_low_source_finding_requires_canonical_inventory_despite_zero_blockers(t
             "authors": [validator._readable_review_role(finding["pass"]["role"])],
         }
     ]
-    validator._validate_batch_source_findings(result, manifest)
+    validator._validate_batch_source_findings(run, result, manifest)
 
 
-def test_mixed_source_findings_keep_each_original_severity() -> None:
+def test_mixed_source_findings_keep_each_original_severity(tmp_path: Path) -> None:
     """A blocking source pass never forces a separate minor source finding into a blocking severity."""
     spec = importlib.util.spec_from_file_location("mixed_source_findings", preparation.SKILL / "validate_artifacts.py")
     validator = importlib.util.module_from_spec(spec)
@@ -1158,7 +1830,9 @@ def test_mixed_source_findings_keep_each_original_severity() -> None:
         "review_decision": {"recommendation": "needs-more-work"},
     }
     validator._validate_batch_source_findings(
-        {"status": "fail", "metadata": metadata}, {"manifest_kind": "batched-review", "source_findings": ledger}
+        tmp_path,
+        {"status": "fail", "metadata": metadata},
+        {"manifest_kind": "batched-review", "source_findings": ledger},
     )
 
 
@@ -1334,6 +2008,8 @@ def _canonical_report(
     recommendation: str,
     status: str = "pass",
     duplicates: dict[str, str] | None = None,
+    confidence_metadata: dict[str, object] | None = None,
+    retained_gates: dict[str, object] | None = None,
 ) -> Path:
     """Construct complete ordinary result, gates and bound grouped handoff for real consumer admission."""
     spec = importlib.util.spec_from_file_location(
@@ -1404,10 +2080,29 @@ def _canonical_report(
     }
     result_path = run / "result.json"
     gate_ids = ["lint", "format", "types", "tests", "review"]
+    confidence = 0.95
+    if manifest["schema_version"] == 9:
+        confidence = min(item["confidence"] for item in manifest["passes"])
+        for item in manifest["passes"]:
+            for part in item["source_parts" if manifest.get("review_topology") == "source-only" else "final_parts"]:
+                for gap in part["confidence"]["gaps"]:
+                    if gap["status"] != "closed":
+                        label = (
+                            f"{item['role']} {part['output_path']}: {gap['gap']} ({gap['status']}) - {gap['rationale']}"
+                        )
+                        metadata["confidence_gaps"].append(label)
+                        metadata["confidence_gap_closures"].append(
+                            {"gap": label, "status": gap["status"], "rationale": gap["rationale"]}
+                        )
+        metadata["confidence_recovery"]["initial_confidence"] = confidence
+        metadata["confidence_recovery"]["final_confidence"] = confidence
+    if confidence_metadata is not None:
+        metadata.update(confidence_metadata)
+        confidence = metadata["confidence_recovery"]["final_confidence"]
     result = {
         "schema_version": 3,
         "status": status,
-        "confidence": 0.95,
+        "confidence": confidence,
         "checks_failed": [],
         "checks_run": gate_ids,
         "findings": {
@@ -1427,36 +2122,49 @@ def _canonical_report(
             for record in records
         )
     (run / "review-notes.md").write_text(notes + "\n", encoding="utf-8", newline="\n")
-    checks = []
-    for gate in gate_ids:
-        for suffix in ("command", "stdout", "stderr"):
-            (run / f"{gate}.{suffix}.txt").write_text("", encoding="utf-8", newline="\n")
-        check = {
-            "id": gate,
-            "status": "not-applicable",
-            "exit_code": 0,
-            "duration_seconds": 0.0,
-            "command_path": f"{gate}.command.txt",
-            "stdout": f"{gate}.stdout.txt",
-            "stderr": f"{gate}.stderr.txt",
-            "reason": "Synthetic minimal source declares no command for this gate.",
-        }
-        if gate == "review":
-            check["status"] = "pass"
-            check.pop("reason")
-            (run / check["stdout"]).write_text(
-                "Canonical assessment admission exercised independently.\n", encoding="utf-8", newline="\n"
-            )
-        checks.append(check)
-    (run / "gates.json").write_text(
-        json.dumps({"status": "pass", "checks_failed": [], "checks": checks}), encoding="utf-8", newline="\n"
-    )
+    if retained_gates is None:
+        checks = []
+        for gate in gate_ids:
+            for suffix in ("command", "stdout", "stderr"):
+                (run / f"{gate}.{suffix}.txt").write_text("", encoding="utf-8", newline="\n")
+            check = {
+                "id": gate,
+                "status": "not-applicable",
+                "exit_code": 0,
+                "duration_seconds": 0.0,
+                "command_path": f"{gate}.command.txt",
+                "stdout": f"{gate}.stdout.txt",
+                "stderr": f"{gate}.stderr.txt",
+                "reason": "Synthetic minimal source declares no command for this gate.",
+            }
+            if gate == "review":
+                check["status"] = "pass"
+                check.pop("reason")
+                (run / check["stdout"]).write_text(
+                    "Canonical assessment admission exercised independently.\n", encoding="utf-8", newline="\n"
+                )
+            checks.append(check)
+        (run / "gates.json").write_text(
+            json.dumps({"status": "pass", "checks_failed": [], "checks": checks}), encoding="utf-8", newline="\n"
+        )
+    else:
+        checks = retained_gates["checks"]
+        (run / "gates.json").write_text(json.dumps(retained_gates), encoding="utf-8", newline="\n")
     fields = [
         ("Scope", "working-tree"),
         ("Revision", "diff sha256:" + metadata["review_input_sha256"]),
         ("CI", "unavailable"),
         ("Type", "fix"),
-        ("Suggestion", "minor changes" if recommendation == "minor-changes" else "needs work"),
+        (
+            "Suggestion",
+            {
+                "accept-as-is": "approve",
+                "minor-changes": "minor changes",
+                "needs-more-work": "needs work",
+                "reject": "reject",
+                "not-aligned": "not aligned",
+            }[recommendation],
+        ),
     ]
     source_records = [{"id": "snapshot:" + field, "evidence": "review-notes.md"} for field, _ in fields]
     tables = [
@@ -1511,7 +2219,7 @@ def _canonical_report(
         "remaining": [],
         "next_steps": [],
         "confidence": {
-            "score": 0.95,
+            "score": confidence,
             "band": "fair",
             "limits": metadata["confidence_recovery"]["remaining_limits"],
             "gaps": metadata["confidence_gap_closures"],
@@ -1766,6 +2474,130 @@ def test_individual_duplicate_actions_require_exact_obligations_and_origins(tmp_
             finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
 
 
+@pytest.mark.parametrize(
+    "problem",
+    [
+        "none",
+        "origin",
+        "author",
+        "pointer",
+        "coordinate",
+        "original",
+        "severity",
+        "digest",
+        "range",
+        "witness",
+        "reason",
+        "duplicates",
+        "unknown-group",
+        "inventory",
+        "no-reconciliation",
+        "identical-origins",
+    ],
+)
+def test_semantic_group_preserves_origins_at_ordinary_report_intake(tmp_path: Path, problem: str) -> None:
+    """Wording variants share one evidenced action while every original obligation reaches remediation."""
+    first = _batch_finding("F_ONE", "medium", "Make the result distinguish an input transpose.")
+    duplicate = {**first, "id": "F_COPY"}
+    variant = _batch_finding("F_VARIANT", "low", "Use an asymmetric input to detect a transposed result.")
+    variant["closure_evidence"] = "The correct orientation passes and a deliberately transposed result fails."
+    variant["evidence"] = [{"path": "other.py", "start_line": 1, "end_line": 1}]
+    if problem == "identical-origins":
+        variant = {**first, "id": "F_VARIANT"}
+    run, home = _completed_batches(
+        tmp_path,
+        blocker=(1, "challenger"),
+        source_records=[first, duplicate],
+        interaction_finding=(1, "qa-specialist", 3),
+        interaction_records=[variant],
+    )
+    assert _batch_command(run, "assemble-batches", home).returncode == 0
+    manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
+    originals = manifest["source_findings"]
+    assert len(originals) == 3
+    record = {
+        **first,
+        "id": "F_CANONICAL",
+        "authors": ["Challenger", "QA specialist"],
+        "summary": "The oracle must detect a transposed result.",
+        "required_change": "Use asymmetric input to make the result distinguish an input transpose.",
+        "closure_evidence": variant["closure_evidence"],
+        "evidence": [*[item["manifest_path"] for item in originals], "widget.py:1-1", "other.py:1-1"],
+    }
+    exact = sorted(item["finding_id"] for item in originals if item["original"]["id"] != "F_VARIANT")
+    duplicates = {exact[1]: exact[0]}
+    if problem == "identical-origins":
+        exact = sorted(item["finding_id"] for item in originals)
+        duplicates = {identity: exact[0] for identity in exact[1:]}
+    group = {
+        "invariant": "The test oracle distinguishes orientation.",
+        "rationale": "All originals require the same asymmetric oracle and transpose negative control.",
+        "origins": {
+            item[
+                "finding_id"
+            ]: "The asymmetric input and transpose control cover this original change and closure demand."
+            for item in originals
+        },
+        "evidence": [originals[0]["original"]["evidence"][0].copy()],
+    }
+    reconciliation = {"F_CANONICAL": group}
+    extra = {"source_finding_reconciliation": reconciliation}
+    if problem == "origin":
+        group["origins"].pop(originals[0]["finding_id"])
+    elif problem == "author":
+        record["authors"] = ["Challenger"]
+    elif problem == "pointer":
+        record["evidence"] = [entry for entry in record["evidence"] if entry != originals[0]["manifest_path"]]
+    elif problem == "coordinate":
+        record["evidence"].remove("other.py:1-1")
+    elif problem == "original":
+        extra["source_findings"] = json.loads(json.dumps(originals))
+        extra["source_findings"][0]["original"]["required_change"] = "Discard the original obligation."
+    elif problem == "severity":
+        record["severity"] = "low"
+    elif problem == "digest":
+        group["evidence"][0]["source_sha256"] = "0" * 64
+    elif problem == "range":
+        group["evidence"][0]["end_line"] = 999999
+    elif problem == "witness":
+        group["evidence"] = []
+    elif problem == "reason":
+        group["origins"][originals[0]["finding_id"]] = " "
+    elif problem == "duplicates":
+        duplicates[originals[-1]["finding_id"]] = exact[0]
+    elif problem == "unknown-group":
+        reconciliation["UNKNOWN"] = group
+    elif problem == "inventory":
+        manifest["batch_execution"]["inventory_sha256"] = "0" * 64
+        (run / "specialist-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    elif problem == "no-reconciliation":
+        extra = {}
+    path = _canonical_report(
+        run,
+        [record],
+        {item["finding_id"]: ["F_CANONICAL"] for item in originals},
+        "needs-more-work",
+        status="fail",
+        duplicates=duplicates,
+        confidence_metadata=extra,
+    )
+    spec = importlib.util.spec_from_file_location(
+        "semantic_consumer_intake", preparation.SKILL.parents[1] / "shared/find-review-report.py"
+    )
+    finder = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = finder
+    spec.loader.exec_module(finder)
+    if problem != "none":
+        with pytest.raises(LookupError, match="review-batch"):
+            finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
+        return
+    assert finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent") == path
+    evidence = finder.finding_evidence(path, "F_CANONICAL")
+    assert evidence["source_origins"] == originals
+    assert evidence["source_reconciliation"] == group
+    assert json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))["source_findings"] == originals
+
+
 def test_optional_disposition_witness_over_capacity_keeps_actionable_finding(tmp_path: Path) -> None:
     """A large optional dismissal witness leaves the obligation open without blocking the bounded final wave."""
     record = _batch_finding("F_WIDE", "low", "Document the full selected source behavior.")
@@ -1892,3 +2724,530 @@ def test_five_role_batches_preserve_roster_and_findings(tmp_path: Path, mutation
             assert "role" in checked.stderr or "pass" in checked.stderr
     else:
         assert checked.returncode == 0, checked.stderr
+
+
+@pytest.mark.parametrize("route", ["interaction", "fitting-final"])
+def test_unissued_historical_inventory_uses_complete_current_instructions(tmp_path: Path, route: str) -> None:
+    """Fresh work on a retained generation must explain ratings and confidence without changing issued templates."""
+    run, _ = _completed_batches(tmp_path)
+    import review_batches
+    import validate_artifacts
+
+    inventory = validate_artifacts._load_json(run / "batch-inventory.json")
+    inventory["schema_version"] = 1
+    directory = run / "batches" / ("interaction-001" if route == "interaction" else "interactions")
+    plan = validate_artifacts._load_json(directory / "inspection-plan.json")
+    for entry in plan["contexts"]:
+        (directory / entry["context_path"]).unlink()
+    if route == "interaction":
+        rendered = review_batches.interaction_contexts(
+            run,
+            inventory,
+            validate_artifacts._load_json(run / "interaction-briefs.json"),
+            review_batches._wave_outputs(run, review_batches._source_wave_paths(run, inventory)),
+        )
+        contexts = {role: packets[0] for role, packets in rendered.items()}
+    else:
+        contexts = review_batches.consolidation_contexts(run, inventory)
+    for role, content in contexts.items():
+        assert review_batches.RATING_LEGEND in content
+        assert review_batches.CONFIDENCE_ACCOUNTING in content
+        # The newly issued full prefix must itself remain a recognized exact historical template.
+        (directory / "specialists" / f"{role}-context.md").write_bytes(content)
+    if route == "interaction":
+        repeated = review_batches.interaction_contexts(
+            run,
+            inventory,
+            validate_artifacts._load_json(run / "interaction-briefs.json"),
+            review_batches._wave_outputs(run, review_batches._source_wave_paths(run, inventory)),
+        )
+        assert {role: packets[0] for role, packets in repeated.items()} == contexts
+    else:
+        assert review_batches.consolidation_contexts(run, inventory) == contexts
+
+
+def test_multipart_confidence_recovery_retains_scoped_judgments(tmp_path: Path) -> None:
+    """Allow fully mapped global recovery without altering historical scores or accepting invented evidence."""
+    run, home = _completed_batches(tmp_path, large=True, consolidation_reports=3)
+    import validate_artifacts
+
+    assembled = _batch_command(run, "assemble-batches", home)
+    assert assembled.returncode == 0, assembled.stderr
+    manifest_bytes = (run / "specialist-manifest.json").read_bytes()
+    manifest = json.loads(manifest_bytes)
+    first_wave = run / manifest["batch_execution"]["waves"][0]["manifest_path"]
+    selected = json.loads(first_wave.read_bytes())["passes"][0]
+    evidence_path = (first_wave.parent / selected["output_path"]).relative_to(run).as_posix()
+    labels = [
+        f"{item['role']} {part['output_path']}: {gap['gap']} ({gap['status']}) - {gap['rationale']}"
+        for item in manifest["passes"]
+        for part in item["final_parts"]
+        for gap in part["confidence"]["gaps"]
+        if gap["status"] != "closed"
+    ]
+    residual = "Residual: controlled offline receipt uncertainty."
+    confidence_metadata = {
+        "confidence_gaps": [*labels, residual],
+        "confidence_gap_closures": [
+            {
+                "gap": label,
+                "status": "closed",
+                "evidence": evidence_path,
+                "rationale": "(-0.00) Complete admitted source inspection resolves this scoped fixture limitation.",
+            }
+            for label in labels
+        ]
+        + [{"gap": residual, "status": "unresolved", "rationale": "(-0.01) Offline receipts remain a limit."}],
+        "confidence_recovery": {
+            "initial_confidence": 0.95,
+            "final_confidence": 0.99,
+            "status": "fair",
+            "evidence": [evidence_path],
+            "recovery_actions": ["Reconcile all scoped causes against admitted source inspection."],
+            "remaining_limits": [f"(-0.00) Same cause as {residual}"],
+        },
+    }
+    path = _canonical_report(run, [], {}, "accept-as-is", confidence_metadata=confidence_metadata)
+    validate_artifacts._validate_result(run, path, home, "parent", tmp_path)
+    assert (run / "specialist-manifest.json").read_bytes() == manifest_bytes
+    assert {part["confidence"]["score"] for item in manifest["passes"] for part in item["final_parts"]} == {0.95}
+    spec = importlib.util.spec_from_file_location(
+        "confidence_recovery_intake", preparation.SKILL.parents[1] / "shared/find-review-report.py"
+    )
+    finder = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = finder
+    spec.loader.exec_module(finder)
+    assert finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent") == path
+    shared = json.loads(json.dumps(confidence_metadata))
+    for closure in shared["confidence_gap_closures"][:-1]:
+        closure["status"] = "unresolved"
+        closure["rationale"] = f"(-0.00) Same cause as {residual} Count the offline limitation once globally."
+    path = _canonical_report(run, [], {}, "accept-as-is", confidence_metadata=shared)
+    validate_artifacts._validate_result(run, path, home, "parent", tmp_path)
+    # Quoted immutable labels themselves contain historical deductions; only the leading current token counts.
+    counted = labels[0]
+    shared["confidence_gap_closures"][0]["rationale"] = "(-0.01) Count the remaining offline uncertainty once."
+    for closure in shared["confidence_gap_closures"][1:]:
+        closure["rationale"] = f"(-0.00) Same cause as {counted}"
+    path = _canonical_report(run, [], {}, "accept-as-is", confidence_metadata=shared)
+    validate_artifacts._validate_result(run, path, home, "parent", tmp_path)
+    for mutation, expected in (
+        ("dropped", "review-consolidation-confidence-gap-dropped"),
+        ("missing-evidence", "review-consolidation-confidence-evidence-invalid"),
+        ("unadmitted-evidence", "review-consolidation-confidence-evidence-invalid"),
+        ("closed-deduction", "review-consolidation-confidence-accounting-invalid"),
+        ("wrong-total", "review-consolidation-confidence-accounting-invalid"),
+        ("wrong-initial", "review-consolidation-confidence-initial-mismatch"),
+        ("conflicting-evidence", "review-consolidation-confidence-evidence-invalid"),
+        ("unknown-scoped-gap", "review-consolidation-confidence-gap-unknown"),
+        ("unproved-reduction", "review-consolidation-confidence-evidence-invalid"),
+    ):
+        changed = json.loads(json.dumps(confidence_metadata))
+        closure = changed["confidence_gap_closures"][0]
+        if mutation == "dropped":
+            changed["confidence_gaps"].remove(labels[0])
+            changed["confidence_gap_closures"].pop(0)
+        elif mutation == "missing-evidence":
+            closure["evidence"] = "Claimed closed without a receipt."
+        elif mutation == "unadmitted-evidence":
+            closure["evidence"] = "review-notes.md"
+        elif mutation == "closed-deduction":
+            closure["rationale"] = "(-0.01) Closed but still deducted."
+        elif mutation == "wrong-total":
+            changed["confidence_gap_closures"][-1]["rationale"] = "(-0.02) Wrong total."
+        elif mutation == "conflicting-evidence":
+            closure["evidence_path"] = "review-notes.md"
+        elif mutation == "unknown-scoped-gap":
+            unknown = labels[0].split(": ", 1)[0] + ": Invented scoped gap."
+            changed["confidence_gaps"].append(unknown)
+            changed["confidence_gap_closures"].append({**closure, "gap": unknown})
+        elif mutation == "unproved-reduction":
+            closure["status"] = "unresolved"
+            closure.pop("evidence")
+            closure["rationale"] = "(-0.00) Lowered without evidence or a shared cause."
+        else:
+            changed["confidence_recovery"]["initial_confidence"] = 0.96
+        path = _canonical_report(run, [], {}, "accept-as-is", confidence_metadata=changed)
+        with pytest.raises(SystemExit, match=expected):
+            validate_artifacts._validate_result(run, path, home, "parent", tmp_path)
+
+
+@pytest.mark.parametrize("placement", ["gap", "rationale", "duplicate"])
+def test_emitted_scoped_deductions_require_evidence_for_reduction(tmp_path: Path, placement: str) -> None:
+    """Bind permitted raw token positions through native assembly before checking a global reduction."""
+    profile = {"score": 0.70, "scope": "Bounded implementation and regression inspection.", "gaps": []}
+    for name, amount in [
+        ("Production source and exact diff unavailable", "25"),
+        ("Mutation evidence unavailable", "05"),
+    ]:
+        token = f"(-0.{amount})"
+        profile["gaps"].append(
+            {
+                "gap": name + (f" {token}" if placement in {"gap", "duplicate"} else ""),
+                "status": "unresolved",
+                "rationale": "Full global evidence has not yet been inspected."
+                + (f" {token}" if placement in {"rationale", "duplicate"} else ""),
+            }
+        )
+    run, home = _completed_batches(tmp_path, large=True, consolidation_reports=3, consolidation_confidence=profile)
+    import validate_artifacts
+
+    assert _batch_command(run, "assemble-batches", home).returncode == 0
+    manifest_bytes = (run / "specialist-manifest.json").read_bytes()
+    manifest = json.loads(manifest_bytes)
+    part = next(item for item in manifest["passes"] if item["role"] == "qa-specialist")["final_parts"][0]
+    assert part["confidence"] == profile
+    raw_bytes = (run / part["output_path"]).read_bytes()
+    labels = []
+    closures = []
+    for item in manifest["passes"]:
+        for current in item["final_parts"]:
+            for index, gap in enumerate(current["confidence"]["gaps"]):
+                if gap["status"] == "closed":
+                    continue
+                label = f"{item['role']} {current['output_path']}: {gap['gap']} ({gap['status']}) - {gap['rationale']}"
+                labels.append(label)
+                closures.append(
+                    {"gap": label, "status": "unresolved", "rationale": "(-0.00) Same cause as pending global cause."}
+                )
+                if current == part:
+                    closures[-1]["rationale"] = (
+                        "(-0.01) Production still absent; no cause evidence."
+                        if index == 0
+                        else "(-0.05) Mutation remains absent."
+                    )
+    production = next(closure["gap"] for closure in closures if closure["rationale"].startswith("(-0.01)"))
+    for closure in closures:
+        if closure["rationale"].startswith("(-0.00)"):
+            closure["rationale"] = f"(-0.00) Same cause as {production}"
+    evidence = manifest["passes"][0]["final_parts"][-1]["output_path"]
+    metadata = {
+        "confidence_gaps": labels,
+        "confidence_gap_closures": closures,
+        "confidence_recovery": {
+            "initial_confidence": 0.70,
+            "final_confidence": 0.94,
+            "status": "fair",
+            "evidence": [evidence],
+            "recovery_actions": ["Inventory global scoped limitations."],
+            "remaining_limits": [f"(-0.00) Same cause as {production}"],
+        },
+    }
+    path = _canonical_report(run, [], {}, "accept-as-is", confidence_metadata=metadata)
+    with pytest.raises(SystemExit, match="review-consolidation-confidence-evidence-invalid"):
+        validate_artifacts._validate_result(run, path, home, "parent", tmp_path)
+    spec = importlib.util.spec_from_file_location(
+        "scoped_token_intake", preparation.SKILL.parents[1] / "shared/find-review-report.py"
+    )
+    finder = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = finder
+    spec.loader.exec_module(finder)
+    with pytest.raises(LookupError, match="review-consolidation-confidence-evidence-invalid"):
+        finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
+    # The counted cause gets its own admitted reference; other occurrences remain explicit shared-cause mappings.
+    next(closure for closure in closures if closure["gap"] == production)["evidence"] = evidence
+    path = _canonical_report(run, [], {}, "accept-as-is", confidence_metadata=metadata)
+    validate_artifacts._validate_result(run, path, home, "parent", tmp_path)
+    assert finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent") == path
+    assert (run / part["output_path"]).read_bytes() == raw_bytes
+    assert (run / "specialist-manifest.json").read_bytes() == manifest_bytes
+
+
+@pytest.mark.parametrize(
+    "gap,rationale,expected",
+    [
+        pytest.param("Missing evidence (-0.25).", "Evidence is absent.", 25, id="gap-only"),
+        pytest.param("Missing evidence.", "Evidence is absent (-0.25).", 25, id="rationale-only"),
+        pytest.param("Missing evidence (-0.25).", "Evidence is absent (-0.25).", 25, id="duplicate-identical"),
+        pytest.param("Missing evidence (-1.00).", "Evidence is absent.", 100, id="historical-full-shortfall"),
+        pytest.param("Missing evidence (−0.25).", "Evidence is absent.", 25, id="historical-unicode-minus"),
+        pytest.param("Missing evidence.", "No numerical attribution supplied.", 0, id="explicit-residual-needed"),
+        pytest.param("Missing evidence (-0.25).", "Evidence is absent (-0.05).", None, id="conflicting-fields"),
+        pytest.param(
+            "Missing evidence (-0.25) and (-0.05).", "Ambiguous cause attribution.", None, id="ambiguous-own-field"
+        ),
+    ],
+)
+def test_scoped_contribution_positions_are_unambiguous(gap: str, rationale: str, expected: int | None) -> None:
+    """Preserve historical token spellings while refusing conflicting attribution instead of dropping its cost."""
+    helper = preparation.runpy.run_path(str(preparation.SKILL / "validate_artifacts.py"))[
+        "_scoped_confidence_deduction"
+    ]
+    profile = {"gap": gap, "rationale": rationale}
+    if expected is None:
+        with pytest.raises(SystemExit, match="review-consolidation-confidence-scoped-deduction-ambiguous"):
+            helper(profile)
+    else:
+        assert helper(profile) == expected
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+def test_local_source_gate_evidence_reaches_ordinary_confidence_intake(tmp_path: Path, workers: int) -> None:
+    """Current import-bound local tests can close runtime gaps without changing source scores."""
+    run, home = _completed_source_only(tmp_path, runtime_test=True)
+    assert _batch_command(run, "assemble-batches", home).returncode == 0
+    manifest = json.loads((run / "specialist-manifest.json").read_bytes())
+    mirror = json.loads((run / "local-source/review-worktree.json").read_bytes())["review_worktree"]
+    args = [
+        sys.executable,
+        str(preparation.PLUGIN_ROOT / "shared/run_gates.py"),
+        "--out",
+        str(run),
+        "--worktree",
+        mirror,
+        "--pytest-python",
+        sys.executable,
+        "--pytest-import",
+        "widget",
+        "--pytest-args-json",
+        json.dumps(
+            [
+                "-q",
+                *(["-n", str(workers)] if workers else ["-p", "no:xdist"]),
+                "-p",
+                "no:cacheprovider",
+                "-o",
+                "addopts=",
+                "test_runtime.py",
+            ]
+        ),
+    ]
+    for gate in ("lint", "format", "types", "review"):
+        args.extend((f"--{gate}", f"{sys.executable} -c pass"))
+    completed = subprocess.run(
+        args, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}, capture_output=True, text=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+    gates_bytes = (run / "gates.json").read_bytes()
+    actual_proof = next(check for check in json.loads(gates_bytes)["checks"] if check["id"] == "tests")[
+        "python_imports"
+    ]
+    if workers:
+        assert len(actual_proof["workers"]) == workers
+        assert any(worker["status"] == "inconclusive" for worker in actual_proof["workers"].values())
+        assert actual_proof["status"] == "pass"
+    spec = importlib.util.spec_from_file_location("local_gate_consumer", preparation.SKILL / "validate_artifacts.py")
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
+    assert "checks/tests.stdout.txt" in validator._consolidation_confidence_evidence(run, manifest)
+    labels = [
+        f"{item['role']} {part['output_path']}: {gap['gap']} ({gap['status']}) - {gap['rationale']}"
+        for item in manifest["passes"]
+        for part in item["source_parts"]
+        for gap in part["confidence"]["gaps"]
+    ]
+    metadata = {
+        "confidence_gaps": ["Synthetic offline receipts.", *labels],
+        "confidence_gap_closures": [
+            {
+                "gap": "Synthetic offline receipts.",
+                "status": "unresolved",
+                "rationale": "(-0.05) Native specialist receipts are synthetic.",
+            },
+            *[
+                {
+                    "gap": label,
+                    "status": "closed",
+                    "rationale": "(-0.00) Current mirror tests executed.",
+                    "evidence": "checks/tests.stdout.txt",
+                }
+                for label in labels
+            ],
+        ],
+        "confidence_recovery": {
+            "initial_confidence": 0.90,
+            "final_confidence": 0.95,
+            "status": "fair",
+            "evidence": ["checks/tests.stdout.txt"],
+            "recovery_actions": ["Executed current source tests."],
+            "remaining_limits": ["(-0.05) Native specialist receipts are synthetic."],
+        },
+    }
+    path = _canonical_report(
+        run, [], {}, "accept-as-is", confidence_metadata=metadata, retained_gates=json.loads(gates_bytes)
+    )
+    (run / "gates.json").write_bytes(gates_bytes)
+    finder_spec = importlib.util.spec_from_file_location(
+        "local_gate_finder", preparation.PLUGIN_ROOT / "shared/find-review-report.py"
+    )
+    finder = importlib.util.module_from_spec(finder_spec)
+    sys.modules[finder_spec.name] = finder
+    finder_spec.loader.exec_module(finder)
+    assert finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent") == path
+    sidecar_path = run / "checks/tests.python-imports.json"
+    sidecar_bytes = sidecar_path.read_bytes()
+    for problem in (
+        "omit-one-worker",
+        "omit-all-workers",
+        "deleted-sidecar",
+        "altered-sidecar",
+        "altered-sidecar-rehashed",
+        "invalid-sidecar",
+        "missing-hash",
+        "wrong-hash",
+        "changed-inline",
+    ):
+        if not workers and problem.startswith("omit-"):
+            continue
+        changed_gates = json.loads(gates_bytes)
+        gate = next(check for check in changed_gates["checks"] if check["id"] == "tests")
+        if problem == "omit-one-worker":
+            gate["python_imports"]["workers"].pop(next(iter(gate["python_imports"]["workers"])))
+        elif problem == "omit-all-workers":
+            gate["python_imports"]["workers"] = {}
+        elif problem == "deleted-sidecar":
+            sidecar_path.unlink()
+        elif problem in {"altered-sidecar", "altered-sidecar-rehashed"}:
+            changed_proof = json.loads(sidecar_bytes)
+            changed_proof["status"] = "fail"
+            sidecar_path.write_bytes(json.dumps(changed_proof).encode())
+            if problem == "altered-sidecar-rehashed":
+                gate["source"]["artifacts"]["checks/tests.python-imports.json"] = hashlib.sha256(
+                    sidecar_path.read_bytes()
+                ).hexdigest()
+        elif problem == "invalid-sidecar":
+            sidecar_path.write_bytes(b"{")
+            gate["source"]["artifacts"]["checks/tests.python-imports.json"] = hashlib.sha256(b"{").hexdigest()
+        elif problem == "missing-hash":
+            gate["source"]["artifacts"].pop("checks/tests.python-imports.json", None)
+        elif problem == "wrong-hash":
+            gate["source"]["artifacts"]["checks/tests.python-imports.json"] = "0" * 64
+        else:
+            gate["python_imports"]["invoked_interpreter"] = str(tmp_path / "other-python")
+        (run / "gates.json").write_bytes(json.dumps(changed_gates).encode())
+        with pytest.raises(LookupError, match="local-confidence-tests-proof"):
+            finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
+        sidecar_path.write_bytes(sidecar_bytes)
+        (run / "gates.json").write_bytes(gates_bytes)
+    for problem in (
+        "external-test-unimported",
+        "empty-worker",
+        "failed-worker",
+        "external-module-unimported",
+        "missing-interpreter",
+        "missing-prefix",
+        "missing-module",
+        "test-identity",
+        "neutral-module",
+    ):
+        changed_gates = json.loads(gates_bytes)
+        gate = next(check for check in changed_gates["checks"] if check["id"] == "tests")
+        proof = gate["python_imports"]
+        worker = {
+            key: json.loads(json.dumps(proof[key]))
+            for key in ("status", "runtime_interpreter", "sys_prefix", "worktree", "modules", "tests", "local_source")
+        }
+        module_name = next(iter(worker["modules"]))
+        test_name = next(iter(worker["tests"]))
+        if problem == "external-test-unimported":
+            worker["status"] = "inconclusive"
+            worker["tests"][test_name] = {
+                "origin": str(tmp_path / "external.py"),
+                "tracked": False,
+                "status": "inconclusive",
+                "reason": "module-not-imported",
+            }
+        elif problem == "empty-worker":
+            worker["tests"] = {}
+        elif problem == "failed-worker":
+            worker["status"] = "fail"
+        elif problem == "external-module-unimported":
+            worker["status"] = "inconclusive"
+            worker["modules"][module_name] = {
+                "origin": str(tmp_path / "external.py"),
+                "tracked": False,
+                "status": "inconclusive",
+                "reason": "module-not-imported",
+            }
+        elif problem == "missing-interpreter":
+            worker.pop("runtime_interpreter")
+        elif problem == "missing-prefix":
+            worker.pop("sys_prefix")
+        elif problem == "missing-module":
+            worker["modules"].pop(module_name)
+        elif problem == "test-identity":
+            worker["tests"][str(tmp_path / "external.py")] = worker["tests"].pop(test_name)
+        else:
+            worker["status"] = "inconclusive"
+            worker["modules"][module_name] = {
+                "origin": None,
+                "tracked": False,
+                "status": "inconclusive",
+                "reason": "module-not-imported",
+            }
+        proof["workers"] = {
+            "gw0": worker,
+            "gw1": {
+                key: json.loads(json.dumps(proof[key]))
+                for key in (
+                    "status",
+                    "runtime_interpreter",
+                    "sys_prefix",
+                    "worktree",
+                    "modules",
+                    "tests",
+                    "local_source",
+                )
+            },
+        }
+        changed_sidecar = json.dumps(proof).encode()
+        sidecar_path.write_bytes(changed_sidecar)
+        gate["source"]["artifacts"]["checks/tests.python-imports.json"] = hashlib.sha256(changed_sidecar).hexdigest()
+        (run / "gates.json").write_text(json.dumps(changed_gates), encoding="utf-8")
+        if problem == "neutral-module":
+            assert finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent") == path
+        else:
+            with pytest.raises(LookupError, match="local-source-tests"):
+                finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
+    sidecar_path.write_bytes(sidecar_bytes)
+    (run / "gates.json").write_bytes(gates_bytes)
+    snapshot = json.loads((run / "checks/local-source-snapshot.json").read_bytes())
+    gate_records = json.loads(gates_bytes)
+    test_gate = next(check for check in gate_records["checks"] if check["id"] == "tests")
+    snapshot["transport"] = test_gate["python_imports"]["local_source"]
+    for problem in ("missing-member", "stale-member", "external-origin", "forged-tracked", "worker-snapshot"):
+        changed_snapshot = json.loads(json.dumps(snapshot))
+        changed_checks = json.loads(json.dumps(gate_records["checks"]))
+        proof = next(check for check in changed_checks if check["id"] == "tests")["python_imports"]
+        origin = next(iter(proof["tests"].values()))
+        if problem == "missing-member":
+            changed_snapshot["files"] = [
+                record for record in changed_snapshot["files"] if record["path"] != "test_runtime.py"
+            ]
+        elif problem == "stale-member":
+            origin["snapshot_member"]["sha256"] = "0" * 64
+        elif problem == "external-origin":
+            origin["origin"] = str(tmp_path / "repository/test_runtime.py")
+        elif problem == "forged-tracked":
+            assert origin["tracked"] is False
+            origin["tracked"] = True
+        else:
+            worker = json.loads(json.dumps(proof))
+            worker["local_source"]["snapshot_sha256"] = "0" * 64
+            proof["workers"] = {"gw0": worker}
+        with pytest.raises(SystemExit, match="(local-source-tests|pr-source-review-tests-import-proof-invalid)"):
+            validator._validate_pr_tests_import_proof(changed_checks, mirror, changed_snapshot)
+    with pytest.raises(SystemExit, match="pr-source-review-tests-import-proof-invalid"):
+        validator._validate_pr_tests_import_proof(gate_records["checks"], mirror)
+    release_spec = importlib.util.spec_from_file_location(
+        "local_release_counterpart", preparation.PLUGIN_ROOT / "shared/validate-artifacts.py"
+    )
+    release_validator = importlib.util.module_from_spec(release_spec)
+    sys.modules[release_spec.name] = release_validator
+    release_spec.loader.exec_module(release_validator)
+    head = subprocess.run(
+        ["git", "-C", mirror, "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    with pytest.raises(SystemExit, match="release-gate-source:lint:expected-head"):
+        release_validator._validate_release_gate_source({"release_head": head}, gate_records)
+    for status in ("fail", "not-applicable"):
+        changed_gates = json.loads(gates_bytes)
+        next(check for check in changed_gates["checks"] if check["id"] == "tests")["status"] = status
+        (run / "gates.json").write_text(json.dumps(changed_gates), encoding="utf-8")
+        assert "checks/tests.stdout.txt" not in validator._consolidation_confidence_evidence(run, manifest)
+    (run / "gates.json").write_bytes(gates_bytes)
+    original_log = (run / "checks/tests.stdout.txt").read_bytes()
+    (run / "checks/tests.stdout.txt").write_bytes(original_log + b"forged extra execution\n")
+    with pytest.raises(LookupError, match="local-confidence-tests-artifact-invalid"):
+        finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
+    (run / "checks/tests.stdout.txt").write_bytes(original_log)

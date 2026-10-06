@@ -7,6 +7,8 @@ description: Build/extend grounded Kaggle Jupytext notebooks for training, EDA, 
 
 # Kaggle
 
+> Task-size routing follows [Proportional Execution](../../shared/native-skill-contract.md#proportional-execution); this skill's specialized lifecycle and acceptance checks remain authoritative.
+
 Build public-readable Kaggle notebook with evidence-backed problem profile, visual EDA, stage-level sanity checks, reproducible training, inference, and submission validation. Write notebook scripts only; use `implement` for packages or production modules and `research` for literature surveys.
 
 ## Input Schema

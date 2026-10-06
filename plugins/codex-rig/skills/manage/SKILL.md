@@ -25,19 +25,27 @@ The installed plugin tree is immutable input. Resolve requested targets against 
 
 ## Lightweight Local Work
 
+> Read and apply [Proportional Execution](../../shared/native-skill-contract.md#proportional-execution) before choosing the direct or detailed path.
+
 Use a parent-only path for a small, understood, reversible local change with bounded impact and existing task authorization. A code fix plus its regression test remains one change. Routing examples are optional; tests and documentation for one change do not create separate domains.
 
 1. Inspect the affected flow and applicable instructions; define the requested outcome. Investigate an unknown cause before editing.
 2. Make the smallest authorized change. Run the relevant acceptance check and configured lint/format checks; inspect the diff.
 3. Report the outcome, verification, and material limits concisely. Do not create execution plans, specialist packs, confidence worksheets, five-entry gate bundles, or final-handoff/result artifacts solely for this path. Reuse still-valid checks for unchanged source and environment.
 
-This path takes precedence over the detailed workflow and role examples below. Select the detailed workflow for broad or risky changes, an explicitly requested structured report/review, or work requiring independent specialist coverage. Actual runtime permissions, protected-state decisions, and project-required checks still apply. Missing parallel controls select parent-serial work; they do not require another permission request for already-authorized local edits.
+This path takes precedence over the detailed workflow and role examples below. Select the detailed workflow for medium/large or unexpectedly nontrivial work under Proportional Execution, an explicitly requested structured report/review, or work requiring independent specialist coverage. Actual runtime permissions, protected-state decisions, and project-required checks still apply. Missing parallel controls select parent-serial work; they do not require another permission request for already-authorized local edits.
+
+## Execution Route Selection
+
+Before preparing or dispatching any child, resolve invocation `--execution=<mode>` → `CODEX_RIG_EXECUTION` → `auto` and apply the loaded Proportional Execution selector. Honor `serial`; `parallel-read` chooses only the strict portable section; reject unsupported `parallel-write`. Absent, explicit, or environment `auto` chooses suitable observed native bounded work or parent-serial work, never the portable route. Native support is read-only; all management mutations remain parent-serial.
+
+Record the choice and reason in the existing plan or concise outcome. Use portable helpers and digest receipts only after selecting `parallel-read`; native work does not inherit their helper-level `auto` resolver.
 
 ## Parallel Adoption (Portable read-only)
 
 <!-- policy-sibling: skills/implement/SKILL.md (Parallel Adoption section) — near-duplicate; also see skills/code-review/SKILL.md Workflow parallel-review section as a third divergent variant; check siblings before editing this section alone -->
 
-This skill permits only its promoted portable read-only route. Resolve execution precedence from per-invocation `--execution=<mode>`, then `CODEX_RIG_EXECUTION`, then the `auto` default. The default execution mode is `auto`. `auto` selects this route only after this consumer's runtime matrix and promotion; otherwise it resolves safely to `serial`. Serial parent work uses existing task authorization; exact-plan-digest approval applies when the promoted parallel-read route is selected. This route never bypasses consumer promotion, serial parent authority, or applicable write approval. Supplied denials or stale approvals remain invalid in every execution mode.
+This portable section permits only its promoted portable read-only route. Native disjoint read-only support may follow Proportional Execution; all management mutations remain parent-serial, with protected-target, approval, and propagation rules unchanged. Execution Route Selection must resolve to `parallel-read` before this section applies; `auto` does not select it. This consumer's runtime matrix and promotion remain mandatory. Serial parent work uses existing task authorization; exact-plan-digest approval applies when the promoted parallel-read route is selected. This route never bypasses consumer promotion, serial parent authority, or applicable write approval. Supplied denials or stale approvals remain invalid in every execution mode.
 
 Follow the [canonical G0–G8 execution flow](../../ARCHITECTURE.md#canonical-g0g8-execution-flow) for shared gate order and fork outcomes. This consumer's read-only inventory passes are bounded by G0–G5; parent owns deterministic G6 integration, G7 verification, and G8 verdict/promotion.
 
@@ -47,7 +55,7 @@ The promoted route permits read-only inventory, reference, ownership, and policy
 
 ### Required barrier
 
-Apply shared [host compatibility check](../../shared/specialist-orchestration.md#host-compatibility-before-dispatch) before preparing any child work. Include `read_host` only from verified launcher-supported child controls. Missing or incompatible controls make `auto` resolve serial with reason; explicit parallel-read stops before dispatch. A plan declaration is not effective-control proof, and post-run validation remains mandatory.
+Apply shared [host compatibility check](../../shared/specialist-orchestration.md#host-compatibility-before-dispatch) before preparing any child work. Include `read_host` only from verified launcher-supported child controls. Missing or incompatible controls stop the selected parallel-read route before dispatch. A plan declaration is not effective-control proof, and post-run validation remains mandatory.
 
 Before any dispatch, freeze intent, target, baseline, ownership map, exact references, calibration and routing impact, context packs, role-card hashes, checks, resource locks, and plan digest. Dispatch at most one fixed dependency-ready wave, then join every terminal scan before edits, propagation, gates, or acceptance; changed scope requires new plan.
 
@@ -55,7 +63,7 @@ The frozen `<run-directory>/execution-plan.json` must include exact `consumer_po
 
 Bootstrap exception: run-directory creation (Step 01), the `inventory.txt`/`references.txt`/`ownership.md` writes from Step 03, and the `write-approval.json` write itself are exempt from requiring a prior approved plan digest — these precursor writes must exist before a plan digest can be computed or approved.
 
-Before dispatch, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer manage --plan <run-directory>/execution-plan.json --approval <run-directory>/write-approval.json`; append `--execution=<mode>` only for explicit invocation value. Omit `--approval` when no parent writes are planned or effective execution is serial and no approval was supplied. Resolve host fallback before deciding whether the parallel route needs a receipt. A nonzero result stops route.
+Before dispatch, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer manage --plan <run-directory>/execution-plan.json --approval <run-directory>/write-approval.json`; pass `--execution=parallel-read` for the selected portable route, including an environment-selected value. Omit `--approval` when no parent writes are planned or effective execution is serial and no approval was supplied. Resolve host fallback before deciding whether the parallel route needs a receipt. A nonzero result stops route.
 
 After every spawned child reaches a terminal handoff, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py validate-runtime --consumer manage --manifest <run-directory>/execution-manifest.json --plan <run-directory>/execution-plan.json --parent-rollout <authoritative-parent-rollout> --sessions-dir <authoritative-sessions-directory> --run-dir <run-directory> --roles-dir PLUGIN_ROOT/roles`. Require `runtime_promotion_eligible=true`, `consumer_id=manage`, and `write_parallel_eligible=false`. Run the same preflight again after the terminal join and before the first parent mutation. Any plan, approval, consumer, runtime, or join drift stops mutation and requires a new frozen plan plus exact approval.
 
@@ -73,7 +81,7 @@ Unavailable or unsafe fan-out uses equal-gate `serial-fallback` from the same fr
 
 ### Acceptance
 
-This skill's shared runtime matrix and consumer promotion must remain complete before `auto` selects this route. Acceptance must prove freeze, complete join, truthful execution label, resource compatibility, equal gates, and unchanged serial parent authority.
+This skill's shared runtime matrix and consumer promotion must remain complete before the selected `parallel-read` route starts. Acceptance must prove freeze, complete join, truthful execution label, resource compatibility, equal gates, and unchanged serial parent authority.
 
 ### Stop rule
 
@@ -83,7 +91,7 @@ Generic parallel writes remain disabled. Stop without dispatch on missing promot
 
 ### 01: Create run directory
 
-Run `create_run.py --skill manage` per `../../shared/helper-cli-contract.md`. For parallel-adoption execution-mode selection (`auto`/`serial`/`parallel-read`/`parallel-write`), see the Parallel Adoption section above before proceeding.
+Run `create_run.py --skill manage` per `../../shared/helper-cli-contract.md`. Apply Execution Route Selection before any child preparation. Native or parent-serial work follows its selected route; only selected `parallel-read` work enters Parallel Adoption and its helper/receipt lifecycle.
 
 ### 02: Parse intent and target
 

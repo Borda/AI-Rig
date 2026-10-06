@@ -94,7 +94,7 @@ Every `roles/<role_id>/ROLE.md` follows one fixed schema, and `runtime/calibrati
 2. **Evidence ownership** — what role must read or establish before acting, and what it must record (rejected alternatives, tradeoffs, verified-vs-assumed state) as it works.
 3. **Execution constraints** — house style, conventions, and hard "do not" rules role must respect, plus which other role owns adjacent work it must hand off instead of doing itself.
 4. **Handover contract** — exact ordered content role must return to its parent or caller.
-5. **Confidence contract** — 0–1 confidence score role must report, ≥0.90 bar for completion claim, and instruction to name every material evidence gap rather than omit it.
+5. **Confidence contract** — 0–1 confidence score role must report, ≥0.90 bar for completion claim, and instruction to name every material evidence gap rather than omit it. Every standalone card also states numerical deduction accounting: ASCII minus/two-decimal contributions for each gap or limitation, zero-impact limits, overlap counted once, exact `1.00 - score` shortfall, named score-setting constraints and residual uncertainty. These are evidence-backed judgment allocations, not calibrated probabilities.
 
 > **Selection boundary (advisory only — not part of the enforced 5)**: `solution-architect` and `security-auditor` additionally carry an explicit-user-selection rule and read-only advisory boundary in their own `ROLE.md` prose. `check_agents()`'s enforced-sections tuple has exactly 5 entries and does not check for this section; no other Sol role carries or needs it.
 

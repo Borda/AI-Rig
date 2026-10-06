@@ -606,6 +606,90 @@ def test_collect_pr_remediation_keeps_github_attached_branch(tmp_path: Path) -> 
     assert checkout["checkout_mode"] == "remediate"
 
 
+@pytest.mark.parametrize("checkout_mode", ["review", "remediate"])
+def test_collect_pr_preserves_ignored_nested_worktree(tmp_path: Path, checkout_mode: str) -> None:
+    """Allow an unrelated prior review worktree reported by Git with a directory suffix."""
+    module = _load_collector()
+    source, worktree, base, old, head = _setup_repositories(tmp_path)
+    _git(worktree, "checkout", "-b", "local-diverged", base)
+    nested = worktree / "cache" / "review"
+    _git(worktree, "worktree", "add", "--detach", str(nested), old)
+    (worktree / ".git" / "info" / "exclude").write_text("cache/\n", encoding="utf-8")
+    preserved = nested / "private.txt"
+    preserved.write_bytes(b"USER BYTES\n")
+    assert "cache/review/\0" in _git(worktree, "ls-files", "--others", "-z")
+    output = tmp_path / "collected"
+
+    code, calls = _collect(
+        module,
+        source,
+        worktree,
+        output,
+        base,
+        head,
+        cross_repository=False,
+        checkout_mode=checkout_mode,
+        gh_checkout_fails=False,
+    )
+
+    assert code == 0
+    assert preserved.read_bytes() == b"USER BYTES\n"
+    assert _git(nested, "rev-parse", "HEAD") == old
+    checkout = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
+    assert checkout["checkout_mode"] == checkout_mode
+    assert _git(worktree, "rev-parse", "HEAD") == (head if checkout_mode == "remediate" else base)
+    if checkout_mode == "remediate":
+        assert ["gh", "pr", "checkout", "https://github.com/example/project/pull/17"] in calls
+        assert _git(worktree, "branch", "--show-current") == "topic"
+
+
+@pytest.mark.parametrize("pr_path", ["cache", "cache/review", "cache/review/new.py"])
+@pytest.mark.parametrize("checkout_mode", ["review", "remediate"])
+def test_collect_pr_blocks_checkout_over_nested_worktree(tmp_path: Path, pr_path: str, checkout_mode: str) -> None:
+    """Retain directory overlap protection for Git's collapsed nested worktree entry."""
+    module = _load_collector()
+    source, worktree, base, old, _head = _setup_repositories(tmp_path)
+    incoming = source / pr_path
+    incoming.parent.mkdir(parents=True, exist_ok=True)
+    incoming.write_bytes(b"PR BYTES\n")
+    _git(source, "add", "--", pr_path)
+    _git(source, "commit", "-m", "add nested checkout collision")
+    head = _git(source, "rev-parse", "HEAD")
+    _git(source, "update-ref", "refs/pull/17/head", head)
+    _git(worktree, "checkout", "-b", "local-diverged", base)
+    nested = worktree / "cache" / "review"
+    _git(worktree, "worktree", "add", "--detach", str(nested), old)
+    (worktree / ".git" / "info" / "exclude").write_text("cache/\n", encoding="utf-8")
+    preserved = nested / "private.txt"
+    preserved.write_bytes(b"USER BYTES\n")
+    original_index = (worktree / ".git" / "index").read_bytes()
+    output = tmp_path / "collected"
+
+    code, calls = _collect(
+        module,
+        source,
+        worktree,
+        output,
+        base,
+        head,
+        cross_repository=False,
+        checkout_mode=checkout_mode,
+        gh_checkout_fails=False,
+    )
+
+    assert code == (2 if checkout_mode == "remediate" else 0)
+    assert not any(call[:3] == ["gh", "pr", "checkout"] for call in calls)
+    assert not any(call[:2] == ["git", "checkout"] for call in calls)
+    assert preserved.read_bytes() == b"USER BYTES\n"
+    assert _git(nested, "rev-parse", "HEAD") == old
+    assert _git(worktree, "rev-parse", "HEAD") == base
+    assert (worktree / ".git" / "index").read_bytes() == original_index
+    artifact = "worktree-preflight.json" if checkout_mode == "remediate" else "source-worktree-context.json"
+    preflight = json.loads((output / artifact).read_text(encoding="utf-8"))
+    assert preflight["overlapping_pr_paths"] == ["cache/review/"]
+    assert preflight["status"].startswith("blocked-")
+
+
 @pytest.mark.parametrize(
     ("local_path", "pr_path"),
     [

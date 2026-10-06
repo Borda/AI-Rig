@@ -93,8 +93,20 @@ def test_review_action_table_rejects_duplicate_finding_identity(tmp_path: Path) 
         _load_validator()._validate_action_table(notes, _result(high=2), metadata, "pr")
 
 
-def test_attributed_review_notes_bind_authors_to_canonical_findings(tmp_path: Path) -> None:
-    """Preserve all contributors and reject a changed author in saved review notes."""
+@pytest.mark.parametrize(
+    ("damage", "expected_error"),
+    [
+        pytest.param("none", None, id="valid-attributed-table"),
+        pytest.param("documented-template", None, id="published-skill-table-passes-consumer"),
+        pytest.param("author-divider", "review-findings-action-table-divider-invalid", id="invalid-author-divider"),
+        pytest.param("other-divider", "review-findings-action-table-divider-invalid", id="invalid-other-divider"),
+        pytest.param("header", "review-findings-action-table-header-mismatch", id="changed-header"),
+    ],
+)
+def test_attributed_review_notes_bind_authors_to_canonical_findings(
+    tmp_path: Path, damage: str, expected_error: str | None
+) -> None:
+    """Preserve author attribution and distinguish malformed dividers from incorrect headers."""
     validator = _load_validator()
     result = {**_result(high=1), "schema_version": 2}
     metadata = _metadata("needs-more-work")
@@ -123,9 +135,24 @@ def test_attributed_review_notes_bind_authors_to_canonical_findings(tmp_path: Pa
         "| --- | --- | --- | --- | --- |\n"
         "| R1 | Software engineer, QA specialist | Add a guard | config.py:12 | Required |\n"
     )
+    if damage == "documented-template":
+        skill = (PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md").read_text(encoding="utf-8")
+        header = "| Finding / area | Author | Required change | Evidence | Status |"
+        template = skill[skill.index(header) :].splitlines()
+        body = body.replace(header + "\n| --- | --- | --- | --- | --- |", "\n".join(template[:2]))
+    elif damage == "author-divider":
+        body = body.replace("| --- | --- | --- | --- | --- |", "| --- | -- | --- | --- | --- |")
+    elif damage == "other-divider":
+        body = body.replace("| --- | --- | --- | --- | --- |", "| -- | --- | --- | --- | --- |")
+    elif damage == "header":
+        body = body.replace("| Finding / area | Author |", "| Author | Finding / area |")
     notes = tmp_path / "review-notes.md"
     notes.write_text(body, encoding="utf-8")
     validator._validate_review_decision(metadata, result)
+    if expected_error is not None:
+        with pytest.raises(SystemExit, match=expected_error):
+            validator._validate_action_table(notes, result, metadata, "pr")
+        return
     validator._validate_action_table(notes, result, metadata, "pr")
     notes.write_text(body.replace("Software engineer, QA specialist", "QA specialist"), encoding="utf-8")
     with pytest.raises(SystemExit, match="review-findings-action-table-authors-mismatch"):

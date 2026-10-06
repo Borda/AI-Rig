@@ -695,6 +695,41 @@ def test_verified_pr_source_accepts_isolated_review_worktree(tmp_path: Path) -> 
     _load_validator()._validate_verified_pr_source(tmp_path, routing, target, checkout)
 
 
+@pytest.mark.parametrize("state", ["pass", "failed", "wrong-head", "non-pr"])
+def test_consolidation_confidence_admits_only_verified_pr_gate_logs(tmp_path: Path, state: str) -> None:
+    """Admit mutation evidence through checkout routing while retaining exact-source and passing-gate checks."""
+    routing, target, checkout = _verified_review_worktree_source(tmp_path)
+    for name, payload in {
+        "pr-routing.json": routing,
+        "target-branch.json": target,
+        "local-checkout.json": checkout,
+        "review-routing.json": {"risk_tier": "HIGH_RISK", "sol_selection": {}},
+    }.items():
+        (tmp_path / name).write_text(json.dumps(payload), encoding="utf-8")
+    gates = json.loads((tmp_path / "gates.json").read_text(encoding="utf-8"))
+    types = {**gates["checks"][0], "id": "types", "status": "fail" if state == "failed" else "pass"}
+    gates["checks"].append(types)
+    for check in gates["checks"]:
+        for key, suffix in (("command_path", "command"), ("stdout", "stdout"), ("stderr", "stderr")):
+            check[key] = f"checks/{check['id']}.{suffix}.txt"
+            path = tmp_path / check[key]
+            if not path.exists():
+                path.write_text("Mutation detected.\n" if suffix == "stdout" else "\n", encoding="utf-8")
+    if state == "wrong-head":
+        types["source"] = {**types["source"], "expected_head": "c" * 40}
+    (tmp_path / "gates.json").write_text(json.dumps(gates), encoding="utf-8")
+    if state == "non-pr":
+        (tmp_path / "pr-routing.json").unlink()
+    validator = _load_validator()
+    if state == "wrong-head":
+        with pytest.raises(SystemExit, match="pr-source-review-gates-worktree-mismatch"):
+            validator._consolidation_confidence_evidence(tmp_path, {"batch_execution": {"waves": []}})
+    else:
+        references = validator._consolidation_confidence_evidence(tmp_path, {"batch_execution": {"waves": []}})
+        assert ("checks/types.stdout.txt" in references) is (state == "pass")
+        assert ("checks/review.command.txt" in references) is (state != "non-pr")
+
+
 def test_verified_pr_source_accepts_original_worktree_after_run_promotion(tmp_path: Path) -> None:
     """Keep a checkout created before PR run promotion bound to the moved report."""
     promoted = tmp_path / "code-review" / "pr-123" / "run-001"

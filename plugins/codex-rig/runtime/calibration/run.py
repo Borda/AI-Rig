@@ -1396,7 +1396,7 @@ def validate_role_task_routing(cards: dict[str, str]) -> list[str]:
 
 
 def check_agents(run: CalibrationRun) -> None:
-    """Run registration, schema, confidence, model, and effort checks for agents."""
+    """Check agent registration, standalone confidence accounting, model and effort contracts."""
     for agent in AGENTS:
         if run.paths.project_cfg is not None:
             check_contains(run, run.paths.project_cfg, rf"\[agents\.{agent}\]", "agent-registration-project")
@@ -1457,6 +1457,24 @@ def check_agents(run: CalibrationRun) -> None:
             )
         if run.paths.layout == "source":
             check_contains(run, agent_file, r"\.codex/AGENTS\.md confidence contract", "confidence-policy")
+        else:
+            confidence_contract = read_text(agent_file).partition("## Confidence contract\n")[2].split("\n## ", 1)[0]
+            accounting_terms = (
+                "every reported gap or limitation",
+                "`(-0.NN)`",
+                "ASCII minus and two decimals",
+                "`(-0.00)`",
+                "count overlapping causes once",
+                "unique deductions sum exactly to `1.00 - score`",
+                "score-setting caps/floors/bands and their contribution",
+                "unexplained shortfall is one explicit residual",
+                "evidence-backed judgment accounting",
+                "not an empirically calibrated probability",
+            )
+            if not all(term in confidence_contract for term in accounting_terms):
+                run.fail_and_leak("confidence-policy", f"role-confidence-deductions-missing:{agent}")
+            else:
+                run.append_check(f"agent-confidence-deductions=ok:{agent}")
         check_agent_model(run, agent, agent_file)
         check_agent_effort(run, agent, agent_file)
     if run.paths.layout == "plugin":
@@ -3511,7 +3529,11 @@ def build_recommendations(
 
 
 def write_result(run: CalibrationRun) -> None:
-    """Write result.json and recommendations.md for the calibration run."""
+    """Write calibration results with transparent deductions for the existing fixed scores.
+
+    Attribute the fixture-scope shortfall and lack of current route acceptance without changing confidence, historical
+    artifacts, or serialized fields. Overlapping limits refer to their owning gap and carry zero additional deduction.
+    """
     if not run.paths.leaks.exists():
         run.paths.leaks.touch()
     status = "fail" if run.fails > 0 or run.leaks > 0 else "pass"
@@ -3524,27 +3546,37 @@ def write_result(run: CalibrationRun) -> None:
     recommendations, follow_up = build_recommendations(
         behavioral, run.checks_failed, run.leaks, accepted_route_evidence
     )
-    confidence_gaps = ["fixture-heavy calibration does not fully prove live model behavior"]
+    confidence = 0.95 if accepted_route_evidence else 0.9
+    # Preserve the fixed scoring: 0.05 fixture-scope baseline, plus 0.05 without current route acceptance.
+    fixture_gap = "(-0.05) fixture-heavy calibration does not fully prove live model behavior"
+    confidence_gaps = [fixture_gap]
     confidence_gap_closures = [
         {
-            "gap": "fixture-heavy calibration does not fully prove live model behavior",
+            "gap": fixture_gap,
             "status": "unresolved",
-            "rationale": "behavioral metrics include fixture observations; live observations are reported separately",
+            "rationale": (
+                "behavioral metrics include fixture observations; live observations are reported separately. "
+                "The fixed deduction is transparent judgment accounting, not an empirically calibrated probability."
+            ),
         }
     ]
-    remaining_limits = ["live model quality still depends on live calibration observations"]
-    if run.paths.accepted_route_evidence.exists() and not accepted_route_evidence:
-        stale_gap = "accepted live-route evidence predates the current skill identity"
-        confidence_gaps.append(stale_gap)
-        confidence_gap_closures.append(
-            {
-                "gap": stale_gap,
-                "status": "unresolved",
-                "rationale": "the archived evidence roster includes retired skill names and is preserved only as history",
-            }
+    remaining_limits = [
+        f"(-0.00) live model quality still depends on live calibration observations; accounted by gap: {fixture_gap}"
+    ]
+    if not accepted_route_evidence:
+        if run.paths.accepted_route_evidence.exists():
+            route_gap = "(-0.05) accepted live-route evidence predates the current skill identity"
+            route_rationale = (
+                "the archived evidence roster includes retired skill names and is preserved only as history"
+            )
+        else:
+            route_gap = "(-0.05) current live-route acceptance evidence is unavailable"
+            route_rationale = "current live-route acceptance evidence was not established"
+        confidence_gaps.append(route_gap)
+        confidence_gap_closures.append({"gap": route_gap, "status": "unresolved", "rationale": route_rationale})
+        remaining_limits.append(
+            f"(-0.00) current implement and assess routes lack fresh paid live evidence; accounted by gap: {route_gap}"
         )
-        remaining_limits.append("current implement and assess routes lack fresh paid live evidence")
-    confidence = 0.95 if accepted_route_evidence else 0.9
     payload = {
         "status": status,
         "timestamp": run.paths.timestamp,

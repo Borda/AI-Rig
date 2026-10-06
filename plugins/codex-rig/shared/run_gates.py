@@ -44,8 +44,11 @@ files. Worktree-bound runs record the selected checkout at the top level and in 
 executable records include their expected head plus before/after source receipts. Records distinguish
 pass, fail, timeout, missing command, and ``not-applicable`` states, while captured output is bounded to protect
 artifact size.
-Import-bound test records contain the interpreter environment and resolved, Git-tracked origins for imported modules
-and selected tests. Parallel runs retain each worker's source proof and fail if a started worker has no valid receipt.
+Import-bound test records contain the interpreter environment and resolved origins for imported modules and selected
+tests. Clean sources require Git tracking; verified local mirrors instead bind regular-file snapshot membership and
+bytes, truthfully retaining untracked added files. Local gate snapshots retain unchanged gitlink identity without
+traversing or importing submodule contents. Parallel runs retain each worker's source proof and fail if a started worker
+has no valid receipt.
 
 ## Failure
 
@@ -53,7 +56,8 @@ A missing command, non-zero command result, timeout, source mismatch or dirtines
 requested gate, or unwritable artifact directory is retained as explicit gate evidence. The CLI returns ``1`` for failed
 gates, ``124`` for a timeout, and ``2`` for invalid input such as a newline in a skip reason, allowing callers to
 classify the run without parsing prose.
-An imported module or selected test file outside the worktree or absent from its Git index fails the test gate; a module
+An imported module or selected test file outside the worktree, absent from its required clean Git index or mismatched
+with its admitted local snapshot fails the test gate; a module
 not loaded in any executing pytest process, one without a file origin, or no selected tests leaves proof inconclusive
 and fails closed. A crashed worker or missing worker receipt also fails the source proof.
 """
@@ -61,6 +65,7 @@ and fails closed. A crashed worker or missing worker receipt also fails the sour
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -71,6 +76,8 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, NamedTuple
+
+import collect_diff
 
 
 GATE_IDS = ("lint", "format", "types", "tests", "review")
@@ -86,6 +93,85 @@ class PythonTestSpec(NamedTuple):
     interpreter: Path
     modules: tuple[str, ...]
     arguments: tuple[str, ...]
+
+
+def _capture_local_gate_snapshot(worktree: Path) -> dict[str, Any]:
+    """Freeze root runtime files and Git identities without traversing unsupported gitlinks."""
+
+    def observe() -> dict[str, Any]:
+        """Read one complete observation with gitlinks kept separate from file records."""
+        inventory = collect_diff._source_inventory(worktree, ["."])
+        index = collect_diff._git_output(worktree, ("ls-files", "--stage", "-z"))
+        head = collect_diff._git_output(worktree, ("ls-tree", "-r", "-z", "HEAD"))
+        gitlinks: dict[str, dict[str, Any]] = {}
+        for row in head.split(b"\0"):
+            if row:
+                identity, name = row.split(b"\t", 1)
+                mode, _, oid = identity.split()
+                if mode == b"160000":
+                    gitlinks[os.fsdecode(name)] = {"head_oid": oid.decode("ascii"), "index_entries": []}
+        entries = []
+        for row in index.split(b"\0"):
+            if row:
+                identity, name = row.split(b"\t", 1)
+                mode, oid, stage = identity.split()
+                path = os.fsdecode(name)
+                entries.append((path, {"mode": mode.decode("ascii"), "oid": oid.decode("ascii"), "stage": int(stage)}))
+                if mode == b"160000":
+                    gitlinks.setdefault(path, {"head_oid": None, "index_entries": []})
+        for path, entry in entries:
+            if path in gitlinks:
+                gitlinks[path]["index_entries"].append(entry)
+        for path, identity in gitlinks.items():
+            if identity["index_entries"] != [{"mode": "160000", "oid": identity["head_oid"], "stage": 0}]:
+                raise RuntimeError(f"local-gate-gitlink-identity-changed:{path}")
+        status = collect_diff._git_output(
+            worktree, ("status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none")
+        )
+        if any(os.fsdecode(row[3:]) in gitlinks for row in status.split(b"\0") if row):
+            raise RuntimeError("local-gate-gitlink-dirty")
+        paths = [
+            path
+            for path in collect_diff._inventory_paths(inventory)
+            if not any(path == link or path.startswith(link + "/") for link in gitlinks)
+        ]
+        return {
+            "repository": worktree.as_posix(),
+            "revision": collect_diff._git_output(worktree, ("rev-parse", "--verify", "HEAD")).strip().decode("ascii"),
+            "index_sha256": hashlib.sha256(index).hexdigest(),
+            "inventory_sha256": hashlib.sha256(inventory).hexdigest(),
+            "status_sha256": hashlib.sha256(status).hexdigest(),
+            "files": [collect_diff._source_record(worktree, path) for path in paths],
+            "gitlinks": [{"path": path, **identity} for path, identity in sorted(gitlinks.items())],
+        }
+
+    before = observe()
+    if before != observe():
+        raise RuntimeError("local-gate-source-changed-during-capture")
+    return before
+
+
+def _local_snapshot_bytes(snapshot: dict[str, Any]) -> bytes:
+    """Encode the runtime snapshot for identical producer and consumer digests."""
+    return (json.dumps(snapshot, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def validate_local_gate_source(out: Path, worktree: Path) -> dict[str, Any]:
+    """Bind one existing local mirror receipt to fresh runtime bytes and contained artifacts."""
+    out = out.resolve()
+    if out.is_relative_to(worktree) or worktree.is_relative_to(out / "checks"):
+        raise ValueError("local-gate-artifacts-overlap-source")
+    for name in ("local-source/review-worktree.json", "local-source/source-snapshot.json", "checks"):
+        path = out / name
+        if path.is_symlink() or not path.resolve().is_relative_to(out):
+            raise ValueError("local-gate-artifact-escape")
+    if any((out / name).exists() for name in ("pr-routing.json", "local-checkout.json", "pr/local-checkout.json")):
+        raise ValueError("local-gate-source-receipt-ambiguous")
+    receipt = json.loads((out / "local-source/review-worktree.json").read_bytes())
+    if receipt["review_worktree"] != worktree.as_posix():
+        raise ValueError("local-gate-worktree-mismatch")
+    collect_diff.verify_review_worktree(out / "local-source")
+    return _capture_local_gate_snapshot(worktree)
 
 
 def positive_integer(value: str) -> int:
@@ -141,7 +227,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--worktree",
         type=Path,
-        help="Absolute checkout root for all source inspections and executable gates; requires --expected-head.",
+        help="Absolute checkout root; requires --expected-head or the existing output local-source mirror receipt.",
     )
     parser.add_argument(
         "--project-env", type=Path, help="Absolute existing project virtual environment for gate tools."
@@ -158,9 +244,14 @@ def parse_args() -> argparse.Namespace:
     if arguments.worktree is not None:
         if not arguments.worktree.is_absolute() or not arguments.worktree.is_dir():
             parser.error("invalid-worktree: expected an existing absolute directory")
-        if arguments.expected_head is None:
-            parser.error("invalid-worktree: --expected-head is required")
         arguments.worktree = arguments.worktree.resolve()
+        if arguments.expected_head is None:
+            if not (arguments.out / "local-source/review-worktree.json").is_file():
+                parser.error("invalid-worktree: --expected-head is required")
+            try:
+                validate_local_gate_source(arguments.out, arguments.worktree)
+            except (OSError, ValueError, RuntimeError, KeyError) as error:
+                parser.error(f"invalid-worktree: --expected-head or valid local-source receipt required: {error}")
     if arguments.project_env is not None:
         if arguments.worktree is None:
             parser.error("invalid-project-env: --worktree is required")
@@ -333,8 +424,26 @@ def execute_command(
             return 124, time.monotonic() - started
 
 
-def inspect_imported_module(name: str, worktree: Path) -> dict[str, Any]:
-    """Check one module actually loaded by pytest against tracked checkout source."""
+def _local_origin_membership(origin: Path, worktree: Path, snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Accept an actual regular-file origin only when its admitted snapshot bytes still match."""
+    relative = origin.relative_to(worktree).as_posix()
+    record = next((item for item in snapshot["files"] if item["path"] == relative), None)
+    if (
+        record is None
+        or record["kind"] != "file"
+        or not origin.is_file()
+        or hashlib.sha256(origin.read_bytes()).hexdigest() != record["sha256"]
+    ):
+        return {"status": "fail", "reason": "origin-not-current-snapshot-member"}
+    return {
+        "status": "pass",
+        "reason": None,
+        "snapshot_member": {key: record[key] for key in ("path", "kind", "sha256")},
+    }
+
+
+def inspect_imported_module(name: str, worktree: Path, local_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Check an actual imported origin against clean tracking or admitted local snapshot bytes."""
     module = sys.modules.get(name)
     if module is None:
         return {"origin": None, "tracked": False, "status": "inconclusive", "reason": "module-not-imported"}
@@ -365,11 +474,12 @@ def inspect_imported_module(name: str, worktree: Path) -> dict[str, Any]:
         "tracked": tracked,
         "status": "pass" if tracked else "fail",
         "reason": None if tracked else "origin-not-tracked",
+        **(_local_origin_membership(origin, worktree, local_snapshot) if local_snapshot is not None else {}),
     }
 
 
-def inspect_collected_test(path: Path, worktree: Path) -> dict[str, Any]:
-    """Verify that one collected test file is tracked inside the selected checkout."""
+def inspect_collected_test(path: Path, worktree: Path, local_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Verify an actual collected test against clean tracking or admitted local snapshot bytes."""
     origin = path.resolve()
     try:
         relative = origin.relative_to(worktree).as_posix()
@@ -394,6 +504,7 @@ def inspect_collected_test(path: Path, worktree: Path) -> dict[str, Any]:
         "tracked": tracked,
         "status": "pass" if tracked else "fail",
         "reason": None if tracked else "test-not-tracked",
+        **(_local_origin_membership(origin, worktree, local_snapshot) if local_snapshot is not None else {}),
     }
 
 
@@ -454,6 +565,15 @@ def pytest_configure(config: Any) -> None:
     task = json.loads(raw)
     worktree = Path(task["worktree"])
     modules = task["modules"]
+    local_source = task.get("local_source")
+    local_snapshot = None
+    if local_source is not None:
+        content = Path(local_source["snapshot_path"]).read_bytes()
+        if hashlib.sha256(content).hexdigest() != local_source["snapshot_sha256"]:
+            raise ValueError("local-python-snapshot-changed")
+        local_snapshot = json.loads(content)
+        if local_snapshot["repository"] != worktree.as_posix():
+            raise ValueError("local-python-snapshot-worktree-mismatch")
 
     class SourceProof:
         """Retain each pytest process's selected tests and actual imported module origins."""
@@ -502,12 +622,17 @@ def pytest_configure(config: Any) -> None:
             ):
                 self.errors.append(f"worker-proof-invalid:{worker}")
                 return
+            if local_source is not None and proof.get("local_source") != local_source:
+                self.errors.append(f"worker-local-snapshot-mismatch:{worker}")
+                return
             self.workers[worker] = proof
 
         def pytest_sessionfinish(self, session: Any, exitstatus: int) -> None:
             """Publish serial or aggregated worker proof before pytest returns."""
-            origins = {name: inspect_imported_module(name, worktree) for name in modules}
-            tests = {path.resolve().as_posix(): inspect_collected_test(path, worktree) for path in self.paths}
+            origins = {name: inspect_imported_module(name, worktree, local_snapshot) for name in modules}
+            tests = {
+                path.resolve().as_posix(): inspect_collected_test(path, worktree, local_snapshot) for path in self.paths
+            }
             statuses = {entry["status"] for entry in (*origins.values(), *tests.values())}
             status = (
                 "fail" if "fail" in statuses else "inconclusive" if not tests or "inconclusive" in statuses else "pass"
@@ -519,6 +644,7 @@ def pytest_configure(config: Any) -> None:
                 "worktree": worktree.as_posix(),
                 "modules": origins,
                 "tests": tests,
+                **({"local_source": local_source} if local_source is not None else {}),
             }
             if hasattr(config, "workeroutput"):
                 config.workeroutput["codex_rig_source_proof"] = process_proof
@@ -537,6 +663,7 @@ def pytest_configure(config: Any) -> None:
                 "runtime_interpreter": process_proof["runtime_interpreter"],
                 "sys_prefix": process_proof["sys_prefix"],
                 "worktree": worktree.as_posix(),
+                **({"local_source": local_source} if local_source is not None else {}),
             }
             Path(task["proof_path"]).write_text(json.dumps(proof, indent=2) + "\n", encoding="utf-8", newline="\n")
 
@@ -545,7 +672,7 @@ def pytest_configure(config: Any) -> None:
 
 def run_python_tests_child(arguments: list[str]) -> int:
     """Run pytest with controller and worker source proof in the selected interpreter."""
-    if len(arguments) != 5:
+    if len(arguments) not in {5, 6}:
         print("invalid-python-test-child-arguments", file=sys.stderr)
         return 2
     worktree = Path(arguments[0]).resolve()
@@ -553,6 +680,8 @@ def run_python_tests_child(arguments: list[str]) -> int:
     modules = json.loads(arguments[2])
     pytest_arguments = json.loads(arguments[3])
     invoked_interpreter = arguments[4]
+    if len(arguments) == 6:
+        sys.dont_write_bytecode = True
     # Pytest is optional for all other gate modes and belongs to the selected test environment.
     import pytest
 
@@ -562,6 +691,8 @@ def run_python_tests_child(arguments: list[str]) -> int:
         "modules": modules,
         "invoked_interpreter": invoked_interpreter,
     }
+    if len(arguments) == 6:
+        task["local_source"] = json.loads(arguments[5])
     prior_task = os.environ.get("CODEX_RIG_PYTEST_SOURCE_PROOF")
     os.environ["CODEX_RIG_PYTEST_SOURCE_PROOF"] = json.dumps(task)
     try:
@@ -683,9 +814,14 @@ def run_check(
     worktree: Path | None = None,
     python_test: PythonTestSpec | None = None,
     environment: dict[str, str] | None = None,
+    local_source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run one gate or record its explicit not-applicable status."""
+    """Run one gate and bind local execution artifacts to the observed source and child proof."""
     paths, recorded = check_paths(gate_id, out_dir)
+    if local_source is not None:
+        for path in paths.values():
+            if path.is_symlink() or not path.resolve().is_relative_to(out_dir.resolve()):
+                raise ValueError("local-gate-artifact-escape")
     if skip_reason:
         return skipped_check(gate_id, skip_reason, paths, recorded)
     if not command and not (gate_id == "tests" and python_test is not None):
@@ -718,6 +854,15 @@ def run_check(
             json.dumps(python_test.arguments),
             python_test.interpreter.as_posix(),
         ]
+        if local_source is not None:
+            python_test_argv.append(
+                json.dumps(
+                    {
+                        "snapshot_path": (out_dir / local_source["snapshot_path"]).resolve().as_posix(),
+                        "snapshot_sha256": local_source["snapshot_sha256"],
+                    }
+                )
+            )
         command = f"argv-json:{json.dumps(python_test_argv)}"
     paths["command"].write_text(f"{command}\n", encoding="utf-8")
     source: dict[str, Any] | None = None
@@ -741,6 +886,33 @@ def run_check(
                 "source": source,
             }
 
+    if local_source is not None:
+        try:
+            current = validate_local_gate_source(out_dir, worktree)
+            if (
+                hashlib.sha256((out_dir / local_source["receipt_path"]).read_bytes()).hexdigest()
+                != local_source["receipt_sha256"]
+            ):
+                raise ValueError("local-gate-receipt-changed")
+            digest = hashlib.sha256(_local_snapshot_bytes(current)).hexdigest()
+            if digest != local_source["snapshot_sha256"]:
+                raise ValueError("local-gate-source-changed")
+            for path in paths.values():
+                if path.is_symlink() or not path.resolve().is_relative_to(out_dir.resolve()):
+                    raise ValueError("local-gate-artifact-escape")
+            source = {**local_source, "before": {"snapshot_sha256": digest}, "after": None}
+        except (OSError, ValueError, RuntimeError, KeyError) as error:
+            append_stderr(paths["stderr"], str(error))
+            paths["stdout"].write_text("", encoding="utf-8")
+            return {
+                "id": gate_id,
+                "status": "fail",
+                "exit_code": 1,
+                "duration_seconds": 0.0,
+                "command_path": recorded["command"],
+                "stdout": recorded["stdout"],
+                "stderr": recorded["stderr"],
+            }
     exit_code, duration = execute_command(
         python_test_argv or command, timeout, paths["stdout"], paths["stderr"], worktree, environment
     )
@@ -762,10 +934,26 @@ def run_check(
         "stdout": recorded["stdout"],
         "stderr": recorded["stderr"],
     }
+    proof_bytes: bytes | None = None
     if python_test_argv is not None:
         try:
-            proof = json.loads(proof_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            if local_source is not None and (
+                proof_path.is_symlink()
+                or not proof_path.resolve().is_relative_to(out_dir.resolve())
+                or not proof_path.is_file()
+            ):
+                raise ValueError("local-gate-proof-artifact-invalid")
+            if local_source is None:
+                proof = json.loads(proof_path.read_text(encoding="utf-8"))
+            else:
+                proof_bytes = proof_path.read_bytes()
+                proof = json.loads(proof_bytes.decode("utf-8"))
+                if not isinstance(proof, dict):
+                    raise ValueError("python-import-proof-not-object")
+        except (OSError, ValueError, UnicodeError) as error:
+            if local_source is None and not isinstance(error, (OSError, json.JSONDecodeError)):
+                raise
+            proof_bytes = None
             proof = {
                 "mode": "in-process-pytest",
                 "status": "inconclusive",
@@ -781,7 +969,40 @@ def run_check(
             append_stderr(paths["stderr"], f"python-import-origin:{proof.get('status', 'invalid')}")
             if result["status"] == "pass":
                 result["status"] = "fail"
-    if source is not None:
+    if local_source is not None:
+        try:
+            after = validate_local_gate_source(out_dir, worktree)
+            if (
+                hashlib.sha256((out_dir / local_source["receipt_path"]).read_bytes()).hexdigest()
+                != local_source["receipt_sha256"]
+            ):
+                raise ValueError("local-gate-receipt-changed")
+            digest = hashlib.sha256(_local_snapshot_bytes(after)).hexdigest()
+            source["after"] = {"snapshot_sha256": digest}
+            if digest != local_source["snapshot_sha256"]:
+                raise ValueError("local-gate-source-changed")
+        except (OSError, ValueError, RuntimeError, KeyError) as error:
+            append_stderr(paths["stderr"], str(error))
+            result["status"] = "fail"
+        if python_test_argv is not None and proof_bytes is not None:
+            try:
+                if (
+                    proof_path.is_symlink()
+                    or not proof_path.resolve().is_relative_to(out_dir.resolve())
+                    or not proof_path.is_file()
+                    or proof_path.read_bytes() != proof_bytes
+                ):
+                    raise ValueError("local-gate-proof-artifact-changed")
+            except (OSError, ValueError) as error:
+                append_stderr(paths["stderr"], str(error))
+                result["status"] = "fail"
+        source["artifacts"] = {
+            recorded[key]: hashlib.sha256(path.read_bytes()).hexdigest() for key, path in paths.items()
+        }
+        if python_test_argv is not None and proof_bytes is not None:
+            source["artifacts"]["checks/tests.python-imports.json"] = hashlib.sha256(proof_bytes).hexdigest()
+        result["source"] = source
+    elif source is not None:
         after = inspect_source(worktree)
         source["after"] = after
         result["source"] = source
@@ -871,6 +1092,23 @@ def main() -> int:
         return 2
     (output / CHECKS_DIRNAME).mkdir(parents=True, exist_ok=True)
 
+    local_source = None
+    if arguments.worktree is not None and arguments.expected_head is None:
+        snapshot = validate_local_gate_source(output, arguments.worktree)
+        content = _local_snapshot_bytes(snapshot)
+        snapshot_path = output / CHECKS_DIRNAME / "local-source-snapshot.json"
+        if snapshot_path.is_symlink() or not snapshot_path.resolve().is_relative_to(output.resolve()):
+            raise ValueError("local-gate-artifact-escape")
+        snapshot_path.write_bytes(content)
+        receipt_path = output / "local-source/review-worktree.json"
+        local_source = {
+            "mode": "local-review-mirror",
+            "worktree": arguments.worktree.as_posix(),
+            "receipt_path": "local-source/review-worktree.json",
+            "receipt_sha256": hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+            "snapshot_path": "checks/local-source-snapshot.json",
+            "snapshot_sha256": hashlib.sha256(content).hexdigest(),
+        }
     checks = [
         run_check(
             gate_id,
@@ -882,6 +1120,7 @@ def main() -> int:
             arguments.worktree,
             arguments.python_test,
             environment,
+            local_source,
         )
         for gate_id in GATE_IDS
     ]
@@ -904,7 +1143,10 @@ def main() -> int:
         "checks": checks,
     }
     if arguments.worktree is not None:
-        payload["source"] = {"worktree": arguments.worktree.as_posix(), "expected_head": arguments.expected_head}
+        payload["source"] = local_source or {
+            "worktree": arguments.worktree.as_posix(),
+            "expected_head": arguments.expected_head,
+        }
         if arguments.project_env is not None:
             payload["source"]["project_env"] = arguments.project_env.as_posix()
     result_path = output / "gates.json"

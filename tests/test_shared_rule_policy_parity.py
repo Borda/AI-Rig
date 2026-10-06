@@ -33,6 +33,27 @@ DELTA_NAME = "quality-gates-delta.md"
 # foundry owns the shared body, so it has nothing to defer and ships no delta.
 SATELLITES = tuple(plugin for plugin in PLUGINS if plugin != "cc_foundry")
 
+
+@pytest.mark.parametrize("plugin", [*PLUGINS, "codex-rig"])
+def test_evidence_and_tdd_keep_real_behavior_as_the_oracle(plugin: str) -> None:
+    """Keep standalone plugin policy from substituting mocked agreement for real acceptance."""
+    policy_path = (
+        REPO_ROOT / "plugins" / plugin / "shared/native-skill-contract.md"
+        if plugin == "codex-rig"
+        else REPO_ROOT / "plugins" / plugin / "rules" / RULE_NAME
+    )
+    policy = policy_path.read_text(encoding="utf-8")
+    for obligation in (
+        "Every factual, causal, and completion claim",
+        "representative real case alongside the TDD loop",
+        "Mocks belong only to subsequent polishing",
+        "Never weaken assertions",
+        "user-authorized behavior",
+        "blocked or unverified",
+    ):
+        assert obligation in policy, (plugin, obligation)
+
+
 # ``Output Routing`` states the same obligations in two shapes: foundry inlines the terminal-print
 # steps into one prose paragraph, while the siblings break them into nested bullets that carry their
 # own bold labels. The names therefore differ without any rule differing. Re-examine this exemption

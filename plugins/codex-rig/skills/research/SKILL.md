@@ -7,6 +7,8 @@ description: Research docs, papers, or state of the art; provide source-backed r
 
 # Research
 
+> Task-size routing follows [Proportional Execution](../../shared/native-skill-contract.md#proportional-execution); this skill's specialized lifecycle and acceptance checks remain authoritative.
+
 Source-backed research for documentation, API migration, paper, or state-of-the-art questions.
 
 ## Input Schema

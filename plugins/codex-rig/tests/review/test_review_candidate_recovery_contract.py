@@ -110,7 +110,15 @@ def test_native_protocol_repair_resumes_the_retained_wave_without_reassessment()
     assert "closure-evidence-shape" in recovery
     assert "same run and current wave" in recovery
     assert "one generated `_a2`" in recovery
-    assert "Preserve every claim, finding ID, severity, source coordinate, confidence and assessment" in recovery
+    for invariant in (
+        "Preserve every claim, severity, source coordinate, confidence and assessment",
+        "Finding IDs remain unchanged except for the single proven local-ID token in `finding-id-namespace`",
+        "retain the original raw ID and immutable qualified origin witness",
+        "uniquely prove the original local ID and identical non-ID finding fields",
+        "all other response bytes remain exact",
+        "Ordinary ID validation remains strict",
+    ):
+        assert invariant in recovery
     assert "do not require a fresh complete PR review" in recovery
     assert "No substantive reassessment" in recovery
 

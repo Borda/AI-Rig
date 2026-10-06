@@ -1718,21 +1718,22 @@ class TestPortableReadConsumerRuntimeMatrix:
         ):
             assert subsection in section
         for contract in (
-            "This skill permits only its promoted portable read-only route.",
-            "Resolve execution precedence from per-invocation `--execution=<mode>`, then `CODEX_RIG_EXECUTION`, then the `auto` default.",
+            "This portable section permits only its promoted portable read-only route",
+            "Execution Route Selection must resolve to `parallel-read` before this section applies",
             safe_surface,
             serial_surface,
             join_clause,
             resource_clause,
-            "The default execution mode is `auto`.",
-            "`auto` selects this route only after this consumer's runtime matrix and promotion; otherwise it resolves safely to `serial`.",
+            "`auto` does not select it.",
             "Serial parent work uses existing task authorization; exact-plan-digest approval applies when the promoted parallel-read route is selected.",
             "Before any dispatch, freeze",
             "Dispatch at most one fixed dependency-ready wave",
             "canonical quality gates; verdict; and promotion",
             "Unavailable or unsafe fan-out uses equal-gate `serial-fallback` from the same frozen plan with the same quality gates and retained evidence.",
-            "This skill's shared runtime matrix and consumer promotion must remain complete before `auto` selects this route.",
-            "Generic parallel writes remain disabled.",
+            "This skill's shared runtime matrix and consumer promotion must remain complete before the selected `parallel-read` route starts.",
+            "Generic portable parallel writes remain disabled."
+            if skill == "implement"
+            else "Generic parallel writes remain disabled.",
             "This route never bypasses consumer promotion, serial parent authority, or applicable write approval",
             f"parallel_execution.py preflight --consumer {skill}",
             f"parallel_execution.py validate-runtime --consumer {skill}",

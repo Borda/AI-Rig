@@ -107,9 +107,17 @@ def _write_unavailable_pr_evidence(run_dir: Path) -> dict[str, object]:
     }
 
 
+@pytest.mark.integration
 def test_write_result_unavailable_review_emits_validator_accepted_candidate(tmp_path: Path) -> None:
     """Prevent unavailable PR collection failures from receiving assessed-review result fields."""
     metadata = _write_unavailable_pr_evidence(tmp_path)
+    metadata["confidence_gap_closures"][0]["rationale"] = (
+        "(-0.10) " + metadata["confidence_gap_closures"][0]["rationale"]
+    )
+    metadata["confidence_recovery"]["remaining_limits"] = [
+        "(-0.00) PR correctness was not assessed. No additional deduction; "
+        "the canonical source-verification gap accounts for this limitation."
+    ]
     candidate_path = tmp_path / "result.candidate.json"
 
     completed = subprocess.run(
@@ -208,6 +216,14 @@ def test_write_result_unavailable_review_emits_validator_accepted_candidate(tmp_
 
     _load_validator()._validate_result(tmp_path, result_path, tmp_path, "thread", tmp_path)
     _load_module(SHARED_VALIDATOR, "unavailable_shared_validator").validate("code-review", tmp_path, result_path)
+
+    rendered = final_path.read_text(encoding="utf-8")
+    assert "0.90 (fair)." in rendered
+    assert CONFIDENCE_GAP in rendered
+    assert handoff["confidence"]["gaps"][0]["gap"] == CONFIDENCE_GAP
+    assert f"Gap [unresolved]: {CONFIDENCE_GAP} — (-0.10) " in rendered
+    assert "Limits: (-0.00) PR correctness was not assessed." in rendered
+    assert "No additional deduction" in rendered
 
     gates = json.loads((tmp_path / "gates.json").read_text(encoding="utf-8"))
     gates["checks"][0]["status"] = "pass"

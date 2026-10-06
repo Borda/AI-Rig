@@ -7,6 +7,8 @@ description: Independently review and fix a bounded task through convergence rou
 
 # Challenge and Resolve
 
+> Task-size routing follows [Proportional Execution](../../shared/native-skill-contract.md#proportional-execution); this skill's specialized lifecycle and acceptance checks remain authoritative.
+
 Read, apply `../../shared/adversarial-loop.md` before dispatch or edits. That shared procedure owns the algorithm; this entrypoint owns Codex artifacts, the closing gate. Read `evidence-contract.md` before source capture or reviewer dispatch. Also read `../../shared/native-skill-contract.md` and `../../shared/specialist-orchestration.md` for authority, recurrence, reviewer admission, evidence limits.
 
 ## Input Schema

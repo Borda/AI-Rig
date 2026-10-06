@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import runpy
+import re
 from pathlib import Path
 
 import pytest
@@ -387,3 +388,24 @@ def test_repository_preapproval_names_only_project_plugin_family() -> None:
     assert "every skill and flow in these plugins" in policy
     assert "Normal substitutions" in policy
     assert "Never approve git push" in policy
+
+
+def test_repository_bridge_preapproval_preserves_conditional_scope() -> None:
+    """Pin the Bridge policy boundary without claiming a live auto-review approval decision."""
+    policy = tomllib.loads(SOURCE_CONFIG.read_text(encoding="utf-8"))["auto_review"]["extra_policy"]
+    assert set(re.findall(r"\bbridge_[a-z_]+\b", policy)) == {
+        "bridge_status",
+        "bridge_bind_workspace",
+        "bridge_advise",
+        "bridge_review",
+        "bridge_implement",
+    }
+    assert "verified installed and loaded" in policy
+    assert "ordinary provider inference" in policy
+    assert "already authorized task" in policy
+    assert "current workspace binding" in policy
+    assert "implementation stays within the authorized edit scope" in policy
+    assert "Keep native user workspace confirmation" in policy
+    assert "setup changes, authentication, and setup verify-live" in policy
+    assert "not an arbitrary MCP, shell, or interpreter grant" in policy
+    assert "paid calls not preapproved above" in policy

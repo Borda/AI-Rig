@@ -20,7 +20,29 @@ Long workflows keep contract-level `## Workflow` with `### NN:` ordered subheade
 
 ## Proportional Execution
 
-A skill's documented lightweight local path overrides its detailed artifact lifecycle for bounded, understood, reversible work. The parent performs the relevant checks and gives a concise evidence-backed outcome; unrelated role fan-out, reports, schemas, and confidence worksheets are unnecessary. Use the detailed lifecycle when scope, risk, an explicit report request, or required independent coverage warrants it. A missing child capability stops that child route, while already-authorized parent work continues. Preserve real runtime permissions and project acceptance requirements.
+A specific, understood, bounded, reversible, low-risk task with clear acceptance uses the skill's lightweight local path: inspect, make the authorized change, verify, and report concise evidence. A coherent fix plus its regression remains one task; file count, ordinary logs, factual queries, and optional tooling do not require orchestration. Investigate an unknown cause before editing. Pause further implementation and promote when evidence reveals unclear scope or acceptance, coupled domains, material risk, or consequential design choices.
+
+Medium/large or unexpectedly nontrivial implementation follows this default order:
+
+1. Define and freeze the top-level outcome, scope, constraints, and acceptance plan.
+2. Independently challenge and resolve that plan using the [canonical convergence rules](adversarial-loop.md).
+3. Detail the implementation, file ownership, dependencies, checks, and stop conditions.
+4. Independently challenge and resolve those details before implementation.
+5. Delegate bounded independent workstreams in parallel when useful; serialize coupled work and shared resources. Join every dispatched owner before parent integration and acceptance.
+6. Crosscheck the integrated result and verification against every accepted plan criterion; disclose unmet criteria.
+
+Reuse a still-current parent-scoped plan and its challenges for already-scoped children; do not recursively repeat this sequence for each child. Plan challenges use the existing independent convergence rules, without requiring two standalone `challenge-resolve` invocations. Read-only analysis uses planning suited to its uncertainty without inventing an implementation stage. Explicit report requests and required independent coverage retain their owning workflow's gates.
+
+Implement may use observed native collaboration for task-authorized writes to disjoint file sets, with explicit behavior, acceptance, and stop boundaries. These are instruction bounds, not enforced filesystem isolation. Record actual tool controls, join actual deltas and checks, and keep integration, shared/coupled files, protected decisions, canonical gates, and final acceptance with the parent. Manage mutations remain parent-serial; disjoint read-only support is permitted. Specialized remediation and protected-state lifecycles remain authoritative.
+
+For Implement and Manage, select the route before preparing or dispatching children. Resolve `--execution=<mode>` from the invocation first, then `CODEX_RIG_EXECUTION`, then `auto` when neither is set; reject an unknown value. Explicit invocation wins over the environment, including explicit `auto`.
+
+- `serial`: honor the selection with parent-serial work; do not dispatch native parallel owners or portable children.
+- `parallel-read`: select only the strict portable read-only route and satisfy its admission, promotion, exact-plan-digest approval, runtime validation, and parent-serial mutation rules. Missing required portable controls stop dispatch; never switch to native to avoid those gates.
+- `parallel-write`: reject before dispatch; no supported generic parallel-write route exists.
+- `auto`, whether absent, explicit, or from the environment: use the lightweight parent path for narrow work. For accepted nontrivial work, choose bounded native delegation only when useful disjoint ownership and the actual runtime's supported controls permit it; otherwise perform safe parent-serial work and disclose any unmet independent coverage. Manage native support remains read-only and every management mutation remains parent-serial. `auto` never selects the strict portable route, even if its helper reports promotion.
+
+Record the resolved selection, chosen route, and any reason for serial work in the existing plan or concise outcome. Native and parent-serial work do not invoke portable preflight/runtime-promotion helpers or require a portable digest receipt. A selected portable route passes `--execution=parallel-read` to its helper so the unchanged helper's own `auto` resolution cannot reselect the workflow route. Native delegation cannot supply portable control proof or bypass selected portable gates. A missing child capability stops that route while already-authorized safe parent work continues, but required independent coverage remains unmet until supplied. Preserve runtime permissions, project checks, TDD/root-cause evidence, confidence requirements, and all approval and stop boundaries.
 
 ## Portability Rules
 
@@ -207,10 +229,13 @@ A file that only grows — a `.jsonl` record or event log, a review-round or wor
 
 ## Evidence Rules
 
+- Every factual, causal, and completion claim must cite a source actually inspected, a recorded experiment, or other concrete proof at the claim. Label inference and hypothesis explicitly; absent proof means blocked or unverified, never success. Source text proves only what it states; passing unit tests prove only their exercised contract, not an untested workflow or host.
+- Keep a representative real case alongside the TDD loop. Establish the failure and intended result with real inputs, real components, and the actual affected environment before relying on a test double; retain commands, environment/source identity, outputs and before/after evidence. Recheck that real case after the fix and before completion. An unavailable real environment remains an explicit unmet acceptance check; mocks cannot replace it or justify a completion claim.
+- Mocks belong only to subsequent polishing after the real behavior is understood and validated. Use fast regression tests to shorten iteration while the real case remains the acceptance oracle. Never weaken assertions, remove failing coverage, or change expected outputs or user-authorized behavior merely to turn tests green. Correct a mistaken test only from independent specification or real-case evidence, record why, and preserve the intended contract; a changed requirement needs the user's decision.
 - Code claims: file/line refs. Current external: live primary source or stale/unverified caveat. Root cause: evidence, falsification, rejected alternative. Metric: baseline, guard, comparison. Release: SemVer plus changelog/migration evidence.
 - Every skill/agent score uses bands: `<= 0.8` unacceptable; `0.8 < confidence < 0.85` very questionable; `0.85 <= confidence < 0.9` cautious-low; `>= 0.9` fair but not automatic.
 - Skill JSON `metadata.confidence_recovery`: initial/final score, band, objective evidence, recovery, limits. Post-recovery `<= 0.8`: `confidence-not-acceptable`; `0.8 < confidence < 0.85`: `confidence-very-questionable`. Agent output has visible prose/table same fields.
-- Close gaps with evidence or explicit unresolved/deferred record. Skill JSON uses `metadata.confidence_gap_closures`; agents show closure list/table.
+- Close gaps with evidence or explicit unresolved/deferred record. Skill JSON uses `metadata.confidence_gap_closures`; agents show closure list/table. Every reported gap or limitation follows [Confidence Deduction Accounting](quality-gates.md#confidence-deduction-accounting), including visible numerical contributions and nonreducing limits.
 
 ## Calibration Hooks
 

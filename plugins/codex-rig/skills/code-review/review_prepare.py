@@ -77,6 +77,83 @@ import collect_diff  # noqa: E402
 MAX_REVIEW_CONTEXT_BYTES = 262144
 
 
+def _read_arguments(source: str) -> dict[str, Any]:
+    """Extract literal arguments from a known direct reader frame or its exact compact setup shape."""
+    body = source.removeprefix('// @exec: {"max_output_tokens": 10000}\n').removesuffix("\n")
+    direct = re.fullmatch(r"const r = await tools\.exec_command\((\{.*\})\); text\(r\.output\);", body)
+    compact = re.fullmatch(
+        r'const args = (\{.*\}); store\("review-context-[a-f0-9]{64}", args\); '
+        r"const r = await tools\.exec_command\(args\); text\(r\.output\);",
+        body,
+    )
+    matched = direct or compact
+    if matched is None:
+        raise ValueError("review-reader-literal-arguments-invalid")
+    args = json.loads(matched[1])
+    if not isinstance(args, dict) or not isinstance(args.get("cmd"), str):
+        raise ValueError("review-reader-literal-arguments-invalid")
+    return args
+
+
+def _compact_read_call(
+    first_call: str, context_sha256: str, page: int, *, arguments: dict[str, Any] | None = None
+) -> str:
+    """Bind one literal setup and later numeric selectors to an immutable per-attempt reader identity."""
+    key = "review-context-" + hashlib.sha256((first_call + "\0" + context_sha256).encode()).hexdigest()
+    pragma = '// @exec: {"max_output_tokens": 10000}\n'
+    if page == 1:
+        args = _read_arguments(first_call) if arguments is None else arguments
+        return (
+            pragma
+            + f'const args = {json.dumps(args, ensure_ascii=False)}; store("{key}", args); const r = await tools.exec_command(args); text(r.output);'
+        )
+    if page < 1:
+        raise ValueError("review-context-page-invalid")
+    return (
+        pragma
+        + f'const args = load("{key}"); const r = await tools.exec_command({{...args, cmd: args.cmd + " --page {page}"}}); text(r.output);'
+    )
+
+
+def _compact_dispatch_message(message: str, context_sha256: str) -> str:
+    """Keep immutable arguments in the first read and replace repeated long recipes with exact selectors."""
+    calls = re.findall(r"```javascript\n(.*?)\n```", message, re.DOTALL)
+    if not calls:
+        raise ValueError("review-reader-page-calls-missing")
+    first = _read_arguments(calls[0])
+    for page, call in enumerate(calls, 1):
+        expected = {**first, "cmd": first["cmd"] + (f" --page {page}" if page != 1 else "")}
+        if _read_arguments(call) != expected:
+            raise ValueError("review-reader-page-call-mismatch")
+        message = message.replace(
+            "```javascript\n" + call + "\n```",
+            "```javascript\n" + _compact_read_call(calls[0], context_sha256, page) + "\n```",
+            1,
+        )
+    return message.replace(
+        "Copy each complete JavaScript block below exactly once, in order, without editing its command or path. ",
+        "Copy the setup block once and each page selector once, in order, without edits. ",
+    )
+
+
+def _dispatch_message(plan_path: Path, role: str, attempt: int = 1, *, provenance_header: bool = False) -> str:
+    """Issue compact reads only for new work while retaining every already frozen historical recipe."""
+    retained = plan_path.parent / "dispatch.json"
+    if retained.exists():
+        dispatch = validator._load_json(retained)
+        _retained_reader_identity(plan_path.parent, dispatch)
+        calls = [call for call in dispatch["calls"] if call["role"] == role]
+        if len(calls) != 1 or attempt != 1:
+            raise ValueError("review-prepared-reader-recipe-invalid")
+        return calls[0]["arguments"]["message"]
+    message = review_context.dispatch_message(plan_path, role, attempt, provenance_header=provenance_header)
+    plan = validator._load_json(plan_path)
+    entries = [entry for entry in plan["contexts"] if entry["role_id"] == role]
+    if len(entries) != 1:
+        raise ValueError("review-context-role-count")
+    return _compact_dispatch_message(message, entries[0]["context_sha256"])
+
+
 def _json_bytes(value: object) -> bytes:
     """Encode stable JSON bytes independently of host newline conventions."""
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
@@ -362,6 +439,14 @@ def prepare(
         if challenge_only:
             # Preserve the strict challenge evidence envelope, including its exact final byte.
             context = card + b"\n" + validator._resolve_path(out, brief["evidence_path"]).read_bytes()
+        elif not batches:
+            # Batch source templates embed the historical task verbatim; clarify only new ordinary contexts.
+            context += (
+                "\n\n## Response layout\n\n"
+                "Put findings and confidence under their own separate headings. Keep `## Reviewer Assessment` "
+                "to exactly the separate lines `Rating: <integer>` and `Rationale: <one-line explanation>`. "
+                "Preserve all required findings, confidence deductions and evidence; do not put them inside the assessment section.\n"
+            ).encode("utf-8")
         # The page reader transports larger contexts without dropping source; cap total work at 256 KiB.
         if not batches and len(context) > MAX_REVIEW_CONTEXT_BYTES:
             raise ValueError(f"review-context-capacity-exceeded:{role}:{MAX_REVIEW_CONTEXT_BYTES}-bytes")
@@ -379,6 +464,7 @@ def prepare(
         )
         cards[role] = validator._load_role_card(validator.PLUGIN_ROOT / "roles", role)
     if batches:
+        plan["review_topology"] = "source-only"
         return review_batches.prepare_source_batches(
             out,
             plan,
@@ -413,13 +499,10 @@ def prepare(
                 "role": role,
                 "arguments": {
                     "task_name": f"review_{role.replace('-', '_')}_{context['context_sha256'][:12]}_a1",
-                    "agent_type": "default",
                     "fork_turns": "none",
                     "model": cards[role]["model"],
                     "reasoning_effort": cards[role]["model_reasoning_effort"],
-                    "message": review_context.dispatch_message(
-                        out / "inspection-plan.json", role, provenance_header=False
-                    ),
+                    "message": _dispatch_message(out / "inspection-plan.json", role),
                 },
             }
         )
@@ -476,6 +559,7 @@ def _observed_pass(
     *,
     attempt_number: int = 1,
     retain_rejected: bool = False,
+    batch_response: bool = False,
 ) -> dict[str, Any]:
     """Extract one completed child without inventing IDs, model choices, outputs, or joins."""
     role = context["role_id"]
@@ -542,6 +626,7 @@ def _observed_pass(
             main=False,
             role=role,
             structured_native=plan["consumer_policy"]["consumer_id"] == "challenge-resolve",
+            batch_response=batch_response,
         )
     agent_path = session.get("agent_path") or session["source"]["subagent"]["thread_spawn"]["agent_path"]
     attempt = {
@@ -590,14 +675,20 @@ def observed_pass(
     children: dict[str, list[Path]],
     assessment: dict[str, Any],
     trigger: list[str],
+    *,
+    batch_response: bool = False,
 ) -> dict[str, Any]:
     """Retain one original response and its single diagnosed replacement when explicitly prepared."""
     repair_path = out / f"repair-dispatch.{context['role_id']}.json"
     if not repair_path.exists():
-        return _observed_pass(out, context, parent_rows, children, assessment, trigger)
+        return _observed_pass(out, context, parent_rows, children, assessment, trigger, batch_response=batch_response)
     repair = validator._load_json(repair_path)
-    original = _observed_pass(out, context, parent_rows, children, assessment, trigger, retain_rejected=True)
-    selected = _observed_pass(out, context, parent_rows, children, assessment, trigger, attempt_number=2)
+    original = _observed_pass(
+        out, context, parent_rows, children, assessment, trigger, retain_rejected=True, batch_response=batch_response
+    )
+    selected = _observed_pass(
+        out, context, parent_rows, children, assessment, trigger, attempt_number=2, batch_response=batch_response
+    )
     selected["attempts"] = original["attempts"] + selected["attempts"]
     selected["recovery"] = {"kind": repair["kind"]}
     return selected
@@ -608,7 +699,7 @@ def _retained_reader_identity(out: Path, dispatch: dict[str, Any]) -> dict[str, 
     try:
         first = dispatch["calls"][0]["arguments"]["message"]
         source = re.search(r"```javascript\n(.*?)\n```", first, re.DOTALL)[1]
-        command = json.loads(source.split("tools.exec_command(", 1)[1].split("); text", 1)[0])["cmd"]
+        command = _read_arguments(source)["cmd"]
         argv = shlex.split(command, posix=os.name != "nt")
         reader_path = Path(argv[1].strip('"') if os.name == "nt" else argv[1])
     except (IndexError, KeyError, TypeError, ValueError) as error:
@@ -629,7 +720,7 @@ def _retained_reader_identity(out: Path, dispatch: dict[str, Any]) -> dict[str, 
         "context_reader_sha256": validator._sha256(reader_path),
     }
     # Digest admission alone does not certify edited dispatch instructions or an unrelated plan.
-    for protocol in ("paged-context-v7", "paged-context-v6"):
+    for protocol in ("paged-context-v8", "paged-context-v7", "paged-context-v6"):
         identity["dispatch_protocol"] = protocol
         if all(
             call["arguments"]["message"]
@@ -892,7 +983,11 @@ def main() -> int:
     repair_parser.add_argument("--out", required=True, type=Path)
     repair_parser.add_argument("--codex-home", required=True, type=Path)
     repair_parser.add_argument("--role", required=True)
-    repair_parser.add_argument("--kind", required=True, choices=("closure-evidence-shape", "incomplete-dispatch"))
+    repair_parser.add_argument(
+        "--kind",
+        required=True,
+        choices=("closure-evidence-shape", "assessment-format", "finding-id-namespace", "incomplete-dispatch"),
+    )
     assemble_parser = commands.add_parser("assemble", help="Bind received child results to actual runtime records.")
     assemble_parser.add_argument("--out", required=True, type=Path)
     assemble_parser.add_argument("--challenge-only", action="store_true")

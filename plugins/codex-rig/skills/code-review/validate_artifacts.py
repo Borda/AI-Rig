@@ -48,12 +48,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import os
 import re
 import sys
-from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 from typing import Any, NamedTuple
 
 
@@ -66,10 +64,75 @@ SHARED_DIRECTORY = PLUGIN_ROOT / "shared"
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
-from parallel_execution import _SECRET_PATTERNS, validate_inspection_contexts, validate_read_only_runtime  # noqa: E402
-from local_reviewer_wave import ReviewRouteError, validate_evidence as validate_local_reviewer_evidence  # noqa: E402
+from run_gates import (  # noqa: E402
+    validate_local_gate_source,
+    _local_snapshot_bytes,
+    inspect_collected_test,
+    _aggregate_worker_proofs,
+)
+from parallel_execution import (  # noqa: E402
+    _SECRET_PATTERNS as _SECRET_PATTERNS,
+    validate_inspection_contexts as validate_inspection_contexts,
+    validate_read_only_runtime as validate_read_only_runtime,
+)
 from review_routing import ROUTING_SIGNALS, derive_mechanical_risk  # noqa: E402
-from review_context import context_pages, dispatch_message, render_read_call, render_read_output  # noqa: E402
+from local_reviewer_wave import (  # noqa: E402
+    ReviewRouteError as ReviewRouteError,
+)
+from review_context import (  # noqa: E402
+    context_pages as context_pages,
+    dispatch_message as dispatch_message,
+    render_read_call as render_read_call,
+    render_read_output as render_read_output,
+)
+from review_execution_validation import (  # noqa: E402
+    validate_local_reviewer_evidence as validate_local_reviewer_evidence,
+    FINDING_SEVERITIES as FINDING_SEVERITIES,
+    TRANSIENT_RETRY_ERRORS as TRANSIENT_RETRY_ERRORS,
+    _text_reviewer_assessment as _text_reviewer_assessment,
+    _retained_reviewer_rating as _retained_reviewer_rating,
+    _validate_local_reviewer_wave as _validate_local_reviewer_wave,
+    _receipt_binds_child as _receipt_binds_child,
+    _closure_shape_repair as _closure_shape_repair,
+    _assessment_format_repair as _assessment_format_repair,
+    _finding_id_namespace_repair as _finding_id_namespace_repair,
+    _original_dispatch_message as _original_dispatch_message,
+    _recovery_arguments as _recovery_arguments,
+    _validate_spawn_attempts as _validate_spawn_attempts,
+    _batch_reviewer_findings as _batch_reviewer_findings,
+    REQUIRED_ROLES as REQUIRED_ROLES,
+    LEGACY_PROTOCOL_V6_READER_SHA256 as LEGACY_PROTOCOL_V6_READER_SHA256,
+    LEGACY_SINGLE_CALL_READER_SHA256 as LEGACY_SINGLE_CALL_READER_SHA256,
+    LEGACY_ALL_PAGE_READER_SHA256 as LEGACY_ALL_PAGE_READER_SHA256,
+    LEGACY_WORKDIR_READER_SHA256S as LEGACY_WORKDIR_READER_SHA256S,
+    _load_role_card as _load_role_card,
+    _load_json as _load_json,
+    _resolve_path as _resolve_path,
+    _sha256 as _sha256,
+    _read_jsonl as _read_jsonl,
+    _find_rollout as _find_rollout,
+    _event_payloads as _event_payloads,
+    _paged_native_manifest as _paged_native_manifest,
+    _native_dispatch_message as _native_dispatch_message,
+    _native_read_frame as _native_read_frame,
+    _reader_command_matches as _reader_command_matches,
+    _literal_duplicated_plan_command as _literal_duplicated_plan_command,
+    _native_recipe_plan as _native_recipe_plan,
+    _manifest_passes as _manifest_passes,
+    _validate_inspection_plan as _validate_inspection_plan,
+    _child_controls as _child_controls,
+    _inspection_child_called_tool as _inspection_child_called_tool,
+    _missing_reader_error_path as _missing_reader_error_path,
+    _binary_source_diagnostic as _binary_source_diagnostic,
+    _validate_context_read as _validate_context_read,
+    _joined_terminal_timestamp as _joined_terminal_timestamp,
+    _joined_terminal_result as _joined_terminal_result,
+    _parent_timestamp as _parent_timestamp,
+    _related_capacity_release as _related_capacity_release,
+    _validate_native_schedule as _validate_native_schedule,
+    _native_independent_wave as _native_independent_wave,
+    _validate_instruction_bounded_review as _validate_instruction_bounded_review,
+)
 
 REQUIRED_SECTIONS = (
     "Decision Summary",
@@ -83,15 +146,7 @@ REQUIRED_SECTIONS = (
     "Confidence Gaps",
     "Confidence Calibration",
 )
-REQUIRED_ROLES = {"qa-specialist", "challenger"}
 VALID_RECOMMENDATIONS = {"accept-as-is", "minor-changes", "needs-more-work", "reject", "not-aligned"}
-FINDING_SEVERITIES = ("critical", "high", "medium", "low")
-LEGACY_PROTOCOL_V6_READER_SHA256 = "bf0025b22283b98a95e6a77a08b600e090f417e10bb0c90f3371bf0d19198132"
-LEGACY_SINGLE_CALL_READER_SHA256 = "47024ba02c7dec6927356dca33ec44e9710de325fcc1fbb8ec56f66ad0a9c772"
-LEGACY_ALL_PAGE_READER_SHA256 = "c185dc007a261a2d9c0e449e5a888a7a771cd99336ebe8c7085432bc2b0d43c8"
-LEGACY_WORKDIR_READER_SHA256S = frozenset(
-    {LEGACY_PROTOCOL_V6_READER_SHA256, LEGACY_SINGLE_CALL_READER_SHA256, LEGACY_ALL_PAGE_READER_SHA256}
-)
 CLOSE_CODES = {
     "FALSE_GOAL",
     "BREAKING_CONDUCT",
@@ -121,7 +176,6 @@ ALL_MANIFEST_ROLES = {
 }
 INDEPENDENT_PASS_TIERS = {"BROAD", "HIGH_RISK"}
 VALID_MODES = {"spawned", "substituted", "app-server", "inspection"}
-TRANSIENT_RETRY_ERRORS = {"rate_limited", "timeout", "transport_error"}
 SOL_ROLES = {"solution-architect", "security-auditor"}
 UNAVAILABLE_NOTE_LINES = (
     "PR Review Availability: unavailable",
@@ -263,38 +317,6 @@ WORKTREE_FAILURE_RECOVERY_ACTIONS = {
 }
 
 
-def _load_role_card(roles_dir: Path, role: str) -> dict[str, str]:
-    """Load a role-card contract and bind it to its exact bytes."""
-    path = roles_dir / role / "ROLE.md"
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as error:
-        raise SystemExit(f"role-card-missing:{role}") from error
-    if not lines or lines[0] != "---":
-        raise SystemExit(f"role-card-frontmatter-invalid:{role}")
-    try:
-        closing_index = lines.index("---", 1)
-    except ValueError as error:
-        raise SystemExit(f"role-card-frontmatter-invalid:{role}") from error
-    fields: dict[str, str] = {}
-    for line in lines[1:closing_index]:
-        key, separator, value = line.partition(":")
-        if not separator or not key or not value.strip() or key in fields:
-            raise SystemExit(f"role-card-frontmatter-invalid:{role}")
-        fields[key] = value.strip()
-    required = ("role_id", "model", "model_reasoning_effort", "approval_policy", "sandbox_mode")
-    if fields.get("role_id") != role or any(field not in fields for field in required):
-        raise SystemExit(f"role-card-contract-invalid:{role}")
-    return {
-        "role_id": role,
-        "role_card_sha256": _sha256(path),
-        "model": fields["model"],
-        "model_reasoning_effort": fields["model_reasoning_effort"],
-        "approval_policy": fields["approval_policy"],
-        "sandbox_mode": fields["sandbox_mode"],
-    }
-
-
 def _validate_sol_selections(payload: dict[str, Any], roles: set[str], *, label: str) -> dict[str, dict[str, str]]:
     """Validate immutable explicit-user-selection records for every routed Sol role."""
     selected_roles = SOL_ROLES & roles
@@ -342,14 +364,6 @@ CONDITIONAL_SIGNALS = {
 }
 
 
-def _load_json(path: Path) -> dict[str, Any]:
-    with path.open(encoding="utf-8") as handle:
-        payload = json.load(handle)
-    if not isinstance(payload, dict):
-        raise SystemExit(f"expected JSON object: {path}")
-    return payload
-
-
 def _load_json_list(path: Path) -> list[Any]:
     """Load one required JSON array artifact."""
     with path.open(encoding="utf-8") as handle:
@@ -357,87 +371,6 @@ def _load_json_list(path: Path) -> list[Any]:
     if not isinstance(payload, list):
         raise SystemExit(f"expected JSON array: {path}")
     return payload
-
-
-def _resolve_path(out_dir: Path, raw_path: object) -> Path:
-    """Resolve one declared review artifact path without consulting the caller's working directory.
-
-    The recorded path was written by an earlier process whose directory is not stored alongside it, so probing the
-    reader's own directory made a finished review valid in one place and invalid in another. Candidates are derived from
-    `out_dir` — the current relative form first, then its ancestors for runs written before that convention — and the
-    containment check below still rejects anything landing outside the review output.
-    """
-    if not isinstance(raw_path, str) or not raw_path:
-        raise SystemExit("missing output path")
-    declared = Path(raw_path)
-    path = declared if declared.is_absolute() else out_dir / declared
-    if not declared.is_absolute() and not path.is_file():
-        for ancestor in out_dir.resolve().parents:
-            if (ancestor / declared).is_file():
-                path = ancestor / declared
-                break
-    resolved = path.resolve()
-    if not resolved.is_relative_to(out_dir.resolve()):
-        raise SystemExit(f"artifact-path-outside-review-output:{raw_path}")
-    return resolved
-
-
-def _sha256(path: Path) -> str:
-    """Return the SHA-256 digest for an evidence file."""
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    """Read valid object rows from a Codex rollout log."""
-    rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        row = json.loads(line)
-        if isinstance(row, dict):
-            rows.append(row)
-    return rows
-
-
-def _find_rollout(codex_home: Path, thread_id: str) -> Path:
-    """Find the unique rollout log for a Codex thread ID."""
-    matches = list((codex_home / "sessions").rglob(f"*{thread_id}*.jsonl"))
-    if len(matches) != 1:
-        raise SystemExit(f"provenance-rollout-count:{thread_id}:{len(matches)}")
-    return matches[0]
-
-
-def _event_payloads(rows: list[dict[str, Any]], event_type: str) -> list[dict[str, Any]]:
-    """Select event-message payloads of one type."""
-    payloads = [
-        row["payload"]
-        for row in rows
-        if row.get("type") == "event_msg"
-        and isinstance(row.get("payload"), dict)
-        and row["payload"].get("type") == event_type
-    ]
-    if event_type != "sub_agent_activity":
-        return payloads
-    for row in rows:
-        payload = row.get("payload")
-        if row.get("type") != "event_msg" or not isinstance(payload, dict):
-            continue
-        item = payload.get("item")
-        if payload.get("type") != "item_completed" or not isinstance(item, dict):
-            continue
-        if item.get("type") != "SubAgentActivity":
-            continue
-        payloads.append(
-            {
-                "event_id": item.get("id"),
-                "kind": item.get("kind"),
-                "agent_path": item.get("agent_path"),
-                "agent_thread_id": item.get("agent_thread_id"),
-                "started_at_ms": payload.get("started_at_ms"),
-                "completed_at_ms": payload.get("completed_at_ms"),
-            }
-        )
-    return payloads
 
 
 def _validate_routing(out_dir: Path, risk_tier: str) -> set[str]:
@@ -640,74 +573,12 @@ def _readable_review_role(role_id: str) -> str:
     return " ".join([first, *parts[1:]])
 
 
-def _retained_reviewer_rating(
-    path: Path,
-    *,
-    local_reviewer_wave: bool,
-    main: bool,
-    role: str,
-    structured_native: bool = False,
-    preassessment_blocker: bool = False,
-) -> int:
-    """Read a scoped rating and rationale from the retained reviewer response.
-
-    Proven preassessment recovery may retain paired unavailable digests only for an empty blocking response. Completed
-    inspection retains the strict digest contract.
-    """
-    try:
-        content = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as error:
-        raise SystemExit(f"review-assessment-content-invalid:{role}") from error
-    if local_reviewer_wave or structured_native:
-        if structured_native:
-            block = re.fullmatch(r"```adversarial-loop\n(.*?)\n```", content.strip(), re.DOTALL)
-            content = block.group(1) if block else content
-        try:
-            payload = json.loads(content)
-        except (ValueError, RecursionError) as error:
-            raise SystemExit(f"review-assessment-content-invalid:{role}") from error
-        assessment = payload.get("assessment") if isinstance(payload, dict) else None
-        if structured_native:
-            if (
-                not isinstance(payload, dict)
-                or set(payload) != {"source_sha256", "diff_sha256", "findings", "assessment"}
-                or not isinstance(payload["findings"], list)
-                or not isinstance(assessment, dict)
-                or set(assessment) != {"rating", "rationale"}
-            ):
-                raise SystemExit(f"review-assessment-content-invalid:{role}")
-            # Failed first reads cannot supply source digests; this receipt never certifies inspection.
-            unavailable = (
-                preassessment_blocker
-                and payload["source_sha256"] is None
-                and payload["diff_sha256"] is None
-                and payload["findings"] == []
-                and assessment["rating"] == 5
-            )
-            if not unavailable and any(
-                not isinstance(payload[key], str) or re.fullmatch(r"[0-9a-f]{64}", payload[key]) is None
-                for key in ("source_sha256", "diff_sha256")
-            ):
-                raise SystemExit(f"review-assessment-content-invalid:{role}")
-        rating = assessment.get("rating") if isinstance(assessment, dict) else None
-        rationale = assessment.get("rationale") if isinstance(assessment, dict) else None
-    else:
-        heading = "Main Reviewer Assessment" if main else "Reviewer Assessment"
-        if len(re.findall(rf"(?m)^## {re.escape(heading)}[ \t]*$", content)) != 1:
-            raise SystemExit(f"review-assessment-content-invalid:{role}")
-        section = re.search(rf"(?ms)^## {re.escape(heading)}\s*\n(?P<body>.*?)(?=^## |\Z)", content)
-        body = section.group("body") if section else ""
-        ratings = re.findall(r"(?m)^Rating: ([1-5])\s*$", body)
-        rationales = re.findall(r"(?m)^Rationale: (\S.*)$", body)
-        rating = int(ratings[0]) if len(ratings) == 1 else None
-        rationale = rationales[0] if len(rationales) == 1 else None
-    if type(rating) is not int or rating not in range(1, 6) or not isinstance(rationale, str) or not rationale.strip():
-        raise SystemExit(f"review-assessment-content-invalid:{role}")
-    return rating
-
-
 def _validate_reviewer_assessments(
-    out_dir: Path, metadata: dict[str, Any], passes_by_role: dict[str, dict[str, Any]]
+    out_dir: Path,
+    metadata: dict[str, Any],
+    passes_by_role: dict[str, dict[str, Any]],
+    *,
+    batch_response: bool = False,
 ) -> None:
     """Bind each supplied assessment to a validated reviewer and retained output."""
     assessments = metadata.get("reviewer_assessments")
@@ -760,7 +631,11 @@ def _validate_reviewer_assessments(
                 raise SystemExit("review-assessment-main-evidence-mismatch")
             local_reviewer_wave = False
         rating = _retained_reviewer_rating(
-            evidence_path, local_reviewer_wave=local_reviewer_wave, main=label == "main reviewer", role=role
+            evidence_path,
+            local_reviewer_wave=local_reviewer_wave,
+            main=label == "main reviewer",
+            role=role,
+            batch_response=batch_response and label in expected and "reviewer_findings" in expected[label][1],
         )
         if rating != assessment.get("rating"):
             raise SystemExit(f"review-assessment-rating-mismatch:{role}")
@@ -893,8 +768,10 @@ def _validate_action_table(notes_path: Path, result: dict[str, Any], metadata: d
         raise SystemExit("review-findings-action-table-authors-unbound")
     if attributed:
         expected_headers = (ACTION_TABLE_HEADERS[0], "Author", *ACTION_TABLE_HEADERS[1:])
-        if tuple(rows[0]) != expected_headers or not re.fullmatch(r":?-{3,}:?", rows[1][1]):
+        if tuple(rows[0]) != expected_headers:
             raise SystemExit("review-findings-action-table-header-mismatch")
+        if not re.fullmatch(r":?-{3,}:?", rows[1][1]):
+            raise SystemExit("review-findings-action-table-divider-invalid")
         records = {
             record["id"]: record
             for record in metadata.get("review_findings", []) + metadata.get("operational_blockers", [])
@@ -951,8 +828,15 @@ def _validate_action_table(notes_path: Path, result: dict[str, Any], metadata: d
             raise SystemExit("review-findings-action-table-incomplete")
 
 
-def _validate_unavailable_result(out_dir: Path, result: dict[str, Any], metadata: dict[str, Any], scope: str) -> None:
-    """Validate a terminal PR-collection process failure without inventing a review outcome."""
+def _validate_unavailable_result(
+    out_dir: Path, result: dict[str, Any], metadata: dict[str, Any], scope: str, *, require_deductions: bool = False
+) -> None:
+    """Validate terminal collection failure with complete historical or deduction text.
+
+    Keep canonical gap identity and process evidence exact; admit the new accounting profile only when its closure and
+    overlapping limit carry consistent deductions. Fresh candidates require that profile; canonical historical results
+    remain readable.
+    """
     if scope != "pr":
         raise SystemExit("unavailable-review-non-pr-scope")
     if result.get("status") != "fail":
@@ -1025,14 +909,21 @@ def _validate_unavailable_result(out_dir: Path, result: dict[str, Any], metadata
         if checkout_state is not None
         else "Core source verification did not complete; retained collection artifacts may be partial and were not assessed."
     )
-    if metadata.get("confidence_gap_closures") != [
-        {
-            "gap": UNAVAILABLE_CONFIDENCE_GAP,
-            "status": "unresolved",
-            "rationale": expected_closure_rationale,
-        }
-    ]:
+    expected_closure = {
+        "gap": UNAVAILABLE_CONFIDENCE_GAP,
+        "status": "unresolved",
+        "rationale": expected_closure_rationale,
+    }
+    deduction_closure = expected_closure | {"rationale": f"(-0.10) {expected_closure_rationale}"}
+    closures = metadata.get("confidence_gap_closures")
+    if closures == [expected_closure]:
+        has_deductions = False
+    elif closures == [deduction_closure]:
+        has_deductions = True
+    else:
         raise SystemExit("unavailable-review-confidence-closures-must-be-canonical")
+    if require_deductions and not has_deductions:
+        raise SystemExit("unavailable-review-candidate-confidence-deductions-required")
     expected_recovery = {
         "initial_confidence": 0.9,
         "final_confidence": 0.9,
@@ -1049,6 +940,12 @@ def _validate_unavailable_result(out_dir: Path, result: dict[str, Any], metadata
             else "PR correctness was not assessed."
         ],
     }
+    # Select the complete text profile together so partial migrations cannot hide a shortfall.
+    if has_deductions:
+        expected_recovery["remaining_limits"] = [
+            f"(-0.00) {expected_recovery['remaining_limits'][0]} No additional deduction; "
+            "the canonical source-verification gap accounts for this limitation."
+        ]
     if metadata.get("confidence_recovery") != expected_recovery:
         raise SystemExit("unavailable-review-confidence-recovery-must-be-canonical")
     _validate_unavailable_gates(out_dir, result)
@@ -1531,8 +1428,10 @@ def _validate_pr_review_gate_command(out_dir: Path, checks: list[dict[str, Any]]
         raise SystemExit("pr-source-review-gate-command-invalid")
 
 
-def _validate_pr_tests_import_proof(checks: list[dict[str, Any]], worktree: str) -> None:
-    """Require passing PR tests to show imported project modules came from the reviewed worktree."""
+def _validate_pr_tests_import_proof(
+    checks: list[dict[str, Any]], worktree: str, local_snapshot: dict[str, Any] | None = None
+) -> None:
+    """Require actual test origins from clean tracked source or explicitly admitted local snapshot bytes."""
     tests_checks = [check for check in checks if check.get("id") == "tests"]
     if len(tests_checks) != 1:
         raise SystemExit("pr-source-review-tests-import-proof-invalid")
@@ -1562,7 +1461,7 @@ def _validate_pr_tests_import_proof(checks: list[dict[str, Any]], worktree: str)
             or not name.strip()
             or not isinstance(module, dict)
             or module.get("status") != "pass"
-            or module.get("tracked") is not True
+            or (local_snapshot is None and module.get("tracked") is not True)
             or module.get("reason") is not None
             or not isinstance(module.get("origin"), str)
             or not Path(module["origin"]).is_absolute()
@@ -1575,12 +1474,92 @@ def _validate_pr_tests_import_proof(checks: list[dict[str, Any]], worktree: str)
             or not Path(name).is_absolute()
             or not isinstance(test, dict)
             or test.get("status") != "pass"
-            or test.get("tracked") is not True
+            or (local_snapshot is None and test.get("tracked") is not True)
             or test.get("reason") is not None
             or test.get("origin") != name
             or not Path(name).resolve().is_relative_to(source_root)
         ):
             raise SystemExit("pr-source-review-tests-import-proof-invalid")
+    if local_snapshot is not None:
+        records = {record["path"]: record for record in local_snapshot["files"]}
+        expected_transport = local_snapshot["transport"]
+        workers = proof.get("workers")
+        if (
+            not isinstance(workers, dict)
+            or proof.get("errors") != []
+            or any(not isinstance(name, str) or not name for name in workers)
+        ):
+            raise SystemExit("local-source-tests-worker-envelope-invalid")
+        processes = [proof, *workers.values()]
+        for process in processes:
+            if (
+                not isinstance(process, dict)
+                or process.get("local_source") != expected_transport
+                or process.get("worktree") != worktree
+                or not isinstance(process.get("modules"), dict)
+                or set(process["modules"]) != set(proof["modules"])
+                or not isinstance(process.get("tests"), dict)
+                or not process["tests"]
+                or any(
+                    not isinstance(process.get(field), str) or not Path(process[field]).is_absolute()
+                    for field in ("runtime_interpreter", "sys_prefix")
+                )
+            ):
+                raise SystemExit("local-source-tests-worker-envelope-invalid")
+            neutral = False
+            for name, origin in process["modules"].items():
+                # Only an exact unloaded-module record is neutral; selected tests always require byte membership.
+                if (
+                    isinstance(origin, dict)
+                    and origin
+                    == {"origin": None, "tracked": False, "status": "inconclusive", "reason": "module-not-imported"}
+                    and origin.get("tracked") is False
+                ):
+                    neutral = True
+                    continue
+                if (
+                    not isinstance(origin, dict)
+                    or origin.get("status") != "pass"
+                    or origin.get("reason") is not None
+                    or not isinstance(origin.get("origin"), str)
+                    or not Path(origin["origin"]).is_absolute()
+                ):
+                    raise SystemExit("local-source-tests-origin-invalid")
+            expected_status = "inconclusive" if neutral else "pass"
+            if process.get("status") != expected_status:
+                raise SystemExit("local-source-tests-worker-status-invalid")
+            for name, test in process["tests"].items():
+                if (
+                    not isinstance(name, str)
+                    or not Path(name).is_absolute()
+                    or not isinstance(test, dict)
+                    or test.get("origin") != name
+                    or test.get("status") != "pass"
+                    or test.get("reason") is not None
+                ):
+                    raise SystemExit("local-source-tests-selected-test-invalid")
+            loaded_modules = [
+                origin for origin in process["modules"].values() if origin.get("status") != "inconclusive"
+            ]
+            for origin in [*loaded_modules, *process["tests"].values()]:
+                path = Path(origin["origin"]).resolve()
+                if not path.is_relative_to(source_root):
+                    raise SystemExit("local-source-tests-origin-invalid")
+                record = records.get(path.relative_to(source_root).as_posix())
+                if (
+                    record is None
+                    or record["kind"] != "file"
+                    or origin.get("status") != "pass"
+                    or origin.get("reason") is not None
+                    or origin.get("snapshot_member") != {key: record[key] for key in ("path", "kind", "sha256")}
+                    or origin.get("tracked") is not inspect_collected_test(path, source_root, local_snapshot)["tracked"]
+                    or _sha256(path) != record["sha256"]
+                ):
+                    raise SystemExit("local-source-tests-snapshot-member-invalid")
+        if workers:
+            combined = _aggregate_worker_proofs(workers, set(workers), list(proof["modules"]))
+            if any(combined[key] != proof[key] for key in ("status", "modules", "tests", "errors")):
+                raise SystemExit("local-source-tests-worker-union-invalid")
 
 
 def _validate_closed_result(out_dir: Path, result: dict[str, Any], metadata: dict[str, Any], scope: str) -> None:
@@ -1869,58 +1848,181 @@ def _validate_confidence_recovery(result: dict[str, Any], metadata: dict[str, An
         raise SystemExit("review-confidence-status-should-be-fair")
 
 
-def _paged_native_manifest(manifest: dict[str, Any]) -> bool:
-    """Identify audited native page reads while keeping aggregate admission separate."""
-    return manifest.get("schema_version") == 6 or (
-        manifest.get("schema_version") in {7, 8} and manifest.get("manifest_kind") == "native-wave"
-    )
+def _consolidation_confidence_evidence(out_dir: Path, manifest: dict[str, Any]) -> set[str]:
+    """Bind recovery references to admitted outputs and source-bound PR gates without judging relevance."""
+    references: set[str] = set()
+    for record in manifest["batch_execution"]["waves"]:
+        path = _resolve_path(out_dir, record["manifest_path"])
+        if _sha256(path) != record["manifest_sha256"]:
+            raise SystemExit("review-consolidation-confidence-evidence-invalid")
+        wave = _load_json(path)
+        for item in wave["passes"]:
+            selected = next(attempt for attempt in item["attempts"] if attempt["attempt"] == item["selected_attempt"])
+            output = _resolve_path(path.parent, item["output_path"])
+            if _sha256(output) != selected["output_sha256"]:
+                raise SystemExit("review-consolidation-confidence-evidence-invalid")
+            references.add(output.relative_to(out_dir).as_posix())
+    # Existing PR admission binds gate execution/import receipts to the exact reviewed revision.
+    routing_path = out_dir / "pr-routing.json"
+    routing = _load_json(routing_path) if routing_path.is_file() else {}
+    gates = _load_json(out_dir / "gates.json")
+    if routing.get("checkout_method") == "git-detached-review-worktree" and gates.get("source"):
+        _validate_verified_pr_source(
+            out_dir, routing, _load_json(out_dir / "target-branch.json"), _load_json(out_dir / "local-checkout.json")
+        )
+        for check in gates["checks"]:
+            if check["status"] == "pass" and check.get("source"):
+                for key in ("command_path", "stdout", "stderr"):
+                    path = _resolve_path(out_dir, check[key])
+                    if not path.is_file():
+                        raise SystemExit("review-consolidation-confidence-evidence-invalid")
+                    references.add(path.relative_to(out_dir).as_posix())
+    elif routing_path.exists() is False and gates.get("source", {}).get("mode") == "local-review-mirror":
+        source = gates["source"]
+        import review_batches
+
+        inventory = review_batches.validate_inventory(out_dir)
+        root = Path(source["worktree"])
+        if inventory["source_arguments"]["source_root"] != root.as_posix():
+            raise SystemExit("local-confidence-source-root-mismatch")
+        current = validate_local_gate_source(out_dir, root)
+        snapshot_path = _resolve_path(out_dir, source.get("snapshot_path"))
+        receipt_path = _resolve_path(out_dir, source.get("receipt_path"))
+        if (
+            source.get("snapshot_path") != "checks/local-source-snapshot.json"
+            or source.get("receipt_path") != "local-source/review-worktree.json"
+            or snapshot_path.is_symlink()
+            or receipt_path.is_symlink()
+            or _sha256(snapshot_path) != source.get("snapshot_sha256")
+            or _sha256(receipt_path) != source.get("receipt_sha256")
+            or hashlib.sha256(_local_snapshot_bytes(current)).hexdigest() != source.get("snapshot_sha256")
+        ):
+            raise SystemExit("local-confidence-source-snapshot-invalid")
+        selected = {record["path"]: record for record in current["files"]}
+        if any(selected.get(record["path"]) != record for record in inventory["source_snapshot"]["files"]):
+            raise SystemExit("local-confidence-source-selection-mismatch")
+        tests = [check for check in gates["checks"] if check["id"] == "tests"]
+        if len(tests) != 1:
+            raise SystemExit("local-confidence-tests-invalid")
+        check = tests[0]
+        if check["status"] != "pass":
+            return references
+        receipt = check.get("source")
+        fields = ("mode", "worktree", "receipt_path", "receipt_sha256", "snapshot_path", "snapshot_sha256")
+        if (
+            not isinstance(receipt, dict)
+            or any(receipt.get(key) != source.get(key) for key in fields)
+            or any(
+                receipt.get(phase) != {"snapshot_sha256": source["snapshot_sha256"]} for phase in ("before", "after")
+            )
+        ):
+            raise SystemExit("local-confidence-tests-source-invalid")
+        proof_path = out_dir / "checks/tests.python-imports.json"
+        try:
+            if (
+                proof_path.is_symlink()
+                or not proof_path.resolve().is_relative_to(out_dir.resolve())
+                or not proof_path.is_file()
+            ):
+                raise ValueError("missing-or-escaped-proof")
+            proof_bytes = proof_path.read_bytes()
+            if (
+                receipt.get("artifacts", {}).get("checks/tests.python-imports.json")
+                != hashlib.sha256(proof_bytes).hexdigest()
+            ):
+                raise ValueError("proof-hash-mismatch")
+            if json.loads(proof_bytes.decode("utf-8")) != check.get("python_imports"):
+                raise ValueError("proof-inline-mismatch")
+        except (OSError, ValueError, UnicodeError):
+            raise SystemExit("local-confidence-tests-proof-invalid") from None
+        current["transport"] = {"snapshot_path": snapshot_path.as_posix(), "snapshot_sha256": source["snapshot_sha256"]}
+        _validate_pr_tests_import_proof(gates["checks"], root.as_posix(), current)
+        for key in ("command_path", "stdout", "stderr"):
+            path = _resolve_path(out_dir, check[key])
+            if path.is_symlink() or not path.is_file() or receipt.get("artifacts", {}).get(check[key]) != _sha256(path):
+                raise SystemExit("local-confidence-tests-artifact-invalid")
+            references.add(path.relative_to(out_dir).as_posix())
+    return references
 
 
-def _native_dispatch_message(manifest: dict[str, Any], plan_path: Path, role: str, attempt: int) -> str:
-    """Render the declared native recipe, preserving historical reader paths exactly."""
-    return dispatch_message(
-        _native_recipe_plan(manifest, plan_path),
-        role,
-        attempt,
-        manifest["context_reader_python"],
-        provenance_header=manifest.get("dispatch_protocol", "paged-context-v6") == "paged-context-v6",
-        reader_path=Path(manifest["context_reader_path"]) if manifest.get("schema_version") in {7, 8} else None,
-        _all_page_calls=manifest.get("schema_version") != 6
-        and manifest.get("context_reader_sha256")
-        not in {LEGACY_PROTOCOL_V6_READER_SHA256, LEGACY_SINGLE_CALL_READER_SHA256},
-        _include_workdir=manifest.get("schema_version") == 6
-        or manifest.get("context_reader_sha256") in LEGACY_WORKDIR_READER_SHA256S,
-    )
+def _scoped_confidence_deduction(gap: dict[str, Any]) -> int:
+    """Read one historical cause's contribution from either permitted field without double-counting duplicate labels."""
+    tokens = set(re.findall(r"\([-−](0\.\d{2}|1\.00)\)", gap["gap"] + "\n" + gap["rationale"]))
+    if len(tokens) > 1:
+        raise SystemExit("review-consolidation-confidence-scoped-deduction-ambiguous")
+    return round(float(next(iter(tokens))) * 100) if tokens else 0
 
 
-def _native_recipe_plan(manifest: dict[str, Any], retained_plan: Path) -> Path:
-    """Preserve historical call coordinates only when their plan bytes match the retained plan."""
-    original = manifest.get("original_plan_path")
-    if original is None:
-        return retained_plan
-    path = Path(str(original))
-    if (
-        manifest.get("schema_version") not in {7, 8}
-        or manifest.get("dispatch_protocol") != "paged-context-v6"
-        or not path.is_absolute()
-        or not path.is_file()
-        or path.name != "inspection-plan.json"
-        or path.read_bytes() != retained_plan.read_bytes()
-    ):
-        raise SystemExit("manifest-original-plan-identity-invalid")
-    return path
-
-
-def _manifest_passes(manifest: dict[str, Any]) -> list[dict[str, Any]]:
-    passes = manifest.get("passes", manifest.get("specialist_passes"))
-    if not isinstance(passes, list):
-        raise SystemExit("manifest-missing-passes")
-    normalized = []
-    for index, item in enumerate(passes):
-        if not isinstance(item, dict):
-            raise SystemExit(f"manifest-pass-not-object:{index}")
-        normalized.append(item)
-    return normalized
+def _validate_consolidation_confidence(
+    out_dir: Path, manifest: dict[str, Any], result: dict[str, Any], metadata: dict[str, Any]
+) -> None:
+    """Require all scoped causes, admitted evidence and complete deductions before global confidence recovery."""
+    minimum = min(item["confidence"] for item in manifest["passes"])
+    labels: dict[str, int] = {}
+    prefixes = []
+    for item in manifest["passes"]:
+        for part in item["source_parts" if manifest.get("review_topology") == "source-only" else "final_parts"]:
+            prefixes.append(f"{item['role']} {part['output_path']}: ")
+            accounted = 0
+            for gap in part["confidence"]["gaps"]:
+                historical = _scoped_confidence_deduction(gap) if result["confidence"] > minimum else 0
+                accounted += historical
+                if gap["status"] != "closed":
+                    label = f"{item['role']} {part['output_path']}: {gap['gap']} ({gap['status']}) - {gap['rationale']}"
+                    if label not in metadata.get("confidence_gaps", []):
+                        raise SystemExit("review-consolidation-confidence-gap-dropped")
+                    labels[label] = historical
+            residual = round((1 - part["confidence"]["score"]) * 100) - accounted
+            if result["confidence"] > minimum and residual > 0:
+                label = (
+                    f"{item['role']} {part['output_path']}: residual scoped confidence shortfall {residual / 100:.2f}"
+                )
+                if label not in metadata.get("confidence_gaps", []):
+                    raise SystemExit("review-consolidation-confidence-gap-dropped")
+                labels[label] = residual
+    if result["confidence"] <= minimum:
+        return
+    recovery = metadata.get("confidence_recovery", {})
+    if recovery.get("final_confidence") != result["confidence"]:
+        raise SystemExit("review-consolidation-confidence-inflated")
+    if recovery.get("initial_confidence") != minimum:
+        raise SystemExit("review-consolidation-confidence-initial-mismatch")
+    _validate_confidence_gaps(result, metadata)
+    _validate_confidence_recovery(result, metadata)
+    references = _consolidation_confidence_evidence(out_dir, manifest)
+    if any(evidence not in references for evidence in recovery["evidence"]):
+        raise SystemExit("review-consolidation-confidence-evidence-invalid")
+    closures = {closure["gap"].strip(): closure for closure in metadata["confidence_gap_closures"]}
+    if any(label.startswith(tuple(prefixes)) and label not in labels for label in closures):
+        raise SystemExit("review-consolidation-confidence-gap-unknown")
+    deductions = {}
+    for label, closure in closures.items():
+        # Historical labels quoted in the prose retain their own numbers; only the leading current token contributes.
+        match = re.match(r"\(-0\.(\d{2})\)(?:\s|$)", closure.get("rationale", ""))
+        if match is None or (closure["status"] == "closed" and match[1] != "00"):
+            raise SystemExit("review-consolidation-confidence-accounting-invalid")
+        deductions[label] = int(match[1])
+        if closure.get("evidence") and closure.get("evidence_path") and closure["evidence"] != closure["evidence_path"]:
+            raise SystemExit("review-consolidation-confidence-evidence-invalid")
+        if closure["status"] == "closed":
+            evidence = closure.get("evidence_path") or closure.get("evidence")
+            if evidence not in references or evidence not in recovery["evidence"]:
+                raise SystemExit("review-consolidation-confidence-evidence-invalid")
+    for label in labels:
+        closure = closures[label]
+        reduced = deductions[label] < labels[label]
+        shared = any(
+            other != label and deduction > 0 and other in closure["rationale"]
+            for other, deduction in deductions.items()
+        )
+        if closure["status"] != "closed" and reduced and not shared:
+            evidence = closure.get("evidence_path") or closure.get("evidence")
+            if evidence not in references or evidence not in recovery["evidence"]:
+                raise SystemExit("review-consolidation-confidence-evidence-invalid")
+        if closure["status"] != "closed" and deductions[label] == 0 and not shared:
+            raise SystemExit("review-consolidation-confidence-accounting-invalid")
+    if abs(sum(deductions.values()) / 100 - (1 - result["confidence"])) > 0.000001:
+        raise SystemExit("review-consolidation-confidence-accounting-invalid")
 
 
 def _validate_review_runtime(
@@ -1934,7 +2036,7 @@ def _validate_review_runtime(
     roles_dir: Path = PLUGIN_ROOT / "roles",
 ) -> dict[str, object]:
     """Validate route-specific execution evidence before granting reviewer independence."""
-    if manifest.get("schema_version") in {7, 8} and manifest.get("manifest_kind") == "batched-review":
+    if manifest.get("schema_version") in {7, 8, 9} and manifest.get("manifest_kind") == "batched-review":
         import review_batches  # Verified circular producer/validator boundary; resolve after initialization.
 
         return review_batches.validate_aggregate(
@@ -2028,1574 +2130,6 @@ def _validate_review_runtime(
     return summary
 
 
-def _validate_inspection_plan(
-    out_dir: Path, manifest: dict[str, Any], parent_thread_id: str
-) -> tuple[dict[str, Any], dict[str, Path], bool, str | None]:
-    """Bind schema-five inspection evidence to its exact no-execution plan."""
-    execution = manifest.get("inspection_execution")
-    if not isinstance(execution, dict) or set(execution) != {"plan_path", "plan_sha256"}:
-        raise SystemExit("review-inspection-plan-missing")
-    plan_path = _resolve_path(out_dir, execution["plan_path"])
-    if not plan_path.is_file() or _sha256(plan_path) != execution["plan_sha256"]:
-        raise SystemExit("review-inspection-plan-hash-mismatch")
-    plan = _load_json(plan_path)
-    required_keys = {
-        "consumer_policy",
-        "review_operation",
-        "write_policy",
-        "review_run_id",
-        "parent_thread_id",
-        "review_input_sha256",
-        "source_sensitivity",
-        "contexts",
-        "independent_review_required",
-        "independence_requirement_evidence",
-    }
-    if set(plan) != required_keys:
-        raise SystemExit("review-inspection-plan-shape-invalid")
-    policy = plan["consumer_policy"]
-    consumer = policy.get("consumer_id") if isinstance(policy, dict) else None
-    if consumer not in {"code-review", "challenge-resolve"} or policy != {
-        "consumer_id": consumer,
-        "capability": "instruction-bounded-review",
-        "promotion_status": "promoted",
-        "parent_mutations": "serial",
-        "canonical_gates": "serial",
-    }:
-        raise SystemExit("review-inspection-plan-policy-invalid")
-    if consumer == "challenge-resolve" and (
-        not isinstance(plan["contexts"], list)
-        or len(plan["contexts"]) != 1
-        or not isinstance(plan["contexts"][0], dict)
-        or plan["contexts"][0].get("role_id") != "challenger"
-    ):
-        raise SystemExit("review-inspection-plan-challenge-role-invalid")
-    if plan["review_operation"] != "inspection-only" or plan["write_policy"] != {
-        "parent_writes": "none",
-        "approval_requirement": "not-required",
-    }:
-        raise SystemExit("review-inspection-plan-operation-invalid")
-    if plan["source_sensitivity"] != "non-sensitive":
-        raise SystemExit("review-inspection-plan-source-sensitivity-invalid")
-    for key in ("review_run_id", "parent_thread_id", "review_input_sha256"):
-        if plan[key] != manifest.get(key):
-            raise SystemExit(f"review-inspection-plan-identity-mismatch:{key}")
-    if plan["parent_thread_id"] != parent_thread_id:
-        raise SystemExit("review-inspection-plan-parent-thread-mismatch")
-    independent_required = plan["independent_review_required"]
-    evidence = plan["independence_requirement_evidence"]
-    if type(independent_required) is not bool:
-        raise SystemExit("review-inspection-plan-independence-required-invalid")
-    if independent_required:
-        if not isinstance(evidence, str) or not evidence.strip():
-            raise SystemExit("review-inspection-plan-independence-evidence-missing")
-    elif evidence is not None:
-        raise SystemExit("review-inspection-plan-independence-evidence-unexpected")
-    try:
-        contexts = validate_inspection_contexts(
-            plan,
-            plan_path,
-            context_limit=None
-            if manifest.get("schema_version") in {7, 8} and manifest.get("manifest_kind") == "native-wave"
-            else 4,
-        )
-    except ValueError as error:
-        raise SystemExit(f"review-inspection-contexts-invalid:{error}") from error
-    return plan, contexts, independent_required, evidence
-
-
-def _child_controls(child_rows: list[dict[str, Any]], turn_id: str) -> dict[str, str]:
-    """Report observed child controls without treating them as an isolation guarantee."""
-    contexts = [
-        row["payload"]
-        for row in child_rows
-        if row.get("type") == "turn_context"
-        and isinstance(row.get("payload"), dict)
-        and row["payload"].get("turn_id") == turn_id
-    ]
-    if len(contexts) != 1:
-        raise SystemExit("review-inspection-turn-context-missing")
-    context = contexts[0]
-    sandbox = context.get("sandbox_mode")
-    if sandbox is None and isinstance(context.get("sandbox_policy"), dict):
-        sandbox = context["sandbox_policy"].get("type")
-    approval = context.get("approval_policy")
-    return {
-        "sandbox_mode": sandbox if isinstance(sandbox, str) and sandbox else "unknown",
-        "approval_policy": approval if isinstance(approval, str) and approval else "unknown",
-    }
-
-
-def _inspection_child_called_tool(child_rows: list[dict[str, Any]]) -> bool:
-    """Reject every child tool-call or tool-result record for supplied-context inspection."""
-    for row in child_rows:
-        payload = row.get("payload")
-        if row.get("type") == "response_item" and isinstance(payload, dict):
-            if payload.get("type") not in {"agent_message", "message", "reasoning"}:
-                return True
-        elif row.get("type") == "event_msg" and isinstance(payload, dict):
-            if payload.get("type") == "item_completed":
-                item = payload.get("item")
-                if not isinstance(item, dict) or item.get("type") not in {
-                    "AgentMessage",
-                    "Reasoning",
-                    "ContextCompaction",
-                }:
-                    return True
-            elif payload.get("type") not in {"task_started", "task_complete", "token_count", "thread_settings_applied"}:
-                return True
-    return False
-
-
-def _validate_context_read(
-    child_rows: list[dict[str, Any]],
-    plan_path: Path,
-    role: str,
-    attempt: dict[str, Any],
-    manifest: dict[str, Any],
-    context: str,
-    *,
-    incomplete_dispatch: bool = False,
-) -> None:
-    """Require exact page reads, or prove a successful prefix followed only by missing-reader failures."""
-    tool_rows = [
-        row["payload"]
-        for row in child_rows
-        if row.get("type") == "response_item"
-        and isinstance(row.get("payload"), dict)
-        and row["payload"].get("type")
-        in {"custom_tool_call", "function_call", "custom_tool_call_output", "function_call_output"}
-    ]
-    page_count = len(context_pages(context))
-    if (not incomplete_dispatch and len(tool_rows) != 2 * page_count) or (
-        incomplete_dispatch and (len(tool_rows) % 2 or not 4 <= len(tool_rows) <= 2 * page_count)
-    ):
-        raise SystemExit(f"review-inspection-context-read-count-mismatch:{role}")
-    expected_commands: list[str] = []
-    expected_outputs: list[str] = []
-    expected_exits: list[int] = []
-    failed = False
-    successful = 0
-    for page in range(1, len(tool_rows) // 2 + 1):
-        call, output = tool_rows[2 * (page - 1) : 2 * page]
-        expected_call = render_read_call(
-            _native_recipe_plan(manifest, plan_path),
-            role,
-            attempt["attempt"],
-            manifest["context_reader_python"],
-            page,
-            reader_path=Path(manifest["context_reader_path"]) if manifest.get("schema_version") in {7, 8} else None,
-            _include_workdir=manifest.get("schema_version") == 6
-            or manifest.get("context_reader_sha256") in LEGACY_WORKDIR_READER_SHA256S,
-        )
-        expected_command = json.loads(expected_call.split("tools.exec_command(", 1)[1].split("); text", 1)[0])["cmd"]
-        expected_output = render_read_output(
-            context,
-            role,
-            manifest["review_run_id"],
-            manifest["review_input_sha256"],
-            attempt["context_sha256"],
-            attempt["attempt"],
-            page,
-        )
-        canonical_call = call.get("name") == "exec" and call.get("input") in {expected_call, expected_call + "\n"}
-        if output.get("call_id") != call.get("call_id") or not isinstance(call.get("call_id"), str):
-            raise SystemExit(f"review-inspection-context-read-receipt-mismatch:{role}:{page}")
-        receipt = output.get("output")
-        valid_receipt = not (
-            not isinstance(receipt, list)
-            or len(receipt) != 2
-            or not isinstance(receipt[0], dict)
-            or receipt[0].get("type") != "input_text"
-            or not isinstance(receipt[0].get("text"), str)
-            or not receipt[0]["text"].startswith("Script completed\n")
-        )
-        canonical_output = valid_receipt and receipt[1] == {"type": "input_text", "text": expected_output}
-        exit_code = 0
-        if incomplete_dispatch and not (canonical_call and canonical_output):
-            diagnostic = receipt[1].get("text") if valid_receipt and isinstance(receipt[1], dict) else None
-            missing = (
-                re.fullmatch(
-                    r"(.+?): can't open file '(.+)': \[Errno 2\] No such file or directory\r?\n?",
-                    diagnostic,
-                )
-                if isinstance(diagnostic, str)
-                else None
-            )
-            missing_path = Path(missing[2]) if missing else None
-            if (
-                missing_path is None
-                or not (PurePosixPath(missing[1]).is_absolute() or PureWindowsPath(missing[1]).is_absolute())
-                or not (
-                    PurePosixPath(missing[1]).name.lower().startswith("python")
-                    or PureWindowsPath(missing[1]).name.lower().startswith("python")
-                )
-                or not missing_path.is_absolute()
-                or missing_path.name != "review_context.py"
-                or missing_path.exists()
-                or missing_path == Path(manifest["context_reader_path"])
-            ):
-                raise SystemExit(f"review-repair-dispatch-cause-unproven:{role}:{page}")
-            malformed = render_read_call(
-                _native_recipe_plan(manifest, plan_path),
-                role,
-                attempt["attempt"],
-                manifest["context_reader_python"],
-                page,
-                missing_path,
-                _include_workdir=manifest.get("schema_version") == 6
-                or manifest.get("context_reader_sha256") in LEGACY_WORKDIR_READER_SHA256S,
-            )
-            if call.get("name") != "exec" or call.get("input") not in {malformed, malformed + "\n"}:
-                raise SystemExit(f"review-repair-dispatch-cause-unproven:{role}:{page}")
-            failed = True
-            expected_command = json.loads(malformed.split("tools.exec_command(", 1)[1].split("); text", 1)[0])["cmd"]
-            expected_output = diagnostic
-            exit_code = 2
-        elif not canonical_call:
-            raise SystemExit(f"review-inspection-context-read-call-mismatch:{role}:{page}")
-        elif not canonical_output:
-            raise SystemExit(f"review-inspection-context-read-output-mismatch:{role}:{page}")
-        elif failed:
-            raise SystemExit(f"review-repair-dispatch-read-after-failure:{role}:{page}")
-        else:
-            successful += 1
-        expected_commands.append(expected_command)
-        expected_outputs.append(expected_output)
-        expected_exits.append(exit_code)
-    if incomplete_dispatch and (not successful or not failed):
-        raise SystemExit(f"review-repair-dispatch-cause-unproven:{role}")
-    commands = [
-        row["payload"]["item"]
-        for row in child_rows
-        if row.get("type") == "event_msg"
-        and isinstance(row.get("payload"), dict)
-        and row["payload"].get("type") == "item_completed"
-        and isinstance(row["payload"].get("item"), dict)
-        and row["payload"]["item"].get("type") == "CommandExecution"
-    ]
-    if commands:
-        if len(commands) != len(expected_commands):
-            raise SystemExit(f"review-inspection-context-command-mismatch:{role}")
-        for page, (command, expected_command, expected_output, exit_code) in enumerate(
-            zip(commands, expected_commands, expected_outputs, expected_exits), start=1
-        ):
-            if (
-                not isinstance(command.get("command"), list)
-                or expected_command not in command["command"]
-                or command.get("exit_code") != exit_code
-                or command.get("stdout") != (expected_output if exit_code == 0 else "")
-                or exit_code == 2
-                and command.get("stderr") != expected_output
-            ):
-                raise SystemExit(f"review-inspection-context-command-mismatch:{role}:{page}")
-    remaining = [
-        row
-        for row in child_rows
-        if not (row.get("type") == "response_item" and row.get("payload") in tool_rows)
-        and not (
-            row.get("type") == "event_msg"
-            and isinstance(row.get("payload"), dict)
-            and row["payload"].get("type") == "item_completed"
-            and row["payload"].get("item") in commands
-        )
-    ]
-    if _inspection_child_called_tool(remaining):
-        raise SystemExit(f"review-inspection-child-tool-use:{role}")
-
-
-def _joined_terminal_timestamp(parent_rows: list[dict[str, Any]], agent_path: str, message: str) -> datetime | None:
-    """Return the unique parent-visible final-answer join matching one child output."""
-    joined: list[datetime] = []
-    for row in parent_rows:
-        payload = row.get("payload")
-        if row.get("type") != "response_item" or not isinstance(payload, dict):
-            continue
-        if payload.get("type") != "agent_message" or payload.get("author") != agent_path:
-            continue
-        content = payload.get("content")
-        if not isinstance(content, list):
-            continue
-        texts = [item.get("text") for item in content if isinstance(item, dict) and item.get("type") == "input_text"]
-        if (
-            len(texts) == 1
-            and isinstance(texts[0], str)
-            and texts[0].startswith("Message Type: FINAL_ANSWER\n")
-            and texts[0].split("Payload:\n", 1)[-1].strip() == message
-        ):
-            try:
-                timestamp = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
-            except (KeyError, TypeError, ValueError, AttributeError):
-                return None
-            if timestamp.tzinfo is None:
-                return None
-            joined.append(timestamp)
-    return joined[0] if len(joined) == 1 else None
-
-
-def _joined_terminal_result(parent_rows: list[dict[str, Any]], agent_path: str, message: str) -> bool:
-    """Require one parent-visible child final message matching the bound output exactly."""
-    joined = 0
-    for row in parent_rows:
-        payload = row.get("payload")
-        if row.get("type") != "response_item" or not isinstance(payload, dict):
-            continue
-        if payload.get("type") != "agent_message" or payload.get("author") != agent_path:
-            continue
-        content = payload.get("content")
-        if not isinstance(content, list):
-            continue
-        texts = [item.get("text") for item in content if isinstance(item, dict) and item.get("type") == "input_text"]
-        if (
-            len(texts) == 1
-            and isinstance(texts[0], str)
-            and texts[0].startswith("Message Type: FINAL_ANSWER\n")
-            and texts[0].split("Payload:\n", 1)[-1].strip() == message
-        ):
-            joined += 1
-    return joined == 1
-
-
-def _parent_timestamp(row: dict[str, Any]) -> datetime:
-    """Read one timezone-aware parent event timestamp or reject its evidence."""
-    try:
-        value = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
-    except (KeyError, TypeError, ValueError, AttributeError) as error:
-        raise SystemExit("review-inspection-schedule-timestamp-invalid") from error
-    if value.tzinfo is None:
-        raise SystemExit("review-inspection-schedule-timestamp-invalid")
-    return value
-
-
-def _validate_native_schedule(
-    out_dir: Path,
-    manifest: dict[str, Any],
-    passes: list[dict[str, Any]],
-    parent_rows: list[dict[str, Any]],
-    frozen_contexts: dict[str, Path],
-    codex_home: Path,
-    parent_thread_id: str,
-    roles_dir: Path,
-) -> bool:
-    """Bind native dispatch order, original and correction allocations, refusals, and waits to parent evidence."""
-    plan_path = _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"])
-    ordered_roles = sorted(frozen_contexts, key=lambda role: (-len(frozen_contexts[role].read_bytes()), role))
-    role_attempts: dict[str, list[dict[str, Any]]] = {}
-    for item in passes:
-        role_attempts[item["role"]] = item["attempts"]
-
-    allocations: list[dict[str, Any]] = []
-    successful_call_ids: set[str] = set()
-    expected_task_names: dict[str, tuple[str, int]] = {}
-    for role in ordered_roles:
-        card = _load_role_card(roles_dir, role)
-        for attempt in role_attempts[role]:
-            number = attempt["attempt"]
-            call_id = attempt.get("spawn_call_id")
-            records = [
-                row
-                for row in parent_rows
-                if row.get("type") == "response_item"
-                and isinstance(row.get("payload"), dict)
-                and row["payload"].get("call_id") == call_id
-            ]
-            calls = [row for row in records if row["payload"].get("type") == "function_call"]
-            outputs = [row for row in records if row["payload"].get("type") == "function_call_output"]
-            if len(calls) != 1 or len(outputs) != 1 or calls[0]["payload"].get("name") != "spawn_agent":
-                raise SystemExit(f"review-inspection-launch-receipt-invalid:{role}:{number}")
-            try:
-                arguments = json.loads(calls[0]["payload"].get("arguments", ""))
-                receipt = json.loads(outputs[0]["payload"].get("output", ""))
-            except (TypeError, json.JSONDecodeError) as error:
-                raise SystemExit(f"review-inspection-launch-receipt-invalid:{role}:{number}") from error
-            expected = {
-                "task_name": f"review_{role.replace('-', '_')}_{attempt['context_sha256'][:12]}_a{number}",
-                "agent_type": "default",
-                "fork_turns": "none",
-                "model": card["model"],
-                "reasoning_effort": card["model_reasoning_effort"],
-                "message": _native_dispatch_message(manifest, plan_path, role, number),
-            }
-            recovered = next(item for item in passes if item["role"] == role)
-            if recovered.get("recovery") is not None and number == 2:
-                expected = _recovery_arguments(out_dir, manifest, recovered, parent_rows, codex_home)
-            elif recovered.get("recovery") == {"kind": "incomplete-dispatch"}:
-                expected["message"] = _original_dispatch_message(manifest, plan_path, role, attempt, parent_rows)
-            arguments_match = arguments == expected
-            if not arguments_match and _paged_native_manifest(manifest) and isinstance(arguments, dict):
-                # Opaque host transport preserves exact child delivery; audited page reads bind the source separately.
-                arguments_match = (
-                    set(arguments) == set(expected)
-                    and {key: value for key, value in arguments.items() if key != "message"}
-                    == {key: value for key, value in expected.items() if key != "message"}
-                    and _receipt_binds_child(
-                        parent_rows,
-                        codex_home,
-                        parent_thread_id,
-                        attempt,
-                        expected["message"],
-                        schema_version=6,
-                        model=card["model"],
-                        effort=card["model_reasoning_effort"],
-                    )
-                )
-            if not arguments_match or receipt != {"task_name": attempt["agent_path"]}:
-                raise SystemExit(f"review-inspection-launch-arguments-invalid:{role}:{number}")
-            launched_at = _parent_timestamp(calls[0])
-            received_at = _parent_timestamp(outputs[0])
-            if launched_at >= received_at:
-                raise SystemExit(f"review-inspection-launch-receipt-invalid:{role}:{number}")
-            child_rows = _read_jsonl(_find_rollout(codex_home, attempt["agent_thread_id"]))
-            terminals = [
-                event
-                for event in _event_payloads(child_rows, "task_complete")
-                if event.get("turn_id") == attempt.get("turn_id")
-            ]
-            if len(terminals) != 1:
-                raise SystemExit(f"review-inspection-attempt-timing-missing:{role}:{number}")
-            terminal = terminals[0]
-            terminal_start = terminal.get("started_at")
-            terminal_end = terminal.get("completed_at")
-            if (
-                isinstance(terminal_start, bool)
-                or isinstance(terminal_end, bool)
-                or not isinstance(terminal_start, int | float)
-                or not isinstance(terminal_end, int | float)
-                or not math.isfinite(terminal_start)
-                or not math.isfinite(terminal_end)
-                or terminal_start >= terminal_end
-            ):
-                raise SystemExit(f"review-inspection-attempt-timing-invalid:{role}:{number}")
-            terminal_at = datetime.fromtimestamp(terminal_end, timezone.utc)
-            if attempt.get("status") == "completed":
-                message = _resolve_path(out_dir, attempt["output_path"]).read_text(encoding="utf-8").strip()
-            else:
-                message = terminal.get("last_agent_message")
-            if not isinstance(message, str):
-                raise SystemExit(f"review-inspection-parent-join-missing:{role}")
-            joined_at = _joined_terminal_timestamp(parent_rows, attempt["agent_path"], message.strip())
-            # Integer host starts identify a whole-second bucket; precise child creation remains receipt-bound.
-            start_predates_launch = (
-                terminal_start + 1 <= launched_at.timestamp()
-                if type(terminal_start) is int
-                else terminal_start < launched_at.timestamp()
-            )
-            if start_predates_launch or joined_at is None or received_at > joined_at:
-                raise SystemExit(f"review-inspection-parent-join-missing:{role}")
-            successful_call_ids.add(call_id)
-            expected_task_names[expected["task_name"]] = (role, number)
-            allocations.append(
-                {
-                    "role": role,
-                    "attempt": number,
-                    "task_name": expected["task_name"],
-                    "start": launched_at,
-                    "launch_index": parent_rows.index(calls[0]),
-                    "end": max(terminal_at, joined_at),
-                }
-            )
-
-    for item in passes:
-        if item.get("recovery") is None:
-            continue
-        retained = [allocation for allocation in allocations if allocation["role"] == item["role"]]
-        if len(retained) != 2 or retained[1]["start"] <= retained[0]["end"]:
-            raise SystemExit(f"review-repair-before-original-join:{item['role']}")
-
-    first_launches: dict[str, tuple[datetime, int]] = {}
-    for allocation in allocations:
-        if allocation["attempt"] == 1:
-            role = allocation["role"]
-            first_launches[role] = (allocation["start"], allocation["launch_index"])
-    if set(first_launches) != set(ordered_roles):
-        raise SystemExit("review-inspection-context-role-set-mismatch")
-    if [role for role, _ in sorted(first_launches.items(), key=lambda pair: pair[1][1])] != ordered_roles:
-        raise SystemExit("review-inspection-dispatch-order-mismatch")
-
-    capacity_refusals: list[dict[str, Any]] = []
-    for row in parent_rows:
-        payload = row.get("payload")
-        if (
-            row.get("type") != "response_item"
-            or not isinstance(payload, dict)
-            or payload.get("type") != "function_call"
-            or payload.get("name") != "spawn_agent"
-            or payload.get("call_id") in successful_call_ids
-        ):
-            continue
-        try:
-            arguments = json.loads(payload.get("arguments", ""))
-        except (TypeError, json.JSONDecodeError):
-            continue
-        name = arguments.get("task_name") if isinstance(arguments, dict) else None
-        if name not in expected_task_names:
-            continue
-        call_id = payload.get("call_id")
-        matching = [
-            candidate
-            for candidate in parent_rows
-            if candidate.get("type") == "response_item"
-            and isinstance(candidate.get("payload"), dict)
-            and candidate["payload"].get("type") == "function_call_output"
-            and candidate["payload"].get("call_id") == call_id
-        ]
-        if (
-            len(matching) != 1
-            or matching[0]["payload"].get("output") != "collab spawn failed: agent thread limit reached"
-        ):
-            raise SystemExit(f"review-inspection-capacity-refusal-invalid:{expected_task_names[name][0]}")
-        role = expected_task_names[name][0]
-        card = _load_role_card(roles_dir, role)
-        expected_arguments = {
-            "task_name": name,
-            "agent_type": "default",
-            "fork_turns": "none",
-            "model": card["model"],
-            "reasoning_effort": card["model_reasoning_effort"],
-            "message": _native_dispatch_message(manifest, plan_path, role, expected_task_names[name][1]),
-        }
-        if arguments != expected_arguments:
-            raise SystemExit(f"review-inspection-capacity-refusal-invalid:{role}")
-        called_at = _parent_timestamp(row)
-        returned_at = _parent_timestamp(matching[0])
-        if called_at >= returned_at:
-            raise SystemExit(f"review-inspection-capacity-refusal-invalid:{role}")
-        for path in (codex_home / "sessions").rglob("*.jsonl"):
-            try:
-                with path.open(encoding="utf-8") as stream:
-                    session_row = json.loads(stream.readline())
-                session = session_row.get("payload", {})
-                spawn = session.get("source", {}).get("subagent", {}).get("thread_spawn", {})
-                session_path = session.get("agent_path") or spawn.get("agent_path", "")
-            except (OSError, AttributeError, TypeError, ValueError, json.JSONDecodeError):
-                continue
-            session_name = str(session_path).replace("\\", "/").rsplit("/", 1)[-1]
-            if spawn.get("parent_thread_id") != parent_thread_id or session_name != name:
-                continue
-            try:
-                created_at = datetime.fromisoformat(session["timestamp"].replace("Z", "+00:00"))
-            except (KeyError, TypeError, ValueError, AttributeError) as error:
-                raise SystemExit(f"review-inspection-capacity-refusal-invalid:{role}") from error
-            if created_at.tzinfo is None:
-                raise SystemExit(f"review-inspection-capacity-refusal-invalid:{role}")
-            if called_at <= created_at <= returned_at:
-                raise SystemExit(f"review-inspection-capacity-refusal-invalid:{role}")
-        active = sum(allocation["start"] <= called_at < allocation["end"] for allocation in allocations)
-        capacity_refusals.append(
-            {
-                "called_at": called_at,
-                "role": role,
-                "attempt": expected_task_names[name][1],
-                "active": active,
-                "returned_at": returned_at,
-                "call_index": parent_rows.index(row),
-                "output_index": parent_rows.index(matching[0]),
-                "task_name": name,
-            }
-        )
-
-    for refusal in capacity_refusals:
-        next_attempts = [
-            (later["call_index"], later["called_at"])
-            for later in capacity_refusals
-            if later["task_name"] == refusal["task_name"] and later["call_index"] > refusal["call_index"]
-        ]
-        next_attempts.extend(
-            (allocation["launch_index"], allocation["start"])
-            for allocation in allocations
-            if allocation["task_name"] == refusal["task_name"] and allocation["launch_index"] > refusal["call_index"]
-        )
-        if not next_attempts:
-            raise SystemExit(f"review-inspection-capacity-refusal-no-state-change:{refusal['role']}")
-        next_call_index, next_call_at = min(next_attempts, key=lambda item: item[0])
-        if next_call_index <= refusal["output_index"] or next_call_at <= refusal["returned_at"]:
-            raise SystemExit(f"review-inspection-capacity-refusal-no-state-change:{refusal['role']}")
-        if not any(
-            allocation["start"] <= refusal["called_at"] < allocation["end"]
-            and refusal["returned_at"] < allocation["end"] <= next_call_at
-            for allocation in allocations
-        ):
-            raise SystemExit(f"review-inspection-capacity-refusal-no-state-change:{refusal['role']}")
-
-    capacity_limited = False
-    for refusal in sorted(capacity_refusals, key=lambda entry: (entry["called_at"], entry["call_index"])):
-        refused_at = refusal["called_at"]
-        role = refusal["role"]
-        attempt_number = refusal["attempt"]
-        active = refusal["active"]
-        returned_at = refusal["returned_at"]
-        if active < 1 or active > 4:
-            raise SystemExit(f"review-inspection-capacity-refusal-invalid:{role}")
-        next_allocation = next(
-            item for item in allocations if item["role"] == role and item["attempt"] == attempt_number
-        )
-        position = ordered_roles.index(role)
-        if (
-            next_allocation["start"] <= returned_at
-            or not any(returned_at <= allocation["end"] <= next_allocation["start"] for allocation in allocations)
-            or (
-                attempt_number == 1
-                and (
-                    first_launches[role][0] <= refused_at
-                    or any(first_launches[previous][0] > refused_at for previous in ordered_roles[:position])
-                    or any(first_launches[later][0] <= refused_at for later in ordered_roles[position + 1 :])
-                )
-            )
-            or (
-                attempt_number > 1
-                and not any(
-                    allocation["role"] == role
-                    and allocation["attempt"] == attempt_number - 1
-                    and allocation["end"] <= refused_at
-                    for allocation in allocations
-                )
-            )
-        ):
-            raise SystemExit(f"review-inspection-capacity-refusal-invalid:{role}")
-        capacity_limited = capacity_limited or active < 4
-
-    wait_events: list[tuple[datetime, datetime, int]] = []
-    for row in parent_rows:
-        payload = row.get("payload")
-        if (
-            row.get("type") != "response_item"
-            or not isinstance(payload, dict)
-            or payload.get("type") != "function_call"
-            or payload.get("name") != "wait_agent"
-        ):
-            continue
-        matching = [
-            candidate
-            for candidate in parent_rows
-            if candidate.get("type") == "response_item"
-            and isinstance(candidate.get("payload"), dict)
-            and candidate["payload"].get("type") == "function_call_output"
-            and candidate["payload"].get("call_id") == payload.get("call_id")
-        ]
-        if len(matching) != 1 or "output" not in matching[0]["payload"]:
-            raise SystemExit("review-inspection-schedule-wait-invalid")
-        try:
-            wait_arguments = json.loads(payload.get("arguments", "{}"))
-        except (TypeError, json.JSONDecodeError) as error:
-            raise SystemExit("review-inspection-schedule-wait-invalid") from error
-        timeout = wait_arguments.get("timeout_ms") if isinstance(wait_arguments, dict) else None
-        if wait_arguments not in ({}, {"timeout_ms": timeout}) or (
-            "timeout_ms" in wait_arguments and (type(timeout) is not int or not 10000 <= timeout <= 3600000)
-        ):
-            raise SystemExit("review-inspection-schedule-wait-invalid")
-        started, returned = _parent_timestamp(row), _parent_timestamp(matching[0])
-        if started >= returned:
-            raise SystemExit("review-inspection-schedule-wait-invalid")
-        call_index = parent_rows.index(row)
-        wait_events.append((started, returned, call_index))
-        output_index = parent_rows.index(matching[0])
-        if any(call_index < allocation["launch_index"] < output_index for allocation in allocations):
-            raise SystemExit("review-inspection-schedule-wait-invalid")
-
-    first_roles = set(first_launches)
-    repaired_roles = {item["role"] for item in passes if item.get("recovery") is not None}
-    first_current_launch = min((allocation["launch_index"] for allocation in allocations), default=len(parent_rows))
-    for started, _returned, call_index in wait_events:
-        pending = any(
-            (allocation["attempt"] == 1 or allocation["role"] not in repaired_roles) and allocation["start"] > started
-            for allocation in allocations
-        ) or any(role not in first_roles or first_launches[role][0] > started for role in ordered_roles)
-        active = sum(allocation["start"] <= started < allocation["end"] for allocation in allocations)
-        refusals = [entry for entry in capacity_refusals if entry["called_at"] <= started]
-        observed_full_pool = max(refusals, key=lambda entry: entry["called_at"])["active"] if refusals else 4
-        # Earlier dependent-wave waits remain validated but are not this wave's refill opportunities.
-        if call_index >= first_current_launch and pending and active < observed_full_pool:
-            raise SystemExit("review-inspection-refill-opportunity-missed")
-        if any(started <= allocation["start"] < _returned for allocation in allocations):
-            raise SystemExit("review-inspection-schedule-wait-invalid")
-
-    # A fast child may finish before the next spawn. Functional parent work, rather than elapsed host time,
-    # distinguishes an interrupted free-capacity queue from consecutive generated launches.
-    first_index = min(index for _started, index in first_launches.values())
-    last_index = max(index for _started, index in first_launches.values())
-    launch_indices = {allocation["launch_index"] for allocation in allocations if allocation["attempt"] == 1}
-    refusal_indices = {entry["call_index"] for entry in capacity_refusals if entry["attempt"] == 1}
-    for index in range(first_index + 1, last_index):
-        row = parent_rows[index]
-        payload = row.get("payload")
-        if (
-            row.get("type") != "response_item"
-            or not isinstance(payload, dict)
-            or payload.get("type") not in {"function_call", "custom_tool_call"}
-            or index in launch_indices | refusal_indices
-        ):
-            continue
-        called_at = _parent_timestamp(row)
-        active = sum(allocation["start"] <= called_at < allocation["end"] for allocation in allocations)
-        refusals = [entry for entry in capacity_refusals if entry["call_index"] < index]
-        full_pool = max(refusals, key=lambda entry: entry["call_index"])["active"] if refusals else 4
-        if active < full_pool:
-            raise SystemExit("review-inspection-dispatch-interrupted")
-
-    events = sorted(
-        (event for item in allocations for event in ((item["start"], 1), (item["end"], -1))),
-        key=lambda event: (event[0], event[1]),
-    )
-    active = peak = 0
-    for _timestamp, change in events:
-        active += change
-        peak = max(peak, active)
-    if peak > 4:
-        raise SystemExit("review-inspection-active-capacity-exceeded")
-    return capacity_limited
-
-
-def _native_independent_wave(manifest: dict[str, Any], summary: dict[str, Any]) -> bool:
-    """Admit a current native launch queue after full runtime validation, independent of core-role policy flags."""
-    return (
-        manifest.get("schema_version") in {7, 8}
-        and manifest.get("manifest_kind") == "native-wave"
-        and manifest.get("dispatch_protocol") == "paged-context-v7"
-        and summary.get("actual_mode") == "independent-spawned"
-    )
-
-
-def _validate_instruction_bounded_review(
-    out_dir: Path,
-    manifest: dict[str, Any],
-    passes: list[dict[str, Any]],
-    codex_home: Path,
-    parent_thread_id: str,
-    roles_dir: Path,
-) -> dict[str, object]:
-    """Validate supplied-context inspection without claiming host-enforced isolation."""
-    if manifest.get("runtime_execution") is not None or manifest.get("app_server_execution") is not None:
-        raise SystemExit("review-inspection-runtime-evidence-forbidden")
-    _, frozen_contexts, independent_required, _ = _validate_inspection_plan(out_dir, manifest, parent_thread_id)
-    inspections = [item for item in passes if item.get("mode") == "inspection"]
-    if {item["role"] for item in inspections} != set(frozen_contexts):
-        raise SystemExit("review-inspection-context-role-set-mismatch")
-    if not inspections:
-        return {
-            "actual_mode": "serial-fallback",
-            "evidence_level": "instruction-bounded-review",
-            "write_parallel_eligible": False,
-            "independence_satisfied": False,
-            "independence_required": independent_required,
-            "observed_controls": {},
-        }
-
-    parent_rows = _read_jsonl(_find_rollout(codex_home, parent_thread_id))
-    capacity_limited = (
-        _validate_native_schedule(
-            out_dir,
-            manifest,
-            inspections,
-            parent_rows,
-            frozen_contexts,
-            codex_home,
-            parent_thread_id,
-            roles_dir,
-        )
-        if (
-            manifest.get("schema_version") in {7, 8}
-            and manifest.get("manifest_kind") == "native-wave"
-            and manifest.get("dispatch_protocol") == "paged-context-v7"
-        )
-        else False
-    )
-    controls: dict[str, dict[str, str]] = {}
-    intervals: list[tuple[int | float, int | float]] = []
-    selected_intervals: list[tuple[int | float, int | float]] = []
-    for item in inspections:
-        role = item["role"]
-        role_card_path = roles_dir / role / "ROLE.md"
-        role_card = role_card_path.read_bytes().decode("utf-8")
-        selected = item["selected_attempt"]
-        for attempt in item["attempts"]:
-            context_path = _resolve_path(out_dir, attempt["context_path"])
-            if context_path != frozen_contexts[role]:
-                raise SystemExit(f"review-inspection-attempt-context-mismatch:{role}")
-            context = context_path.read_bytes().decode("utf-8")
-            if any(pattern.search(context) for pattern in _SECRET_PATTERNS):
-                raise SystemExit(f"review-inspection-context-sensitive-material:{role}")
-            if not context.startswith(role_card):
-                raise SystemExit(f"review-inspection-role-card-context-missing:{role}")
-            child_rows = _read_jsonl(_find_rollout(codex_home, attempt["agent_thread_id"]))
-            if manifest.get("schema_version") in {7, 8}:
-                turn_id = attempt.get("turn_id")
-                terminals = [
-                    event for event in _event_payloads(child_rows, "task_complete") if event.get("turn_id") == turn_id
-                ]
-                if not isinstance(turn_id, str) or not turn_id or len(terminals) != 1:
-                    raise SystemExit(f"review-inspection-attempt-timing-missing:{role}:{attempt['attempt']}")
-                started_at, completed_at = terminals[0].get("started_at"), terminals[0].get("completed_at")
-                if (
-                    isinstance(started_at, bool)
-                    or isinstance(completed_at, bool)
-                    or not isinstance(started_at, int | float)
-                    or not isinstance(completed_at, int | float)
-                    or not math.isfinite(started_at)
-                    or not math.isfinite(completed_at)
-                    or started_at >= completed_at
-                ):
-                    raise SystemExit(f"review-inspection-attempt-timing-invalid:{role}:{attempt['attempt']}")
-                intervals.append((started_at, completed_at))
-            if _paged_native_manifest(manifest):
-                plan_path = _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"])
-                recovery = item.get("recovery")
-                if recovery is not None and (
-                    recovery["kind"] == "incomplete-dispatch"
-                    and attempt["attempt"] == 1
-                    or recovery["kind"] == "closure-evidence-shape"
-                    and attempt["attempt"] == 2
-                ):
-                    if recovery["kind"] == "closure-evidence-shape" and _inspection_child_called_tool(child_rows):
-                        raise SystemExit(f"review-repair-formatting-tool-use:{role}")
-                    _recovery_arguments(out_dir, manifest, item, parent_rows, codex_home)
-                else:
-                    _validate_context_read(child_rows, plan_path, role, attempt, manifest, context)
-            elif _inspection_child_called_tool(child_rows):
-                raise SystemExit(f"review-inspection-child-tool-use:{role}")
-        attempt = item["attempts"][selected - 1]
-        context = _resolve_path(out_dir, attempt["context_path"]).read_bytes().decode("utf-8")
-        spawn_calls = [
-            row["payload"]
-            for row in parent_rows
-            if row.get("type") == "response_item"
-            and isinstance(row.get("payload"), dict)
-            and row["payload"].get("type") == "function_call"
-            and row["payload"].get("name") == "spawn_agent"
-        ]
-        matching_calls = []
-        for call in spawn_calls:
-            try:
-                arguments = json.loads(call.get("arguments", ""))
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if (
-                isinstance(arguments, dict)
-                and call.get("call_id") == attempt.get("spawn_call_id")
-                and (_paged_native_manifest(manifest) or arguments.get("message") == context)
-                and arguments.get("task_name") == Path(attempt["agent_path"]).name
-                and arguments.get("fork_turns") == "none"
-                and (
-                    not _paged_native_manifest(manifest)
-                    or (
-                        arguments.get("agent_type") == "default"
-                        and arguments.get("model") == attempt["model"]
-                        and arguments.get("reasoning_effort") == attempt["effort"]
-                    )
-                )
-            ):
-                matching_calls.append(call)
-        if len(matching_calls) != 1:
-            raise SystemExit(f"review-inspection-context-not-sent:{role}")
-        child_rows = _read_jsonl(_find_rollout(codex_home, attempt["agent_thread_id"]))
-        controls[role] = _child_controls(child_rows, attempt["turn_id"])
-        completions = [
-            event
-            for event in _event_payloads(child_rows, "task_complete")
-            if event.get("turn_id") == attempt["turn_id"]
-        ]
-        if len(completions) != 1:
-            raise SystemExit(f"review-inspection-child-terminal-missing:{role}")
-        started_at, completed_at = completions[0].get("started_at"), completions[0].get("completed_at")
-        if (
-            isinstance(started_at, bool)
-            or isinstance(completed_at, bool)
-            or not isinstance(started_at, int | float)
-            or not isinstance(completed_at, int | float)
-            or not math.isfinite(started_at)
-            or not math.isfinite(completed_at)
-            or started_at >= completed_at
-        ):
-            raise SystemExit(f"review-inspection-child-timing-invalid:{role}")
-        message = _resolve_path(out_dir, attempt["output_path"]).read_text(encoding="utf-8").strip()
-        if any(pattern.search(message) for pattern in _SECRET_PATTERNS):
-            raise SystemExit(f"review-inspection-output-sensitive-material:{role}")
-        if manifest.get("schema_version") in {7, 8}:
-            joined = _joined_terminal_timestamp(parent_rows, attempt["agent_path"], message) is not None
-        else:
-            joined = _joined_terminal_result(parent_rows, attempt["agent_path"], message)
-        if not joined:
-            raise SystemExit(f"review-inspection-parent-join-missing:{role}")
-        if manifest.get("schema_version") not in {7, 8}:
-            intervals.append((started_at, completed_at))
-        if item.get("recovery") is not None:
-            original = item["attempts"][0]
-            original_rows = _read_jsonl(_find_rollout(codex_home, original["agent_thread_id"]))
-            inspected_source = item["recovery"] == {"kind": "closure-evidence-shape"} or any(
-                "codex-review-provenance" in json.dumps(row.get("payload", {}).get("output"))
-                for row in original_rows
-                if row.get("type") == "response_item"
-            )
-            if inspected_source:
-                # Already validated original reads prove actual source concurrency; only a2 supplies accepted coverage.
-                original_terminal = next(
-                    event
-                    for event in _event_payloads(original_rows, "task_complete")
-                    if event.get("turn_id") == original["turn_id"]
-                )
-                selected_intervals.append((original_terminal["started_at"], original_terminal["completed_at"]))
-            else:
-                selected_intervals.append((started_at, completed_at))
-        else:
-            selected_intervals.append((started_at, completed_at))
-
-    overlaps = any(
-        max(first[0], second[0]) < min(first[1], second[1])
-        for index, first in enumerate(selected_intervals)
-        for second in selected_intervals[index + 1 :]
-    )
-    if manifest.get("schema_version") in {7, 8}:
-        active = peak_active = 0
-        events = sorted(
-            (event for start, end in intervals for event in ((start, 1), (end, -1))),
-            key=lambda event: (event[0], event[1]),
-        )
-        for _timestamp, change in events:
-            active += change
-            peak_active = max(peak_active, active)
-        if peak_active > 4:
-            raise SystemExit("review-inspection-active-capacity-exceeded")
-    actual_mode = "parallel" if overlaps else "independent-spawned" if len(inspections) > 1 else "serial"
-    required_roles = REQUIRED_ROLES & {item["role"] for item in passes}
-    independence_satisfied = bool(required_roles) and required_roles <= {item["role"] for item in inspections}
-    return {
-        "actual_mode": actual_mode,
-        "evidence_level": "instruction-bounded-review",
-        "write_parallel_eligible": False,
-        "capacity_limited": capacity_limited,
-        "independence_satisfied": independence_satisfied,
-        "independence_required": independent_required,
-        "observed_controls": controls,
-    }
-
-
-def _validate_local_reviewer_wave(
-    out_dir: Path,
-    manifest: dict[str, Any],
-    passes: list[dict[str, Any]],
-    *,
-    require_assessment: bool = True,
-    roles_dir: Path = PLUGIN_ROOT / "roles",
-) -> dict[str, object]:
-    """Bind an isolated review wave without manufacturing native child lineage."""
-    execution = manifest.get("app_server_execution")
-    if not isinstance(execution, dict) or set(execution) != {"plan_path", "evidence_path", "evidence_sha256"}:
-        raise SystemExit("review-app-server-execution-missing")
-    if manifest.get("runtime_execution") is not None or any(item.get("mode") == "spawned" for item in passes):
-        raise SystemExit("review-app-server-native-evidence-forbidden")
-    plan_path = _resolve_path(out_dir, execution["plan_path"])
-    evidence_path = _resolve_path(out_dir, execution["evidence_path"])
-    if not evidence_path.is_file() or _sha256(evidence_path) != execution["evidence_sha256"]:
-        raise SystemExit("review-app-server-evidence-hash-mismatch")
-    try:
-        summary = validate_local_reviewer_evidence(
-            plan_path,
-            evidence_path,
-            roles_dir,
-            require_dispatch=True,
-            require_assessment=require_assessment,
-        )
-    except (ReviewRouteError, ValueError, OSError) as error:
-        raise SystemExit(f"review-app-server-evidence-invalid:{error}") from error
-    evidence = _load_json(evidence_path)
-    for key in ("review_run_id", "parent_thread_id", "review_input_sha256"):
-        if evidence.get(key) != manifest.get(key):
-            raise SystemExit(f"review-app-server-identity-mismatch:{key}")
-    isolated = [item for item in passes if item.get("mode") == "app-server"]
-    nodes = {node["role_id"]: node for node in evidence["nodes"]}
-    if not isolated or len(isolated) != len(nodes) or {item.get("role") for item in isolated} != set(nodes):
-        raise SystemExit("review-app-server-role-set-mismatch")
-    for item in isolated:
-        node = nodes[item["role"]]
-        if (
-            item.get("role_card_sha256") != node["role_card_sha256"]
-            or _resolve_path(out_dir, item.get("output_path")) != (evidence_path.parent / node["output_path"]).resolve()
-            or item.get("attempts") not in (None, [])
-            or item.get("selected_attempt") is not None
-        ):
-            raise SystemExit(f"review-app-server-pass-mismatch:{item['role']}")
-    if (
-        summary.get("evidence_level") != "app-server-parent-observed"
-        or summary.get("actual_mode") not in {"parallel", "independent-spawned"}
-        or summary.get("approval_policy") != "never"
-        or summary.get("filesystem_credential_isolation") != "unverified"
-        or summary.get("write_parallel_eligible") is not False
-        or summary.get("consumer_id") != "code-review"
-    ):
-        raise SystemExit("review-app-server-summary-invalid")
-    return summary
-
-
-def _receipt_binds_child(
-    parent_rows: list[dict[str, Any]],
-    codex_home: Path,
-    parent_thread_id: str,
-    attempt: dict[str, Any],
-    context: str,
-    *,
-    schema_version: int = 5,
-    model: str | None = None,
-    effort: str | None = None,
-) -> bool:
-    """Bind a path-only native spawn receipt to one newly created runtime child session.
-
-    This inspection-only route requires call, receipt, and child creation timestamps to prevent a retained older same-
-    path child from substituting for a missing new log. Unknown receipt formats, missing timestamps, and ambiguous
-    sessions fail closed.
-    """
-    call_id = attempt.get("spawn_call_id")
-    if not isinstance(call_id, str) or not call_id:
-        return False
-    records = [
-        row
-        for row in parent_rows
-        if row.get("type") == "response_item"
-        and isinstance(row.get("payload"), dict)
-        and row["payload"].get("call_id") == call_id
-    ]
-    calls = [row for row in records if row["payload"].get("type") == "function_call"]
-    receipts = [row for row in records if row["payload"].get("type") == "function_call_output"]
-    if len(calls) != 1 or len(receipts) != 1 or calls[0]["payload"].get("name") != "spawn_agent":
-        return False
-    try:
-        arguments = json.loads(calls[0]["payload"].get("arguments", ""))
-        receipt = json.loads(receipts[0]["payload"].get("output", ""))
-        called_at = datetime.fromisoformat(calls[0]["timestamp"].replace("Z", "+00:00"))
-        received_at = datetime.fromisoformat(receipts[0]["timestamp"].replace("Z", "+00:00"))
-    except (KeyError, TypeError, ValueError, AttributeError):
-        return False
-    agent_path = attempt["agent_path"]
-    if (
-        receipt != {"task_name": agent_path}
-        or not isinstance(arguments, dict)
-        or (schema_version != 6 and arguments.get("message") != context)
-        or arguments.get("task_name") != agent_path.rsplit("/", 1)[-1]
-        or arguments.get("fork_turns") != "none"
-        or (
-            schema_version == 6
-            and (
-                arguments.get("agent_type") != "default"
-                or arguments.get("model") != model
-                or arguments.get("reasoning_effort") != effort
-            )
-        )
-        or called_at.tzinfo is None
-        or received_at.tzinfo is None
-        or called_at >= received_at
-    ):
-        return False
-
-    # The host receipt contains no UUID. Require unique parent/path metadata as well
-    # as creation inside this call's interval, never a guessed or synthesized event.
-    matches: list[str] = []
-    for path in (codex_home / "sessions").rglob("*.jsonl"):
-        try:
-            with path.open(encoding="utf-8") as stream:
-                row = json.loads(stream.readline())
-            if not isinstance(row, dict) or row.get("type") != "session_meta":
-                return False
-            session = row["payload"]
-            source = session.get("source")
-            if not isinstance(source, dict):
-                continue
-            subagent = source.get("subagent")
-            if not isinstance(subagent, dict):
-                continue
-            spawn = subagent.get("thread_spawn", {})
-            if spawn.get("parent_thread_id") != parent_thread_id or spawn.get("agent_path") != agent_path:
-                continue
-            if session.get("parent_thread_id") != parent_thread_id or session.get("agent_path") != agent_path:
-                return False
-            created_at = datetime.fromisoformat(session["timestamp"].replace("Z", "+00:00"))
-            if created_at.tzinfo is None or not called_at <= created_at <= received_at:
-                return False
-            matches.append(session["id"])
-        except (OSError, KeyError, TypeError, ValueError, AttributeError):
-            return False
-    if matches != [attempt["agent_thread_id"]]:
-        return False
-    if schema_version != 6:
-        return True
-    child_rows = _read_jsonl(_find_rollout(codex_home, attempt["agent_thread_id"]))
-    delivered = [
-        item["encrypted_content"]
-        for row in child_rows
-        if row.get("type") == "response_item"
-        and isinstance(row.get("payload"), dict)
-        and row["payload"].get("type") == "agent_message"
-        for item in row["payload"].get("content", [])
-        if isinstance(item, dict) and isinstance(item.get("encrypted_content"), str)
-    ]
-    return len(delivered) == 1 and delivered[0] == arguments.get("message")
-
-
-def _closure_shape_repair(content: str, snapshot: dict[str, Any], role: str) -> str:
-    """Repair only list-valued closure evidence while retaining every other response byte and finding value."""
-    match = re.search(r"\A\s*## Reviewer Findings\s*\n```json\n(.*?)\n```", content, re.DOTALL)
-    if match is None:
-        raise SystemExit(f"review-repair-ineligible-format:{role}")
-
-    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        """Reject duplicate keys rather than changing which claim survives."""
-        result: dict[str, Any] = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError("duplicate key")
-            result[key] = value
-        return result
-
-    try:
-        records = json.loads(match[1], object_pairs_hook=unique)
-    except (ValueError, RecursionError) as error:
-        raise SystemExit(f"review-repair-ineligible-json:{role}") from error
-    changed = False
-    if not isinstance(records, list):
-        raise SystemExit(f"review-repair-ineligible-records:{role}")
-    for record in records:
-        if not isinstance(record, dict):
-            raise SystemExit(f"review-repair-ineligible-records:{role}")
-        closure = record.get("closure_evidence")
-        if isinstance(closure, list):
-            if not closure or any(not isinstance(value, str) or not value.strip() for value in closure):
-                raise SystemExit(f"review-repair-ineligible-closure:{role}")
-            record["closure_evidence"] = "\n".join(closure)
-            changed = True
-    if not changed:
-        raise SystemExit(f"review-repair-no-shape-error:{role}")
-    expected = content[: match.start(1)] + json.dumps(records, ensure_ascii=False) + content[match.end(1) :]
-    _batch_reviewer_findings(Path("unused"), snapshot, role, content_override=expected)
-    return expected
-
-
-def _original_dispatch_message(
-    manifest: dict[str, Any],
-    plan_path: Path,
-    role: str,
-    attempt: dict[str, Any],
-    parent_rows: list[dict[str, Any]],
-) -> str:
-    """Preserve exact dispatch instructions while retaining separately audited malformed page blocks."""
-    canonical = _native_dispatch_message(manifest, plan_path, role, 1)
-    calls = [
-        row["payload"]
-        for row in parent_rows
-        if row.get("type") == "response_item"
-        and row.get("payload", {}).get("type") == "function_call"
-        and row["payload"].get("call_id") == attempt.get("spawn_call_id")
-    ]
-    if len(calls) != 1:
-        raise SystemExit(f"review-repair-original-dispatch-missing:{role}")
-    try:
-        actual = json.loads(calls[0]["arguments"])["message"]
-    except (KeyError, TypeError, ValueError) as error:
-        raise SystemExit(f"review-repair-original-dispatch-invalid:{role}") from error
-    if actual == canonical:
-        return canonical
-    expected_blocks = list(re.finditer(r"```javascript\n(.*?)\n```", canonical, re.DOTALL))
-    actual_blocks = (
-        list(re.finditer(r"```javascript\n(.*?)\n```", actual, re.DOTALL)) if isinstance(actual, str) else []
-    )
-    normalized = actual
-    for expected, observed in reversed(list(zip(expected_blocks, actual_blocks))):
-        normalized = normalized[: observed.start(1)] + expected[1] + normalized[observed.end(1) :]
-    if not expected_blocks or len(actual_blocks) != len(expected_blocks) or normalized != canonical:
-        raise SystemExit(f"review-repair-original-dispatch-invalid:{role}")
-    return actual
-
-
-def _recovery_arguments(
-    out_dir: Path,
-    manifest: dict[str, Any],
-    item: dict[str, Any],
-    parent_rows: list[dict[str, Any]],
-    codex_home: Path,
-) -> dict[str, str]:
-    """Derive one correction from observed original provenance, never a parent-authored replacement finding."""
-    role = item["role"]
-    kind = item["recovery"]["kind"]
-    if kind not in {"closure-evidence-shape", "incomplete-dispatch"}:
-        raise SystemExit(f"review-repair-kind-invalid:{role}")
-    original = item["attempts"][0]
-    card = _load_role_card(PLUGIN_ROOT / "roles", role)
-    # The original response must independently bind to its real child, parent and exact output bytes.
-    initial = {**item, "attempts": [original], "selected_attempt": 1, "output_path": original["output_path"]}
-    initial.pop("recovery", None)
-    _validate_spawn_attempts(
-        out_dir,
-        initial,
-        manifest,
-        codex_home,
-        parent_rows,
-        set(),
-        card,
-        set(),
-        set(),
-        original_dispatch_failure=kind == "incomplete-dispatch",
-    )
-    rows = _read_jsonl(_find_rollout(codex_home, original["agent_thread_id"]))
-    raw = _resolve_path(out_dir, original["raw_output_path"]).read_text(encoding="utf-8")
-    if _joined_terminal_timestamp(parent_rows, original["agent_path"], raw.strip()) is None:
-        raise SystemExit(f"review-repair-original-not-joined:{role}")
-    context = _resolve_path(out_dir, original["context_path"]).read_text(encoding="utf-8")
-    plan_path = _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"])
-    if kind == "closure-evidence-shape":
-        _validate_context_read(rows, plan_path, role, original, manifest, context)
-        snapshot = _load_json(out_dir.parent.parent / "batch-inventory.json")["source_snapshot"]
-        expected = _closure_shape_repair(raw, snapshot, role)
-        message = (
-            "Correct only closure_evidence arrays in the following retained response. Join their strings with a newline "
-            "in original order. Preserve every other finding field, claim, severity, evidence, confidence and assessment "
-            "exactly. Use no tools and perform no source reassessment. Return exactly this validated correction:\n"
-            + expected
-        )
-    elif any(
-        "codex-review-provenance" in json.dumps(row.get("payload", {}).get("output"))
-        for row in rows
-        if row.get("type") == "response_item"
-    ):
-        _validate_context_read(rows, plan_path, role, original, manifest, context, incomplete_dispatch=True)
-        calls = [
-            row["payload"]
-            for row in rows
-            if row.get("type") == "response_item"
-            and row.get("payload", {}).get("type") in {"custom_tool_call", "function_call"}
-        ]
-        canonical = _native_dispatch_message(manifest, plan_path, role, 1)
-        actual = _original_dispatch_message(manifest, plan_path, role, original, parent_rows)
-        expected_blocks = re.findall(r"```javascript\n(.*?)\n```", canonical, re.DOTALL)
-        actual_blocks = re.findall(r"```javascript\n(.*?)\n```", actual, re.DOTALL)
-        if any(
-            observed != expected
-            and (
-                page >= len(calls)
-                or observed not in {calls[page].get("input"), calls[page].get("input", "").rstrip("\n")}
-            )
-            for page, (expected, observed) in enumerate(zip(expected_blocks, actual_blocks))
-        ):
-            raise SystemExit(f"review-repair-original-dispatch-invalid:{role}")
-        if _retained_reviewer_rating(
-            _resolve_path(out_dir, original["output_path"]),
-            local_reviewer_wave=False,
-            main=False,
-            role=role,
-            structured_native=_load_json(plan_path)["consumer_policy"]["consumer_id"] == "challenge-resolve",
-        ) not in {4, 5}:
-            raise SystemExit(f"review-repair-incomplete-assessment-missing:{role}")
-        message = _native_dispatch_message(manifest, plan_path, role, 2)
-    else:
-        calls = [
-            row["payload"]
-            for row in rows
-            if row.get("type") == "response_item"
-            and row.get("payload", {}).get("type") in {"custom_tool_call", "function_call"}
-        ]
-        canonical = _native_dispatch_message(manifest, plan_path, role, 1)
-        actual = _original_dispatch_message(manifest, plan_path, role, original, parent_rows)
-        expected_blocks = re.findall(r"```javascript\n(.*?)\n```", canonical, re.DOTALL)
-        actual_blocks = re.findall(r"```javascript\n(.*?)\n```", actual, re.DOTALL)
-        if actual_blocks[1:] != expected_blocks[1:] or (
-            actual_blocks[0] != expected_blocks[0]
-            and not any(actual_blocks[0] == call.get("input", "").rstrip("\n") for call in calls)
-        ):
-            raise SystemExit(f"review-repair-original-dispatch-invalid:{role}")
-        expected_call = render_read_call(
-            plan_path,
-            role,
-            1,
-            manifest["context_reader_python"],
-            reader_path=Path(manifest["context_reader_path"]),
-            _include_workdir=manifest.get("schema_version") == 6
-            or manifest.get("context_reader_sha256") in LEGACY_WORKDIR_READER_SHA256S,
-        )
-        if not calls or any(
-            call.get("name") != "exec" or call.get("input") in {expected_call, expected_call + "\n"} for call in calls
-        ):
-            raise SystemExit(f"review-repair-dispatch-cause-unproven:{role}")
-        if (
-            _retained_reviewer_rating(
-                _resolve_path(out_dir, original["output_path"]),
-                local_reviewer_wave=False,
-                main=False,
-                role=role,
-                structured_native=_load_json(plan_path)["consumer_policy"]["consumer_id"] == "challenge-resolve",
-                preassessment_blocker=True,
-            )
-            != 5
-        ):
-            raise SystemExit(f"review-repair-preassessment-blocker-missing:{role}")
-        tool_rows = [
-            row["payload"]
-            for row in rows
-            if row.get("type") == "response_item"
-            and row.get("payload", {}).get("type")
-            in {"custom_tool_call", "function_call", "custom_tool_call_output", "function_call_output"}
-        ]
-        if len(tool_rows) != 2 * len(calls):
-            raise SystemExit(f"review-repair-dispatch-results-missing:{role}")
-        for index, call in enumerate(calls):
-            output = tool_rows[2 * index + 1]
-            diagnostic = json.dumps(output.get("output"))
-            if (
-                tool_rows[2 * index] != call
-                or output.get("call_id") != call.get("call_id")
-                or ("usage:" not in diagnostic or "error:" not in diagnostic)
-            ):
-                raise SystemExit(f"review-repair-dispatch-failure-unproven:{role}")
-            try:
-                input_args = json.loads(call["input"].split("tools.exec_command(", 1)[1].split("); text", 1)[0])
-                expected_args = json.loads(expected_call.split("tools.exec_command(", 1)[1].split("); text", 1)[0])
-            except (ValueError, IndexError, KeyError, TypeError) as error:
-                raise SystemExit(f"review-repair-dispatch-cause-unproven:{role}") from error
-            if (
-                set(input_args) != set(expected_args)
-                or any(input_args[key] != expected_args[key] for key in expected_args if key != "cmd")
-                or not isinstance(input_args["cmd"], str)
-            ):
-                raise SystemExit(f"review-repair-dispatch-cause-unproven:{role}")
-            rendered = expected_call.replace(
-                json.dumps(expected_args, ensure_ascii=False), json.dumps(input_args, ensure_ascii=False)
-            )
-            reader_prefix = expected_args["cmd"].split(" --plan", 1)[0]
-            producer_prefix = reader_prefix.replace("review_context.py", "review_prepare.py")
-            if call["input"] not in {rendered, rendered + "\n"} or (
-                not any(input_args["cmd"].startswith(prefix + " ") for prefix in (reader_prefix, producer_prefix))
-                or any(character in input_args["cmd"] for character in (";", "|", "&", "`", "$", "<", ">", "\n", "\r"))
-            ):
-                raise SystemExit(f"review-repair-dispatch-cause-unproven:{role}")
-        commands = [
-            row["payload"]["item"]
-            for row in rows
-            if row.get("type") == "event_msg"
-            and row.get("payload", {}).get("type") == "item_completed"
-            and row.get("payload", {}).get("item", {}).get("type") == "CommandExecution"
-        ]
-        if any(command.get("exit_code") != 2 for command in commands):
-            raise SystemExit(f"review-repair-dispatch-failure-unproven:{role}")
-        message = _native_dispatch_message(manifest, plan_path, role, 2)
-    return {
-        "task_name": f"review_{role.replace('-', '_')}_{original['context_sha256'][:12]}_a2",
-        "agent_type": "default",
-        "fork_turns": "none",
-        "model": card["model"],
-        "reasoning_effort": card["model_reasoning_effort"],
-        "message": message,
-    }
-
-
-def _validate_spawn_attempts(
-    out_dir: Path,
-    item: dict[str, Any],
-    manifest: dict[str, Any],
-    codex_home: Path,
-    parent_rows: list[dict[str, Any]],
-    used_threads: set[str],
-    role_card: dict[str, str],
-    used_context_paths: set[Path],
-    used_output_paths: set[Path],
-    *,
-    original_dispatch_failure: bool = False,
-) -> None:
-    """Bind a spawned specialist output to parent and child rollout evidence."""
-    role = str(item["role"])
-    attempts = item.get("attempts")
-    if not isinstance(attempts, list) or not 1 <= len(attempts) <= 2:
-        raise SystemExit(f"manifest-invalid-attempt-count:{role}")
-    if not all(isinstance(attempt, dict) for attempt in attempts):
-        raise SystemExit(f"manifest-attempt-not-object:{role}")
-    if [attempt.get("attempt") for attempt in attempts] != list(range(1, len(attempts) + 1)):
-        raise SystemExit(f"manifest-attempt-sequence:{role}")
-    recovery = item.get("recovery")
-    if recovery is not None and (
-        manifest.get("schema_version") != 8
-        or len(attempts) != 2
-        or recovery not in ({"kind": "closure-evidence-shape"}, {"kind": "incomplete-dispatch"})
-        or item.get("selected_attempt") != 2
-        or any(attempt.get("status") != "completed" for attempt in attempts)
-    ):
-        raise SystemExit(f"manifest-invalid-internal-recovery:{role}")
-    if (
-        recovery is None
-        and len(attempts) == 2
-        and (attempts[0].get("status") == "completed" or attempts[0].get("error_type") not in TRANSIENT_RETRY_ERRORS)
-    ):
-        raise SystemExit(f"manifest-invalid-retry:{role}")
-    selected = item.get("selected_attempt")
-    if not isinstance(selected, int) or selected < 1 or selected > len(attempts):
-        raise SystemExit(f"manifest-invalid-selected-attempt:{role}")
-
-    parent_events = _event_payloads(parent_rows, "sub_agent_activity")
-    role_context_paths: set[Path] = set()
-    for attempt in attempts:
-        thread_id = attempt.get("agent_thread_id")
-        event_id = attempt.get("event_id")
-        agent_path = attempt.get("agent_path")
-        receipt_route = (
-            manifest.get("schema_version") in {5, 6, 7, 8} or _paged_native_manifest(manifest)
-        ) and "event_id" not in attempt
-        identities = (thread_id, agent_path) if receipt_route else (thread_id, event_id, agent_path)
-        if not all(isinstance(value, str) and value for value in identities):
-            raise SystemExit(f"manifest-attempt-identity-missing:{role}")
-        context_path = _resolve_path(out_dir, attempt.get("context_path"))
-        if context_path in used_context_paths and not (
-            (manifest.get("schema_version") in {5, 6, 7, 8} or _paged_native_manifest(manifest))
-            and context_path in role_context_paths
-        ):
-            raise SystemExit("manifest-reused-context-path")
-        used_context_paths.add(context_path)
-        role_context_paths.add(context_path)
-        context_sha256 = attempt.get("context_sha256")
-        if not context_path.exists() or _sha256(context_path) != context_sha256:
-            raise SystemExit(f"provenance-context-hash-mismatch:{role}")
-        expected_agent_name = f"review_{role.replace('-', '_')}_{context_sha256[:12]}_a{attempt['attempt']}"
-        if Path(agent_path).name != expected_agent_name:
-            raise SystemExit(f"provenance-agent-path-context-mismatch:{role}:{agent_path}")
-        if thread_id in used_threads:
-            raise SystemExit(f"manifest-reused-agent-thread:{thread_id}")
-        used_threads.add(thread_id)
-        matches = [
-            event
-            for event in parent_events
-            if event.get("event_id") == event_id
-            and event.get("agent_thread_id") == thread_id
-            and event.get("agent_path") == agent_path
-            and event.get("kind") == "started"
-        ]
-        if receipt_route:
-            sent_context = (
-                _native_dispatch_message(
-                    manifest,
-                    _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"]),
-                    role,
-                    attempt["attempt"],
-                )
-                if _paged_native_manifest(manifest)
-                else context_path.read_bytes().decode("utf-8")
-            )
-            if recovery is not None and attempt["attempt"] == 2:
-                sent_context = _recovery_arguments(out_dir, manifest, item, parent_rows, codex_home)["message"]
-            elif original_dispatch_failure or recovery == {"kind": "incomplete-dispatch"} and attempt["attempt"] == 1:
-                sent_context = _original_dispatch_message(
-                    manifest,
-                    _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"]),
-                    role,
-                    attempt,
-                    parent_rows,
-                )
-            bound = _receipt_binds_child(
-                parent_rows,
-                codex_home,
-                manifest["parent_thread_id"],
-                attempt,
-                sent_context,
-                schema_version=6 if _paged_native_manifest(manifest) else manifest["schema_version"],
-                model=role_card["model"],
-                effort=role_card["model_reasoning_effort"],
-            )
-            if manifest.get("schema_version") in {7, 8} and not _paged_native_manifest(manifest):
-                sent_calls = [
-                    row["payload"]
-                    for row in parent_rows
-                    if row.get("type") == "response_item"
-                    and isinstance(row.get("payload"), dict)
-                    and row["payload"].get("type") == "function_call"
-                    and row["payload"].get("call_id") == attempt.get("spawn_call_id")
-                ]
-                bound = (
-                    bound
-                    and len(sent_calls) == 1
-                    and json.loads(sent_calls[0]["arguments"]).get("message") == sent_context
-                )
-        else:
-            bound = len(matches) == 1
-        if not bound:
-            raise SystemExit(f"provenance-parent-spawn-mismatch:{role}:{attempt['attempt']}")
-
-        child_rows = _read_jsonl(_find_rollout(codex_home, thread_id))
-        session_rows = [
-            row["payload"]
-            for row in child_rows
-            if row.get("type") == "session_meta"
-            and isinstance(row.get("payload"), dict)
-            and row["payload"].get("id") == thread_id
-        ]
-        if len(session_rows) != 1:
-            raise SystemExit(f"provenance-child-session-count:{thread_id}")
-        session = session_rows[0]
-        spawn = session.get("source", {}).get("subagent", {}).get("thread_spawn", {})
-        if session.get("id") != thread_id or spawn.get("parent_thread_id") != manifest["parent_thread_id"]:
-            raise SystemExit(f"provenance-child-parent-mismatch:{thread_id}")
-        session_path = session.get("agent_path") or spawn.get("agent_path")
-        if session_path != agent_path:
-            raise SystemExit(f"provenance-child-path-mismatch:{role}:{session_path}")
-        session_role = session.get("agent_role") or spawn.get("agent_role")
-        if session_role is not None and session_role != ("default" if _paged_native_manifest(manifest) else role):
-            raise SystemExit(f"provenance-child-role-mismatch:{role}:{session_role}")
-
-        if attempt.get("status") != "completed":
-            if attempt.get("error_type") not in TRANSIENT_RETRY_ERRORS or attempt["attempt"] == selected:
-                raise SystemExit(f"manifest-invalid-failed-attempt:{role}:{attempt['attempt']}")
-            continue
-
-        turn_id = attempt.get("turn_id")
-        contexts = [
-            row["payload"]
-            for row in child_rows
-            if row.get("type") == "turn_context"
-            and isinstance(row.get("payload"), dict)
-            and row["payload"].get("turn_id") == turn_id
-        ]
-        if len(contexts) != 1:
-            raise SystemExit(f"provenance-turn-context-mismatch:{thread_id}")
-        context = contexts[0]
-        if context.get("model") != attempt.get("model") or context.get("effort") != attempt.get("effort"):
-            raise SystemExit(f"provenance-model-effort-mismatch:{thread_id}")
-        if context.get("model") != role_card["model"]:
-            raise SystemExit(f"provenance-role-model-policy-mismatch:{role}:{thread_id}")
-        if context.get("effort") != role_card["model_reasoning_effort"]:
-            raise SystemExit(f"provenance-role-effort-policy-mismatch:{role}:{thread_id}")
-        completions = [
-            event for event in _event_payloads(child_rows, "task_complete") if event.get("turn_id") == turn_id
-        ]
-        if len(completions) != 1 or not isinstance(completions[0].get("last_agent_message"), str):
-            raise SystemExit(f"provenance-task-complete-mismatch:{thread_id}")
-
-        output_path = _resolve_path(out_dir, attempt.get("output_path"))
-        if output_path in used_output_paths:
-            raise SystemExit("manifest-reused-output-path")
-        used_output_paths.add(output_path)
-        if not output_path.exists() or _sha256(output_path) != attempt.get("output_sha256"):
-            raise SystemExit(f"provenance-output-hash-mismatch:{role}")
-        if manifest.get("schema_version") in {7, 8}:
-            raw = completions[0]["last_agent_message"].encode("utf-8")
-            raw_path = _resolve_path(out_dir, attempt.get("raw_output_path"))
-            if raw_path.read_bytes() != raw or _sha256(raw_path) != attempt.get("raw_output_sha256"):
-                raise SystemExit(f"provenance-raw-output-mismatch:{role}")
-            if recovery is not None and attempt["attempt"] == 2:
-                expected_arguments = _recovery_arguments(out_dir, manifest, item, parent_rows, codex_home)
-                if recovery["kind"] == "closure-evidence-shape":
-                    expected_output = expected_arguments["message"].split(
-                        "Return exactly this validated correction:\n", 1
-                    )[1]
-                    if raw.decode("utf-8") != expected_output:
-                        raise SystemExit(f"review-repair-claims-changed:{role}")
-        message = completions[0]["last_agent_message"].strip()
-        if output_path.read_text(encoding="utf-8").strip() != message:
-            raise SystemExit(f"provenance-output-message-mismatch:{role}")
-        expected_header = (
-            f"<!-- codex-review-provenance role={role} run={manifest['review_run_id']} "
-            f"input={manifest['review_input_sha256']} context={attempt['context_sha256']} "
-            f"attempt={attempt['attempt']} -->"
-        )
-        if manifest.get("schema_version") not in {7, 8} and message.splitlines()[0] != expected_header:
-            raise SystemExit(f"provenance-output-header-mismatch:{role}")
-
-    if attempts[selected - 1].get("status") != "completed":
-        raise SystemExit(f"manifest-selected-attempt-not-completed:{role}")
-    canonical_output = _resolve_path(out_dir, item.get("output_path"))
-    selected_output = _resolve_path(out_dir, attempts[selected - 1].get("output_path"))
-    if canonical_output != selected_output:
-        raise SystemExit(f"manifest-selected-output-mismatch:{role}")
-
-
 def _validate_manifest_entries(
     out_dir: Path,
     manifest: dict[str, Any],
@@ -3612,12 +2146,14 @@ def _validate_manifest_entries(
 ) -> dict[str, dict[str, Any]]:
     """Bind every triggered pass to its evidence and expose the native runtime summary when requested."""
     schema_version = manifest.get("schema_version")
-    if schema_version not in {2, 3, 4, 5, 6, 7, 8}:
+    if schema_version not in {2, 3, 4, 5, 6, 7, 8, 9}:
         raise SystemExit("manifest-schema-version")
-    if schema_version in {7, 8}:
+    if schema_version in {7, 8, 9}:
         kind = manifest.get("manifest_kind")
         if kind not in {"native-wave", "batched-review"}:
             raise SystemExit("manifest-kind-invalid")
+        if schema_version == 9 and kind != "batched-review":
+            raise SystemExit("manifest-schema-nine-aggregate-only")
         if kind == "batched-review":
             import review_batches  # Resolve the circular aggregate validation boundary after initialization.
 
@@ -3634,7 +2170,7 @@ def _validate_manifest_entries(
             if runtime_summary is not None:
                 runtime_summary.update(summary)
             return {item["role"]: item for item in passes}
-        if manifest.get("dispatch_protocol") not in {"paged-context-v6", "paged-context-v7"}:
+        if manifest.get("dispatch_protocol") not in {"paged-context-v6", "paged-context-v7", "paged-context-v8"}:
             raise SystemExit("manifest-dispatch-protocol-invalid")
         reader_path = Path(str(manifest.get("context_reader_path", "")))
         # Historical readers retain their issued dispatch recipe while exact page calls and outputs remain checked.
@@ -3645,7 +2181,9 @@ def _validate_manifest_entries(
             or reader_path.name != "review_context.py"
             or _sha256(reader_path) != manifest.get("context_reader_sha256")
             or manifest["context_reader_sha256"] not in {*LEGACY_WORKDIR_READER_SHA256S, _sha256(current_reader)}
-            or manifest["dispatch_protocol"] == "paged-context-v7"
+            or manifest["dispatch_protocol"] == "paged-context-v8"
+            and manifest["context_reader_sha256"] != _sha256(current_reader)
+            or manifest["dispatch_protocol"] in {"paged-context-v7", "paged-context-v8"}
             and manifest["context_reader_sha256"] == LEGACY_PROTOCOL_V6_READER_SHA256
         ):
             raise SystemExit("manifest-context-reader-identity-invalid")
@@ -4084,7 +2622,7 @@ def _validate_runtime_summary_metadata(
         ):
             if metadata.get(key) != expected:
                 raise SystemExit(f"metadata-{key.replace('_', '-')}-mismatch")
-        if manifest.get("schema_version") in {5, 6, 7, 8}:
+        if manifest.get("schema_version") in {5, 6, 7, 8, 9}:
             if metadata.get("execution_observed_controls") != runtime_summary.get("observed_controls"):
                 raise SystemExit("metadata-execution-observed-controls-mismatch")
     if metadata.get("review_run_id") != manifest.get("review_run_id"):
@@ -4128,7 +2666,7 @@ def _validate_specialist_manifest(
     )
     runtime_summary = (
         runtime_summary
-        if manifest.get("schema_version") in {7, 8}
+        if manifest.get("schema_version") in {7, 8, 9}
         else _validate_review_runtime(
             out_dir,
             manifest,
@@ -4142,6 +2680,8 @@ def _validate_specialist_manifest(
         else {}
     )
     _validate_runtime_summary_metadata(metadata, manifest, runtime_summary)
+    if manifest.get("schema_version") == 9:
+        _validate_consolidation_confidence(out_dir, manifest, result, metadata)
     return _SpecialistEvidence(
         triggered_roles=triggered_roles,
         manifest=manifest,
@@ -4164,6 +2704,8 @@ def _validate_specialist_pass_metadata(metadata: dict[str, Any], by_role: dict[s
         role = item.get("role")
         if not isinstance(role, str):
             raise SystemExit(f"metadata-specialist-pass-missing-role:{index}")
+        if role in metadata_by_role:
+            raise SystemExit(f"metadata-specialist-pass-duplicate-role:{role}")
         metadata_by_role[role] = item
     if set(metadata_by_role) != set(by_role):
         raise SystemExit("metadata-specialist-pass-role-mismatch")
@@ -4182,6 +2724,9 @@ def _validate_specialist_pass_metadata(metadata: dict[str, Any], by_role: dict[s
         ):
             if metadata_item.get(key) != item.get(key):
                 raise SystemExit(f"metadata-specialist-pass-mismatch:{role}:{key}")
+        for parts_key in ("final_parts", "source_parts"):
+            if parts_key in item and metadata_item.get(parts_key) != item[parts_key]:
+                raise SystemExit(f"metadata-specialist-pass-mismatch:{role}:{parts_key}")
 
 
 def _validate_inspection_independence(
@@ -4195,12 +2740,16 @@ def _validate_inspection_independence(
     triggered_required = REQUIRED_ROLES & evidence.triggered_roles
     plan_dir = out_dir
     plan_manifest = evidence.manifest
-    if plan_manifest.get("manifest_kind") == "batched-review":
+    if plan_manifest.get("schema_version") == 9:
+        independence_required = evidence.runtime_summary["independence_required"]
+        requirement_evidence = evidence.runtime_summary["independence_requirement_evidence"]
+    elif plan_manifest.get("manifest_kind") == "batched-review":
         plan_dir = out_dir / "batches" / "interactions"
         plan_manifest = _load_json(plan_dir / "specialist-manifest.json")
-    _, _, independence_required, requirement_evidence = _validate_inspection_plan(
-        plan_dir, plan_manifest, env.parent_thread_id
-    )
+    if plan_manifest.get("schema_version") != 9:
+        _, _, independence_required, requirement_evidence = _validate_inspection_plan(
+            plan_dir, plan_manifest, env.parent_thread_id
+        )
     routing_requirement = evidence.routing.get("independent_review_required")
     if routing_requirement is not independence_required:
         raise SystemExit("routing-inspection-independence-required-mismatch")
@@ -4241,17 +2790,17 @@ def _validate_independence_requirement(
     env: _ReviewEnvironment,
 ) -> None:
     """Check the review's independence requirement and the metadata that claims it was satisfied."""
-    if evidence.manifest.get("schema_version") in {5, 6, 7, 8}:
+    if evidence.manifest.get("schema_version") in {5, 6, 7, 8, 9}:
         independence_required, required_independent = _validate_inspection_independence(
             out_dir, evidence, metadata, status, env
         )
     else:
         independence_required, required_independent = _validate_legacy_independence(evidence, status, risk_tier)
     native_wave = evidence.manifest
-    if evidence.manifest.get("manifest_kind") == "batched-review":
+    if evidence.manifest.get("manifest_kind") == "batched-review" and evidence.manifest.get("schema_version") != 9:
         native_wave = _load_json(out_dir / "batches/interactions/specialist-manifest.json")
     if (
-        evidence.manifest.get("schema_version") in {3, 4, 5, 6, 7, 8}
+        evidence.manifest.get("schema_version") in {3, 4, 5, 6, 7, 8, 9}
         and status == "pass"
         and len(evidence.triggered_roles) >= 2
         and (
@@ -4263,6 +2812,13 @@ def _validate_independence_requirement(
                     and evidence.runtime_summary.get("capacity_limited") is True
                 )
                 and not _native_independent_wave(native_wave, evidence.runtime_summary)
+                and not (
+                    evidence.manifest.get("schema_version") == 9
+                    and (
+                        evidence.runtime_summary.get("final_union") is True
+                        or evidence.runtime_summary.get("source_union") is True
+                    )
+                )
             )
             or any(item["mode"] not in {"inspection", "spawned", "app-server"} for item in evidence.passes)
         )
@@ -4280,119 +2836,126 @@ def _validate_independence_requirement(
         raise SystemExit("metadata-independence-required-mismatch")
 
 
-def _batch_reviewer_findings(
-    path: Path, snapshot: dict[str, Any], role: str, *, content_override: str | None = None
-) -> list[dict[str, Any]]:
-    """Parse explicit batched obligations and bind declared coordinates to frozen source hashes.
-
-    Ordinary native and historical reviewer formats never enter this profile. Missing inventories and prose outside the
-    allowed sections fail; ratings and blocking counts cannot invent or suppress records.
-    """
-    content = path.read_text(encoding="utf-8") if content_override is None else content_override
-    match = re.fullmatch(
-        r"\s*## Reviewer Findings\s*\n```json\n(?P<records>.*?)\n```\s*"
-        r"(?:## Finding Dispositions\s*\n(?P<dispositions>.*?))?"
-        r"## Reviewer Confidence\s*\n```json\n(?P<confidence>.*?)\n```\s*"
-        r"## Reviewer Assessment\s*\nRating: [1-5]\s*\nRationale: [^\n]+\s*",
-        content,
-        re.DOTALL,
-    )
-    if match is None:
-        raise SystemExit(f"review-batch-individual-findings-format:{role}")
-    dispositions = match["dispositions"]
-    if dispositions is not None and any(
-        re.fullmatch(
-            r"Source disposition [^\s:]+: (closed|rejected); Evidence: .+:[1-9][0-9]*-[1-9][0-9]* - \S.*", line
-        )
-        is None
-        for line in dispositions.strip().splitlines()
+def _batch_provenance_header(out_dir: Path, manifest: dict[str, Any], item: dict[str, Any]) -> str | None:
+    """Derive an optional current native marker from frozen delivery, never from the response's claims."""
+    if (
+        manifest.get("schema_version") != 8
+        or manifest.get("manifest_kind") != "native-wave"
+        or manifest.get("reviewer_findings_version") != 1
+        or manifest.get("dispatch_protocol") not in {"paged-context-v7", "paged-context-v8"}
+        or manifest.get("context_reader_sha256") != _sha256(SKILL_DIRECTORY / "review_context.py")
     ):
-        raise SystemExit(f"review-batch-individual-findings-disposition-format:{role}")
+        return None
+    plan_path = _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"])
+    plan = _load_json(plan_path)
+    attempt = item["attempts"][item["selected_attempt"] - 1]
+    entries = [entry for entry in plan["contexts"] if entry["role_id"] == item["role"]]
+    if (
+        _sha256(plan_path) != manifest["inspection_execution"]["plan_sha256"]
+        or any(plan[key] != manifest[key] for key in ("review_run_id", "review_input_sha256", "parent_thread_id"))
+        or len(entries) != 1
+        or attempt["attempt"] != item["selected_attempt"]
+        or entries[0]["context_sha256"] != attempt["context_sha256"]
+        or _resolve_path(out_dir, attempt["context_path"]) != _resolve_path(out_dir, entries[0]["context_path"])
+        or _sha256(_resolve_path(out_dir, entries[0]["context_path"])) != entries[0]["context_sha256"]
+    ):
+        raise SystemExit(f"review-batch-provenance-identity-invalid:{item['role']}")
+    return render_read_output(
+        "",
+        item["role"],
+        plan["review_run_id"],
+        plan["review_input_sha256"],
+        attempt["context_sha256"],
+        attempt["attempt"],
+    ).splitlines()[0]
 
-    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        """Reject duplicate JSON keys rather than silently replacing an obligation field."""
-        result = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError("duplicate finding key")
-            result[key] = value
-        return result
+
+def _validate_batch_reconciliation(
+    out_dir: Path,
+    manifest: dict[str, Any],
+    groups: dict[str, Any],
+    actions: dict[str, list[dict[str, Any]]],
+    records: dict[str, Any],
+) -> None:
+    """Bind parent-authored same-cause reasons to every origin and the admitted current source snapshot.
+
+    This validates preservation and source identity, not semantic equivalence. Parent source judgment and independent
+    verification must establish that the canonical change and closure obligation cover each retained original.
+    """
+    error = "review-batch-source-reconciliation-invalid"
+    if set(groups) - set(actions):
+        raise SystemExit(error)
+    execution = manifest["batch_execution"]
+    inventory_path = _resolve_path(out_dir, execution["inventory_path"])
+    if _sha256(inventory_path) != execution["inventory_sha256"]:
+        raise SystemExit(error)
+    import review_batches  # Reuse the verified circular boundary after ordinary constituent admission.
 
     try:
-        records = json.loads(match["records"], object_pairs_hook=unique_object)
-        confidence = json.loads(match["confidence"], object_pairs_hook=unique_object)
-    except (ValueError, RecursionError) as error:
-        raise SystemExit(f"review-batch-individual-findings-json:{role}") from error
-    if (
-        not isinstance(confidence, dict)
-        or set(confidence) != {"score", "scope", "gaps"}
-        or type(confidence["score"]) not in {int, float}
-        or not 0 <= confidence["score"] <= 1
-        or not isinstance(confidence["scope"], str)
-        or not confidence["scope"].strip()
-        or not isinstance(confidence["gaps"], list)
-        or any(
-            not isinstance(gap, dict)
-            or set(gap) != {"gap", "status", "rationale"}
-            or any(not isinstance(gap[key], str) or not gap[key].strip() for key in gap)
-            or gap["status"] not in {"closed", "unresolved", "deferred"}
-            for gap in confidence["gaps"]
-        )
-    ):
-        raise SystemExit(f"review-batch-individual-findings-confidence:{role}")
-    if not isinstance(records, list):
-        raise SystemExit(f"review-batch-individual-findings-inventory:{role}")
-    sources = {item["path"]: item for item in snapshot["files"]}
-    identities = set()
-    bound = []
-    fields = {"id", "severity", "title", "summary", "required_change", "evidence", "closure_evidence"}
-    for record in records:
+        inventory = review_batches.validate_inventory(out_dir)
+    except ValueError as exc:
+        raise SystemExit(error) from exc
+    sources = {item["path"]: item for item in inventory["source_snapshot"]["files"]}
+    for identity, group in groups.items():
+        originals = actions[identity]
+        # Identical originals retain the historical exact-canonical contract; only variants need reconciliation.
+        payloads = {
+            json.dumps({key: value for key, value in item["original"].items() if key != "id"}, sort_keys=True)
+            for item in originals
+        }
         if (
-            not isinstance(record, dict)
-            or set(record) != fields
-            or not isinstance(record["id"], str)
-            or re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", record["id"]) is None
-            or record["id"] in identities
-            or not isinstance(record["severity"], str)
-            or record["severity"] not in FINDING_SEVERITIES
-            or any(not isinstance(record[key], str) or not record[key].strip() for key in fields - {"evidence"})
-            or not isinstance(record["evidence"], list)
+            not isinstance(group, dict)
+            or set(group) != {"invariant", "rationale", "origins", "evidence"}
+            or any(not isinstance(group[key], str) or not group[key].strip() for key in ("invariant", "rationale"))
+            or not isinstance(group["origins"], dict)
+            or set(group["origins"]) != {item["finding_id"] for item in originals}
+            or any(not isinstance(reason, str) or not reason.strip() for reason in group["origins"].values())
+            or len(originals) < 2
+            or len(payloads) < 2
+            or not isinstance(group["evidence"], list)
+            or not group["evidence"]
         ):
-            raise SystemExit(f"review-batch-individual-findings-record:{role}")
-        identities.add(record["id"])
-        evidence = []
-        for entry in record["evidence"]:
-            if not isinstance(entry, dict) or set(entry) != {"path", "start_line", "end_line"}:
-                raise SystemExit(f"review-batch-individual-findings-evidence:{role}")
-            source = sources.get(entry["path"]) if isinstance(entry["path"], str) else None
+            raise SystemExit(error)
+        severity = min((item["original"]["severity"] for item in originals), key=FINDING_SEVERITIES.index)
+        if records[identity].get("severity") != severity:
+            raise SystemExit(error)
+        for witness in group["evidence"]:
+            if not isinstance(witness, dict) or set(witness) != {"path", "start_line", "end_line", "source_sha256"}:
+                raise SystemExit(error)
+            source = sources.get(witness["path"]) if isinstance(witness["path"], str) else None
             if (
                 source is None
-                or source["kind"] == "missing"
-                or type(entry["start_line"]) is not int
-                or type(entry["end_line"]) is not int
-                or not 1 <= entry["start_line"] <= entry["end_line"] <= len(source["content"].splitlines())
+                or source.get("encoding") != "utf-8"
+                or source["sha256"] != witness["source_sha256"]
+                or hashlib.sha256(source["content"].encode("utf-8")).hexdigest() != source["sha256"]
+                or type(witness["start_line"]) is not int
+                or type(witness["end_line"]) is not int
+                or not 1 <= witness["start_line"] <= witness["end_line"] <= len(source["content"].splitlines())
             ):
-                raise SystemExit(f"review-batch-individual-findings-evidence:{role}")
-            evidence.append({**entry, "source_sha256": source["sha256"]})
-        bound.append({**record, "evidence": evidence})
-    return bound
+                raise SystemExit(error)
 
 
-def _validate_batch_source_findings(result: dict[str, Any], manifest: dict[str, Any]) -> None:
+def _validate_batch_source_findings(out_dir: Path, result: dict[str, Any], manifest: dict[str, Any]) -> None:
     """Retain unresolved findings from every admitted batch phase and forbid false canonical approval.
 
     The serialized source_findings field retains individual original obligations from source, intermediate interaction,
-    and final waves. Every unresolved individual requires its exact canonical action and retained origin evidence;
-    shared actions need explicit exact-obligation duplicate accounting before ordinary remediation intake can admit.
+    and final waves. Every unresolved individual requires one canonical action and retained original obligations and
+    evidence. Shared actions require exact duplicate accounting or complete parent reconciliation bound to admitted
+    source. Neither path changes an original obligation or establishes closure merely because a canonical action exists.
     """
     if manifest.get("manifest_kind") != "batched-review":
         return
     ledger = manifest["source_findings"]
     metadata = result["metadata"]
+    reconciliations = metadata.get("source_finding_reconciliation", {})
+    if not isinstance(reconciliations, dict):
+        raise SystemExit("review-batch-source-reconciliation-invalid")
     if metadata.get("source_findings") != ledger:
         raise SystemExit("review-batch-result-source-findings-mismatch")
     unresolved = [item for item in ledger if item["disposition"] == "unresolved"]
     if not unresolved:
+        if reconciliations:
+            raise SystemExit("review-batch-source-reconciliation-invalid")
         return
     blocking = any(item["original"]["severity"] != "low" for item in unresolved)
     if (blocking and result.get("status") == "pass") or metadata.get("review_decision", {}).get(
@@ -4419,22 +2982,30 @@ def _validate_batch_source_findings(result: dict[str, Any], manifest: dict[str, 
                 f"{entry['path']}:{entry['start_line']}-{entry['end_line']}" not in finding.get("evidence", [])
                 for entry in original["evidence"]
             )
-            or any(
-                finding.get(key) != original[key]
-                for key in ("severity", "title", "summary", "required_change", "closure_evidence")
+            or (
+                identity not in reconciliations
+                and any(
+                    finding.get(key) != original[key]
+                    for key in ("severity", "title", "summary", "required_change", "closure_evidence")
+                )
             )
         ):
             raise SystemExit("review-batch-result-source-finding-inventory-dropped")
         actions.setdefault(identity, []).append(item)
+    if reconciliations:
+        _validate_batch_reconciliation(out_dir, manifest, reconciliations, actions, records)
     duplicates = {}
-    for originals in actions.values():
+    for identity, originals in actions.items():
         originals.sort(key=lambda item: item["finding_id"])
-        first = originals[0]
-        payload = {key: value for key, value in first["original"].items() if key != "id"}
-        for item in originals[1:]:
-            if {key: value for key, value in item["original"].items() if key != "id"} != payload:
+        first_by_payload = {}
+        for item in originals:
+            payload = json.dumps({key: value for key, value in item["original"].items() if key != "id"}, sort_keys=True)
+            if first_by_payload and payload not in first_by_payload and identity not in reconciliations:
                 raise SystemExit("review-batch-distinct-findings-collapsed")
-            duplicates[item["finding_id"]] = first["finding_id"]
+            if payload in first_by_payload:
+                duplicates[item["finding_id"]] = first_by_payload[payload]
+            else:
+                first_by_payload[payload] = item["finding_id"]
     if metadata.get("source_finding_duplicates", {}) != duplicates:
         raise SystemExit("review-batch-duplicate-accounting-mismatch")
 
@@ -4479,12 +3050,26 @@ def _result_context(result_path: Path) -> dict[str, Any]:
     }
 
 
-def _terminal_review_steps(out_dir: Path, context: dict[str, Any]) -> list[_ReviewStep]:
-    """List the checks for an unavailable or closed review in fail-fast order."""
+def _terminal_review_steps(out_dir: Path, result_path: Path, context: dict[str, Any]) -> list[_ReviewStep]:
+    """Check terminal reviews, requiring deduction text before candidate promotion."""
     result, metadata, scope = context["result"], context["metadata"], context["scope"]
-    terminal = _validate_unavailable_result if context["review_status"] == "unavailable" else _validate_closed_result
+
+    def terminal() -> None:
+        """Select candidate requirements without changing canonical historical readers."""
+        if context["review_status"] == "unavailable":
+            _validate_unavailable_result(
+                out_dir,
+                result,
+                metadata,
+                scope,
+                require_deductions=result_path.name != "result.json"
+                or result_path.parent.resolve() != out_dir.resolve(),
+            )
+        else:
+            _validate_closed_result(out_dir, result, metadata, scope)
+
     return [
-        _ReviewStep(str(context["review_status"]), lambda: terminal(out_dir, result, metadata, scope)),
+        _ReviewStep(str(context["review_status"]), terminal),
         _ReviewStep("confidence-gaps", lambda: _validate_confidence_gaps(result, metadata)),
         _ReviewStep("confidence-recovery", lambda: _validate_confidence_recovery(result, metadata)),
     ]
@@ -4504,7 +3089,16 @@ def _assessed_review_steps(
 
     def assessments() -> None:
         if result.get("schema_version") == 3 or metadata.get("reviewer_assessments") is not None:
-            _validate_reviewer_assessments(out_dir, metadata, state["evidence"].by_role)
+            manifest = state["evidence"].manifest
+            _validate_reviewer_assessments(
+                out_dir,
+                metadata,
+                state["evidence"].by_role,
+                batch_response=manifest.get("schema_version") in {7, 8, 9}
+                and (
+                    manifest.get("manifest_kind") == "batched-review" or manifest.get("reviewer_findings_version") == 1
+                ),
+            )
 
     notes, evidence = ("notes-sections",), ("specialist-manifest",)
     steps = [
@@ -4527,7 +3121,9 @@ def _assessed_review_steps(
                 evidence,
             ),
             _ReviewStep(
-                "batch-findings", lambda: _validate_batch_source_findings(result, state["evidence"].manifest), evidence
+                "batch-findings",
+                lambda: _validate_batch_source_findings(out_dir, result, state["evidence"].manifest),
+                evidence,
             ),
             _ReviewStep("reviewer-assessments", assessments, evidence),
             _ReviewStep(
@@ -4547,7 +3143,7 @@ def _review_steps(
 ) -> list[_ReviewStep]:
     """Select the terminal or assessed review check list for one loaded candidate."""
     if context["review_status"] is not None:
-        return _terminal_review_steps(out_dir, context)
+        return _terminal_review_steps(out_dir, result_path, context)
     return _assessed_review_steps(out_dir, result_path, context, env)
 
 

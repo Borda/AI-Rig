@@ -135,3 +135,42 @@ def test_complex_final_chat_contracts_use_structure_not_dense_prose(skill: str) 
     assert "Next steps" in output_contract
     dense_lines = [line for line in output_contract.splitlines() if len(line) > 600]
     assert dense_lines == []
+
+
+def test_confidence_deductions_are_accounted_once_in_existing_text_fields() -> None:
+    """Prevent unexplained scores, hidden deductions, and duplicate gap accounting."""
+    contract = QUALITY_GATES.read_text(encoding="utf-8")
+    section = contract.split("## Confidence Deduction Accounting\n", maxsplit=1)[1].split("\n## ", maxsplit=1)[0]
+    for requirement in (
+        "every reported confidence gap or limitation",
+        "ASCII minus",
+        "two decimals",
+        "exactly `1.00 - score`",
+        "`(-0.00)`",
+        "one explicit `residual`",
+        "cap, floor, or band",
+        "count its deduction once",
+        "transparent judgment accounting",
+        "not an empirically calibrated probability",
+    ):
+        assert requirement in section
+    for relative_path in ("shared/native-skill-contract.md", "shared/final-handoff-contract.md"):
+        text = (PLUGIN_ROOT / relative_path).read_text(encoding="utf-8")
+        assert "quality-gates.md#confidence-deduction-accounting" in text
+    handoff = (PLUGIN_ROOT / "shared/final-handoff-contract.md").read_text(encoding="utf-8")
+    assert "existing gap/limit strings" in handoff
+    assert "matching closure labels" in handoff
+    assert "Preserve exact canonical gap identities" in handoff
+    assert "existing closure evidence/rationale displayed by the renderer" in handoff
+    assert "both gap identity and closure text are fixed" in handoff
+    assert "editable corresponding existing limit string" in handoff
+    assert "New Code Review `unavailable` output" in handoff
+    assert "confidence `0.90`" in handoff
+    assert "closure rationale with `(-0.10)`" in handoff
+    assert "remaining limit with `(-0.00)`" in handoff
+    assert "never mix historical and new closure/limit strings" in handoff
+    assert "historical compatibility is not available for a fresh candidate" in handoff
+    assert "Historical rendered bytes" in handoff
+    baseline = (PLUGIN_ROOT / "assets/AGENTS.md").read_text(encoding="utf-8")
+    assert "exactly `1.00 - score`" in baseline
+    assert "`(-0.00)`" in baseline

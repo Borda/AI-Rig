@@ -9,6 +9,29 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
 
 
+def test_report_discussion_stays_before_source_mutation_gates() -> None:
+    """Keep accepted report discussion useful without pretending source remediation completed."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    discussion = skill.split("### Report discussion after deferred source recovery", 1)[1].split("### 03:", 1)[0]
+    for boundary in (
+        "An admitted assessed report plus the user's accepted source deferral",
+        "Preserve `mode=pr`",
+        "diagnosed collection-failure artifacts",
+        "original ID",
+        "missing observable closure evidence",
+        "Do not require attached checkout, target integration, merge authorization, or a merge commit",
+        "Do not create or promote a canonical remediation result",
+        "does not authorize a fresh review",
+        "execute steps 03–12 with incomplete source receipts",
+        "edit source, merge, commit, claim findings fixed, or close missing independent coverage",
+        "Producer-owned validation and independence remain mandatory",
+        "first unmet checkpoint",
+    ):
+        assert boundary in discussion
+    assert "For terminal remediation finalization" in skill
+    assert "For source remediation in `mode=pr`, required before `action-items.md`, `resolution-scope.md`" in skill
+
+
 def test_session_review_shortcut_reuses_local_review_without_pr_refresh() -> None:
     """Keep session-local remediation independent from fresh PR collection.
 

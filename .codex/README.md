@@ -339,6 +339,8 @@ From this source checkout, `make sync-codex` performs a broader managed restore:
 
 The [personal session policy](global-session-policy.md#local-test-execution) keeps ordinary local tests sandboxed and requires evidence for additional capabilities, including local sockets, subprocess communication, and filesystem access. Repeated runs should reuse a verified project test entrypoint with a narrow approval prefix; inline environment assignments and log redirection can otherwise make each changed shell string require its own approval. The policy grants no permissions, installs no test runner, and leaves existing approval rules unchanged. A source edit takes effect in other sessions only after deliberate policy synchronization and loading the updated instructions.
 
+The project approval policy preapproves the five Bridge MCP tools when `bridge@borda-ai-rig` is verified installed and loaded, including ordinary provider inference for an already authorized task or invoked workflow. Status checks can run before binding; binding establishes the workspace through native user confirmation. Executable calls require the current workspace binding and stay within the authorized task scope; setup changes, authentication and setup `verify-live` keep separate approvals. This supplements the existing Bridge command-recipe allowance, grants no arbitrary MCP or shell access, and reaches other sessions through deliberate policy synchronization rather than editing installed configuration during a task.
+
 <details>
 <summary><strong>Show sync scope and cleanup boundaries</strong></summary>
 

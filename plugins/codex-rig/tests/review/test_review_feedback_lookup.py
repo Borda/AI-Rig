@@ -61,6 +61,35 @@ class TestFindingEvidence:
             {"evidence": "review-notes.md#Findings", "path": str((run / "review-notes.md").resolve())}
         ]
         assert evidence["source_evidence"] == ["src/guard.py:12", "../../outside.md", "Caller record absent"]
+        assert evidence["source_origins"] == []
+        assert evidence["source_reconciliation"] is None
+
+    def test_returns_every_grouped_origin_without_changing_canonical_evidence(self, tmp_path: Path) -> None:
+        """Remediation sees each original closure obligation instead of only representative prose."""
+        run = _review_run(tmp_path, 1, [FINDING])
+        path = run / "result.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        origins = [
+            {"finding_id": "source.qa.one", "original": {"required_change": "Guard missing inputs."}},
+            {"finding_id": "source.qa.two", "original": {"closure_evidence": "Fail on missing input."}},
+            {"finding_id": "source.qa.other", "original": {"required_change": "Independent obligation."}},
+        ]
+        group = {
+            "invariant": "Missing inputs are guarded.",
+            "origins": {item["finding_id"]: "Covered." for item in origins[:2]},
+        }
+        payload["metadata"].update(
+            source_findings=origins,
+            source_finding_mapping={
+                item["finding_id"]: ["F7" if index < 2 else "F8"] for index, item in enumerate(origins)
+            },
+            source_finding_reconciliation={"F7": group},
+        )
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        evidence = FINDER.finding_evidence(path, "F7")
+        assert evidence["finding"] == FINDING
+        assert evidence["source_origins"] == origins[:2]
+        assert evidence["source_reconciliation"] == group
 
     @pytest.mark.parametrize(
         ("name", "finding_id", "code"),

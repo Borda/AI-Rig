@@ -7,6 +7,8 @@ description: Draft release notes, changelogs, contributor credits, migration gui
 
 # Release
 
+> Task-size routing follows [Proportional Execution](../../shared/native-skill-contract.md#proportional-execution); this skill's specialized lifecycle and acceptance checks remain authoritative.
+
 Prepare substantial, source-grounded release communication and SemVer readiness evidence. Never tag, publish, upload, or force-push. Release documents serve users; the final workflow report serves maintainers and does not replace the release draft.
 
 ## Input Schema

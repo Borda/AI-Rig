@@ -461,6 +461,13 @@ def test_blocked_preflight_receipt_reaches_actionable_unavailable_finalization(
     result_path = _write_unavailable_artifact(tmp_path)
     result = json.loads(result_path.read_bytes())
     result_path.unlink()
+    result["metadata"]["confidence_gap_closures"][0]["rationale"] = (
+        "(-0.10) " + result["metadata"]["confidence_gap_closures"][0]["rationale"]
+    )
+    result["metadata"]["confidence_recovery"]["remaining_limits"] = [
+        "(-0.00) PR correctness was not assessed. No additional deduction; "
+        "the canonical source-verification gap accounts for this limitation."
+    ]
     code = "collector:dirty-pr-worktree-before-pr-checkout"
     action = "Preserve or move the local changes that overlap PR files, then start a fresh collector run."
     (tmp_path / "pr-error.txt").write_text(code + "\n", encoding="utf-8", newline="\n")
@@ -586,3 +593,96 @@ def test_blocked_preflight_receipt_reaches_actionable_unavailable_finalization(
     )
     assert completed.returncode == 0, completed.stderr.decode()
     assert completed.stdout == final_bytes
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("deductions", [False, True])
+@pytest.mark.parametrize(
+    "checkout_state",
+    [
+        None,
+        pytest.param(
+            {"status": "checkout-command-started", "local_state": "changed-or-unknown"},
+            id="checkout-state-retained",
+        ),
+    ],
+)
+def test_unavailable_confidence_accepts_complete_historical_or_deduction_profile(
+    tmp_path: Path, checkout_state: dict[str, object] | None, deductions: bool
+) -> None:
+    """Keep historical metadata readable and accept complete transparent accounting."""
+    result_path = _write_unavailable_artifact(tmp_path, checkout_state=checkout_state)
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    metadata = result["metadata"]
+    if deductions:
+        metadata["confidence_gap_closures"][0]["rationale"] = (
+            "(-0.10) " + metadata["confidence_gap_closures"][0]["rationale"]
+        )
+        previous_limit = metadata["confidence_recovery"]["remaining_limits"][0]
+        metadata["confidence_recovery"]["remaining_limits"] = [
+            f"(-0.00) {previous_limit} No additional deduction; "
+            "the canonical source-verification gap accounts for this limitation."
+        ]
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    review_validator = _load_module(REVIEW_VALIDATOR_PATH, "complete_confidence_profile_review")
+    review_validator._validate_result(tmp_path, result_path, tmp_path, "thread", tmp_path)
+    _load_module(SHARED_VALIDATOR_PATH, "complete_confidence_profile_shared").validate(
+        "code-review", tmp_path, result_path
+    )
+
+
+@pytest.mark.parametrize(
+    ("rationale_prefix", "limit_prefix", "error"),
+    [
+        pytest.param("(-0.10) ", "", "confidence-recovery", id="new-rationale-old-limit"),
+        pytest.param("", "(-0.00) ", "confidence-recovery", id="old-rationale-new-limit"),
+        pytest.param("(-0.09) ", "(-0.00) ", "confidence-closures", id="shortfall-under-counted"),
+        pytest.param("(-0.11) ", "(-0.00) ", "confidence-closures", id="shortfall-over-counted"),
+        pytest.param("(−0.10) ", "(-0.00) ", "confidence-closures", id="non-ascii-minus"),
+        pytest.param("(-0.1) ", "(-0.00) ", "confidence-closures", id="wrong-decimal-precision"),
+        pytest.param("(-0.10) ", "(-0.01) ", "confidence-recovery", id="overlap-double-counted"),
+    ],
+)
+def test_unavailable_confidence_rejects_mixed_or_misaccounted_profiles(
+    tmp_path: Path, rationale_prefix: str, limit_prefix: str, error: str
+) -> None:
+    """Reject partial migrations and deductions inconsistent with canonical 0.90."""
+    result_path = _write_unavailable_artifact(tmp_path)
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    metadata = result["metadata"]
+    closure = metadata["confidence_gap_closures"][0]
+    closure["rationale"] = rationale_prefix + closure["rationale"]
+    if limit_prefix:
+        metadata["confidence_recovery"]["remaining_limits"] = [
+            f"{limit_prefix}PR correctness was not assessed. No additional deduction; "
+            "the canonical source-verification gap accounts for this limitation."
+        ]
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    validator = _load_module(REVIEW_VALIDATOR_PATH, "invalid_confidence_profile")
+    with pytest.raises(SystemExit, match=f"unavailable-review-{error}-must-be-canonical"):
+        validator._validate_result(tmp_path, result_path, tmp_path, "thread", tmp_path)
+
+
+@pytest.mark.parametrize("candidate_name", ["result.candidate.json", "renamed-candidate.json"])
+def test_fresh_unavailable_candidate_requires_visible_confidence_deductions(
+    tmp_path: Path, candidate_name: str
+) -> None:
+    """Prevent new candidates from using historical no-deduction compatibility."""
+    historical_path = _write_unavailable_artifact(tmp_path)
+    historical_bytes = historical_path.read_bytes()
+    candidate_path = tmp_path / candidate_name
+    candidate_result = json.loads(historical_bytes)
+    candidate_result["schema_version"] = 3
+    candidate_path.write_text(json.dumps(candidate_result), encoding="utf-8")
+    validator = _load_module(REVIEW_VALIDATOR_PATH, "fresh_confidence_profile")
+
+    with pytest.raises(SystemExit, match="unavailable-review-candidate-confidence-deductions-required"):
+        validator._validate_result(tmp_path, candidate_path, tmp_path, "thread", tmp_path)
+    report = validator.collect_result_errors(tmp_path, candidate_path, tmp_path, "thread", tmp_path)
+    assert {"step": "unavailable", "code": "unavailable-review-candidate-confidence-deductions-required"} in report[
+        "errors"
+    ]
+    validator._validate_result(tmp_path, historical_path, tmp_path, "thread", tmp_path)
+    assert historical_path.read_bytes() == historical_bytes

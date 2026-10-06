@@ -7,6 +7,8 @@ description: Optimize a measurable metric with bounded iterations, guardrails, a
 
 # Optimize
 
+> Task-size routing follows [Proportional Execution](../../shared/native-skill-contract.md#proportional-execution); this skill's specialized lifecycle and acceptance checks remain authoritative.
+
 Metric-driven optimization with explicit guards, rollback criteria, experiment log.
 
 ## Input Schema

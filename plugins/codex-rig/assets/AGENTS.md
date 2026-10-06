@@ -14,7 +14,7 @@ Docs, deps, CI/CD, releases, security, deprecations → prefer current primary s
 
 ## Execution Discipline
 
-- Non-trivial work: define scope, owned files, acceptance criteria before editing. 3+ meaningful steps or design tradeoff → create/update short plan first.
+- Specific, understood, bounded, reversible, low-risk work with clear acceptance: act directly and verify; a coherent fix plus its regression stays one task. Unknown cause → investigate first. Unclear scope/acceptance, coupled domains, material risk or consequential design choices → pause further implementation and promote. Nontrivial work defines scope, owned files and acceptance before editing. Medium/large or unexpectedly nontrivial implementation: top-level plan → independent challenge/resolve → implementation details → independent challenge/resolve → bounded independent delegated execution in parallel when useful → parent integration, verification and final plan crosscheck. Serialize coupled/shared work. Reuse still-current parent-scoped plans and challenges for bounded children; no recursive planning. File count, ordinary logs, factual queries and optional tooling do not force orchestration. Read-only analysis uses planning suited to uncertainty without inventing implementation. Preserve actual runtime permissions, protected decisions, independent coverage and project checks; instruction bounds never prove enforced isolation.
 - Prefer smallest reversible change solving actual problem. Fix feels speculative → stop, re-scope before widening blast radius.
 - Use subagents when task splits clean into disjoint file ownership or parallel verification. Prompt tight, task-specific; no dup of main thread full context.
 - Verification = part of work, not follow-up. No task done until relevant lint/tests/gates run and result explainable concrete.
@@ -116,6 +116,8 @@ Coding principles = canonical standard for implementation + review:
 
 ### Testing
 
+Keep a representative real case alongside TDD: reproduce with real inputs, components and affected environment, retain before/after evidence, and recheck it before completion. Mocks belong only to subsequent polishing after real behavior is understood and validated. An unavailable real case remains an unmet acceptance check. Never weaken assertions, remove coverage, or alter user-authorized behavior to get green tests; correct a mistaken test only with independent specification or real-case proof and a recorded reason. Requirement changes need the user's decision.
+
 Every test must pass The Suspicious Check:
 
 1. What specific bug test prevent?
@@ -143,12 +145,13 @@ Every test must pass The Suspicious Check:
 
 - Hallucination guard: never invent file paths, function names, configs
 - Verify output: confirm generated code compiles + runs
-- Truth over assumption: never present assumption, inference, guess, implied completion as fact unless verified + can point to proof
+- Every factual, causal, and completion claim cites inspected source, a recorded experiment, or concrete proof at the claim. Distinguish source facts, inference and hypotheses; untested behavior stays unverified. Never generalize a narrow passing check to an untested workflow.
 - Not verified → say unverified; assumptions only as explicit hypotheses during debugging/investigation
 - Signal uncertainty: state confidence when unsure ("~75% confident...")
 - Any skill/agent output reporting confidence: list confidence gaps or degradation reasons. Each gap cites extra evidence closing it or recorded explicit as unresolved/deferred w/ reason it stays open.
 - Confidence bands on every skill/agent output: `<= 0.8` not acceptable, never presented as complete; `0.8 < confidence < 0.85` very questionable, needs serious recovery before any output; `0.85 <= confidence < 0.9` cautious-low, proceed only w/ objective evidence, recovery actions, remaining limits; `>= 0.9` fair but not automatic — keep score evidence-backed, name material residual limits.
 - Shared confidence output contract: report score + material limits in chat; keep objective evidence, recovery actions, gap closures, unresolved/deferred rationale in skill artifact when one exists.
+- Confidence deduction accounting: every reported gap/limit carries `(-0.NN)` (ASCII minus, two decimals); unique deductions sum to exactly `1.00 - score` at displayed precision. Nonreducing limits use `(-0.00)`; repeated/overlapping gaps count once; name score-setting caps/floors/bands and their contribution; unexplained shortfall gets one explicit `residual`. This is transparent judgment accounting, not an empirically calibrated probability. Preserve evidence and closure labels in existing metadata strings.
 - Minimal blast radius: prefer targeted, reversible changes
 - Complex logic must emit logs — silent failure forbidden
 - Cite specific files + line numbers in explanations
@@ -302,7 +305,7 @@ Parent agent responsibilities:
 - Prefer lowest-cost capable model and effort: Luna for bounded support and curation, Sol for implementation/runtime/testing and final executable verification; architecture/security advisor roles require explicit selection.
 - Luna support roles hand executable verification, release-blocking, API/runtime-changing ownership to the Sol parent or owning specialist.
 - Observed reasoning-progress stalls permit one advisory capability escalation only under packaged `shared/specialist-orchestration.md` protocol.
-- Parallelize only disjoint evidence, tests, docs, profiling work w/ clear ownership.
+- Parallelize disjoint task-authorized implementation or independent evidence, tests, docs and profiling w/ clear ownership, acceptance and stop conditions; serialize shared/coupled work, protected mutations and parent acceptance. Specialized portable read-only routes retain their own admission and mutation restrictions.
 - Every delegated workstream must pass packaged handover gate before parent acceptance.
 
 ______________________________________________________________________

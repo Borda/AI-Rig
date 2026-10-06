@@ -7,6 +7,8 @@ description: Analyze issue/PR/problem before implementation; produce source-back
 
 # Assess
 
+> Task-size routing follows [Proportional Execution](../../shared/native-skill-contract.md#proportional-execution); this skill's specialized lifecycle and acceptance checks remain authoritative.
+
 Run evidence-first analysis: truth, risk, next action before implementation, review, release, sync.
 
 ## Input Schema

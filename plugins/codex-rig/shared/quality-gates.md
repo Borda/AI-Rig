@@ -25,13 +25,24 @@ Confidence needs objective evidence. Before user output, apply bands: `<= 0.8` u
 
 Each `run_gates.py` invocation writes `gates.json` with exactly five IDs. Entries contain `id`, `status`, `exit_code`, `duration_seconds`, `command_path`, `stdout`, `stderr`; `missing-command`, `not-applicable`, `timeout` also need reason. The three log fields record path relative to run's output directory in POSIX form (`checks/<id>.<kind>.txt`); absolute path is accepted only inside that directory. Readers accept any relative entry that resolves inside output directory, trying `--out` first, then its ancestors for runs written before this convention — never their own working directory, which is what once made same artifact valid in one directory, invalid in another. Every accepted log must resolve inside output directory. `not-applicable` passes only with explicit reason; `missing-command`/`timeout` fail. Result status/check lists reconcile with `gates.json`.
 
-For `--pytest-python` source binding, keep the project's pytest selection and parallel options. The test gate records selected test paths and declared module origins from each executing pytest process, including xdist workers. A missing or crashed worker receipt, an observed outside/untracked origin, or a declared module absent from every process cannot certify reviewed source; retain the failing or inconclusive gate evidence. A module absent in one worker remains neutral when another worker proves its tracked origin.
+For `--pytest-python` source binding, keep the project's pytest selection and parallel options. The test gate records selected test paths and declared module origins from each executing pytest process, including xdist workers. A missing or crashed worker receipt, an observed origin outside the verified source, or an untracked origin without valid local snapshot membership cannot certify reviewed source; retain the failing or inconclusive gate evidence. A module absent in one worker remains neutral when another worker proves its tracked origin or admitted local snapshot membership. Clean PR mode still requires its expected head and tracked origins. A local review mirror may omit `--expected-head` only when `--out` already contains the valid collector `local-source/review-worktree.json` and `local-source/source-snapshot.json` for that exact mirror, with no competing PR receipt; the runner freezes a current runtime snapshot before gates. Local test/module origins must match regular-file snapshot members and current bytes, so a collector-admitted added file may keep `tracked=false` only with that proof. This local admission does not relax clean PR or release gate contracts, and old unbound logs cannot be promoted retroactively.
 
 Optional but recommended:
 
 - `recommendations`: list of concrete next improvements
 - `follow_up`: list of prioritized next actions
 - `metadata`: required with confidence for machine-readable gaps/closures; otherwise skill-specific evidence not hidden in prose notes
+
+## Confidence Deduction Accounting
+
+For every reported confidence gap or limitation, show its contribution as `(-0.NN)` using an ASCII minus and two decimals. Unique deductions must sum to exactly `1.00 - score` at the displayed precision; choose the displayed score and deductions consistently. Keep existing confidence bands and evidence requirements.
+
+- A limitation that did not reduce the score carries `(-0.00)`; retain its evidence or unresolved/deferred rationale.
+- Name any cap, floor, or band that determined the score and show its contribution. Attribute overlapping causes without double-counting; when a limit repeats a gap, reference the same label and count its deduction once.
+- Put shortfall no named gap explains in one explicit `residual` entry with its deduction and reason; never hide it or silently distribute it across named gaps. A score below `1.00` requires at least one gap or residual entry.
+- This is transparent judgment accounting, not an empirically calibrated probability or measured causal decomposition. Deductions remain evidence-backed estimates; arithmetic precision does not establish statistical precision.
+
+Example: confidence `0.96`; `(-0.02)` unavailable target-host execution, `(-0.02)` unexercised live workflow, `(-0.00)` installation excluded from the requested scope. The two reducing limitations account for the `0.04` shortfall; the scope disclosure contributes zero.
 
 ## Fail rules
 
@@ -59,7 +70,7 @@ Every final chat is compact, outcome-coupled handoff in this order:
 3. `Verification`: name checks run and their exact results, including skips, failures, and unavailable checks.
 4. `Remaining`: list every unresolved, deferred, skipped, externally owned, or environment-blocked obligation with its owner and next action. Write `None` only when evidence closes all obligations.
 5. `Recommendations / next steps`: give prioritized owner/action entries that move unresolved work or accepted recommendation forward. Reference result rows instead of repeating them; write `None` when no follow-up is justified.
-6. `Confidence`: report score, material limits, and any unresolved confidence gap under shared confidence-band policy.
+6. `Confidence`: report score, material limits, and any unresolved confidence gap under shared confidence-band policy and [Confidence Deduction Accounting](#confidence-deduction-accounting).
 7. `Artifact`: link the canonical result artifact and any essential supporting report. An artifact is supplemental, never a substitute for the outcome, result rows, verification, remaining-work disclosure, or next steps.
 
 Keep headings and tables proportional to result. A single decision may use one short result row or compact field list; branch-heavy results use separate bullets or tables instead of one long paragraph. Preserve skill-specific terminal-close or unavailable-output exceptions when their contracts prohibit normal tables or recommendations.

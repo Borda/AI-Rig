@@ -2862,6 +2862,200 @@
       "id": "code-remediate-collapsed-scope-menu",
       "prompt": "The packaged ask_user tool supports a closed enum. Instead of passing All, Required, Suggestions, Custom selection as options, the agent omits options and puts the scope grammar, five commit modes, and work-plan preference into one required answer field. The user types all. Assess the collapsed selectable menu and bundled unrelated decisions; all selects findings only and supplies no commit or work-plan authorization.",
       "target": "code-remediate"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-remediate-deferred-source-report-discussion",
+      "prompt": "A validated assessed PR report has no source defect and one incomplete reviewer-coverage obligation. Source checkout fails; user explicitly accepts stale online coverage and report-only discussion. Agent preserves PR mode and failed collection, discusses the original obligation and concrete review recovery with evidence, without demanding target merge, selecting source edits, fabricating closure, or promoting remediation result. Existing review authorization is reused only for its bounded producer recovery. Assess this interim continuation.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "report-discussion-blocked-by-source-mutation"
+      ],
+      "id": "code-remediate-report-discussion-merge-detour",
+      "prompt": "User accepts only report discussion after failed checkout. Agent refuses to explain a retained operational reviewer gap until attached source checkout and target merge commit finish, although no source edits are selected. Assess this false prerequisite.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [],
+      "id": "implement-real-case-tdd-oracle",
+      "prompt": "User-authorized behavior is frozen. Agent reproduces the incident with actual affected components and environment, retains commands and source identity, uses fast regression tests alongside that real case, and rechecks the real case after fixing. Mocks are added only as polishing after real behavior is validated. Completion cites recorded before/after results and explicitly limits platforms not run. Assess.",
+      "target": "implement"
+    },
+    {
+      "expected_findings": [
+        "real-case-acceptance-missing",
+        "tdd-user-behavior-drift",
+        "unsupported-completion-claim"
+      ],
+      "id": "implement-mocked-green-contract-drift",
+      "prompt": "Agent cannot reproduce the defect in the affected environment. It creates mocks from its intended implementation, changes an expected value to match current output, removes a failing assertion, and claims the entire real workflow fixed solely because those tests pass. No user requirement changed and no real-case proof exists. Assess evidence and TDD contract preservation.",
+      "target": "implement"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-supported-native-host-arguments",
+      "prompt": "The native spawn tool has no agent_type argument. Generated calls omit it, retain exact explicit model, effort, fork_turns=none and task name, and assembly binds actual parent-child receipts, delivery and complete page reads. Historical explicit default remains readable; nondefault agent_type and extra unsupported arguments fail. Assess this host compatibility correction.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "confidence-visible-deductions-reconcile",
+      "prompt": "An evidence-backed result reports confidence 0.96. Each gap or limit shows a judgment deduction: (-0.02) target-host execution unavailable, (-0.02) live service route untested, (-0.00) installation outside requested scope. Repeated limits reference their original gap and count once. The author labels weights as judgment accounting, preserves closure evidence and historical records, and does not call the score an empirically calibrated probability. Assess.",
+      "target": "implement"
+    },
+    {
+      "expected_findings": [
+        "confidence-deduction-total-mismatch",
+        "confidence-gap-double-counted",
+        "confidence-limit-contribution-missing",
+        "confidence-probability-unsupported"
+      ],
+      "id": "confidence-hidden-and-double-counted-deductions",
+      "prompt": "A result reports confidence 0.96, lists one (-0.01) gap and repeats the same gap as another (-0.01) limit, omits contributions for other limitations, and gives no residual explanation for the shortfall. It calls the score a calibrated probability without calibration evidence. Assess.",
+      "target": "implement"
+    },
+    {
+      "expected_findings": [],
+      "id": "review-opaque-recovery-delivery-bound",
+      "prompt": "A paged native host retains an opaque dispatch value. Recovery preserves its exact parent-to-child delivery, validates all original command/result receipts and the bounded reader failure, then admits only a complete fresh replacement assessment with every canonical page. The incomplete original is never accepted as source coverage. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-proved-preexecution-comment-correction",
+      "prompt": "A current native reviewer mistypes only the optional outer JSON comment. The host rejects malformed JSON before executing any command. The unchanged canonical JavaScript body and matched host error are retained, the exact same-page read follows immediately, and every canonical source page and execution receipt validates. One incidental failure is permitted in total; optional comment omission remains equivalent. The parent resumes ordinary assembly without changing raw evidence or spawning a replacement. Assess this bounded recovery.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "reader-correction-unproved",
+        "reader-correction-limit-exceeded",
+        "review-coverage-incomplete"
+      ],
+      "id": "code-review-unproved-reader-correction",
+      "prompt": "A parent excludes an extra reader call merely because it later succeeded. The retained error is unknown, its inner command changed, and no complete execution receipts establish pre-execution rejection. It also accepts a malformed-comment failure plus a missing-plan failure in one child despite the single incidental-failure bound, then claims full review completion without remaining interaction waves. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-batch-assessment-equivalent-layout",
+      "prompt": "A retained current batch-profile response has all required finding and confidence sections, complete native source receipts and one assessment line: Rating: 2. Rationale: Source-backed explanation. Its generated instructions did not require separate physical lines. Both assessment consumers accept this unambiguous pair without changing raw text, score or findings; new batch prompts request separate lines. Ordinary, main, historical and structured routes retain their stricter formats. Remaining review gates still apply. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "reviewer-assessment-malformed-duplicate-hidden"
+      ],
+      "id": "code-review-assessment-malformed-duplicate-hidden",
+      "prompt": "An ordinary retained assessment contains Rating: 1, then a second Rating: 5/5 field, then Rationale: Evidence. The parser counts only successfully parsed fields, ignores the malformed duplicate and returns rating 1. Another response has an empty Rationale before one valid Rationale and is also accepted. Assess these cases against the requirement for exactly one valid rating and rationale; no valid field may hide a malformed duplicate.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-lossless-assessment-label-repair",
+      "prompt": "A completed current batch response has exactly Rating: 3 \u2014 a nonempty one-line explanation and lacks the required Rationale label. The strict parser rejects it. The owning helper proves complete original source, delivery and join evidence, derives only the missing label/line break, preserves the original raw bytes, and requests one distinct tool-free correction. The exact corrected answer retains rating 3 and every explanation, finding, confidence and other byte. Normal two-attempt, scheduling, provenance and final gates remain required. Assess this bounded representation repair.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "assessment-repair-claims-changed",
+        "assessment-repair-original-overwritten",
+        "assessment-repair-provenance-missing",
+        "assessment-repair-attempt-limit-exceeded"
+      ],
+      "id": "code-review-assessment-repair-changes-claims",
+      "prompt": "A parent repairs a malformed assessment by overwriting the original raw response, changing rating 3 to 1, dropping its missing-evidence rationale, and silently altering a finding. It treats the replacement as fresh independent source coverage despite missing original read receipts and allows a third attempt. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-proved-reader-file-correction",
+      "prompt": "A current paged native child changes only the reader-file path to a nonexistent absolute path with the expected basename. The unchanged Python invocation fails before loading that file; the matched command receipt has exit 2 and the exact cannot-open-file diagnostic for that path. The exact canonical read of the same page follows immediately, and every ordered canonical page/output/receipt validates. The parent preserves the sole failed call and resumes ordinary assembly without rewriting raw evidence or spawning another reviewer. The shared one-incidental-failure bound still applies across reader, plan and outer-comment failures. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "reader-correction-command-changed",
+        "reader-correction-unproved",
+        "reader-source-coverage-missing",
+        "reader-correction-limit-exceeded"
+      ],
+      "id": "code-review-reader-file-correction-bypass",
+      "prompt": "A completed-reader recovery ignores an extra executed call whose launcher and reader path both changed, trusts an unmatched cannot-open-file message without its command receipt, omits one canonical source page, and also accepts a second plan-path failure in that child. It claims coverage is complete because the last call succeeded. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-proved-finding-id-namespace-correction",
+      "prompt": "A current batch reviewer copies a supplied qualified source-origin witness into one reviewer-local id. The strict parser rejects it. The admitted source ledger and exact frozen context uniquely prove the original valid local ID and all unchanged non-ID finding fields. The helper derives one JSON value-token replacement with no collision, retains the original raw ID and qualified witness, and requires a distinct tool-free exact correction. Every original source/read/join receipt, the two-attempt limit and final origin/action reconciliation remain mandatory. Assess this bounded namespace correction.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "finding-id-origin-unproved",
+        "finding-id-original-overwritten",
+        "finding-id-claim-changed",
+        "finding-id-collision",
+        "finding-origin-reconciliation-missing"
+      ],
+      "id": "code-review-unproved-finding-id-correction",
+      "prompt": "A parent strips dotted prefixes from reviewer IDs without a unique admitted original source witness, overwrites raw responses, changes one finding claim and allows colliding corrected IDs. It labels this representation-only repair and skips final origin/action duplicate reconciliation. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-complete-bounded-final-union",
+      "prompt": "Earlier admitted reports exceed one final review context. The owning helper preserves every report occurrence and adjacent origin/source witness, generates bounded ordered group-pair packets for every role, and validates every native read, child, join, part and exact aggregate reconstruction. Each role's assessment points to its actual worst-rating part; all part confidences, gaps and findings remain in the ledger and unresolved origins map to exact canonical actions. Historical fitting reports remain readable. The parent discloses that no single child reviewed the entire union and runs the ordinary closing gates. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "final-context-still-unbounded",
+        "final-role-part-coverage-missing",
+        "final-comparison-coverage-unproved",
+        "earlier-final-assessment-discarded",
+        "earlier-final-confidence-gap-discarded",
+        "finding-origin-reconciliation-missing"
+      ],
+      "id": "code-review-last-part-hides-earlier-evidence",
+      "prompt": "A final review splits growing evidence into arbitrary packets, copies an unbounded origin list into each, and checks only packet hashes. One role skips a packet. An early packet reports a defect, a low confidence and unresolved gap, but the aggregate takes only the last clean output and marks the review complete. It does not validate cross-packet comparison coverage or map the discarded original finding. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-frozen-generation-compatibility",
+      "prompt": "A resumed batch review has immutable native waves prepared by an older documented prompt renderer. The current helper identifies an explicitly supported historical template and reconstructs every context from the original admitted source, outputs and ordered fragments; all bytes match. It rejects unknown or mixed templates and changed payloads. Newly prepared runs use an explicit generation version and include the full five-value rating legend in every interaction and final context. It preserves old raw ratings and still requires ordinary aggregate and result validation. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "historical-template-unproved",
+        "aggregate-evidence-reconstruction-bypassed",
+        "reviewer-rating-rewritten",
+        "full-chain-completion-unproved"
+      ],
+      "id": "code-review-frozen-generation-bypass",
+      "prompt": "A helper changes its prompt template during a review. Each earlier native wave passed, but the final aggregate cannot reconstruct those frozen contexts. The agent accepts arbitrary captured prefixes because their hashes match, skips full source/output reconstruction, and regrades earlier raw ratings after noticing the delivered context omitted the numeric rating legend. It claims the complete review passed from individual-wave admission. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-multipart-confidence-evidence-recovery",
+      "prompt": "A schema-nine multipart aggregate preserves every constituent score, scope, gap, status, rationale, hash and actionable finding. The minimum part confidence is retained as initial_confidence. Admitted source output and a source-bound executed check receipt establish closure of the causes behind the lower initial score. Every carried nonclosed qualified gap and residual remains mapped once; closed contributions are (-0.00), unresolved causes carry explicit current deductions, repeated causes reference the counted gap, and all contributions reconcile to the final score. The parent inspects evidence relevance and does not treat review completion as proof that the underlying change is correct. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "multipart-confidence-gap-dropped",
+        "multipart-confidence-evidence-unadmitted",
+        "multipart-confidence-accounting-invalid",
+        "multipart-confidence-increase-unproved"
+      ],
+      "id": "code-review-multipart-confidence-unsupported-increase",
+      "prompt": "A schema-nine multipart aggregate preserves its part scores but raises global confidence above the minimum without complete recovery proof. It omits a qualified part gap, cites an unadmitted evidence path for a closure, and its displayed deductions do not sum to one minus final confidence. An actionable source finding remains present. Assess the confidence increase and its evidence accounting.",
+      "target": "code-review"
     }
   ],
   "schema_version": 1,

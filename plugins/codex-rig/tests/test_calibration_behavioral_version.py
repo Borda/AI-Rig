@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from decimal import Decimal
 import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -353,3 +355,53 @@ def test_installed_cache_reports_immutable_fixture_skip(tmp_path: Path) -> None:
     assert result["metadata"]["checks_skipped"] == [
         {"id": "behavioral-version-policy", "reason": "immutable-plugin-fixture"}
     ]
+
+
+@pytest.mark.parametrize(
+    ("current", "evidence_exists", "score", "route_gap"),
+    [
+        pytest.param(True, True, 0.95, None, id="current-route-acceptance"),
+        pytest.param(
+            False,
+            True,
+            0.9,
+            "(-0.05) accepted live-route evidence predates the current skill identity",
+            id="historical-route-evidence",
+        ),
+        pytest.param(
+            False,
+            False,
+            0.9,
+            "(-0.05) current live-route acceptance evidence is unavailable",
+            id="missing-route-evidence",
+        ),
+    ],
+)
+def test_calibration_result_accounts_for_existing_score_shortfall(
+    tmp_path: Path, current: bool, evidence_exists: bool, score: float, route_gap: str | None
+) -> None:
+    """Explain fixed scoring branches without changing scores or losing closure identity."""
+    runner = _load_runner()
+    evidence = tmp_path / "accepted-route-evidence.json"
+    if evidence_exists:
+        evidence.write_text("{}", encoding="utf-8")
+    paths = replace(runner.Paths.create("plugin", tmp_path), accepted_route_evidence=evidence)
+    run = runner.CalibrationRun(paths=paths)
+    run.accepted_route_evidence_current = current
+
+    runner.write_result(run)
+
+    result = json.loads(paths.result.read_text(encoding="utf-8"))
+    assert result["confidence"] == score
+    metadata = result["metadata"]
+    base_gap = "(-0.05) fixture-heavy calibration does not fully prove live model behavior"
+    expected_gaps = [base_gap] + ([route_gap] if route_gap is not None else [])
+    assert metadata["confidence_gaps"] == expected_gaps
+    assert [entry["gap"] for entry in metadata["confidence_gap_closures"]] == expected_gaps
+    amounts = [Decimal(re.match(r"^\(-([0-9]+\.[0-9]{2})\) ", gap)[1]) for gap in expected_gaps]
+    assert sum(amounts) == Decimal("1.00") - Decimal(str(score))
+    limits = metadata["confidence_recovery"]["remaining_limits"]
+    assert len(limits) == len(expected_gaps)
+    assert all(limit.startswith("(-0.00) ") for limit in limits)
+    assert all(f"accounted by gap: {gap}" in limit for gap, limit in zip(expected_gaps, limits, strict=True))
+    assert "not an empirically calibrated probability" in metadata["confidence_gap_closures"][0]["rationale"]

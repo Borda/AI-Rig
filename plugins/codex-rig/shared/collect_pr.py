@@ -752,8 +752,9 @@ def _fetch_exact_ref(run: RunCommand, timeout: int, remote_name: str, source_ref
 
 
 def _filesystem_path_parts(path: str, root: Path, directories: dict[Path, dict[str, Path]]) -> tuple[str, ...]:
-    """Match existing namespace spellings without conflating distinct links to one target."""
-    parts = path.split("/")
+    """Match Git path components while preserving distinct links and directory collisions."""
+    # Git collapses nested worktrees to directory records; the terminator is not a name.
+    parts = path.rstrip("/").split("/")
     parent = root
     canonical: list[str] = []
     for index, component in enumerate(parts):
@@ -790,12 +791,16 @@ def _overlapping_dirty_paths(
     if not changed_paths:
         return []
     changed_parts = [
-        _filesystem_path_parts(path, root, directories) if root is not None else tuple(path.split("/"))
+        _filesystem_path_parts(path, root, directories) if root is not None else tuple(path.rstrip("/").split("/"))
         for path in changed_paths
     ]
     overlaps = []
     for dirty in dirty_paths:
-        dirty_parts = _filesystem_path_parts(dirty, root, directories) if root is not None else tuple(dirty.split("/"))
+        dirty_parts = (
+            _filesystem_path_parts(dirty, root, directories)
+            if root is not None
+            else tuple(dirty.rstrip("/").split("/"))
+        )
         if any(
             dirty_parts[: len(changed)] == changed or changed[: len(dirty_parts)] == dirty_parts
             for changed in changed_parts

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import importlib.util
 import json
 import os
 import shlex
@@ -822,3 +824,199 @@ def test_ignored_submodule_changes_block_guarded_execution(tmp_path: Path, mutat
     assert "dependency" in check["source"]["before"]["status"]
     assert check["source"]["after"] is None
     assert "source-dirty" in (output / str(check["stderr"])).read_text(encoding="utf-8")
+
+
+def _local_gate_inputs(tmp_path: Path, variant: str) -> tuple[Path, Path, Path, list[str]]:
+    """Build a real collector mirror and its explicit import-bound gate invocation."""
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    head = _initialize_repository(repository)
+    (repository / ".gitignore").write_text("__pycache__/\n.pytest_cache/\n", encoding="utf-8")
+    _git(repository, "add", ".gitignore")
+    _git(repository, "commit", "-m", f"test caches\n\n{CODEX_TRAILER}")
+    module = repository / "localmod.py"
+    test = repository / "test_localmod.py"
+    module.write_text("value = 1\n", encoding="utf-8")
+    test.write_text(
+        "import sys\nfrom pathlib import Path\nsys.path.insert(0, str(Path(__file__).parent))\n"
+        "import localmod\ndef test_value():\n    assert localmod.value == 2\n",
+        encoding="utf-8",
+    )
+    if variant != "added":
+        _git(repository, "add", "localmod.py", "test_localmod.py")
+        if variant == "gitlink":
+            _git(repository, "update-index", "--add", "--cacheinfo", f"160000,{head},dependency")
+            (repository / "dependency").mkdir()
+        _git(repository, "commit", "-m", f"runtime files\n\n{CODEX_TRAILER}")
+    module.write_text("value = 2\n", encoding="utf-8")
+    output = tmp_path / "review"
+    collected = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/collect_diff.py"),
+            "--review-worktree",
+            "--repository",
+            str(repository),
+            "--out",
+            str(output / "local-source"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert collected.returncode == 0, collected.stderr
+    mirror = Path(json.loads((output / "local-source/review-worktree.json").read_bytes())["review_worktree"])
+    if variant == "gitlink":
+        (mirror / "dependency").mkdir(exist_ok=True)
+    args = [
+        sys.executable,
+        str(RUN_GATES),
+        "--out",
+        str(output),
+        "--worktree",
+        str(mirror),
+        "--pytest-python",
+        sys.executable,
+        "--pytest-import",
+        "localmod",
+        "--pytest-args-json",
+        json.dumps(["-q", "-p", "no:xdist", "-o", "addopts=", "test_localmod.py"]),
+    ]
+    for gate in GATE_IDS:
+        if gate != "tests":
+            args.extend((f"--skip-{gate}", "out of scope"))
+    return repository, output, mirror, args
+
+
+@pytest.mark.parametrize("variant", ["tracked", "added", "gitlink"])
+def test_local_mirror_import_bound_gate_preserves_admitted_source(tmp_path: Path, variant: str) -> None:
+    """Import exact dirty mirror bytes including added files while excluding unchanged gitlinks."""
+    repository, output, mirror, args = _local_gate_inputs(tmp_path, variant)
+    result = subprocess.run(args, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    check = _gate_check(output, "tests")
+    assert check["source"]["mode"] == "local-review-mirror"
+    assert check["source"]["before"] == check["source"]["after"]
+    proof = check["python_imports"]
+    sidecar = (output / "checks/tests.python-imports.json").read_bytes()
+    assert json.loads(sidecar) == proof
+    assert check["source"]["artifacts"]["checks/tests.python-imports.json"] == hashlib.sha256(sidecar).hexdigest()
+    assert proof["modules"]["localmod"]["tracked"] is (variant != "added")
+    assert proof["modules"]["localmod"]["snapshot_member"]["path"] == "localmod.py"
+    assert proof["tests"][(mirror / "test_localmod.py").as_posix()]["tracked"] is (variant != "added")
+    snapshot = json.loads((output / "checks/local-source-snapshot.json").read_bytes())
+    assert all(record["path"] != "dependency" for record in snapshot["files"])
+    assert bool(snapshot["gitlinks"]) is (variant == "gitlink")
+
+
+@pytest.mark.parametrize("mutation", ["during-run", "gitlink-pointer", "unreceipted-root"])
+def test_local_gate_rejects_source_binding_changes(tmp_path: Path, mutation: str) -> None:
+    """Local source execution never accepts drift, altered gitlink identity or another checkout."""
+    repository, output, mirror, args = _local_gate_inputs(
+        tmp_path, "gitlink" if mutation == "gitlink-pointer" else "added"
+    )
+    marker = tmp_path / "executed.txt"
+    command = _python_command(
+        f"from pathlib import Path; Path({str(marker)!r}).write_text('ran'); "
+        + (f"Path({str(mirror / 'localmod.py')!r}).write_text('value = 99\\n')" if mutation == "during-run" else "pass")
+    )
+    if mutation == "gitlink-pointer":
+        _git(mirror, "update-index", "--cacheinfo", f"160000,{_git(mirror, 'rev-parse', 'HEAD')},dependency")
+    elif mutation == "unreceipted-root":
+        mirror = repository
+    result = _run_lint_gate(repository, output, None, command, mirror)
+    assert result.returncode != 0
+    assert marker.exists() is (mutation == "during-run")
+    if mutation == "during-run":
+        assert _lint_check(output)["status"] == "fail"
+
+
+def test_parallel_local_added_source_proof_binds_every_worker(tmp_path: Path) -> None:
+    """Actual pytest workers retain the same admitted untracked module and test byte membership."""
+    repository, output, mirror, args = _local_gate_inputs(tmp_path, "added")
+    index = args.index("--pytest-args-json") + 1
+    args[index] = json.dumps(["-q", "-n", "2", "-p", "no:cacheprovider", "-o", "addopts=", "test_localmod.py"])
+    result = subprocess.run(args, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    proof = _gate_check(output, "tests")["python_imports"]
+    assert set(proof["workers"]) == {"gw0", "gw1"}
+    assert all(worker["local_source"] == proof["local_source"] for worker in proof["workers"].values())
+    assert proof["modules"]["localmod"]["tracked"] is False
+    assert all(record["tracked"] is False for record in proof["tests"].values())
+
+
+@pytest.mark.parametrize("mutation", ["changed", "deleted"])
+def test_local_gate_rejects_child_sidecar_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str) -> None:
+    """Reject child proof changes during real post-run source capture instead of hashing mixed evidence."""
+    repository, output, mirror, args = _local_gate_inputs(tmp_path, "added")
+    monkeypatch.syspath_prepend(str(PLUGIN_ROOT / "shared"))
+    spec = importlib.util.spec_from_file_location("sidecar_gate_runner", RUN_GATES)
+    gates = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = gates
+    spec.loader.exec_module(gates)
+    (output / "checks").mkdir()
+    snapshot = gates.validate_local_gate_source(output, mirror)
+    content = gates._local_snapshot_bytes(snapshot)
+    (output / "checks/local-source-snapshot.json").write_bytes(content)
+    local_source = {
+        "mode": "local-review-mirror",
+        "worktree": mirror.as_posix(),
+        "receipt_path": "local-source/review-worktree.json",
+        "receipt_sha256": hashlib.sha256((output / "local-source/review-worktree.json").read_bytes()).hexdigest(),
+        "snapshot_path": "checks/local-source-snapshot.json",
+        "snapshot_sha256": hashlib.sha256(content).hexdigest(),
+    }
+    sidecar = output / "checks/tests.python-imports.json"
+    read_bytes = Path.read_bytes
+    observations = 0
+
+    def read_and_change_proof(path: Path) -> bytes:
+        """Read actual bytes, then synchronize an exact-path sidecar mutation after initial consumption."""
+        nonlocal observations
+        content = read_bytes(path)
+        if path == sidecar:
+            observations += 1
+            if observations == 1:
+                assert json.loads(content)["status"] == "pass"
+                if mutation == "deleted":
+                    path.unlink()
+                else:
+                    path.write_bytes(content + b" ")
+        return content
+
+    read_text = Path.read_text
+
+    def read_text_and_change_proof(path: Path, *arguments, **keywords) -> str:
+        """Apply the same exact-path timing control to the historical text reader."""
+        nonlocal observations
+        content = read_text(path, *arguments, **keywords)
+        if path == sidecar:
+            observations += 1
+            assert json.loads(content)["status"] == "pass"
+            if mutation == "deleted":
+                path.unlink()
+            else:
+                path.write_bytes(content.encode("utf-8") + b" ")
+        return content
+
+    monkeypatch.setattr(Path, "read_text", read_text_and_change_proof)
+    monkeypatch.setattr(Path, "read_bytes", read_and_change_proof)
+    result = gates.run_check(
+        "tests",
+        "",
+        "",
+        60,
+        output,
+        None,
+        mirror,
+        gates.PythonTestSpec(
+            Path(sys.executable), ("localmod",), ("-q", "-p", "no:xdist", "-o", "addopts=", "test_localmod.py")
+        ),
+        {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        local_source,
+    )
+    assert result["python_imports"]["status"] == "pass"
+    assert result["source"]["before"] == result["source"]["after"]
+    assert result["status"] == "fail"
+    assert observations == (1 if mutation == "deleted" else 2)
+    assert "local-gate-proof-artifact-changed" in (output / "checks/tests.stderr.txt").read_text()

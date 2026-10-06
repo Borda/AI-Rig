@@ -1,9 +1,54 @@
 # Changelog
 
+## 0.33.0
+
+- Split review execution validation and preparation tests into focused modules below the repository file-size limit, preserving validation behavior and existing helper imports.
+
+- Route narrow implementation and management work directly; guide broader implementation through independent plan challenges, bounded native delegation, and verification against the accepted plan while keeping portable parallel-read and management-mutation boundaries distinct.
+
+- Bind source-dependent local `working-tree` and `path` review gates to the existing verified collector mirror receipt and a fresh runtime snapshot, including admitted added files; keep clean PR and release source checks strict and historical gate logs unpromoted.
+
+- Show each Codex confidence gap/limit contribution, reconcile deductions with the score, disclose zero-impact limits and unexplained residuals, and preserve historical artifact formats. Carry the rule in every standalone role card and enforce it during calibration. Generated calibration reports account for every existing score branch, including absent live-route evidence, without raising scores.
+
+- Align generated native review calls with hosts that omit the agent selector, while preserving strict model, context, lineage and historical default checks. Validate opaque capacity refusals through exact controls, no-child evidence and joined capacity release rather than plaintext message equality.
+
+- Recover a proved duplicated-interpreter page-read error with one complete independent replacement; bind opaque host delivery, retain original evidence and reject incomplete coverage. Current paged reads tolerate one proved missing-plan copy failure followed immediately by the exact same-page read; unchanged commands may omit the optional outer output-budget comment.
+
+- Admit a single malformed outer JSON comment only with proved host rejection before execution, unchanged reader code, immediate canonical same-page correction and complete source receipts. Share the existing single-failure bound; retain raw evidence and reject altered or incomplete execution.
+
+- Recognize a proved missing reader-file launch within that same bounded completed-read recovery. Require exact remaining arguments, matching exit-2 diagnostic, immediate canonical retry and complete source evidence; reject mixed or repeated failures.
+
+- Align partial missing-reader recovery with native receipts that place the exact diagnostic wholly on stdout or stderr. Preserve strict command/error matching and require a complete independent replacement; reject mixed or extra output.
+
+- Align both batched assessment consumers with unambiguous inline rating/rationale output while making future prompts explicit about separate lines. Reject malformed duplicate fields in all text assessments; preserve raw responses, scores and strict non-batch formats.
+
+- Restore ordinary/main text assessment composition around one blank-line-bounded separate Rating/Rationale pair, preserving surrounding content while rejecting duplicate, malformed, fenced or ambiguous declarations.
+
+- Extend bounded native representation recovery to an explicit rating and em-dash explanation missing the required rationale label. Preserve the original response and complete source evidence; require one exact tool-free correction without changing claims or relaxing ordinary validation.
+
+- Specify reviewer-local finding IDs separately from qualified origin witnesses. Permit one proven namespace correction through the existing bounded native replacement, retaining original raw evidence, exact finding content and strict identity validation.
+
+- Bound final review consolidation across serial native parts, retaining every report, origin witness and cross-group comparison. Validate the complete schedule and preserve all parts' findings, confidence gaps and adverse ratings; keep historical fitting aggregates readable.
+
+- Allow schema-nine confidence above the immutable per-part minimum only through complete accounting of carried nonclosed gaps and residuals, admitted closure/reduction evidence, current unresolved deductions and score reconciliation. Preserve every constituent judgment, gap and actionable finding; validation checks references and accounting while the parent judges semantic closure.
+
+- Version new batch generation and restore the full rating scale in interaction and final prompts. Reconstruct historical runs with source-proven templates, retaining frozen evidence and rejecting unknown templates or altered payloads.
+
+- Give unissued interaction and fitting-final work in historical schema-one runs the complete current rating legend and confidence instructions, then recognize that exact prefix during reconstruction while preserving the proved issued templates.
+
+- Freeze new bounded batch reviews as source-only before dispatch: each role owns one source responsibility, with ordered capacity parts when necessary and no new interaction or consolidation review waves. Preserve strict historical interaction/consolidation routes, immutable source origins, ordinary remediation evidence lookup, and each part's raw assessment and minimum confidence.
+
+- Use private `paged-context-v8` store/load frames for unissued native page reads; prompts remain marker-free, while schema-eight native-wave batch admission accepts an absent or one exact derived leading marker view for the current reader and paged v7/v8, preserving raw output and strict standalone/repair parsers. Preserve issued v6/v7 recipes. Admit only one source-proved literal duplicate `--plan` in a complete known historical v7 execution; do not generalize argument equivalence or alter retained evidence.
+
+- Normalize Git directory terminators during checkout collision checks, preserving ignored worktrees and real ancestor collisions.
+
+- Keep accepted report discussion before source-mutation prerequisites and correct the review action-table divider recipe and diagnostic.
+
+- Require cited evidence and representative real cases alongside TDD; preserve user-authorized behavior and reserve mocks for later polishing.
+
 ## 0.32.7
 
 - Resolve missing runtime access through owning-helper approval before terminal review reporting; distinguish network failure from actual denial and preserve safe diagnostics when public fallback fails identically.
-
 - Preserve unrelated TOML tables inserted before the managed permission profile closing comment during setup, migration, and removal; continue rejecting changed or extended permission grants.
 
 ## 0.32.6

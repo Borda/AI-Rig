@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -44,9 +45,26 @@ def test_generated_pages_execute_from_unrelated_cwd_with_exact_context(tmp_path:
         f"<!-- codex-review-provenance role={role} run={plan['review_run_id']} "
         f"input={plan['review_input_sha256']} context={entry['context_sha256']} attempt=1 -->"
     ).encode("utf-8")
+    first_call = preparation._CONTEXT_READ_CALL(run / "inspection-plan.json", role, 1, sys.executable)
+    first_arguments = json.loads(first_call.split("tools.exec_command(", 1)[1].split("); text", 1)[0])
+    key = "review-context-" + hashlib.sha256((first_call + "\0" + entry["context_sha256"]).encode()).hexdigest()
+    pragma = '// @exec: {"max_output_tokens": 10000}\n'
     delivered = []
     for page, source in enumerate(sources, 1):
-        arguments = json.loads(source.split("tools.exec_command(", 1)[1].split("); text", 1)[0])
+        # Compact dispatch stores one immutable command; subsequent frames select only their page.
+        if page == 1:
+            assert source == (
+                pragma
+                + f'const args = {json.dumps(first_arguments, ensure_ascii=False)}; store("{key}", args); '
+                + "const r = await tools.exec_command(args); text(r.output);"
+            )
+        else:
+            assert source == (
+                pragma
+                + f'const args = load("{key}"); const r = await tools.exec_command('
+                + f'{{...args, cmd: args.cmd + " --page {page}"}}); text(r.output);'
+            )
+        arguments = {**first_arguments, "cmd": first_arguments["cmd"] + (f" --page {page}" if page != 1 else "")}
         assert "workdir" not in arguments, f"page {page} still transmits a redundant working-directory coordinate"
         # CreateProcess consumes native list2cmdline syntax; POSIX uses the generated shlex quoting.
         command = arguments["cmd"] if os.name == "nt" else shlex.split(arguments["cmd"])

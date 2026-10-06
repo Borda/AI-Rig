@@ -7,6 +7,8 @@ description: Dry-run active plugin cache drift; refresh/reinstall only with appr
 
 # Sync
 
+> Task-size routing follows [Proportional Execution](../../shared/native-skill-contract.md#proportional-execution); this skill's specialized lifecycle and acceptance checks remain authoritative.
+
 Inspect and refresh the public-GitHub Codex Rig plugin through supported Codex CLI operations. Never copy files into an installed cache, edit Codex configuration by hand, or treat cached package directories as mutable source trees.
 
 Sync never mutates external agent files. Direct plugin installation does not install Codex-home permissions; explicit setup or sync invokes the installed-package GitHub profile helper preserving explicit default permissions and supplying `local-workflow` when no default exists. This checkout separately defines a project-local opt-in profile. Never edit Codex home by hand in place of this managed lifecycle. Before plugin removal, run `agent-shims remove` while manager is still available. After refresh or reinstall, run `agent-shims doctor` to report prior shim residue; new installation and relinking remain platform-blocked. Report unknown or modified `codex-rig-*.toml` files without removing, adopting, or repairing them.

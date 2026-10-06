@@ -31,19 +31,33 @@ When independent review findings are fixed in a cycle, read `../../shared/advers
 
 ## Lightweight Local Work
 
+> Read and apply [Proportional Execution](../../shared/native-skill-contract.md#proportional-execution) before choosing the direct or detailed path.
+
 Use a parent-only path for a small, understood, reversible local change with bounded impact and existing task authorization. A code fix plus its regression test remains one change. Routing examples are optional; tests and documentation for one change do not create separate domains.
 
 1. Inspect the affected flow and applicable instructions; define the requested outcome. Investigate an unknown cause before editing.
 2. Make the smallest authorized change. Run the relevant acceptance check and configured lint/format checks; inspect the diff.
 3. Report the outcome, verification, and material limits concisely. Do not create execution plans, specialist packs, confidence worksheets, five-entry gate bundles, or final-handoff/result artifacts solely for this path. Reuse still-valid checks for unchanged source and environment.
 
-This path takes precedence over the detailed workflow and role examples below. Select the detailed workflow for broad or risky changes, an explicitly requested structured report/review, or work requiring independent specialist coverage. Actual runtime permissions, protected-state decisions, and project-required checks still apply. Missing parallel controls select parent-serial work; they do not require another permission request for already-authorized local edits.
+This path takes precedence over the detailed workflow and role examples below. Select the detailed workflow for medium/large or unexpectedly nontrivial work under Proportional Execution, an explicitly requested structured report/review, or work requiring independent specialist coverage. Actual runtime permissions, protected-state decisions, and project-required checks still apply. Missing portable parallel controls select parent-serial work for that route; they do not prohibit an authorized native bounded delegation route or require another permission request for already-authorized local edits.
+
+## Execution Route Selection
+
+Before preparing or dispatching any child, resolve invocation `--execution=<mode>` → `CODEX_RIG_EXECUTION` → `auto` and apply the loaded Proportional Execution selector. Honor `serial`; `parallel-read` chooses only the strict portable section; reject unsupported `parallel-write`. Absent, explicit, or environment `auto` chooses suitable observed native bounded work or parent-serial work, never the portable route. Native writes require the accepted plan and disjoint task-authorized ownership.
+
+Record the choice and reason in the existing plan or concise outcome. Use portable helpers and digest receipts only after selecting `parallel-read`; native work does not inherit their helper-level `auto` resolver.
+
+## Native Bounded Delegation
+
+After the accepted plan stages in Proportional Execution, native collaboration may assign task-authorized implementation, test, or documentation edits to disjoint owners. Apply `../../shared/specialist-orchestration.md`; give each owner its file set, behavior, acceptance checks, dependencies, and stop condition. Reuse the accepted parent plan rather than requiring recursive child planning. Inspect actual deltas and terminal handoffs, then integrate and verify serially. Shared files, coupled dependencies, protected decisions, canonical gates, and final acceptance stay parent-owned. Instruction bounds do not establish filesystem isolation or portable promotion.
+
+This route uses existing task authorization and observed tool capabilities, separately from the explicit portable modes below. Never relabel native work as portable parallel-read or generic `parallel-write`, or use it to bypass selected portable gates.
 
 ## Parallel Adoption (Portable read-only)
 
 <!-- policy-sibling: skills/manage/SKILL.md (Parallel Adoption section) — near-duplicate; also see skills/code-review/SKILL.md Workflow parallel-review section as a third divergent variant; check siblings before editing this section alone -->
 
-This skill permits only its promoted portable read-only route. Resolve execution precedence from per-invocation `--execution=<mode>`, then `CODEX_RIG_EXECUTION`, then the `auto` default. The default execution mode is `auto`. `auto` selects this route only after this consumer's runtime matrix and promotion; otherwise it resolves safely to `serial`. Serial parent work uses existing task authorization; exact-plan-digest approval applies when the promoted parallel-read route is selected. This route never bypasses consumer promotion, serial parent authority, or applicable write approval. Supplied denials or stale approvals remain invalid in every execution mode.
+This portable section permits only its promoted portable read-only route; its restrictions do not govern the separate Native Bounded Delegation route. Execution Route Selection must resolve to `parallel-read` before this section applies; `auto` does not select it. This consumer's runtime matrix and promotion remain mandatory. Serial parent work uses existing task authorization; exact-plan-digest approval applies when the promoted parallel-read route is selected. This route never bypasses consumer promotion, serial parent authority, or applicable write approval. Supplied denials or stale approvals remain invalid in every execution mode.
 
 Follow the [canonical G0–G8 execution flow](../../ARCHITECTURE.md#canonical-g0g8-execution-flow) for shared gate order and fork outcomes. This consumer's read-only evidence passes are bounded by G0–G5; parent owns deterministic G6 integration, G7 verification, and G8 verdict/promotion.
 
@@ -53,7 +67,7 @@ The promoted route permits read-only evidence, acceptance, and documentation-imp
 
 ### Required barrier
 
-Apply shared [host compatibility check](../../shared/specialist-orchestration.md#host-compatibility-before-dispatch) before preparing any child work. Include `read_host` only from verified launcher-supported child controls. Missing or incompatible controls make `auto` resolve serial with reason; explicit parallel-read stops before dispatch. A plan declaration is not effective-control proof, and post-run validation remains mandatory.
+Apply shared [host compatibility check](../../shared/specialist-orchestration.md#host-compatibility-before-dispatch) before preparing any child work. Include `read_host` only from verified launcher-supported child controls. Missing or incompatible controls stop the selected parallel-read route before dispatch. A plan declaration is not effective-control proof, and post-run validation remains mandatory.
 
 Before any dispatch, freeze goal, mode, `done_when`, baseline, ownership DAG, context packs, role-card hashes, checks, resource locks, and plan digest. Dispatch at most one fixed dependency-ready wave, then join every terminal handoff before implementation, integration, gates, or acceptance; changed scope requires new plan.
 
@@ -61,13 +75,13 @@ The frozen `<run-directory>/execution-plan.json` must include exact `consumer_po
 
 Bootstrap exception: run-directory creation (Step 01), baseline diff/branch persistence (Step 02), and the `write-approval.json` write itself are exempt from requiring a prior approved plan digest — these precursor writes must exist before a plan digest can be computed or approved.
 
-Before dispatch, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer implement --plan <run-directory>/execution-plan.json --approval <run-directory>/write-approval.json`; append `--execution=<mode>` only for explicit invocation value. Omit `--approval` when no parent writes are planned or effective execution is serial and no approval was supplied. Resolve host fallback before deciding whether the parallel route needs a receipt. A nonzero result stops route.
+Before dispatch, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer implement --plan <run-directory>/execution-plan.json --approval <run-directory>/write-approval.json`; pass `--execution=parallel-read` for the selected portable route, including an environment-selected value. Omit `--approval` when no parent writes are planned or effective execution is serial and no approval was supplied. Resolve host fallback before deciding whether the parallel route needs a receipt. A nonzero result stops route.
 
 After every spawned child reaches a terminal handoff, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py validate-runtime --consumer implement --manifest <run-directory>/execution-manifest.json --plan <run-directory>/execution-plan.json --parent-rollout <authoritative-parent-rollout> --sessions-dir <authoritative-sessions-directory> --run-dir <run-directory> --roles-dir PLUGIN_ROOT/roles`. Require `runtime_promotion_eligible=true`, `consumer_id=implement`, and `write_parallel_eligible=false`. Run the same preflight again after the terminal join and before the first parent mutation. Any plan, approval, consumer, runtime, or join drift stops mutation and requires a new frozen plan plus exact approval.
 
 ### Serial parent decisions
 
-Parent owns all implementation, test, and documentation writes; shared files and dependency chains; integration and conflict handling; calibration, artifacts, and result writes; canonical quality gates; verdict; and promotion. Never expand wave dynamically or dispatch dependent work early.
+On this portable route, parent owns all implementation, test, and documentation writes; shared files and dependency chains; integration and conflict handling; calibration, artifacts, and result writes; canonical quality gates; verdict; and promotion. Never expand wave dynamically or dispatch dependent work early.
 
 ### Resource conflicts
 
@@ -79,17 +93,17 @@ Unavailable or unsafe fan-out uses equal-gate `serial-fallback` from the same fr
 
 ### Acceptance
 
-This skill's shared runtime matrix and consumer promotion must remain complete before `auto` selects this route. Acceptance must prove freeze, complete join, truthful execution label, resource compatibility, equal gates, and unchanged serial parent authority.
+This skill's shared runtime matrix and consumer promotion must remain complete before the selected `parallel-read` route starts. Acceptance must prove freeze, complete join, truthful execution label, resource compatibility, equal gates, and unchanged serial parent authority.
 
 ### Stop rule
 
-Generic parallel writes remain disabled. Stop without dispatch on missing promotion, mutable packs, ownership or resource overlap, sensitive or unproven controls, missing terminal evidence, or incomplete join; implementation, test, documentation, and all other mutations remain parent-serial.
+Generic portable parallel writes remain disabled. Stop without dispatch on missing promotion, mutable packs, ownership or resource overlap, sensitive or unproven controls, missing terminal evidence, or incomplete join; implementation, test, documentation, and all other mutations remain parent-serial.
 
 ## Workflow (Exact Commands)
 
 ### 01: Create run directory
 
-Run `create_run.py --skill implement` per `../../shared/helper-cli-contract.md`. For parallel-adoption execution-mode selection (`auto`/`serial`/`parallel-read`/`parallel-write`), see the Parallel Adoption section above before proceeding.
+Run `create_run.py --skill implement` per `../../shared/helper-cli-contract.md`. Apply Execution Route Selection before any child preparation. Native or parent-serial work follows its selected route; only selected `parallel-read` work enters Parallel Adoption and its helper/receipt lifecycle.
 
 ### 02: Record baseline diff and branch
 
@@ -107,7 +121,7 @@ Modes:
 - `config`: inventory references and calibration/routing impact before editing.
 - `spike`: read-only or disposable probe; do not present as completed implementation.
 
-Define narrowest reversible change, owners, acceptance. For 3+ steps/design tradeoffs, update plan before edit.
+Define narrowest reversible change, owners, acceptance. Apply Proportional Execution: finish both independent plan challenges before Step 05 for medium/large or promoted work; reuse accepted parent-scoped plans for bounded child tasks.
 
 **Structural context (optional)**: select one task-neutral route at decision point, then invoke adapter once: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category implementation --query-kind <kind> [--target <qname>] --out <run-directory>/codemap-context.json`. Use `skip` for exact localized edit with no unresolved structural fact, matching single route (`central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling`) for one unresolved fact, and `standard` for broad or unknown scope. Map direct, all, or production caller questions to `callers`; use `blast` only for explicitly transitive caller questions. An explicit user or tool request for structural evidence overrides `skip`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with routing above. Persist result once here, before step 05 implementation; step 06 specialist fan-out consumes `<run-directory>/codemap-context.json`, never fresh query.
 
@@ -143,7 +157,7 @@ Failing-first and acceptance pytest runs in this loop follow [Sandboxed Test Run
 
 ### 06: Orchestrate specialists when the change crosses a domain boundary
 
-Read and apply `../../shared/specialist-orchestration.md` only when task crosses domains, benefits from independent verification, or splits into parallel context packs; do not load it for narrow one-domain implementation in one to three files.
+Read and apply `../../shared/specialist-orchestration.md` only when task crosses domains, benefits from independent verification, or splits into parallel context packs; do not load it solely for a narrow, understood one-domain change. File count alone does not determine routing. Native bounded owners are assigned after accepted plan details and before Step 05; this step retains any required subsequent specialist review.
 
 Before spawning or substituting specialists, write `<run-directory>/specialist-plan.md` with one row per planned pass:
 

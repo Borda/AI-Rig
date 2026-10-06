@@ -7,6 +7,8 @@ description: Calibrate skills/role cards for leaks/gaps with recall, precision, 
 
 # Calibrate
 
+> Task-size routing follows [Proportional Execution](../../shared/native-skill-contract.md#proportional-execution); this skill's specialized lifecycle and acceptance checks remain authoritative.
+
 Run calibration for Codex workflow integrity and behavioral scoring.
 
 ## Input Schema
