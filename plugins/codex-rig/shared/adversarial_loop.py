@@ -68,24 +68,39 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
+#: Current schema revision of the loop ledger header; a ledger with any other version is rejected.
 SCHEMA_VERSION = 2
 #: Historical single-file schema with every round inline; readable archives, never a current result.
 HISTORICAL_SCHEMA_VERSION = 1
+#: Allowed values for a finding's disposition field.
 _DISPOSITIONS = {"open", "fixed-pending-verification", "verified-fixed", "rejected"}
+#: Severity tiers a finding may carry, mapped to the weight each adds to a round's weighted score.
 _TIERS = {"security": 20, "critical": 10, "high": 6, "medium": 4, "low": 2, "nit": 1}
+#: Dispositions that still count as open findings and contribute to the weighted score.
 _OPEN_DISPOSITIONS = {"open", "fixed-pending-verification"}
+#: Pattern for a lowercase 64-character hex SHA-256 digest, used to validate snapshot diff digests.
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+#: Exact set of keys permitted at the top level of a loop ledger.
 _ROOT_KEYS = {"schema_version", "implementation_author", "current_snapshot", "rounds"}
+#: Exact set of keys permitted in each review round record.
 _ROUND_KEYS = {"index", "reviewer", "snapshot", "report_path", "findings"}
+#: Exact set of keys permitted in a round's reviewer record.
 _REVIEWER_KEYS = {"identity", "independent"}
+#: Exact set of keys permitted in a snapshot record (revision plus diff digest).
 _SNAPSHOT_KEYS = {"revision", "diff_digest"}
+#: Exact set of keys permitted in each finding record.
 _FINDING_KEYS = {"signature", "tier", "structural", "disposition", "evidence"}
+#: Exact set of keys permitted at the top level of a round-actions record.
 _ACTION_ROOT_KEYS = {"schema_version", "rounds"}
+#: Exact set of keys permitted in each per-round entry of the actions record.
 _ACTION_ROUND_KEYS = {"index", "actions"}
+#: Exact set of keys permitted in a single action taken on a finding.
 _ACTION_KEYS = {"signature", "decision", "evidence", "owner", "next_action", "root_cause"}
+#: Keys every root-cause analysis attached to a fix action must provide.
 _ROOT_CAUSE_KEYS = {"claim", "evidence", "falsification", "rejected_alternative"}
+#: Allowed decisions for an action on a finding: fix it, escalate it, or defer it.
 _ACTION_DECISIONS = {"fix", "escalate", "defer"}
+#: Evidence prefixes a fix action must cover, each naming one kind of proof such as an invariant or a sibling.
 _FIX_EVIDENCE_PREFIXES = ("invariant:", "original:", "consumer:", "sibling:", "source-paths:")
 
 
@@ -316,11 +331,13 @@ def validate_ledger(payload: object) -> list[str]:
     if not errors:
         summary = _summary_from_valid(root)
         reviewed_rounds = summary["rounds"]
-        assert isinstance(reviewed_rounds, list)
+        if not isinstance(reviewed_rounds, list):
+            raise TypeError(f"reviewed_rounds must be list, got {type(reviewed_rounds).__name__}")
         terminal_round = len(reviewed_rounds)
         if summary["reason"] == "independence-unavailable":
             author = root["implementation_author"]
-            assert isinstance(author, str)
+            if not isinstance(author, str):
+                raise TypeError(f"author must be str, got {type(author).__name__}")
             terminal_round = next(
                 (
                     index
@@ -354,16 +371,19 @@ def _score(round_record: dict[str, Any]) -> int:
 def _summary_from_valid(payload: dict[str, Any]) -> dict[str, object]:
     """Infer a status from a structurally valid ledger without rerunning validation."""
     rounds = payload["rounds"]
-    assert isinstance(rounds, list)
+    if not isinstance(rounds, list):
+        raise TypeError(f"rounds must be list, got {type(rounds).__name__}")
     if not rounds:
         return {"status": "stopped", "reason": "independence-unavailable", "scores": [], "rounds": []}
 
     author = payload["implementation_author"]
-    assert isinstance(author, str)
+    if not isinstance(author, str):
+        raise TypeError(f"author must be str, got {type(author).__name__}")
     scores: list[int] = []
     round_summaries: list[dict[str, object]] = []
     for position, round_record in enumerate(rounds, start=1):
-        assert isinstance(round_record, dict)
+        if not isinstance(round_record, dict):
+            raise TypeError(f"round_record must be dict, got {type(round_record).__name__}")
         if not _is_independent_round(round_record, author):
             return {
                 "status": "stopped",
@@ -372,7 +392,8 @@ def _summary_from_valid(payload: dict[str, Any]) -> dict[str, object]:
                 "rounds": round_summaries,
             }
         findings = round_record["findings"]
-        assert isinstance(findings, list)
+        if not isinstance(findings, list):
+            raise TypeError(f"findings must be list, got {type(findings).__name__}")
         counts = {tier: 0 for tier in _TIERS}
         for finding in findings:
             if finding["disposition"] in _OPEN_DISPOSITIONS:
@@ -403,7 +424,8 @@ def summarize_ledger(payload: object) -> dict[str, object]:
     errors = validate_ledger(payload)
     if errors:
         raise ValueError(";".join(errors))
-    assert isinstance(payload, dict)
+    if not isinstance(payload, dict):
+        raise TypeError(f"payload must be dict, got {type(payload).__name__}")
     return _summary_from_valid(payload)
 
 
@@ -412,7 +434,8 @@ def validate_actions(ledger: object, payload: object) -> list[str]:
     errors = validate_ledger(ledger)
     if errors:
         return errors
-    assert isinstance(ledger, dict)
+    if not isinstance(ledger, dict):
+        raise TypeError(f"ledger must be dict, got {type(ledger).__name__}")
     root = _exact_keys(payload, _ACTION_ROOT_KEYS, "actions", errors)
     if root is None:
         return errors

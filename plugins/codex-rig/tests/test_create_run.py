@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 CREATE_RUN = PLUGIN_ROOT / "shared" / "create_run.py"
 
@@ -36,7 +35,8 @@ def _new_review_run(root: Path, number: object = 17) -> Path:
 def _load_create_run() -> ModuleType:
     """Load the helper for a collision injected at the filesystem boundary."""
     spec = importlib.util.spec_from_file_location("create_run_under_test", CREATE_RUN)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

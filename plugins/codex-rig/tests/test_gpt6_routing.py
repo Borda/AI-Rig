@@ -1,15 +1,14 @@
 """Verify the agreed GPT-6 model and effort assignments in active source routing."""
 
-import json
 import importlib.util
-from pathlib import Path
+import json
 import re
 import sys
+from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
 import pytest
-
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 ROLES = REPOSITORY_ROOT / "plugins" / "codex-rig" / "roles"
@@ -81,7 +80,8 @@ def live_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Path
     calibration = REPOSITORY_ROOT / "plugins" / "codex-rig" / "runtime" / "calibration"
     monkeypatch.syspath_prepend(str(calibration))
     spec = importlib.util.spec_from_file_location("gpt6_live_runner", calibration / "run_live_ab.py")
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     runner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runner)
 

@@ -37,9 +37,11 @@ import shutil
 import sys
 from pathlib import Path
 
-
+#: Plugin directory that is copied into the distributable package, derived from this script's location.
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+#: Directory names left out of the package copy at any depth: scratch output, caches and tests.
 EXCLUDED_DIRECTORIES = frozenset({".plans", ".reports", ".temp", ".pytest_cache", "__pycache__", "tests"})
+#: File names left out of the package copy: coverage data and macOS metadata.
 EXCLUDED_FILES = frozenset({".coverage", ".DS_Store"})
 
 

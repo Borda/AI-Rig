@@ -31,7 +31,9 @@ import sys
 from pathlib import Path
 from shutil import which
 
+#: Captures the name of a Python ``class`` or ``def`` declared on a diff line.
 _SYMBOL_RE: re.Pattern[str] = re.compile(r"(?:class|def)\s+([A-Za-z_][A-Za-z0-9_]*)")
+#: Upper bound on ``__init__.py`` paths collected, guarding against pathological monorepos.
 _MAX_INIT_FILES = 50
 
 

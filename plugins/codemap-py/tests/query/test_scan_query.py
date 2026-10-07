@@ -14,12 +14,13 @@ Fixture layout:
 
 from __future__ import annotations
 
+import argparse
 import ast
 import json
 import os
 import subprocess
-import uuid
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,19 @@ def _load_scan_index():
     import codemap_py.scanner as mod
 
     return mod
+
+
+def _write_files(root: Path, files: dict[str, str]) -> None:
+    """Write each ``{relative name: content}`` pair under *root*.
+
+    >>> import tempfile
+    >>> with tempfile.TemporaryDirectory() as tmp:
+    ...     _write_files(Path(tmp), {"a.py": "x = 1\\n"})
+    ...     (Path(tmp) / "a.py").read_text()
+    'x = 1\\n'
+    """
+    for name, content in files.items():
+        (root / name).write_text(content)
 
 
 _scan_index_mod = _load_scan_index()
@@ -488,17 +502,23 @@ class TestSymbolQueries:
 class TestSymbolStaleAndImports:
     """Per-symbol stale field and optional ``--with-imports`` block."""
 
-    def test_symbol_stale_false_on_fresh_index(self, query):
-        """Symbol from a fresh index reports stale=False."""
-        data = query("symbol", "func_gamma")
-        assert data["symbols"], "expected at least one symbol match"
-        assert data["symbols"][0]["stale"] is False
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            pytest.param("stale", False, id="stale-false"),
+            pytest.param("stale_reason", None, id="stale-reason-is-json-null"),
+            pytest.param("imports", None, id="imports-null-without-with-imports-flag"),
+        ],
+    )
+    def test_symbol_fresh_index_field_defaults(self, query, field, expected):
+        """A symbol from a fresh index reports stale=False, a JSON-null stale_reason, and null imports by default.
 
-    def test_symbol_stale_reason_none_on_fresh(self, query):
-        """stale_reason is the JSON null (Python None), not the string 'None'."""
+        ``stale_reason`` is the JSON null (Python None), not the string 'None'; without ``--with-imports`` the imports
+        field is likewise JSON null.
+        """
         data = query("symbol", "func_gamma")
         assert data["symbols"], "expected at least one symbol match"
-        assert data["symbols"][0]["stale_reason"] is None
+        assert data["symbols"][0][field] is expected
 
     def test_symbol_with_imports_flag(self, query):
         """Verify command-line option behavior.
@@ -511,12 +531,6 @@ class TestSymbolStaleAndImports:
         assert imports is not None, "imports field should be populated when --with-imports is set"
         assert "import" in imports, f"expected an import statement in imports block, got: {imports!r}"
 
-    def test_symbol_no_imports_flag_default(self, query):
-        """Without ``--with-imports``, imports field is JSON null."""
-        data = query("symbol", "func_gamma")
-        assert data["symbols"], "expected at least one symbol match"
-        assert data["symbols"][0]["imports"] is None
-
     def test_symbol_imports_empty_for_no_import_module(self, query):
         """Verify command-line option behavior.
 
@@ -528,7 +542,7 @@ class TestSymbolStaleAndImports:
         assert imports in ("", None), f"expected empty import block for gamma, got: {imports!r}"
 
     def test_symbol_stale_file_deleted(self, tmp_path, scan_index, scan_query):
-        """Deleting source file after indexing produces stale=True, reason='file deleted'."""
+        """Deleting source file after indexing produces stale=True, reason='file deleted', category 'symbol_deleted'."""
         import json
         import subprocess
 
@@ -554,6 +568,7 @@ class TestSymbolStaleAndImports:
         sym = data["symbols"][0]
         assert sym["stale"] is True
         assert sym["stale_reason"] == "file deleted"
+        assert sym["stale_category"] == "symbol_deleted"  # the symbol is gone, not merely moved
 
     def test_symbol_stale_line_range_past_eof(self, tmp_path, scan_index, scan_query):
         """Truncating file below indexed end_line produces stale=True, reason='line range past EOF'."""
@@ -584,46 +599,38 @@ class TestSymbolStaleAndImports:
         assert sym["stale"] is True
         assert sym["stale_reason"] == "line range past EOF"
 
-    def test_symbol_stale_prefix_name_at_indexed_location(self, tmp_path, scan_index, scan_query):
-        """Renaming function to prefix-extended name at same lines → stale=True (not false-negative)."""
-        import json
-        import subprocess
-
-        root = tmp_path / "prefix"
-        root.mkdir()
-        (root / "helpers.py").write_text("def helper(x):\n    return x\n")
-        subprocess.run(
-            [sys.executable, str(scan_index), "--root", str(root)],
-            capture_output=True,
-            cwd=str(root),
-            check=True,
-        )
-        index_path = root / ".cache" / "codemap" / f"{root.name}.json"
-        (root / "helpers.py").write_text("def helper_v2(x):\n    return x\n")
-        result = subprocess.run(
-            [sys.executable, str(scan_query), "--index", str(index_path), "symbol", "helper"],
-            capture_output=True,
-            text=True,
-            cwd=str(root),
-        )
-        assert result.returncode == 0
-        data = json.loads(result.stdout)
-        assert data["symbols"]
-        sym = data["symbols"][0]
-        assert sym["stale"] is True, "helper_v2 at helper's lines must be detected stale"
-
-    def test_with_imports_one_line_docstring(self, tmp_path, scan_index, scan_query):
+    @pytest.mark.parametrize(
+        ("project_dir", "module_file", "content", "symbol", "expected_fragments"),
+        [
+            pytest.param(
+                "docstring",
+                "ds.py",
+                '"""Module docs."""\nimport os\nfrom pathlib import Path\n\ndef dsfunc(x):\n    return x\n',
+                "dsfunc",
+                ("import os", "pathlib"),
+                id="one-line-module-docstring",
+            ),
+            pytest.param(
+                "multiline",
+                "ml.py",
+                "from typing import (\n    Any,\n    Optional,\n)\n\ndef mlfunc(x: Any) -> Optional[int]:\n    return x\n",
+                "mlfunc",
+                ("Any", "Optional"),
+                id="multiline-parenthesized-import",
+            ),
+        ],
+    )
+    def test_with_imports_extracts_import_block(
+        self, tmp_path, scan_index, scan_query, project_dir, module_file, content, symbol, expected_fragments
+    ):
         """Verify command-line option behavior.
 
-        --with-imports extracts imports even when file opens with a one-line module docstring.
+        --with-imports extracts imports even when the file opens with a one-line module docstring, and captures the full
+        multi-line parenthesized import block.
         """
-        import json
-        import subprocess
-
-        root = tmp_path / "docstring"
+        root = tmp_path / project_dir
         root.mkdir()
-        content = '"""Module docs."""\nimport os\nfrom pathlib import Path\n\ndef dsfunc(x):\n    return x\n'
-        (root / "ds.py").write_text(content)
+        (root / module_file).write_text(content)
         subprocess.run(
             [sys.executable, str(scan_index), "--root", str(root)],
             capture_output=True,
@@ -632,7 +639,7 @@ class TestSymbolStaleAndImports:
         )
         index_path = root / ".cache" / "codemap" / f"{root.name}.json"
         result = subprocess.run(
-            [sys.executable, str(scan_query), "--index", str(index_path), "symbol", "--with-imports", "dsfunc"],
+            [sys.executable, str(scan_query), "--index", str(index_path), "symbol", "--with-imports", symbol],
             capture_output=True,
             text=True,
             cwd=str(root),
@@ -642,43 +649,9 @@ class TestSymbolStaleAndImports:
         assert data["symbols"]
         imports = data["symbols"][0]["imports"]
         assert imports is not None
-        assert "import os" in imports, f"expected 'import os', got: {imports!r}"
-        assert "pathlib" in imports, f"expected pathlib import, got: {imports!r}"
-
-    def test_with_imports_multiline_parenthesized(self, tmp_path, scan_index, scan_query):
-        """Verify command-line option behavior.
-
-        --with-imports captures full multi-line parenthesized import block.
-        """
-        import json
-        import subprocess
-
-        root = tmp_path / "multiline"
-        root.mkdir()
-        content = (
-            "from typing import (\n    Any,\n    Optional,\n)\n\ndef mlfunc(x: Any) -> Optional[int]:\n    return x\n"
+        assert all(fragment in imports for fragment in expected_fragments), (
+            f"expected {expected_fragments} in imports, got: {imports!r}"
         )
-        (root / "ml.py").write_text(content)
-        subprocess.run(
-            [sys.executable, str(scan_index), "--root", str(root)],
-            capture_output=True,
-            cwd=str(root),
-            check=True,
-        )
-        index_path = root / ".cache" / "codemap" / f"{root.name}.json"
-        result = subprocess.run(
-            [sys.executable, str(scan_query), "--index", str(index_path), "symbol", "--with-imports", "mlfunc"],
-            capture_output=True,
-            text=True,
-            cwd=str(root),
-        )
-        assert result.returncode == 0
-        data = json.loads(result.stdout)
-        assert data["symbols"]
-        imports = data["symbols"][0]["imports"]
-        assert imports is not None
-        assert "Any" in imports, f"expected 'Any' in imports, got: {imports!r}"
-        assert "Optional" in imports, f"expected 'Optional' in imports, got: {imports!r}"
 
 
 class TestScanRoot:
@@ -867,25 +840,16 @@ def test_path_same_module(project, scan_query):
 class TestRdepsNewFields:
     """Rdeps output includes dynamic_imported_by and config_refs fields."""
 
-    def test_rdeps_has_dynamic_imported_by_key(self, query):
-        """Rdeps result always carries dynamic_imported_by key, even when empty."""
-        data = query("rdeps", "gamma")
-        assert "dynamic_imported_by" in data
+    @pytest.mark.parametrize("field", ["dynamic_imported_by", "config_refs"])
+    def test_rdeps_carries_field_as_list(self, query, field):
+        """Rdeps result always carries the field, even when empty, and it is a list.
 
-    def test_rdeps_has_config_refs_key(self, query):
-        """Rdeps result always carries config_refs key, even when empty."""
+        ``dynamic_imported_by`` may be empty for modules with no dynamic callers; ``config_refs`` may be empty when no
+        config files reference the module.
+        """
         data = query("rdeps", "gamma")
-        assert "config_refs" in data
-
-    def test_rdeps_dynamic_imported_by_is_list(self, query):
-        """dynamic_imported_by is a list (may be empty for modules with no dynamic callers)."""
-        data = query("rdeps", "gamma")
-        assert isinstance(data["dynamic_imported_by"], list)
-
-    def test_rdeps_config_refs_is_list(self, query):
-        """config_refs is a list (may be empty when no config files reference the module)."""
-        data = query("rdeps", "gamma")
-        assert isinstance(data["config_refs"], list)
+        assert field in data
+        assert isinstance(data[field], list)
 
     def test_rdeps_populates_dynamic_imported_by_and_config_refs(self, tmp_path, scan_index, scan_query):
         """Dynamic import literals and root config references are exposed for rdeps."""
@@ -934,10 +898,21 @@ class TestRequireFeature:
         """No raise/exit when scan_version >= min_ver."""
         _require_feature(index_v3, 3, "test_feature")
 
-    def test_exits_when_version_below_minimum(self, index_v3) -> None:
-        """Index at v3 must fail a v4-min-version check via SystemExit."""
+    @pytest.mark.parametrize(
+        ("index", "min_ver", "feature"),
+        [
+            pytest.param({"scan_version": 3, "modules": []}, 4, "mock_patches", id="v3-index-below-v4-minimum"),
+            pytest.param({}, 1, "test_feature", id="missing-version-key-treated-as-zero"),
+        ],
+    )
+    def test_exits_when_version_unmet(self, index, min_ver, feature) -> None:
+        """An index below the minimum version fails via SystemExit; a missing scan_version is treated as 0.
+
+        A v3 index fails a v4 minimum with ``SystemExit``; an index with no ``scan_version`` key reads as version 0, so
+        any minimum is unmet, instead of silently passing.
+        """
         with pytest.raises(SystemExit):
-            _require_feature(index_v3, 4, "mock_patches")
+            _require_feature(index, min_ver, feature)
 
     def test_error_message_names_feature(self, index_v3, capsys) -> None:
         """Error output must include the feature name so the user knows what failed."""
@@ -950,11 +925,6 @@ class TestRequireFeature:
         """scan_version stored as a string (legacy indexes) must still parse cleanly."""
         index = {"scan_version": "3"}
         _require_feature(index, 3, "test_feature")
-
-    def test_handles_missing_version_key(self) -> None:
-        """Missing scan_version is treated as 0 and triggers SystemExit."""
-        with pytest.raises(SystemExit):
-            _require_feature({}, 1, "test_feature")
 
 
 class TestHasCallGraph:
@@ -1040,30 +1010,37 @@ class TestMockRdeps:
         )
         return query_result.returncode, json.loads(query_result.stdout), query_result.stderr
 
-    def test_decorator_form_indexed(self, tmp_path, scan_index, scan_query):
-        """Report decorator-based patch references through mock dependencies."""
-        src = "from unittest.mock import patch\n\n@patch('mypackage.x.fn')\ndef test_a(mock_fn):\n    pass\n"
+    @pytest.mark.parametrize(
+        ("src", "expected_form"),
+        [
+            pytest.param(
+                "from unittest.mock import patch\n\n@patch('mypackage.x.fn')\ndef test_a(mock_fn):\n    pass\n",
+                "decorator",
+                id="decorator-form",
+            ),
+            pytest.param(
+                "from unittest.mock import patch\n\ndef test_b():\n    with patch('mypackage.x.fn'):\n        pass\n",
+                "call",
+                id="call-form",
+            ),
+            pytest.param(
+                "def test_c(mocker):\n    mocker.patch('mypackage.x.fn')\n",
+                "mocker",
+                id="mocker-form",
+            ),
+        ],
+    )
+    def test_patch_reference_form_indexed(self, tmp_path, scan_index, scan_query, src, expected_form):
+        """Report decorator, call-in-body, and pytest-mock patch references with their specific reference form.
+
+        Each patch spelling lands in ``mock-rdeps`` under its own ``form`` value, so tools can tell a decorator from a
+        ``with patch(...)`` call and from ``mocker.patch``; every form also counts as at least one caller.
+        """
         rc, data, _ = self._scan_and_query(tmp_path, scan_index, scan_query, src, ["mock-rdeps", "mypackage.x::fn"])
         assert rc == 0
         forms = {c["form"] for c in data["callers"]}
-        assert "decorator" in forms
+        assert expected_form in forms
         assert data["count"] >= 1
-
-    def test_call_form_indexed(self, tmp_path, scan_index, scan_query):
-        """Capture patch calls inside function bodies with the call reference form."""
-        src = "from unittest.mock import patch\n\ndef test_b():\n    with patch('mypackage.x.fn'):\n        pass\n"
-        rc, data, _ = self._scan_and_query(tmp_path, scan_index, scan_query, src, ["mock-rdeps", "mypackage.x::fn"])
-        assert rc == 0
-        forms = {c["form"] for c in data["callers"]}
-        assert "call" in forms
-
-    def test_mocker_form_indexed(self, tmp_path, scan_index, scan_query):
-        """Capture pytest-mock patch calls with their specific reference form."""
-        src = "def test_c(mocker):\n    mocker.patch('mypackage.x.fn')\n"
-        rc, data, _ = self._scan_and_query(tmp_path, scan_index, scan_query, src, ["mock-rdeps", "mypackage.x::fn"])
-        assert rc == 0
-        forms = {c["form"] for c in data["callers"]}
-        assert "mocker" in forms
 
     def test_class_method_key_normalization(self, tmp_path, scan_index, scan_query):
         """Normalize to ``mypackage.x::MyClass.method``."""
@@ -1082,17 +1059,27 @@ class TestMockRdeps:
         assert data["symbol"] == "MyClass.method"
         assert data["module"] == "mypackage.x"
 
-    def test_non_mock_decorator_not_captured(self, tmp_path, scan_index, scan_query):
-        """Non-patch decorators (e.g. ``@pytest.fixture``) are not added to mock_patches."""
-        src = "import pytest\n\n@pytest.fixture\ndef thing():\n    return 1\n"
-        rc, data, _ = self._scan_and_query(tmp_path, scan_index, scan_query, src, ["mock-rdeps", "pytest::fixture"])
-        assert rc == 0
-        assert data["count"] == 0
+    @pytest.mark.parametrize(
+        ("src", "query_args"),
+        [
+            pytest.param(
+                "import pytest\n\n@pytest.fixture\ndef thing():\n    return 1\n",
+                ["mock-rdeps", "pytest::fixture"],
+                id="non-patch-decorator",
+            ),
+            pytest.param(
+                "from unittest.mock import patch\n\n@patch('nodots')\ndef test_e(_):\n    pass\n",
+                ["mock-rdeps", "nodots"],
+                id="malformed-patch-string",
+            ),
+        ],
+    )
+    def test_non_patch_reference_not_captured(self, tmp_path, scan_index, scan_query, src, query_args):
+        """Non-patch decorators (e.g. ``@pytest.fixture``) are not added to mock_patches.
 
-    def test_malformed_patch_string_logs_warning(self, tmp_path, scan_index, scan_query):
-        """Do not crash; warns to stderr and is skipped."""
-        src = "from unittest.mock import patch\n\n@patch('nodots')\ndef test_e(_):\n    pass\n"
-        rc, data, _ = self._scan_and_query(tmp_path, scan_index, scan_query, src, ["mock-rdeps", "nodots"])
+        A malformed patch string must not crash: it is skipped (with a stderr warning) and yields no mock reference.
+        """
+        rc, data, _ = self._scan_and_query(tmp_path, scan_index, scan_query, src, query_args)
         assert rc == 0
         assert data["count"] == 0
 
@@ -1116,19 +1103,14 @@ class TestMockRdeps:
 class TestFindIndex:
     """find_index: .cache/codemap/ preferred over .cache/scan/ (D2 fix)."""
 
-    def test_codemap_dir_found(self, tmp_path, monkeypatch) -> None:
-        """Index in .cache/codemap/ is returned when present."""
-        idx = tmp_path / ".cache" / "codemap" / f"{tmp_path.name}.json"
-        idx.parent.mkdir(parents=True)
-        idx.write_text("{}")
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(_scan_query_mod.index_io, "_get_git_root_cached", lambda: None)
-        result = _find_index()
-        assert result == idx
+    @pytest.mark.parametrize("cache_subdir", ["codemap", "scan"])
+    def test_index_found_in_cache_dir(self, tmp_path, monkeypatch, cache_subdir) -> None:
+        """An index in .cache/codemap/ is returned when present; .cache/scan/ is the fallback when it is absent.
 
-    def test_scan_fallback_found(self, tmp_path, monkeypatch) -> None:
-        """Index in .cache/scan/ is returned when .cache/codemap/ absent."""
-        idx = tmp_path / ".cache" / "scan" / f"{tmp_path.name}.json"
+        ``.cache/codemap/`` is the current location and ``.cache/scan/`` the legacy fallback used when the former is
+        absent; the lookup runs with no git root so only the cache directory decides the result.
+        """
+        idx = tmp_path / ".cache" / cache_subdir / f"{tmp_path.name}.json"
         idx.parent.mkdir(parents=True)
         idx.write_text("{}")
         monkeypatch.chdir(tmp_path)
@@ -1210,39 +1192,50 @@ class TestImportClassification:
         )
         return query_result.returncode, json.loads(query_result.stdout), query_result.stderr
 
-    def test_stdlib_import_classified_as_stdlib(self, tmp_path, scan_index, scan_query):
-        """Place in the ``stdlib`` group for ``import-types``."""
-        root = tmp_path / "stdlib_proj"
-        root.mkdir()
-        (root / "consumer.py").write_text("import os\n\ndef use_os():\n    return os.getcwd()\n")
-        rc, data, _ = self._scan_and_query(root, scan_index, scan_query, ["import-types", "consumer"])
-        assert rc == 0, data
-        assert "os" in data["stdlib"]
-        assert "os" not in data["third_party"]
-        assert "os" not in data["internal"]
+    @pytest.mark.parametrize(
+        ("project_dir", "files", "import_name", "group"),
+        [
+            pytest.param(
+                "stdlib_proj",
+                {"consumer.py": "import os\n\ndef use_os():\n    return os.getcwd()\n"},
+                "os",
+                "stdlib",
+                id="stdlib",
+            ),
+            pytest.param(
+                "third_party_proj",
+                {"consumer.py": "import numpy\n\ndef use_np():\n    return numpy.array([])\n"},
+                "numpy",
+                "third_party",
+                id="third_party",
+            ),
+            pytest.param(
+                "internal_proj",
+                {
+                    "lib_a.py": "def thing():\n    return 1\n",
+                    "consumer.py": "import lib_a\n\ndef use():\n    return lib_a.thing()\n",
+                },
+                "lib_a",
+                "internal",
+                id="internal-sibling-module",
+            ),
+        ],
+    )
+    def test_import_classified_into_single_group(
+        self, tmp_path, scan_index, scan_query, project_dir, files, import_name, group
+    ):
+        """Place an import in exactly one ``import-types`` group: stdlib, third_party, or internal.
 
-    def test_third_party_import_classified_as_third_party(self, tmp_path, scan_index, scan_query):
-        """Place in the ``third_party`` group (numpy is not stdlib and not indexed)."""
-        root = tmp_path / "third_party_proj"
+        ``os`` is stdlib; ``numpy`` is not stdlib and not indexed, so it is third-party; an import of a sibling indexed
+        module lands in the ``internal`` group.
+        """
+        root = tmp_path / project_dir
         root.mkdir()
-        (root / "consumer.py").write_text("import numpy\n\ndef use_np():\n    return numpy.array([])\n")
+        _write_files(root, files)
         rc, data, _ = self._scan_and_query(root, scan_index, scan_query, ["import-types", "consumer"])
         assert rc == 0, data
-        assert "numpy" in data["third_party"]
-        assert "numpy" not in data["stdlib"]
-        assert "numpy" not in data["internal"]
-
-    def test_internal_import_classified_as_internal(self, tmp_path, scan_index, scan_query):
-        """An import of a sibling indexed module lands in the ``internal`` group."""
-        root = tmp_path / "internal_proj"
-        root.mkdir()
-        (root / "lib_a.py").write_text("def thing():\n    return 1\n")
-        (root / "consumer.py").write_text("import lib_a\n\ndef use():\n    return lib_a.thing()\n")
-        rc, data, _ = self._scan_and_query(root, scan_index, scan_query, ["import-types", "consumer"])
-        assert rc == 0, data
-        assert "lib_a" in data["internal"]
-        assert "lib_a" not in data["third_party"]
-        assert "lib_a" not in data["stdlib"]
+        assert import_name in data[group]
+        assert all(import_name not in data[other] for other in {"stdlib", "third_party", "internal"} - {group})
 
     def test_import_types_returns_all_three_groups(self, tmp_path, scan_index, scan_query):
         """Return stdlib, third_party, and internal in a single payload."""
@@ -1283,7 +1276,7 @@ class TestImportClassification:
         )
 
     @pytest.mark.parametrize(
-        "group, import_name",
+        ("group", "import_name"),
         [
             pytest.param("stdlib", "os", id="stdlib-os"),
             pytest.param("stdlib", "collections", id="stdlib-collections"),
@@ -1374,53 +1367,83 @@ class TestDocstringCoverage:
         """
         return json.loads(index_path.read_text())
 
-    def test_documented_function_sets_has_docstring_true(self, tmp_path, scan_index):
-        """A function with a docstring is flagged ``has_docstring=True`` in the index."""
-        root = tmp_path / "doc_true"
+    @pytest.mark.parametrize(
+        ("project_dir", "source", "function_name", "expected_has_docstring", "expected_first_line"),
+        [
+            pytest.param(
+                "doc_true",
+                'def documented(x):\n    """Does something useful."""\n    return x\n',
+                "documented",
+                True,
+                "Does something useful.",
+                id="documented-function",
+            ),
+            pytest.param(
+                "doc_missing",
+                "def undocumented(x):\n    return x + 1\n",
+                "undocumented",
+                False,
+                None,
+                id="undocumented-function",
+            ),
+        ],
+    )
+    def test_function_docstring_fields_indexed(
+        self, tmp_path, scan_index, project_dir, source, function_name, expected_has_docstring, expected_first_line
+    ):
+        """A function is indexed with explicit ``has_docstring`` and ``docstring_first_line`` fields.
+
+        A documented function is flagged ``has_docstring=True`` with its first line; a function without a docstring gets
+        explicit false/None fields.
+        """
+        root = tmp_path / project_dir
         root.mkdir()
-        (root / "mymod.py").write_text('def documented(x):\n    """Does something useful."""\n    return x\n')
+        (root / "mymod.py").write_text(source)
         index_path = self._scan(root, scan_index)
         index = self._load_index(index_path)
         mod = next(m for m in index["modules"] if m["name"] == "mymod")
-        sym = next(s for s in mod["symbols"] if s["name"] == "documented")
-        assert sym["has_docstring"] is True
-        assert sym["docstring_first_line"] == "Does something useful."
+        sym = next(s for s in mod["symbols"] if s["name"] == function_name)
+        assert sym["has_docstring"] is expected_has_docstring
+        assert sym["docstring_first_line"] == expected_first_line
 
-    def test_documented_function_excluded_from_undocumented(self, tmp_path, scan_index, scan_query):
-        """A documented function does not appear in the ``undocumented`` query result."""
-        root = tmp_path / "doc_exclude"
+    @pytest.mark.parametrize(
+        ("project_dir", "source", "function_name", "expected_listed", "expected_total"),
+        [
+            pytest.param(
+                "doc_exclude",
+                'def documented(x):\n    """Does something useful."""\n    return x\n',
+                "documented",
+                False,
+                0,
+                id="documented-function-excluded",
+            ),
+            pytest.param(
+                "doc_missing_query",
+                "def undocumented(x):\n    return x + 1\n",
+                "undocumented",
+                True,
+                1,
+                id="undocumented-function-returned",
+            ),
+        ],
+    )
+    def test_undocumented_query_lists_only_undocumented_function(
+        self, tmp_path, scan_index, scan_query, project_dir, source, function_name, expected_listed, expected_total
+    ):
+        """A documented function is absent from the ``undocumented`` result; a public undocumented one surfaces.
+
+        The same ``undocumented`` query is run on a one-function module: with a docstring the function is absent and the
+        total is 0, without one it is listed and the total is 1.
+        """
+        root = tmp_path / project_dir
         root.mkdir()
-        (root / "mymod.py").write_text('def documented(x):\n    """Does something useful."""\n    return x\n')
+        (root / "mymod.py").write_text(source)
         index_path = self._scan(root, scan_index)
         rc, data, _ = self._query(root, index_path, scan_query, ["undocumented", "mymod"])
         assert rc == 0, data
         names = {f["name"] for f in data["undocumented"]}
-        assert "documented" not in names
-        assert data["total"] == 0
-
-    def test_undocumented_function_index_fields(self, tmp_path, scan_index):
-        """A function without a docstring is indexed with explicit false/None docstring fields."""
-        root = tmp_path / "doc_missing"
-        root.mkdir()
-        (root / "mymod.py").write_text("def undocumented(x):\n    return x + 1\n")
-        index_path = self._scan(root, scan_index)
-        index = self._load_index(index_path)
-        mod = next(m for m in index["modules"] if m["name"] == "mymod")
-        sym = next(s for s in mod["symbols"] if s["name"] == "undocumented")
-        assert sym["has_docstring"] is False
-        assert sym["docstring_first_line"] is None
-
-    def test_undocumented_function_returned(self, tmp_path, scan_index, scan_query):
-        """A public function without a docstring surfaces in the undocumented query."""
-        root = tmp_path / "doc_missing_query"
-        root.mkdir()
-        (root / "mymod.py").write_text("def undocumented(x):\n    return x + 1\n")
-        index_path = self._scan(root, scan_index)
-        rc, data, _ = self._query(root, index_path, scan_query, ["undocumented", "mymod"])
-        assert rc == 0, data
-        names = {f["name"] for f in data["undocumented"]}
-        assert "undocumented" in names
-        assert data["total"] == 1
+        assert (function_name in names) is expected_listed
+        assert data["total"] == expected_total
 
     def test_async_decorated_class_and_blank_first_line_docstrings_indexed(self, tmp_path, scan_index):
         """Docstring fields are populated for async, decorated, class, and blank-first-line cases."""
@@ -1460,54 +1483,56 @@ class TestDocstringCoverage:
         assert by_qname["Documented.method"]["has_docstring"] is True
         assert by_qname["Documented.method"]["docstring_first_line"] == "Method summary."
 
-    def test_undocumented_query_reports_async_functions_and_classes(self, tmp_path, scan_index, scan_query):
-        """Public async functions and classes without docstrings are included in undocumented results."""
-        root = tmp_path / "doc_public_shapes"
-        root.mkdir()
-        (root / "mymod.py").write_text(
-            "async def missing_async():\n"
-            "    return 1\n"
-            "\n"
-            "class MissingClass:\n"
-            "    def documented_method(self):\n"
-            '        """Method docs do not document the class itself."""\n'
-            "        return 2\n"
-        )
-        index_path = self._scan(root, scan_index)
-        rc, data, _ = self._query(root, index_path, scan_query, ["undocumented", "mymod"])
-        assert rc == 0, data
-        qnames = {f["qualified_name"] for f in data["undocumented"]}
-        assert {"missing_async", "MissingClass"}.issubset(qnames)
+    @pytest.mark.parametrize(
+        ("project_dir", "source", "expected_present", "expected_absent"),
+        [
+            pytest.param(
+                "doc_public_shapes",
+                "async def missing_async():\n"
+                "    return 1\n"
+                "\n"
+                "class MissingClass:\n"
+                "    def documented_method(self):\n"
+                '        """Method docs do not document the class itself."""\n'
+                "        return 2\n",
+                {"missing_async", "MissingClass"},
+                set(),
+                id="public-async-function-and-class",
+            ),
+            pytest.param(
+                "doc_method",
+                "class MyClass:\n    def method_no_doc(self):\n        return 1\n",
+                {"MyClass.method_no_doc"},
+                set(),
+                id="class-method-under-qualified-name",
+            ),
+            pytest.param(
+                "doc_dunder",
+                "class MyClass:\n    def __init__(self):\n        self.x = 0\n",
+                {"MyClass"},
+                {"MyClass.__init__"},
+                id="dunder-init-excluded-but-class-public",
+            ),
+        ],
+    )
+    def test_undocumented_query_reports_public_symbols_by_qualified_name(
+        self, tmp_path, scan_index, scan_query, project_dir, source, expected_present, expected_absent
+    ):
+        """Public async functions, classes, and class methods without docstrings are reported by qualified_name.
 
-    def test_undocumented_class_method_returned(self, tmp_path, scan_index, scan_query):
-        """A class method without a docstring is reported as undocumented under its qualified_name."""
-        root = tmp_path / "doc_method"
-        root.mkdir()
-        src = "class MyClass:\n    def method_no_doc(self):\n        return 1\n"
-        (root / "mymod.py").write_text(src)
-        index_path = self._scan(root, scan_index)
-        rc, data, _ = self._query(root, index_path, scan_query, ["undocumented", "mymod"])
-        assert rc == 0, data
-        qnames = {f["qualified_name"] for f in data["undocumented"]}
-        assert "MyClass.method_no_doc" in qnames
-
-    def test_dunder_init_excluded(self, tmp_path, scan_index, scan_query):
-        """Exclude undocumented initializer methods from documentation findings.
-
-        Rule: ``qualified_name`` containing any component starting with ``_`` is considered
-        non-public — covers dunders, private helpers, and private classes uniformly.
+        Rule: ``qualified_name`` containing any component starting with ``_`` is considered non-public — covers dunders,
+        private helpers, and private classes uniformly — so an undocumented ``__init__`` is excluded while the class
+        itself, having no docstring, is public and appears.
         """
-        root = tmp_path / "doc_dunder"
+        root = tmp_path / project_dir
         root.mkdir()
-        src = "class MyClass:\n    def __init__(self):\n        self.x = 0\n"
-        (root / "mymod.py").write_text(src)
+        (root / "mymod.py").write_text(source)
         index_path = self._scan(root, scan_index)
         rc, data, _ = self._query(root, index_path, scan_query, ["undocumented", "mymod"])
         assert rc == 0, data
         qnames = {f["qualified_name"] for f in data["undocumented"]}
-        assert "MyClass.__init__" not in qnames
-        # Class itself has no docstring → MyClass is public and should appear.
-        assert "MyClass" in qnames
+        assert expected_present <= qnames
+        assert qnames.isdisjoint(expected_absent)
 
     def test_all_flag_returns_symbols_across_modules(self, tmp_path, scan_index, scan_query):
         """Return undocumented public symbols from every non-test module."""
@@ -1639,28 +1664,20 @@ class TestUncovered:
         assert data["showing"] == 1
         assert data["module"] == "mymod"
 
-    def test_function_with_test_callers_excluded(self, capsys):
-        """Public fn with ``fn_rdep_test_count >= 1`` is filtered out."""
-        index = self._make_index(
-            [
-                {
-                    "name": "mymod",
-                    "status": "ok",
-                    "is_test": False,
-                    "symbols": [
-                        self._make_symbol("covered", fn_rdep_test_count=3, mock_rdep_count=0),
-                        self._make_symbol("uncovered", fn_rdep_test_count=0, mock_rdep_count=0),
-                    ],
-                }
-            ]
-        )
-        data = self._run(capsys, index, self._ns(module="mymod"))
-        names = {f["name"] for f in data["uncovered"]}
-        assert "covered" not in names
-        assert "uncovered" in names
+    @pytest.mark.parametrize(
+        ("excluded_name", "excluded_counts", "kept_name"),
+        [
+            pytest.param(
+                "covered", {"fn_rdep_test_count": 3, "mock_rdep_count": 0}, "uncovered", id="test-callers-exclude"
+            ),
+            pytest.param("mocked", {"fn_rdep_test_count": 0, "mock_rdep_count": 2}, "orphan", id="mock-excludes"),
+        ],
+    )
+    def test_covered_function_excluded(self, capsys, excluded_name, excluded_counts, kept_name):
+        """A public fn with ``fn_rdep_test_count >= 1`` or ``mock_rdep_count >= 1`` is filtered out.
 
-    def test_mocked_function_excluded(self, capsys):
-        """Public fn with ``mock_rdep_count >= 1`` is filtered out even when no direct test callers exist."""
+        A mocked fn is excluded even when no direct test callers exist; the sibling with both counters at zero stays.
+        """
         index = self._make_index(
             [
                 {
@@ -1668,16 +1685,16 @@ class TestUncovered:
                     "status": "ok",
                     "is_test": False,
                     "symbols": [
-                        self._make_symbol("mocked", fn_rdep_test_count=0, mock_rdep_count=2),
-                        self._make_symbol("orphan", fn_rdep_test_count=0, mock_rdep_count=0),
+                        self._make_symbol(excluded_name, **excluded_counts),
+                        self._make_symbol(kept_name, fn_rdep_test_count=0, mock_rdep_count=0),
                     ],
                 }
             ]
         )
         data = self._run(capsys, index, self._ns(module="mymod"))
         names = {f["name"] for f in data["uncovered"]}
-        assert "mocked" not in names
-        assert "orphan" in names
+        assert excluded_name not in names
+        assert kept_name in names
 
     def test_private_function_excluded(self, capsys):
         """Leading-underscore symbols never appear (public filter)."""
@@ -1758,53 +1775,36 @@ class TestUncovered:
         assert data["showing"] == 2
         assert len(data["uncovered"]) == 2
 
-    def test_sort_name_returns_alphabetical(self, capsys):
-        """Return findings alphabetically by qualified_name."""
-        index = self._make_index(
-            [
-                {
-                    "name": "mymod",
-                    "status": "ok",
-                    "is_test": False,
-                    "symbols": [
-                        self._make_symbol("zeta", start_line=1, end_line=100, fn_rdep_test_count=0, mock_rdep_count=0),
-                        self._make_symbol("alpha", start_line=1, end_line=2, fn_rdep_test_count=0, mock_rdep_count=0),
-                        self._make_symbol("mu", start_line=1, end_line=50, fn_rdep_test_count=0, mock_rdep_count=0),
-                    ],
-                }
-            ]
-        )
-        data = self._run(capsys, index, self._ns(module="mymod", sort=_scan_query_mod.UncoveredSort.NAME))
-        names_in_order = [f["name"] for f in data["uncovered"]]
-        assert names_in_order == ["alpha", "mu", "zeta"]
+    @pytest.mark.parametrize(
+        ("symbol_spans", "ns_kwargs", "expected_order"),
+        [
+            pytest.param(
+                (("zeta", 1, 100), ("alpha", 1, 2), ("mu", 1, 50)),
+                {"sort": _scan_query_mod.UncoveredSort.NAME},
+                ["alpha", "mu", "zeta"],
+                id="sort-name-alphabetical",
+            ),
+            pytest.param(
+                (("small", 1, 3), ("big", 1, 100), ("medium", 1, 20)),
+                {},
+                ["big", "medium", "small"],
+                id="default-sort-loc-biggest-first",
+            ),
+            pytest.param(
+                (("highline", 196, 200), ("bigspan", 1, 100)),
+                {},
+                ["bigspan", "highline"],
+                id="loc-uses-start-line-span",
+            ),
+        ],
+    )
+    def test_sort_orders_uncovered_symbols(self, capsys, symbol_spans, ns_kwargs, expected_order):
+        """Findings are ordered alphabetically for ``--sort name`` and by LOC span, biggest first, by default.
 
-    def test_sort_loc_descending_default(self, capsys):
-        """Default ``--sort loc`` returns the biggest uncovered symbol first."""
-        index = self._make_index(
-            [
-                {
-                    "name": "mymod",
-                    "status": "ok",
-                    "is_test": False,
-                    "symbols": [
-                        self._make_symbol("small", start_line=1, end_line=3, fn_rdep_test_count=0, mock_rdep_count=0),
-                        self._make_symbol("big", start_line=1, end_line=100, fn_rdep_test_count=0, mock_rdep_count=0),
-                        self._make_symbol("medium", start_line=1, end_line=20, fn_rdep_test_count=0, mock_rdep_count=0),
-                    ],
-                }
-            ]
-        )
-        data = self._run(capsys, index, self._ns(module="mymod"))
-        names_in_order = [f["name"] for f in data["uncovered"]]
-        assert names_in_order == ["big", "medium", "small"]
-
-    def test_sort_loc_uses_start_line_span(self, capsys):
-        """LOC sort ranks by ``end_line - start_line``, not by ``end_line`` alone.
-
-        ``highline`` ends at line 200 but spans only 5 lines; ``bigspan`` ends at
-        100 but spans 99 lines.  Correct span-based sort puts ``bigspan`` first.
-        A broken implementation that uses ``end_line`` alone would put ``highline``
-        first, so this test acts as a regression guard for that failure mode.
+        LOC sort ranks by ``end_line - start_line``, not by ``end_line`` alone: ``highline`` ends at line 200 but spans
+        only 5 lines, while ``bigspan`` ends at 100 but spans 99 lines, so span-based sort puts ``bigspan`` first. A
+        broken implementation that uses ``end_line`` alone would put ``highline`` first, so that case is a regression
+        guard for that failure mode.
         """
         index = self._make_index(
             [
@@ -1813,19 +1813,15 @@ class TestUncovered:
                     "status": "ok",
                     "is_test": False,
                     "symbols": [
-                        self._make_symbol(
-                            "highline", start_line=196, end_line=200, fn_rdep_test_count=0, mock_rdep_count=0
-                        ),
-                        self._make_symbol(
-                            "bigspan", start_line=1, end_line=100, fn_rdep_test_count=0, mock_rdep_count=0
-                        ),
+                        self._make_symbol(name, start_line=start, end_line=end, fn_rdep_test_count=0, mock_rdep_count=0)
+                        for name, start, end in symbol_spans
                     ],
                 }
             ]
         )
-        data = self._run(capsys, index, self._ns(module="mymod"))
+        data = self._run(capsys, index, self._ns(module="mymod", **ns_kwargs))
         names_in_order = [f["name"] for f in data["uncovered"]]
-        assert names_in_order == ["bigspan", "highline"]
+        assert names_in_order == expected_order
 
     def test_sort_loc_missing_start_line_ranks_last(self, capsys):
         """Symbol without ``start_line`` gets loc=0 and sorts below symbols with a proper span."""
@@ -1854,21 +1850,30 @@ class TestUncovered:
         names_in_order = [f["name"] for f in data["uncovered"]]
         assert names_in_order[-1] == "no_start"
 
-    def test_neither_module_nor_all_errors_out(self, capsys):
-        """Missing both positional ``module`` and ``--all`` exits with the usage hint."""
-        index = self._make_index([])
-        with pytest.raises(SystemExit):
-            _scan_query_mod.cmd_uncovered(index, self._ns(module=None, all_modules=False))
-        captured = capsys.readouterr()
-        assert "--all" in captured.out
+    @pytest.mark.parametrize(
+        ("index_kwargs", "ns_kwargs", "expected_output"),
+        [
+            pytest.param({}, {"module": None, "all_modules": False}, "--all", id="neither-module-nor-all"),
+            pytest.param(
+                {"scan_version": 3},
+                {"module": None, "all_modules": True},
+                "fn_rdep_test_count",
+                id="index-below-v4",
+            ),
+        ],
+    )
+    def test_unusable_invocation_exits_with_hint(self, capsys, index_kwargs, ns_kwargs, expected_output):
+        """Missing both ``module`` and ``--all`` exits with a usage hint; a pre-v4 index names the feature.
 
-    def test_requires_v4_index(self, capsys):
-        """An index at scan_version < 4 yields a SystemExit with feature name in the error."""
-        index = self._make_index([], scan_version=3)
+        Calling ``uncovered`` with neither a module nor ``--all`` is a usage error that points at ``--all``; an index
+        older than v4 lacks the counters the query reads, so the error names ``fn_rdep_test_count`` instead of answering
+        wrongly.
+        """
+        index = self._make_index([], **index_kwargs)
         with pytest.raises(SystemExit):
-            _scan_query_mod.cmd_uncovered(index, self._ns(module=None, all_modules=True))
+            _scan_query_mod.cmd_uncovered(index, self._ns(**ns_kwargs))
         captured = capsys.readouterr()
-        assert "fn_rdep_test_count" in captured.out
+        assert expected_output in captured.out
 
     def test_end_to_end_via_subprocess(self, tmp_path, scan_index, scan_query):
         """End-to-end: scan-index populates counters; scan-query uncovered surfaces only true orphans.
@@ -1964,35 +1969,49 @@ class TestSphinxXrefs:
         roles = {ref["role"] for ref in data["refs"]}
         assert "func" in roles
 
-    def test_sphinx_class_role_in_rst_file(self, tmp_path, scan_index, scan_query):
-        """Index Sphinx class references from reStructuredText files."""
-        root = tmp_path / "xref_rst"
-        root.mkdir()
-        (root / "mymod.py").write_text("class MyCls:\n    pass\n")
-        docs_dir = root / "docs"
-        docs_dir.mkdir()
-        (docs_dir / "api.rst").write_text("See :class:`mymod.MyCls` for usage.\n")
-        index_path = self._scan(root, scan_index)
-        rc, data, _ = self._query(root, index_path, scan_query, ["xrefs", "mymod::MyCls"])
-        assert rc == 0, data
-        assert data["count"] >= 1, data
-        sources = {ref["source"] for ref in data["refs"]}
-        assert "sphinx" in sources
+    @pytest.mark.parametrize(
+        ("project_dir", "module_source", "doc_file", "doc_text", "target", "expected_source"),
+        [
+            pytest.param(
+                "xref_rst",
+                "class MyCls:\n    pass\n",
+                "api.rst",
+                "See :class:`mymod.MyCls` for usage.\n",
+                "mymod::MyCls",
+                "sphinx",
+                id="sphinx-class-role-in-rst",
+            ),
+            pytest.param(
+                "xref_mkdocs",
+                "def target_fn():\n    return 1\n",
+                "api.md",
+                "See [the function][mymod.target_fn] for details.\n",
+                "mymod::target_fn",
+                "mkdocs",
+                id="mkdocs-named-link-in-md",
+            ),
+        ],
+    )
+    def test_doc_file_reference_indexed_with_its_source(
+        self, tmp_path, scan_index, scan_query, project_dir, module_source, doc_file, doc_text, target, expected_source
+    ):
+        """Index Sphinx references from ``.rst`` files and MkDocs autorefs from ``.md`` files with their source.
 
-    def test_mkdocs_named_link_in_md_file(self, tmp_path, scan_index, scan_query):
-        """Record Markdown references with the MkDocs source classification."""
-        root = tmp_path / "xref_mkdocs"
+        The ``source`` label records which documentation system produced the reference: ``sphinx`` for a role in an
+        ``.rst`` file and ``mkdocs`` for a ``[text][identifier]`` autoref in a Markdown file under ``docs/``.
+        """
+        root = tmp_path / project_dir
         root.mkdir()
-        (root / "mymod.py").write_text("def target_fn():\n    return 1\n")
+        (root / "mymod.py").write_text(module_source)
         docs_dir = root / "docs"
         docs_dir.mkdir()
-        (docs_dir / "api.md").write_text("See [the function][mymod.target_fn] for details.\n")
+        (docs_dir / doc_file).write_text(doc_text)
         index_path = self._scan(root, scan_index)
-        rc, data, _ = self._query(root, index_path, scan_query, ["xrefs", "mymod::target_fn"])
+        rc, data, _ = self._query(root, index_path, scan_query, ["xrefs", target])
         assert rc == 0, data
         assert data["count"] >= 1, data
         sources = {ref["source"] for ref in data["refs"]}
-        assert "mkdocs" in sources
+        assert expected_source in sources
 
     def test_tilde_prefix_stripped_from_target(self, tmp_path, scan_index, scan_query):
         """Normalize shortened Sphinx function references to qualified names."""
@@ -2050,24 +2069,6 @@ class TestSphinxXrefs:
         index = json.loads(index_path.read_text())
         assert "sphinx_xref_count" in index, "top-level sphinx_xref_count missing from index"
         assert index["sphinx_xref_count"].get("mymod::target_fn", 0) >= 2
-
-    def test_xrefs_requires_v5_index(self, tmp_path, scan_query):
-        """An index at scan_version < 5 yields a SystemExit-style error when querying ``xrefs``."""
-        root = tmp_path / "xref_v4"
-        root.mkdir()
-        index_dir = root / ".cache" / "codemap"
-        index_dir.mkdir(parents=True)
-        index_path = index_dir / f"{root.name}.json"
-        index_path.write_text(json.dumps({"scan_version": 4, "modules": []}))
-        result = subprocess.run(
-            [sys.executable, str(scan_query), "--index", str(index_path), "xrefs", "mymod::fn"],
-            capture_output=True,
-            text=True,
-            cwd=str(root),
-        )
-        assert result.returncode != 0
-        data = json.loads(result.stdout)
-        assert "sphinx_xrefs" in data.get("error", ""), data
 
 
 class TestDeadSymbols:
@@ -2247,122 +2248,122 @@ class TestDeadSymbols:
         names = {f["name"] for f in data["dead"]}
         assert "called_fn" not in names
 
-    def test_entry_point_module_excluded(self, capsys):
-        """Symbol in an entry-point module (``__main__`` guard) is never dead."""
-        index = self._make_index(
-            [
-                self._make_module(
-                    "scripts.runner",
-                    rdep_count=0,
-                    is_entry_point=True,
-                    symbols=[self._make_symbol("main_fn", start_line=1, end_line=20)],
-                )
-            ]
-        )
-        data = self._run_dead_symbols(capsys, index, self._ns())
-        names = {f["name"] for f in data["dead"]}
-        assert "main_fn" not in names
+    @pytest.mark.parametrize(
+        ("module_name", "module_kwargs", "symbol_name", "symbol_kwargs", "index_kwargs"),
+        [
+            pytest.param(
+                "scripts.runner",
+                {"rdep_count": 0, "is_entry_point": True},
+                "main_fn",
+                {"start_line": 1, "end_line": 20},
+                {},
+                id="entry-point-module",
+            ),
+            pytest.param(
+                "tests.test_thing",
+                {"rdep_count": 0, "is_test": True},
+                "test_helper",
+                {"start_line": 1, "end_line": 20},
+                {},
+                id="test-module",
+            ),
+            pytest.param(
+                "mymod",
+                {"rdep_count": 0},
+                "mocked_fn",
+                {"start_line": 1, "end_line": 10, "mock_rdep_count": 2},
+                {},
+                id="mocked-by-tests",
+            ),
+            pytest.param(
+                "mymod",
+                {"rdep_count": 0},
+                "documented_fn",
+                {"start_line": 1, "end_line": 10},
+                {"sphinx_xref_count": {"mymod::documented_fn": 3}},
+                id="referenced-by-docs",
+            ),
+            pytest.param(
+                "mymod",
+                {"rdep_count": 2},
+                "orphan_fn",
+                {"start_line": 1, "end_line": 10},
+                {},
+                id="module-has-importers",
+            ),
+        ],
+    )
+    def test_alive_symbol_excluded(self, capsys, module_name, module_kwargs, symbol_name, symbol_kwargs, index_kwargs):
+        """A symbol with any live reachability signal is never reported dead.
 
-    def test_test_module_excluded(self, capsys):
-        """Symbol in a test module is never dead (test files are not production surface)."""
+        Live signals: a symbol in an entry-point module (``__main__`` guard); a symbol in a test module (test files are
+        not production surface); ``mock_rdep_count >= 1`` (tests reference it via patch()); a ``sphinx_xref_count``
+        entry (docs cite it); a module ``rdep_count > 0``, which disqualifies every symbol the module owns.
+        """
         index = self._make_index(
             [
                 self._make_module(
-                    "tests.test_thing",
-                    rdep_count=0,
-                    is_test=True,
-                    symbols=[self._make_symbol("test_helper", start_line=1, end_line=20)],
-                )
-            ]
-        )
-        data = self._run_dead_symbols(capsys, index, self._ns())
-        names = {f["name"] for f in data["dead"]}
-        assert "test_helper" not in names
-
-    def test_private_fn_excluded(self, capsys):
-        """Leading-underscore symbols are not dead candidates (public filter)."""
-        index = self._make_index(
-            [
-                self._make_module(
-                    "mymod",
-                    rdep_count=0,
-                    symbols=[
-                        self._make_symbol("_helper", start_line=1, end_line=10),
-                        self._make_symbol("public_fn", start_line=11, end_line=20),
-                    ],
-                )
-            ]
-        )
-        data = self._run_dead_symbols(capsys, index, self._ns())
-        names = {f["name"] for f in data["dead"]}
-        assert "_helper" not in names
-        assert "public_fn" in names
-
-    def test_mocked_fn_excluded(self, capsys):
-        """Fn with ``mock_rdep_count >= 1`` is alive (tests reference it via patch())."""
-        index = self._make_index(
-            [
-                self._make_module(
-                    "mymod",
-                    rdep_count=0,
-                    symbols=[self._make_symbol("mocked_fn", start_line=1, end_line=10, mock_rdep_count=2)],
-                )
-            ]
-        )
-        data = self._run_dead_symbols(capsys, index, self._ns())
-        names = {f["name"] for f in data["dead"]}
-        assert "mocked_fn" not in names
-
-    def test_doc_referenced_fn_excluded(self, capsys):
-        """Fn referenced via ``sphinx_xref_count`` is alive (docs cite it)."""
-        index = self._make_index(
-            [
-                self._make_module(
-                    "mymod",
-                    rdep_count=0,
-                    symbols=[self._make_symbol("documented_fn", start_line=1, end_line=10)],
+                    module_name, **module_kwargs, symbols=[self._make_symbol(symbol_name, **symbol_kwargs)]
                 )
             ],
-            sphinx_xref_count={"mymod::documented_fn": 3},
+            **index_kwargs,
         )
         data = self._run_dead_symbols(capsys, index, self._ns())
         names = {f["name"] for f in data["dead"]}
-        assert "documented_fn" not in names
+        assert symbol_name not in names
 
-    def test_module_with_importers_excluded(self, capsys):
-        """A module's rdep_count > 0 disqualifies every symbol it owns."""
+    @pytest.mark.parametrize(
+        ("module_kwargs", "symbol_spans", "ns_kwargs", "excluded_name", "kept_name"),
+        [
+            pytest.param(
+                {"rdep_count": 0},
+                (("_helper", 1, 10), ("public_fn", 11, 20)),
+                {},
+                "_helper",
+                "public_fn",
+                id="private-leading-underscore",
+            ),
+            pytest.param(
+                {"rdep_count": 0, "exports": ["exported_fn"]},
+                (("exported_fn", 1, 10), ("hidden_fn", 11, 20)),
+                {},
+                "exported_fn",
+                "hidden_fn",
+                id="listed-in-dunder-all",
+            ),
+            pytest.param(
+                {"rdep_count": 0},
+                (("trivial", 1, 2), ("big_enough", 10, 20)),
+                {"min_loc": 5},
+                "trivial",
+                "big_enough",
+                id="below-min-loc",
+            ),
+        ],
+    )
+    def test_filter_drops_candidate_and_keeps_dead_sibling(
+        self, capsys, module_kwargs, symbol_spans, ns_kwargs, excluded_name, kept_name
+    ):
+        """Leading-underscore, ``__all__``-exported, and sub-5-line symbols are not dead candidates.
+
+        The public sibling that none of those filters applies to is still reported dead, so each filter is proven to
+        drop only its own symbol.
+        """
         index = self._make_index(
             [
                 self._make_module(
                     "mymod",
-                    rdep_count=2,
-                    symbols=[self._make_symbol("orphan_fn", start_line=1, end_line=10)],
-                )
-            ]
-        )
-        data = self._run_dead_symbols(capsys, index, self._ns())
-        names = {f["name"] for f in data["dead"]}
-        assert "orphan_fn" not in names
-
-    def test_exported_symbol_excluded(self, capsys):
-        """Symbol present in module's ``__all__`` is explicitly exported and therefore alive."""
-        index = self._make_index(
-            [
-                self._make_module(
-                    "mymod",
-                    rdep_count=0,
-                    exports=["exported_fn"],
+                    **module_kwargs,
                     symbols=[
-                        self._make_symbol("exported_fn", start_line=1, end_line=10),
-                        self._make_symbol("hidden_fn", start_line=11, end_line=20),
+                        self._make_symbol(name, start_line=start, end_line=end) for name, start, end in symbol_spans
                     ],
                 )
             ]
         )
-        data = self._run_dead_symbols(capsys, index, self._ns())
+        data = self._run_dead_symbols(capsys, index, self._ns(**ns_kwargs))
         names = {f["name"] for f in data["dead"]}
-        assert "exported_fn" not in names
-        assert "hidden_fn" in names
+        assert excluded_name not in names
+        assert kept_name in names
 
     def test_exports_none_no_filter(self, capsys):
         """When ``exports is None`` (no ``__all__``) the export filter is inactive."""
@@ -2379,25 +2380,6 @@ class TestDeadSymbols:
         data = self._run_dead_symbols(capsys, index, self._ns())
         names = {f["name"] for f in data["dead"]}
         assert "public_fn" in names
-
-    def test_min_loc_filter_drops_trivial(self, capsys):
-        """Skip symbols spanning fewer than 5 lines."""
-        index = self._make_index(
-            [
-                self._make_module(
-                    "mymod",
-                    rdep_count=0,
-                    symbols=[
-                        self._make_symbol("trivial", start_line=1, end_line=2),
-                        self._make_symbol("big_enough", start_line=10, end_line=20),
-                    ],
-                )
-            ]
-        )
-        data = self._run_dead_symbols(capsys, index, self._ns(min_loc=5))
-        names = {f["name"] for f in data["dead"]}
-        assert "trivial" not in names
-        assert "big_enough" in names
 
     def test_star_import_module_skipped_and_warned(self, capsys):
         """Modules with ``has_star_imports=True`` are skipped wholesale; warning logged to stderr."""
@@ -2420,21 +2402,31 @@ class TestDeadSymbols:
         assert "starry_mod" in captured.err
         assert "star imports" in captured.err
 
-    def test_v3_index_rejected(self, capsys):
-        """An index at scan_version < 6 fails with the feature name in the error message."""
-        index = self._make_index([], scan_version=3)
-        with pytest.raises(SystemExit):
-            _scan_query_mod.cmd_dead_symbols(index, self._ns())
-        captured = capsys.readouterr()
-        assert "dead-symbol" in captured.out
+    @pytest.mark.parametrize(
+        ("command_name", "ns_kwargs", "index_kwargs", "expected_output"),
+        [
+            pytest.param("cmd_dead_symbols", {"min_loc": 5}, {"scan_version": 3}, "dead-symbol", id="symbols-v3-index"),
+            pytest.param(
+                "cmd_dead_symbols",
+                {"min_loc": 5},
+                {"include_sphinx_table": False},
+                "sphinx_xref_count",
+                id="symbols-missing-sphinx-xref-count",
+            ),
+            pytest.param("cmd_dead_modules", {}, {"scan_version": 3}, "dead-symbol", id="modules-v3-index"),
+        ],
+    )
+    def test_unusable_index_fails_closed(self, capsys, command_name, ns_kwargs, index_kwargs, expected_output):
+        """An index below v6 fails with the feature name in the error; a v6 index lacking ``sphinx_xref_count`` aborts.
 
-    def test_missing_sphinx_xref_count_fail_closed(self, capsys):
-        """Index at v6 lacking ``sphinx_xref_count`` aborts — never silently treats missing as zero."""
-        index = self._make_index([], include_sphinx_table=False)
+        A missing ``sphinx_xref_count`` table is never silently treated as zero, which would mark documented symbols
+        dead.
+        """
+        index = self._make_index([], **index_kwargs)
         with pytest.raises(SystemExit):
-            _scan_query_mod.cmd_dead_symbols(index, self._ns())
+            getattr(_scan_query_mod, command_name)(index, argparse.Namespace(**ns_kwargs))
         captured = capsys.readouterr()
-        assert "sphinx_xref_count" in captured.out
+        assert expected_output in captured.out
 
     def test_sort_loc_descending(self, capsys):
         """Findings are returned biggest-LOC first."""
@@ -2480,14 +2472,6 @@ class TestDeadSymbols:
         assert "runner" not in names
         assert "tests.test_thing" not in names
         assert "orphan_lib" in names
-
-    def test_dead_modules_requires_v6_index(self, capsys):
-        """An index at scan_version < 6 yields a SystemExit with feature name in the error."""
-        index = self._make_index([], scan_version=3)
-        with pytest.raises(SystemExit):
-            _scan_query_mod.cmd_dead_modules(index, self._ns_modules())
-        captured = capsys.readouterr()
-        assert "dead-symbol" in captured.out
 
     def test_dead_symbols_suppresses_imported_module_symbols(self, tmp_path, scan_index, scan_query):
         """Imported-module symbols are suppressed while an unimported module's symbol is reported.
@@ -2583,42 +2567,59 @@ class TestDeadSymbols:
         mod_names = {m["name"] for m in mod_data["dead_modules"]}
         assert "lonely" in mod_names, mod_data
 
-    def test_module_exports_extracted_from_all_assignment(self, tmp_path, scan_index):
-        """Scan-index parses ``__all__`` literal lists into the module's ``exports`` field."""
-        root = tmp_path / "exports_static"
-        root.mkdir()
-        (root / "mymod.py").write_text(
-            '__all__ = ["public_fn", "AnotherName"]\n'
-            "\n"
-            "\n"
-            "def public_fn(x):\n"
-            "    return x\n"
-            "\n"
-            "\n"
-            "def AnotherName(x):\n"
-            "    return x\n"
-            "\n"
-            "\n"
-            "def hidden(x):\n"
-            "    return x\n"
-        )
-        result = subprocess.run(
-            [sys.executable, str(scan_index), "--root", str(root)],
-            capture_output=True,
-            text=True,
-            cwd=str(root),
-        )
-        assert result.returncode == 0, result.stderr
-        index_path = root / ".cache" / "codemap" / f"{root.name}.json"
-        index = json.loads(index_path.read_text())
-        mod = next(m for m in index["modules"] if m["name"] == "mymod")
-        assert mod["exports"] == ["public_fn", "AnotherName"]
+    @pytest.mark.parametrize(
+        ("project_dir", "source", "expected_exports"),
+        [
+            pytest.param(
+                "exports_static",
+                '__all__ = ["public_fn", "AnotherName"]\n'
+                "\n"
+                "\n"
+                "def public_fn(x):\n"
+                "    return x\n"
+                "\n"
+                "\n"
+                "def AnotherName(x):\n"
+                "    return x\n"
+                "\n"
+                "\n"
+                "def hidden(x):\n"
+                "    return x\n",
+                ["public_fn", "AnotherName"],
+                id="literal-all-list-extracted",
+            ),
+            pytest.param(
+                "exports_missing",
+                "def public_fn(x):\n    return x\n",
+                None,
+                id="absent-all-is-null",
+            ),
+            pytest.param(
+                "exports_dynamic",
+                "_names = ['a', 'b']\n"
+                "__all__ = [n for n in _names]\n"
+                "\n"
+                "\n"
+                "def a(x):\n"
+                "    return x\n"
+                "\n"
+                "\n"
+                "def b(x):\n"
+                "    return x\n",
+                None,
+                id="dynamic-all-is-null",
+            ),
+        ],
+    )
+    def test_module_exports_field(self, tmp_path, scan_index, project_dir, source, expected_exports):
+        """Scan-index parses literal ``__all__`` lists into ``exports``; absent or dynamic ``__all__`` yields null.
 
-    def test_module_exports_none_when_absent(self, tmp_path, scan_index):
-        """A module without ``__all__`` reports ``exports: null`` (no export filter)."""
-        root = tmp_path / "exports_missing"
+        A module without ``__all__`` reports ``exports: null`` (no export filter), and a dynamic ``__all__``
+        (comprehension or non-literal) does too.
+        """
+        root = tmp_path / project_dir
         root.mkdir()
-        (root / "mymod.py").write_text("def public_fn(x):\n    return x\n")
+        (root / "mymod.py").write_text(source)
         result = subprocess.run(
             [sys.executable, str(scan_index), "--root", str(root)],
             capture_output=True,
@@ -2629,35 +2630,7 @@ class TestDeadSymbols:
         index_path = root / ".cache" / "codemap" / f"{root.name}.json"
         index = json.loads(index_path.read_text())
         mod = next(m for m in index["modules"] if m["name"] == "mymod")
-        assert mod["exports"] is None
-
-    def test_module_exports_none_when_dynamic(self, tmp_path, scan_index):
-        """Dynamic ``__all__`` (comprehension or non-literal) yields ``exports: null``."""
-        root = tmp_path / "exports_dynamic"
-        root.mkdir()
-        (root / "mymod.py").write_text(
-            "_names = ['a', 'b']\n"
-            "__all__ = [n for n in _names]\n"
-            "\n"
-            "\n"
-            "def a(x):\n"
-            "    return x\n"
-            "\n"
-            "\n"
-            "def b(x):\n"
-            "    return x\n"
-        )
-        result = subprocess.run(
-            [sys.executable, str(scan_index), "--root", str(root)],
-            capture_output=True,
-            text=True,
-            cwd=str(root),
-        )
-        assert result.returncode == 0, result.stderr
-        index_path = root / ".cache" / "codemap" / f"{root.name}.json"
-        index = json.loads(index_path.read_text())
-        mod = next(m for m in index["modules"] if m["name"] == "mymod")
-        assert mod["exports"] is None
+        assert mod["exports"] == expected_exports
 
 
 class TestConftestSyspath:
@@ -2743,53 +2716,47 @@ class TestSubprocessDeps:
         assert calls[0]["file"] == str(src)
         assert calls[0]["line"] == 2
 
-    def test_subprocess_popen_detected(self, tmp_path):
-        """Detect process creation through the subprocess module."""
-        (tmp_path / "worker.py").write_text("# target\n")
-        src = tmp_path / "caller.py"
-        src.write_text("import subprocess\nsubprocess.Popen(['python', 'worker.py'])\n")
-        tree = ast.parse(src.read_text())
-        indexed_files = {"worker.py": "worker", "caller.py": "caller"}
-        calls = _extract_subprocess(tree, src, tmp_path, indexed_files)
-        assert len(calls) == 1
-        assert calls[0]["target_module"] == "worker"
+    @pytest.mark.parametrize(
+        ("script_file", "caller_source", "expected_target"),
+        [
+            pytest.param(
+                "worker.py",
+                "import subprocess\nsubprocess.Popen(['python', 'worker.py'])\n",
+                "worker",
+                id="popen",
+            ),
+            pytest.param(
+                "script.py",
+                "import subprocess, sys\nsubprocess.run([sys.executable, 'script.py'])\n",
+                "script",
+                id="sys-executable-form",
+            ),
+            pytest.param(
+                "x.py",
+                "import subprocess\n"
+                "from pathlib import Path\n"
+                "subprocess.run(['python', str(Path(__file__).parent / 'x.py')])\n",
+                "x",
+                id="path-file-parent-form",
+            ),
+            pytest.param("script.py", "import os\nos.system('python script.py')\n", "script", id="os-system"),
+        ],
+    )
+    def test_subprocess_invocation_form_detected(self, tmp_path, script_file, caller_source, expected_target):
+        """Resolve each supported invocation shape to exactly one edge targeting the indexed script's module.
 
-    def test_sys_executable_form_detected(self, tmp_path):
-        """[sys.executable, 'script.py'] form resolves identically to bare 'python'."""
-        (tmp_path / "script.py").write_text("# target\n")
+        ``Popen`` is detected like ``run``; ``[sys.executable, 'script.py']`` resolves identically to bare ``python``;
+        stringified source-relative ``Path(__file__).parent`` paths resolve against the caller; and ``os.system``
+        strings are split so the script token is resolved.
+        """
+        (tmp_path / script_file).write_text("# target\n")
         src = tmp_path / "caller.py"
-        src.write_text("import subprocess, sys\nsubprocess.run([sys.executable, 'script.py'])\n")
+        src.write_text(caller_source)
         tree = ast.parse(src.read_text())
-        indexed_files = {"script.py": "script", "caller.py": "caller"}
+        indexed_files = {script_file: expected_target, "caller.py": "caller"}
         calls = _extract_subprocess(tree, src, tmp_path, indexed_files)
         assert len(calls) == 1
-        assert calls[0]["target_module"] == "script"
-
-    def test_path_file_parent_form_detected(self, tmp_path):
-        """Resolve stringified source-relative paths against the caller."""
-        (tmp_path / "x.py").write_text("# target\n")
-        src = tmp_path / "caller.py"
-        src.write_text(
-            "import subprocess\n"
-            "from pathlib import Path\n"
-            "subprocess.run(['python', str(Path(__file__).parent / 'x.py')])\n"
-        )
-        tree = ast.parse(src.read_text())
-        indexed_files = {"x.py": "x", "caller.py": "caller"}
-        calls = _extract_subprocess(tree, src, tmp_path, indexed_files)
-        assert len(calls) == 1
-        assert calls[0]["target_module"] == "x"
-
-    def test_os_system_detected(self, tmp_path):
-        """Split string and resolves the script token."""
-        (tmp_path / "script.py").write_text("# target\n")
-        src = tmp_path / "caller.py"
-        src.write_text("import os\nos.system('python script.py')\n")
-        tree = ast.parse(src.read_text())
-        indexed_files = {"script.py": "script", "caller.py": "caller"}
-        calls = _extract_subprocess(tree, src, tmp_path, indexed_files)
-        assert len(calls) == 1
-        assert calls[0]["target_module"] == "script"
+        assert calls[0]["target_module"] == expected_target
 
     def test_unresolvable_script_skipped(self, tmp_path, capsys):
         """Subprocess call referencing a non-indexed script emits a stderr warning and is skipped."""
@@ -2803,28 +2770,18 @@ class TestSubprocessDeps:
         assert "subprocess" in captured.err
         assert "nonexistent_xyz_123.py" in captured.err
 
-    def test_non_subprocess_call_ignored(self, tmp_path):
-        """Plain function calls and unrelated attribute calls are not confused with subprocess edges."""
+    @pytest.mark.parametrize(
+        "caller_source",
+        [
+            pytest.param("def foo():\n    bar()\n    obj.method('python script.py')\n", id="unrelated-calls"),
+            pytest.param("import os\nos.system('ls -la /tmp')\n", id="os-system-non-python"),
+            pytest.param("import subprocess\nsubprocess.run(['echo', 'hi'])\n", id="subprocess-non-python-token"),
+        ],
+    )
+    def test_non_python_invocation_ignored(self, tmp_path, caller_source):
+        """Plain calls, unrelated attribute calls, and non-python commands yield no subprocess edge."""
         src = tmp_path / "caller.py"
-        src.write_text("def foo():\n    bar()\n    obj.method('python script.py')\n")
-        tree = ast.parse(src.read_text())
-        indexed_files = {"caller.py": "caller"}
-        calls = _extract_subprocess(tree, src, tmp_path, indexed_files)
-        assert calls == []
-
-    def test_os_system_non_python_ignored(self, tmp_path):
-        """Do not match — no python interpreter token at index 0."""
-        src = tmp_path / "caller.py"
-        src.write_text("import os\nos.system('ls -la /tmp')\n")
-        tree = ast.parse(src.read_text())
-        indexed_files = {"caller.py": "caller"}
-        calls = _extract_subprocess(tree, src, tmp_path, indexed_files)
-        assert calls == []
-
-    def test_subprocess_with_non_python_token_ignored(self, tmp_path):
-        """Avoid subprocess edges for commands without a Python executable token."""
-        src = tmp_path / "caller.py"
-        src.write_text("import subprocess\nsubprocess.run(['echo', 'hi'])\n")
+        src.write_text(caller_source)
         tree = ast.parse(src.read_text())
         indexed_files = {"caller.py": "caller"}
         calls = _extract_subprocess(tree, src, tmp_path, indexed_files)
@@ -2890,24 +2847,6 @@ class TestSubprocessDeps:
         assert "subprocess_rdep_count" in index
         assert index["subprocess_rdep_count"].get("target") == 2
 
-    def test_requires_v8_index(self, tmp_path, scan_query):
-        """An index at scan_version < 8 yields a SystemExit-style error for subprocess commands."""
-        root = tmp_path / "sub_v7"
-        root.mkdir()
-        index_dir = root / ".cache" / "codemap"
-        index_dir.mkdir(parents=True)
-        index_path = index_dir / f"{root.name}.json"
-        index_path.write_text(json.dumps({"scan_version": 7, "modules": []}))
-        result = subprocess.run(
-            [sys.executable, str(scan_query), "--index", str(index_path), "subprocess-deps", "anything"],
-            capture_output=True,
-            text=True,
-            cwd=str(root),
-        )
-        assert result.returncode != 0
-        data = json.loads(result.stdout)
-        assert "subprocess-deps" in data.get("error", "")
-
 
 class TestFixtureGraph:
     """Tests for extract_fixtures() fixture extraction and fixture-graph queries."""
@@ -2920,32 +2859,52 @@ class TestFixtureGraph:
         fixtures = _extract_fixtures(tree, src)
         assert any(f["name"] == "my_fixture" for f in fixtures)
 
-    def test_scope_extracted(self, tmp_path):
-        """Extract fixture scope from a keyword argument."""
-        src = tmp_path / "conftest.py"
-        src.write_text("import pytest\n\n@pytest.fixture(scope='session')\ndef session_fixture():\n    yield {}\n")
-        tree = ast.parse(src.read_text())
-        fixtures = _extract_fixtures(tree, src)
-        fix = next(f for f in fixtures if f["name"] == "session_fixture")
-        assert fix["scope"] == "session"
+    @pytest.mark.parametrize(
+        ("source", "fixture_name", "attribute", "expected"),
+        [
+            pytest.param(
+                "import pytest\n\n@pytest.fixture(scope='session')\ndef session_fixture():\n    yield {}\n",
+                "session_fixture",
+                "scope",
+                "session",
+                id="scope-from-keyword-argument",
+            ),
+            pytest.param(
+                "import pytest\n\n@pytest.fixture\ndef fn_fixture():\n    return 1\n",
+                "fn_fixture",
+                "scope",
+                "function",
+                id="scope-defaults-to-function",
+            ),
+            pytest.param(
+                "import pytest\n\n@pytest.fixture(scope='class')\ndef class_fixture():\n    return {}\n",
+                "class_fixture",
+                "scope",
+                "class",
+                id="class-scope",
+            ),
+            pytest.param(
+                "import pytest\n\n@pytest.fixture\ndef yield_fixture():\n    yield 'value'\n",
+                "yield_fixture",
+                "yields",
+                True,
+                id="yield-in-body-sets-yields",
+            ),
+        ],
+    )
+    def test_fixture_attribute_extracted(self, tmp_path, source, fixture_name, attribute, expected):
+        """Extract a fixture's scope (keyword, default 'function', class scope) and its yield flag.
 
-    def test_scope_defaults_to_function(self, tmp_path):
-        """No scope kwarg → scope defaults to 'function'."""
+        ``scope`` falls back to ``function`` when no keyword is given, and ``yields`` is a real boolean set by a
+        ``yield`` in the fixture body; both feed the fixture-graph queries.
+        """
         src = tmp_path / "conftest.py"
-        src.write_text("import pytest\n\n@pytest.fixture\ndef fn_fixture():\n    return 1\n")
+        src.write_text(source)
         tree = ast.parse(src.read_text())
         fixtures = _extract_fixtures(tree, src)
-        fix = next(f for f in fixtures if f["name"] == "fn_fixture")
-        assert fix["scope"] == "function"
-
-    def test_yields_detected(self, tmp_path):
-        """Yield inside fixture body → yields=True."""
-        src = tmp_path / "conftest.py"
-        src.write_text("import pytest\n\n@pytest.fixture\ndef yield_fixture():\n    yield 'value'\n")
-        tree = ast.parse(src.read_text())
-        fixtures = _extract_fixtures(tree, src)
-        fix = next(f for f in fixtures if f["name"] == "yield_fixture")
-        assert fix["yields"] is True
+        fix = next(f for f in fixtures if f["name"] == fixture_name)
+        assert fix[attribute] == expected
+        assert type(fix[attribute]) is type(expected)  # a bool flag must be a real bool, not a truthy stand-in
 
     def test_non_fixture_not_captured(self, tmp_path):
         """Regular functions without @pytest.fixture are ignored."""
@@ -2954,15 +2913,6 @@ class TestFixtureGraph:
         tree = ast.parse(src.read_text())
         fixtures = _extract_fixtures(tree, src)
         assert fixtures == []
-
-    def test_class_scope(self, tmp_path):
-        """Capture class-scoped fixtures in query results."""
-        src = tmp_path / "conftest.py"
-        src.write_text("import pytest\n\n@pytest.fixture(scope='class')\ndef class_fixture():\n    return {}\n")
-        tree = ast.parse(src.read_text())
-        fixtures = _extract_fixtures(tree, src)
-        fix = next(f for f in fixtures if f["name"] == "class_fixture")
-        assert fix["scope"] == "class"
 
 
 # v5.4: shorthand handles for coverage integration tests below. These three moved
@@ -3022,32 +2972,26 @@ def _invert_contexts(
 class TestCoverageComputation:
     """Unit tests for the pure coverage math helpers — no SQLite involved."""
 
-    def test_full_coverage_pct_is_one(self):
-        """Every line in the symbol's range is measured → coverage_pct == 1.0."""
-        pct, covered_by = _compute_symbol_coverage(10, 14, frozenset({10, 11, 12, 13, 14}), {})
-        assert pct == 1.0
+    @pytest.mark.parametrize(
+        ("start", "end", "measured", "expected_pct"),
+        [
+            pytest.param(10, 14, frozenset({10, 11, 12, 13, 14}), 1.0, id="every-line-measured"),
+            pytest.param(1, 4, frozenset({1, 2}), 0.5, id="two-of-four-lines-measured"),
+            pytest.param(10, 12, frozenset({1, 2, 3}), 0.0, id="no-lines-measured-in-range"),
+            pytest.param(5, 5, frozenset({5}), 1.0, id="single-line-symbol-denominator-clamp"),
+            pytest.param(10, 5, frozenset(), 0.0, id="inverted-range-clamps-denominator-to-one"),
+        ],
+    )
+    def test_coverage_pct_over_measured_lines(self, start, end, measured, expected_pct):
+        """Coverage_pct is the measured share of the symbol's line range, with a safe denominator and no contexts.
+
+        Every line measured gives 1.0; two of four gives 0.5; no measured line in range gives 0.0 (not absent); a 1-line
+        symbol with that line measured gives 1.0 (denominator clamp); and, defensively, ``end_line < start_line`` must
+        not divide by zero or negative. Without contexts, ``covered_by`` stays None.
+        """
+        pct, covered_by = _compute_symbol_coverage(start, end, measured, {})
+        assert pct == expected_pct
         assert covered_by is None
-
-    def test_half_coverage_pct(self):
-        """Two of four lines measured → coverage_pct == 0.5."""
-        pct, _ = _compute_symbol_coverage(1, 4, frozenset({1, 2}), {})
-        assert pct == 0.5
-
-    def test_zero_coverage_pct_with_no_measured_lines(self):
-        """No lines measured in range → coverage_pct == 0.0 (not absent)."""
-        pct, covered_by = _compute_symbol_coverage(10, 12, frozenset({1, 2, 3}), {})
-        assert pct == 0.0
-        assert covered_by is None
-
-    def test_single_line_symbol_pct(self):
-        """1-line symbol with that line measured → coverage_pct == 1.0 (denominator clamp)."""
-        pct, _ = _compute_symbol_coverage(5, 5, frozenset({5}), {})
-        assert pct == 1.0
-
-    def test_inverted_range_clamps_denominator_to_one(self):
-        """Defensive: end_line < start_line should not divide by zero or negative."""
-        pct, _ = _compute_symbol_coverage(10, 5, frozenset(), {})
-        assert pct == 0.0
 
     def test_covered_by_collects_unique_contexts(self):
         """Multiple lines tagged with overlapping contexts → unique sorted list."""
@@ -3264,7 +3208,7 @@ class TestCoverageQueryCommands:
         return {row["qualified_name"] for row in data["coverage_gap"]}
 
     @pytest.mark.parametrize(
-        "threshold, expected_names",
+        ("threshold", "expected_names"),
         [
             pytest.param(0.0, set(), id="zero-threshold-excludes-zero-coverage"),
             pytest.param(0.75, {"empty"}, id="exact-threshold-excludes-equal-partial"),
@@ -3354,23 +3298,41 @@ class TestCoverageQueryCommands:
         data = json.loads(result.stdout)
         assert "no coverage data" in data.get("error", "")
 
-    def test_coverage_requires_v10_index(self, tmp_path, scan_query):
-        """A v9 index must be rejected with a clear feature-gating error."""
-        root = tmp_path / "v9_cov"
+
+class TestFeatureVersionGates:
+    """Commands that need a newer index fail with a feature-gating error instead of answering from an old schema."""
+
+    @pytest.mark.parametrize(
+        ("scan_version", "query_args", "expected_error_fragment"),
+        [
+            pytest.param(4, ("xrefs", "mymod::fn"), "sphinx_xrefs", id="xrefs-needs-v5"),
+            pytest.param(7, ("subprocess-deps", "anything"), "subprocess-deps", id="subprocess-deps-needs-v8"),
+            pytest.param(9, ("coverage", "anything::x"), "coverage", id="coverage-needs-v10"),
+        ],
+    )
+    def test_command_rejects_index_below_its_minimum_version(
+        self, tmp_path, scan_query, scan_version, query_args, expected_error_fragment
+    ):
+        """An index older than a command's minimum scan_version exits non-zero with an error naming the feature.
+
+        Each command guards its own feature with a minimum ``scan_version``; an older index must fail loudly with the
+        feature named rather than return an answer computed from fields the old schema never recorded.
+        """
+        root = tmp_path / "gated"
         root.mkdir()
         index_dir = root / ".cache" / "codemap"
         index_dir.mkdir(parents=True)
         index_path = index_dir / f"{root.name}.json"
-        index_path.write_text(json.dumps({"scan_version": 9, "modules": []}))
+        index_path.write_text(json.dumps({"scan_version": scan_version, "modules": []}))
         result = subprocess.run(
-            [sys.executable, str(scan_query), "--index", str(index_path), "coverage", "anything::x"],
+            [sys.executable, str(scan_query), "--index", str(index_path), *query_args],
             capture_output=True,
             text=True,
             cwd=str(root),
         )
         assert result.returncode != 0
         data = json.loads(result.stdout)
-        assert "coverage" in data.get("error", "")
+        assert expected_error_fragment in data.get("error", "")
 
 
 class TestErrorSemantics:
@@ -3419,30 +3381,6 @@ class TestErrorSemantics:
         data = json.loads(result.stdout)
         assert data["module"] == "pkg.delta"
         assert data["imported_by"] == []
-
-    def test_symbol_deleted_category(self, tmp_path, scan_index, scan_query):
-        """A deleted source file → stale_category 'symbol_deleted' (the symbol is gone)."""
-        root = tmp_path / "deleted_cat"
-        root.mkdir()
-        (root / "goner.py").write_text("def goner(x):\n    return x\n")
-        subprocess.run(
-            [sys.executable, str(scan_index), "--root", str(root)],
-            capture_output=True,
-            cwd=str(root),
-            check=True,
-        )
-        index_path = root / ".cache" / "codemap" / f"{root.name}.json"
-        (root / "goner.py").unlink()
-        result = subprocess.run(
-            [sys.executable, str(scan_query), "--index", str(index_path), "symbol", "goner"],
-            capture_output=True,
-            text=True,
-            cwd=str(root),
-        )
-        assert result.returncode == 0
-        sym = json.loads(result.stdout)["symbols"][0]
-        assert sym["stale"] is True
-        assert sym["stale_category"] == "symbol_deleted"
 
     def test_coords_stale_category(self, tmp_path, scan_index, scan_query):
         """A renamed symbol at the indexed lines → stale_category 'coords_stale' (moved, not gone)."""
@@ -4004,28 +3942,36 @@ class TestArgvHardening:
         )
         return result.returncode, json.loads(result.stdout)
 
-    def test_newline_joined_names_rejected(self, project, scan_query):
-        """A newline-joined name list in ONE argument exits 1 naming the shell cause."""
-        root, index_path = project
-        rc, data = self._run_raw(scan_query, root, index_path, "rdeps", "alpha\nbeta\ngamma")
-        assert rc == 1
-        assert "3 names passed as ONE argument" in data["error"]
-        assert "batch" in data["error"]
+    @pytest.mark.parametrize(
+        ("args", "expected_error_fragments"),
+        [
+            pytest.param(
+                ("rdeps", "alpha\nbeta\ngamma"),
+                ("3 names passed as ONE argument", "batch"),
+                id="newline-joined-names-name-the-shell-cause",
+            ),
+            pytest.param(
+                ("fn-rdeps", "gamma"),
+                ("'gamma' is a module, not a function qname", "rdeps gamma"),
+                id="module-given-to-fn-command-redirects-to-rdeps",
+            ),
+            pytest.param(
+                ("fn-rdeps", "gamma::nope"),
+                ("find-symbol",),
+                id="unknown-symbol-keeps-generic-find-symbol-pointer",
+            ),
+        ],
+    )
+    def test_malformed_argv_exits_with_actionable_error(self, project, scan_query, args, expected_error_fragments):
+        """Malformed caller argv exits 1 with an error that names the mistake and the working alternative.
 
-    def test_fn_command_with_module_arg_gets_redirect_hint(self, project, scan_query):
-        """Fn-rdeps on a bare module names the mistake and points at rdeps."""
+        A newline-joined name list in ONE argument names the shell cause; ``fn-rdeps`` on a bare module points at
+        ``rdeps``; a genuinely unknown symbol still gets the ``find-symbol`` pointer.
+        """
         root, index_path = project
-        rc, data = self._run_raw(scan_query, root, index_path, "fn-rdeps", "gamma")
+        rc, data = self._run_raw(scan_query, root, index_path, *args)
         assert rc == 1
-        assert "'gamma' is a module, not a function qname" in data["error"]
-        assert "rdeps gamma" in data["error"]
-
-    def test_fn_command_with_unknown_symbol_keeps_generic_error(self, project, scan_query):
-        """A genuinely unknown symbol still gets the find-symbol pointer."""
-        root, index_path = project
-        rc, data = self._run_raw(scan_query, root, index_path, "fn-rdeps", "gamma::nope")
-        assert rc == 1
-        assert "find-symbol" in data["error"]
+        assert all(fragment in data["error"] for fragment in expected_error_fragments)
 
 
 class TestInvalidCommandSuggestions:

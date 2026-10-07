@@ -1,6 +1,7 @@
 """Find the files a scan covers and the roots and hashes that identify them."""
 
 from __future__ import annotations
+
 import fnmatch
 import functools
 import os
@@ -8,17 +9,21 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
 from codemap_py.schema import EntityType
+
 from .docs_xrefs import _iter_doc_files
-from .exclusions import Exclusions, INDEXED_PATHSPEC, SKIP_DIRS, _load_exclusions, _match_exclusion
+from .exclusions import INDEXED_PATHSPEC, SKIP_DIRS, Exclusions, _load_exclusions, _match_exclusion
 
-
+#: Matches posix paths that denote test code (tests directories, test_*.py, *_test.py, conftest.py).
 _TEST_PATH_RE = re.compile(r"(^|/)tests?/|/test_[^/]+\.py$|/[^/]+_test\.py$|/conftest\.py$")
 
 
+#: Matches posix paths that sit under a doc or docs directory.
 _DOCS_PATH_RE = re.compile(r"(^|/)docs?/")
 
 
+#: Matches posix paths that sit under an example or examples directory.
 _EXAMPLES_PATH_RE = re.compile(r"(^|/)examples?/")
 
 
@@ -138,7 +143,7 @@ def find_root() -> Path:
     """Return the git repository root, or cwd if not inside a git repo."""
     try:
         root = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             text=True,
             stderr=subprocess.DEVNULL,
             timeout=_GIT_TIMEOUT_S,
@@ -156,7 +161,7 @@ def get_git_sha(root: Path) -> str | None:
     """
     try:
         return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
+            ["git", "rev-parse", "HEAD"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             text=True,
             stderr=subprocess.DEVNULL,
             cwd=str(root),
@@ -180,8 +185,8 @@ def _git_file_hashes(root: Path, exclusions: Exclusions) -> dict[str, str]:
         exclusions: paths matching these are dropped so git-tracked-but-excluded files
             (e.g. a vendored copy named in ``.codemapignore``) never enter the index.
     """
-    output = subprocess.check_output(
-        ["git", "ls-files", "-s", "-z", "--", *INDEXED_PATHSPEC],
+    output = subprocess.check_output(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
+        ["git", "ls-files", "-s", "-z", "--", *INDEXED_PATHSPEC],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
         cwd=str(root),
         stderr=subprocess.DEVNULL,
         timeout=_GIT_TIMEOUT_S,
@@ -213,7 +218,9 @@ def _md5_file_hashes(root: Path, exclusions: Exclusions) -> dict[str, str]:
     py_files, _counts = _iter_python_files(root, exclusions)
     for py_file in py_files:
         try:
-            hashes[py_file.relative_to(root).as_posix()] = hashlib.md5(py_file.read_bytes()).hexdigest()
+            hashes[py_file.relative_to(root).as_posix()] = hashlib.md5(
+                py_file.read_bytes(), usedforsecurity=False
+            ).hexdigest()
         except OSError as exc:
             print(f"[codemap] ⚠ could not hash {py_file}: {exc} — treating as unchanged", file=sys.stderr)
     rst_files, md_files = _iter_doc_files(root)
@@ -222,7 +229,7 @@ def _md5_file_hashes(root: Path, exclusions: Exclusions) -> dict[str, str]:
         if _match_exclusion(rel, exclusions) is not None:
             continue
         try:
-            hashes[rel] = hashlib.md5(doc_file.read_bytes()).hexdigest()
+            hashes[rel] = hashlib.md5(doc_file.read_bytes(), usedforsecurity=False).hexdigest()
         except OSError as exc:
             print(f"[codemap] ⚠ could not hash {doc_file}: {exc} — treating as unchanged", file=sys.stderr)
     return hashes
@@ -275,6 +282,7 @@ def _is_package_dir(directory: Path) -> bool:
     return (directory / "__init__.py").exists() or (directory / "__init__.pyi").exists()
 
 
+#: File names that mark a directory as a package.
 _INIT_NAMES = ("__init__.py", "__init__.pyi")
 
 

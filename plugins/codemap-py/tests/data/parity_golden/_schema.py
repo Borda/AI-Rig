@@ -43,7 +43,7 @@ REQUIRED_INDEX_KEYS: frozenset[str] = frozenset({"scan_version", "modules"})
 MIN_LOADABLE_VERSION: int = 3
 
 
-def validate_index(index: object) -> str | None:
+def validate_index(index: object) -> str | None:  # noqa: PLR0911
     """Return an error slug when *index* is not a loadable codemap index, else None.
 
     Pure structural gate run by the reader immediately after ``json.load`` — before

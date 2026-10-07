@@ -306,7 +306,8 @@ def test_graph_aggregates_byte_identical_old_vs_new(tmp_path: Path, old_scan_ind
 
     assert old_result.returncode == new_result.returncode == 0
     assert old_result.stderr == new_result.stderr
-    assert old_index is not None and new_index is not None
+    assert old_index is not None
+    assert new_index is not None
 
     for field in (
         "fixture_rdep_count",
@@ -338,7 +339,8 @@ def test_dedup_collision_resolution_identical(tmp_path: Path, old_scan_index: Pa
     new_result, new_index = _run_scan(_NEW_SCAN_INDEX, root, index_dir)
 
     assert old_result.returncode == new_result.returncode == 0
-    assert old_index is not None and new_index is not None
+    assert old_index is not None
+    assert new_index is not None
     assert old_index["collisions"] == new_index["collisions"]
     assert len(old_index["collisions"]) > 0, "fixture must actually force a collision"
     old_names = sorted(m["name"] for m in old_index["modules"])
@@ -378,7 +380,8 @@ def test_coverage_annotation_identical_old_vs_new(tmp_path: Path, old_scan_index
     new_result, new_index = _run_scan(_NEW_SCAN_INDEX, root, index_dir, "--with-coverage", str(cov_path))
 
     assert old_result.returncode == new_result.returncode == 0
-    assert old_index is not None and new_index is not None
+    assert old_index is not None
+    assert new_index is not None
     old_leaf = next(m for m in old_index["modules"] if m["name"] == "pkg.leaf")
     new_leaf = next(m for m in new_index["modules"] if m["name"] == "pkg.leaf")
     assert old_leaf.get("symbols") == new_leaf.get("symbols")
@@ -406,7 +409,8 @@ def test_fixture_graph_and_mock_patch_data_identical(tmp_path: Path, old_scan_in
     new_result, new_index = _run_scan(_NEW_SCAN_INDEX, root, index_dir)
 
     assert old_result.returncode == new_result.returncode == 0
-    assert old_index is not None and new_index is not None
+    assert old_index is not None
+    assert new_index is not None
     assert old_index["fixture_rdep_count"] == new_index["fixture_rdep_count"]
 
     def _mock_patches_by_module(index: dict) -> dict:

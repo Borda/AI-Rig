@@ -24,9 +24,7 @@ import time
 from pathlib import Path
 
 import pytest
-
 import verify_blueprint_audit as verifier
-
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "audit"
 LOGS = FIXTURES / "logs"
@@ -81,6 +79,16 @@ def _probe_unreadable_file() -> bool:
 _CAN_DENY_READ = _probe_unreadable_file()
 _skip_read_denial_unavailable = pytest.mark.skipif(not _CAN_DENY_READ, reason="this process can read a mode-000 file")
 _skip_symlinks_unavailable = pytest.mark.skipif(not _CAN_SYMLINK, reason="this process may not create symlinks")
+
+
+def _make_stray_directory(entry: Path, _dangling_target: Path) -> None:
+    """Create a directory carrying a session-log filename."""
+    entry.mkdir()
+
+
+def _make_dangling_symlink(entry: Path, dangling_target: Path) -> None:
+    """Create a symlink named like a session log whose target does not exist."""
+    entry.symlink_to(dangling_target)
 
 
 class _DyingHandle:
@@ -336,7 +344,7 @@ class TestJsonOutput:
         # from the module under test would let a renamed, added or dropped bucket rewrite the contract and the test
         # that guards it in one edit, which is the whole failure this test exists to prevent.
         assert set(verifier.BUCKETS) == EXPECTED_BUCKETS
-        for report in list(payload["files"].values()) + [payload["totals"]]:
+        for report in [*list(payload["files"].values()), payload["totals"]]:
             assert set(report) == {*EXPECTED_BUCKETS, "counts"}
             assert all(isinstance(report[bucket], int) for bucket in EXPECTED_BUCKETS)
             assert set(report["counts"]) == {"record_phase", "outcome", "trust_level", "agent_id", "lane", "parent"}
@@ -352,21 +360,26 @@ class TestJsonOutput:
 class TestReaderClassification:
     """A record the reader cannot process must be classified into a bucket, never raised out of the run."""
 
-    def test_a_stored_lone_surrogate_is_classified_not_raised(self, tmp_path: Path, capsys) -> None:
-        """An unencodable record must be reported as corrupt, not abort the run.
+    @pytest.mark.parametrize(
+        ("content", "fill"),
+        [
+            # The writer refuses to emit a lone surrogate, so one on disk is damage. Hashing it raises
+            # ``UnicodeEncodeError`` deep inside the read loop, which used to take down the whole verification.
+            pytest.param('{"a":"x\\ud800","record_hash":"00"}\n', "e", id="stored-lone-surrogate"),
+            # Both sides read as absent for such a record; comparing them directly would call it verified.
+            pytest.param('{"a":"x\\ud800"}\n', "f", id="unhashable-without-hash-field"),
+        ],
+    )
+    def test_an_unencodable_record_is_classified_corrupt_not_raised(
+        self, tmp_path: Path, content: str, fill: str
+    ) -> None:
+        """An unencodable record is reported as corrupt instead of aborting the run.
 
-        The writer refuses to emit a lone surrogate, so one on disk is damage. Hashing it raises ``UnicodeEncodeError``
-        deep inside the read loop, which used to take down the whole verification — the one row nobody can read would
-        cost every other row in every other file its report.
+        The one row nobody can read must not cost every other row in every other file its report, whether the record
+        stores a hash (which cannot be verified) or has none at all.
         """
-        path = tmp_path / f"s-{'e' * 32}.jsonl"
-        path.write_text('{"a":"x\\ud800","record_hash":"00"}\n', encoding="utf-8")
-        assert _report(path)["corrupt-record"] == 1
-
-    def test_an_unhashable_record_with_no_hash_field_is_still_corrupt(self, tmp_path: Path) -> None:
-        """Both sides read as absent for such a record; comparing them directly would call it verified."""
-        path = tmp_path / f"s-{'f' * 32}.jsonl"
-        path.write_text('{"a":"x\\ud800"}\n', encoding="utf-8")
+        path = tmp_path / f"s-{fill * 32}.jsonl"
+        path.write_text(content, encoding="utf-8")
         assert _report(path)["corrupt-record"] == 1
 
     @pytest.mark.parametrize("field", ["session_id", "tool_use_id"])
@@ -528,26 +541,31 @@ class TestReadPath:
         assert "cannot list" in captured.err
         assert "nothing was read" not in captured.out
 
-    def test_a_stray_directory_does_not_become_a_false_corruption_alarm(self, tmp_path: Path, capsys) -> None:
-        """``open`` raises on a directory exactly as ``unlink`` does, and an uncaught raise here exits 1.
+    @pytest.mark.parametrize(
+        "make_entry",
+        [
+            # ``open`` raises on a directory exactly as ``unlink`` does, and an uncaught raise exits 1.
+            pytest.param(_make_stray_directory, id="stray-directory"),
+            # ``FileNotFoundError`` out of the read loop would likewise read as corruption.
+            pytest.param(_make_dangling_symlink, id="dangling-symlink", marks=_skip_symlinks_unavailable),
+        ],
+    )
+    def test_an_unreadable_entry_is_skipped_and_named_not_reported_as_corruption(
+        self, tmp_path: Path, capsys, make_entry
+    ) -> None:
+        """A stray directory or dead link in the log dir is skipped by name, never a false corruption alarm.
 
-        Exit 1 is reserved for ``corrupt-record``. A stray directory in the log dir must not produce the loudest signal
-        the tool has about a record that is perfectly intact — nor stop the real file beside it being read.
+        Exit 1 is reserved for ``corrupt-record``. An entry that cannot be read must not produce the loudest signal the
+        tool has about a record that is perfectly intact, nor stop the real file beside it being read — and skipping it
+        is right only if the skip is announced rather than silent.
         """
         shutil.copy(LOGS / "clean-single-plugin.jsonl", tmp_path / f"s-{'a' * 32}.jsonl")
-        (tmp_path / f"s-{'b' * 32}.jsonl").mkdir()
+        make_entry(tmp_path / f"s-{'b' * 32}.jsonl", tmp_path / "gone.jsonl")
 
         assert verifier.main(["verify", str(tmp_path)]) == 0
-        assert f"s-{'a' * 32}.jsonl" in capsys.readouterr().out, "the real file must still be reported"
-
-    @_skip_symlinks_unavailable
-    def test_a_dangling_symlink_does_not_become_a_false_corruption_alarm(self, tmp_path: Path, capsys) -> None:
-        """Same for a dead link: ``FileNotFoundError`` out of the read loop would read as corruption."""
-        shutil.copy(LOGS / "clean-single-plugin.jsonl", tmp_path / f"s-{'a' * 32}.jsonl")
-        (tmp_path / f"s-{'c' * 32}.jsonl").symlink_to(tmp_path / "gone.jsonl")
-
-        assert verifier.main(["verify", str(tmp_path)]) == 0
-        assert f"s-{'a' * 32}.jsonl" in capsys.readouterr().out
+        captured = capsys.readouterr()
+        assert f"s-{'a' * 32}.jsonl" in captured.out, "the real file must still be reported"
+        assert f"s-{'b' * 32}.jsonl" in captured.err, "the skipped entry must be named"
 
     @_skip_read_denial_unavailable
     def test_one_unreadable_file_does_not_abort_the_scan(self, tmp_path: Path, capsys) -> None:
@@ -586,14 +604,6 @@ class TestReadPath:
         link.symlink_to(real)
 
         assert verifier.main(["verify", str(link)]) == 1, "a corrupt record behind a link must still be found"
-
-    def test_directory_scan_names_what_it_skipped(self, tmp_path: Path, capsys) -> None:
-        """Skipping an unreadable entry is right; skipping it silently is not."""
-        shutil.copy(LOGS / "clean-single-plugin.jsonl", tmp_path / f"s-{'a' * 32}.jsonl")
-        (tmp_path / f"s-{'b' * 32}.jsonl").mkdir()
-
-        assert verifier.main(["verify", str(tmp_path)]) == 0
-        assert f"s-{'b' * 32}.jsonl" in capsys.readouterr().err
 
     @_skip_symlinks_unavailable
     def test_a_skipped_symlink_is_reported_as_a_link_not_as_damage(self, tmp_path: Path, capsys) -> None:

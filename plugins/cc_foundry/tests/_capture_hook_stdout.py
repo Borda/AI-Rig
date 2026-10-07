@@ -26,8 +26,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 _TESTS_DIR = Path(__file__).resolve().parent
 _PLUGIN_DIR = _TESTS_DIR.parent
@@ -54,10 +54,10 @@ SEEDED_TEXTS = {
 #: the allow paths of the seeded manifest and the documented normalization-tolerant variants of them.
 EXTRA_COMMANDS = (
     *SEEDED_TEXTS.values(),
-    f"{list(SEEDED_TEXTS.values())[0]}  # resolve the run dir",
-    list(SEEDED_TEXTS.values())[0] + "   ",
+    f"{next(iter(SEEDED_TEXTS.values()))}  # resolve the run dir",
+    next(iter(SEEDED_TEXTS.values())) + "   ",
     list(SEEDED_TEXTS.values())[1].replace("\n", "\r\n"),
-    f"{list(SEEDED_TEXTS.values())[0]}\n{list(SEEDED_TEXTS.values())[2]}",
+    f"{next(iter(SEEDED_TEXTS.values()))}\n{list(SEEDED_TEXTS.values())[2]}",
     "",
     "   ",
     "\n",

@@ -112,16 +112,16 @@ def extract_vars(scores: dict) -> dict[str, str]:
         result[f"AXIS{n}_CONF"] = str(axis.get("conf", -1))
         result[f"AXIS{n}_STATUS"] = str(axis.get("label", "⚪"))
         result[f"AXIS{n}_SIGNAL"] = str(axis.get("signal", ""))
-        result[f"WEIGHT_{n}"] = str(int(round(float(weights.get(k, 0)) * 100)))
+        result[f"WEIGHT_{n}"] = str(round(float(weights.get(k, 0)) * 100))
 
     return result
 
 
-def emit(vars: dict[str, str]) -> str:
+def emit(variables: dict[str, str]) -> str:
     """Render a variable dict as newline-separated shell-quoted ``VAR=value`` assignments.
 
     Args:
-        vars: Mapping of shell variable name to string value.
+        variables: Mapping of shell variable name to string value.
 
     Returns:
         Multi-line string safe for ``eval``.
@@ -131,7 +131,7 @@ def emit(vars: dict[str, str]) -> str:
         FOO=bar
         BAZ='hello world'
     """
-    return "\n".join(f"{key}={shlex.quote(value)}" for key, value in vars.items())
+    return "\n".join(f"{key}={shlex.quote(value)}" for key, value in variables.items())
 
 
 def main(argv: list[str] | None = None) -> int:

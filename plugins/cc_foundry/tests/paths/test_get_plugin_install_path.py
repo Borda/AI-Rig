@@ -10,8 +10,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-from get_plugin_install_path import main, stale_root_warning  # noqa: E402
+from get_plugin_install_path import main, stale_root_warning
 
 
 def _write_registry(path: Path, payload: dict) -> None:

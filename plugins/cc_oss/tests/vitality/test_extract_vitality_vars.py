@@ -7,8 +7,6 @@ import shlex
 from pathlib import Path
 
 import pytest
-
-
 from extract_vitality_vars import emit, extract_vars, main
 
 
@@ -87,17 +85,17 @@ class TestExtractVars:
 
 
 class TestEmit:
-    def test_simple_values_unquoted(self) -> None:
-        out = emit({"FOO": "bar"})
-        assert out == "FOO=bar"
-
-    def test_spaces_single_quoted(self) -> None:
-        out = emit({"MSG": "hello world"})
-        assert out == "MSG='hello world'"
-
-    def test_multiple_vars_newline_separated(self) -> None:
-        out = emit({"A": "1", "B": "2"})
-        assert out == "A=1\nB=2"
+    @pytest.mark.parametrize(
+        ("variables", "expected"),
+        [
+            pytest.param({"FOO": "bar"}, "FOO=bar", id="simple-values-unquoted"),
+            pytest.param({"MSG": "hello world"}, "MSG='hello world'", id="spaces-single-quoted"),
+            pytest.param({"A": "1", "B": "2"}, "A=1\nB=2", id="multiple-vars-newline-separated"),
+        ],
+    )
+    def test_emit_formats_assignments(self, variables: dict[str, str], expected: str) -> None:
+        """Plain values stay unquoted, values with spaces are single-quoted, several vars are newline-separated."""
+        assert emit(variables) == expected
 
     @pytest.mark.parametrize(
         "value",
@@ -154,4 +152,5 @@ class TestMain:
         rc = main([str(f)])
         assert rc == 0
         lines = capsys.readouterr().out.strip().splitlines()
-        assert lines and all("=" in ln for ln in lines)
+        assert lines
+        assert all("=" in ln for ln in lines)

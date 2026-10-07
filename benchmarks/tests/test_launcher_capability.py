@@ -5,9 +5,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 import _launcher_capability
+import pytest
 from _launcher_capability import _pinned_frozen_checkout_is_available
 
 
@@ -81,6 +80,15 @@ def test_pinned_frozen_checkout_wrong_head_is_rejected(tmp_path: Path) -> None:
     checkout, _ = _pinned_checkout(tmp_path)
 
     assert _pinned_frozen_checkout_is_available(checkout, "0" * 40) is False
+
+
+def test_pinned_frozen_checkout_rejects_git_directory_without_head(tmp_path: Path) -> None:
+    """A partial Git directory cannot admit source-dependent contract or lifecycle coverage."""
+    source = tmp_path / "source"
+    (source / ".git").mkdir(parents=True)
+
+    assert source.is_dir()
+    assert _pinned_frozen_checkout_is_available(source, "a" * 40) is False
 
 
 def test_pinned_frozen_checkout_missing_status_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

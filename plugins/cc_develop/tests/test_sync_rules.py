@@ -14,16 +14,7 @@ from pathlib import Path, PureWindowsPath
 
 import pytest
 import sync_rules
-from sync_rules import (
-    VARIANTS,
-    SourceError,
-    cache_lineage,
-    dest_name,
-    main,
-    owns,
-    read_link_target,
-    sync,
-)
+from sync_rules import VARIANTS, SourceError, cache_lineage, dest_name, main, owns, read_link_target, sync
 
 MARKETPLACE = "borda-ai-rig"
 PLUGIN = "develop"
@@ -155,6 +146,8 @@ def test_owns_same_lineage_stale_version(tmp_path: Path) -> None:
         "src/AI-Rig/plugins/cc_develop/rules/quality-gates.md",
         # dotfiles path — the exact shape the reverted attempt deleted
         "dotfiles/plugins/cc_develop/rules/quality-gates.md",
+        # a similarly named plugin must not enter the Develop lineage through a shared name prefix
+        ".claude/plugins/cache/borda-ai-rig/develop-extra/0.1.0/rules/quality-gates.md",
     ],
 )
 def test_does_not_own_foreign_targets(tmp_path: Path, target_rel: str) -> None:
@@ -162,17 +155,6 @@ def test_does_not_own_foreign_targets(tmp_path: Path, target_rel: str) -> None:
     root = _installed_root(home)
 
     assert not owns(_dest(home), str(home / target_rel), root, cache_lineage(root, home))
-
-
-def test_does_not_own_sibling_version_prefix_collision(tmp_path: Path) -> None:
-    """Prevent a similarly named plugin version from entering the Develop lineage."""
-    home = _make_home(tmp_path)
-    root = _installed_root(home)
-    sneaky = (
-        home / ".claude" / "plugins" / "cache" / MARKETPLACE / "develop-extra" / "0.1.0" / "rules" / "quality-gates.md"
-    )
-
-    assert not owns(_dest(home), str(sneaky), root, cache_lineage(root, home))
 
 
 # --- install behaviour -------------------------------------------------------
@@ -434,27 +416,39 @@ def _canonical_outside_rules_dir(home: Path) -> None:
     _deliver_canonical(home, stray)
 
 
-def test_delivers_the_full_rule_when_no_canonical_is_present(tmp_path: Path) -> None:
-    """A standalone install has no shared body to defer to, so it must ship every obligation."""
-    home = _make_home(tmp_path)
-    root = _installed_root(home, rules=BOTH_VARIANTS)
-
-    result = sync(PLUGIN, root, home)
-
-    assert result.linked == ["develop-quality-gates.md"]
-    assert Path(read_link_target(_dest(home))) == root / "rules" / VARIANT.full
+def _canonical_absent(home: Path) -> None:
+    """Leave the canonical name undelivered, as in a standalone install."""
 
 
-def test_delivers_the_delta_when_the_canonical_is_owner_provided(tmp_path: Path) -> None:
-    """With the shared body already delivered, only the plugin's own additions are installed."""
-    home = _make_home(tmp_path)
-    root = _installed_root(home, rules=BOTH_VARIANTS)
+def _canonical_owner_provided(home: Path) -> None:
+    """Deliver the canonical name from the owning plugin, as the owner's own setup would."""
     _deliver_canonical(home, _canonical_source(home))
 
+
+@pytest.mark.parametrize(
+    ("plant", "delivered_variant"),
+    [
+        # A standalone install has no shared body to defer to, so it must ship every obligation.
+        pytest.param(_canonical_absent, VARIANT.full, id="full-rule-when-no-canonical-is-present"),
+        # With the shared body already delivered, only the plugin's own additions are installed.
+        pytest.param(_canonical_owner_provided, VARIANT.delta, id="delta-when-the-canonical-is-owner-provided"),
+    ],
+)
+def test_delivers_the_variant_matching_canonical_provenance(
+    tmp_path: Path, plant: Callable[[Path], None], delivered_variant: str
+) -> None:
+    """The full rule is delivered without a canonical, the delta when the owner already delivered the shared body.
+
+    Either way the plugin's single destination name is linked at the chosen variant.
+    """
+    home = _make_home(tmp_path)
+    root = _installed_root(home, rules=BOTH_VARIANTS)
+    plant(home)
+
     result = sync(PLUGIN, root, home)
 
     assert result.linked == ["develop-quality-gates.md"]
-    assert Path(read_link_target(_dest(home))) == root / "rules" / VARIANT.delta
+    assert Path(read_link_target(_dest(home))) == root / "rules" / delivered_variant
 
 
 def test_the_delta_is_never_delivered_under_a_name_of_its_own(tmp_path: Path) -> None:
@@ -555,42 +549,63 @@ def test_a_delta_without_its_full_counterpart_aborts(tmp_path: Path) -> None:
 # --- source validation -------------------------------------------------------
 
 
-def test_missing_manifest_aborts_before_mutation(tmp_path: Path) -> None:
-    home = _make_home(tmp_path)
-    root = _installed_root(home)
+def _delete_manifest(root: Path) -> None:
+    """Remove the plugin manifest."""
     (root / ".claude-plugin" / "plugin.json").unlink()
 
-    with pytest.raises(SourceError, match="missing plugin manifest"):
-        sync(PLUGIN, root, home)
-    assert list((home / ".claude" / "rules").iterdir()) == []
 
-
-def test_invalid_manifest_aborts(tmp_path: Path) -> None:
-    home = _make_home(tmp_path)
-    root = _installed_root(home)
+def _write_invalid_manifest(root: Path) -> None:
+    """Replace the plugin manifest with text that is not JSON."""
     (root / ".claude-plugin" / "plugin.json").write_text("{not json", encoding="utf-8")
 
-    with pytest.raises(SourceError, match="unreadable plugin manifest"):
-        sync(PLUGIN, root, home)
 
-
-def test_mismatched_manifest_name_aborts(tmp_path: Path) -> None:
-    home = _make_home(tmp_path)
-    root = _installed_root(home)
+def _write_mismatched_manifest(root: Path) -> None:
+    """Replace the plugin manifest with one declaring another plugin's name."""
     (root / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": "oss"}), encoding="utf-8")
 
-    with pytest.raises(SourceError, match="declares 'oss'"):
-        sync(PLUGIN, root, home)
 
-
-def test_missing_rules_dir_aborts(tmp_path: Path) -> None:
-    home = _make_home(tmp_path)
-    root = _installed_root(home)
+def _remove_rules_dir(root: Path) -> None:
+    """Delete the rules directory together with its only rule."""
     (root / "rules" / "quality-gates.md").unlink()
     (root / "rules").rmdir()
 
-    with pytest.raises(SourceError, match="rules directory missing"):
+
+def _empty_rules_dir(root: Path) -> None:
+    """Delete the only rule, leaving an empty rules directory."""
+    (root / "rules" / "quality-gates.md").unlink()
+
+
+def _blank_rule_file(root: Path) -> None:
+    """Truncate the only rule to an empty file."""
+    (root / "rules" / "quality-gates.md").write_text("", encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("corrupt", "message"),
+    [
+        pytest.param(_delete_manifest, "missing plugin manifest", id="missing-manifest"),
+        pytest.param(_write_invalid_manifest, "unreadable plugin manifest", id="invalid-manifest"),
+        pytest.param(_write_mismatched_manifest, "declares 'oss'", id="mismatched-manifest-name"),
+        pytest.param(_remove_rules_dir, "rules directory missing", id="missing-rules-dir"),
+        pytest.param(_empty_rules_dir, r"no \*\.md rules found", id="empty-rules-dir"),
+        pytest.param(_blank_rule_file, "rule is empty", id="empty-rule-file"),
+    ],
+)
+def test_invalid_plugin_source_aborts_before_mutation(
+    tmp_path: Path, corrupt: Callable[[Path], None], message: str
+) -> None:
+    """A plugin source with a bad manifest or rules directory aborts with a named reason and delivers nothing.
+
+    The manifest may be missing, unreadable or declare another plugin; the rules directory may be missing or empty; a
+    rule file may be empty. Validation runs before any link is created in the user's rules directory.
+    """
+    home = _make_home(tmp_path)
+    root = _installed_root(home)
+    corrupt(root)
+
+    with pytest.raises(SourceError, match=message):
         sync(PLUGIN, root, home)
+    assert list((home / ".claude" / "rules").iterdir()) == []
 
 
 def test_symlinked_rules_dir_aborts(tmp_path: Path) -> None:
@@ -604,24 +619,6 @@ def test_symlinked_rules_dir_aborts(tmp_path: Path) -> None:
     (root / "rules").symlink_to(elsewhere)
 
     with pytest.raises(SourceError, match="not a real directory"):
-        sync(PLUGIN, root, home)
-
-
-def test_empty_rules_dir_aborts(tmp_path: Path) -> None:
-    home = _make_home(tmp_path)
-    root = _installed_root(home)
-    (root / "rules" / "quality-gates.md").unlink()
-
-    with pytest.raises(SourceError, match="no \\*.md rules found"):
-        sync(PLUGIN, root, home)
-
-
-def test_empty_rule_file_aborts(tmp_path: Path) -> None:
-    home = _make_home(tmp_path)
-    root = _installed_root(home)
-    (root / "rules" / "quality-gates.md").write_text("", encoding="utf-8")
-
-    with pytest.raises(SourceError, match="rule is empty"):
         sync(PLUGIN, root, home)
 
 

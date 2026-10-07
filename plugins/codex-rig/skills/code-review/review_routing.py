@@ -48,7 +48,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-
+#: Exact set of routing signal names that a routing record must provide, each a boolean.
 ROUTING_SIGNALS = {
     "behavior_change",
     "bug_fix",

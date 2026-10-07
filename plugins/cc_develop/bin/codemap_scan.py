@@ -35,6 +35,7 @@ from pathlib import Path
 # mistake for an option flag (e.g. a leading "--") or that contains whitespace/other shell-unsafe
 # characters. Every derived or caller-supplied module name is checked against this before it
 # reaches a subprocess argv position.
+#: Dotted Python module name pattern that every module must match before it is used in a subprocess argument.
 _MODULE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 
 
@@ -181,8 +182,8 @@ def derive_modules_from_diff(diff_files: Iterable[str], limit: int) -> list[str]
 def _git_diff_files(timeout: int = 15) -> list[str]:
     """Return ``.py`` file paths from ``git diff HEAD --name-only`` (empty list on failure)."""
     try:
-        out = subprocess.check_output(  # noqa: S603 — fixed argv, no shell.
-            ["git", "diff", "HEAD", "--name-only"],
+        out = subprocess.check_output(
+            ["git", "diff", "HEAD", "--name-only"],  # noqa: S607 - git resolved via PATH on purpose
             stderr=subprocess.DEVNULL,
             text=True,
             timeout=timeout,
@@ -199,8 +200,8 @@ def _git_root(timeout: int = 15) -> Path:
     a consumer that anchored on the process CWD reported a false ``no_index`` whenever a skill ran from a subdirectory.
     """
     try:
-        out = subprocess.check_output(  # noqa: S603 — fixed argv, no shell.
-            ["git", "rev-parse", "--show-toplevel"],
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - git resolved via PATH on purpose
             stderr=subprocess.DEVNULL,
             text=True,
             timeout=timeout,
@@ -223,6 +224,7 @@ def _index_path(root: Path) -> Path:
     return index_dir / f"{root.name}.json"
 
 
+#: Most .py files collected by one directory walk, which keeps a scan of a huge tree bounded.
 _MAX_FIND_FILES = 2000
 
 
@@ -271,7 +273,7 @@ def _scan_query(args: list[str], timeout: int = 15) -> None:
     """Invoke ``codemap-py query`` with given args; stream stdout; swallow non-zero exits."""
     try:
         subprocess.run(  # noqa: S603 — fixed binary name + caller-controlled args.
-            ["codemap-py", "query", *args],
+            ["codemap-py", "query", *args],  # noqa: S607 - codemap-py resolved via PATH on purpose
             check=False,
             stderr=subprocess.DEVNULL,
             timeout=timeout,

@@ -5,8 +5,8 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -15,12 +15,11 @@ import pytest
 BENCHMARKS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARKS))
 
-from _bench_common import paid_lifecycle  # noqa: E402
-from _bench_common.artifact_hashing import runner_sha256  # noqa: E402
-
 # Patch seams live in the package modules the runner shim re-exports from: patching the shim
 # would leave each package module's own global binding untouched.
 from _bench_claude.agentic import paid as agentic_paid  # noqa: E402
+from _bench_common import paid_lifecycle  # noqa: E402
+from _bench_common.artifact_hashing import runner_sha256  # noqa: E402
 
 
 def _readcrop_row() -> dict[str, Any]:
@@ -290,25 +289,57 @@ def test_paid_patch_scope_and_snapshot_close_over_shared_runtime_bytes(
     assert hashes["patch_index_locks"] == script_run_agentic._sha256_file(files["patch-index-locks.json"])
 
 
-def test_paid_fix_multi_dispatches_the_shared_executable_contract_once(
+@pytest.mark.parametrize(
+    ("study", "task_id", "prompt", "loader", "scope_resolver", "binding", "digest_char"),
+    [
+        pytest.param(
+            "fix-multi",
+            "FM-01",
+            "Fix callers.",
+            "load_claude_fix_multi_tasks",
+            "resolve_claude_fix_multi_scope",
+            "fix-multi",
+            "b",
+            id="fix-multi",
+        ),
+        pytest.param(
+            "patch",
+            "PT-01",
+            "Fix the regression.",
+            "load_claude_patch_tasks",
+            "resolve_claude_patch_scope",
+            "patch",
+            "c",
+            id="patch",
+        ),
+    ],
+)
+def test_paid_executable_study_dispatches_the_shared_contract_once(
     script_run_agentic: Any,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    study: str,
+    task_id: str,
+    prompt: str,
+    loader: str,
+    scope_resolver: str,
+    binding: str,
+    digest_char: str,
 ) -> None:
-    """Fix-Multi must enter the one shared lifecycle, not a Claude-specific task×arm loop.
+    """Fix-Multi and Patch must enter the one shared paid lifecycle, not a Claude-specific task×arm loop.
 
-    Regression: Claude's earlier Fix-Multi adapter stopped at preflight, while
-    the legacy loop used provider-specific keyword scoring instead of the shared
-    executable contract.
+    Regression: Claude's earlier Fix-Multi adapter stopped at preflight, while the legacy loop used provider-specific
+    keyword scoring instead of the shared executable contract. The historical patch prototype lived only in the old
+    Claude runner, leaving the canonical A/B/C adapter unable to select PT tasks.
     """
-    contract = SimpleNamespace(task_id="FM-01", provider_binding=lambda: {"task": "fix-multi"})
-    loaded = [{"task": {"id": "FM-01", "prompt": "Fix callers."}, "contract": contract}]
-    scope = {"scope_sha256": "b" * 64, "task_ids": ["FM-01"], "total_cells": 3}
+    contract = SimpleNamespace(task_id=task_id, provider_binding=lambda: {"task": binding})
+    loaded = [{"task": {"id": task_id, "prompt": prompt}, "contract": contract}]
+    scope = {"scope_sha256": digest_char * 64, "task_ids": [task_id], "total_cells": 3}
     dispatched: list[dict[str, Any]] = []
     index_path = tmp_path / "index.json"
     index_path.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(agentic_paid, "load_claude_fix_multi_tasks", lambda *_args: loaded)
-    monkeypatch.setattr(agentic_paid, "resolve_claude_fix_multi_scope", lambda *_args: scope)
+    monkeypatch.setattr(agentic_paid, loader, lambda *_args: loaded)
+    monkeypatch.setattr(agentic_paid, scope_resolver, lambda *_args: scope)
     monkeypatch.setattr(agentic_paid, "_resolve_claude_paid_scope", lambda **_kwargs: scope)
     monkeypatch.setattr(agentic_paid, "find_index", lambda _repo, index: Path(index))
     monkeypatch.setattr(agentic_paid, "run_claude_paid_stage", lambda **kwargs: dispatched.append(kwargs))
@@ -316,56 +347,18 @@ def test_paid_fix_multi_dispatches_the_shared_executable_contract_once(
     script_run_agentic.main(
         repo_path=tmp_path,
         index=index_path,
-        study="fix-multi",
-        tasks=["FM-01"],
+        study=study,
+        tasks=[task_id],
         model="haiku",
         run_dir=tmp_path / "fresh",
-        paid_approval="b" * 16,
+        paid_approval=digest_char * 16,
     )
 
     assert len(dispatched) == 1
-    assert dispatched[0]["study"] == "fix-multi"
+    assert dispatched[0]["study"] == study
     assert dispatched[0]["tasks"] == loaded
     assert dispatched[0]["scope"] == scope
     assert dispatched[0]["model"] == "haiku"
-
-
-def test_paid_patch_dispatches_the_shared_executable_contract_once(
-    script_run_agentic: Any,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """Patch tasks must use the existing paid lifecycle, not a second provider loop.
-
-    Regression: the historical patch prototype lived only in the old Claude
-    runner, leaving the canonical A/B/C adapter unable to select PT tasks.
-    """
-    contract = SimpleNamespace(task_id="PT-01", provider_binding=lambda: {"task": "patch"})
-    loaded = [{"task": {"id": "PT-01", "prompt": "Fix the regression."}, "contract": contract}]
-    scope = {"scope_sha256": "c" * 64, "task_ids": ["PT-01"], "total_cells": 3}
-    dispatched: list[dict[str, Any]] = []
-    index_path = tmp_path / "index.json"
-    index_path.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(agentic_paid, "load_claude_patch_tasks", lambda *_args: loaded)
-    monkeypatch.setattr(agentic_paid, "resolve_claude_patch_scope", lambda *_args: scope)
-    monkeypatch.setattr(agentic_paid, "_resolve_claude_paid_scope", lambda **_kwargs: scope)
-    monkeypatch.setattr(agentic_paid, "find_index", lambda _repo, index: Path(index))
-    monkeypatch.setattr(agentic_paid, "run_claude_paid_stage", lambda **kwargs: dispatched.append(kwargs))
-
-    script_run_agentic.main(
-        repo_path=tmp_path,
-        index=index_path,
-        study="patch",
-        tasks=["PT-01"],
-        model="haiku",
-        run_dir=tmp_path / "fresh",
-        paid_approval="c" * 16,
-    )
-
-    assert len(dispatched) == 1
-    assert dispatched[0]["study"] == "patch"
-    assert dispatched[0]["tasks"] == loaded
-    assert dispatched[0]["scope"] == scope
 
 
 def test_patch_row_keeps_quality_separate_from_pooling_eligibility(script_run_agentic: Any) -> None:
@@ -443,7 +436,7 @@ def test_claude_patch_commands_preserve_the_admitted_pytest_runtime(
         model="haiku",
     )
 
-    with pytest.raises(ValueError) as stale:
+    with pytest.raises(ValueError, match=r"cannot start paid Claude patch stage") as stale:
         script_run_agentic._require_claude_paid_request(
             study="patch",
             run_dir=tmp_path / "fresh",

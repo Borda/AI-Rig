@@ -151,64 +151,52 @@ Each completed cell survives a later failure.
 
 from __future__ import annotations
 
-import os  # noqa: F401
-import subprocess  # noqa: F401
-import tempfile  # noqa: F401
-import time  # noqa: F401
 import sys
 from pathlib import Path
-
 
 # benchmarks/ is not a package; make its private shared packages importable
 # regardless of how this script is launched (direct path, symlink, or any cwd).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _bench_codex.structural.config import (  # noqa: E402,F401
-    CODEX_STRUCTURAL_ARMS,
-    PARITY_CODEX_MODEL,
-    PARITY_CODEX_REASONING_EFFORT,
-    PARITY_MANIFEST_PATH,
-    _PROVENANCE_KEY,
-)
-from _bench_codex.structural.provenance import _repo_sha  # noqa: E402,F401
-from _bench_codex.structural.arms import (  # noqa: E402,F401
+import os  # noqa: F401
+import subprocess  # noqa: F401
+import tempfile  # noqa: F401
+import time  # noqa: F401
+
+from _bench_codex import runtime  # noqa: F401
+from _bench_codex.structural.arms import (  # noqa: F401
     _arm_envelope,
     _manifest_arm_order,
     _print_result_block,
     arm_envelope,
 )
-
-# Reached by the shared _bench_codex stage modules and by run-codex-agentic.py, which both
-# sibling-load this file by path rather than importing the package.
-from _bench_codex.structural.provisioning import (  # noqa: E402,F401
-    bind_executable_agent_workspace,
-    prepare_coordination_root,
+from _bench_codex.structural.cli import _run_unified_execution, cli, load_index_relocation, main  # noqa: F401
+from _bench_codex.structural.config import (  # noqa: F401
+    _PROVENANCE_KEY,
+    CODEX_STRUCTURAL_ARMS,
+    PARITY_CODEX_MODEL,
+    PARITY_CODEX_REASONING_EFFORT,
+    PARITY_MANIFEST_PATH,
 )
-from _bench_codex.structural.models import CodexRun  # noqa: E402,F401
-from _bench_codex.structural.manifest import (  # noqa: E402,F401
-    _resolve_structural_task_selection,
-    _validate_targeted_scope_request,
-    _validate_unscoped_paid_task_ids,
-    resolve_task_selection,
-)
-from _bench_codex.structural.tasks import load_tasks_with_provenance  # noqa: E402,F401
-from _bench_codex.structural.diff_impact import (  # noqa: E402,F401
+from _bench_codex.structural.diff_impact import (  # noqa: F401
     _capture_diff_impact_stage,
     _git_porcelain_status,
     _validate_codex_stratum,
     _validate_locked_runtime,
     build_codex_command,
 )
-from _bench_codex.structural.scoring import (  # noqa: E402,F401
-    _arm_compliance,
-    _default_evaluator,
-    _diff_impact_stager,
-    _evaluator_identity,
-    _locked_query_conformance,
-    _locked_query_fitness,
-    _pooling_ineligibility_reasons,
+from _bench_codex.structural.manifest import (  # noqa: F401
+    _resolve_structural_task_selection,
+    _validate_targeted_scope_request,
+    _validate_unscoped_paid_task_ids,
+    resolve_task_selection,
 )
-from _bench_codex.structural.provisioning import (  # noqa: E402,F401
+from _bench_codex.structural.models import CodexRun  # noqa: F401
+from _bench_codex.structural.provenance import _repo_sha  # noqa: F401
+
+# Reached by the shared _bench_codex stage modules and by run-codex-agentic.py, which both
+# sibling-load this file by path rather than importing the package.
+from _bench_codex.structural.provisioning import (  # noqa: F401
     ArmHome,
     TreatmentArtifactLockError,
     _admit_installed_skill_pair,
@@ -238,12 +226,15 @@ from _bench_codex.structural.provisioning import (  # noqa: E402,F401
     _write_frozen_marketplace,
     _write_input_snapshot,
     _write_permission_config,
+    bind_executable_agent_workspace,
     prepare_arm_home,
+    prepare_coordination_root,
     probe_arm_home,
 )
-from _bench_codex.structural.runner import (  # noqa: E402,F401
-    CodexRunner,
+from _bench_codex.structural.rescore import _initial_run_metadata, rescore_results  # noqa: F401
+from _bench_codex.structural.runner import (  # noqa: F401
     NEW_PROCESS_GROUP,
+    CodexRunner,
     _append_run,
     _assert_coordination_root_idle,
     _canonical_telemetry_path,
@@ -252,11 +243,17 @@ from _bench_codex.structural.runner import (  # noqa: E402,F401
     _write_canonical_telemetry,
     _write_run_metadata,
 )
-from _bench_codex.structural.rescore import _initial_run_metadata, rescore_results  # noqa: E402,F401
-from _bench_codex.structural.cli import _run_unified_execution, cli, load_index_relocation, main  # noqa: E402,F401
-
-from _bench_codex import runtime  # noqa: E402,F401
-from _bench_common.mutation_isolation import (  # noqa: E402,F401
+from _bench_codex.structural.scoring import (  # noqa: F401
+    _arm_compliance,
+    _default_evaluator,
+    _diff_impact_stager,
+    _evaluator_identity,
+    _locked_query_conformance,
+    _locked_query_fitness,
+    _pooling_ineligibility_reasons,
+)
+from _bench_codex.structural.tasks import load_tasks_with_provenance  # noqa: F401
+from _bench_common.mutation_isolation import (
     ExecutableAgentWorkspace,
     create_executable_agent_workspace,
     relocate_frozen_index_for_worktree,

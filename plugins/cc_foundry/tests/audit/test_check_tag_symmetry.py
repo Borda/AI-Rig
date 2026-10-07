@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import check_tag_symmetry as cts
+import pytest
 
 
 def _messages(findings: list[cts.Finding]) -> list[str]:
@@ -32,12 +31,6 @@ def _messages(findings: list[cts.Finding]) -> list[str]:
 class TestCheckFile:
     """Covers check_file() for individual file scenarios."""
 
-    def test_clean_file_returns_empty(self, tmp_path: Path) -> None:
-        """File with properly balanced non-empty tags returns no violations."""
-        f = tmp_path / "ok.md"
-        f.write_text("<objective>\ncontent\n</objective>\n", encoding="utf-8")
-        assert cts.check_file(f) == []
-
     def test_empty_block_detected(self, tmp_path: Path) -> None:
         """Empty structural block returns one violation."""
         f = tmp_path / "bad.md"
@@ -46,26 +39,90 @@ class TestCheckFile:
         assert len(violations) == 1
         assert "empty block <objective></objective>" in violations[0]
 
-    def test_whitespace_only_block_detected(self, tmp_path: Path) -> None:
-        """Block with only whitespace between tags is flagged as empty."""
-        f = tmp_path / "ws.md"
-        f.write_text("<notes>   </notes>\n", encoding="utf-8")
-        violations = _messages(cts.check_file(f))
-        assert any("empty block" in v and "<notes>" in v for v in violations)
+    @pytest.mark.parametrize(
+        ("text", "kind", "tag"),
+        [
+            pytest.param("<notes>   </notes>\n", "empty block", "<notes>", id="whitespace-only-block"),
+            pytest.param("<constants>\n\n</constants>\n", "empty block", "constants", id="blank-lines-only-block"),
+            pytest.param("<workflow>\ncontent\n", "unbalanced", "<workflow>", id="open-without-close"),
+            pytest.param("content\n</inputs>\n", "unbalanced", "<inputs>", id="close-without-open"),
+        ],
+    )
+    def test_defective_block_is_flagged(self, tmp_path: Path, text: str, kind: str, tag: str) -> None:
+        """An empty or unbalanced structural block yields a finding naming the defect and the tag.
 
-    def test_unbalanced_open_without_close(self, tmp_path: Path) -> None:
-        """Tag opened but never closed is flagged as unbalanced."""
-        f = tmp_path / "unclosed.md"
-        f.write_text("<workflow>\ncontent\n", encoding="utf-8")
+        Covers a block holding only spaces, one holding only blank lines (no code fence to count as content), a tag
+        opened and never closed, and a closing tag with no opening.
+        """
+        f = tmp_path / "bad.md"
+        f.write_text(text, encoding="utf-8")
         violations = _messages(cts.check_file(f))
-        assert any("unbalanced" in v and "<workflow>" in v for v in violations)
+        assert any(kind in v and tag in v for v in violations)
 
-    def test_unbalanced_close_without_open(self, tmp_path: Path) -> None:
-        """Close tag without matching open tag is flagged as unbalanced."""
-        f = tmp_path / "unopened.md"
-        f.write_text("content\n</inputs>\n", encoding="utf-8")
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("<objective>\ncontent\n</objective>\n", id="balanced-non-empty-block"),
+            # Tags outside the structural registry are never checked.
+            pytest.param("<example></example>\n<code></code>\n", id="non-structural-tags-ignored"),
+            # Tag names quoted inside an HTML comment must not inflate the open count.
+            pytest.param(
+                "<!-- Tag convention: <role>, <workflow>, <notes> are structural. -->\n"
+                "<role>\ncontent\n</role>\n"
+                "<workflow>\ncontent\n</workflow>\n"
+                "<notes>\ncontent\n</notes>\n",
+                id="tag-names-in-html-comment",
+            ),
+            # A code fence counts as content, so the block is not empty.
+            pytest.param("<constants>\n\n```yaml\nKEY: value\n```\n\n</constants>\n", id="block-holding-only-a-fence"),
+            pytest.param("<routing-boundaries>\ncontent\n</routing-boundaries>\n", id="hyphenated-tag-name"),
+            # Only whole-line tags are structural; `<a_b>` inside a sentence is a placeholder.
+            pytest.param("<role>\nWrite to <output_path> when done.\n</role>\n", id="underscore-placeholder-in-prose"),
+            # A four-backtick template fence hides its inner three-backtick block too.
+            pytest.param(
+                "<role>\ncontent\n</role>\n\n````\n**Run:**\n```\n<pytest_cmd>\n```\n````\n",
+                id="underscore-tag-inside-wide-fence",
+            ),
+            # Collapsible README sections open with attributes but close with a bare tag.
+            pytest.param(
+                "<details open>\n<summary>Title</summary>\n\nbody\n\n</details>\n", id="attributed-open-bare-close"
+            ),
+            # A `<name>` seen only mid-sentence is a placeholder, never a discovered block.
+            pytest.param("Pass <output-path> to the script, then read <output-path>.\n", id="placeholder-only-inline"),
+            # Stripping comments before code spans would shift later span pairing and leak the quoted `<workflow>` tag.
+            pytest.param(
+                "The marker `<!-- policy-sibling: a.md, b.md -->` is required; "
+                "see the curator `<workflow>` step for the follow-up.\n",
+                id="code-span-quoting-html-comment",
+            ),
+        ],
+    )
+    def test_well_formed_text_returns_empty(self, tmp_path: Path, text: str) -> None:
+        """Well-formed structural markup, and text only resembling it, returns no violations.
+
+        Covers balanced non-empty blocks, tags outside the registry, tag names quoted in HTML comments or code spans,
+        fence-only content, hyphenated names, underscore placeholders in prose or fences, attributed open tags and mid-
+        sentence placeholders.
+        """
+        f = tmp_path / "ok.md"
+        f.write_text(text, encoding="utf-8")
+        assert cts.check_file(f) == []
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param(
+                "<role>\ncontent\n</role>\nUse `\\<notes>` to suppress navigation.\n", id="inline-backtick-span"
+            ),
+            pytest.param("<role>\ncontent\n</role>\n```markdown\n\\<workflow>\nexample\n```\n", id="fenced-code-block"),
+        ],
+    )
+    def test_escaped_tag_in_code_is_not_flagged(self, tmp_path: Path, text: str) -> None:
+        """A backslash-escaped structural tag inside an inline backtick span or a fenced block is not flagged."""
+        f = tmp_path / "escaped.md"
+        f.write_text(text, encoding="utf-8")
         violations = _messages(cts.check_file(f))
-        assert any("unbalanced" in v and "<inputs>" in v for v in violations)
+        assert not any("escaped structural tag" in v for v in violations)
 
     def test_unreadable_file_returns_error(self, tmp_path: Path) -> None:
         """Non-existent path returns cannot-read violation instead of raising."""
@@ -98,40 +155,6 @@ class TestCheckFile:
         violations = cts.check_file(f)
         assert len(violations) == 2
 
-    def test_non_structural_tag_ignored(self, tmp_path: Path) -> None:
-        """Tags not in the structural list are not checked."""
-        f = tmp_path / "other.md"
-        f.write_text("<example></example>\n<code></code>\n", encoding="utf-8")
-        assert cts.check_file(f) == []
-
-    def test_html_comment_with_tag_names_not_flagged(self, tmp_path: Path) -> None:
-        """Structural tag names mentioned inside HTML comments don't inflate open count."""
-        f = tmp_path / "comment.md"
-        f.write_text(
-            "<!-- Tag convention: <role>, <workflow>, <notes> are structural. -->\n"
-            "<role>\ncontent\n</role>\n"
-            "<workflow>\ncontent\n</workflow>\n"
-            "<notes>\ncontent\n</notes>\n",
-            encoding="utf-8",
-        )
-        assert cts.check_file(f) == []
-
-    def test_code_fence_content_not_flagged_as_empty(self, tmp_path: Path) -> None:
-        """Block containing only a code fence is not flagged as empty."""
-        f = tmp_path / "fence.md"
-        f.write_text(
-            "<constants>\n\n```yaml\nKEY: value\n```\n\n</constants>\n",
-            encoding="utf-8",
-        )
-        assert cts.check_file(f) == []
-
-    def test_truly_empty_block_still_flagged(self, tmp_path: Path) -> None:
-        """Block with only whitespace (no code fence) is still flagged as empty."""
-        f = tmp_path / "empty.md"
-        f.write_text("<constants>\n\n</constants>\n", encoding="utf-8")
-        violations = _messages(cts.check_file(f))
-        assert any("empty block" in v and "constants" in v for v in violations)
-
     def test_underscore_tag_name_flagged_with_hyphen_suggestion(self, tmp_path: Path) -> None:
         """A block tag whose name carries an underscore is not a CommonMark tag."""
         f = tmp_path / "underscore.md"
@@ -147,26 +170,6 @@ class TestCheckFile:
         kinds = [v.kind for v in cts.check_file(f)]
         assert cts.FindingKind.UNDERSCORE_TAG in kinds
 
-    def test_hyphenated_tag_name_not_flagged(self, tmp_path: Path) -> None:
-        f = tmp_path / "hyphen.md"
-        f.write_text("<routing-boundaries>\ncontent\n</routing-boundaries>\n", encoding="utf-8")
-        assert cts.check_file(f) == []
-
-    def test_underscore_placeholder_in_prose_not_flagged(self, tmp_path: Path) -> None:
-        """Only whole-line tags are structural; `<a_b>` inside a sentence is a placeholder."""
-        f = tmp_path / "prose.md"
-        f.write_text("<role>\nWrite to <output_path> when done.\n</role>\n", encoding="utf-8")
-        assert cts.check_file(f) == []
-
-    def test_underscore_tag_inside_wide_fence_not_flagged(self, tmp_path: Path) -> None:
-        """A four-backtick template fence hides its inner three-backtick block too."""
-        f = tmp_path / "template.md"
-        f.write_text(
-            "<role>\ncontent\n</role>\n\n````\n**Run:**\n```\n<pytest_cmd>\n```\n````\n",
-            encoding="utf-8",
-        )
-        assert cts.check_file(f) == []
-
     def test_escaped_structural_tag_flagged_as_low(self, tmp_path: Path) -> None:
         """Backslash-escaped structural tag in prose is flagged with [low] severity."""
         f = tmp_path / "escaped.md"
@@ -177,26 +180,6 @@ class TestCheckFile:
         violations = _messages(cts.check_file(f))
         assert any("escaped structural tag" in v and "antipatterns-to-flag" in v for v in violations)
         assert any("[low]" in v for v in violations)
-
-    def test_escaped_tag_inside_backtick_not_flagged(self, tmp_path: Path) -> None:
-        """Escaped structural tag inside inline backtick span is not flagged."""
-        f = tmp_path / "backtick.md"
-        f.write_text(
-            "<role>\ncontent\n</role>\nUse `\\<notes>` to suppress navigation.\n",
-            encoding="utf-8",
-        )
-        violations = _messages(cts.check_file(f))
-        assert not any("escaped structural tag" in v for v in violations)
-
-    def test_escaped_tag_inside_code_fence_not_flagged(self, tmp_path: Path) -> None:
-        """Escaped structural tag inside fenced code block is not flagged."""
-        f = tmp_path / "fence.md"
-        f.write_text(
-            "<role>\ncontent\n</role>\n```markdown\n\\<workflow>\nexample\n```\n",
-            encoding="utf-8",
-        )
-        violations = _messages(cts.check_file(f))
-        assert not any("escaped structural tag" in v for v in violations)
 
     @pytest.mark.parametrize(
         "tag",
@@ -262,46 +245,6 @@ class TestDynamicBalance:
         assert len(violations) == 1
         assert "unbalanced <split-strategies> — 2 open, 1 close" in violations[0]
 
-    def test_attributed_open_pairs_with_plain_close(self, tmp_path: Path) -> None:
-        """An open tag carrying attributes still pairs with its bare closing tag.
-
-        Collapsible sections in plugin READMEs are written `<details open>` on one line and closed by a bare
-        `</details>` on its own. Matching the open form literally would count every such section as a missing open and
-        bury a real defect under README noise.
-        """
-        f = tmp_path / "readme.md"
-        f.write_text(
-            "<details open>\n<summary>Title</summary>\n\nbody\n\n</details>\n",
-            encoding="utf-8",
-        )
-        assert cts.check_file(f) == []
-
-    def test_placeholder_only_seen_inline_is_never_discovered(self, tmp_path: Path) -> None:
-        """A `<name>` that only ever appears mid-sentence is a placeholder, not a block.
-
-        Skill prose is full of unpaired argument placeholders. Discovering names from any occurrence would report every
-        one of them as unbalanced; requiring a standalone line is what separates a block from a placeholder.
-        """
-        f = tmp_path / "skill.md"
-        f.write_text("Pass <output-path> to the script, then read <output-path>.\n", encoding="utf-8")
-        assert cts.check_file(f) == []
-
-    def test_code_span_quoting_an_html_comment_does_not_leak_later_tags(self, tmp_path: Path) -> None:
-        """A line whose code span quotes an HTML comment keeps its later spans intact.
-
-        Stripping comments before code spans deletes the comment out of the span and leaves its two backticks adjacent;
-        every later span on the line then pairs one delimiter off, so quoted prose is treated as code and the tag it
-        mentions escapes into the balance count. The documentation line that names a marker comment and a tag in the
-        same sentence is the real case that produced a phantom unbalanced finding.
-        """
-        f = tmp_path / "doc.md"
-        f.write_text(
-            "The marker `<!-- policy-sibling: a.md, b.md -->` is required; "
-            "see the curator `<workflow>` step for the follow-up.\n",
-            encoding="utf-8",
-        )
-        assert cts.check_file(f) == []
-
     def test_legacy_underscore_block_is_both_renamed_and_balance_checked(self, tmp_path: Path) -> None:
         """A legacy underscore block reports the rename and its balance defect together.
 
@@ -332,15 +275,21 @@ class TestParseKinds:
             cts.FindingKind.UNBALANCED,
         }
 
-    def test_read_error_is_not_selectable(self) -> None:
-        """Read-error is always emitted, never nameable in ``--check``."""
-        with pytest.raises(ValueError, match="read-error"):
-            cts.parse_kinds("read-error")
+    @pytest.mark.parametrize(
+        ("spec", "match"),
+        [
+            pytest.param("read-error", "read-error", id="read-error-not-selectable"),
+            pytest.param("empty-block,bogus", "bogus", id="unknown-token"),
+        ],
+    )
+    def test_unselectable_mode_raises_naming_the_token(self, spec: str, match: str) -> None:
+        """A mode that cannot be selected raises ValueError naming it.
 
-    def test_unknown_token_raises(self) -> None:
-        """An unrecognised mode name raises ValueError naming the token."""
-        with pytest.raises(ValueError, match="bogus"):
-            cts.parse_kinds("empty-block,bogus")
+        ``read-error`` is always emitted and never nameable in ``--check``, and an unrecognised token raises with the
+        token in the message.
+        """
+        with pytest.raises(ValueError, match=match):
+            cts.parse_kinds(spec)
 
 
 class TestMain:

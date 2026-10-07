@@ -2,23 +2,22 @@
 
 from __future__ import annotations
 
-import json
-import importlib.util
-import sys
-import shutil
 import contextlib
-from types import SimpleNamespace
-from types import ModuleType
+import importlib.util
+import json
+import os
+import shutil
+import sys
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
-
-from _bench_common import change_impact_stage as stage
 
 # Patch seams live in the package modules the runner shim re-exports from: patching the shim
 # would leave each package module's own global binding untouched.
 from _bench_claude.agentic import cli as agentic_cli
 from _bench_claude.agentic import runner as agentic_runner
+from _bench_common import change_impact_stage as stage
 
 
 def test_paid_impact_lifecycle_uses_isolated_fixture_and_native_rows(
@@ -79,7 +78,8 @@ def test_paid_impact_lifecycle_uses_isolated_fixture_and_native_rows(
     assert all(row["input_tokens"] == 100 for row in rows)
     assert all(row["quality"]["graded_score"] == 1 for row in rows)
     assert all(row["admitted_quality"] == 0 for row in rows if row["arm"] == "B_auto")
-    assert len(opened) == 15 and all(not root.exists() for root in opened)
+    assert len(opened) == 15
+    assert all(not root.exists() for root in opened)
     assert json.loads((destination / "run-metadata.json").read_text())["status"] == "completed"
     assert (destination / "summary.json").is_file()
     assert (destination / "checksums.sha256").is_file()
@@ -95,7 +95,8 @@ def _load_provider(provider: str) -> ModuleType:
     """Load an existing Fire runner without starting its command-line entrypoint."""
     path = Path(__file__).resolve().parents[1] / f"run-{provider}-agentic.py"
     spec = importlib.util.spec_from_file_location(f"_impact_dispatch_{provider}", path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -160,7 +161,7 @@ def test_impact_scope_binds_provider_model_and_frozen_index(provider: str) -> No
 def test_paid_mode_fails_before_creating_artifacts(tmp_path: Path) -> None:
     """A new fixture scope cannot bypass the existing provider runtime locks."""
     destination = tmp_path / "result"
-    with pytest.raises(ValueError, match="paid.*requires current scope approval"):
+    with pytest.raises(ValueError, match=r"paid.*requires current scope approval"):
         stage.run_stage(provider="codex", output_dir=destination)
     assert not destination.exists()
 
@@ -174,7 +175,7 @@ def test_diagnostic_refuses_output_inside_model_fixture(tmp_path: Path, monkeypa
     monkeypatch.setattr(stage, "_FIXTURE", fixture)
     destination = fixture / "diagnostic-oracle-evidence"
     assert not destination.exists()
-    with pytest.raises(ValueError, match="outside.*fixture"):
+    with pytest.raises(ValueError, match=r"outside.*fixture"):
         stage.run_stage(provider="codex", answers_file=source, output_dir=destination)
     assert not destination.exists()
 
@@ -268,7 +269,8 @@ def test_native_quality_gates_and_partial_credit_remain_distinct(tmp_path: Path)
     assert rows[1]["answer_contract_valid"] is False
     assert all(row["admitted_quality"] == 0 and row["exact_pass"] is False for row in rows[1:6])
     assert all(row["quality"]["graded_score"] == 1 for row in rows[2:6])
-    assert rows[6]["exact_pass"] is True and rows[6]["input_tokens"] is None
+    assert rows[6]["exact_pass"] is True
+    assert rows[6]["input_tokens"] is None
     summary = json.loads((destination / "summary.json").read_text())
     assert summary["comparisons"]["C_strict"]["efficiency"]["input_tokens"]["unavailable_pairs"] == 1
 
@@ -309,12 +311,14 @@ def test_interrupted_impact_run_preserves_spend_summary_and_cleans_source(tmp_pa
             provider="codex", paid_approval=scope["scope_sha256"][:16], output_dir=destination, runtime_factory=_runtime
         )
     rows = [json.loads(line) for line in (destination / "telemetry.jsonl").read_text().splitlines()]
-    assert len(rows) == 1 and rows[0]["input_tokens"] == 200
+    assert len(rows) == 1
+    assert rows[0]["input_tokens"] == 200
     assert json.loads((destination / "run-metadata.json").read_text())["status"] == "failed"
     summary = json.loads((destination / "summary.json").read_text())
     assert summary["all_assigned"]["A_plain"]["unobserved_cells"] == 4
     assert summary["all_assigned"]["B_auto"]["unobserved_cells"] == 5
-    assert len(roots) == 2 and all(not root.exists() for root in roots)
+    assert len(roots) == 2
+    assert all(not root.exists() for root in roots)
     assert (destination / "checksums.sha256").is_file()
 
 
@@ -396,7 +400,7 @@ def test_rejected_native_evidence_is_retained_without_false_quality(tmp_path: Pa
         rows = [json.loads(line) for line in (destination / "telemetry.jsonl").read_text().splitlines()]
         assert all(row["contaminated"] and row["admitted_quality"] == 0 for row in rows)
     else:
-        with pytest.raises(ValueError, match="explicit treatment_adherence|another coordinate"):
+        with pytest.raises(ValueError, match=r"explicit treatment_adherence|another coordinate"):
             stage.run_stage(
                 provider="codex",
                 paid_approval=scope["scope_sha256"][:16],
@@ -429,6 +433,69 @@ def test_implementation_identity_excludes_private_reports_and_caches(
     assert stage._implementation_hashes() == before
     (plugin / "src/runtime.py").write_text("VALUE = 2\n")
     assert stage._implementation_hashes() != before
+
+
+@pytest.fixture
+def fingerprint_plugin(tmp_path: Path) -> Path:
+    """Plugin tree mixing runtime inputs with private trees and look-alike file names."""
+    plugin = tmp_path / "plugin"
+    for relative in (
+        "bin/tool",
+        "bin/data.bin",
+        "bin/__pycache__/tool.pyc",
+        "bin/tests/check.py",
+        "src/runtime.py",
+        "src/README.md",
+        "src/notes.txt",
+        "src/__pycache__/runtime.py",
+        "tests/check.py",
+        "docs/.cache/index.json",
+        ".git/config.json",
+        ".venv/lib/site.py",
+        ".reports/report.md",
+        "nested/bin",
+        "nested/keep.toml",
+        "bin/.plans",
+    ):
+        (plugin / relative).parent.mkdir(parents=True, exist_ok=True)
+        (plugin / relative).write_text("x\n")
+    return plugin
+
+
+def test_fingerprinted_plugin_files_keep_runtime_inputs_and_drop_private_trees(fingerprint_plugin: Path) -> None:
+    """Only runtime inputs count: ``bin`` entries and fingerprinted suffixes outside any excluded path component.
+
+    Excluded names disqualify a file whether they name a directory above it or the file itself, while a ``bin`` path
+    keeps every suffix. A pruned walk that mishandles either rule would silently change approved runtime identity.
+    """
+    kept = sorted(
+        path.relative_to(fingerprint_plugin).as_posix()
+        for path in stage._fingerprinted_plugin_files(fingerprint_plugin)
+    )
+
+    assert kept == ["bin/data.bin", "bin/tool", "nested/bin", "nested/keep.toml", "src/README.md", "src/runtime.py"]
+
+
+def test_fingerprint_walk_never_enters_excluded_directories(
+    fingerprint_plugin: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Excluded trees are pruned during traversal instead of being listed and filtered afterwards.
+
+    The fingerprint runs before and after every paid cell, so listing ``.git`` or ``__pycache__`` only to discard the
+    entries is the cost this walk exists to avoid. Directory listings are recorded at the ``os.scandir`` seam.
+    """
+    scanned: set[str] = set()
+    real_scandir = os.scandir
+
+    def _record(path: str) -> object:
+        scanned.add(Path(path).relative_to(fingerprint_plugin).as_posix())
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", _record)
+
+    list(stage._fingerprinted_plugin_files(fingerprint_plugin))
+
+    assert scanned == {".", "bin", "docs", "nested", "src"}
 
 
 def test_real_claude_adapter_connects_native_transport_to_shared_quality(
@@ -480,7 +547,8 @@ def test_real_claude_adapter_connects_native_transport_to_shared_quality(
     destination = tmp_path / "actual-adapter"
     module.main(study="change-impact", model="sonnet", run_dir=destination, paid_approval=scope["scope_sha256"][:16])
     rows = [json.loads(line) for line in (destination / "telemetry.jsonl").read_text().splitlines()]
-    assert len(native_calls) == 15 and all(not root.exists() for root in native_calls)
+    assert len(native_calls) == 15
+    assert all(not root.exists() for root in native_calls)
     assert all(row["quality"]["graded_score"] == 1 and row["success"] is True for row in rows)
     assert all(row["exact_pass"] is (row["arm"] != "C_strict") for row in rows)
     assert all(row["input_tokens"] == 150 and row["cached_input_tokens"] == 100 for row in rows)

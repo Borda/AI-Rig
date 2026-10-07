@@ -57,8 +57,8 @@ import tempfile
 from pathlib import Path
 from typing import Final
 
-# Sibling import: both scripts ship in the same bin/ directory, which is not a package. Putting it on the path
-# keeps one normalizer for minting and matching, whether run as a script or loaded by the test conftest.
+#: Sibling import: both scripts ship in the same bin/ directory, which is not a package. Putting it on the path
+#: keeps one normalizer for minting and matching, whether run as a script or loaded by the test conftest.
 _BIN_DIR = str(Path(__file__).resolve().parent)
 if _BIN_DIR not in sys.path:
     sys.path.insert(0, _BIN_DIR)
@@ -69,12 +69,17 @@ from mint_finding_ids import normalize_path, read_jsonl, section_slug  # noqa: E
 SEVERITY_SCORE: Final = {"critical": 5, "high": 4, "medium": 3, "low": 2, "cosmetic": 1}
 #: Sections whose MEDIUM findings are ``[req]`` (code-related) per review-section-taxonomy.md "Severity → Resolve Type".
 REQ_MEDIUM_SECTIONS: Final = frozenset({"critical", "architecture-quality", "performance-concerns", "api-design"})
+#: Fields every finding record must provide to be merged into an action item.
 FINDING_FIELDS: Final = ("id", "section", "severity", "title", "change", "author")
+#: Item-type markers that denote an unresolved review comment still needing action.
 PENDING_TYPE_MARKERS: Final = ("[req]", "[suggest]", "[question]")
 #: Item ``status`` values that keep an item open; a missing status counts as open.
 OPEN_STATUSES: Final = ("", "pending")
+#: Verifier verdict value under which a finding's ``verify_verdict`` and ``verify_file`` are carried onto its item.
 CONFIRMED: Final = "CONFIRMED"
+#: Minimum length in characters of an item's full comment text before it counts as substantive.
 THIN_TEXT_CHARS: Final = 80
+#: Default maximum length in characters of a finding's short summary.
 SUMMARY_CHARS: Final = 60
 
 
@@ -336,7 +341,12 @@ def _git_head(cwd: Path) -> str:
     """Return the checkout's current commit, or ``""`` when git cannot tell."""
     try:
         out = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True, check=False, timeout=10
+            ["git", "rev-parse", "HEAD"],  # noqa: S607 - git resolved via PATH on purpose
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
         return ""

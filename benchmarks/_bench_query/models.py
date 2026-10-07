@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-
 # ---- TYPES ----
 
 
@@ -135,9 +134,11 @@ class ScanResult:
 
 # ---- CONFIG ----
 
+#: Task suite of code-benchmark tasks that the query benchmark loads.
 TASKS_FILE = Path(__file__).resolve().parents[1] / "suites" / "tasks-code.json"
 # OSS_TASKS_FILE (tasks-bench.json) comes from benchmark_paths as TASKS_BENCH_FILE.
 
+#: Pass criteria for each scenario code; scenarios compare their measured values against these bounds.
 THRESHOLDS = {
     # Coverage gap suite (C): structural completeness of cold grep vs codemap
     "C1": {"coverage_gap_min": 0.10},  # codemap finds >=10% more importers than grep

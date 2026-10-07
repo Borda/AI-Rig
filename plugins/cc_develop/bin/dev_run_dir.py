@@ -28,6 +28,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+#: Matches every character outside letters, digits, underscore and hyphen, so it can be stripped from sentinel names.
 _SAFE_NAME_RE = re.compile(r"[^a-zA-Z0-9_-]")
 
 

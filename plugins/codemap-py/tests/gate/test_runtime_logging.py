@@ -17,9 +17,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import _runtime_log as rl
+import pytest
 
 
 @pytest.fixture(autouse=True)
@@ -46,7 +45,8 @@ def test_runtime_isolation(tmp_path: Path) -> None:
     rl.write_log("codex", {"event": "b"}, session="s1", root=root)
     claude = _logs_root(root) / "claude" / "cli_s1.jsonl"
     codex = _logs_root(root) / "codex" / "cli_s1.jsonl"
-    assert claude.is_file() and codex.is_file()
+    assert claude.is_file()
+    assert codex.is_file()
     assert claude != codex
     assert _lines(claude)[0]["runtime"] == "claude"
     assert _lines(codex)[0]["runtime"] == "codex"
@@ -66,7 +66,8 @@ def test_invalid_identity_falls_back_to_direct(tmp_path: Path) -> None:
     root = tmp_path / "proj"
     root.mkdir()
     diag = rl.write_log("kotlin", {"event": "y"}, session="s", root=root)
-    assert diag is not None and diag.code == rl.INVALID_RUNTIME
+    assert diag is not None
+    assert diag.code == rl.INVALID_RUNTIME
     assert (_logs_root(root) / "direct" / "cli_s.jsonl").is_file()
     # the invalid value never became a path component.
     assert not (_logs_root(root) / "kotlin").exists()
@@ -104,7 +105,8 @@ def test_resolve_runtime_missing_falls_back_to_direct() -> None:
     """A missing runtime resolves to direct and reports the bounded diagnostic."""
     runtime, diag = rl.resolve_runtime(None)
     assert runtime == "direct"
-    assert diag is not None and diag.code == rl.INVALID_RUNTIME
+    assert diag is not None
+    assert diag.code == rl.INVALID_RUNTIME
 
 
 def test_session_id_is_sanitized(tmp_path: Path) -> None:

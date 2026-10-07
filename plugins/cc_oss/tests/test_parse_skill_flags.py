@@ -19,7 +19,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from parse_skill_flags import _emit, _validate_flags, _var_name, parse_skill_flags  # loaded by conftest.py
 
 _BIN = Path(__file__).resolve().parents[1] / "bin" / "parse-skill-flags.py"
@@ -58,20 +57,18 @@ class TestValidateFlags:
         """Comma-separated tokens split, whitespace trimmed, order preserved."""
         assert _validate_flags("reply, no-challenge ,worktree") == ["reply", "no-challenge", "worktree"]
 
-    def test_empty_string_raises(self) -> None:
-        """An empty ``--flags`` value is rejected."""
-        with pytest.raises(ValueError, match="at least one flag name"):
-            _validate_flags("")
-
-    def test_uppercase_token_raises(self) -> None:
-        """Flag names must be lowercase — uppercase rejected."""
-        with pytest.raises(ValueError, match="invalid flag name"):
-            _validate_flags("Reply")
-
-    def test_leading_dash_raises(self) -> None:
-        """Flag names are bare (no leading ``--``) — a dash-prefixed token is rejected."""
-        with pytest.raises(ValueError, match="invalid flag name"):
-            _validate_flags("--reply")
+    @pytest.mark.parametrize(
+        ("value", "message"),
+        [
+            pytest.param("", "at least one flag name", id="empty-string"),
+            pytest.param("Reply", "invalid flag name", id="uppercase-token"),
+            pytest.param("--reply", "invalid flag name", id="leading-dash"),
+        ],
+    )
+    def test_invalid_flags_value_raises(self, value: str, message: str) -> None:
+        """An empty ``--flags`` value is rejected; flag names must be lowercase and bare (no leading ``--``)."""
+        with pytest.raises(ValueError, match=message):
+            _validate_flags(value)
 
 
 # ---------------------------------------------------------------------------
@@ -82,30 +79,30 @@ class TestValidateFlags:
 class TestFlagDetection:
     """parse_skill_flags: anchored-token detection, never bare substring."""
 
-    def test_flag_present(self) -> None:
-        """A requested flag present in the blob → 'true'."""
-        result = parse_skill_flags("42 --reply", ["reply"])
-        assert result["FLAG_REPLY"] == "true"
+    @pytest.mark.parametrize(
+        ("blob", "flags", "variable", "expected"),
+        [
+            pytest.param("42 --reply", ["reply"], "FLAG_REPLY", "true", id="flag-present"),
+            pytest.param("42", ["reply"], "FLAG_REPLY", "false", id="flag-absent"),
+            pytest.param("42 --no-challenge", ["no-challenge"], "FLAG_NO_CHALLENGE", "true", id="hyphenated-flag-name"),
+            pytest.param(
+                "--reply-later fix the bug", ["reply"], "FLAG_REPLY", "false", id="reply-later-not-a-substring-match"
+            ),
+            pytest.param(
+                "42 some-repo--reply-bot", ["reply"], "FLAG_REPLY", "false", id="repo-name-with-reply-bot-not-a-match"
+            ),
+        ],
+    )
+    def test_flag_detected_only_as_anchored_token(
+        self, blob: str, flags: list[str], variable: str, expected: str
+    ) -> None:
+        """A requested flag present in the blob → 'true', absent → 'false'; never a bare substring match.
 
-    def test_flag_absent(self) -> None:
-        """A requested flag absent from the blob → 'false'."""
-        result = parse_skill_flags("42", ["reply"])
-        assert result["FLAG_REPLY"] == "false"
-
-    def test_hyphenated_flag_name(self) -> None:
-        """Hyphenated flag name emits FLAG_NO_CHALLENGE, matches correctly."""
-        result = parse_skill_flags("42 --no-challenge", ["no-challenge"])
-        assert result["FLAG_NO_CHALLENGE"] == "true"
-
-    def test_anchored_not_substring_reply_later(self) -> None:
-        """'--reply-later' must NOT false-fire FLAG_REPLY (documented pitfall)."""
-        result = parse_skill_flags("--reply-later fix the bug", ["reply"])
-        assert result["FLAG_REPLY"] == "false"
-
-    def test_anchored_not_substring_reply_bot_repo_name(self) -> None:
-        """A repo name containing '--reply-bot' must not false-fire FLAG_REPLY."""
-        result = parse_skill_flags("42 some-repo--reply-bot", ["reply"])
-        assert result["FLAG_REPLY"] == "false"
+        A hyphenated flag name emits FLAG_NO_CHALLENGE and matches correctly. '--reply-later' must NOT false-fire
+        FLAG_REPLY (documented pitfall), and neither may a repo name containing '--reply-bot'.
+        """
+        result = parse_skill_flags(blob, flags)
+        assert result[variable] == expected
 
     def test_multiple_flags_independent(self) -> None:
         """Each requested flag is detected independently of the others."""
@@ -118,15 +115,17 @@ class TestFlagDetection:
 class TestKeepExtraction:
     """parse_skill_flags: ``--keep <items>`` value extraction."""
 
-    def test_keep_value_extracted(self) -> None:
-        """A quoted ``--keep`` value is captured verbatim."""
-        result = parse_skill_flags('42 --keep "drop the typo fix"', [])
-        assert result["KEEP_ITEMS"] == "drop the typo fix"
-
-    def test_keep_absent_yields_empty_string(self) -> None:
-        """No ``--keep`` flag → KEEP_ITEMS is empty string, not absent key."""
-        result = parse_skill_flags("42", [])
-        assert result["KEEP_ITEMS"] == ""
+    @pytest.mark.parametrize(
+        ("blob", "expected"),
+        [
+            pytest.param('42 --keep "drop the typo fix"', "drop the typo fix", id="quoted-value-captured-verbatim"),
+            pytest.param("42", "", id="absent-yields-empty-string-not-missing-key"),
+        ],
+    )
+    def test_keep_items_value(self, blob: str, expected: str) -> None:
+        """A quoted ``--keep`` value is captured verbatim; no ``--keep`` flag → KEEP_ITEMS is an empty string."""
+        result = parse_skill_flags(blob, [])
+        assert result["KEEP_ITEMS"] == expected
 
     def test_keep_removed_from_clean_args(self) -> None:
         """Remove retained-item options from the cleaned argument list."""
@@ -138,25 +137,24 @@ class TestKeepExtraction:
 class TestCleanArgs:
     """parse_skill_flags: CLEAN_ARGS construction (flag stripping, #, whitespace)."""
 
-    def test_requested_flags_stripped(self) -> None:
-        """Every requested flag token is removed from CLEAN_ARGS."""
-        result = parse_skill_flags("42 --reply --worktree report", ["reply", "worktree"])
-        assert result["CLEAN_ARGS"] == "42 report"
+    @pytest.mark.parametrize(
+        ("blob", "flags", "expected"),
+        [
+            pytest.param(
+                "42 --reply --worktree report", ["reply", "worktree"], "42 report", id="requested-flags-stripped"
+            ),
+            pytest.param("#42", [], "42", id="leading-hash-stripped-once"),
+            pytest.param("##42", [], "#42", id="double-hash-stripped-once-not-recursively"),
+            pytest.param("42   --reply   report", ["reply"], "42 report", id="whitespace-collapsed-after-flag-removal"),
+        ],
+    )
+    def test_clean_args_value(self, blob: str, flags: list[str], expected: str) -> None:
+        """Every requested flag token is removed and exactly one leading '#' is stripped (not recursively).
 
-    def test_leading_hash_stripped_once(self) -> None:
-        """Exactly one leading '#' is stripped from CLEAN_ARGS."""
-        result = parse_skill_flags("#42", [])
-        assert result["CLEAN_ARGS"] == "42"
-
-    def test_double_hash_stripped_once_not_recursively(self) -> None:
-        """'##42' has exactly one '#' stripped → CLEAN_ARGS='#42'."""
-        result = parse_skill_flags("##42", [])
-        assert result["CLEAN_ARGS"] == "#42"
-
-    def test_whitespace_collapsed(self) -> None:
-        """Multiple spaces left behind by flag removal collapse to one."""
-        result = parse_skill_flags("42   --reply   report", ["reply"])
-        assert result["CLEAN_ARGS"] == "42 report"
+        Multiple spaces left behind by flag removal collapse to one.
+        """
+        result = parse_skill_flags(blob, flags)
+        assert result["CLEAN_ARGS"] == expected
 
     def test_unrequested_flag_left_untouched(self) -> None:
         """A flag token not in the requested list is left in CLEAN_ARGS."""
@@ -216,18 +214,6 @@ def test_module_doctests_pass() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_main_via_subprocess_basic() -> None:
-    """Subprocess invocation produces parseable shell assignments."""
-    result = subprocess.run(
-        [sys.executable, str(_BIN), "--flags", "reply", "42", "--reply"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assignments = dict(line.split("=", 1) for line in result.stdout.strip().splitlines())
-    assert assignments["FLAG_REPLY"].strip("'") == "true"
-
-
 def test_main_missing_flags_exits_nonzero() -> None:
     """Missing ``--flags`` is an argparse-level error (exit 2)."""
     result = subprocess.run(
@@ -268,21 +254,10 @@ def test_help_blob_is_argument_text_not_argparse_help() -> None:
     assert "CLEAN_ARGS=--help" in result.stdout
 
 
-def test_dash_leading_prose_forwarded_not_misparsed_as_flag() -> None:
-    """Blob-forward safety: dash-leading blob content reaches the parser as CLEAN_ARGS, not an unknown option."""
-    result = subprocess.run(
-        [sys.executable, str(_BIN), "--flags", "reply", "-x is broken"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assignments = dict(line.split("=", 1) for line in result.stdout.strip().splitlines())
-    assert "is broken" in assignments["CLEAN_ARGS"]
-
-
 @pytest.mark.parametrize(
     ("flags", "argument", "expected_var", "expected_value"),
     [
+        pytest.param("reply", "42 --reply", "FLAG_REPLY", "true", id="basic"),
         pytest.param("worktree", "42 report --worktree", "FLAG_WORKTREE", "true", id="resolve-shape"),
         pytest.param("reply,quick", "vitality --quick", "FLAG_QUICK", "true", id="analyse-shape"),
         pytest.param(
@@ -292,12 +267,17 @@ def test_dash_leading_prose_forwarded_not_misparsed_as_flag() -> None:
             "true",
             id="review-shape",
         ),
+        pytest.param("reply", "-x is broken", "CLEAN_ARGS", "-x is broken", id="dash-leading-prose-not-an-option"),
     ],
 )
 def test_real_skill_call_shapes_via_subprocess(
     flags: str, argument: str, expected_var: str, expected_value: str
 ) -> None:
-    """The three real SKILL.md call shapes (resolve/analyse/review) produce correct assignments."""
+    """The three real SKILL.md call shapes (resolve/analyse/review) produce correct assignments.
+
+    A basic ``--flags reply`` call yields parseable shell assignments. Blob-forward safety: dash-leading blob content
+    reaches the parser as CLEAN_ARGS, not as an unknown option.
+    """
     result = subprocess.run(
         [sys.executable, str(_BIN), "--flags", flags, argument],
         capture_output=True,

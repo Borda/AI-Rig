@@ -67,25 +67,43 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 needs the TOML par
 
 from _package_identity import verify_package
 
-
+#: Path components, below the Codex home, of the installed plugin cache directory for this plugin.
 CACHE_PARTS = ("plugins", "cache", "borda-ai-rig", "codex-rig")
+#: File name of the managed GitHub read-only rules file placed in the Codex rules directory.
 RULE_NAME = "codex-rig-github-read.rules"
+#: Marker line, followed by its sha256, that identifies the installed github-read rules file.
 MARKER = b"# codex-rig:github-read sha256="
+#: File name of the managed pull-request collection rules file placed in the Codex rules directory.
 PR_RULE_NAME = "codex-rig-pr-collection.rules"
+#: Marker line, followed by its sha256, that identifies the installed pr-collection rules file.
 PR_MARKER = b"# codex-rig:pr-collection sha256="
+#: Pattern for a GitHub pull-request URL of the form https://github.com/owner/repo/pull/N.
 PR_URL = re.compile(r"https://github\.com/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*/pull/[1-9][0-9]*")
+#: Largest rules, config, or state file, in bytes (4 MiB), that will be read or written.
 MAX_BYTES = 4 * 1024 * 1024
+#: Pattern for the plugin cache version directory name, a dotted numeric version with optional suffix.
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?")
+#: Pattern for an older single-pattern python allow rule, recognized so it can be replaced on update.
 LEGACY_RULE = re.compile(rb'prefix_rule\(pattern=(\["python(?:3)?", "(?:[^"\\]|\\.)*"\]), decision="allow"\)')
+#: Pattern for an older pull-request collection allow rule, recognized so it can be replaced on update.
 LEGACY_PR_RULE = re.compile(rb'prefix_rule\(pattern=(\[.*\]), decision="allow"\)')
+#: File name of the JSON state file recording the permission profile edit and the original settings it replaced.
 PROFILE_STATE = "codex-rig-github-read-profile.json"
+#: Marker comment delimiting the managed permission-profile block in the Codex config.
 PROFILE_MARKER = "# codex-rig:github-read"
+#: Line that opens the managed permission-profile block in the Codex config file.
 PROFILE_BEGIN = f"{PROFILE_MARKER} profile begin\n"
+#: Line that closes the managed permission-profile block in the Codex config file.
 PROFILE_END = f"{PROFILE_MARKER} profile end\n"
+#: Marked config line that selects the github-read permission profile as the default.
 ROOT_LINE = f'default_permissions = "github-read" {PROFILE_MARKER}\n'
+#: Marked config line that selects the workspace profile as the default (older schemas).
 WORKSPACE_LINE = f'default_permissions = ":workspace" {PROFILE_MARKER}\n'
+#: Marked config line that selects the network-disabled local-workflow profile as the default (schema 4 and later).
 LOCAL_WORKFLOW_LINE = f'default_permissions = "local-workflow" {PROFILE_MARKER}\n'
+#: Marked config line that turns on the network proxy so the github-read profile can reach GitHub.
 NETWORK_LINE = f"network_proxy = true {PROFILE_MARKER}\n"
+#: Body of the github-read permission profile: workspace access plus network access to GitHub domains only.
 LEGACY_PROFILE_BODY = (
     "[permissions.github-read]\n"
     'extends = ":workspace"\n\n'
@@ -97,6 +115,7 @@ LEGACY_PROFILE_BODY = (
     '"api.github.com" = "allow"\n'
     '"github.com" = "allow"\n'
 )
+#: Body of the local-workflow permission profile: workspace access with the network disabled.
 LOCAL_WORKFLOW_BODY = (
     "[permissions.local-workflow]\n"
     'extends = ":workspace"\n\n'
@@ -105,12 +124,19 @@ LOCAL_WORKFLOW_BODY = (
     "[permissions.local-workflow.network]\n"
     "enabled = false\n\n"
 )
+#: Full managed profile body for schema 4 and later: the local-workflow profile followed by the github-read profile.
 PROFILE_BODY = LOCAL_WORKFLOW_BODY + LEGACY_PROFILE_BODY
+#: Complete marked config block written for pre-schema-4 state, containing only the github-read profile.
 LEGACY_PROFILE_BLOCK = PROFILE_BEGIN + LEGACY_PROFILE_BODY + PROFILE_END
+#: Complete marked config block written for schema 4 and later, containing both managed profiles.
 PROFILE_BLOCK = PROFILE_BEGIN + PROFILE_BODY + PROFILE_END
+#: Matches a TOML table header line, capturing the table name.
 TABLE = re.compile(r"^\s*\[([^]]+)\]\s*(?:#.*)?$")
+#: Pattern for one bare, double-quoted, or single-quoted key segment of a TOML table header.
 TABLE_KEY = re.compile(r"""\s*(?:([A-Za-z0-9_-]+)|("(?:[^"\\]|\\.)*")|('(?:[^']*)'))\s*(?:\.|$)""")
+#: Pattern that matches a TOML key assignment at the start of a line and captures the key.
 ASSIGNMENT = re.compile(r'^\s*("[^"]+"|\x27[^\x27]+\x27|[A-Za-z_][A-Za-z_0-9-]*)\s*=')
+#: Pattern for a legacy sandbox_mode = "workspace-write" line, converted into the workspace default_permissions line.
 LEGACY_WORKSPACE_LINE = re.compile(
     r"^(\s*)(?:sandbox_mode|\"sandbox_mode\"|'sandbox_mode')(\s*=\s*)"
     r"(?:\"workspace-write\"|'workspace-write')(?=\s*(?:#|$))"
@@ -123,7 +149,7 @@ class UnsafeRulesState(ValueError):
 
 def _rule_bytes(marker: bytes, pattern: list[object]) -> bytes:
     """Render a checksum-protected rule from an exact argument pattern."""
-    body = f'prefix_rule(pattern={json.dumps(pattern)}, decision="allow")\n'.encode("utf-8")
+    body = f'prefix_rule(pattern={json.dumps(pattern)}, decision="allow")\n'.encode()
     return marker + hashlib.sha256(body).hexdigest().encode("ascii") + b"\n" + body
 
 

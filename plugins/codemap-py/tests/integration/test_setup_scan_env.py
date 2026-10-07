@@ -127,27 +127,34 @@ _skip_posix_entrypoints_unavailable = pytest.mark.skipif(
 class TestArgumentValidation:
     """Bad CLI shapes must fail fast with exit 3 and never touch tmpfiles."""
 
-    def test_unknown_flag(self, launcher: list[str], fake_repo: Path, isolated_tmpdir: Path) -> None:
-        """An unknown long flag exits 3 with a stderr message."""
-        r = _run_setup(
-            launcher,
-            "--bogus",
-            env={"CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT), "TMPDIR": str(isolated_tmpdir)},
-            cwd=str(fake_repo),
-        )
-        assert r.returncode == _EXIT_BAD_ARGS
-        assert "unknown argument" in r.stderr
+    @pytest.mark.parametrize(
+        ("bad_args", "stderr_fragment"),
+        [
+            pytest.param(("--bogus",), "unknown argument", id="unknown-long-flag"),
+            pytest.param(("--arguments",), "needs a value", id="arguments-option-without-value"),
+        ],
+    )
+    def test_malformed_arguments_exit_bad_args(
+        self,
+        launcher: list[str],
+        fake_repo: Path,
+        isolated_tmpdir: Path,
+        bad_args: tuple[str, ...],
+        stderr_fragment: str,
+    ) -> None:
+        """An unknown long flag, or an arguments option without a following value, exits 3 with a stderr message.
 
-    def test_arguments_without_value(self, launcher: list[str], fake_repo: Path, isolated_tmpdir: Path) -> None:
-        """Reject an arguments option without a following value."""
+        Validation fails fast with the dedicated exit code and a message naming the problem, before any state file or
+        tmpfile is written, for both the Python port and the bash shim.
+        """
         r = _run_setup(
             launcher,
-            "--arguments",
+            *bad_args,
             env={"CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT), "TMPDIR": str(isolated_tmpdir)},
             cwd=str(fake_repo),
         )
         assert r.returncode == _EXIT_BAD_ARGS
-        assert "needs a value" in r.stderr
+        assert stderr_fragment in r.stderr
 
     def test_arguments_equals_form(self, launcher: list[str], fake_repo: Path, isolated_tmpdir: Path) -> None:
         """Accept the equals form of the arguments option."""
@@ -173,7 +180,11 @@ class TestMissingScanIndex:
     def test_bogus_plugin_root(
         self, launcher: list[str], fake_repo: Path, isolated_tmpdir: Path, tmp_path: Path
     ) -> None:
-        """Pointing ``CLAUDE_PLUGIN_ROOT`` at an empty dir surfaces the missing-binary error."""
+        """Pointing ``CLAUDE_PLUGIN_ROOT`` at an empty dir surfaces the missing-binary error.
+
+        Under the ``sh-shim`` launcher this also proves a non-zero exit from the port reaches the caller unchanged
+        through the shim.
+        """
         empty = tmp_path / "no-plugin"
         empty.mkdir()
         r = _run_setup(
@@ -438,17 +449,3 @@ class TestShimDelegation:
         assert py.stderr == sh.stderr
         assert _read_state(Path(py.stdout.strip())) == _read_state(Path(sh.stdout.strip()))
         assert _tmpfile_shapes(py_tmp) == _tmpfile_shapes(sh_tmp)
-
-    def test_shim_propagates_failure_exit_code(self, fake_repo: Path, isolated_tmpdir: Path, tmp_path: Path) -> None:
-        """A non-zero exit from the port reaches the caller unchanged through the shim."""
-        empty = tmp_path / "no-plugin"
-        empty.mkdir()
-        r = _run_setup(
-            _SH_ARGV,
-            "--arguments",
-            "",
-            env={"CLAUDE_PLUGIN_ROOT": str(empty), "TMPDIR": str(isolated_tmpdir)},
-            cwd=str(fake_repo),
-        )
-        assert r.returncode == 1
-        assert "scan-index binary not found" in r.stderr

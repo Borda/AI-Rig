@@ -49,18 +49,29 @@ import time
 from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
-
+#: Full plugin id (name@marketplace) that the Codex plugin listing must report as installed.
 PLUGIN_ID = "codex-rig@borda-ai-rig"
+#: Name of this plugin, checked against the manifest, plugin manifest, and Codex listing.
 PLUGIN_NAME = "codex-rig"
+#: Name of the plugin marketplace used to query and locate the installed plugin.
 MARKETPLACE = "borda-ai-rig"
+#: Revision of the role-link protocol; must match the manifest schema and bootstrap protocol, and is echoed in output.
 PROTOCOL = 1
+#: Line written between the JSON status header and the role card text in successful output.
 CARD_SEPARATOR = "--- codex-rig-role-card ---\n"
+#: Pattern for a lowercase 64-character hexadecimal SHA-256 digest string.
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+#: Absolute path of this script, without resolving symlinks.
 SCRIPT_PATH = Path(__file__).absolute()
+#: Plugin directory containing this script, which must equal the installed plugin cache root.
 PLUGIN_ROOT = SCRIPT_PATH.parent.parent
+#: Largest manifest or role card file, in bytes (2 MiB), that will be read.
 MAX_TEXT_BYTES = 2 * 1024 * 1024
+#: Largest file, in bytes (512 MiB), that will be read when digesting the Codex binary.
 MAX_BINARY_BYTES = 512 * 1024 * 1024
+#: Largest stdout or stderr stream, in bytes (64 KiB), accepted from a Codex CLI subprocess.
 MAX_CLI_OUTPUT_BYTES = 64 * 1024
+#: Role identifiers this script will serve; any other requested role id is rejected.
 VALID_ROLE_IDS = frozenset(
     {
         "challenger",
@@ -198,9 +209,11 @@ def executable_is_unchanged(path: Path, original_fd: int, expected_digest: str) 
 
 def run_bounded(command: list[str], timeout: float = 10.0) -> tuple[int, bytes, bytes]:
     """Run a child while enforcing stdout and stderr limits during capture."""
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    assert process.stdout is not None
-    assert process.stderr is not None
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)  # noqa: S603 - argv list, no shell
+    if process.stdout is None:
+        raise RuntimeError("process.stdout must not be None")
+    if process.stderr is None:
+        raise RuntimeError("process.stderr must not be None")
     streams = {process.stdout.fileno(): bytearray(), process.stderr.fileno(): bytearray()}
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ)

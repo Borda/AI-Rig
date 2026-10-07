@@ -5,13 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-
-from _bench_common.provider_parity_contracts import (
-    EvaluationResult,
-)
+from _bench_common.provider_parity_contracts import EvaluationResult
 
 from _bench_claude.structural.config import LEGACY_EXPERIMENT_REVISION
-
 
 # ---------------------------------------------------------------------------
 # Data classes

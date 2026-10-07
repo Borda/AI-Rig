@@ -86,9 +86,29 @@ jobs:
             python plugins/cc_foundry/bin/build_blueprint_manifest.py \
             --scan-dir plugins --check
 
-      # Four workers run the complete suite, including Node, coverage, and subprocess tests.
-      # pytest-randomly is installed with the test group and records a seed for reproducing order-dependent failures.
+      # Four workers run the complete suite, including Node, coverage, and subprocess tests; work stealing keeps the
+      # few multi-minute tests from landing last on one worker. Coverage is opt-in so local runs stay untraced, and
+      # its sources stay out of pyproject's [tool.coverage], which would also configure tests that start their own
+      # coverage run. The XML report feeds the informational Codecov upload below.
+      # Every test over 0.1 s is listed so per-file cost can be aggregated, not just the 500 slowest.
       - name: 🧪 Run plugin tests (Python bin/ + JS hooks)
         run: |
-          uv run --only-group test pytest -n 4 \
-            -W error::DeprecationWarning --durations=500
+          uv run --only-group test pytest -n 4 --dist worksteal \
+            -W error::DeprecationWarning --durations=0 --durations-min=0.1 \
+            --cov=plugins/codemap-py/bin --cov=plugins/codemap-py/src \
+            --cov=plugins/cc_develop/bin --cov=plugins/cc_foundry/bin \
+            --cov=plugins/cc_oss/bin --cov=plugins/cc_research/bin \
+            --cov-report=term-missing --cov-report=html:.reports/coverage \
+            --cov-report=xml:coverage.xml
+
+      # Coverage is informational only: an upload failure never fails the job, and codecov.yml
+      # marks every status as informational so coverage changes never block a merge.
+      - name: 📊 Upload coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          disable_search: true
+          flags: ${{ runner.os }}-py${{ matrix.python-version }}
+          fail_ci_if_error: false

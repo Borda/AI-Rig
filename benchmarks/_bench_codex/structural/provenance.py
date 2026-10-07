@@ -10,8 +10,8 @@ from pathlib import Path
 def _repo_sha(repo_path: Path) -> str:
     """Return repository HEAD or ``unknown`` when the fixture has no Git metadata."""
     try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo_path), "rev-parse", "HEAD"],
+        proc = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", "-C", str(repo_path), "rev-parse", "HEAD"],  # noqa: S607 - git/tool resolved via PATH on purpose
             capture_output=True,
             text=True,
             timeout=10,

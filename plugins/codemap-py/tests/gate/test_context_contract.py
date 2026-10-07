@@ -23,7 +23,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from codemap_py import integration
 
 _PLUGIN_ROOT = Path(__file__).parent.parent.parent
@@ -77,12 +76,6 @@ class TestContextContract:
         text = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
         assert "# Codemap context contract — v4" in text
 
-    def test_declares_cross_plugin_consumers(self):
-        """Consumer header names the managed-block contract and wrapper consumers."""
-        text = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
-        assert "<!-- file: codemap-context.md" in text
-        assert "codemap-py.integration.v2" in text
-
     @pytest.mark.parametrize(
         "section",
         [
@@ -99,12 +92,6 @@ class TestContextContract:
     def test_carries_required_section(self, section: str):
         """Every generic section the wrappers delegate to must be present in the contract."""
         assert section in _CONTEXT_CONTRACT.read_text(encoding="utf-8")
-
-    def test_target_derivation_is_pluggable(self):
-        """Target derivation is explicitly consumer-supplied, not baked into the generic contract."""
-        text = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
-        assert "consumer-supplied inputs" in text
-        assert "contract doesn't derive them" in text
 
     def test_carries_evidence_line_and_completeness_semantics(self):
         """The evidence line and all four completeness states are defined once in the contract."""
@@ -143,7 +130,7 @@ class TestContextContract:
     @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
     @pytest.mark.parametrize(
         ("query_kind", "expected_queries"),
-        (
+        [
             pytest.param("skip", [], id="localized-skip"),
             pytest.param(
                 "callers",
@@ -162,7 +149,7 @@ class TestContextContract:
                 ],
                 id="removed-symbol-route-falls-back-to-standard",
             ),
-        ),
+        ],
     )
     def test_batch_preflight_executes_only_the_selected_route(
         self,
@@ -223,7 +210,7 @@ class TestContextContract:
     @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
     @pytest.mark.parametrize(
         ("query_kind", "tsv_commands", "json_commands"),
-        (
+        [
             pytest.param("central", ["central --top 5"], [], id="central-is-tabular"),
             pytest.param("coupling", ["coupled"], [], id="coupled-is-tabular"),
             pytest.param(
@@ -250,7 +237,7 @@ class TestContextContract:
                 ["symbol --with-imports target"],
                 id="symbol-stays-json-beside-three-tables",
             ),
-        ),
+        ],
     )
     def test_tsv_is_requested_only_for_the_commands_that_render_as_one_table(
         self,
@@ -350,7 +337,7 @@ class TestContextContract:
     @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
     @pytest.mark.parametrize(
         ("envelope", "expected"),
-        (
+        [
             pytest.param('{"index": {"stale": true}}', "completeness=stale", id="stale-on-stderr"),
             pytest.param(
                 '{"index": {"query_complete": false}}',
@@ -363,7 +350,7 @@ class TestContextContract:
                 "completeness=exhaustive",
                 id="clean-on-stderr",
             ),
-        ),
+        ],
     )
     def test_the_tsv_envelope_is_read_from_stderr(self, tmp_path: Path, envelope: str, expected: str) -> None:
         """Staleness and completeness must survive the move to stderr.
@@ -486,12 +473,6 @@ class TestContextContract:
 class TestGatesContract:
     """The shipped gates contract carries the plugin-agnostic Gate A / Gate B machinery."""
 
-    def test_has_version_header_and_consumer_declaration(self):
-        """Gates contract carries its version header and a cross-plugin consumer declaration."""
-        text = _GATES_CONTRACT.read_text(encoding="utf-8")
-        assert "# Codemap gates contract — v3" in text
-        assert "<!-- file: codemap-gates.md" in text
-
     @pytest.mark.parametrize(
         "marker",
         [
@@ -527,29 +508,10 @@ class TestGatesContract:
 class TestDevelopWrapper:
     """The develop context wrapper references the contract and keeps only its per-plugin surface."""
 
-    def test_reads_the_context_contract_from_the_active_install(self):
-        """Wrapper resolves the active codemap-py install and reads this plugin's context contract live.
-
-        No manifested copy, no newest-version cache glob, no bare cross-plugin source path.
-        """
-        text = _DEVELOP_CONTEXT.read_text(encoding="utf-8")
-        assert _PROVIDER_RESOLVE in text
-        assert 'cat "$_CODEMAP_SHARED/codemap-context.md"' in text
-        assert not _DEVELOP_CONTEXT.with_name("codemap-py--codemap-context.md").exists()
-        assert "codemap-py--" not in text
-        assert "plugins/cache" not in text
-        assert "plugins/codemap-py/claude-skills/_shared" not in text
-
     def test_never_uses_bare_relative_cross_plugin_path(self):
         """Wrapper must not cross-reference the codemap plugin via a bare relative path."""
         text = _DEVELOP_CONTEXT.read_text(encoding="utf-8")
         assert "../codemap" not in text
-
-    def test_keeps_graceful_fallback(self):
-        """Wrapper degrades gracefully when the codemap plugin is absent — never a broken load."""
-        text = _DEVELOP_CONTEXT.read_text(encoding="utf-8")
-        assert "Fallback when codemap plugin absent" in text
-        assert "Never break load." in text
 
     def test_fix_consumer_selects_the_shared_zero_or_task_fit_query_route(self) -> None:
         """The production fix workflow must classify retrieval before loading the shared batch."""
@@ -596,46 +558,108 @@ class TestDevelopWrapper:
         assert "bin/codemap_cache.py" not in text
 
 
-@pytest.mark.skipif(not _DEVELOP_GATES.is_file(), reason="develop plugin sibling tree absent")
-class TestDevelopGatesWrapper:
-    """The develop gates wrapper references the gates contract and supplies its skip flag."""
+_skip_develop_context_absent = pytest.mark.skipif(
+    not _DEVELOP_CONTEXT.is_file(), reason="develop plugin sibling tree absent"
+)
+_skip_develop_gates_absent = pytest.mark.skipif(
+    not _DEVELOP_GATES.is_file(), reason="develop plugin sibling tree absent"
+)
+_skip_oss_gates_absent = pytest.mark.skipif(not _OSS_GATES.is_file(), reason="oss plugin sibling tree absent")
 
-    def test_reads_the_gates_contract_from_the_active_install(self):
-        """Wrapper resolves the active codemap-py install and reads this plugin's gates contract live."""
-        text = _DEVELOP_GATES.read_text(encoding="utf-8")
+
+class TestConsumerWrappers:
+    """Each consumer wrapper references its shipped contract live instead of carrying a copy.
+
+    Covers the develop context wrapper and the develop and oss gates wrappers; a case skips when its sibling plugin tree
+    is absent.
+    """
+
+    @pytest.mark.parametrize(
+        ("wrapper", "contract_name"),
+        [
+            pytest.param(
+                _DEVELOP_CONTEXT, "codemap-context.md", marks=_skip_develop_context_absent, id="develop-context"
+            ),
+            pytest.param(_DEVELOP_GATES, "codemap-gates.md", marks=_skip_develop_gates_absent, id="develop-gates"),
+            pytest.param(_OSS_GATES, "codemap-gates.md", marks=_skip_oss_gates_absent, id="oss-gates"),
+        ],
+    )
+    def test_reads_the_contract_from_the_active_install(self, wrapper: Path, contract_name: str):
+        """Wrapper resolves the active codemap-py install and reads this plugin's contract live.
+
+        No manifested copy, no newest-version cache glob, no bare cross-plugin source path.
+        """
+        text = wrapper.read_text(encoding="utf-8")
         assert _PROVIDER_RESOLVE in text
-        assert 'cat "$_CODEMAP_SHARED/codemap-gates.md"' in text
-        assert not _DEVELOP_GATES.with_name("codemap-py--codemap-gates.md").exists()
+        assert f'cat "$_CODEMAP_SHARED/{contract_name}"' in text
+        assert not wrapper.with_name(f"codemap-py--{contract_name}").exists()
         assert "codemap-py--" not in text
         assert "plugins/cache" not in text
         assert "plugins/codemap-py/claude-skills/_shared" not in text
 
-    def test_supplies_develop_skip_flag_and_fallback(self):
-        """Wrapper carries develop's skip flag and a graceful fallback."""
-        text = _DEVELOP_GATES.read_text(encoding="utf-8")
-        assert "CODEMAP_RAW=auto" in text
-        assert "Never break load." in text
 
+class TestRequiredPhrases:
+    """Shipped contract and wrapper files carry the exact phrases their consumers rely on.
 
-@pytest.mark.skipif(not _OSS_GATES.is_file(), reason="oss plugin sibling tree absent")
-class TestOssGatesWrapper:
-    """The oss gates wrapper references the gates contract and supplies its skip flag."""
+    Covers the context contract's consumer header and consumer-supplied target derivation, the gates contract's version
+    header and consumer declaration, and each consumer wrapper's own surface plus its graceful fallback; a wrapper case
+    skips when its sibling plugin tree is absent.
+    """
 
-    def test_reads_the_gates_contract_from_the_active_install(self):
-        """Wrapper resolves the active codemap-py install and reads this plugin's gates contract live."""
-        text = _OSS_GATES.read_text(encoding="utf-8")
-        assert _PROVIDER_RESOLVE in text
-        assert 'cat "$_CODEMAP_SHARED/codemap-gates.md"' in text
-        assert not _OSS_GATES.with_name("codemap-py--codemap-gates.md").exists()
-        assert "codemap-py--" not in text
-        assert "plugins/cache" not in text
-        assert "plugins/codemap-py/claude-skills/_shared" not in text
-
-    def test_supplies_oss_skip_flag_and_fallback(self):
-        """Wrapper carries oss's skip flag and a graceful fallback."""
-        text = _OSS_GATES.read_text(encoding="utf-8")
-        assert "CODEMAP_FORCE_OFF=false" in text
-        assert "Never break the load." in text
+    @pytest.mark.parametrize(
+        ("path", "first_phrase", "second_phrase"),
+        [
+            # Consumer header names the managed-block contract and wrapper consumers.
+            pytest.param(
+                _CONTEXT_CONTRACT,
+                "<!-- file: codemap-context.md",
+                "codemap-py.integration.v2",
+                id="context-declares-cross-plugin-consumers",
+            ),
+            # Target derivation is explicitly consumer-supplied, not baked into the generic contract.
+            pytest.param(
+                _CONTEXT_CONTRACT,
+                "consumer-supplied inputs",
+                "contract doesn't derive them",
+                id="context-target-derivation-is-pluggable",
+            ),
+            # Gates contract carries its version header and a cross-plugin consumer declaration.
+            pytest.param(
+                _GATES_CONTRACT,
+                "# Codemap gates contract — v3",
+                "<!-- file: codemap-gates.md",
+                id="gates-version-header-and-consumer-declaration",
+            ),
+            # Context wrapper degrades gracefully when the codemap plugin is absent — never a broken load.
+            pytest.param(
+                _DEVELOP_CONTEXT,
+                "Fallback when codemap plugin absent",
+                "Never break load.",
+                marks=_skip_develop_context_absent,
+                id="develop-context-graceful-fallback",
+            ),
+            # Gates wrappers supply their skip flag (develop ``CODEMAP_RAW=auto``, oss ``CODEMAP_FORCE_OFF=false``).
+            pytest.param(
+                _DEVELOP_GATES,
+                "CODEMAP_RAW=auto",
+                "Never break load.",
+                marks=_skip_develop_gates_absent,
+                id="develop-gates-skip-flag",
+            ),
+            pytest.param(
+                _OSS_GATES,
+                "CODEMAP_FORCE_OFF=false",
+                "Never break the load.",
+                marks=_skip_oss_gates_absent,
+                id="oss-gates-skip-flag",
+            ),
+        ],
+    )
+    def test_file_carries_both_phrases(self, path: Path, first_phrase: str, second_phrase: str):
+        """The shipped file contains both phrases that pin its consumer declaration or fallback surface."""
+        text = path.read_text(encoding="utf-8")
+        assert first_phrase in text
+        assert second_phrase in text
 
 
 def _commit_fixture(root: Path) -> None:

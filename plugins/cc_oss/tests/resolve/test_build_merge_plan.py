@@ -9,9 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import build_merge_plan as bmp
+import pytest
 
 
 class TestBuildPlan:
@@ -38,19 +37,24 @@ class TestBuildPlan:
         plan = bmp.build_plan(commits, items, {}, ["1", "3"])
         assert plan == [{"item_id": "1", "sha": "aa", "group": "docs", "module": ""}]
 
-    def test_unresolved_module_defaults_to_empty_string(self) -> None:
-        """A file absent from the codemap map (no index, or non-Python item) resolves to an empty module."""
-        commits = [{"item_id": 1, "sha": "aa", "group": "docs"}]
-        items = [{"id": 1, "file": "readme.md"}]
-        plan = bmp.build_plan(commits, items, {}, ["1"])
-        assert plan[0]["module"] == ""
+    @pytest.mark.parametrize(
+        ("commits", "field"),
+        [
+            pytest.param([{"item_id": 1, "sha": "aa", "group": "docs"}], "module", id="unresolved-module"),
+            pytest.param([{"item_id": 1, "sha": "aa"}], "group", id="missing-group"),
+        ],
+    )
+    def test_unresolved_module_or_missing_group_defaults_to_empty_string(
+        self, commits: list[dict[str, object]], field: str
+    ) -> None:
+        """An unresolvable module or an absent group resolves to an empty string, not a KeyError.
 
-    def test_missing_group_defaults_to_empty_string(self) -> None:
-        """A commit ledger row without a ``group`` key (defensive) resolves to an empty group, not a KeyError."""
-        commits = [{"item_id": 1, "sha": "aa"}]
+        A file absent from the codemap map (no index, or non-Python item) resolves to an empty module; a commit ledger
+        row without a ``group`` key (defensive) resolves to an empty group.
+        """
         items = [{"id": 1, "file": "readme.md"}]
         plan = bmp.build_plan(commits, items, {}, ["1"])
-        assert plan[0]["group"] == ""
+        assert plan[0][field] == ""
 
     def test_duplicate_item_id_in_commits_raises(self) -> None:
         """Two commits rows sharing an item_id raise instead of the second silently overwriting the first.
@@ -62,15 +66,22 @@ class TestBuildPlan:
         with pytest.raises(ValueError, match="duplicate item_id"):
             bmp.build_plan(commits, [], {}, ["1"])
 
-    def test_commits_row_missing_sha_raises(self) -> None:
-        """A commits row without ``sha`` raises a named error, not an uncaught KeyError."""
-        with pytest.raises(ValueError, match="missing item_id/sha"):
-            bmp.build_plan([{"item_id": 1}], [], {}, ["1"])
+    @pytest.mark.parametrize(
+        ("commits", "items", "message"),
+        [
+            pytest.param([{"item_id": 1}], [], "missing item_id/sha", id="commits-row-missing-sha"),
+            pytest.param([], [{"file": "a.py"}], "missing id", id="action-item-missing-id"),
+        ],
+    )
+    def test_malformed_input_row_raises_named_error(
+        self, commits: list[dict[str, object]], items: list[dict[str, object]], message: str
+    ) -> None:
+        """A commits row without ``sha`` or an action-items row without ``id`` raises a named error.
 
-    def test_action_item_missing_id_raises(self) -> None:
-        """An action-items row without ``id`` raises a named error, not an uncaught KeyError."""
-        with pytest.raises(ValueError, match="missing id"):
-            bmp.build_plan([], [{"file": "a.py"}], {}, ["1"])
+        The failure is a ``ValueError`` naming the missing field, never an uncaught ``KeyError``.
+        """
+        with pytest.raises(ValueError, match=message):
+            bmp.build_plan(commits, items, {}, ["1"])
 
     def test_duplicate_priority_order_id_deduplicated(self) -> None:
         """A repeated id in priority_order emits one plan entry, not two identical cherry-pick targets."""
@@ -187,80 +198,29 @@ class TestMainCli:
         assert rc == 0
         assert json.loads(out_file.read_text(encoding="utf-8"))[0]["module"] == ""
 
-    def test_empty_codemap_maps_file_degrades_to_empty_module(self, tmp_path: Path) -> None:
-        """A 0-byte --codemap-maps file (the NORMAL state Structural prep leaves when codemap-py is.
+    @pytest.mark.parametrize(
+        "maps_content",
+        [
+            pytest.param("", id="empty-file"),
+            pytest.param("[]", id="non-dict-top-level"),
+            pytest.param('{"file_module": "not-a-dict"}', id="non-dict-file-module"),
+        ],
+    )
+    def test_unusable_codemap_maps_file_degrades_to_empty_module(self, tmp_path: Path, maps_content: str) -> None:
+        """A --codemap-maps file that is empty or wrong-shaped degrades to an empty map, exit 0, plan still written.
 
-        absent or its query fails — the file is created unconditionally, then re-emptied on any failure) degrades to an
-        empty map, exit 0, plan still written — never the raw ``json.JSONDecodeError`` traceback N2 found escaping past
-        ``Path.is_file()``.
+        A 0-byte file is the NORMAL state Structural prep leaves when codemap-py is absent or its query fails (the file
+        is created unconditionally, then re-emptied on any failure); it must never surface as the raw
+        ``json.JSONDecodeError`` traceback N2 found escaping past ``Path.is_file()``. A top-level JSON value that is not
+        an object (e.g. a bare array) or a ``file_module`` value that is not an object (e.g. a string) would otherwise
+        raise in ``raw.get("file_module", {})`` or ``file_module.get(...)`` (F8), so the shape guard degrades them too.
         """
         commits_file = tmp_path / "commits.jsonl"
         commits_file.write_text('{"item_id": 1, "sha": "aa", "group": "sw"}\n', encoding="utf-8")
         items_file = tmp_path / "items.jsonl"
         items_file.write_text('{"id": 1, "file": "core.py"}\n', encoding="utf-8")
         maps_file = tmp_path / "codemap-maps.json"
-        maps_file.write_text("", encoding="utf-8")
-        out_file = tmp_path / "plan.json"
-        rc = bmp.main(
-            [
-                "--commits",
-                str(commits_file),
-                "--action-items",
-                str(items_file),
-                "--priority-order",
-                "1",
-                "--out",
-                str(out_file),
-                "--codemap-maps",
-                str(maps_file),
-            ]
-        )
-        assert rc == 0
-        assert json.loads(out_file.read_text(encoding="utf-8"))[0]["module"] == ""
-
-    def test_codemap_maps_non_dict_top_level_degrades_to_empty_module(self, tmp_path: Path) -> None:
-        """A --codemap-maps file whose top-level JSON value isn't an object (e.g. a bare array) degrades safely.
-
-        F8: ``raw.get("file_module", {})`` would raise ``AttributeError`` on a list — the pre-fix code
-        assumed every valid-JSON payload was a dict. Exercises the shape guard rather than the
-        OSError/JSONDecodeError path already covered by the empty-file and missing-file cases above.
-        """
-        commits_file = tmp_path / "commits.jsonl"
-        commits_file.write_text('{"item_id": 1, "sha": "aa", "group": "sw"}\n', encoding="utf-8")
-        items_file = tmp_path / "items.jsonl"
-        items_file.write_text('{"id": 1, "file": "core.py"}\n', encoding="utf-8")
-        maps_file = tmp_path / "codemap-maps.json"
-        maps_file.write_text("[]", encoding="utf-8")
-        out_file = tmp_path / "plan.json"
-        rc = bmp.main(
-            [
-                "--commits",
-                str(commits_file),
-                "--action-items",
-                str(items_file),
-                "--priority-order",
-                "1",
-                "--out",
-                str(out_file),
-                "--codemap-maps",
-                str(maps_file),
-            ]
-        )
-        assert rc == 0
-        assert json.loads(out_file.read_text(encoding="utf-8"))[0]["module"] == ""
-
-    def test_codemap_maps_non_dict_file_module_degrades_to_empty_module(self, tmp_path: Path) -> None:
-        """A --codemap-maps file whose ``file_module`` value isn't an object degrades safely.
-
-        F8: a valid top-level dict with a wrong-shaped ``file_module`` (e.g. a string) would otherwise
-        propagate a non-dict into ``build_plan``'s ``file_module.get(...)`` call and raise.
-        """
-        commits_file = tmp_path / "commits.jsonl"
-        commits_file.write_text('{"item_id": 1, "sha": "aa", "group": "sw"}\n', encoding="utf-8")
-        items_file = tmp_path / "items.jsonl"
-        items_file.write_text('{"id": 1, "file": "core.py"}\n', encoding="utf-8")
-        maps_file = tmp_path / "codemap-maps.json"
-        maps_file.write_text('{"file_module": "not-a-dict"}', encoding="utf-8")
+        maps_file.write_text(maps_content, encoding="utf-8")
         out_file = tmp_path / "plan.json"
         rc = bmp.main(
             [

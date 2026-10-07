@@ -79,11 +79,15 @@ from typing import Any, NamedTuple
 
 import collect_diff
 
-
+#: Verification gate identifiers, in the order the gates run and are reported.
 GATE_IDS = ("lint", "format", "types", "tests", "review")
+#: Per-gate timeout, in seconds, used when `GATE_TIMEOUT_SECONDS` is not set.
 DEFAULT_TIMEOUT_SECONDS = 900
+#: Name of the output subdirectory that holds per-check proof files.
 CHECKS_DIRNAME = "checks"
+#: Timeout, in seconds, for the quick git and source-inspection commands run alongside the gates.
 SOURCE_INSPECTION_TIMEOUT_SECONDS = 30
+#: Pattern for a dotted Python module name accepted as a pytest import-origin argument.
 PYTHON_MODULE_PATTERN = re.compile(r"[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*")
 
 
@@ -359,8 +363,8 @@ def terminate_process(process: subprocess.Popen[str], platform: str) -> None:
     if process.poll() is not None:
         return
     if platform == "win32":
-        subprocess.run(
-            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+        subprocess.run(  # noqa: S603 - argv list, no shell
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -403,7 +407,7 @@ def execute_command(
         argv = ["bash", "-c", command]
     with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
         try:
-            process = subprocess.Popen(
+            process = subprocess.Popen(  # noqa: S603 - argv list, no shell
                 argv,
                 stdout=stdout,
                 stderr=stderr,
@@ -457,8 +461,8 @@ def inspect_imported_module(name: str, worktree: Path, local_snapshot: dict[str,
         return {"origin": origin.as_posix(), "tracked": False, "status": "fail", "reason": "origin-outside-worktree"}
     try:
         tracked = (
-            subprocess.run(
-                ["git", "ls-files", "--error-unmatch", "--", relative],
+            subprocess.run(  # noqa: S603 - argv list, no shell
+                ["git", "ls-files", "--error-unmatch", "--", relative],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
                 cwd=worktree,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -487,8 +491,8 @@ def inspect_collected_test(path: Path, worktree: Path, local_snapshot: dict[str,
         return {"origin": origin.as_posix(), "tracked": False, "status": "fail", "reason": "test-outside-worktree"}
     try:
         tracked = (
-            subprocess.run(
-                ["git", "ls-files", "--error-unmatch", "--", relative],
+            subprocess.run(  # noqa: S603 - argv list, no shell
+                ["git", "ls-files", "--error-unmatch", "--", relative],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
                 cwd=worktree,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -750,7 +754,7 @@ def inspect_source(worktree: Path | None = None) -> dict[str, str]:
     try:
         if worktree is not None:
             root = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
+                ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
                 cwd=worktree,
                 capture_output=True,
                 text=True,
@@ -760,7 +764,7 @@ def inspect_source(worktree: Path | None = None) -> dict[str, str]:
             if root.returncode != 0 or not root.stdout.strip() or Path(root.stdout.strip()).resolve() != worktree:
                 return {**empty, "error": "selected-worktree-is-not-checkout-root"}
         head = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            ["git", "rev-parse", "HEAD"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             cwd=worktree,
             capture_output=True,
             text=True,
@@ -772,7 +776,7 @@ def inspect_source(worktree: Path | None = None) -> dict[str, str]:
             return {**empty, "error": f"git-rev-parse-failed:{detail}"}
         # Repository ignore settings must not conceal changed release dependencies.
         status = subprocess.run(
-            ["git", "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"],
+            ["git", "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             cwd=worktree,
             capture_output=True,
             text=True,
@@ -842,7 +846,8 @@ def run_check(
     python_test_argv: list[str] | None = None
     proof_path = out_dir / CHECKS_DIRNAME / "tests.python-imports.json"
     if gate_id == "tests" and python_test is not None:
-        assert worktree is not None
+        if worktree is None:
+            raise RuntimeError("worktree must not be None")
         proof_path.unlink(missing_ok=True)
         python_test_argv = [
             str(python_test.interpreter),

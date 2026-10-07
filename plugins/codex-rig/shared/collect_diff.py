@@ -50,15 +50,21 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 
+#: Git object name of a SHA-1 (40 hex digits) or SHA-256 (64 hex digits) repository.
+_REVISION_PATTERN = re.compile(rb"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
+#: Output file name paired with the git diff arguments that produce it, one entry per diff artifact.
 ARTIFACT_COMMANDS = (
     ("diff.patch", ("diff",)),
     ("files.txt", ("diff", "--name-only")),
@@ -104,7 +110,7 @@ def parse_args() -> argparse.Namespace:
 def run_git(arguments: tuple[str, ...], output: Path) -> int:
     """Run one Git argv vector and write its stdout bytes unchanged."""
     with output.open("wb") as stream:
-        completed = subprocess.run(["git", *arguments], stdout=stream, check=False)
+        completed = subprocess.run(["git", *arguments], stdout=stream, check=False)  # noqa: S603, S607 - argv list, no shell; tool resolved via PATH on purpose
     return completed.returncode
 
 
@@ -147,10 +153,9 @@ def collect_diff(scope: str, target: str, output: Path) -> int:
 
 def _git_output(repository: Path, arguments: tuple[str, ...]) -> bytes:
     """Return stdout from one successful read-only Git invocation."""
-    completed = subprocess.run(
-        ["git", "-C", os.fspath(repository), "--literal-pathspecs", *arguments],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+    completed = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "-C", os.fspath(repository), "--literal-pathspecs", *arguments],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+        capture_output=True,
         check=False,
     )
     if completed.returncode != 0:
@@ -158,11 +163,55 @@ def _git_output(repository: Path, arguments: tuple[str, ...]) -> bytes:
     return completed.stdout
 
 
-def _repository_root(repository: Path) -> Path:
-    """Resolve and verify the Git top-level directory for a snapshot repository."""
+#: Most Git processes one batch of independent reads keeps in flight at once.
+_GIT_BATCH_WORKERS = 4
+
+
+def _git_attempts(commands: list[tuple[Path, tuple[str, ...]]]) -> list[bytes | RuntimeError]:
+    """Run independent read-only Git invocations concurrently, returning each outcome in request order.
+
+    Process creation dominates these reads on Windows, so overlapping the waits shortens a batch without changing what
+    any single invocation reads. A failed invocation is returned instead of raised so the caller can settle outcomes in
+    the order its sequential checks always ran, keeping the first reported error unchanged.
+    """
+
+    def attempt(command: tuple[Path, tuple[str, ...]]) -> bytes | RuntimeError:
+        """Return one invocation's stdout, or the error it would have raised."""
+        try:
+            return _git_output(*command)
+        except RuntimeError as error:
+            return error
+
+    if len(commands) == 1:
+        return [attempt(commands[0])]
+    with ThreadPoolExecutor(max_workers=min(len(commands), _GIT_BATCH_WORKERS)) as pool:
+        return list(pool.map(attempt, commands))
+
+
+def _settled(outcome: bytes | RuntimeError) -> bytes:
+    """Return a batched outcome's stdout, raising the error it recorded."""
+    if isinstance(outcome, RuntimeError):
+        raise outcome
+    return outcome
+
+
+def _git_outputs(repository: Path, argument_sets: list[tuple[str, ...]]) -> list[bytes]:
+    """Return stdout from independent read-only Git invocations in one repository, raising the first failure in
+    order."""
+    return [_settled(outcome) for outcome in _git_attempts([(repository, arguments) for arguments in argument_sets])]
+
+
+def _checkout_directory(repository: Path) -> Path:
+    """Resolve a snapshot repository path that must exist and be a directory."""
     candidate = repository.resolve(strict=True)
     if not candidate.is_dir():
         raise ValueError(f"Snapshot repository is not a directory: {repository}")
+    return candidate
+
+
+def _repository_root(repository: Path) -> Path:
+    """Resolve and verify the Git top-level directory for a snapshot repository."""
+    candidate = _checkout_directory(repository)
     root = _git_output(candidate, ("rev-parse", "--show-toplevel")).rstrip(b"\n")
     return Path(os.fsdecode(root)).resolve(strict=True)
 
@@ -196,10 +245,12 @@ def _normalize_scope_paths(repository: Path, scope_paths: list[str]) -> list[str
 
 def _source_inventory(repository: Path, scope_paths: list[str]) -> bytes:
     """Return HEAD, index, and non-ignored worktree names selected by literal scopes."""
-    head = _git_output(repository, ("ls-tree", "-r", "--name-only", "-z", "HEAD", "--", *scope_paths))
-    current = _git_output(
+    head, current = _git_outputs(
         repository,
-        ("ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", *scope_paths),
+        [
+            ("ls-tree", "-r", "--name-only", "-z", "HEAD", "--", *scope_paths),
+            ("ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", *scope_paths),
+        ],
     )
     return head + current
 
@@ -257,21 +308,53 @@ def _inventory_paths(inventory: bytes) -> list[str]:
     return sorted({os.fsdecode(path) for path in inventory.split(b"\0") if path})
 
 
+def _repository_root_and_head(repository: Path) -> tuple[Path, bytes | None]:
+    """Resolve the Git top-level directory and verified HEAD revision with a single Git call.
+
+    The revision is ``None`` whenever the combined call fails or prints an unexpected shape; the top-level directory
+    then comes from the separate lookup, so every failure is reported exactly as the individual calls report it.
+    """
+    candidate = repository.resolve(strict=True)
+    if candidate.is_dir():
+        with contextlib.suppress(RuntimeError):
+            output = _git_output(candidate, ("rev-parse", "--show-toplevel", "--verify", "HEAD"))
+            root, _, revision = output.rstrip(b"\n").rpartition(b"\n")
+            if root and _REVISION_PATTERN.fullmatch(revision):
+                return Path(os.fsdecode(root.rstrip(b"\n"))).resolve(strict=True), revision
+    return _repository_root(repository), None
+
+
+def _source_state(root: Path, scopes: list[str], revision: bytes | None) -> tuple[bytes, bytes, bytes]:
+    """Read the HEAD revision, staged index, and file inventory for one snapshot pass with overlapped Git reads.
+
+    A known ``revision`` is reused; ``None`` reads it as the first request so a failing HEAD lookup is still reported
+    before any index or inventory failure.
+    """
+    requests = [
+        ("ls-files", "--stage", "-z", "--", *scopes),
+        ("ls-tree", "-r", "--name-only", "-z", "HEAD", "--", *scopes),
+        ("ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", *scopes),
+    ]
+    if revision is None:
+        requests.insert(0, ("rev-parse", "--verify", "HEAD"))
+    outputs = _git_outputs(root, requests)
+    if revision is None:
+        revision = outputs.pop(0).rstrip(b"\n")
+    index, head_names, current_names = outputs
+    return revision, index, head_names + current_names
+
+
 def capture_source_snapshot(repository: Path, scope_paths: list[str]) -> dict[str, object]:
     """Capture explicit current source bytes and Git state for a repository scope.
 
     The returned records include tracked, untracked non-ignored, and missing tracked paths. It compares the revision,
     index, selected file inventory, and selected bytes before and after reading source to reject concurrent changes.
     """
-    root = _repository_root(repository)
+    root, head = _repository_root_and_head(repository)
     scopes = _normalize_scope_paths(root, scope_paths)
-    revision_before = _git_output(root, ("rev-parse", "--verify", "HEAD")).rstrip(b"\n")
-    index_before = _git_output(root, ("ls-files", "--stage", "-z", "--", *scopes))
-    inventory_before = _source_inventory(root, scopes)
+    revision_before, index_before, inventory_before = _source_state(root, scopes, head)
     records = [_source_record(root, path) for path in _inventory_paths(inventory_before)]
-    revision_after = _git_output(root, ("rev-parse", "--verify", "HEAD")).rstrip(b"\n")
-    index_after = _git_output(root, ("ls-files", "--stage", "-z", "--", *scopes))
-    inventory_after = _source_inventory(root, scopes)
+    revision_after, index_after, inventory_after = _source_state(root, scopes, None)
     records_after = [_source_record(root, path) for path in _inventory_paths(inventory_after)]
     if (revision_before, index_before, inventory_before, records) != (
         revision_after,
@@ -293,8 +376,8 @@ def capture_source_snapshot(repository: Path, scope_paths: list[str]) -> dict[st
 
 def _output_is_ignored(repository: Path, relative_path: str) -> bool:
     """Return whether Git excludes a prospective snapshot output path."""
-    completed = subprocess.run(
-        [
+    completed = subprocess.run(  # noqa: S603 - argv list, no shell
+        [  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             "git",
             "-C",
             os.fspath(repository),
@@ -304,8 +387,7 @@ def _output_is_ignored(repository: Path, relative_path: str) -> bool:
             "--",
             relative_path,
         ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
     if completed.returncode not in {0, 1}:
@@ -323,12 +405,14 @@ def _validate_snapshot_output(snapshot: dict[str, object], output: Path) -> None
         return
 
     scope_paths = snapshot["scope_paths"]
-    assert isinstance(scope_paths, list)
+    if not isinstance(scope_paths, list):
+        raise TypeError(f"scope_paths must be list, got {type(scope_paths).__name__}")
     selected = any(path == "." or relative == path or relative.startswith(f"{path}/") for path in scope_paths)
     if not selected:
         return
     files = snapshot["files"]
-    assert isinstance(files, list)
+    if not isinstance(files, list):
+        raise TypeError(f"files must be list, got {type(files).__name__}")
     if any(record.get("path") == relative for record in files if isinstance(record, dict)):
         raise ValueError("Source snapshot output is already included in the selected source")
     if not _output_is_ignored(repository, relative):
@@ -357,9 +441,11 @@ def _require_ignored_inside_repository(repository: Path, destination: Path) -> N
 def _materialize_source(review: Path, snapshot: dict[str, object], untracked_paths: set[str]) -> None:
     """Restore captured file bytes and untracked entries after Git applies the local patch."""
     records = snapshot["files"]
-    assert isinstance(records, list)
+    if not isinstance(records, list):
+        raise TypeError(f"records must be list, got {type(records).__name__}")
     for record in records:
-        assert isinstance(record, dict)
+        if not isinstance(record, dict):
+            raise TypeError(f"record must be dict, got {type(record).__name__}")
         relative = record["path"]
         # Git may convert tracked line endings; the snapshot must retain the caller's raw bytes.
         # Tracked symlinks and deletions remain Git's responsibility and are verified afterward.
@@ -372,7 +458,8 @@ def _materialize_source(review: Path, snapshot: dict[str, object], untracked_pat
         if not destination.parent.resolve().is_relative_to(review):
             raise RuntimeError(f"Review source path escapes worktree: {relative}")
         content = record["content"]
-        assert isinstance(content, str)
+        if not isinstance(content, str):
+            raise TypeError(f"content must be str, got {type(content).__name__}")
         source = content.encode("utf-8") if record["encoding"] == "utf-8" else base64.b64decode(content)
         if record["kind"] == "symlink":
             destination.symlink_to(os.fsdecode(source))
@@ -415,16 +502,16 @@ def collect_review_worktree(repository: Path, output: Path) -> dict[str, object]
     if snapshot != capture_source_snapshot(root, paths):
         raise RuntimeError("Repository changed while preparing local review worktree")
 
-    completed = subprocess.run(
-        ["git", "-C", os.fspath(root), "worktree", "add", "--detach", os.fspath(review), str(snapshot["revision"])],
+    completed = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "-C", os.fspath(root), "worktree", "add", "--detach", os.fspath(review), str(snapshot["revision"])],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
         capture_output=True,
         check=False,
     )
     if completed.returncode != 0:
         raise RuntimeError("Git could not create detached local review worktree")
     if patch:
-        completed = subprocess.run(
-            ["git", "-C", os.fspath(review), "apply", "--binary", "--"],
+        completed = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", "-C", os.fspath(review), "apply", "--binary", "--"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             input=patch,
             capture_output=True,
             check=False,
@@ -478,19 +565,29 @@ def verify_review_worktree(output: Path) -> None:
     source = Path(receipt["source_worktree"])
     if review.resolve() != report.with_name(f"{report.name}-review-worktree") or review.resolve() == source.resolve():
         raise RuntimeError("Review worktree path no longer matches receipt")
-    if _repository_root(review) != review.resolve():
+    # The four identity probes are independent; outcomes are settled in the original check order below.
+    topology = _git_attempts(
+        [
+            (_checkout_directory(review), ("rev-parse", "--show-toplevel")),
+            (source, ("rev-parse", "--git-common-dir")),
+            (review, ("rev-parse", "--git-common-dir")),
+            (review, ("branch", "--show-current")),
+        ]
+    )
+    if Path(os.fsdecode(_settled(topology[0]).rstrip(b"\n"))).resolve(strict=True) != review.resolve():
         raise RuntimeError("Review worktree path is not a checkout root")
-    source_common = (source / os.fsdecode(_git_output(source, ("rev-parse", "--git-common-dir")).strip())).resolve()
-    review_common = (review / os.fsdecode(_git_output(review, ("rev-parse", "--git-common-dir")).strip())).resolve()
+    source_common = (source / os.fsdecode(_settled(topology[1]).strip())).resolve()
+    review_common = (review / os.fsdecode(_settled(topology[2]).strip())).resolve()
     if source_common != review_common:
         raise RuntimeError("Review worktree repository no longer matches source")
-    if _git_output(review, ("branch", "--show-current")).strip():
+    if _settled(topology[3]).strip():
         raise RuntimeError("Review worktree is no longer detached")
     current = capture_source_snapshot(review, receipt["scope_paths"])
     if current["revision"] != receipt["revision"] or current["files"] != snapshot["files"]:
         raise RuntimeError("Review worktree source changed after collection")
-    status = _git_output(review, ("status", "--porcelain", "-z", "--untracked-files=all"))
-    patch = _git_output(review, ("diff", "--binary", "HEAD", "--"))
+    status, patch = _git_outputs(
+        review, [("status", "--porcelain", "-z", "--untracked-files=all"), ("diff", "--binary", "HEAD", "--")]
+    )
     if hashlib.sha256(status).hexdigest() != receipt["review_status_sha256"]:
         raise RuntimeError("Review worktree status changed after collection")
     if hashlib.sha256(patch).hexdigest() != receipt["diff_sha256"]:

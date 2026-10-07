@@ -1,15 +1,14 @@
 """Check convergence evidence through the public workflow artifact validator."""
 
-import json
 import hashlib
 import itertools
+import json
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-
 from test_final_handoff import _load_finalizer, _load_shared_validator, _write_schema_v2_assess
 from test_loop_review_evidence import _loop_evidence_run, _read_ledger, _rewrite_native_outputs, _write_ledger
 from test_loop_review_evidence import _validator as _load_loop_validator
@@ -149,7 +148,7 @@ def test_public_validator_accepts_clean_current_loop(
     validator = _load_shared_validator()
     validator.validate("challenge-resolve", tmp_path, result_path)
     (tmp_path / "current.diff").write_bytes(b"unreviewed change")
-    with pytest.raises(SystemExit, match="adversarial-loop-snapshot-digest-mismatch:current.diff"):
+    with pytest.raises(SystemExit, match=r"adversarial-loop-snapshot-digest-mismatch:current.diff"):
         validator.validate("challenge-resolve", tmp_path, result_path)
 
 
@@ -176,7 +175,7 @@ def test_public_validator_requires_review_action_report_section(
         encoding="utf-8",
     )
 
-    with pytest.raises(SystemExit, match="missing-artifact-section:loop-report.md:Remediation"):
+    with pytest.raises(SystemExit, match=r"missing-artifact-section:loop-report.md:Remediation"):
         _load_shared_validator().validate("challenge-resolve", tmp_path, result_path)
 
 
@@ -192,7 +191,7 @@ def test_public_validator_rejects_remediation_word_in_body_only(
         ),
         encoding="utf-8",
     )
-    with pytest.raises(SystemExit, match="missing-artifact-section:loop-report.md:Remediation"):
+    with pytest.raises(SystemExit, match=r"missing-artifact-section:loop-report.md:Remediation"):
         _load_shared_validator().validate("challenge-resolve", tmp_path, result_path)
 
 
@@ -822,7 +821,7 @@ def test_chunked_coordinator_validates_real_children_and_interaction(
     ).hexdigest()
     (tmp_path / "result.json").write_text(json.dumps(tampered_coordinator), encoding="utf-8", newline="\n")
     with pytest.raises(
-        SystemExit, match="adversarial-loop-chunk-coverage-invalid:.*chunk-interaction-assessment-missing"
+        SystemExit, match=r"adversarial-loop-chunk-coverage-invalid:.*chunk-interaction-assessment-missing"
     ):
         validator.validate("challenge-resolve", tmp_path, tmp_path / "result.json")
     (tmp_path / "result.json").write_bytes(original_canonical)

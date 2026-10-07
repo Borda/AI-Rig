@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 import timing_analyzer as ta
 
 
@@ -31,7 +30,7 @@ def test_parse_since_units():
 
 
 def test_parse_since_invalid():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"invalid --since"):
         ta.parse_since("1week")
 
 
@@ -129,37 +128,48 @@ def test_invocation_pairs_fifo(tmp_path: Path):
     assert pairs[1]["wall_ms"] == 25_000
 
 
-def test_resolve_agent_ms_uses_raw_when_above_threshold():
-    row = {"ts": "1970-01-01T00:00:10Z", "duration_ms": 50_000, "args": "type=x desc=d"}
-    assert ta.resolve_agent_ms(row, []) == 50_000
-
-
-def test_resolve_agent_ms_substitutes_background_pair():
-    row = {
-        "ts": "1970-01-01T00:00:30Z",
-        "duration_ms": 80,
-        "args": "type=foundry:curator desc=Curator audit batch",
-    }
-    pairs = [
-        {
-            "agent": "foundry:curator",
-            "desc": "Curator audit batch 1",
-            "start": 0.0,
-            "end": 30.0,
-            "wall_ms": 30_000,
-        }
-    ]
-    assert ta.resolve_agent_ms(row, pairs) == 30_000
-
-
-def test_resolve_agent_ms_outside_window_falls_back():
-    row = {
-        "ts": "1970-01-01T00:00:00Z",
-        "duration_ms": 80,
-        "args": "type=x desc=d",
-    }
-    pairs = [{"agent": "x", "desc": "d", "start": 0.0, "end": 1000.0, "wall_ms": 1_000_000}]
-    assert ta.resolve_agent_ms(row, pairs) == 80
+@pytest.mark.parametrize(
+    ("row", "pairs", "expected"),
+    [
+        pytest.param(
+            {"ts": "1970-01-01T00:00:10Z", "duration_ms": 50_000, "args": "type=x desc=d"},
+            [],
+            50_000,
+            id="raw-duration-above-threshold",
+        ),
+        pytest.param(
+            {
+                "ts": "1970-01-01T00:00:30Z",
+                "duration_ms": 80,
+                "args": "type=foundry:curator desc=Curator audit batch",
+            },
+            [
+                {
+                    "agent": "foundry:curator",
+                    "desc": "Curator audit batch 1",
+                    "start": 0.0,
+                    "end": 30.0,
+                    "wall_ms": 30_000,
+                }
+            ],
+            30_000,
+            id="background-pair-substituted",
+        ),
+        pytest.param(
+            {
+                "ts": "1970-01-01T00:00:00Z",
+                "duration_ms": 80,
+                "args": "type=x desc=d",
+            },
+            [{"agent": "x", "desc": "d", "start": 0.0, "end": 1000.0, "wall_ms": 1_000_000}],
+            80,
+            id="outside-window-falls-back",
+        ),
+    ],
+)
+def test_resolve_agent_ms(row, pairs, expected):
+    """The agent duration is the raw value when above threshold, else the matching background pair's wall time."""
+    assert ta.resolve_agent_ms(row, pairs) == expected
 
 
 @pytest.fixture(name="synthetic_logs")
@@ -223,11 +233,18 @@ def _synthetic_logs(tmp_path: Path) -> tuple[Path, Path]:
     return timings, invocations
 
 
-def test_aggregate_local_bucket(synthetic_logs):
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [
+        pytest.param("local_ms", 300, id="local-bash-plus-read"),
+        pytest.param("agent_ms", 15_000, id="agent-above-threshold-used-as-is"),
+    ],
+)
+def test_aggregate_bucket(synthetic_logs, field, expected):
+    """Session s1 buckets Bash 200 + Read 100 as local, and an Agent row above the 1_000 threshold as agent."""
     timings, inv = synthetic_logs
     sessions, _, _ = ta.aggregate_sessions(timings, inv, cutoff=0.0)
-    # s1 local: Bash 200 + Read 100 = 300
-    assert sessions["s1"].local_ms == 300
+    assert getattr(sessions["s1"], field) == expected
 
 
 def test_aggregate_skill_and_idle(synthetic_logs):
@@ -237,13 +254,6 @@ def test_aggregate_skill_and_idle(synthetic_logs):
     assert sessions["s1"].idle_ms == 60_000
     assert len(skill_events) == 1
     assert skill_events[0]["skill"] == "foundry:audit"
-
-
-def test_aggregate_agent_bucket(synthetic_logs):
-    timings, inv = synthetic_logs
-    sessions, _, _ = ta.aggregate_sessions(timings, inv, cutoff=0.0)
-    # Agent duration_ms 15_000 >= 1_000 threshold → used as-is
-    assert sessions["s1"].agent_ms == 15_000
 
 
 def test_aggregate_bash_clip_and_warning_count(synthetic_logs):
@@ -355,7 +365,7 @@ def test_main_writes_report(tmp_path: Path, synthetic_logs, capsys):
 
 
 def test_main_returns_1_when_empty_window(tmp_path: Path, synthetic_logs, capsys):
-    timings, inv = synthetic_logs
+    _timings, inv = synthetic_logs
     out = tmp_path / "report.md"
     # 1s window into past — no rows match (rows are dated year 2030, time.time() << those ts)
     # but cutoff = now - 1s; rows in year 2030 have ts >> now → they DO match.

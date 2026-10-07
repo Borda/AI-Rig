@@ -1,34 +1,41 @@
 """Extract documentation cross-references from RST, MkDocs and config files."""
 
 from __future__ import annotations
+
 import ast
 import os
 import re
 from pathlib import Path
+
 from .exclusions import SKIP_DIRS
 
-
+#: Glob patterns, relative to the scan root, for config files scanned for dotted references to code.
 _CONFIG_SCAN_PATTERNS = ("pyproject.toml", "setup.cfg", "setup.py", "*.yml", "*.yaml")
 
 
 # Match dotted names with ≥1 dot — simple module path heuristic (no single-word false positives).
+#: Matches dotted names with at least one dot, a heuristic for module or attribute paths.
 _DOTTED_NAME_RE = re.compile(r"\b([a-zA-Z_][a-zA-Z0-9_]*)(?:\.[a-zA-Z_][a-zA-Z0-9_]+)+\b")
 
 
 # Sphinx role markup like :func:`mypackage.fn`, :class:`~pkg.MyCls`, :meth:`pkg.Cls.m`
+#: Matches Sphinx role markup such as :func:`pkg.fn`, capturing the role and the target.
 _SPHINX_XREF_RE = re.compile(r":(?P<role>[a-z]+):`(?P<target>[^`]+)`")
 
 
 # Roles whose targets we resolve into the symbol-index ``module::name`` form.
 # Stored as a frozenset for fast membership tests in the hot doc-scanning loop.
+#: Sphinx roles whose targets are resolved into index references.
 _SPHINX_RESOLVABLE_ROLES: frozenset[str] = frozenset({"func", "class", "meth", "mod", "attr", "data", "exc"})
 
 
 # MkDocs autorefs: [text][identifier] — identifier is a dotted Python path.
+#: Matches MkDocs autorefs links of the form [text][identifier], capturing the identifier.
 _MKDOCS_NAMED_RE = re.compile(r"\[(?:[^\]]+)\]\[([A-Za-z_][A-Za-z0-9_.]*)\]")
 
 
 # MkDocs autorefs backtick form: [`identifier`][]
+#: Matches MkDocs autorefs links of the form [`identifier`][], capturing the identifier.
 _MKDOCS_BACKTICK_RE = re.compile(r"\[`([A-Za-z_][A-Za-z0-9_.]*)`\]\[\]")
 
 
@@ -76,23 +83,8 @@ def _resolve_xref_target(role: str, raw_target: str, current_module: str) -> str
     """
     if role not in _SPHINX_RESOLVABLE_ROLES:
         return None
-    target = raw_target.strip()
-    if not target:
-        return None
-    # Strip Sphinx prefix markers before processing.
-    if target[:1] in ("~", "!"):
-        target = target[1:]
-    if not target:
-        return None
-    # Relative references: leading "." anchors against current module's package.
-    if target.startswith("."):
-        stripped = target.lstrip(".")
-        package = current_module.rsplit(".", 1)[0] if "." in current_module else current_module
-        target = f"{package}.{stripped}" if stripped else package
-        if not target:
-            return None
-
-    if role == "mod":
+    target = _normalize_xref_target(raw_target, current_module)
+    if target is None or role == "mod":
         return target
 
     if role == "meth":
@@ -102,16 +94,50 @@ def _resolve_xref_target(role: str, raw_target: str, current_module: str) -> str
             module_part = ".".join(parts[:-2])
             attr_part = ".".join(parts[-2:])
             return f"{module_part}::{attr_part}"
-        if len(parts) == 2:
-            # Bare ClassName.method — anchor against current module.
-            return f"{current_module}::{target}" if current_module else target
-        # Single component — anchor against current module.
-        return f"{current_module}::{target}" if current_module else target
+        # Bare ClassName.method or single component — anchor against current module.
+        return _anchor_to_module(target, current_module)
 
     # func / class / exc / attr / data — dotted path → module::name
     if "." in target:
         module_part, name_part = target.rsplit(".", 1)
         return f"{module_part}::{name_part}"
+    return _anchor_to_module(target, current_module)
+
+
+def _normalize_xref_target(raw_target: str, current_module: str) -> str | None:
+    """Strip Sphinx prefix markers and resolve a relative target against its package.
+
+    Returns ``None`` when nothing remains of the target after normalization.
+
+    Examples:
+        >>> _normalize_xref_target(" ~pkg.fn ", "other")
+        'pkg.fn'
+        >>> _normalize_xref_target(".sibling", "pkg.mod")
+        'pkg.sibling'
+        >>> _normalize_xref_target("!", "pkg.mod") is None
+        True
+    """
+    target = raw_target.strip()
+    # Strip Sphinx prefix markers before processing.
+    if target[:1] in ("~", "!"):
+        target = target[1:]
+    # Relative references: leading "." anchors against current module's package.
+    if target.startswith("."):
+        stripped = target.lstrip(".")
+        package = current_module.rsplit(".", 1)[0] if "." in current_module else current_module
+        target = f"{package}.{stripped}" if stripped else package
+    return target or None
+
+
+def _anchor_to_module(target: str, current_module: str) -> str:
+    """Qualify a bare target with the current module, when one is known.
+
+    Examples:
+        >>> _anchor_to_module("helper", "pkg.mod")
+        'pkg.mod::helper'
+        >>> _anchor_to_module("helper", "")
+        'helper'
+    """
     return f"{current_module}::{target}" if current_module else target
 
 

@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
-from pathlib import Path
 import queue
 import subprocess
 import sys
 import threading
-from typing import Any, Iterator
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -146,7 +147,8 @@ def test_handshake_discovery_and_explicit_acceptance(
             "answer": answer,
         }
         assert json.loads(result["result"]["content"][0]["text"]) == receipt
-        assert "question" not in receipt and "options" not in receipt
+        assert "question" not in receipt
+        assert "options" not in receipt
 
 
 @pytest.mark.parametrize(
@@ -425,7 +427,8 @@ def test_each_provider_copy_preserves_request_dispatch_boundaries(server: Path) 
         }
         connection.request(6, "notifications/cancelled", {"requestId": 4})
         cancelled = connection.receive()
-        assert cancelled["id"] == 4 and cancelled["result"]["structuredContent"]["status"] == "cancelled"
+        assert cancelled["id"] == 4
+        assert cancelled["result"]["structuredContent"]["status"] == "cancelled"
         assert "answer" not in cancelled["result"]["structuredContent"]
         assert connection.receive() == {
             "jsonrpc": "2.0",

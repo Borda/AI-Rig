@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
-import hashlib
 import json
 import subprocess
 import sys
@@ -74,7 +74,8 @@ def _load_sync() -> ModuleType:
     if str(SCRIPTS_DIR) not in sys.path:
         sys.path.insert(0, str(SCRIPTS_DIR))
     specification = importlib.util.spec_from_file_location("codex_rig_sync_codex", SYNC_SCRIPT)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -290,7 +291,7 @@ def test_native_sync_rejects_bridge_python_below_minimum(tmp_path: Path) -> None
             return subprocess.CompletedProcess(command, 0, "Python 3.9.19\n", "")
         return base_run(command, **kwargs)
 
-    with pytest.raises(module.SyncError, match="found Python 3.9.19"):
+    with pytest.raises(module.SyncError, match=r"found Python 3.9.19"):
         module.sync_codex(
             module.parse_args(["--no-codex-global-agents"]),
             run=_run,
@@ -324,7 +325,7 @@ def test_sync_mcp_python_prerequisite_precedes_marketplace_mutations(
         return subprocess.CompletedProcess(command, returncode, version, "")
 
     home = tmp_path / "home"
-    with pytest.raises(module.SyncError, match="Python 3.10 or newer"):
+    with pytest.raises(module.SyncError, match=r"Python 3.10 or newer"):
         module.sync_codex(module.parse_args([]), run=run, environ={"HOME": str(home)}, stdout=io.StringIO())
     assert calls == [["python", "--version"]]
     assert not home.exists()
@@ -340,7 +341,7 @@ def test_sync_missing_python_executable_stops_before_marketplace() -> None:
         calls.append(command)
         raise FileNotFoundError("python")
 
-    with pytest.raises(module.SyncError, match="Python 3.10 or newer"):
+    with pytest.raises(module.SyncError, match=r"Python 3.10 or newer"):
         module.sync_codex(module.parse_args([]), run=run, environ={}, stdout=io.StringIO())
     assert calls == [["python", "--version"]]
 
@@ -571,7 +572,7 @@ def test_native_sync_rejects_pinned_payload_missing_rules_before_changes(tmp_pat
     )
 
 
-@pytest.mark.parametrize("tamper", ("malformed-manifest", "hash-mismatch", "missing-package-dependency"))
+@pytest.mark.parametrize("tamper", ["malformed-manifest", "hash-mismatch", "missing-package-dependency"])
 def test_native_sync_rejects_invalid_pinned_payload_before_changes(tmp_path: Path, tamper: str) -> None:
     """Keep a corrupt selected package from mutating the configured plugin state."""
     module = _load_sync()
@@ -633,10 +634,10 @@ def test_native_sync_requires_both_managed_plugins_after_install(tmp_path: Path)
 
 @pytest.mark.parametrize(
     "arguments",
-    (
+    [
         pytest.param(["install", "--no-codex-global-agents"], id="install"),
         pytest.param(["clear"], id="clear"),
-    ),
+    ],
 )
 def test_native_sync_preserves_rule_helper_status_before_partial_failure(tmp_path: Path, arguments: list[str]) -> None:
     """Show completed rule changes when the helper reports a later partial failure."""
@@ -809,7 +810,7 @@ def test_system_runner_resolves_simulated_windows_batch_launcher(monkeypatch: py
 
 @pytest.mark.parametrize(
     "argument",
-    (
+    [
         "main&whoami",
         "main|whoami",
         "main<in",
@@ -820,7 +821,7 @@ def test_system_runner_resolves_simulated_windows_batch_launcher(monkeypatch: py
         "main!x!",
         'main"x',
         "main x",
-    ),
+    ],
 )
 def test_system_runner_rejects_simulated_windows_batch_shell_syntax(
     monkeypatch: pytest.MonkeyPatch, argument: str

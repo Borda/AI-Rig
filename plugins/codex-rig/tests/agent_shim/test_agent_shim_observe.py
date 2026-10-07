@@ -12,10 +12,8 @@ import tempfile
 from pathlib import Path
 from types import ModuleType
 
-import pytest
-
 import _platform
-
+import pytest
 from _platform import (
     DIRECTORY_SYMLINKS_AVAILABLE,
     FILE_SYMLINKS_AVAILABLE,
@@ -1144,7 +1142,7 @@ def test_nonprivate_transactions_container_blocks_even_when_empty(tmp_path: Path
 def test_observer_rejects_relative_supplied_roots(tmp_path: Path) -> None:
     """Require explicit canonical roots before opening any supplied path."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_roots")
-    codex_home, plugin_root, _, _ = _make_roots(tmp_path)
+    _codex_home, plugin_root, _, _ = _make_roots(tmp_path)
 
     with pytest.raises(ValueError, match="absolute canonical"):
         module.observe_filesystem(codex_home=Path("relative"), plugin_root=plugin_root)
@@ -1258,7 +1256,7 @@ def test_unsafe_state_path_closes_an_already_open_target_descriptor(
 
     assert result.classification == "blocked"
     assert len(captured) == 1
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match=r"\[Errno 9\]"):
         os.fstat(captured[0])
 
 

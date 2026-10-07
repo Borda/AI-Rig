@@ -26,7 +26,9 @@ import subprocess
 import sys
 from collections import Counter
 
+#: Matches the leading conventional-commit type, e.g. ``fix`` in ``fix(oss)!: ...``, capturing it as group 1.
 _TYPE = re.compile(r"^(\w+)(?:\([^)]*\))?!?:")
+#: Commit types counted as real categories; any other leading word is bucketed as ``other``.
 _KNOWN = {"fix", "feat", "refactor", "perf", "test", "docs", "ci", "chore", "refine", "compress", "revert", "style"}
 
 
@@ -105,7 +107,12 @@ def recurring_theme(types: Counter[str]) -> str:
 def _git(args: list[str]) -> str:
     """Run a git command from repo root, returning stdout ('' on any failure)."""
     try:
-        return subprocess.run(["git", *args], capture_output=True, text=True, timeout=15).stdout
+        return subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", *args],  # noqa: S607 - git resolved via PATH on purpose
+            capture_output=True,
+            text=True,
+            timeout=15,
+        ).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
 

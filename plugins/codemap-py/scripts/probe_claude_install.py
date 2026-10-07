@@ -51,9 +51,13 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+#: Resolved path of this probe script.
 _THIS = Path(__file__).resolve()
+#: Directory holding the probe and package-builder scripts.
 _SCRIPTS = _THIS.parent
+#: Root of the repository checkout that contains ``plugins/codemap-py``.
 _REPO_ROOT = _SCRIPTS.parents[2]
+#: Path of the package builder script the probe runs before installing.
 _BUILDER = _SCRIPTS / "build_package.py"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
@@ -66,11 +70,16 @@ from _probe_runtime import (  # noqa: E402  (needs the scripts path insert above
     write_real_mode_map,
 )
 
+#: Name of the throwaway marketplace the probe registers to install the candidate from.
 MKT_NAME = "codemap-py-probe-mkt"
+#: Plugin name the probe installs and expects the installed manifest to carry.
 PLUGIN_NAME = "codemap-py"
 
+#: Exit code when the install probe passes.
 EXIT_OK = 0
+#: Exit code when the install probe runs and fails.
 EXIT_FAIL = 1
+#: Exit code when the probe cannot run because the builder or the ``claude`` CLI is missing.
 EXIT_SKIP = 2
 
 
@@ -227,14 +236,14 @@ def verify_claude_install(installed_path: Path) -> ClaudeInstallReport:
 
 def _claude_version() -> str | None:
     try:
-        out = subprocess.run(["claude", "--version"], capture_output=True, text=True, timeout=15, check=False)
+        out = subprocess.run(["claude", "--version"], capture_output=True, text=True, timeout=15, check=False)  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
     except (FileNotFoundError, OSError, subprocess.SubprocessError):
         return None
     return out.stdout.strip() or out.stderr.strip() or None
 
 
 def _run(cmd: list[str], config_dir: Path) -> subprocess.CompletedProcess:
-    return subprocess.run(
+    return subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
         cmd,
         env={**os.environ, "CLAUDE_CONFIG_DIR": str(config_dir)},
         capture_output=True,

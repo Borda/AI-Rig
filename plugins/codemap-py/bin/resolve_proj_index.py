@@ -65,7 +65,7 @@ def compute_proj_index(cwd: Path | None = None) -> tuple[str, Path]:
     git_root: Path | None = None
     try:
         # timeout=5 — Bound git subprocess to fail fast on hung repos / FUSE mounts.
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
             [_resolve("git"), "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,

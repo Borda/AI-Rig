@@ -84,10 +84,10 @@ def get_sentinel_path() -> str:
     Examples:
         No doctest — requires live git subprocess; covered by pytest with monkeypatch.
     """
-    repo_root = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
+    repo_root = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()  # noqa: S607 - git resolved via PATH on purpose
     repo_name = repo_root.rsplit("/", 1)[-1]
 
-    branch = subprocess.check_output(["git", "branch", "--show-current"], text=True).strip()
+    branch = subprocess.check_output(["git", "branch", "--show-current"], text=True).strip()  # noqa: S607 - git resolved via PATH on purpose
 
     # Prefer a per-user temp dir over a world-readable default, but only when the value is
     # absolute for this host. Windows CI inherits a POSIX-style TMPDIR that has no native

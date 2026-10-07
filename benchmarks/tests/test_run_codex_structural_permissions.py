@@ -19,7 +19,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from _launcher_capability import _private_filesystem_available
 
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
@@ -30,7 +29,6 @@ sys.path.insert(0, str(BENCHMARKS_DIR))
 # below is reached through its defining module, so this is the single place to patch it.
 from _bench_codex.structural import diff_impact as codex_diff_impact  # noqa: E402
 from _bench_codex.structural import provisioning as codex_provisioning  # noqa: E402
-
 from _bench_common import mutation_isolation  # noqa: E402
 
 SCRIPT_PATH = BENCHMARKS_DIR / "run-codex-structural.py"
@@ -198,7 +196,7 @@ def test_codex_stratum_locks_luna_and_high_effort(script_run_codex: Any) -> None
     """The accepted model/effort pair is consumed from the active manifest."""
     script_run_codex._validate_codex_stratum("gpt-6.1-sol", "high", MANIFEST_PATH)
 
-    with pytest.raises(ValueError, match="gpt-6.1-sol"):
+    with pytest.raises(ValueError, match=r"gpt-6.1-sol"):
         script_run_codex._validate_codex_stratum("gpt-5.3-codex", "high", MANIFEST_PATH)
     with pytest.raises(ValueError, match="reasoning effort"):
         script_run_codex._validate_codex_stratum("gpt-6.1-sol", "medium", MANIFEST_PATH)
@@ -304,7 +302,7 @@ def test_permission_profiles_replace_legacy_sandbox_and_grant_only_coordination_
 
 
 @POSIX_SECURITY
-@pytest.mark.parametrize("arm", ("B_auto", "C_strict"))
+@pytest.mark.parametrize("arm", ["B_auto", "C_strict"])
 def test_codemap_permission_profiles_grant_only_coordination_write(
     script_run_codex: Any, tmp_path: Path, arm: str
 ) -> None:
@@ -389,9 +387,9 @@ def test_benchmark_evidence_roots_require_absolute_directories(script_run_codex:
         {"BENCHMARK_EVIDENCE_ROOTS": json.dumps([str(evidence_root)])}
     ) == (evidence_root.resolve(),)
 
-    with pytest.raises(ValueError, match="absolute|evidence"):
+    with pytest.raises(ValueError, match=r"absolute|evidence"):
         script_run_codex._benchmark_evidence_roots({"BENCHMARK_EVIDENCE_ROOTS": '["relative"]'})
-    with pytest.raises(ValueError, match="path strings|evidence"):
+    with pytest.raises(ValueError, match=r"path strings|evidence"):
         script_run_codex._benchmark_evidence_roots({"BENCHMARK_EVIDENCE_ROOTS": "[]"})
 
     missing_root = tmp_path / "future-results"
@@ -401,7 +399,7 @@ def test_benchmark_evidence_roots_require_absolute_directories(script_run_codex:
 
     non_directory = tmp_path / "not-a-directory"
     non_directory.write_text("fixture", encoding="utf-8")
-    with pytest.raises(ValueError, match="directory|evidence"):
+    with pytest.raises(ValueError, match=r"directory|evidence"):
         script_run_codex._benchmark_evidence_roots({"BENCHMARK_EVIDENCE_ROOTS": json.dumps([str(non_directory)])})
 
 
@@ -712,7 +710,7 @@ def test_locked_treatment_python_is_executable_and_version_checked(
         """Return a mismatched runtime identity for admission rejection."""
         return SimpleNamespace(returncode=0, stdout="Python 3.13.5\n", stderr="")
 
-    with pytest.raises(ValueError, match="3.11"):
+    with pytest.raises(ValueError, match=r"3.11"):
         script_run_codex._verify_locked_codemap_python(
             manifest_path=manifest_path,
             command_runner=_wrong_runtime,
@@ -923,7 +921,7 @@ def test_coordination_root_rejects_symlinks_and_cannot_escape_its_index_director
         coordination_root.mkdir()
         (coordination_root / "readers").symlink_to(escaped_path, target_is_directory=True)
 
-    with pytest.raises(ValueError, match="symlink|escape|safe|coordination"):
+    with pytest.raises(ValueError, match=r"symlink|escape|safe|coordination"):
         script_run_codex._prepare_coordination_root(index_path)
 
     assert not (escaped_path / "registry.lock").exists()
@@ -950,7 +948,7 @@ def test_permission_profile_verification_fails_closed_when_codex_rejects_the_pro
             return SimpleNamespace(returncode=0, stdout="codex-cli 0.138.0", stderr="")
         return SimpleNamespace(returncode=2, stdout="", stderr="unknown permission profile provider-parity-codemap")
 
-    with pytest.raises(ValueError, match="profile|permission|unsupported"):
+    with pytest.raises(ValueError, match=r"profile|permission|unsupported"):
         script_run_codex._verify_permission_profile(home, repo_path, command_runner=_reject_profile)
 
 
@@ -983,7 +981,7 @@ def test_permission_profile_resolves_workspace_python_symlink_before_sandbox(
 
     monkeypatch.setattr(script_run_codex.sys, "executable", str(workspace_python))
 
-    with pytest.raises(ValueError, match="profile|permission|unsupported"):
+    with pytest.raises(ValueError, match=r"profile|permission|unsupported"):
         script_run_codex._verify_permission_profile(home, repo_path, command_runner=_reject_after_capture)
 
     sandbox_command = commands[1]

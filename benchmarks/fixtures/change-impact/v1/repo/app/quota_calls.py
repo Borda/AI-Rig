@@ -1,6 +1,7 @@
 """Production quota call shapes."""
 
-from impactlib.quota import apply, apply as quota_apply
+from impactlib.quota import apply
+from impactlib.quota import apply as quota_apply
 
 
 def batch_preview() -> int:

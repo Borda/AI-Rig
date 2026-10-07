@@ -196,19 +196,20 @@ def test_report_written_unreadable_transcript_is_denied(tmp_path: Path, topic_ru
 
 
 @_skip_node_unavailable
-def test_plan_mode_report_name_is_gated(tmp_path: Path) -> None:
-    """plan.md writes `topic-plan-<branch>-<date>.md` — same gate applies."""
-    report_file = tmp_path / "repo" / ".reports" / "research" / "topic-plan-main-2026-08-04.md"
-    report_file.parent.mkdir(parents=True)
-    (tmp_path / SENTINEL_NAME).write_text(f"{report_file}\n", encoding="utf-8")
+@pytest.mark.parametrize(
+    "report_name",
+    [
+        pytest.param("topic-plan-main-2026-08-04.md", id="plan-mode-report-name"),
+        pytest.param("topic-main-2026-08-04-2.md", id="counter-suffixed-report-name"),
+    ],
+)
+def test_report_name_variants_are_gated(tmp_path: Path, report_name: str) -> None:
+    """Every report-name shape a topic run can resolve is gated the same way.
 
-    assert _denial_reason(_run(tmp_path, _ask_payload())) is not None
-
-
-@_skip_node_unavailable
-def test_counter_suffixed_report_name_is_gated(tmp_path: Path) -> None:
-    """Anti-overwrite reruns resolve to `-2.md`; the sentinel path is used verbatim."""
-    report_file = tmp_path / "repo" / ".reports" / "research" / "topic-main-2026-08-04-2.md"
+    plan.md writes `topic-plan-<branch>-<date>.md`; anti-overwrite reruns resolve to `-2.md` and the sentinel path is
+    used verbatim.
+    """
+    report_file = tmp_path / "repo" / ".reports" / "research" / report_name
     report_file.parent.mkdir(parents=True)
     (tmp_path / SENTINEL_NAME).write_text(f"{report_file}\n", encoding="utf-8")
 

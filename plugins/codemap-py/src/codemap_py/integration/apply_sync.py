@@ -1,6 +1,7 @@
 """Execute an approved plan, journalling each mutation so it can be rolled back."""
 
 from __future__ import annotations
+
 import argparse
 import contextlib
 import json
@@ -8,21 +9,22 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
+
 from codemap_py import index_paths
-from .managed_block import _managed_block_status, _mutate_content
 
 # Reached through the module, not a bound name: tests patch these on the defining
 # module (monkeypatch.setattr(integration.native, ...)), which a `from .native import`
 # binding here would not see.
 from . import native
+from .managed_block import _managed_block_status, _mutate_content
 from .native import _installed_version_lookup, _run_native
 from .types import (
+    _EXIT_OK,
+    MARKETPLACE_NAME,
     ApprovalError,
     ConsumerTarget,
     IntegrationError,
-    MARKETPLACE_NAME,
     RefusalError,
-    _EXIT_OK,
     _cli_for,
     _find_target,
 )
@@ -121,8 +123,8 @@ def _is_installed_cache_path(path: Path) -> bool:
 
 def _git_dirty(root: Path, rel_path: str) -> bool:
     try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain", "--", rel_path],
+        result = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
+            ["git", "status", "--porcelain", "--", rel_path],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             cwd=str(root),
             capture_output=True,
             text=True,

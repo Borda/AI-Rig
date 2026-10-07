@@ -62,7 +62,8 @@ def test_consumer_reuses_only_qualified_answers(relative: str) -> None:
 def _load(path: Path, name: str) -> ModuleType:
     """Load *path* under a unique module name — both plugins ship a ``codemap_resolve``."""
     spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

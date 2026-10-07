@@ -21,10 +21,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+#: Allowed shape of a skill slug used in the run directory name: letters, digits, underscore and hyphen only.
 _SLUG_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 # Strictly relative — no leading slash, no NUL byte, no ``..``, only the
 # alphanumeric/underscore/dot/hyphen/slash subset that matches the project
 # artifact tree (``.experiments``, ``.reports/...``, etc.) (CWE-22).
+#: Allowed characters for the base directory, which keeps it a relative path inside the project artifact tree.
 _BASE_RE = re.compile(r"^[a-zA-Z0-9_.][a-zA-Z0-9_./-]*$")
 
 

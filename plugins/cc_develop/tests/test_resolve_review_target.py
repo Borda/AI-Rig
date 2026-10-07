@@ -30,17 +30,19 @@ def _patch_diff(monkeypatch: pytest.MonkeyPatch, files: list[str]) -> None:
     monkeypatch.setattr(_mod, "changed_files", lambda timeout=5: list(files))
 
 
-def test_has_python_under_file_target(tmp_path: Path) -> None:
-    """``find <file.py> -name '*.py'`` prints the file; ``rglob`` alone would miss it."""
-    target = tmp_path / "mod.py"
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        # ``find <file.py> -name '*.py'`` prints the file; ``rglob`` alone would miss it
+        pytest.param("mod.py", True, id="python-file-target"),
+        pytest.param("notes.md", False, id="non-python-file-target"),
+    ],
+)
+def test_has_python_under_file_target(tmp_path: Path, filename: str, expected: bool) -> None:
+    """A single file target counts as holding Python only when it is a ``.py`` file."""
+    target = tmp_path / filename
     target.write_text("x", encoding="utf-8")
-    assert has_python_under(str(target)) is True
-
-
-def test_has_python_under_non_python_file(tmp_path: Path) -> None:
-    target = tmp_path / "notes.md"
-    target.write_text("x", encoding="utf-8")
-    assert has_python_under(str(target)) is False
+    assert has_python_under(str(target)) is expected
 
 
 def test_has_python_under_directory(tmp_path: Path) -> None:

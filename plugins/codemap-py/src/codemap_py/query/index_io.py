@@ -1,6 +1,7 @@
 """Find, load and freshness-check the index, and build the maps every command reads."""
 
 from __future__ import annotations
+
 import calendar
 import json
 import os
@@ -9,7 +10,9 @@ import sys
 import time
 from pathlib import Path
 from typing import NamedTuple
-from codemap_py import index_paths, query_state as state, rwgate
+
+from codemap_py import index_paths, rwgate
+from codemap_py import query_state as state
 from codemap_py.scanner import INDEXED_PATHSPEC
 
 # Transitional seam: exclusion rules live in codemap_py.scanner, but this
@@ -18,19 +21,21 @@ from codemap_py.scanner import INDEXED_PATHSPEC
 # bin/-relative sys.path insert, the same route bin/scan-index used to take.
 # Every other import below is a direct package-internal import.
 # parents[3] not [2]: this file sits one level deeper than the pre-split query.py
+#: Plugin bin/ directory, added to sys.path so the _exclusions shim can be imported.
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
 from _exclusions import Exclusions, _load_exclusions, _match_exclusion, is_excluded  # noqa: E402
+
 from codemap_py.schema import (  # noqa: E402
     CALL_GRAPH_MIN_VER,
     MODULE_ALIASES_MIN_VER,
     VALID_CALL_RESOLUTIONS,
     validate_index,
 )
+
 from .errors import _EXIT_NOT_INDEXED, _die_json, _exit_error  # noqa: E402
 from .output import _print  # noqa: E402
-
 
 # v5.1: MODULE_ALIASES_MIN_VER is imported for downstream feature gating; no
 # command consumes it directly today — module_aliases is applied internally by
@@ -112,7 +117,7 @@ def _git_root() -> Path | None:
     """Return the git repository root, or None if not inside a git repo."""
     try:
         root = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             text=True,
             stderr=subprocess.DEVNULL,
             timeout=_GIT_TIMEOUT_S,
@@ -237,6 +242,7 @@ def find_index() -> Path:
 # ``no_index``, which reads as "no index exists", so the staleness gate stopped firing
 # on precisely the large repositories it was written for. A helper cap may never be
 # tighter than what the engine will serve; ``TestIndexSizeCapAgreement`` pins that.
+#: Largest index file in bytes (512 MiB) the reader will load, matching what the engine serves.
 _MAX_INDEX_SIZE_BYTES = 512 * 1024 * 1024
 
 
@@ -275,6 +281,7 @@ def _is_valid_index_file(path: Path) -> bool:
 # error so a caller sees WHY the index was rejected, not just that it was. Every
 # message ends in the same rebuild instruction: the fix for a broken index is always
 # to re-scan.
+#: Human-readable explanation for each index self-check failure slug, shown in stderr and JSON errors.
 _SELF_CHECK_DETAIL = {
     "not_object": "the index root is not a JSON object",
     "missing_keys": "the index is missing required keys (scan_version, modules)",
@@ -420,6 +427,7 @@ _GIT_TIMEOUT_S = 10  # max seconds for any git subprocess (H78: hung process gua
 # left a file_shas-less index claiming freshness. Spelled ONCE here and consumed by
 # :func:`_resolve_current_file_shas` and :func:`check_staleness` so the two paths
 # cannot drift apart again.
+#: Git pathspec of every tracked file type that can change index content, shared by the staleness checks.
 _INDEXED_PATHSPEC = INDEXED_PATHSPEC
 
 
@@ -447,6 +455,7 @@ def _git_cwd_kwargs() -> dict[str, str]:
 # ``scan-index --incremental`` inline so the answer reflects the current tree.
 # Bounded so the heal never dominates the query path — a large change set or a
 # slow scan falls back to the stale-honest result instead.
+#: Largest number of changed files for which a stale index is rebuilt inline at query time.
 _HEAL_MAX_CHANGED_FILES = 50  # skip heal when more than this many .py files changed
 
 
@@ -548,8 +557,8 @@ def _resolve_current_file_shas() -> _FileShas:
     if git_root is None:
         return _FileShas({}, _SHAS_NO_REPO)
     try:
-        output = subprocess.check_output(
-            ["git", "ls-files", "-s", "--", *_INDEXED_PATHSPEC],
+        output = subprocess.check_output(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
+            ["git", "ls-files", "-s", "--", *_INDEXED_PATHSPEC],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             text=True,
             stderr=subprocess.DEVNULL,
             timeout=_GIT_TIMEOUT_S,
@@ -607,8 +616,8 @@ def check_staleness(scanned_at: str) -> bool:
     if not _re.match(r"^[0-9T:+\-Z.]+$", scanned_at):
         return False
     try:
-        result = subprocess.run(
-            ["git", "log", f"--since={scanned_at}", "--name-only", "--pretty=", "--", *_INDEXED_PATHSPEC],
+        result = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
+            ["git", "log", f"--since={scanned_at}", "--name-only", "--pretty=", "--", *_INDEXED_PATHSPEC],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             capture_output=True,
             text=True,
             timeout=_GIT_TIMEOUT_S,
@@ -714,7 +723,7 @@ def _run_incremental_scan(scan_index_bin: Path, scan_root: Path | None, changed_
     if scan_root is not None:
         cmd += ["--root", str(scan_root)]
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
             cmd,
             capture_output=True,
             text=True,
@@ -946,7 +955,7 @@ def _current_git_sha() -> str | None:
     """Return current HEAD SHA, or None if git is unavailable."""
     try:
         return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
+            ["git", "rev-parse", "HEAD"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             text=True,
             stderr=subprocess.DEVNULL,
             timeout=_GIT_TIMEOUT_S,
@@ -980,7 +989,7 @@ def _untracked_py_files() -> list[str]:
     """
     try:
         output = subprocess.check_output(
-            ["git", "ls-files", "--others", "--exclude-standard", "--", "*.py"],
+            ["git", "ls-files", "--others", "--exclude-standard", "--", "*.py"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             text=True,
             stderr=subprocess.DEVNULL,
             timeout=_GIT_TIMEOUT_S,

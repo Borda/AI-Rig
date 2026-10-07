@@ -24,6 +24,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+#: Release artifact file names checked for symlinks and backed up as ``.bak`` before the directory is reused.
 _ARTIFACTS: tuple[str, ...] = (
     "HIGHLIGHTS.md",
     "DRAFT.md",

@@ -1,12 +1,15 @@
 """Render and replace the sentinel-bounded region this plugin owns in a consumer file."""
 
 from __future__ import annotations
+
 import re
+
 from codemap_py import __version__
+
 from .types import PROVIDER_NAME
 from .util import _sha256_bytes, _utc_now_iso
 
-
+#: Integration protocol identifier written into plans and managed blocks.
 PROTOCOL_VERSION = "codemap-py.integration.v2"
 
 
@@ -16,12 +19,15 @@ PROTOCOL_VERSION = "codemap-py.integration.v2"
 # byte-for-byte. BLOCK_SCHEMA_VERSION is embedded in the begin marker so a future body-shape
 # change is distinguishable from today's; the full sha256 of the enclosed body is the
 # drift/foreign-tamper signal, independent of that version tag.
+#: Revision of the managed-block body shape, embedded in the begin marker.
 BLOCK_SCHEMA_VERSION = 1
 
 
+#: Matches a managed-block begin marker, capturing the schema version and the body's sha256 digest.
 _MANAGED_BEGIN_RE = re.compile(r"<!-- codemap-py:integration:begin v(\d+) sha256=([0-9a-f]{64}) -->\n")
 
 
+#: End marker line that closes a managed block.
 _MANAGED_END = "<!-- codemap-py:integration:end -->\n"
 
 
@@ -29,9 +35,11 @@ _MANAGED_END = "<!-- codemap-py:integration:end -->\n"
 # (plugins/codex-rig/scripts/install_global_agents.py BEGIN_PREFIX/END_MARKER). Never imported
 # from codex-rig — the byte format is treated as a stable, independently
 # verifiable contract, not a Python API.
+#: Byte pattern matching Codex Rig's global-agents begin marker and capturing its sha256 digest.
 _CODEX_RIG_AGENTS_BEGIN_RE = re.compile(rb"<!-- codex-rig:global-agents begin sha256=([0-9a-f]{64}) -->\n")
 
 
+#: Byte marker that closes Codex Rig's global-agents block.
 _CODEX_RIG_AGENTS_END = b"<!-- codex-rig:global-agents end -->\n"
 
 

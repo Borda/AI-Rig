@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -58,11 +59,11 @@ def test_capture_source_snapshot_binds_worktree_contents_and_index(tmp_path: Pat
     new_content = f"new source{newline}"
     (source / "module.py").write_bytes(base_content.encode("utf-8"))
     (source / "staged.py").write_bytes(base_content.encode("utf-8"))
-    (repository / "removed.py").write_bytes(f"removed = True{newline}".encode("utf-8"))
+    (repository / "removed.py").write_bytes(f"removed = True{newline}".encode())
     _git(repository, "add", "source", "removed.py")
     _git(repository, "commit", "-qm", "fixture")
 
-    (source / "staged.py").write_bytes(f"value = 'staged'{newline}".encode("utf-8"))
+    (source / "staged.py").write_bytes(f"value = 'staged'{newline}".encode())
     _git(repository, "add", "source/staged.py")
     (source / "staged.py").write_bytes(base_content.encode("utf-8"))
     (source / "nested").mkdir()
@@ -357,3 +358,119 @@ def test_capture_source_snapshot_rejects_scope_symlink_escaping_repository(tmp_p
 
     with pytest.raises(ValueError, match="escapes repository"):
         _load_collector().capture_source_snapshot(repository, ["external-link"])
+
+
+@pytest.fixture
+def committed_source_repository(tmp_path: Path) -> Path:
+    """Disposable repository whose only commit tracks one source file."""
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _git(repository, "init", "-q")
+    _git(repository, "config", "user.name", "Snapshot fixture")
+    _git(repository, "config", "user.email", "snapshot@example.invalid")
+    (repository / "source.py").write_text("original\n", encoding="utf-8")
+    _git(repository, "add", "source.py")
+    _git(repository, "commit", "-qm", "fixture")
+    return repository
+
+
+def _move_head(repository: Path) -> None:
+    """Advance HEAD without touching the index or any worktree byte."""
+    _git(repository, "commit", "--allow-empty", "-qm", "moved")
+
+
+def _add_untracked_file(repository: Path) -> None:
+    """Create a new untracked, non-ignored source file."""
+    (repository / "added.py").write_text("added\n", encoding="utf-8")
+
+
+def _restage_executable_mode(repository: Path) -> None:
+    """Change only the staged mode of the tracked file, leaving its bytes and worktree untouched."""
+    _git(repository, "update-index", "--chmod=+x", "source.py")
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(_move_head, id="head-moves"),
+        pytest.param(_add_untracked_file, id="untracked-file-appears"),
+        pytest.param(_restage_executable_mode, id="index-entry-changes"),
+    ],
+)
+def test_capture_source_snapshot_rejects_git_state_change_during_capture(
+    committed_source_repository: Path, monkeypatch: pytest.MonkeyPatch, mutate: object
+) -> None:
+    """Reject a Git-state change that leaves every captured file byte identical.
+
+    The mutation runs right after the first read of each source file, so the revision, the index, or the untracked
+    inventory differs between the two reads while the bytes of the tracked file do not. Each view must keep its own
+    post-read comparison for the capture to fail.
+    """
+    module = _load_collector()
+    original_record = module._source_record
+
+    def record_then_mutate(root: Path, path: str) -> dict[str, object]:
+        """Return the first-read record, then change one Git view."""
+        record = original_record(root, path)
+        mutate(root)
+        return record
+
+    monkeypatch.setattr(module, "_source_record", record_then_mutate)
+    with pytest.raises(RuntimeError, match="changed while capturing"):
+        module.capture_source_snapshot(committed_source_repository, ["."])
+
+
+def test_capture_source_snapshot_reads_each_git_view_only_as_often_as_needed(
+    committed_source_repository: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spawn one combined top-level and HEAD lookup and two reads of every other view.
+
+    A capture runs on every review and validation step, so each extra Git process multiplies across the workflow and
+    costs most on Windows. The HEAD tree listing is still read twice: a HEAD that moves away and back during the capture
+    is caught only when one of the two listings lands on the other commit.
+    """
+    module = _load_collector()
+    real_run = subprocess.run
+    subcommands: list[str] = []
+
+    def record_run(argv: list[str], *args: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        """Record the Git subcommand, then run it unchanged."""
+        subcommands.append(argv[4])
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(module.subprocess, "run", record_run)
+    module.capture_source_snapshot(committed_source_repository, ["source.py"])
+
+    assert sorted(subcommands) == ["ls-files"] * 4 + ["ls-tree"] * 2 + ["rev-parse"] * 2
+
+
+def _initialize_repository(repository: Path) -> None:
+    """Create a repository without any commit, leaving HEAD unborn."""
+    _git(repository, "init", "-q")
+
+
+def _leave_plain_directory(repository: Path) -> None:
+    """Leave the directory outside any Git repository."""
+
+
+@pytest.mark.parametrize(
+    ("prepare", "failed_command"),
+    [
+        pytest.param(_initialize_repository, "rev-parse --verify HEAD", id="unborn-head"),
+        pytest.param(_leave_plain_directory, "rev-parse --show-toplevel", id="not-a-repository"),
+    ],
+)
+def test_capture_source_snapshot_names_the_failed_git_lookup(
+    tmp_path: Path, prepare: object, failed_command: str
+) -> None:
+    """Report an unusable repository through the single Git lookup that failed, not the combined call.
+
+    The top-level and HEAD lookups share one Git process on the success path; when it fails, callers must still see the
+    message of the individual lookup that cannot be satisfied.
+    """
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    prepare(repository)
+
+    with pytest.raises(RuntimeError, match=f"^{re.escape(f'Git source snapshot command failed: {failed_command}')}$"):
+        _load_collector().capture_source_snapshot(repository, ["source.py"])

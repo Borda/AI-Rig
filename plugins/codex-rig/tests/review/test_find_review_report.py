@@ -6,12 +6,11 @@ import importlib.util
 import json
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-
 from test_review_completion_gate import _assessed_pr, _module
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 FINDER_PATH = PLUGIN_ROOT / "shared" / "find-review-report.py"
@@ -53,7 +52,8 @@ def _assessed_local(tmp_path: Path) -> Path:
 def _load_finder() -> object:
     """Load the standalone report finder from its shipped plugin path."""
     specification = importlib.util.spec_from_file_location("find_review_report", FINDER_PATH)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -327,7 +327,7 @@ class TestPrScopedReviewRuns:
             identity_path.write_text(identity, encoding="utf-8")
 
         with pytest.raises(
-            LookupError, match="matching-review-candidate-unpromoted|invalid-review-report-rerun-code-review"
+            LookupError, match=r"matching-review-candidate-unpromoted|invalid-review-report-rerun-code-review"
         ):
             finder.find_latest_review_report("123", [tmp_path])
 
@@ -413,10 +413,17 @@ class TestPrScopedReviewRuns:
 
         assert str(candidate) in str(error.value)
 
-    def test_older_nested_candidate_does_not_block_assessed_run(self, tmp_path: Path) -> None:
-        """Prefer a promoted later run over an abandoned earlier candidate."""
+    @pytest.mark.parametrize(
+        "earlier_run",
+        [
+            pytest.param({"result_name": "result.candidate.json"}, id="candidate"),
+            pytest.param({"review_status": "closed"}, id="closed"),
+        ],
+    )
+    def test_older_nested_run_does_not_block_assessed_run(self, tmp_path: Path, earlier_run: dict[str, str]) -> None:
+        """Prefer a promoted later run over an abandoned earlier candidate or an earlier terminal close."""
         finder = _load_finder()
-        _write_nested_report(tmp_path, "run-009", result_name="result.candidate.json")
+        _write_nested_report(tmp_path, "run-009", **earlier_run)
         assessed = _write_nested_report(tmp_path, "run-010")
 
         selected = finder.find_latest_review_report("123", [tmp_path])
@@ -431,16 +438,6 @@ class TestPrScopedReviewRuns:
 
         with pytest.raises(LookupError, match="matching-review-closed-not-remediable"):
             finder.find_latest_review_report("123", [tmp_path])
-
-    def test_older_nested_closed_run_does_not_block_assessed_run(self, tmp_path: Path) -> None:
-        """Allow a later assessment to supersede an earlier terminal close."""
-        finder = _load_finder()
-        _write_nested_report(tmp_path, "run-009", review_status="closed")
-        assessed = _write_nested_report(tmp_path, "run-010")
-
-        selected = finder.find_latest_review_report("123", [tmp_path])
-
-        assert selected == assessed
 
     def test_rejects_invalid_nested_result(self, tmp_path: Path) -> None:
         """Retain explicit result validation inside the new directory topology."""
@@ -472,7 +469,7 @@ class TestPrScopedReviewRuns:
             finder.find_latest_review_report("456", [tmp_path])
 
     @pytest.mark.parametrize(
-        "pr_name,run_name",
+        ("pr_name", "run_name"),
         [
             pytest.param("pr-x", "run-001", id="pr-x"),
             pytest.param("pr-123", "run-x", id="pr-123-run-x"),
@@ -551,18 +548,12 @@ def test_newer_unavailable_report_does_not_shadow_older_assessed_review(tmp_path
     assert selected == assessed
 
 
-def test_only_unavailable_reports_require_a_new_code_review(tmp_path: Path) -> None:
-    """Do not let remediation consume an operational diagnostic as source findings."""
-    finder = _load_finder()
-    _write_report(tmp_path, "2026-08-10T11-00-00Z", unavailable=True)
+@pytest.mark.parametrize("target", ["https://github.com/acme/widgets/pull/123", "123", "#123"])
+def test_only_unavailable_reports_require_a_new_code_review(tmp_path: Path, target: str) -> None:
+    """Do not let remediation consume an operational diagnostic as source findings.
 
-    with pytest.raises(LookupError, match="matching-review-unavailable-rerun-code-review"):
-        finder.find_latest_review_report("https://github.com/acme/widgets/pull/123", [tmp_path])
-
-
-@pytest.mark.parametrize("target", ["123", "#123"])
-def test_numeric_target_recognizes_url_only_unavailable_report(tmp_path: Path, target: str) -> None:
-    """A pre-identity collection failure keeps its unavailable diagnosis for numeric lookup."""
+    A pre-identity collection failure keeps its unavailable diagnosis for the URL form and for numeric lookup.
+    """
     finder = _load_finder()
     _write_report(tmp_path, "2026-08-10T11-00-00Z", unavailable=True)
 
@@ -879,12 +870,12 @@ def test_pr_lookup_rejects_local_report_with_leftover_pr_identity(tmp_path: Path
         encoding="utf-8",
     )
 
-    with pytest.raises(LookupError, match="^invalid-review-report-rerun-code-review$"):
+    with pytest.raises(LookupError, match=r"^invalid-review-report-rerun-code-review$"):
         _load_finder().find_latest_review_report("123", [tmp_path])
 
 
 @pytest.mark.parametrize(
-    "metadata,diagnostic",
+    ("metadata", "diagnostic"),
     [
         pytest.param(
             {"scope": "working-tree", "review_status": "unavailable"},
@@ -933,7 +924,7 @@ def test_explicit_local_candidate_still_requires_promotion(tmp_path: Path, scope
         encoding="utf-8",
     )
 
-    with pytest.raises(LookupError, match="^matching-review-candidate-unpromoted:"):
+    with pytest.raises(LookupError, match=r"^matching-review-candidate-unpromoted:"):
         _load_finder().require_assessed_review_result(candidate)
 
 
@@ -956,13 +947,26 @@ def test_malformed_result_is_rejected_as_remediation_input(tmp_path: Path) -> No
         finder.require_assessed_review_result(malformed)
 
 
-def test_explicit_closed_report_is_rejected_as_remediation_input(tmp_path: Path) -> None:
-    """Do not treat a terminal proposal-level close decision as source findings."""
-    finder = _load_finder()
-    closed = _write_closed_report(tmp_path, "2026-08-10T11-00-00Z")
+@pytest.mark.parametrize(
+    ("write_report", "error"),
+    [
+        pytest.param(_write_closed_report, "matching-review-closed-not-remediable", id="closed"),
+        pytest.param(_write_candidate_report, "matching-review-candidate-unpromoted", id="candidate"),
+    ],
+)
+def test_explicit_nonassessed_report_is_rejected_as_remediation_input(
+    tmp_path: Path, write_report: Callable[[Path, str], Path], error: str
+) -> None:
+    """Never treat an explicit close decision or unpromoted candidate as validated source findings.
 
-    with pytest.raises(LookupError, match="matching-review-closed-not-remediable"):
-        finder.require_assessed_review_result(closed)
+    A terminal proposal-level close is not source findings, and an explicit candidate path must not bypass full artifact
+    validation.
+    """
+    finder = _load_finder()
+    report = write_report(tmp_path, "2026-08-10T11-00-00Z")
+
+    with pytest.raises(LookupError, match=error):
+        finder.require_assessed_review_result(report)
 
 
 def test_newer_closed_report_blocks_older_assessed_review(tmp_path: Path) -> None:
@@ -1007,12 +1011,3 @@ def test_candidate_for_other_pull_request_does_not_block_assessed_review(tmp_pat
     selected = finder.find_latest_review_report("123", [tmp_path])
 
     assert selected == assessed
-
-
-def test_explicit_candidate_is_not_accepted_as_validated_review(tmp_path: Path) -> None:
-    """Never let an explicit candidate path bypass full artifact validation."""
-    finder = _load_finder()
-    candidate = _write_candidate_report(tmp_path, "2026-08-10T11-00-00Z")
-
-    with pytest.raises(LookupError, match="matching-review-candidate-unpromoted"):
-        finder.require_assessed_review_result(candidate)

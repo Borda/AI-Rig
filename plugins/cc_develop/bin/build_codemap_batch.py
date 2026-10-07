@@ -44,12 +44,14 @@ from pathlib import Path
 # and by plugins/cc_develop/conftest.py during pytest --doctest-modules collection.
 from codemap_scan import _git_diff_files, derive_modules_from_diff, is_valid_module
 
+#: Most modules taken from the git diff when the caller passes no explicit --modules list.
 FALLBACK_LIMIT = 10
 
 # fn-rdeps/fn-blast are NOT in this set: they require `module::fn` qnames and a
 # name-only diff yields bare modules — every such batch item failed "Symbol not
 # found" in production (2026-07 usage audit). Function-level queries return once
 # Derive qualified names from diff hunks before resolving the affected symbols.
+#: Codemap-py query commands, with their fixed flags, issued once for every module in the batch.
 PER_MODULE_QUERIES: tuple[tuple[str, ...], ...] = (
     ("rdeps",),  # importer count → risk tier
     ("mock-rdeps",),

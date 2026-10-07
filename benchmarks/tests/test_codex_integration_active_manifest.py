@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 BENCHMARKS = ROOT / "benchmarks"
 GENERATOR = BENCHMARKS / "build-codex-integration-manifest.py"
@@ -71,7 +70,7 @@ def test_builder_locks_optional_query_arguments_ordering_and_cache_policy() -> N
         "across the 55-task single-repetition execution suite, every arm occupies every ordinal 18 or 19 times"
     )
     token_prompt_cache_policy = (
-        "Console and primary efficiency reports use gross provider input tokens only. "
+        "Console and primary efficiency reports use gross provider input tokens only. "  # noqa: S105 - policy text about LLM tokens, not a credential
         "Cached and fresh input counts are retained as raw telemetry diagnostics. "
         "The Codex CLI exposes no supported per-cell provider prompt-cache reset or disable control. "
         "Deterministic arm-order counterbalancing mitigates order exposure without claiming cache elimination."
@@ -187,12 +186,9 @@ def test_generator_stale_error_names_exact_rebuild_command(tmp_path: Path) -> No
     """Internal check mode must identify the command that repairs generated drift."""
     generator = runpy.run_path(str(GENERATOR))
 
-    try:
+    with pytest.raises(ValueError, match=r"stale") as raised:
         generator["_write_or_check"](tmp_path / "stale.json", b"expected\n", True)
-    except ValueError as exc:
-        assert str(exc).endswith("run: uv run python benchmarks/build-codex-integration-manifest.py")
-    else:
-        raise AssertionError("stale integration output was accepted")
+    assert str(raised.value).endswith("run: uv run python benchmarks/build-codex-integration-manifest.py")
 
 
 def test_integration_manifest_reuses_every_canonical_suite_identity() -> None:
@@ -278,7 +274,7 @@ def test_integration_manifest_locks_plain_cli_and_skill_arms_and_artifacts() -> 
         "across the 55-task single-repetition execution suite, every arm occupies every ordinal 18 or 19 times"
     )
     assert manifest["execution_controls"]["token_prompt_cache_policy"] == (
-        "Console and primary efficiency reports use gross provider input tokens only. "
+        "Console and primary efficiency reports use gross provider input tokens only. "  # noqa: S105 - policy text about LLM tokens, not a credential
         "Cached and fresh input counts are retained as raw telemetry diagnostics. "
         "The Codex CLI exposes no supported per-cell provider prompt-cache reset or disable control. "
         "Deterministic arm-order counterbalancing mitigates order exposure without claiming cache elimination."

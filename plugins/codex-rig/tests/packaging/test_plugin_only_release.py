@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections import Counter
-from dataclasses import replace
 import hashlib
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -13,11 +12,12 @@ import shlex
 import shutil
 import subprocess
 import sys
+from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY_ROOT = PLUGIN_ROOT.parents[1]
@@ -96,7 +96,8 @@ def _load_shared_artifact_validator() -> Any:
     """Load the packaged artifact validator without relying on package imports."""
     path = PLUGIN_ROOT / "shared" / "validate-artifacts.py"
     spec = importlib.util.spec_from_file_location("codex_rig_shared_artifact_validator", path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -106,7 +107,8 @@ def _load_package_validator() -> Any:
     """Load the package validator without relying on package imports."""
     path = PLUGIN_ROOT / "scripts" / "validate_package.py"
     spec = importlib.util.spec_from_file_location("codex_rig_package_validator", path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -116,7 +118,8 @@ def _load_package_builder() -> Any:
     """Load the package builder that owns publication file discovery."""
     path = PLUGIN_ROOT / "scripts" / "build_package.py"
     spec = importlib.util.spec_from_file_location("codex_rig_release_package_builder", path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -130,10 +133,10 @@ def _write_payload_manifest(package_root: Path, *relative_paths: str) -> None:
 
 @pytest.mark.parametrize(
     "payload",
-    (
+    [
         pytest.param(b"C:" + b"\\Users\\" + b"Alice\\project", id="backslash"),
         pytest.param(b"d:" + b"/users/" + b"alice/project", id="case-insensitive-forward-slash"),
-    ),
+    ],
 )
 def test_package_validator_rejects_simulated_windows_user_profile_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: bytes
@@ -152,11 +155,11 @@ def test_package_validator_rejects_simulated_windows_user_profile_paths(
 
 @pytest.mark.parametrize(
     "payload",
-    (
+    [
         pytest.param(b"C:\\ProgramData\\codex-rig", id="system-root"),
         pytest.param(b"%USERPROFILE%\\codex-rig", id="portable-variable"),
         pytest.param(b"docs/windows/users/guide.md", id="relative-documentation"),
-    ),
+    ],
 )
 def test_package_validator_accepts_non_private_simulated_windows_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: bytes
@@ -216,12 +219,15 @@ def _parse_frontmatter(path: Path) -> dict[str, str]:
         'code-review'
     """
     lines = path.read_text(encoding="utf-8").splitlines()
-    assert lines and lines[0] == "---", path
+    assert lines, path
+    assert lines[0] == "---", path
     closing_index = lines.index("---", 1)
     fields: dict[str, str] = {}
     for line in lines[1:closing_index]:
         key, separator, value = line.partition(":")
-        assert separator and key and key not in fields, (path, line)
+        assert separator, (path, line)
+        assert key, (path, line)
+        assert key not in fields, (path, line)
         fields[key] = value.strip()
     return fields
 
@@ -892,7 +898,8 @@ def test_calibration_model_stall_fixture_observations_are_scored(monkeypatch: py
     specification = importlib.util.spec_from_file_location(
         "codex_rig_model_stall_behavioral_score", calibration_dir / "score_behavioral.py"
     )
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     scorer = importlib.util.module_from_spec(specification)
     monkeypatch.setitem(sys.modules, specification.name, scorer)
     specification.loader.exec_module(scorer)
@@ -923,7 +930,8 @@ def test_archived_route_evidence_is_not_promoted_after_skill_rename(
     calibration_dir = PLUGIN_ROOT / "runtime" / "calibration"
     monkeypatch.syspath_prepend(str(calibration_dir))
     spec = importlib.util.spec_from_file_location("codex_rig_calibration_route_archive", calibration_dir / "run.py")
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     runner = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, runner)
     spec.loader.exec_module(runner)
@@ -958,7 +966,8 @@ def test_calibration_rejects_active_assignment_drift(tmp_path: Path, monkeypatch
     calibration_dir = PLUGIN_ROOT / "runtime" / "calibration"
     monkeypatch.syspath_prepend(str(calibration_dir))
     spec = importlib.util.spec_from_file_location("codex_rig_calibration_active_drift", calibration_dir / "run.py")
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     runner = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, runner)
     spec.loader.exec_module(runner)
@@ -984,7 +993,8 @@ def test_recurrence_policy_link_placement_matches_current_packaging(monkeypatch:
     spec = importlib.util.spec_from_file_location(
         "codex_rig_calibration_recurrence_placement", calibration_dir / "run.py"
     )
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     runner = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, runner)
     spec.loader.exec_module(runner)
@@ -1045,7 +1055,8 @@ def test_calibration_recurrence_policy_link_is_limited_to_retry_owners(
     calibration_dir = PLUGIN_ROOT / "runtime" / "calibration"
     monkeypatch.syspath_prepend(str(calibration_dir))
     spec = importlib.util.spec_from_file_location("codex_rig_calibration_recurrence", calibration_dir / "run.py")
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     runner = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, runner)
     spec.loader.exec_module(runner)
@@ -1351,10 +1362,13 @@ class TestParallelExecutionDocumentation:
     def test_has_centered_two_column_gate_cells(self, canonical_parallel_flow: tuple[Path, str, str]) -> None:
         """Keep every bounded gate and endpoint centered inside its cells."""
         _, _, flow = canonical_parallel_flow
-        assert "[" not in flow and "]" not in flow
-        assert "{" not in flow and "}" not in flow
+        assert "[" not in flow
+        assert "]" not in flow
+        assert "{" not in flow
+        assert "}" not in flow
         assert "-->" not in flow
-        assert "✓ YES" in flow and "✗ NO" in flow
+        assert "✓ YES" in flow
+        assert "✗ NO" in flow
         assert max(len(line) for line in flow.splitlines()) <= 100
         flow_lines = flow.splitlines()
         boxed_lines = [line.strip() for line in flow.splitlines() if line.strip().startswith("│")]
@@ -1366,7 +1380,7 @@ class TestParallelExecutionDocumentation:
         observed_gate_cells: Counter[str] = Counter()
         for line_index, line in enumerate(flow_lines):
             separators = [index for index, character in enumerate(line) if character == "│"]
-            for left, right in zip(separators, separators[1:]):
+            for left, right in itertools.pairwise(separators):
                 cell = line[left + 1 : right]
                 content = cell.strip()
                 if not content:

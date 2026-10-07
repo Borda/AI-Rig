@@ -10,10 +10,8 @@ import json
 import os
 from pathlib import Path
 
-import pytest
-
-
 import extract_code_blocks as ecb
+import pytest
 
 
 @pytest.fixture(name="md_dir")
@@ -55,17 +53,21 @@ class TestNormalizeLang:
 class TestEstimateTokens:
     """estimate_tokens: 4-chars/token heuristic, minimum 1 for non-empty content."""
 
-    def test_empty_returns_zero(self) -> None:
-        """Empty string has no tokens."""
-        assert ecb.estimate_tokens("") == 0
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            pytest.param("", 0, id="empty-is-zero"),
+            pytest.param("x", 1, id="single-char-minimum-one"),
+            pytest.param("a" * 40, 10, id="proportional-to-length"),
+        ],
+    )
+    def test_token_estimate(self, text: str, expected: int) -> None:
+        """The estimate is 0 for empty text, at least 1 otherwise, and one token per 4 characters.
 
-    def test_single_char_returns_one(self) -> None:
-        """Minimum is 1 for any non-empty content."""
-        assert ecb.estimate_tokens("x") == 1
-
-    def test_proportional_to_length(self) -> None:
-        """Token count scales with character count at 4 chars/token."""
-        assert ecb.estimate_tokens("a" * 40) == 10
+        Scenario: empty string has no tokens; any non-empty content has a minimum of 1; 40 characters scale to 10
+        tokens.
+        """
+        assert ecb.estimate_tokens(text) == expected
 
 
 class TestClassifyBlock:
@@ -87,25 +89,26 @@ class TestClassifyBlock:
         content = "$ grep pattern file.txt\n$ wc -l out.txt\n$ cat result.json"
         assert ecb.classify_block("output", content) is True
 
-    def test_empty_marker_shebang_is_code(self) -> None:
-        """Shebang line triggers code classification with no marker."""
-        assert ecb.classify_block("", "#!/usr/bin/env bash\necho hi") is True
+    @pytest.mark.parametrize(
+        ("marker", "content"),
+        [
+            pytest.param("", "#!/usr/bin/env bash\necho hi", id="empty-marker-shebang"),
+            pytest.param("", "OUT=$(find . -name '*.py')\necho ${OUT}", id="empty-marker-shell-vars"),
+            pytest.param("", "import os\nimport sys\nresult = os.path.join('a', 'b')", id="empty-marker-python-import"),
+            pytest.param("sh", "ls -la\necho done", id="known-code-marker-simple-content"),
+        ],
+    )
+    def test_code_signal_classifies_as_code(self, marker: str, content: str) -> None:
+        """Code signals classify a block as code.
+
+        Scenario: with no marker, a shebang, shell variable expansion, or a Python import triggers code
+        classification; a known code marker (sh) wins regardless of content simplicity.
+        """
+        assert ecb.classify_block(marker, content) is True
 
     def test_empty_marker_prose_is_not_code(self) -> None:
         """Plain prose with no marker classifies as not code."""
         assert ecb.classify_block("", "This is plain text.\nAnother sentence here.") is False
-
-    def test_empty_marker_shell_vars_is_code(self) -> None:
-        """Shell variable expansion triggers code classification."""
-        assert ecb.classify_block("", "OUT=$(find . -name '*.py')\necho ${OUT}") is True
-
-    def test_empty_marker_import_is_code(self) -> None:
-        """Python import statement triggers code classification."""
-        assert ecb.classify_block("", "import os\nimport sys\nresult = os.path.join('a', 'b')") is True
-
-    def test_known_code_marker_always_wins(self) -> None:
-        """Known code marker (sh) returns True regardless of content simplicity."""
-        assert ecb.classify_block("sh", "ls -la\necho done") is True
 
 
 class TestParseBlocks:
@@ -139,13 +142,16 @@ class TestParseBlocks:
         assert blocks[0].lang_detected == "python"
         assert blocks[1].lang_detected == "bash"
 
-    def test_empty_block_skipped(self) -> None:
-        """Whitespace-only block body is not emitted."""
-        assert ecb.parse_blocks("```bash\n   \n```\n", "f.md") == []
-
-    def test_unclosed_fence_skipped(self) -> None:
-        """Fence with no closing line produces no blocks."""
-        assert ecb.parse_blocks("```bash\necho hi\n", "f.md") == []
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("```bash\n   \n```\n", id="whitespace-only-body"),
+            pytest.param("```bash\necho hi\n", id="unclosed-fence"),
+        ],
+    )
+    def test_degenerate_block_skipped(self, text: str) -> None:
+        """A whitespace-only body or a fence with no closing line produces no blocks."""
+        assert ecb.parse_blocks(text, "f.md") == []
 
     def test_tilde_fence_supported(self) -> None:
         """Tilde fences (~~~) are parsed the same as backtick fences."""

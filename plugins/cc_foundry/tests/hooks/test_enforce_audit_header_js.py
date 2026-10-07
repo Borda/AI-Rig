@@ -170,19 +170,20 @@ def test_missing_aggregate_is_denied(tmp_path: Path, audit_run: tuple[Path, Path
 
 
 @_skip_node_unavailable
-def test_empty_aggregate_is_denied(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
-    """A zero-byte summary.jsonl counts as not written → deny."""
+@pytest.mark.parametrize(
+    "aggregate",
+    [
+        pytest.param("", id="zero-byte-aggregate"),
+        pytest.param('{"file":"a.md","sev":"high"}\n', id="written-aggregate-without-delivery"),
+    ],
+)
+def test_undelivered_aggregate_is_denied(tmp_path: Path, audit_run: tuple[Path, Path, str], aggregate: str) -> None:
+    """A zero-byte aggregate counts as not written, and consolidator output alone does not establish user delivery.
+
+    Scenario: an empty summary.jsonl and a written summary.jsonl with no delivery to the user both deny the follow-up.
+    """
     run_dir, _, cwd = audit_run
-    (run_dir / "summary.jsonl").touch()
-
-    assert _denial_reason(_run(tmp_path, _gate_payload(cwd=cwd))) is not None
-
-
-@_skip_node_unavailable
-def test_written_aggregate_without_delivery_is_denied(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
-    """Consolidator output alone does not establish user delivery."""
-    run_dir, _, cwd = audit_run
-    (run_dir / "summary.jsonl").write_text('{"file":"a.md","sev":"high"}\n', encoding="utf-8")
+    (run_dir / "summary.jsonl").write_text(aggregate, encoding="utf-8")
 
     assert _denial_reason(_run(tmp_path, _gate_payload(cwd=cwd))) is not None
 
@@ -306,24 +307,19 @@ def test_sentinel_resolved_from_payload_session_id(tmp_path: Path, audit_run: tu
         pytest.param("Acknowledge", "hook event name invalid — skill non-functional", id="breaking-ack"),
         pytest.param("Continue ignoring", "skip unknown flags and proceed", id="unknown-flag"),
         pytest.param("Abort", "stop and re-invoke with corrected flags", id="abort"),
+        pytest.param("Acknowledge", "you may fix all of these later", id="gate-wording-only-in-description"),
     ],
 )
 def test_non_gate_questions_pass_through(
     tmp_path: Path, audit_run: tuple[Path, Path, str], label: str, description: str
 ) -> None:
-    """Breaking acks and flag prompts fire before Step 5 by design — never gated."""
+    """Breaking acks and flag prompts fire before Step 5 by design — never gated.
+
+    Scenario: gate wording inside a description must not turn another question into the gate; the gate label is matched
+    only in the label field.
+    """
     _, _, cwd = audit_run
     payload = _other_question_payload(label, description)
-    payload["cwd"] = cwd
-
-    assert _run(tmp_path, payload) == {}
-
-
-@_skip_node_unavailable
-def test_gate_label_matched_only_in_label_field(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
-    """Gate wording inside a description must not turn another question into the gate."""
-    _, _, cwd = audit_run
-    payload = _other_question_payload("Acknowledge", "you may fix all of these later")
     payload["cwd"] = cwd
 
     assert _run(tmp_path, payload) == {}

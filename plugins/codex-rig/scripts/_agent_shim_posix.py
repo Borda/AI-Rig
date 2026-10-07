@@ -49,10 +49,13 @@ from ctypes import CDLL, c_char_p, c_int, c_uint, get_errno
 from dataclasses import dataclass
 from typing import NoReturn
 
-
+#: Largest file, in bytes (4 MiB), that these POSIX helpers will read or write.
 MAX_FILE_BYTES = 4_194_304
+#: Permission mode (owner-only) required for and applied to private managed directories.
 PRIVATE_DIRECTORY_MODE = 0o700
+#: Permission mode (owner read/write only) required for and applied to private managed files.
 PRIVATE_FILE_MODE = 0o600
+#: Pattern for a lowercase 64-character hexadecimal SHA-256 digest string.
 DIGEST = re.compile(r"[0-9a-f]{64}")
 
 

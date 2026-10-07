@@ -27,7 +27,7 @@ state_program_file = _mod.state_program_file
 main = _mod.main
 
 
-@pytest.fixture()
+@pytest.fixture
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Isolated CWD plus sentinel dir under a fixed session token."""
     sentinels = tmp_path / "sentinels"

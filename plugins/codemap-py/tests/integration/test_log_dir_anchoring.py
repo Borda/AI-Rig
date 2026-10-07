@@ -19,9 +19,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 import _runtime_log as rl
+import pytest
 from codemap_py import telemetry
 
 _HOOKS_DIR = Path(__file__).resolve().parents[2] / "hooks"
@@ -34,7 +33,8 @@ _LOGS_REL = Path(".cache") / "codemap" / "logs"
 def _load_hookutil():
     """Load ``hooks/_hookutil.py`` by path (it is not an importable package member)."""
     spec = importlib.util.spec_from_file_location("codemap_hookutil_anchoring", _HOOKS_DIR / "_hookutil.py")
-    assert spec and spec.loader
+    assert spec
+    assert spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -74,25 +74,34 @@ def _run_hook(hook: Path, payload: dict, cwd: Path) -> subprocess.CompletedProce
 class TestHookLayerAnchoring:
     """Hooks launched inside a subdirectory still write to the repo-root log directory."""
 
-    def test_tool_hook_writes_at_the_repo_root(self, repo_with_subdir: tuple[Path, Path]) -> None:
-        """Anchor tool-use logs at the repository root from a nested directory."""
+    @pytest.mark.parametrize(
+        ("hook", "payload", "shard_glob"),
+        [
+            pytest.param(
+                _TOOL_HOOK, {"tool_name": "Grep", "tool_input": {"pattern": "x"}}, "tools*.jsonl", id="tool-use"
+            ),
+            pytest.param(
+                _SKILL_HOOK,
+                {"tool_name": "Skill", "tool_input": {"skill": "codemap-py:query-code"}},
+                "skills*.jsonl",
+                id="skill-start",
+            ),
+        ],
+    )
+    def test_hook_writes_at_the_repo_root(
+        self, repo_with_subdir: tuple[Path, Path], hook: Path, payload: dict, shard_glob: str
+    ) -> None:
+        """Anchor tool-use and skill-start logs at the repository root from a nested directory.
+
+        The hook runs from a nested directory of a real git repo, so only repo-root anchoring can put the shard in the
+        ``claude`` log directory; a shard under the subdirectory would split the join across two directories.
+        """
         root, subdir = repo_with_subdir
 
-        result = _run_hook(_TOOL_HOOK, {"tool_name": "Grep", "tool_input": {"pattern": "x"}}, subdir)
+        result = _run_hook(hook, payload, subdir)
 
         assert result.returncode == 0, result.stderr
-        assert sorted(p.name for p in (root / _LOGS_REL / "claude").glob("tools*.jsonl")) != []
-        assert not (subdir / _LOGS_REL).exists()
-
-    def test_skill_hook_writes_at_the_repo_root(self, repo_with_subdir: tuple[Path, Path]) -> None:
-        """Anchor skill-start logs at the repository root from a nested directory."""
-        root, subdir = repo_with_subdir
-        payload = {"tool_name": "Skill", "tool_input": {"skill": "codemap-py:query-code"}}
-
-        result = _run_hook(_SKILL_HOOK, payload, subdir)
-
-        assert result.returncode == 0, result.stderr
-        assert sorted(p.name for p in (root / _LOGS_REL / "claude").glob("skills*.jsonl")) != []
+        assert sorted(p.name for p in (root / _LOGS_REL / "claude").glob(shard_glob)) != []
         assert not (subdir / _LOGS_REL).exists()
 
 

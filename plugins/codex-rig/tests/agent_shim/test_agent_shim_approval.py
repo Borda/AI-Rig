@@ -13,7 +13,6 @@ from types import ModuleType
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = PLUGIN_ROOT / "scripts"
 GENERATOR_PATH = SCRIPTS / "generate_roles.py"
@@ -541,7 +540,7 @@ def test_historical_target_union_must_remain_complete() -> None:
         item for item in observation.target_observations if item[0] != "codex-rig-retired-specialist.toml"
     )
 
-    with pytest.raises(approval.ApprovalBindingError, match="rebuilt|rosters"):
+    with pytest.raises(approval.ApprovalBindingError, match=r"rebuilt|rosters"):
         approval.build_convergence_approval(
             candidate,
             roster,
@@ -554,7 +553,7 @@ def test_historical_target_union_must_remain_complete() -> None:
 def test_namespace_inventory_must_be_complete_and_empty(status: str) -> None:
     """Reject each incomplete namespace scan status."""
     loaded = _modules()
-    _, observer, _, approval = loaded
+    _, _observer, _, approval = loaded
     roster, candidate, observation = _candidate_and_observation(loaded)
 
     with pytest.raises(approval.ApprovalBindingError, match="approval-eligible"):

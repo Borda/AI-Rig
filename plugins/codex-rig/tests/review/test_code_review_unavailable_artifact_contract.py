@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 REVIEW_VALIDATOR_PATH = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
 SHARED_VALIDATOR_PATH = PLUGIN_ROOT / "shared" / "validate-artifacts.py"
@@ -30,7 +29,8 @@ GH_CHECKOUT_FAILURE = {
 def _load_module(path: Path, name: str) -> object:
     """Load one standalone validator module from its shipped path."""
     specification = importlib.util.spec_from_file_location(name, path)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -412,7 +412,7 @@ def test_unavailable_pr_artifact_rejects_process_diagnostic_table(tmp_path: Path
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    "dirty,changed,recorded,status,admissible",
+    ("dirty", "changed", "recorded", "status", "admissible"),
     [
         pytest.param(["pkg/item.py"], ["pkg/item.py"], ["pkg/item.py"], "blocked-pr-dirty-paths", True, id="exact"),
         pytest.param(["pkg"], ["pkg/item.py"], ["pkg"], "blocked-pr-dirty-paths", True, id="dirty-ancestor"),
@@ -564,11 +564,13 @@ def test_blocked_preflight_receipt_reaches_actionable_unavailable_finalization(
     outcome = json.loads(finalized.stdout)
     assert {path: path.read_bytes() for path in retained} == retained
     if not admissible:
-        assert finalized.returncode == 1 and outcome["promoted"] is False, outcome
+        assert finalized.returncode == 1, outcome
+        assert outcome["promoted"] is False, outcome
         assert "unavailable-review-worktree-preflight-invalid" in json.dumps(outcome), outcome
         assert not result_path.exists()
         return
-    assert finalized.returncode == 0 and outcome["promoted"] is True, outcome
+    assert finalized.returncode == 0, outcome
+    assert outcome["promoted"] is True, outcome
     promoted = json.loads(result_path.read_bytes())
     assert promoted["status"] == "fail"
     assert promoted["metadata"]["review_status"] == "unavailable"

@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import check_bridge
 import pytest
-
-import check_bridge  # noqa: E402
 
 
 def _write_manifest(home: Path) -> None:
@@ -21,11 +20,27 @@ def _write_manifest(home: Path) -> None:
 class TestBridgeStatus:
     """Bridge status resolution keeps absence distinct from disablement."""
 
-    def test_absent_when_no_exact_target_is_installed(self, tmp_path: Path) -> None:
-        """An unrelated plugin and the Codex CLI never qualify as the bridge."""
+    @pytest.mark.parametrize(
+        "registry",
+        [
+            # An unrelated plugin and the Codex CLI never qualify as the bridge.
+            pytest.param({"other@borda-ai-rig": []}, id="unrelated-plugin-only"),
+            # The obsolete flat fixture shape hid the real registry contract and must not false-positive.
+            pytest.param({check_bridge.TARGET_SELECTOR: []}, id="obsolete-flat-registry-shape"),
+            # The root Makefile only treats a plugin as installed when an entry carries installPath; a bare selector key
+            # would tell a skill the bridge is available while the installer that placed it there disagrees.
+            pytest.param({"plugins": {check_bridge.TARGET_SELECTOR: []}}, id="selector-without-install-entry"),
+        ],
+    )
+    def test_absent_when_no_exact_target_is_installed(self, tmp_path: Path, registry: dict) -> None:
+        """A registry with no installed entry for the exact bridge selector reports absent.
+
+        Covers a registry listing only an unrelated plugin, the obsolete flat registry shape, and a selector key that
+        carries no installed entry.
+        """
         manifest = tmp_path / ".claude" / "plugins" / "installed_plugins.json"
         manifest.parent.mkdir(parents=True)
-        manifest.write_text(json.dumps({"other@borda-ai-rig": []}), encoding="utf-8")
+        manifest.write_text(json.dumps(registry), encoding="utf-8")
         assert check_bridge.bridge_status(tmp_path) == "absent"
 
     def test_available_from_exact_registry_selector(self, tmp_path: Path) -> None:
@@ -33,25 +48,6 @@ class TestBridgeStatus:
         _write_manifest(tmp_path)
         assert check_bridge.bridge_status(tmp_path) == "available"
         assert check_bridge.bridge_available(tmp_path) is True
-
-    def test_flat_registry_shape_does_not_false_positive(self, tmp_path: Path) -> None:
-        """Reject the obsolete flat fixture shape that hid the real registry contract."""
-        manifest = tmp_path / ".claude" / "plugins" / "installed_plugins.json"
-        manifest.parent.mkdir(parents=True)
-        manifest.write_text(json.dumps({check_bridge.TARGET_SELECTOR: []}), encoding="utf-8")
-        assert check_bridge.bridge_status(tmp_path) == "absent"
-
-    def test_registry_entry_without_install_path_is_absent(self, tmp_path: Path) -> None:
-        """A selector key with no installed entry must not read as installed.
-
-        The root ``Makefile`` only treats a plugin as installed when an entry carries ``installPath``. A checker that
-        accepted the bare key would tell a skill the bridge is available while the installer that placed it there
-        disagrees.
-        """
-        manifest = tmp_path / ".claude" / "plugins" / "installed_plugins.json"
-        manifest.parent.mkdir(parents=True)
-        manifest.write_text(json.dumps({"plugins": {check_bridge.TARGET_SELECTOR: []}}), encoding="utf-8")
-        assert check_bridge.bridge_status(tmp_path) == "absent"
 
     def test_available_from_marketplace_cache(self, tmp_path: Path) -> None:
         """The exact marketplace cache layout answers only when no registry exists.

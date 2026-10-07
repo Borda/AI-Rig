@@ -9,20 +9,14 @@ import time
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
-
 from _bench_common.benchmark_paths import RESULTS_DIR
-from _bench_common.presentation import (
-    fmt_time,
-    print_section_rule,
-)
+from _bench_common.presentation import fmt_time, print_section_rule
 
 from _bench_claude.structural.config import _BLUE, _GREEN, _RED, _RESET, _console
 from _bench_claude.structural.models import BenchRun
 from _bench_claude.structural.tasks import _run_from_cached
-
 
 # ---------------------------------------------------------------------------
 # Reporting
@@ -50,7 +44,7 @@ def _run_correct_symbol(run: BenchRun) -> str:
     return "?"
 
 
-def _effective_recall(run: Optional[BenchRun]) -> Optional[float]:
+def _effective_recall(run: BenchRun | None) -> float | None:
     """Recall value in [0, 1] for summary display.
 
     Returns the true recall when an evaluator sets it. Evaluators that score by
@@ -87,7 +81,7 @@ def _effective_recall(run: Optional[BenchRun]) -> Optional[float]:
     return 1.0 if run.quality.correct else 0.0
 
 
-def _safe_ratio(num: Optional[float], den: Optional[float]) -> float:
+def _safe_ratio(num: float | None, den: float | None) -> float:
     """Divide num by den; return NaN when den is zero or None.
 
     Args:
@@ -321,7 +315,7 @@ def _print_workflow_breakdown(runs: list[BenchRun], baseline: str = "plain", tre
         print(f"  {wf:<22}  {n_tasks:>7}  {ratio_str}  {ratio_mean_str}  {acc_str}")
 
 
-def _arm_extracted(run: Optional[BenchRun]) -> bool:
+def _arm_extracted(run: BenchRun | None) -> bool:
     """Return True when *run* produced a scored, extracted, completed metric.
 
     A run counts as "extracted" only when it was scored, did not fail extraction, and was not cut
@@ -337,7 +331,7 @@ def _arm_extracted(run: Optional[BenchRun]) -> bool:
     return bool(run and run.quality.scored and not run.quality.extraction_failed and not run.incomplete)
 
 
-def _is_self_consistency(run: Optional[BenchRun]) -> bool:
+def _is_self_consistency(run: BenchRun | None) -> bool:
     """Return True when *run* is a self-consistency (index-derived ground truth) task.
 
     Args:
@@ -359,7 +353,7 @@ def _is_self_consistency(run: Optional[BenchRun]) -> bool:
 
 def _paired_accuracy(
     runs: list[BenchRun], baseline: str = "plain", treatment: str = "codemap"
-) -> Optional[dict[str, int]]:
+) -> dict[str, int] | None:
     """Compute paired accuracy over tasks where BOTH arms extracted successfully.
 
     The per-arm accuracy printed elsewhere drops ``extraction_failed`` runs independently per arm, so

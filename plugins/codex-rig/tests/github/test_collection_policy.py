@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from types import ModuleType
 from pathlib import Path
+from types import ModuleType
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CONFTEST_PATH = PLUGIN_ROOT / "conftest.py"

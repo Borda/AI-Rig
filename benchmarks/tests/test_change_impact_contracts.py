@@ -8,9 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from _bench_common import change_impact_contracts as contracts
-
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_ROOT = ROOT / "benchmarks/fixtures/change-impact/v1/repo"
@@ -98,7 +96,9 @@ def test_perfect_response_is_pooling_eligible_and_scores_fully(oracles: dict[str
     assert score.correct is True
     assert score.quality_score == 1.0
     assert score.graded_score == 1.0
-    assert score.erec is None and score.rrec is None and score.deff is None
+    assert score.erec is None
+    assert score.rrec is None
+    assert score.deff is None
 
 
 @pytest.mark.parametrize("field", ["must_update_callsites", "must_update_tests"])
@@ -150,8 +150,10 @@ def test_invalid_envelopes_and_unknown_reasons_receive_zero_credit(oracles: dict
     answer["reasons"][answer["must_update_callsites"][0]] = "unknown"
     invalid_reason = contracts.assess_change_impact_response({"id": "CI-02"}, _envelope(answer))
 
-    assert malformed.answer is None and malformed.valid is False
-    assert invalid_reason.answer is None and invalid_reason.valid is False
+    assert malformed.answer is None
+    assert malformed.valid is False
+    assert invalid_reason.answer is None
+    assert invalid_reason.valid is False
     assert contracts.score_change_impact_answer(oracle, malformed.answer).quality_score == 0.0
 
 
@@ -161,7 +163,7 @@ def test_failure_details_report_missing_and_unexpected_facts(oracles: dict[str, 
     answer = _answer(oracle)
     removed = answer["must_update_callsites"][1]
     replacement = "app.quota_calls::local_preview@999"
-    answer["must_update_callsites"] = answer["must_update_callsites"][:1] + [replacement]
+    answer["must_update_callsites"] = [*answer["must_update_callsites"][:1], replacement]
     answer["reasons"].pop(removed)
     answer["reasons"][replacement] = "positional-after-keyword-only"
     details = contracts.change_impact_failure_details(oracle, answer)

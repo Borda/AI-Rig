@@ -10,61 +10,19 @@ import shlex
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
 from types import SimpleNamespace
+from typing import Any
 
-
-from _bench_common.artifact_hashing import runner_sha256
-from _bench_common.change_impact_contracts import source_fingerprint as change_impact_source_fingerprint
-from _bench_common.claude_transport import MODEL_TIMEOUT, MODELS, parse_result_usage
 from _bench_common import presentation
-from _bench_common.presentation import (
-    format_artifact_block,
-    format_paid_command_block,
-    format_quality,
-    fmt_time,
-    fmt_tok,
-)
+from _bench_common.agentic_contracts import AgenticOracle, AnswerScore  # noqa: F401
 
 # Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
-from _bench_common.agentic_contracts import (
-    AgenticOracle,  # noqa: F401
-    AnswerScore,  # noqa: F401
-)
-from _bench_common.provider_parity_contracts import (
-    ARM_CONTRACTS,
-    fresh_input_tokens,
-    token_accounting_inconsistent,
-    treatment_adherence,
-)
-from _bench_common.edit_patch_contracts import (
-    EditExecution,
-    EditTaskContract,
-    build_patch_answer,
-    score_edit_execution,
-    validate_patch_index_bundle,
-)
-from _bench_common.mutation_isolation import (
-    PATCH_PYTEST_ENV,
-    create_patch_task_agent_workspace,
-    create_executable_agent_workspace,
-    execute_patch_task_answer,
-    execute_fix_multi_patch,
-    execute_fix_single_patch,
-    patch_test_runtime_identity,
-    relocate_frozen_index_for_worktree,
-)
-from _bench_common.paid_lifecycle import (
-    PaidStageCallbacks,
-    paid_approval_matches,
-    paid_approval_token,
-    run_paid_stage,
-    write_checksums,
-)
+from _bench_common.artifact_hashing import runner_sha256
+from _bench_common.change_impact_contracts import source_fingerprint as change_impact_source_fingerprint
 
 # Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
 # Every name it defines is re-exported here, including ones this file no longer calls itself: callers and tests
@@ -92,6 +50,44 @@ from _bench_common.claude_stages import (
     resolve_claude_patch_scope,
     resolve_readcrop_scope,
 )
+from _bench_common.claude_transport import MODEL_TIMEOUT, MODELS, parse_result_usage
+from _bench_common.edit_patch_contracts import (
+    EditExecution,
+    EditTaskContract,
+    build_patch_answer,
+    score_edit_execution,
+    validate_patch_index_bundle,
+)
+from _bench_common.mutation_isolation import (
+    PATCH_PYTEST_ENV,
+    create_executable_agent_workspace,
+    create_patch_task_agent_workspace,
+    execute_fix_multi_patch,
+    execute_fix_single_patch,
+    execute_patch_task_answer,
+    patch_test_runtime_identity,
+    relocate_frozen_index_for_worktree,
+)
+from _bench_common.paid_lifecycle import (
+    PaidStageCallbacks,
+    paid_approval_matches,
+    paid_approval_token,
+    run_paid_stage,
+    write_checksums,
+)
+from _bench_common.presentation import (
+    fmt_time,
+    fmt_tok,
+    format_artifact_block,
+    format_paid_command_block,
+    format_quality,
+)
+from _bench_common.provider_parity_contracts import (
+    ARM_CONTRACTS,
+    fresh_input_tokens,
+    token_accounting_inconsistent,
+    treatment_adherence,
+)
 
 from _bench_claude.agentic.config import (
     BENCHMARKS_DIR,
@@ -102,13 +98,13 @@ from _bench_claude.agentic.config import (
     RUNNER_PATH,
     _console,
 )
-from _bench_claude.agentic.provenance import _repository_fingerprint, _sha256_file, _validate_parity_runtime
 from _bench_claude.agentic.discovery import find_index
 from _bench_claude.agentic.evidence import (
     _benchmark_evidence_roots,
     _claude_evidence_settings_file,
     _staged_codemap_runtime,
 )
+from _bench_claude.agentic.provenance import _repository_fingerprint, _sha256_file, _validate_parity_runtime
 from _bench_claude.agentic.runner import ModelRunner
 
 
@@ -378,7 +374,8 @@ def _run_claude_p1_stage(
         index_path=index_path,
         model=model,
     )
-    assert run_dir is not None
+    if run_dir is None:
+        raise RuntimeError("run_dir must not be None")
     run_claude_paid_stage(
         study=study,
         tasks=loaded,
@@ -460,7 +457,7 @@ def _native_change_impact_preflight(source_root: Path, run_dir: Path) -> None:
     launcher = shutil.which("claude")
     if launcher is None:
         raise RuntimeError("Claude change-impact preflight requires an installed claude launcher")
-    version = subprocess.run([launcher, "--version"], capture_output=True, text=True, timeout=30, check=False)
+    version = subprocess.run([launcher, "--version"], capture_output=True, text=True, timeout=30, check=False)  # noqa: S603 - argv list, no shell
     if version.returncode != 0:
         raise RuntimeError(f"Claude change-impact preflight failed: {version.stderr.strip()[:300]}")
     denied_evidence = _benchmark_evidence_roots((run_dir,))
@@ -573,7 +570,7 @@ def impact_runtime(
         )
         codemap = _claude_codemap_evidence(events)
         codemap_calls = int(codemap["codemap_calls"])
-        attempted_outside_paths, outside_paths = _outside_workspace_path_evidence(events, source_root)
+        _attempted_outside_paths, outside_paths = _outside_workspace_path_evidence(events, source_root)
         recovery_attempted = _frozen_index_recovery_attempted(events)
         contaminated = bool(
             outside_paths
@@ -732,8 +729,11 @@ def _source_pair_unchanged(
     repo_path: Path, index_path: Path, scope: Mapping[str, Any], *, task_id: str | None = None
 ) -> bool:
     """Return whether one cell preserved its frozen source commit, status, and index bytes."""
-    status = subprocess.run(
-        ["git", "-C", str(repo_path), "status", "--porcelain"], capture_output=True, text=True, check=False
+    status = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "-C", str(repo_path), "status", "--porcelain"],  # noqa: S607 - git resolved via PATH on purpose
+        capture_output=True,
+        text=True,
+        check=False,
     )
     expected = scope["source_binding"]
     patch_coordinates = expected.get("patch_coordinates")
@@ -796,7 +796,7 @@ def _format_claude_stage_row(row: Mapping[str, Any], completed: int, total: int)
         input_text = f">{input_text}" if row["input_tokens"] else "?"
     output_text = fmt_tok(int(row["output_tokens"])) if usage_complete else "?"
     base = (
-        f"({completed}/{total}) {mark}  {str(row['task_id']):<6} {str(row['arm']):<8} "
+        f"({completed}/{total}) {mark}  {row['task_id']!s:<6} {row['arm']!s:<8} "
         f"in={input_text:>6} out={output_text:>5} "
         f"cmd={int(row['command_calls']):>2} time={fmt_time(float(row['elapsed_s'])):>5} quality={quality_text}"
     )
@@ -894,7 +894,8 @@ def run_claude_paid_stage(
             diff = workspace.capture_diff()
             index_unchanged = index_unchanged or workspace.index_unchanged()
             if study == "patch":
-                assert patch_workspace is not None
+                if patch_workspace is None:
+                    raise RuntimeError("patch_workspace must not be None")
                 answer = patch_workspace.capture_answer()
                 diff = answer.diff
                 agent_source_unchanged = patch_workspace.source_unchanged()
@@ -913,7 +914,8 @@ def run_claude_paid_stage(
                 execution = execute_fix_multi_patch(repo_path, contract, diff)
         finally:
             workspace_cleanup_verified = workspace.cleanup()
-        assert execution is not None
+        if execution is None:
+            raise RuntimeError("execution must not be None")
         row = _parse_claude_fix_cell(
             study=study,
             item=item,

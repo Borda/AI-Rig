@@ -27,9 +27,10 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterable, Mapping
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 import fire
 
@@ -37,13 +38,11 @@ import fire
 # regardless of how this script is launched (direct path, symlink, or any cwd).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _bench_common.benchmark_paths import TASKS_BENCH_FILE as TASKS_FILE, gt_is_pending  # noqa: E402
-from _bench_common.codemap_discovery import (
-    find_codemap_bin,
-    git_toplevel,
-    resolve_index_path as _util_resolve_index_path,
-)  # noqa: E402
-from _bench_common.python_source import module_from_init_chain, prune_walk_dirs, walk_py_modules  # noqa: E402
+from _bench_common.benchmark_paths import TASKS_BENCH_FILE as TASKS_FILE
+from _bench_common.benchmark_paths import gt_is_pending
+from _bench_common.codemap_discovery import find_codemap_bin, git_toplevel
+from _bench_common.codemap_discovery import resolve_index_path as _util_resolve_index_path
+from _bench_common.python_source import module_from_init_chain, prune_walk_dirs, walk_py_modules
 
 
 class TaskType(str, Enum):
@@ -72,8 +71,8 @@ class TaskType(str, Enum):
     REAL_ISSUE = "real_issue"
 
 
-# Test-file / test-directory detection — mirrors scan-index ``_TEST_PATH_RE`` so the AST oracle
-# excludes the same test modules scan-query does. Matched against repo-relative paths.
+#: Test-file / test-directory detection — mirrors scan-index ``_TEST_PATH_RE`` so the AST oracle
+#: excludes the same test modules scan-query does. Matched against repo-relative paths.
 _TEST_PATH_RE = re.compile(r"(^|/)tests?/|/test_[^/]+\.py$|/[^/]+_test\.py$|/conftest\.py$")
 
 # ---- XREF ORACLE CONSTANTS — mirror scan-index/scan-query verbatim, never import them (see
@@ -81,16 +80,18 @@ _TEST_PATH_RE = re.compile(r"(^|/)tests?/|/test_[^/]+\.py$|/[^/]+_test\.py$|/con
 # circular again). Each constant carries the exact source line it mirrors so a scanner change
 # breaks the comment instead of silently desyncing the oracle. ----
 
-# mirrors scanner.py:1740 (_SPHINX_XREF_RE)
+#: mirrors scanner.py:1740 (_SPHINX_XREF_RE)
 _XREF_ROLE_RE = re.compile(r":(?P<role>[a-z]+):`(?P<target>[^`]+)`")
-# mirrors scanner.py:1744 (_SPHINX_RESOLVABLE_ROLES) — roles a docstring role is normalized for
+#: mirrors scanner.py:1744 (_SPHINX_RESOLVABLE_ROLES) — roles a docstring role is normalized for
 _XREF_RESOLVABLE_ROLES: frozenset[str] = frozenset({"func", "class", "meth", "mod", "attr", "data", "exc"})
-# mirrors query.py:3777 (_SYMBOL_ROLES) — subset actually checked for brokenness; mod/attr/data excluded
+#: mirrors query.py:3777 (_SYMBOL_ROLES) — subset actually checked for brokenness; mod/attr/data excluded
 _XREF_SYMBOL_ROLES: frozenset[str] = frozenset({"func", "class", "meth", "exc", "mkdocs"})
 # mirrors scanner.py:1747 / :1749 (_MKDOCS_NAMED_RE / _MKDOCS_BACKTICK_RE)
+#: Matches a named mkdocs cross-reference of the form [text][target] and captures the target.
 _MKDOCS_NAMED_RE = re.compile(r"\[(?:[^\]]+)\]\[([A-Za-z_][A-Za-z0-9_.]*)\]")
+#: Matches a backtick mkdocs cross-reference of the form [`target`][] and captures the target.
 _MKDOCS_TICK_RE = re.compile(r"\[`([A-Za-z_][A-Za-z0-9_.]*)`\]\[\]")
-# mirrors scanner.py:50-76 (SKIP_DIRS) — wider than PY_WALK_SKIP; xref scan must match the indexer
+#: mirrors scanner.py:50-76 (SKIP_DIRS) — wider than PY_WALK_SKIP; xref scan must match the indexer
 _XREF_SKIP_DIRS: frozenset[str] = frozenset(
     {
         ".git",
@@ -120,12 +121,12 @@ _XREF_SKIP_DIRS: frozenset[str] = frozenset(
         "_site",
     }
 )
-# mirrors scanner.py:520 (_MAX_FILE_SIZE_BYTES)
+#: mirrors scanner.py:520 (_MAX_FILE_SIZE_BYTES)
 _XREF_MAX_FILE_BYTES = 10 * 1024 * 1024
 
-# Kept in sync with ``scan-query --help`` by the benchmark test suite.  Query
-# contracts are execution metadata, so an unsupported command must fail before
-# a B/C preflight or paid coordinate starts.
+#: Kept in sync with ``scan-query --help`` by the benchmark test suite.  Query
+#: contracts are execution metadata, so an unsupported command must fail before
+#: a B/C preflight or paid coordinate starts.
 _SUPPORTED_EXPECTED_QUERY_COMMANDS: frozenset[str] = frozenset(
     {
         "deps",
@@ -160,6 +161,7 @@ _SUPPORTED_EXPECTED_QUERY_COMMANDS: frozenset[str] = frozenset(
         "batch",
     }
 )
+#: Accepted policies for matching a task's expected queries: any one may match, or all are required.
 _EXPECTED_QUERY_POLICIES: frozenset[str] = frozenset({"any_match", "all_required"})
 
 
@@ -354,9 +356,9 @@ def run_scan_query(sq: Path, args: list[str], index_path: Path, repo_path: Path)
     # The launcher is an extension-less Python script: its shebang only selects an
     # interpreter on POSIX, and "python3" is not a reliable command name on Windows.
     # Running it through the current interpreter matches benchmarks/run-codemap-cli.py.
-    cmd = [sys.executable, str(sq.resolve()), "--index", str(index_path.resolve())] + args
+    cmd = [sys.executable, str(sq.resolve()), "--index", str(index_path.resolve()), *args]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=str(repo_path))
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=str(repo_path))  # noqa: S603 - argv list, no shell
         if result.returncode != 0:
             return None
         return json.loads(result.stdout)
@@ -1943,6 +1945,7 @@ def _query_top_limit(args: list[Any]) -> int | None:
     return None
 
 
+#: Query commands the AST oracle can recompute; review tasks using only these count as oracle-backed.
 _RV_AST_COMMANDS: frozenset[str] = frozenset({"undocumented", "uncovered", "rdeps", "fn-rdeps"})
 
 
@@ -2046,7 +2049,7 @@ def _validate_rv(task: dict, sq: Path, index: Path, repo: Path) -> tuple[bool, d
     ast_value, ast_available, ast_error = _rv_ast_value(cmd, args, repo)
     if ast_error is not None:
         return False, None, ast_error
-    data = run_scan_query(sq, [cmd] + args, index, repo)
+    data = run_scan_query(sq, [cmd, *args], index, repo)
     if not ast_available:
         return False, None, f"independent AST source is unavailable for review command {cmd!r}"
 
@@ -2347,7 +2350,7 @@ def _validate_oss(task: dict, sq: Path, index: Path, repo: Path) -> tuple[bool, 
         q = next((q for q in expected_queries if q["cmd"] == "undocumented"), None)
         if q is None:
             return False, None, "no undocumented query found"
-        data = run_scan_query(sq, ["undocumented"] + q.get("args", []), index, repo)
+        data = run_scan_query(sq, ["undocumented", *q.get("args", [])], index, repo)
         if data is None:
             return False, None, "scan-query undocumented returned None"
         if not isinstance(data.get("total"), int):
@@ -2375,7 +2378,7 @@ def _validate_oss(task: dict, sq: Path, index: Path, repo: Path) -> tuple[bool, 
         q = next((q for q in expected_queries if q["cmd"] == "uncovered"), None)
         if q is None:
             return False, None, "no uncovered query found"
-        data = run_scan_query(sq, ["uncovered"] + q.get("args", []), index, repo)
+        data = run_scan_query(sq, ["uncovered", *q.get("args", [])], index, repo)
         if data is None:
             return False, None, "scan-query uncovered returned None"
         if not isinstance(data.get("total"), int):
@@ -2403,7 +2406,7 @@ def _validate_oss(task: dict, sq: Path, index: Path, repo: Path) -> tuple[bool, 
 
     if check == "coupled":
         q = expected_queries[0]
-        data = run_scan_query(sq, ["coupled"] + q.get("args", []), index, repo)
+        data = run_scan_query(sq, ["coupled", *q.get("args", [])], index, repo)
         if data is None:
             return False, None, "scan-query coupled returned None"
         coupled = data.get("coupled", [])
@@ -2446,7 +2449,7 @@ def _validate_oss(task: dict, sq: Path, index: Path, repo: Path) -> tuple[bool, 
 
     if check == "xrefs_broken":
         q = expected_queries[0]
-        data = run_scan_query(sq, ["xrefs"] + q.get("args", []), index, repo)
+        data = run_scan_query(sq, ["xrefs", *q.get("args", [])], index, repo)
         if data is None:
             return False, None, "scan-query xrefs returned None"
         broken = data.get("broken", [])
@@ -2888,6 +2891,7 @@ def _validate_real_issue(task: dict, sq: Path, index: Path, repo: Path) -> tuple
     return True, gt, ""
 
 
+#: Ground-truth validator function for each task type.
 VALIDATORS = {
     TaskType.SYMBOL_EXTRACTION: _validate_symbol,
     TaskType.FN_CALL_GRAPH: _validate_fn,
@@ -2946,11 +2950,11 @@ def _build_updated_ground_truth(task_type: TaskType, live_gt: dict[str, Any], ex
     return existing_gt
 
 
-# Task types whose refreshed ground truth comes from an INDEPENDENT oracle (AST), not from
-# scan-query (the tool under test). Only these may be refreshed under a plain ``--update``; every
-# other type is scan-query-derived (circular) and requires ``--update-from-tool``.
-# The diff-impact and graph series use only the AST oracle by construction, so their ground truth never
-# touches scan-query — so they refresh under a plain ``--update`` alongside the caller-graph types.
+#: Task types whose refreshed ground truth comes from an INDEPENDENT oracle (AST), not from
+#: scan-query (the tool under test). Only these may be refreshed under a plain ``--update``; every
+#: other type is scan-query-derived (circular) and requires ``--update-from-tool``.
+#: The diff-impact and graph series use only the AST oracle by construction, so their ground truth never
+#: touches scan-query — so they refresh under a plain ``--update`` alongside the caller-graph types.
 _ORACLE_BACKED_TYPES: frozenset[TaskType] = frozenset(
     {
         TaskType.FN_CALL_GRAPH,
@@ -2964,7 +2968,7 @@ _ORACLE_BACKED_TYPES: frozenset[TaskType] = frozenset(
     }
 )
 
-# code_quality checks with a dedicated independent AST oracle.
+#: code_quality checks with a dedicated independent AST oracle.
 _ORACLE_BACKED_CQ_CHECKS: frozenset[str] = frozenset({"undocumented", "uncovered", "combined_health", "xrefs_broken"})
 
 
@@ -3084,9 +3088,9 @@ def _refresh_task_gt(task: dict, live_gt: dict, update_from_tool: bool) -> tuple
 
 
 def main(
-    repo_path: str = None,
-    index_path: str = None,
-    task: str = None,
+    repo_path: str | None = None,
+    index_path: str | None = None,
+    task: str | None = None,
     update: bool = False,
     update_from_tool: bool = False,
     verbose: bool = False,

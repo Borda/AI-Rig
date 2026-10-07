@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-from decimal import Decimal
 import importlib.util
 import json
-from pathlib import Path
 import re
 import subprocess
 import sys
+from dataclasses import replace
+from decimal import Decimal
+from pathlib import Path
 
 import pytest
-
 
 _RUNNER = Path(__file__).resolve().parents[1] / "runtime" / "calibration" / "run.py"
 
@@ -20,7 +19,8 @@ _RUNNER = Path(__file__).resolve().parents[1] / "runtime" / "calibration" / "run
 def _load_runner() -> object:
     """Load the shipped runner without adding a plugin path to sys.path."""
     spec = importlib.util.spec_from_file_location("codex_rig_behavioral_version_runner", _RUNNER)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     runner = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = runner
     spec.loader.exec_module(runner)

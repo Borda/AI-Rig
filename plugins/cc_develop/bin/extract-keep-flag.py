@@ -42,15 +42,15 @@ import sys
 import tempfile
 from pathlib import Path
 
-# [[:space:]]+ (not a single literal space) so `--keep  "a, b"` parses too — superset of the
-# inline form it replaces, never a narrower match.
+#: [[:space:]]+ (not a single literal space) so `--keep  "a, b"` parses too — superset of the
+#: inline form it replaces, never a narrower match.
 _KEEP_RE = re.compile(r'--keep[ \t\r\f\v]+"([^"]+)"')
 
-# Unquoted single token, mirroring the `--venue <VENUE>` spelling the fortify skill documents.
+#: Unquoted single token, mirroring the `--venue <VENUE>` spelling the fortify skill documents.
 _VENUE_RE = re.compile(r"--venue[ \t\r\f\v]+(\S+)")
 
-# CWD-relative, exactly as the shell original: the contract belongs to the project the skill
-# is running in, which is the caller's working directory, not this script's location.
+#: CWD-relative, exactly as the shell original: the contract belongs to the project the skill
+#: is running in, which is the caller's working directory, not this script's location.
 _CONTRACT = Path(".temp/state/skill-contract.md")
 
 
@@ -155,7 +155,7 @@ def _resolve_sentinel_path(slug: str, csid: str, out_file: str, out_file_named: 
     # when TMPDIR is unset: tempfile.gettempdir() answers TEMP/TMP on native Windows and may
     # answer a private per-session dir on macOS. Accepting the shell's spelling as a root too
     # keeps a caller-computed --out-file from being rejected as "outside the temp dir".
-    shell_tmp = Path(os.environ.get("TMPDIR") or "/tmp")
+    shell_tmp = Path(os.environ.get("TMPDIR") or "/tmp")  # noqa: S108 - POSIX fallback when TMPDIR is unset
     sentinel = Path(out_file)
     if not _within(sentinel, (tmp, shell_tmp, Path.cwd())):
         # Every real caller writes into the session temp dir or the project it runs in. The

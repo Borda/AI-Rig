@@ -26,39 +26,48 @@ from __future__ import annotations
 
 import argparse
 import base64
-from collections import deque
-from collections.abc import Callable
-from dataclasses import dataclass
 import hashlib
 import hmac
 import json
 import os
-from pathlib import Path
-from pathlib import PurePath
 import re
-import shutil
 import secrets
+import shutil
 import stat
 import subprocess
 import sys
 import time
+from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path, PurePath
 
-
+#: Marketplace identifier of the bridge plugin that host CLI commands install and look up.
 PLUGIN_ID = "bridge@borda-ai-rig"
+#: Seconds allowed for each short host CLI probe, such as listing plugins or checking login status.
 CAPTURE_TIMEOUT_SECONDS = 20
 # Marketplace installs download plugin payloads, so the approved configure
 # command gets a network-sized budget instead of the local probe timeout.
+#: Seconds allowed for the approved install or enable command, sized for a network download.
 CONFIGURE_TIMEOUT_SECONDS = 300
 # A recorded failed operation blocks identical retries only for this long;
 # afterwards one fresh approved attempt is allowed again, so a transient host
 # fault (network drop, interrupted install) cannot lock the operation forever.
+#: Seconds a recorded failed operation blocks identical retries before one fresh approved attempt is allowed.
 FAILED_OPERATION_TTL_SECONDS = 3600
+#: Largest stdout or stderr slice, in bytes, kept from a host CLI command.
 MAX_CAPTURE_BYTES = 64 * 1024
+#: Largest setup state record, in bytes, that is read back or accepted.
 MAX_STATE_RECORD_BYTES = 8 * 1024 * 1024
+#: Seconds an issued approval stays valid before the configure step must be re-approved.
 APPROVAL_TTL_SECONDS = 300
+#: Length in bytes of the secret key used to sign approval records.
 APPROVAL_KEY_BYTES = 32
+#: Command-line option names that look like credentials; any argv containing one is rejected before parsing.
 SENSITIVE_OPTIONS = ("--token", "--access-token", "--api-key", "--device-code", "--code", "--secret")
+#: Seconds allowed for the live end-to-end check that calls a real host CLI.
 LIVE_TIMEOUT_SECONDS = 180
+#: Per-host table of minimum CLI version, fixed argv templates, and supported install scopes; no other commands are run.
 CAPABILITY_MATRIX = {
     "codex": {
         "minimum_version": "0.148.0",
@@ -169,11 +178,10 @@ def _direction(current_host: str, target: str) -> str | None:
 def _capture(argv: list[str]) -> tuple[bool, str, str]:
     """Run one status probe with bounded capture and discard raw output after parsing."""
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv list, no shell
             argv,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             encoding="utf-8",
             errors="replace",
             check=False,
@@ -236,7 +244,7 @@ def _inventory(host: str) -> tuple[bool, dict[str, object] | None]:
     entry = matches[0]
     enabled = entry.get("enabled", True)
     version = entry.get("version")
-    if not isinstance(enabled, bool) or version is not None and not isinstance(version, str):
+    if not isinstance(enabled, bool) or (version is not None and not isinstance(version, str)):
         return False, None
     return True, {"installed": True, "enabled": enabled, "version": version}
 
@@ -244,11 +252,10 @@ def _inventory(host: str) -> tuple[bool, dict[str, object] | None]:
 def _authenticated(host: str) -> tuple[bool, bool]:
     """Probe host-owned login state without retaining the provider response."""
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv list, no shell
             list(CAPABILITY_MATRIX[host]["authentication_status_argv"]),
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             encoding="utf-8",
             errors="replace",
             check=False,
@@ -519,7 +526,7 @@ def _run_configuration(operations: list[dict[str, object]]) -> bool:
     if not isinstance(argv, list) or not all(isinstance(value, str) for value in argv):
         return False
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv list, no shell
             argv,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -561,7 +568,7 @@ def _state_paths(target: str, scope: str) -> tuple[Path, Path]:
     name = f"{target}-{scope}"
     lock, journal = locks / f"{name}.lock", records / f"{name}.jsonl"
     for path in (lock, journal):
-        if path.is_symlink() or path.exists() and not path.is_file():
+        if path.is_symlink() or (path.exists() and not path.is_file()):
             raise ValueError("user setup state record must be a regular file")
     return lock, journal
 
@@ -570,14 +577,14 @@ def _approval_journal(target: str, scope: str) -> Path:
     """Return the separate regular-file journal used only for one-use approvals."""
     _, journal = _state_paths(target, scope)
     path = journal.with_name(f"{target}-{scope}.approvals.jsonl")
-    if path.is_symlink() or path.exists() and not path.is_file():
+    if path.is_symlink() or (path.exists() and not path.is_file()):
         raise ValueError("approval record must be a regular file")
     return path
 
 
 def _open_regular_record(path: Path, flags: int) -> int:
     """Open one user-state record without accepting a symlink or non-regular file."""
-    if path.is_symlink() or path.exists() and not path.is_file():
+    if path.is_symlink() or (path.exists() and not path.is_file()):
         raise ValueError("user setup record must be a regular file")
     descriptor = os.open(str(path), flags | getattr(os, "O_NOFOLLOW", 0), 0o600)
     try:
@@ -602,10 +609,8 @@ def _read_approval_key(path: Path) -> bytes | None:
         return None
     try:
         metadata = os.fstat(descriptor)
-        if (
-            metadata.st_size != APPROVAL_KEY_BYTES
-            or os.name != "nt"
-            and (metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o600)
+        if metadata.st_size != APPROVAL_KEY_BYTES or (
+            os.name != "nt" and (metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o600)
         ):
             os.close(descriptor)
             return None
@@ -848,11 +853,10 @@ def _remaining(operations: list[dict[str, object]], state: dict[str, object], li
 def _verify_live(target: str, workspace: Path) -> bool:
     """Run the exact approved live doctor and retain only its boolean outcome."""
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv list, no shell
             _live_operation_argv(target, workspace),
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             encoding="utf-8",
             errors="replace",
             check=False,
@@ -930,7 +934,7 @@ class _MutationCompletion:
 def _launch_authentication(target: str) -> _MutationOutcome:
     """Start only the native provider login, with the operator's streams inherited and nothing captured."""
     try:
-        authentication_process = subprocess.run(list(CAPABILITY_MATRIX[target]["authentication_argv"]))
+        authentication_process = subprocess.run(list(CAPABILITY_MATRIX[target]["authentication_argv"]))  # noqa: S603 - argv list from fixed capability matrix, no shell
     except OSError:
         authentication_process = None
     authentication_ok = authentication_process is not None and authentication_process.returncode == 0

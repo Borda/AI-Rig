@@ -35,10 +35,13 @@ import ast
 import sys
 from pathlib import Path
 
-
+#: Plugin directory whose modules must carry a full structured docstring.
 RICH_DOC_PLUGIN = "codex-rig"
+#: Section headings every module docstring in the rich-docstring plugin must contain.
 RICH_DOC_SECTIONS = ("## Purpose", "## Scope", "## Usage", "## Outputs", "## Failure", "## Used by")
+#: Minimum module docstring length, in characters, for modules in the rich-docstring plugin.
 RICH_DOC_MINIMUM_CHARACTERS = 700
+#: Directory names whose Python files are not checked for module docstrings.
 EXCLUDED_DIRECTORY_NAMES = frozenset({"tests", "__pycache__", ".reports"})
 
 

@@ -10,9 +10,8 @@ import base64
 import json
 from pathlib import Path
 
-import pytest
-
 import fetch_gh_data_group2 as fgd
+import pytest
 
 
 class _FakeCompleted:
@@ -37,55 +36,54 @@ def _b64(text: str) -> str:
 # --- arg validation ---------------------------------------------------------
 
 
-def test_missing_owner_exits_1(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-    """No ``--owner`` → exit 1 with '--owner required' on stderr."""
-    rc = fgd.main(["--repo", "repo", "--default-branch", "main", "--data-file", str(tmp_path / "out.jsonl")])
-    assert rc == 1
-    assert "--owner required" in capsys.readouterr().err
-
-
-def test_missing_repo_exits_1(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-    """Require a repository when an owner is provided."""
-    rc = fgd.main(["--owner", "owner", "--default-branch", "main", "--data-file", str(tmp_path / "out.jsonl")])
-    assert rc == 1
-    assert "--repo required" in capsys.readouterr().err
-
-
-def test_missing_default_branch_exits_1(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-    """No ``--default-branch`` → exit 1 with '--default-branch required' on stderr."""
-    rc = fgd.main(["--owner", "owner", "--repo", "repo", "--data-file", str(tmp_path / "out.jsonl")])
-    assert rc == 1
-    assert "--default-branch required" in capsys.readouterr().err
-
-
-def test_missing_data_file_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
-    """No ``--data-file`` → exit 1 with '--data-file required' on stderr."""
-    rc = fgd.main(["--owner", "owner", "--repo", "repo", "--default-branch", "main"])
-    assert rc == 1
-    assert "--data-file required" in capsys.readouterr().err
-
-
 @pytest.mark.parametrize(
-    ("owner", "repo", "branch", "needle"),
+    ("argv", "needle"),
     [
-        pytest.param("../evil", "repo", "main", "--owner must match", id="owner-traversal"),
-        pytest.param("owner", "../evil", "main", "--repo must match", id="repo-traversal"),
-        pytest.param("owner", "repo", "..", "--default-branch must match", id="branch-traversal"),
-        pytest.param("owner", "repo", "a/../b", "--default-branch must match", id="branch-embedded-traversal"),
+        pytest.param(
+            ["--repo", "repo", "--default-branch", "main", "--data-file", "out.jsonl"],
+            "--owner required",
+            id="missing-owner",
+        ),
+        pytest.param(
+            ["--owner", "owner", "--default-branch", "main", "--data-file", "out.jsonl"],
+            "--repo required",
+            id="missing-repo",
+        ),
+        pytest.param(
+            ["--owner", "owner", "--repo", "repo", "--data-file", "out.jsonl"],
+            "--default-branch required",
+            id="missing-default-branch",
+        ),
+        pytest.param(
+            ["--owner", "owner", "--repo", "repo", "--default-branch", "main"],
+            "--data-file required",
+            id="missing-data-file",
+        ),
+        pytest.param(
+            ["--owner", "../evil", "--repo", "repo", "--default-branch", "main", "--data-file", "out.jsonl"],
+            "--owner must match",
+            id="owner-traversal",
+        ),
+        pytest.param(
+            ["--owner", "owner", "--repo", "../evil", "--default-branch", "main", "--data-file", "out.jsonl"],
+            "--repo must match",
+            id="repo-traversal",
+        ),
+        pytest.param(
+            ["--owner", "owner", "--repo", "repo", "--default-branch", "..", "--data-file", "out.jsonl"],
+            "--default-branch must match",
+            id="branch-traversal",
+        ),
+        pytest.param(
+            ["--owner", "owner", "--repo", "repo", "--default-branch", "a/../b", "--data-file", "out.jsonl"],
+            "--default-branch must match",
+            id="branch-embedded-traversal",
+        ),
     ],
 )
-def test_path_traversal_rejected(
-    owner: str,
-    repo: str,
-    branch: str,
-    needle: str,
-    capsys: pytest.CaptureFixture[str],
-    tmp_path: Path,
-) -> None:
-    """Path-traversal patterns in identifier args → exit 1 with regex hint on stderr."""
-    rc = fgd.main(
-        ["--owner", owner, "--repo", repo, "--default-branch", branch, "--data-file", str(tmp_path / "out.jsonl")]
-    )
+def test_invalid_args_exit_1_with_stderr_hint(argv: list[str], needle: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """A missing required arg, or a path-traversal pattern in an identifier arg, → exit 1 with the hint on stderr."""
+    rc = fgd.main(argv)
     assert rc == 1
     assert needle in capsys.readouterr().err
 
@@ -98,24 +96,28 @@ def test_decode_b64_roundtrip() -> None:
     assert fgd._decode_b64(_b64("hello world\nline 2")) == "hello world\nline 2"
 
 
-def test_decode_b64_empty_input_returns_empty() -> None:
-    """Empty raw string short-circuits to empty result."""
-    assert fgd._decode_b64("") == ""
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param("", id="empty-input-short-circuits"),
+        pytest.param("!!!definitely-not-base64$$$", id="non-base64-garbage"),
+    ],
+)
+def test_decode_b64_unusable_input_returns_empty(raw: str) -> None:
+    """Empty raw input short-circuits to an empty result; non-base64 garbage yields an empty string (no exception)."""
+    assert fgd._decode_b64(raw) == ""
 
 
-def test_decode_b64_invalid_returns_empty() -> None:
-    """Non-base64 garbage yields empty string (no exception)."""
-    assert fgd._decode_b64("!!!definitely-not-base64$$$") == ""
-
-
-def test_validate_args_happy_path() -> None:
-    """All valid args → ``None``."""
-    assert fgd._validate_args("owner", "repo", "main", "/tmp/x.jsonl") is None
-
-
-def test_validate_args_slash_in_branch_allowed() -> None:
-    """Branch may contain ``/`` (e.g. ``release/1.x``)."""
-    assert fgd._validate_args("o", "r", "release/1.x", "/tmp/x.jsonl") is None
+@pytest.mark.parametrize(
+    ("owner", "repo", "branch"),
+    [
+        pytest.param("owner", "repo", "main", id="all-valid"),
+        pytest.param("o", "r", "release/1.x", id="slash-in-branch-allowed"),
+    ],
+)
+def test_validate_args_accepts_valid_args(owner: str, repo: str, branch: str) -> None:
+    """All valid args → ``None``; a branch may contain ``/`` (e.g. ``release/1.x``)."""
+    assert fgd._validate_args(owner, repo, branch, "/tmp/x.jsonl") is None
 
 
 def _records(data_file: Path) -> list[dict]:

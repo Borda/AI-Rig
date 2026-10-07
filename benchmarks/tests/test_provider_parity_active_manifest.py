@@ -17,7 +17,6 @@ import pytest
 from benchmarks._bench_common import provider_parity_contracts as core
 from benchmarks._bench_common.artifact_hashing import module_sha256, runner_sha256
 
-
 ROOT = Path(__file__).resolve().parents[2]
 BENCHMARKS = ROOT / "benchmarks"
 METHODOLOGY_MANIFEST = BENCHMARKS / "manifests" / "provider-parity-methodology.json"
@@ -176,20 +175,12 @@ def test_methodology_builder_is_deterministic_and_check_mode_rejects_stale_outpu
     builder["_build_manifest"].__globals__["OUTPUT_MANIFEST"] = output
     expected = builder["_manifest_bytes"](builder["_build_manifest"]())
 
-    try:
+    with pytest.raises(ValueError, match=r"stale"):
         builder["_write_or_check"](output, expected, check=True)
-    except ValueError as error:
-        assert "stale" in str(error)
-    else:
-        raise AssertionError("check mode accepted a missing methodology output")
 
     output.write_bytes(b"{}\n")
-    try:
+    with pytest.raises(ValueError, match=r"stale"):
         builder["_write_or_check"](output, expected, check=True)
-    except ValueError as error:
-        assert "stale" in str(error)
-    else:
-        raise AssertionError("check mode accepted stale methodology output")
 
     builder["_write_or_check"](output, expected, check=False)
     builder["_write_or_check"](output, expected, check=True)
@@ -343,12 +334,9 @@ def test_methodology_builder_stale_error_names_exact_rebuild_command(tmp_path: P
     """Internal check mode must never tell launcher users to remove a flag they did not pass."""
     builder = runpy.run_path(str(METHODOLOGY_BUILDER))
 
-    try:
+    with pytest.raises(ValueError, match=r"stale") as raised:
         builder["_write_or_check"](tmp_path / "stale.json", b"expected\n", check=True)
-    except ValueError as exc:
-        assert str(exc).endswith("run: uv run python benchmarks/build-provider-parity-methodology-manifest.py")
-    else:
-        raise AssertionError("stale methodology output was accepted")
+    assert str(raised.value).endswith("run: uv run python benchmarks/build-provider-parity-methodology-manifest.py")
 
 
 def _suites_by_path(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -404,7 +392,7 @@ def test_methodology_manifest_uses_policy_seed_and_current_suite_inputs() -> Non
         assert methodology["preregistered_cells"][field] == policy["preregistered_cells"][field]
 
 
-@pytest.mark.parametrize("task_id", ("RV-01", "RV-02", "RV-03", "RV-04", "RV-05"))
+@pytest.mark.parametrize("task_id", ["RV-01", "RV-02", "RV-03", "RV-04", "RV-05"])
 def test_methodology_manifest_binds_every_review_subquestion_in_provider_prompt(task_id: str) -> None:
     """Review follow-ups must be hashed as delivered provider input, not evaluator-only metadata."""
     methodology = _load(METHODOLOGY_MANIFEST)

@@ -80,18 +80,24 @@ def _scan_and_load(scan_index: Path, root: Path, *extra: str) -> dict:
 class TestParseSrcRootsToml:
     """_parse_codemap_src_roots_toml extracts the ordered src_roots array."""
 
-    def test_multi_line_array_preserves_order(self):
-        """A multi-line array yields entries in declaration order."""
-        text = '[tool.codemap]\nsrc_roots = [\n  "a/src",\n  "b/src",\n]\n'
-        assert _parse_codemap_src_roots_toml(text) == ["a/src", "b/src"]
-
-    def test_absent_key_returns_empty(self):
-        """A [tool.codemap] section without src_roots yields no entries."""
-        assert _parse_codemap_src_roots_toml('[tool.codemap]\nexclude = ["x"]\n') == []
-
-    def test_wrong_section_ignored(self):
-        """src_roots under a different table is not picked up."""
-        assert _parse_codemap_src_roots_toml('[tool.other]\nsrc_roots = ["x"]\n') == []
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            # A multi-line array yields entries in declaration order.
+            pytest.param(
+                '[tool.codemap]\nsrc_roots = [\n  "a/src",\n  "b/src",\n]\n',
+                ["a/src", "b/src"],
+                id="multi-line-array-preserves-order",
+            ),
+            # A [tool.codemap] section without src_roots yields no entries.
+            pytest.param('[tool.codemap]\nexclude = ["x"]\n', [], id="absent-key-returns-empty"),
+            # src_roots under a different table is not picked up.
+            pytest.param('[tool.other]\nsrc_roots = ["x"]\n', [], id="wrong-section-ignored"),
+        ],
+    )
+    def test_src_roots_array_is_extracted(self, text: str, expected: list[str]):
+        """The ordered ``src_roots`` array of the ``[tool.codemap]`` table is extracted, nothing from other tables."""
+        assert _parse_codemap_src_roots_toml(text) == expected
 
 
 class TestLoadSrcRoots:
@@ -104,19 +110,21 @@ class TestLoadSrcRoots:
         rels = [p.relative_to(tmp_path).as_posix() for p in roots]
         assert rels == ["libs/core/src", "services/api/src"]
 
-    def test_missing_dirs_dropped(self, tmp_path: Path):
-        """A declared root that does not exist on disk is skipped."""
-        (tmp_path / "pyproject.toml").write_text('[tool.codemap]\nsrc_roots = ["exists/src", "ghost/src"]\n')
-        (tmp_path / "exists" / "src").mkdir(parents=True)
+    @pytest.mark.parametrize(
+        ("declared", "existing_dir"),
+        [
+            # A declared root that does not exist on disk is skipped.
+            pytest.param('["exists/src", "ghost/src"]', "exists/src", id="missing-dirs-dropped"),
+            # A src_root entry that escapes the project root is dropped.
+            pytest.param('["../outside", "in/src"]', "in/src", id="escaping-entry-ignored"),
+        ],
+    )
+    def test_unusable_entries_dropped(self, tmp_path: Path, declared: str, existing_dir: str):
+        """Only declared roots that exist and stay inside the project root survive."""
+        (tmp_path / "pyproject.toml").write_text(f"[tool.codemap]\nsrc_roots = {declared}\n")
+        (tmp_path / existing_dir).mkdir(parents=True)
         roots = load_src_roots(tmp_path)
-        assert [p.relative_to(tmp_path).as_posix() for p in roots] == ["exists/src"]
-
-    def test_escaping_entry_ignored(self, tmp_path: Path):
-        """A src_root entry that escapes the project root is dropped."""
-        (tmp_path / "pyproject.toml").write_text('[tool.codemap]\nsrc_roots = ["../outside", "in/src"]\n')
-        (tmp_path / "in" / "src").mkdir(parents=True)
-        roots = load_src_roots(tmp_path)
-        assert [p.relative_to(tmp_path).as_posix() for p in roots] == ["in/src"]
+        assert [p.relative_to(tmp_path).as_posix() for p in roots] == [existing_dir]
 
     def test_no_pyproject_returns_empty(self, tmp_path: Path):
         """A project without pyproject.toml has no configured roots."""
@@ -129,19 +137,19 @@ class TestLoadSrcRoots:
 class TestEffectiveSrcRoot:
     """_effective_src_root maps a file to its first-matching configured root."""
 
-    def test_first_matching_root_by_priority(self, tmp_path: Path):
-        """A file under the first root is named relative to that root."""
-        r0 = tmp_path / "libs" / "core" / "src"
-        r1 = tmp_path / "services" / "api" / "src"
-        fp = r0 / "pkg_a" / "mod_a.py"
-        assert _effective_src_root(fp, (r0, r1), tmp_path) == r0
-
-    def test_second_root_matches_when_first_does_not(self, tmp_path: Path):
-        """A file only under the second root uses the second root."""
-        r0 = tmp_path / "libs" / "core" / "src"
-        r1 = tmp_path / "services" / "api" / "src"
-        fp = r1 / "pkg_b" / "mod_b.py"
-        assert _effective_src_root(fp, (r0, r1), tmp_path) == r1
+    @pytest.mark.parametrize(
+        ("relative_file", "root_index"),
+        [
+            # A file under the first root is named relative to that root.
+            pytest.param("libs/core/src/pkg_a/mod_a.py", 0, id="first-matching-root-by-priority"),
+            # A file only under the second root uses the second root.
+            pytest.param("services/api/src/pkg_b/mod_b.py", 1, id="second-root-when-first-does-not-match"),
+        ],
+    )
+    def test_file_maps_to_its_matching_root(self, tmp_path: Path, relative_file: str, root_index: int):
+        """A file under a configured root is named relative to that root, by priority."""
+        roots = (tmp_path / "libs" / "core" / "src", tmp_path / "services" / "api" / "src")
+        assert _effective_src_root(tmp_path / relative_file, roots, tmp_path) == roots[root_index]
 
     def test_falls_back_to_default_when_no_root_matches(self, tmp_path: Path):
         """A file under no configured root falls back to the default root."""
@@ -158,65 +166,85 @@ class TestEffectiveSrcRoot:
 class TestSrcRootRels:
     """_src_root_rels normalises single-string and tuple forms, dropping empties."""
 
-    def test_single_string_wrapped(self):
-        """A lone rel string becomes a one-element tuple."""
-        assert _src_root_rels("src") == ("src",)
-
-    def test_empty_string_dropped(self):
-        """The project-root sentinel carries no ranking signal and is dropped."""
-        assert _src_root_rels("") == ()
-
-    def test_tuple_filters_empty_entries(self):
-        """Empty entries inside a priority tuple are removed, order preserved."""
-        assert _src_root_rels(("libs/core/src", "", "services/api/src")) == (
-            "libs/core/src",
-            "services/api/src",
-        )
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            # A lone rel string becomes a one-element tuple.
+            pytest.param("src", ("src",), id="single-string-wrapped"),
+            # The project-root sentinel carries no ranking signal and is dropped.
+            pytest.param("", (), id="empty-string-dropped"),
+            # Empty entries inside a priority tuple are removed, order preserved.
+            pytest.param(
+                ("libs/core/src", "", "services/api/src"),
+                ("libs/core/src", "services/api/src"),
+                id="tuple-filters-empty-entries",
+            ),
+        ],
+    )
+    def test_value_is_normalised_to_a_tuple(self, value, expected):
+        """A single string or a tuple becomes a tuple of non-empty entries in priority order."""
+        assert _src_root_rels(value) == expected
 
 
 class TestUnderRootRank:
     """_under_root_rank ranks a path by the first source root it lies under."""
 
-    def test_first_root_ranks_zero(self):
-        """A path under the highest-priority root ranks 0."""
-        assert _under_root_rank("libs/core/src/pkg/m.py", ("libs/core/src", "services/api/src")) == 0
-
-    def test_second_root_ranks_one(self):
-        """A path under the second root ranks 1 (after the first)."""
-        assert _under_root_rank("services/api/src/pkg/m.py", ("libs/core/src", "services/api/src")) == 1
-
-    def test_no_root_ranks_after_all(self):
-        """A path under no configured root ranks after every configured root."""
-        assert _under_root_rank("stray/m.py", ("libs/core/src", "services/api/src")) == 2
-
-    def test_single_root_matches_legacy_binary_ranking(self):
-        """One root reproduces the original under(0)/outside(1) ranking."""
-        assert _under_root_rank("src/m.py", ("src",)) == 0
-        assert _under_root_rank("copy/m.py", ("src",)) == 1
+    @pytest.mark.parametrize(
+        ("path", "roots", "expected_rank"),
+        [
+            # A path under the highest-priority root ranks 0.
+            pytest.param(
+                "libs/core/src/pkg/m.py", ("libs/core/src", "services/api/src"), 0, id="first-root-ranks-zero"
+            ),
+            # A path under the second root ranks 1 (after the first).
+            pytest.param(
+                "services/api/src/pkg/m.py", ("libs/core/src", "services/api/src"), 1, id="second-root-ranks-one"
+            ),
+            # A path under no configured root ranks after every configured root.
+            pytest.param("stray/m.py", ("libs/core/src", "services/api/src"), 2, id="no-root-ranks-after-all"),
+            # One root reproduces the original under(0)/outside(1) ranking.
+            pytest.param("src/m.py", ("src",), 0, id="single-root-under-ranks-zero"),
+            pytest.param("copy/m.py", ("src",), 1, id="single-root-outside-ranks-one"),
+        ],
+    )
+    def test_rank_is_the_index_of_the_first_root_the_path_lies_under(self, path, roots, expected_rank):
+        """A path ranks by the first source root it lies under, or after all roots when under none."""
+        assert _under_root_rank(path, roots) == expected_rank
 
 
 class TestDedupKeyMultiRoot:
     """_dedup_key ranks candidate paths across multiple priority-ordered roots."""
 
-    def test_earlier_root_beats_later_root(self):
-        """A path under the first root outranks one under the second, regardless of length."""
-        roots = ("libs/core/src", "services/api/src")
-        assert _dedup_key("libs/core/src/deep/nested/m.py", roots) < _dedup_key("services/api/src/m.py", roots)
-
-    def test_any_root_beats_non_root(self):
-        """A path under any configured root beats a stray copy under none."""
-        roots = ("libs/core/src", "services/api/src")
-        assert _dedup_key("services/api/src/pkg/m.py", roots) < _dedup_key("vendor/pkg/m.py", roots)
-
-    def test_legacy_single_string_still_supported(self):
-        """The pre-existing single-rel-string call form keeps working."""
-        assert _dedup_key("src/m.py", "src") < _dedup_key("copy/m.py", "src")
+    @pytest.mark.parametrize(
+        ("winner", "loser", "roots"),
+        [
+            # A path under the first root outranks one under the second, regardless of length.
+            pytest.param(
+                "libs/core/src/deep/nested/m.py",
+                "services/api/src/m.py",
+                ("libs/core/src", "services/api/src"),
+                id="earlier-root-beats-later-root",
+            ),
+            # A path under any configured root beats a stray copy under none.
+            pytest.param(
+                "services/api/src/pkg/m.py",
+                "vendor/pkg/m.py",
+                ("libs/core/src", "services/api/src"),
+                id="any-root-beats-non-root",
+            ),
+            # The pre-existing single-rel-string call form keeps working.
+            pytest.param("src/m.py", "copy/m.py", "src", id="legacy-single-string-still-supported"),
+        ],
+    )
+    def test_winner_sorts_before_loser(self, winner: str, loser: str, roots):
+        """A path under a higher-priority configured root sorts before a lower-priority or stray one."""
+        assert _dedup_key(winner, roots) < _dedup_key(loser, roots)
 
 
 class TestDedupModulesRootAware:
     """_dedup_modules resolves collisions using multi-root priority."""
 
-    @pytest.mark.parametrize("reverse", [False, True, False])
+    @pytest.mark.parametrize("reverse", [False, True])
     def test_root_path_beats_stray_copy_deterministically(self, reverse: bool):
         """A configured-root path always wins over a stray copy across input orders."""
         entries = [
@@ -293,31 +321,43 @@ class TestMonorepoScan:
 class TestNoConfigRegression:
     """A project without src_roots behaves exactly as single-root detection always did."""
 
-    def test_src_root_layout_named_without_config(self, tmp_path: Path, scan_index):
-        """A conventional src/ layout with no src_roots names the package under src/."""
-        pkg = tmp_path / "src" / "mypkg"
+    @pytest.mark.parametrize(
+        ("package_dir", "module_file", "expected_names", "expected_roots", "expected_layout"),
+        [
+            # A conventional src/ layout with no src_roots names the package under src/.
+            pytest.param(
+                "src/mypkg",
+                "core.py",
+                {"mypkg", "mypkg.core"},
+                ["src"],
+                True,
+                id="src-root-layout-named-without-config",
+            ),
+            # A flat repo (package at root) records no source-root layout.
+            pytest.param("pkg", "mod.py", {"pkg", "pkg.mod"}, [], False, id="flat-repo-has-no-src-layout"),
+        ],
+    )
+    def test_layout_detected_without_config(
+        self,
+        tmp_path: Path,
+        scan_index,
+        package_dir: str,
+        module_file: str,
+        expected_names: set[str],
+        expected_roots: list[str],
+        expected_layout: bool,
+    ):
+        """Without ``src_roots`` the scan names packages by the detected default root and records its layout."""
+        pkg = tmp_path / package_dir
         pkg.mkdir(parents=True)
         (pkg / "__init__.py").write_text("")
-        (pkg / "core.py").write_text("def f():\n    return 0\n")
+        (pkg / module_file).write_text("def f():\n    return 0\n")
 
         index = _scan_and_load(scan_index, tmp_path)
         names = {m["name"] for m in index["modules"]}
-        assert {"mypkg", "mypkg.core"}.issubset(names)
-        assert index["src_roots"] == ["src"]
-        assert index["src_layout"] is True
-
-    def test_flat_repo_has_no_src_layout(self, tmp_path: Path, scan_index):
-        """A flat repo (package at root) records no source-root layout."""
-        pkg = tmp_path / "pkg"
-        pkg.mkdir()
-        (pkg / "__init__.py").write_text("")
-        (pkg / "mod.py").write_text("def f():\n    return 0\n")
-
-        index = _scan_and_load(scan_index, tmp_path)
-        names = {m["name"] for m in index["modules"]}
-        assert {"pkg", "pkg.mod"}.issubset(names)
-        assert index["src_roots"] == []
-        assert index["src_layout"] is False
+        assert expected_names.issubset(names)
+        assert index["src_roots"] == expected_roots
+        assert index["src_layout"] is expected_layout
 
     def test_resolve_src_roots_collapses_to_single_root(self, tmp_path: Path):
         """Without config, the resolved context uses only the detected default root."""

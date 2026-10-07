@@ -28,8 +28,8 @@ import json
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import pytest
 
@@ -111,33 +111,33 @@ class TestProtectedPaths:
             result["hookSpecificOutput"]["permissionDecisionReason"] == f"protected file ({why}) — confirm this write"
         )
 
-    def test_absolute_path(self, run_guard: Callable[..., dict]) -> None:
-        """An absolute path matches the same as a repository-relative one.
+    @pytest.mark.parametrize(
+        "path",
+        [
+            # Tools may hand over either form depending on how the model addressed the file; a guard matching only
+            # relative paths would be trivially sidestepped by an absolute one.
+            pytest.param("/abs/repo/.github/workflows/x.yml", id="absolute-path"),
+            # Patterns are written for ``/`` and the input is normalized first. Without that step the entire guard would
+            # silently disappear on one OS while every macOS and Linux test stayed green — the project's recurrent
+            # defect class.
+            pytest.param("C:\\repo\\.github\\workflows\\x.yml", id="simulated-windows-separators"),
+            # macOS and Windows filesystems are case-folding, so a write addressed as ``changelog.md`` lands in the
+            # real ``CHANGELOG.md``. Under case-sensitive matching that path classifies as unprotected — and
+            # passthrough means auto-approved whenever the hook is paired with ``acceptEdits``, which is the
+            # configuration it exists for. This is the bypass, not a nicety.
+            pytest.param("changelog.md", id="case-variant-changelog"),
+            pytest.param("Claude.md", id="case-variant-claude-md"),
+            pytest.param("UV.LOCK", id="case-variant-uv-lock"),
+            pytest.param(".GitHub/workflows/ci.yml", id="case-variant-github-dir"),
+        ],
+    )
+    def test_path_form_variants_still_ask(self, run_guard: Callable[..., dict], path: str) -> None:
+        """A protected file addressed by another spelling of its path still asks.
 
-        Tools may hand over either form depending on how the model addressed the file; a guard matching only relative
-        paths would be trivially sidestepped by an absolute one.
+        Scenario: an absolute path matches the same as a repository-relative one; a Windows-style path with backslashes
+        still matches; case variants of a protected name still ask on case-folding filesystems.
         """
-        assert _asks(run_guard("/abs/repo/.github/workflows/x.yml"))
-
-    def test_simulated_windows_separators(self, run_guard: Callable[..., dict]) -> None:
-        """A Windows-style path with backslashes still matches.
-
-        Patterns are written for ``/`` and the input is normalized first. Without that step the entire guard would
-        silently disappear on one OS while every macOS and Linux test stayed green — the project's recurrent defect
-        class.
-        """
-        assert _asks(run_guard("C:\\repo\\.github\\workflows\\x.yml"))
-
-    @pytest.mark.parametrize("path", ["changelog.md", "Claude.md", "UV.LOCK", ".GitHub/workflows/ci.yml"])
-    def test_case_variants(self, run_guard: Callable[..., dict], path: str) -> None:
-        """Case variants of a protected name still ask.
-
-        macOS and Windows filesystems are case-folding, so a write addressed as ``changelog.md`` lands in the real
-        ``CHANGELOG.md``. Under case-sensitive matching that path classifies as unprotected — and passthrough means
-        auto-approved whenever the hook is paired with ``acceptEdits``, which is the configuration it exists for. This
-        is the bypass, not a nicety.
-        """
-        assert _asks(run_guard(path)), f"{path!r} should ask — case-folding bypass"
+        assert _asks(run_guard(path)), f"{path!r} should ask — path-form bypass"
 
     @pytest.mark.parametrize(
         ("tool_name", "key"),

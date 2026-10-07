@@ -4,21 +4,16 @@ import re
 import statistics
 from collections import defaultdict
 from collections.abc import Iterator
-from typing import Optional
 
+from _bench_common.agentic_contracts import AgenticOracle, AnswerScore  # noqa: F401
 
 # Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
-from _bench_common.agentic_contracts import (
-    AgenticOracle,  # noqa: F401
-    AnswerScore,  # noqa: F401
-)
+from _bench_claude.agentic.discovery import count_tokens
 
 # Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
 # Every name it defines is re-exported here, including ones this file no longer calls itself: callers and tests
 # reach these through the runner module, so pruning an apparently unused re-export breaks patch.object targets.
-
 from _bench_claude.agentic.models import BenchmarkRun, QualityScore
-from _bench_claude.agentic.discovery import count_tokens
 from _bench_claude.agentic.scope import run_cost_usd
 
 
@@ -147,7 +142,7 @@ def score_fix(
     diff_text: str,
     expected_patch_keywords: list[str],
     expected_files: list[str],
-    test_passed: Optional[bool] = None,
+    test_passed: bool | None = None,
 ) -> QualityScore:
     """Keyword-recall scorer for fix_single / fix_multicaller tasks.
 

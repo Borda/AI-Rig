@@ -30,7 +30,7 @@ from urllib.parse import quote
 
 from release_append_marker import refuse_legacy, state_relative, unique_root_commit
 
-
+#: Release artifact files, in order, that are published together with the changelog.
 ARTIFACTS = ("DRAFT.md", "SUMMARY.md", "MIGRATION.md")
 
 
@@ -92,8 +92,8 @@ def _candidate_marker_sha(metadata: dict[str, object]) -> str:
 
 def _checked_range_start(root: Path, start: str, endpoint: str) -> str:
     """Resolve the selected start and require it to precede the marker endpoint."""
-    resolved = subprocess.run(
-        ["git", "rev-parse", "--verify", "--end-of-options", f"{start}^{{commit}}"],
+    resolved = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "rev-parse", "--verify", "--end-of-options", f"{start}^{{commit}}"],  # noqa: S607 - git resolved via PATH on purpose
         cwd=root,
         capture_output=True,
         check=False,
@@ -102,8 +102,8 @@ def _checked_range_start(root: Path, start: str, endpoint: str) -> str:
     if resolved.returncode != 0:
         raise ValueError("completed range start is unresolved")
     start_sha = resolved.stdout.decode().strip()
-    ancestor = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", "--end-of-options", start_sha, endpoint],
+    ancestor = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "merge-base", "--is-ancestor", "--end-of-options", start_sha, endpoint],  # noqa: S607 - git resolved via PATH on purpose
         cwd=root,
         capture_output=True,
         check=False,
@@ -178,7 +178,7 @@ def _digest(path: Path) -> str | None:
 def _head_sha(root: Path) -> str:
     """Read the exact commit whose release claims may be published."""
     result = subprocess.run(
-        ["git", "rev-parse", "--verify", "HEAD^{commit}"],
+        ["git", "rev-parse", "--verify", "HEAD^{commit}"],  # noqa: S607 - git resolved via PATH on purpose
         cwd=root,
         capture_output=True,
         text=True,
@@ -193,7 +193,7 @@ def _head_sha(root: Path) -> str:
 def _branch_ref(root: Path) -> str:
     """Read the active branch without substituting a name for detached HEAD."""
     result = subprocess.run(
-        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
+        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],  # noqa: S607 - git resolved via PATH on purpose
         cwd=root,
         capture_output=True,
         text=True,
@@ -208,7 +208,7 @@ def _branch_ref(root: Path) -> str:
 def _tag_state(root: Path) -> bytes:
     """Read exact local tag refs so a new or retargeted tag invalidates the baseline."""
     result = subprocess.run(
-        ["git", "for-each-ref", "--sort=refname", "--format=%(refname) %(objectname)", "refs/tags"],
+        ["git", "for-each-ref", "--sort=refname", "--format=%(refname) %(objectname)", "refs/tags"],  # noqa: S607 - git resolved via PATH on purpose
         cwd=root,
         capture_output=True,
         check=False,
@@ -247,7 +247,7 @@ def _shell_path(path: Path) -> str:
     """Print a candidate path that Git Bash can pass between release blocks."""
     if sys.platform != "win32":
         return str(path)
-    converted = subprocess.run(["cygpath", "-u", str(path)], capture_output=True, text=True, check=True, timeout=5)
+    converted = subprocess.run(["cygpath", "-u", str(path)], capture_output=True, text=True, check=True, timeout=5)  # noqa: S603, S607 - argv list, no shell; cygpath resolved via PATH on purpose
     return converted.stdout.strip()
 
 
@@ -319,8 +319,8 @@ def begin(
     if expected_head is not None and expected_head != head_sha:
         raise ValueError("HEAD changed after release gather")
     if marker_sha is not None:
-        marker_commit = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", marker_sha, head_sha],
+        marker_commit = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", "merge-base", "--is-ancestor", marker_sha, head_sha],  # noqa: S607 - git resolved via PATH on purpose
             cwd=root,
             capture_output=True,
             check=False,
@@ -341,8 +341,8 @@ def begin(
         marker = _checked_path(root, state_relative(branch_ref, "marker"))
         if marker.read_text(encoding="utf-8").strip() != expected_start:
             raise ValueError("saved marker changed after release gather")
-        marker_continuity = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", expected_start, marker_sha or head_sha],
+        marker_continuity = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", "merge-base", "--is-ancestor", expected_start, marker_sha or head_sha],  # noqa: S607 - git resolved via PATH on purpose
             cwd=root,
             capture_output=True,
             check=False,

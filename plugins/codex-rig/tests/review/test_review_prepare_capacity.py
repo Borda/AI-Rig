@@ -6,22 +6,23 @@ import importlib.util
 import json
 import subprocess
 import sys
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
-
 from test_review_prepare import (
+    _CONTEXT_READER,
     HELPER,
     PLUGIN_ROOT,
     SKILL,
-    _CONTEXT_READER,
     _assemble,
     _assembly_evidence,
     _five_role_review_inputs,
     _prepare,
     _record_native_schedule,
+    _restore_tree,
     _review_inputs,
+    _tree_state,
     _write_jsonl,
 )
 
@@ -285,9 +286,22 @@ def test_native_retry_timing_cannot_evade_capacity_or_fabricate_parallelism(tmp_
         assert summary["actual_mode"] == "independent-spawned"
 
 
-@pytest.mark.parametrize(
-    "scenario",
-    [
+def test_actual_native_parent_sequence_controls_allocation_order_and_refill(
+    tmp_path: Path, subtests: pytest.Subtests
+) -> None:
+    """Reject invalid parent scheduling even when every role completes and work peak remains four.
+
+    Every scenario replays a different parent history over the same assembled five-role wave, so that wave is built once
+    and each scenario runs as an independent subtest from a byte-exact restore of it.
+    """
+    run = _five_role_review_inputs(tmp_path)
+    assert _prepare(run).returncode == 0
+    run, home, children = _assembly_evidence(tmp_path, prepared_run=run, active_limit=4)
+    # Retain a valid manifest first so both assembly and ordinary preflight can replay changed parent history.
+    initial = _assemble(run, home)
+    assert initial.returncode == 0, initial.stderr
+    manifested = _tree_state(tmp_path)
+    for scenario in [
         "proper-refill",
         "blocked-wait-coalesces-joins",
         "wait-for-all-before-refill",
@@ -298,16 +312,14 @@ def test_native_retry_timing_cannot_evade_capacity_or_fabricate_parallelism(tmp_
         "30s-wait-again-with-free-slot",
         "completed-wait-again-with-free-slot",
         "join-before-terminal",
-    ],
-)
-def test_actual_native_parent_sequence_controls_allocation_order_and_refill(tmp_path: Path, scenario: str) -> None:
-    """Reject invalid parent scheduling even when every role completes and work peak remains four."""
-    run = _five_role_review_inputs(tmp_path)
-    assert _prepare(run).returncode == 0
-    run, home, children = _assembly_evidence(tmp_path, prepared_run=run, active_limit=4)
-    # Retain a valid manifest first so both assembly and ordinary preflight can replay changed parent history.
-    initial = _assemble(run, home)
-    assert initial.returncode == 0, initial.stderr
+    ]:
+        with subtests.test(scenario=scenario):
+            _restore_tree(tmp_path, manifested)
+            _check_parent_sequence(run, home, children, scenario)
+
+
+def _check_parent_sequence(run: Path, home: Path, children: dict[str, Path], scenario: str) -> None:
+    """Replay one parent scheduling history and require assembly and preflight to agree on admission."""
     _record_native_schedule(run, home, children, scenario=scenario)
     assembled = _assemble(run, home)
     checked = subprocess.run(
@@ -388,11 +400,24 @@ def test_smaller_observed_native_pool_refills_complete_roster(tmp_path: Path, po
 
 @pytest.mark.integration
 @pytest.mark.parametrize("batched", [False, True])
-@pytest.mark.parametrize("interruption", ["none", "wait", "unrelated-tool"])
 def test_fast_native_assembly_requires_uninterrupted_pending_dispatch(
-    tmp_path: Path, batched: bool, interruption: str
+    tmp_path: Path, subtests: pytest.Subtests, batched: bool
 ) -> None:
-    """Admit authentic fast children while rejecting parent work or waiting with a free pending slot."""
+    """Admit authentic fast children while rejecting parent work or waiting with a free pending slot.
+
+    Every interruption alters the same prepared single-slot schedule, so that schedule is built once per preparation
+    mode and each interruption runs as an independent subtest from a byte-exact restore of it.
+    """
+    run, home, children = _fast_native_schedule(tmp_path, batched=batched)
+    scheduled = _tree_state(tmp_path)
+    for interruption in ["none", "wait", "unrelated-tool"]:
+        with subtests.test(interruption=interruption):
+            _restore_tree(tmp_path, scheduled)
+            _check_fast_native_interruption(run, home, children, batched=batched, interruption=interruption)
+
+
+def _fast_native_schedule(tmp_path: Path, *, batched: bool) -> tuple[Path, Path, dict[str, Path]]:
+    """Prepare an independence-required wave and record its children on one active slot."""
     root = _review_inputs(tmp_path)
     routing_path = root / "review-routing.json"
     routing = json.loads(routing_path.read_bytes())
@@ -406,6 +431,13 @@ def test_fast_native_assembly_requires_uninterrupted_pending_dispatch(
     run = root / "batches/source-001" if batched else root
     _, home, children = _assembly_evidence(tmp_path, prepared_run=run)
     _record_native_schedule(run, home, children, pool_size=1)
+    return run, home, children
+
+
+def _check_fast_native_interruption(
+    run: Path, home: Path, children: dict[str, Path], *, batched: bool, interruption: str
+) -> None:
+    """Insert one parent interruption before the pending launch and check wave admission."""
     parent_path = home / "sessions/rollout-parent.jsonl"
     rows = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
     launches = [
@@ -464,7 +496,8 @@ def test_fast_native_assembly_requires_uninterrupted_pending_dispatch(
         summary = json.loads((run / "inspection-summary.json").read_bytes())
         assert summary["actual_mode"] == "independent-spawned"
         assert summary["capacity_limited"] is False
-        assert summary["independence_required"] is True and summary["independence_satisfied"] is True
+        assert summary["independence_required"] is True
+        assert summary["independence_satisfied"] is True
     assert all(path.read_bytes() == content for path, content in original.items())
 
 
@@ -490,9 +523,23 @@ def test_serial_native_roster_with_parent_tool_delay_is_rejected(tmp_path: Path)
     assert "review-inspection-dispatch-interrupted" in result.stderr
 
 
-@pytest.mark.parametrize(
-    "damage",
-    [
+def test_native_capacity_refusal_accepts_only_bound_no_child_opaque_transport(
+    tmp_path: Path, subtests: pytest.Subtests
+) -> None:
+    """Opaque refused messages cannot supply source coverage or weaken spawn controls and release proof.
+
+    Every damage rewrites the refusal of the same assembled capacity-limited wave, so that wave is built once and each
+    damage runs as an independent subtest from a byte-exact restore of it.
+    """
+    run = _five_role_review_inputs(tmp_path)
+    assert _prepare(run).returncode == 0
+    run, home, children = _assembly_evidence(tmp_path, prepared_run=run, active_limit=4)
+    _record_native_schedule(run, home, children, scenario="capacity-rejected")
+    baseline = _assemble(run, home)
+    assert baseline.returncode == 0, baseline.stderr
+    canonical_capacity_limited = json.loads((run / "inspection-summary.json").read_bytes())["capacity_limited"]
+    assembled = _tree_state(tmp_path)
+    for damage in [
         "none",
         "empty-message",
         "javascript-block",
@@ -506,17 +553,16 @@ def test_serial_native_roster_with_parent_tool_delay_is_rejected(tmp_path: Path)
         "child-created",
         "historical-schema",
         "historical-reader",
-    ],
-)
-def test_native_capacity_refusal_accepts_only_bound_no_child_opaque_transport(tmp_path: Path, damage: str) -> None:
-    """Opaque refused messages cannot supply source coverage or weaken spawn controls and release proof."""
-    run = _five_role_review_inputs(tmp_path)
-    assert _prepare(run).returncode == 0
-    run, home, children = _assembly_evidence(tmp_path, prepared_run=run, active_limit=4)
-    _record_native_schedule(run, home, children, scenario="capacity-rejected")
-    baseline = _assemble(run, home)
-    assert baseline.returncode == 0, baseline.stderr
-    canonical_capacity_limited = json.loads((run / "inspection-summary.json").read_bytes())["capacity_limited"]
+    ]:
+        with subtests.test(damage=damage):
+            _restore_tree(tmp_path, assembled)
+            _check_opaque_capacity_refusal(run, home, children, canonical_capacity_limited, damage)
+
+
+def _check_opaque_capacity_refusal(
+    run: Path, home: Path, children: dict[str, Path], canonical_capacity_limited: bool, damage: str
+) -> None:
+    """Make the recorded capacity refusal opaque, apply one damage, and check schedule admission."""
     spec = importlib.util.spec_from_file_location("opaque_refusal_prepare", HELPER)
     prepare = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(prepare)
@@ -723,9 +769,18 @@ def test_same_queued_role_capacity_refusal_requires_each_verified_release(
         assert expected in checked.stderr
 
 
-@pytest.mark.parametrize(
-    "damage",
-    [
+@pytest.mark.integration
+def test_shared_parent_capacity_release_requires_bound_active_turn_and_notified_wait(
+    tmp_path: Path, subtests: pytest.Subtests
+) -> None:
+    """Admit a genuine related slot release while preserving ordinary assembly and refusal prerequisites.
+
+    Every damage rewrites the parent history of the same assembled native wave, so that wave is built once and each
+    damage runs as an independent subtest from a byte-exact restore of it.
+    """
+    run, home, children = _assembly_evidence(tmp_path)
+    assembled = _tree_state(tmp_path)
+    for damage in [
         "none",
         "unrelated",
         "metadata-conflict",
@@ -738,14 +793,14 @@ def test_same_queued_role_capacity_refusal_requires_each_verified_release(
         "future-activity",
         "timed-out",
         "reused-release",
-    ],
-)
-@pytest.mark.integration
-def test_shared_parent_capacity_release_requires_bound_active_turn_and_notified_wait(
-    tmp_path: Path, damage: str
-) -> None:
-    """Admit a genuine related slot release while preserving ordinary assembly and refusal prerequisites."""
-    run, home, children = _assembly_evidence(tmp_path)
+    ]:
+        with subtests.test(damage=damage):
+            _restore_tree(tmp_path, assembled)
+            _check_shared_parent_release(run, home, children, damage)
+
+
+def _check_shared_parent_release(run: Path, home: Path, children: dict[str, Path], damage: str) -> None:
+    """Record one related-turn slot release around a capacity refusal and check assembly and preflight."""
     spec = importlib.util.spec_from_file_location("shared_capacity_prepare", HELPER)
     prepare = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(prepare)

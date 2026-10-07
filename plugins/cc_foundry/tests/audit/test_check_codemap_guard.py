@@ -15,14 +15,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from check_codemap_guard import (
-    Guard,
-    _scannable,
-    check,
-    guard_lines,
-    invariant_findings,
-    manifest_paths,
-)
+from check_codemap_guard import Guard, _scannable, check, guard_lines, invariant_findings, manifest_paths
 from resolve_centrality import match_module
 
 _FOUNDRY = Path(__file__).resolve().parent.parent.parent
@@ -62,17 +55,29 @@ class TestInvariants:
     def test_anchored_line_passes(self) -> None:
         assert invariant_findings("f.md", Guard("bash-preamble", ""), [(1, _ANCHORED_LINE)]) == []
 
-    def test_cwd_anchored_line_flagged(self) -> None:
-        """A bare ``.cache/codemap`` resolves against the CWD — false no_index from a subdir."""
-        hits = [(7, '_IDX="${CODEMAP_INDEX_DIR:-.cache/codemap}"')]
-        findings = invariant_findings("f.md", Guard("bash-preamble", ""), hits)
-        assert findings == ["f.md:7 index dir not anchored to a project-root variable"]
-
-    def test_sanitized_project_name_flagged(self) -> None:
-        """The scanner writes the raw basename; a filtered name seeks a file never written."""
-        hits = [(3, 'PROJ=$(basename "$_ROOT" | tr -cd "[:alnum:]")')]
-        findings = invariant_findings("f.md", Guard("bash-preamble", ""), hits)
-        assert findings == ["f.md:3 project name is sanitized; scanner writes the raw basename"]
+    @pytest.mark.parametrize(
+        ("line_no", "text", "message"),
+        [
+            # A bare `.cache/codemap` resolves against the CWD, so a subdirectory run reports a false no_index.
+            pytest.param(
+                7,
+                '_IDX="${CODEMAP_INDEX_DIR:-.cache/codemap}"',
+                "f.md:7 index dir not anchored to a project-root variable",
+                id="cwd-anchored-index-dir",
+            ),
+            # The scanner writes the raw basename; a filtered name seeks a file that was never written.
+            pytest.param(
+                3,
+                'PROJ=$(basename "$_ROOT" | tr -cd "[:alnum:]")',
+                "f.md:3 project name is sanitized; scanner writes the raw basename",
+                id="sanitized-project-name",
+            ),
+        ],
+    )
+    def test_drifted_line_is_flagged(self, line_no: int, text: str, message: str) -> None:
+        """A bash-preamble line that drifted from either production invariant yields exactly one finding."""
+        findings = invariant_findings("f.md", Guard("bash-preamble", ""), [(line_no, text)])
+        assert findings == [message]
 
     @pytest.mark.parametrize("shape", ["python-local", "index-copy", "doc-prose"])
     def test_non_bash_shapes_exempt(self, shape: str) -> None:

@@ -131,9 +131,9 @@ def test_a_lease_held_by_a_living_process_fails_both_teardown_checks(gate: Path,
     try:
         assert child.stdout is not None
         assert child.stdout.readline().strip() == "ready"
-        with pytest.raises(ValueError, match="busy|live reader tokens"):
+        with pytest.raises(ValueError, match=r"busy|live reader tokens"):
             assert_coordination_root_idle(gate)
-        with pytest.raises(ValueError, match="busy|live reader tokens"):
+        with pytest.raises(ValueError, match=r"busy|live reader tokens"):
             cleanup_coordination_root(gate)
     finally:
         child.communicate("\n", timeout=10)

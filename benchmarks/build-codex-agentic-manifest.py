@@ -13,25 +13,35 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
+#: Repository root, from which tracked file paths are made relative.
 ROOT = Path(__file__).resolve().parents[1]
+#: Benchmarks directory that holds the suites and manifests, also added to the import path.
 BENCHMARKS = ROOT / "benchmarks"
-# Self-named so a rename cannot leave the stale-output hint pointing at a missing script.
+#: Self-named so a rename cannot leave the stale-output hint pointing at a missing script.
 REBUILD_COMMAND = f"uv run python {Path(__file__).resolve().relative_to(ROOT).as_posix()}"
+#: Directory holding the generated manifests.
 MANIFESTS = BENCHMARKS / "manifests"
+#: Provider-parity methodology manifest this manifest is derived from and hashed against.
 SOURCE_MANIFEST = MANIFESTS / "provider-parity-methodology.json"
+#: Agentic task suite whose prompts and hashes are recorded in the manifest.
 TASKS_PATH = BENCHMARKS / "suites" / "tasks-agentic.json"
+#: Machine-readable JSON manifest this script writes or verifies.
 OUTPUT_MANIFEST = MANIFESTS / "codex-agentic.json"
+#: Human-readable Markdown companion of the JSON manifest.
 OUTPUT_HUMAN_MANIFEST = MANIFESTS / "codex-agentic.md"
+#: Stable identifier of the Codex agentic experiment, recorded as experiment_id.
 EXPERIMENT_ID = "codex-agentic"
+#: Revision label of the experiment design; change it when the design changes.
 EXPERIMENT_REVISION = "codex-agentic-nested-package-imports-2026-09-09"
 sys.path.insert(0, str(BENCHMARKS))
 from _bench_common.agentic_contracts import AGENTIC_ARMS, DEFAULT_REPETITIONS, materialize_agentic_prompt  # noqa: E402
 from _bench_common.provider_parity_contracts import canonical_task_hash, semantic_suite_hash  # noqa: E402
 
-
+#: Arms recorded for the experiment, in cycle order; the shared agentic arm set.
 ARMS = AGENTIC_ARMS
+#: Repetitions per task and arm cell, used to compute the planned cell count.
 REPETITIONS = DEFAULT_REPETITIONS
+#: Seconds one task, arm and repetition coordinate may run, recorded in the manifest.
 COORDINATE_TIMEOUT_SECONDS = 600
 
 

@@ -1,6 +1,7 @@
 """Verbs over documentation cross-references and dead symbols or modules."""
 
 from __future__ import annotations
+
 import argparse
 import json
 import sys
@@ -12,13 +13,12 @@ from pathlib import Path
 # bin/-relative sys.path insert, the same route bin/scan-index used to take.
 # Every other import below is a direct package-internal import.
 # parents[3] not [2]: this file sits one level deeper than the pre-split query.py
+#: Plugin bin/ directory, added to sys.path so the _exclusions shim can be imported.
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
-from codemap_py.schema import (  # noqa: E402
-    DEAD_SYMBOL_MIN_VER,
-    SPHINX_XREFS_MIN_VER,
-)
+from codemap_py.schema import DEAD_SYMBOL_MIN_VER, SPHINX_XREFS_MIN_VER  # noqa: E402
+
 from .coverage import _cmd_coverage  # noqa: E402
 from .docs_coverage import _is_public_symbol, _symbol_loc  # noqa: E402
 from .index_io import _get_rev_graph, _get_symbol_map, _require_feature, _require_sphinx_xref_count  # noqa: E402
@@ -48,6 +48,7 @@ def _iter_all_xrefs(index: dict):
 # ``mod`` stores bare module names; ``attr``/``data`` are best-effort and may
 # legitimately point at non-symbol identifiers (instance attributes, runtime
 # globals) — excluding them from the broken check avoids false positives.
+#: Cross-reference roles whose targets are checked against symbol keys when detecting broken references.
 _SYMBOL_ROLES: frozenset[str] = frozenset({"func", "class", "meth", "exc", "mkdocs"})
 
 

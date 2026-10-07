@@ -7,14 +7,7 @@ from pathlib import Path
 import pytest
 
 # conftest.py registers bin/ scripts as importable modules
-from check_mode_dispatch import (
-    Finding,
-    check_file,
-    extract_mode_headers,
-    extract_mode_refs,
-    find_skill_files,
-    main,
-)
+from check_mode_dispatch import Finding, check_file, extract_mode_headers, extract_mode_refs, find_skill_files, main
 
 _HAS_PROJECT_PLUGIN_TREE = (Path(__file__).resolve().parent.parent.parent.parent / "cc_foundry").is_dir()
 
@@ -83,26 +76,29 @@ def _write(tmp: Path, name: str, text: str) -> Path:
 
 
 class TestExtractModeRefs:
-    def test_quoted_go_to(self) -> None:
-        """Extract a mode name from a quoted navigation instruction."""
-        assert extract_mode_refs('go to "Mode: Memory Distillation" below.') == ["Memory Distillation"]
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            pytest.param('go to "Mode: Memory Distillation" below.', ["Memory Distillation"], id="quoted-go-to"),
+            pytest.param(
+                "Skip to **Mode: Executables Extraction** below.",
+                ["Executables Extraction"],
+                id="bold-skip-to-any-case",
+            ),
+            pytest.param("see **Mode: External Distillation** below.", ["External Distillation"], id="see-form"),
+            pytest.param(
+                'see **Mode: A** ... go to "Mode: B" ... go to "Mode: A"', ["A", "B"], id="duplicates-collapse-in-order"
+            ),
+            pytest.param("The word Mode: appears but no verb dispatches it.", [], id="no-dispatch-verb"),
+        ],
+    )
+    def test_extracts_dispatched_mode_names(self, text: str, expected: list[str]) -> None:
+        """Mode names introduced by a dispatch verb are returned, first-seen order, without repeats.
 
-    def test_bold_skip_to(self) -> None:
-        """Match a bold mode reference without regard to verb capitalization."""
-        assert extract_mode_refs("Skip to **Mode: Executables Extraction** below.") == ["Executables Extraction"]
-
-    def test_see_form(self) -> None:
-        """Recognize a mode reference introduced by a see instruction."""
-        assert extract_mode_refs("see **Mode: External Distillation** below.") == ["External Distillation"]
-
-    def test_multiple_refs_deduplicated_in_order(self) -> None:
-        """Repeated references collapse to first-seen order."""
-        text = 'see **Mode: A** ... go to "Mode: B" ... go to "Mode: A"'
-        assert extract_mode_refs(text) == ["A", "B"]
-
-    def test_no_dispatch_returns_empty(self) -> None:
-        """Text with no dispatch verb yields no references."""
-        assert extract_mode_refs("The word Mode: appears but no verb dispatches it.") == []
+        Covers a quoted ``go to``, a bold ``Skip to`` whose verb capitalization does not matter, a ``see`` instruction,
+        repeated references collapsing to first-seen order, and text mentioning ``Mode:`` with no dispatching verb.
+        """
+        assert extract_mode_refs(text) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -111,21 +107,26 @@ class TestExtractModeRefs:
 
 
 class TestExtractModeHeaders:
-    def test_h2_and_h3(self) -> None:
-        """Both `##` and `###` headers are captured."""
-        assert extract_mode_headers("## Mode: A\n### Mode: B") == {"A", "B"}
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            pytest.param("## Mode: A\n### Mode: B", {"A", "B"}, id="h2-and-h3"),
+            pytest.param(
+                "## Mode: Memory Distillation — only when x", {"Memory Distillation"}, id="trailing-qualifier-stripped"
+            ),
+            pytest.param(
+                "## Mode: adversarial (alias: --challenge)", {"adversarial"}, id="trailing-parenthetical-stripped"
+            ),
+            pytest.param("# Mode: NotAHeader", set(), id="h1-is-not-a-header"),
+        ],
+    )
+    def test_extracts_mode_header_names(self, text: str, expected: set[str]) -> None:
+        """Level-2 and level-3 mode headers are captured by bare name.
 
-    def test_trailing_qualifier_stripped(self) -> None:
-        """A trailing `— qualifier` is removed from the header name."""
-        assert extract_mode_headers("## Mode: Memory Distillation — only when x") == {"Memory Distillation"}
-
-    def test_trailing_parenthetical_stripped(self) -> None:
-        """A trailing `(alias: …)` parenthetical is removed from the header name."""
-        assert extract_mode_headers("## Mode: adversarial (alias: --challenge)") == {"adversarial"}
-
-    def test_h1_not_a_mode_header(self) -> None:
-        """A single-`#` line is not treated as a mode header."""
-        assert extract_mode_headers("# Mode: NotAHeader") == set()
+        A trailing ``— qualifier`` or ``(alias: …)`` parenthetical is removed from the name, and a single-``#`` line is
+        not a mode header.
+        """
+        assert extract_mode_headers(text) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -134,10 +135,21 @@ class TestExtractModeHeaders:
 
 
 class TestCheckFile:
-    def test_clean_when_header_present(self, tmp_path: Path) -> None:
-        """A reference with a matching header produces no finding."""
-        path = _write(tmp_path, "SKILL.md", _CLEAN_SKILL)
-        assert check_file(path) == []
+    @pytest.mark.parametrize(
+        "skill",
+        [
+            pytest.param(_CLEAN_SKILL, id="matching-header"),
+            pytest.param(_QUALIFIER_SKILL, id="header-with-trailing-qualifier"),
+            pytest.param(_MULTI_MODE_SKILL, id="several-dispatch-forms"),
+        ],
+    )
+    def test_resolvable_reference_is_clean(self, tmp_path: Path, skill: str) -> None:
+        """A mode reference with a matching header produces no finding.
+
+        Covers a plain match, a header carrying a trailing ``— qualifier`` that still matches a bare reference, and
+        several dispatch forms that each resolve to their own header.
+        """
+        assert check_file(_write(tmp_path, "SKILL.md", skill)) == []
 
     def test_dangling_reference_flagged(self, tmp_path: Path) -> None:
         """A reference whose header was renamed away is flagged."""
@@ -145,16 +157,6 @@ class TestCheckFile:
         findings = check_file(path)
         assert len(findings) == 1
         assert findings[0].mode_name == "Lessons Distillation"
-
-    def test_header_with_qualifier_is_clean(self, tmp_path: Path) -> None:
-        """A header carrying a trailing `— qualifier` still matches a bare reference."""
-        path = _write(tmp_path, "SKILL.md", _QUALIFIER_SKILL)
-        assert check_file(path) == []
-
-    def test_multiple_modes_all_matched(self, tmp_path: Path) -> None:
-        """Several dispatch forms each resolve to their own header — clean."""
-        path = _write(tmp_path, "SKILL.md", _MULTI_MODE_SKILL)
-        assert check_file(path) == []
 
     def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
         """An unreadable path yields no findings rather than raising."""

@@ -40,6 +40,7 @@ from urllib.parse import quote
 
 from release_append_marker import branch_state_key
 
+#: ``git describe`` flags that skip pre-release tags (rc, dev, alpha, beta) when looking for the last release tag.
 _EXCLUDE_FLAGS: tuple[str, ...] = (
     "--exclude=*rc*",
     "--exclude=*dev*",
@@ -101,7 +102,7 @@ def _native_temp_dir() -> Path:
         return Path(tempfile.gettempdir())
     if sys.platform != "win32" or PureWindowsPath(configured).is_absolute():
         return Path(configured)
-    converted = subprocess.run(["cygpath", "-w", configured], capture_output=True, text=True, check=True, timeout=5)
+    converted = subprocess.run(["cygpath", "-w", configured], capture_output=True, text=True, check=True, timeout=5)  # noqa: S603, S607 - argv list, no shell; cygpath resolved via PATH on purpose
     return Path(converted.stdout.strip())
 
 
@@ -109,7 +110,7 @@ def _shell_path(path: str) -> str:
     """Emit paths in Git Bash syntax when native Python is called from that shell."""
     if sys.platform != "win32" or not PureWindowsPath(path).is_absolute():
         return path
-    converted = subprocess.run(["cygpath", "-u", path], capture_output=True, text=True, check=True, timeout=5)
+    converted = subprocess.run(["cygpath", "-u", path], capture_output=True, text=True, check=True, timeout=5)  # noqa: S603, S607 - argv list, no shell; cygpath resolved via PATH on purpose
     return converted.stdout.strip()
 
 

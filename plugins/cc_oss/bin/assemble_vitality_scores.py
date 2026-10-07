@@ -23,16 +23,26 @@ import sys
 from pathlib import Path
 
 # Axis identifiers — names mirror `_shared/vitality-scoring.md`'s Weights table.
+#: Axis id for how quickly issues and pull requests get a first maintainer response.
 RESPONSIVENESS = 1
+#: Axis id for how recently and steadily the repository is maintained.
 MAINTENANCE_ACTIVITY = 2
+#: Axis id for the breadth and health of the contributor base.
 CONTRIBUTOR_HEALTH = 3
+#: Axis id for the health of the issue and pull-request backlog.
 ISSUE_PR_HEALTH = 4
+#: Axis id for CI/CD setup and code-quality signals.
 CI_CD_CODE_QUALITY = 5
+#: Axis id for documentation completeness.
 DOCUMENTATION = 6
+#: Axis id for governance files and project policies.
 GOVERNANCE = 7
+#: Axis id for security practices and posture.
 SECURITY_POSTURE = 8
+#: Axis id for the project's direction of travel over time.
 TRAJECTORY = 9
 
+#: Default weight of each vitality axis in the overall score, keyed by axis id; used when no weights file loads.
 _DEFAULT_WEIGHTS: dict[int, float] = {
     RESPONSIVENESS: 0.10,
     MAINTENANCE_ACTIVITY: 0.08,

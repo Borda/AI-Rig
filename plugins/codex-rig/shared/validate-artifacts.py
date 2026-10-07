@@ -45,24 +45,27 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-from html import escape
 import json
 import math
 import re
 import subprocess
 import sys
+from html import escape
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, NamedTuple
 
 # Preserve sibling-helper imports when callers load this executable by file path.
+#: Directory containing this validator and its sibling modules, added to `sys.path` for file-path loading.
 SHARED_DIRECTORY = Path(__file__).resolve().parent
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
-from adversarial_loop import SCHEMA_VERSION as LOOP_LEDGER_SCHEMA_VERSION, load_ledger  # noqa: E402
+from adversarial_loop import SCHEMA_VERSION as LOOP_LEDGER_SCHEMA_VERSION  # noqa: E402
+from adversarial_loop import load_ledger  # noqa: E402
 from collect_pr import _github_remote_identity, _head_repository  # noqa: E402
 from release_evidence import validate_release_evidence  # noqa: E402
 
+#: Fields every result.json must contain regardless of skill.
 COMMON_RESULT_FIELDS = {
     "status",
     "checks_run",
@@ -71,7 +74,9 @@ COMMON_RESULT_FIELDS = {
     "confidence",
     "artifact_path",
 }
+#: Standard result schema revision; code-review results may also use revision 3.
 RESULT_SCHEMA_VERSION = 2
+#: Exact set of keys the result's final-handoff binding must contain.
 FINAL_HANDOFF_METADATA_FIELDS = {
     "schema_version",
     "handoff_path",
@@ -81,16 +86,22 @@ FINAL_HANDOFF_METADATA_FIELDS = {
     "validation_path",
     "branch",
 }
+#: Required file name for each final-handoff path field, which must resolve inside the run directory.
 FINAL_HANDOFF_FILENAMES = {
     "handoff_path": "final-handoff.json",
     "rendered_path": "final.md",
     "validation_path": "final-handoff.validation.json",
 }
+#: Gate ids that gates.json and the result must each report exactly once.
 EXPECTED_GATE_IDS = {"lint", "format", "types", "tests", "review"}
+#: Gate statuses that count as a failed check.
 FAILING_GATE_STATUSES = {"fail", "missing-command", "timeout"}
+#: All gate statuses gates.json may record.
 VALID_GATE_STATUSES = {"pass", "fail", "missing-command", "not-applicable", "timeout"}
+#: Gate ids, in order, that a code-review result must list as not-applicable when gates were unavailable.
 CODE_REVIEW_UNAVAILABLE_GATE_IDS = ("lint", "format", "types", "tests", "review")
 
+#: Allowed reasons for a group of unresolved items in a code-remediate result.
 UNRESOLVED_REASON_GROUPS = {
     "local-code-or-doc",
     "process-gate",
@@ -102,6 +113,7 @@ UNRESOLVED_REASON_GROUPS = {
     "other",
 }
 
+#: Allowed next owners for a group of unresolved items in a code-remediate result.
 UNRESOLVED_NEXT_OWNERS = {
     "codex",
     "user",
@@ -111,6 +123,7 @@ UNRESOLVED_NEXT_OWNERS = {
     "external-reviewer",
 }
 
+#: Allowed triage statuses for an item in a code-remediate result.
 CODE_REMEDIATE_TRIAGE_STATUSES = {
     "valid",
     "resolved",
@@ -122,6 +135,7 @@ CODE_REMEDIATE_TRIAGE_STATUSES = {
     "needs-clarification",
 }
 
+#: Allowed resolution statuses for an item in a code-remediate result.
 CODE_REMEDIATE_RESOLUTION_STATUSES = {
     "implemented",
     "resolved",
@@ -134,6 +148,7 @@ CODE_REMEDIATE_RESOLUTION_STATUSES = {
     "needs-clarification",
     "unresolved",
 }
+#: Maps each resolution status to the resolution labels the revision-3 resolution table may show for it.
 V3_RESOLUTION_DISPOSITIONS = {
     "implemented": {"Implemented"},
     "resolved": {"Verified without code changes"},
@@ -146,6 +161,7 @@ V3_RESOLUTION_DISPOSITIONS = {
     "unresolved": {"Blocked", "Deferred", "Not selected"},
 }
 
+#: Lowercase column headings the final resolution table must include.
 CODE_REMEDIATE_FINAL_TABLE_REQUIRED_COLUMNS = {
     "input item",
     "item name",
@@ -157,11 +173,17 @@ CODE_REMEDIATE_FINAL_TABLE_REQUIRED_COLUMNS = {
     "resolved how",
     "evidence",
 }
+#: Allowed kinds for a source record behind a remediation item.
 CODE_REMEDIATE_SOURCE_KINDS = {"report", "online", "user"}
+#: Fields of a source record that must be non-empty strings.
 CODE_REMEDIATE_SOURCE_STRING_FIELDS = {"source_id", "location", "body", "evidence"}
+#: Matches a report finding source id: `path:line` or a `.json#fragment` reference.
 CODE_REMEDIATE_REPORT_SOURCE_ID = re.compile(r"(?:.+:[1-9]\d*|.+\.json#[^#\r\n]+)", re.IGNORECASE)
+#: Matches a user-supplied finding source id of the form `user-<name>#finding-<n>`.
 CODE_REMEDIATE_USER_SOURCE_ID = re.compile(r"user-[A-Za-z0-9_-]+#finding-[1-9]\d*")
+#: Pattern for an online source id, which must be a non-blank token that is not itself a URL.
 CODE_REMEDIATE_ONLINE_SOURCE_ID = re.compile(r"(?!https?://)\S+", re.IGNORECASE)
+#: Fields of a final item record that must be non-empty strings.
 CODE_REMEDIATE_FINAL_ITEM_STRING_FIELDS = {
     "input_item_id",
     "item_name",
@@ -173,6 +195,7 @@ CODE_REMEDIATE_FINAL_ITEM_STRING_FIELDS = {
     "resolved_how",
     "evidence",
 }
+#: Agents that may own a remediation work bucket.
 CODE_REMEDIATE_WORK_BUCKET_OWNERS = {
     "parent",
     "sw-engineer",
@@ -185,6 +208,7 @@ CODE_REMEDIATE_WORK_BUCKET_OWNERS = {
     "squeezer",
     "oss-shepherd",
 }
+#: Agents, or `none`, that may verify a remediation work bucket.
 CODE_REMEDIATE_WORK_BUCKET_VERIFIERS = {
     "parent",
     "qa-specialist",
@@ -195,9 +219,12 @@ CODE_REMEDIATE_WORK_BUCKET_VERIFIERS = {
     "solution-architect",
     "none",
 }
+#: Exact confidence-gap text a result must list when pull-request review-thread status was unavailable.
 PR_THREAD_CONFIDENCE_GAP = "PR review-thread resolution status was unavailable; online review triage may be incomplete."
+#: Highest confidence a result may report when pull-request data came from the limited public fallback.
 PR_PUBLIC_FALLBACK_MAX_CONFIDENCE = 0.89
 
+#: Per-skill artifact contract: required files and the section headings each must contain.
 SKILL_REQUIREMENTS: dict[str, dict[str, object]] = {
     "challenge-resolve": {
         "files": {
@@ -801,7 +828,7 @@ def _validate_final_handoff(
         raise SystemExit("invalid-final-handoff-metadata")
     paths = {key: _resolve_final_handoff_path(out_dir, binding.get(key), key) for key in FINAL_HANDOFF_FILENAMES}
     helper = Path(__file__).with_name("final_handoff.py")
-    completed = subprocess.run(
+    completed = subprocess.run(  # noqa: S603 - argv list, no shell
         [
             sys.executable,
             str(helper),
@@ -1332,7 +1359,7 @@ def _validate_code_remediate_completed_report_producer(intake: dict[str, Any], o
             raise SystemExit(f"code-remediate-report-producer-evidence-invalid:{field}")
         command.extend([option, value])
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=300)
+        completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=300)  # noqa: S603 - argv list, no shell
     except (OSError, subprocess.TimeoutExpired) as error:
         raise SystemExit("code-remediate-report-producer-validation-unavailable") from error
     if completed.returncode or completed.stdout.strip() != str(producer):
@@ -1391,7 +1418,8 @@ def _validate_code_remediate_incomplete_report_admission(
         if any(source.get("kind") == "report" for item in items for source in item.get("sources", [])):
             raise SystemExit("code-remediate-report-admission-unavailable-report-sources")
         return
-    assert routing is not None
+    if routing is None:
+        raise RuntimeError("routing must not be None")
     _validate_code_remediate_preliminary_report_source(out_dir, evidence, routing)
     _validate_code_remediate_report_coverage(metadata, out_dir)
 
@@ -1648,7 +1676,7 @@ def _validate_grouped_selection(metadata: dict[str, Any], out_dir: Path) -> None
     inventory_path = out_dir / "selection.json"
     if inventory_path.is_symlink() or not inventory_path.is_file():
         raise SystemExit("code-remediate-selection-inventory-missing")
-    completed = subprocess.run(
+    completed = subprocess.run(  # noqa: S603 - argv list, no shell
         [
             sys.executable,
             str(Path(__file__).with_name("final_handoff.py")),
@@ -3149,7 +3177,7 @@ def _validate_adversarial_loop(
     if candidate or "challenge_scope" in result["metadata"]:
         _validate_challenge_scope(result["metadata"], out_dir)
     ledger_path = out_dir / "loop-ledger.json"
-    completed = subprocess.run(
+    completed = subprocess.run(  # noqa: S603 - argv list, no shell
         [sys.executable, str(Path(__file__).with_name("adversarial_loop.py")), "--ledger", str(ledger_path)],
         capture_output=True,
         text=True,
@@ -3165,7 +3193,7 @@ def _validate_adversarial_loop(
     if type(action_contract) is not int or action_contract != 2:
         raise SystemExit("adversarial-loop-action-contract-required")
     actions_path = out_dir / "loop-actions.json"
-    actions = subprocess.run(
+    actions = subprocess.run(  # noqa: S603 - argv list, no shell
         [
             sys.executable,
             str(Path(__file__).with_name("adversarial_loop.py")),
@@ -3221,7 +3249,7 @@ def _validate_adversarial_loop(
     evidence_validator = (
         Path(__file__).resolve().parent.parent / "skills" / "challenge-resolve" / "validate_evidence.py"
     )
-    evidence = subprocess.run(
+    evidence = subprocess.run(  # noqa: S603 - argv list, no shell
         [sys.executable, str(evidence_validator), "--out", str(out_dir)],
         capture_output=True,
         text=True,
@@ -3267,7 +3295,7 @@ def _validate_challenge_scope(
     ):
         raise SystemExit("adversarial-loop-chunk-coverage-invalid")
     checker = Path(__file__).resolve().parent.parent / "skills" / "challenge-resolve" / "chunk_diff.py"
-    checked = subprocess.run(
+    checked = subprocess.run(  # noqa: S603 - argv list, no shell
         [
             sys.executable,
             str(checker),
@@ -3521,6 +3549,7 @@ def _validate_release_readiness(result: dict[str, Any], out_dir: Path) -> None:
             raise SystemExit("release-readiness-verdict-mismatch")
 
 
+#: Template placeholder and guidance strings that must not remain in a finished release draft.
 _RELEASE_DRAFT_TEMPLATE_RESIDUE = (
     "[Release hook]",
     "[User-facing win]",

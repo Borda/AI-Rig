@@ -47,22 +47,29 @@ from typing import Any, NoReturn
 
 from generate_roles import ROLE_IDS
 
-
+#: Default maximum size, in bytes (1 MiB), of a persisted state JSON payload.
 STATE_BYTES = 1_048_576
+#: Maximum length, in bytes, of the first-line ownership marker in a managed shim.
 MARKER_BYTES = 1_024
+#: Pattern for a lowercase 64-character hexadecimal SHA-256 digest string.
 DIGEST = re.compile(r"[0-9a-f]{64}")
+#: Pattern for a Semantic Versioning string, used to validate the plugin version recorded in state.
 SEMVER = re.compile(
     r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
     r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
 )
+#: Pattern for the first-line ownership marker of a managed shim (install id, role id, hashes).
 MARKER = re.compile(
     r"# codex-rig-shim schema=1 plugin=codex-rig "
     r"install_id=([0-9a-f-]{36}) role_id=([a-z][a-z0-9-]{0,63}) "
     r"package_hash=sha256:([0-9a-f]{64}) role_hash=sha256:([0-9a-f]{64}) "
     r"bootstrap=1 generator=1"
 )
+#: Pattern for a role identifier: a lowercase letter then up to 63 lowercase letters, digits, or hyphens.
 ROLE_ID = re.compile(r"[a-z][a-z0-9-]{0,63}")
+#: Maximum number of role entries a persisted state record may list.
 MAX_STATE_ROLES = 128
+#: Exact key set required at the top level of the persisted state record.
 STATE_FIELDS = {
     "schema",
     "plugin",
@@ -80,8 +87,11 @@ STATE_FIELDS = {
     "roles",
     "transaction_status",
 }
+#: Exact key set required in a root identity record (canonical path, device, inode, ownership, mode).
 ROOT_FIELDS = {"canonical_path", "device", "inode", "owner", "group", "mode"}
+#: Exact key set required in the state's bootstrap record (protocol, helper path, helper hash).
 BOOTSTRAP_FIELDS = {"protocol", "helper_path", "helper_hash"}
+#: Exact key set required in each role entry of the persisted state record.
 ROLE_FIELDS = {"role_id", "target_name", "card_path", "role_hash", "file_hash"}
 
 

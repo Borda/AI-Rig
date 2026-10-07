@@ -9,9 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from _bench_common import manifest_session
-
 
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = BENCHMARKS_DIR.parent
@@ -20,11 +18,11 @@ REPO_ROOT = BENCHMARKS_DIR.parent
 @pytest.mark.integration
 @pytest.mark.parametrize(
     "builder",
-    (
+    [
         "build-provider-parity-methodology-manifest.py",
         "build-codex-integration-manifest.py",
         "build-codex-agentic-manifest.py",
-    ),
+    ],
 )
 def test_session_makes_manifests_ready_once_with_byte_stable_outputs(
     generated_manifest_artifacts: Any,

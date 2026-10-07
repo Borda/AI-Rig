@@ -23,14 +23,16 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import ClassVar
 
-import pytest
 import join_avoidance as ja
+import pytest
 
 _HOOK = Path(__file__).parent.parent.parent / "hooks" / "log-tool-use.py"
 
 _SPEC = importlib.util.spec_from_file_location("codemap_log_tool_use", _HOOK)
-assert _SPEC and _SPEC.loader
+assert _SPEC
+assert _SPEC.loader
 _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 
@@ -151,16 +153,22 @@ def test_search_scope_survives_hook_to_join(tmp_path: Path, scope: str) -> None:
     assert payload["structural_search_count"] == int(scope == "directory")
 
 
-def test_non_search_tool_ignored(tmp_path: Path) -> None:
-    """A tool outside the matched set must write nothing (defence-in-depth vs matcher)."""
-    _run({"tool_name": "Edit", "tool_input": {"file_path": "/x.py"}}, tmp_path)
-    assert _read_records(tmp_path) == []
-
-
-@pytest.mark.parametrize("command", ["ls -la src/", "scan-query rdeps pkg.mod | grep imported_by"])
-def test_bash_non_search_ignored(tmp_path: Path, command: str) -> None:
-    """Bash commands that are not manual search volume must write nothing."""
-    _run({"tool_name": "Bash", "tool_input": {"command": command}}, tmp_path)
+@pytest.mark.parametrize(
+    "payload",
+    [
+        # A tool outside the matched set (defence-in-depth vs the matcher).
+        pytest.param({"tool_name": "Edit", "tool_input": {"file_path": "/x.py"}}, id="non-search-tool"),
+        # Bash commands that are not manual search volume.
+        pytest.param({"tool_name": "Bash", "tool_input": {"command": "ls -la src/"}}, id="bash-plain-listing"),
+        pytest.param(
+            {"tool_name": "Bash", "tool_input": {"command": "scan-query rdeps pkg.mod | grep imported_by"}},
+            id="bash-scan-query-pipe",
+        ),
+    ],
+)
+def test_non_search_call_ignored(tmp_path: Path, payload: dict) -> None:
+    """A tool outside the matched set or a Bash command that is not manual search volume writes nothing."""
+    _run(payload, tmp_path)
     assert _read_records(tmp_path) == []
 
 
@@ -207,12 +215,13 @@ def test_logging_disabled_suppresses_record(tmp_path: Path) -> None:
 class TestReadRedundancyNudge:
     """3rd Read of the same non-test .py file prints one structural-query hint."""
 
-    _PAYLOAD = {"tool_name": "Read", "tool_input": {"file_path": "/proj/src/core.py"}}
+    _PAYLOAD: ClassVar = {"tool_name": "Read", "tool_input": {"file_path": "/proj/src/core.py"}}
 
     def test_hint_fires_exactly_on_third_read(self, tmp_path: Path) -> None:
         """Reads 1–2 stay silent, read 3 hints, read 4 stays silent again."""
         outs = [_run(self._PAYLOAD, tmp_path).stdout for _ in range(4)]
-        assert outs[0] == "" and outs[1] == ""
+        assert outs[0] == ""
+        assert outs[1] == ""
         assert "[codemap] core.py read 3x" in outs[2]
         assert outs[3] == ""
 
@@ -235,7 +244,8 @@ class TestReadRedundancyNudge:
 
         outs = [_run(self._PAYLOAD, tmp_path).stdout for _ in range(3)]
 
-        assert outs[0] == "" and outs[1] == ""
+        assert outs[0] == ""
+        assert outs[1] == ""
         assert "[codemap] core.py read 3x" in outs[2]
 
 

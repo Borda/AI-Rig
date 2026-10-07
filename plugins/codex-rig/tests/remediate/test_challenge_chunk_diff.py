@@ -2,25 +2,25 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
 import importlib.util
 import itertools
+import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-
 CHUNKER = Path(__file__).resolve().parents[2] / "skills" / "challenge-resolve" / "chunk_diff.py"
 REQUEST_ARGS = ("--goal", "Review changed files", "--specification", "Fixture contract", "--done-when", "Clean review")
 
 
-@pytest.fixture
-def changed_repository(tmp_path: Path) -> Path:
-    """Return a repository with tracked edits, a deletion, and untracked source."""
-    repository = tmp_path / "repository"
+@pytest.fixture(scope="module")
+def _committed_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build the committed baseline repository once per module; tests only ever copy it."""
+    repository = tmp_path_factory.mktemp("committed-template") / "repository"
     repository.mkdir()
     for name in ("alpha.py", "beta.py", "removed.py"):
         (repository / name).write_text(f"VALUE = '{name}'\n", encoding="utf-8", newline="\n")
@@ -30,11 +30,46 @@ def changed_repository(tmp_path: Path) -> Path:
         ("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "initial"),
     ):
         subprocess.run(["git", *args], cwd=repository, check=True, capture_output=True)
+    return repository
+
+
+def _copy_changed_repository(template: Path, repository: Path) -> Path:
+    """Copy the committed baseline and add tracked edits, a deletion, and untracked source."""
+    shutil.copytree(template, repository, symlinks=True)
     (repository / "alpha.py").write_text("VALUE = 'changed alpha'\n", encoding="utf-8", newline="\n")
     (repository / "beta.py").write_text("VALUE = 'changed beta'\n", encoding="utf-8", newline="\n")
     (repository / "removed.py").unlink()
     (repository / "new.py").write_text("VALUE = 'new'\n", encoding="utf-8", newline="\n")
     return repository
+
+
+@pytest.fixture
+def changed_repository(_committed_template: Path, tmp_path: Path) -> Path:
+    """Return a private repository copy with tracked edits, a deletion, and untracked source."""
+    return _copy_changed_repository(_committed_template, tmp_path / "repository")
+
+
+@pytest.fixture(scope="module")
+def _shared_plan(_committed_template: Path, tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
+    """Plan the standard changed repository once per module; tests only ever copy the review directory.
+
+    The repository stays read-only for every consumer, because the manifest embeds its path.
+    """
+    root = tmp_path_factory.mktemp("shared-plan")
+    repository = _copy_changed_repository(_committed_template, root / "repository")
+    out = root / "review"
+    planned = _run("plan", "--repository", str(repository), "--out", str(out), "--budget-bytes", "900", *REQUEST_ARGS)
+    assert planned.returncode == 0, planned.stderr
+    return repository, out
+
+
+@pytest.fixture
+def planned_review(_shared_plan: tuple[Path, Path], tmp_path: Path) -> tuple[Path, Path]:
+    """Return the shared read-only repository and a private writable copy of its planned review."""
+    repository, planned = _shared_plan
+    out = tmp_path / "review"
+    shutil.copytree(planned, out)
+    return repository, out
 
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
@@ -267,7 +302,8 @@ def test_prior_signature_visibility_requires_source_record(
 ) -> None:
     """Only a captured file or tracked-deletion record satisfies prior source coverage."""
     spec = importlib.util.spec_from_file_location("challenge_chunk_diff", CHUNKER)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     chunker = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(chunker)
     run = tmp_path / "runs" / "chunk-001"
@@ -513,7 +549,8 @@ def test_continuation_check_rechecks_caller_ledger_bytes(changed_repository: Pat
 def test_prior_result_cannot_reclassify_verified_signature(changed_repository: Path, tmp_path: Path) -> None:
     """A child disposition cannot silently lower a caller finding's severity or structural status."""
     spec = importlib.util.spec_from_file_location("challenge_chunk_diff", CHUNKER)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     chunker = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(chunker)
     prior = _prior_ledger()
@@ -605,15 +642,9 @@ def test_oversized_file_does_not_hide_other_changed_files(changed_repository: Pa
 
 
 @pytest.mark.packaging
-def test_result_map_cannot_claim_clean_without_each_chunk(changed_repository: Path, tmp_path: Path) -> None:
+def test_result_map_cannot_claim_clean_without_each_chunk(planned_review: tuple[Path, Path]) -> None:
     """Reject a final coverage claim that omits a reviewed chunk."""
-    out = tmp_path / "review"
-    assert (
-        _run(
-            "plan", "--repository", str(changed_repository), "--out", str(out), "--budget-bytes", "900", *REQUEST_ARGS
-        ).returncode
-        == 0
-    )
+    _, out = planned_review
     results = out / "results.json"
     results.write_text('{"schema_version":1,"chunks":[]}\n', encoding="utf-8", newline="\n")
 
@@ -625,20 +656,15 @@ def test_result_map_cannot_claim_clean_without_each_chunk(changed_repository: Pa
 
 @pytest.mark.packaging
 def test_stopped_summary_binds_failed_child_and_reports_pending_slots(
-    changed_repository: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    planned_review: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A failed child remains visible while unreviewed chunks and interactions stay pending."""
     spec = importlib.util.spec_from_file_location("challenge_chunk_diff", CHUNKER)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     chunker = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(chunker)
-    out = tmp_path / "review"
-    assert (
-        _run(
-            "plan", "--repository", str(changed_repository), "--out", str(out), "--budget-bytes", "900", *REQUEST_ARGS
-        ).returncode
-        == 0
-    )
+    repository, out = planned_review
     manifest_path = out / "chunks.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     chunks = manifest["chunks"]
@@ -652,7 +678,7 @@ def test_stopped_summary_binds_failed_child_and_reports_pending_slots(
         json.dumps(
             {
                 "schema_version": 2,
-                "repository": changed_repository.resolve().as_posix(),
+                "repository": repository.resolve().as_posix(),
                 "scope_paths": first["scope_paths"],
                 "current_source_path": "current-source.json",
                 "request": manifest["request"],
@@ -737,11 +763,11 @@ def test_stopped_summary_binds_failed_child_and_reports_pending_slots(
             scores=[6], rounds=[{"decision": "plateau"}], reason="plateau"
         )
         result_path.write_text(json.dumps(zero_round_result), encoding="utf-8", newline="\n")
+        evidence_path = run / "loop-evidence.json"
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        evidence["request"]["goal"] = "unrelated review"
+        evidence_path.write_text(json.dumps(evidence), encoding="utf-8", newline="\n")
         with pytest.raises(ValueError, match="chunk-result-request-mismatch"):
-            evidence_path = run / "loop-evidence.json"
-            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-            evidence["request"]["goal"] = "unrelated review"
-            evidence_path.write_text(json.dumps(evidence), encoding="utf-8", newline="\n")
             chunker.check_stopped(manifest_path, results_path)
         evidence["request"] = manifest["request"]
         evidence_path.write_text(json.dumps(evidence), encoding="utf-8", newline="\n")
@@ -791,15 +817,9 @@ def test_stopped_summary_binds_failed_child_and_reports_pending_slots(
 
 
 @pytest.mark.packaging
-def test_result_map_requires_independent_cross_chunk_reviews(changed_repository: Path, tmp_path: Path) -> None:
+def test_result_map_requires_independent_cross_chunk_reviews(planned_review: tuple[Path, Path]) -> None:
     """A clean result per file chunk cannot establish review of their interactions."""
-    out = tmp_path / "review"
-    assert (
-        _run(
-            "plan", "--repository", str(changed_repository), "--out", str(out), "--budget-bytes", "900", *REQUEST_ARGS
-        ).returncode
-        == 0
-    )
+    _, out = planned_review
     manifest = json.loads((out / "chunks.json").read_text(encoding="utf-8"))
     assert len(manifest["chunks"]) >= 2
     results = out / "results.json"
@@ -827,15 +847,9 @@ def test_result_map_requires_independent_cross_chunk_reviews(changed_repository:
 
 
 @pytest.mark.packaging
-def test_no_interaction_decision_requires_source_rationale(changed_repository: Path, tmp_path: Path) -> None:
+def test_no_interaction_decision_requires_source_rationale(planned_review: tuple[Path, Path]) -> None:
     """An empty no-interaction assertion cannot waive independent pair review."""
-    out = tmp_path / "review"
-    assert (
-        _run(
-            "plan", "--repository", str(changed_repository), "--out", str(out), "--budget-bytes", "900", *REQUEST_ARGS
-        ).returncode
-        == 0
-    )
+    _, out = planned_review
     chunks = json.loads((out / "chunks.json").read_text(encoding="utf-8"))["chunks"]
     assert len(chunks) >= 2
     interactions = [
@@ -869,20 +883,15 @@ def test_no_interaction_decision_requires_source_rationale(changed_repository: P
 
 @pytest.mark.packaging
 def test_parent_interaction_claims_do_not_establish_independent_assessment(
-    changed_repository: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    planned_review: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Reject plausible parent decisions without an authenticated interaction assessment."""
     spec = importlib.util.spec_from_file_location("challenge_chunk_diff", CHUNKER)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     chunker = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(chunker)
-    out = tmp_path / "review"
-    assert (
-        _run(
-            "plan", "--repository", str(changed_repository), "--out", str(out), "--budget-bytes", "900", *REQUEST_ARGS
-        ).returncode
-        == 0
-    )
+    _, out = planned_review
     manifest = json.loads((out / "chunks.json").read_text(encoding="utf-8"))
     chunks = manifest["chunks"]
     assert len(chunks) >= 3
@@ -917,7 +926,8 @@ def test_cross_chunk_review_binds_both_current_source_files(
 ) -> None:
     """Child and interaction reviews must retain the coordinator request and current source."""
     spec = importlib.util.spec_from_file_location("challenge_chunk_diff", CHUNKER)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     chunker = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(chunker)
     out = tmp_path / "review"

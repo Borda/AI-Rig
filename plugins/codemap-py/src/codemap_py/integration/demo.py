@@ -1,15 +1,18 @@
 """Run the demonstration walkthrough of a query against the live index."""
 
 from __future__ import annotations
+
 import argparse
 import contextlib
 import json
 from io import StringIO
 from pathlib import Path
+
 from codemap_py import index_paths, query, rwgate
+
 from .audit import build_audit_report
 from .managed_block import PROTOCOL_VERSION
-from .types import Runtime, _EXIT_OK, _EXIT_RUNTIME
+from .types import _EXIT_OK, _EXIT_RUNTIME, Runtime
 from .util import _report_dir
 
 

@@ -5,23 +5,16 @@ import json
 import os
 import shutil
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Sequence
 
+from _bench_common.agentic_contracts import AgenticOracle, AnswerScore  # noqa: F401
 
 # Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
-from _bench_common.agentic_contracts import (
-    AgenticOracle,  # noqa: F401
-    AnswerScore,  # noqa: F401
-)
-
 # Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
 # Every name it defines is re-exported here, including ones this file no longer calls itself: callers and tests
 # reach these through the runner module, so pruning an apparently unused re-export breaks patch.object targets.
-
 from _bench_claude.agentic.config import REPO_ROOT
-
 
 # ---------------------------------------------------------------------------
 # Claude CLI runner

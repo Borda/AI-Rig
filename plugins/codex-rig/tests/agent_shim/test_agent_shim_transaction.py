@@ -9,12 +9,11 @@ import os
 import stat
 import subprocess
 import sys
-import tempfile  # noqa: F401 - used by executable doctest examples
+import tempfile  # noqa: F401
 from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = PLUGIN_ROOT / "scripts"

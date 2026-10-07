@@ -11,7 +11,6 @@ from types import ModuleType
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 LIFECYCLE_PATH = PLUGIN_ROOT / "scripts" / "_agent_shim_lifecycle.py"
 GENERATOR_PATH = PLUGIN_ROOT / "scripts" / "generate_roles.py"

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import importlib.util
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -14,11 +14,10 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from test_review_prepare import (
+    _CONTEXT_READ_CALL,
     HELPER,
     SKILL,
-    _CONTEXT_READ_CALL,
     _assemble,
     _assembly_evidence,
     _partial_dispatch_evidence,
@@ -85,7 +84,7 @@ def _join_command(argv: list[str]) -> str:
     "argv",
     [
         pytest.param(["python", "reader.py", "--plan", "plan.json"], id="plain"),
-        pytest.param([r"D:\a\repo\.venv\Scripts\python.exe", r"C:\Users\run\review_context.py"], id="windows-paths"),
+        pytest.param([r"D:\a\repo\.venv\Scripts\python.exe", r"C:\Reader\review_context.py"], id="windows-paths"),
         pytest.param([r"C:\dir with space\python.exe", "--plan", r"C:\my dir\plan.json"], id="spaces"),
         pytest.param(["say", 'he said "hi"', "", "tail\\"], id="quotes-empty-trailing-backslash"),
         pytest.param(["x", "back\\\\slash", 'two\\\\"quote', r"\\server\share\file"], id="backslash-runs"),
@@ -215,7 +214,7 @@ def test_successful_historical_literal_plan_duplication_requires_exact_safe_rece
         ignored = str(tmp_path / "discarded" / "review_context.py")
         if damage == "substitution":
             ignored += "$(printf_bad)"
-        mutated = argv[:3] + [ignored, "--plan"] + argv[3:]
+        mutated = [*argv[:3], ignored, "--plan", *argv[3:]]
         if damage == "wrong-final-plan":
             mutated[5] = str(tmp_path / "other-plan.json")
         if damage == "wrong-role":
@@ -352,7 +351,8 @@ def test_compact_native_reads_require_exact_setup_selectors_and_expanded_command
         )
         assert all(item["selected_attempt"] == 1 for item in manifest["passes"])
         summary = json.loads((run / "inspection-summary.json").read_bytes())
-        assert summary["actual_mode"] == "parallel" and summary["independence_satisfied"] is True
+        assert summary["actual_mode"] == "parallel"
+        assert summary["independence_satisfied"] is True
     else:
         assert assembled.returncode != 0
         assert "context-read" in assembled.stderr or "context-command" in assembled.stderr
@@ -384,7 +384,7 @@ def test_compact_reader_keys_bind_context_role_plan_and_attempt(tmp_path: Path) 
 
 
 @pytest.mark.parametrize(
-    "windows,literal,accepted",
+    ("windows", "literal", "accepted"),
     [
         pytest.param(False, "/retained/unused/review_context.py", True, id="posix-literal"),
         pytest.param(True, "D:\\Unused\\review_context.py", True, id="windows-literal"),
@@ -439,11 +439,11 @@ def test_historical_duplicate_plan_accepts_only_canonically_serialized_literal_v
         )
 
     expected = frame(canonical)
-    actual = frame(canonical[:3] + [literal, "--plan"] + canonical[3:])
+    actual = frame([*canonical[:3], literal, "--plan", *canonical[3:]])
     proof = validator["_literal_duplicated_plan_command"](actual, expected, windows=windows)
     assert (proof is not None) is accepted
     if accepted:
-        assert proof == (actual, serialize(canonical[:3] + [literal, "--plan"] + canonical[3:]))
+        assert proof == (actual, serialize([*canonical[:3], literal, "--plan", *canonical[3:]]))
 
 
 @pytest.mark.integration
@@ -588,7 +588,7 @@ def test_reader_receipts_require_complete_single_command_wrapper(tmp_path: Path,
 
 
 @pytest.mark.parametrize(
-    "prefix,accepted",
+    ("prefix", "accepted"),
     [
         pytest.param([], True, id="normalized"),
         pytest.param(["/bin/bash", "-lc"], True, id="observed-native-bash"),

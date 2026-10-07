@@ -8,7 +8,6 @@ from types import ModuleType
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR_PATHS = {
     "writer": PLUGIN_ROOT / "shared" / "write-result.py",
@@ -21,7 +20,8 @@ VALIDATOR_CASES = [pytest.param(name, path, id=name) for name, path in VALIDATOR
 def _load_validator(name: str, path: Path) -> ModuleType:
     """Load one standalone validator by path without package installation."""
     specification = importlib.util.spec_from_file_location(f"codex_rig_{name}_gap_validator", path)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module

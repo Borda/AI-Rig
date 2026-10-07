@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import importlib.util
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REVIEW_VALIDATOR = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
@@ -29,7 +28,8 @@ def _load_validator(
 ) -> ModuleType:
     """Load the hyphenated shared artifact validator for focused checks."""
     specification = importlib.util.spec_from_file_location(name, path)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -458,7 +458,7 @@ def test_new_assessed_candidate_requires_attribution(scope: str, missing: str) -
         else:
             del snapshot[missing]
     with pytest.raises(
-        SystemExit, match="code-review-final-handoff-(candidate-attribution-missing|review-summary-mismatch)"
+        SystemExit, match=r"code-review-final-handoff-(candidate-attribution-missing|review-summary-mismatch)"
     ):
         VALIDATOR._validate_code_review_final_handoff(result, handoff, candidate=True)
 

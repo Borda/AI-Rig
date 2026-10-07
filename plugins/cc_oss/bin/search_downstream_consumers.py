@@ -24,11 +24,12 @@ import subprocess
 import sys
 from shutil import which
 
-# GitHub code-search query strings must not carry quote/colon/.. or shell-special
-# characters — those let an attacker pollute the search operators or break out
-# of the embedded query.  We accept dotted Python identifiers (e.g.
-# ``foo.bar.Baz``), digits, hyphen, and underscore — nothing else.
+#: GitHub code-search query strings must not carry quote/colon/.. or shell-special
+#: characters — those let an attacker pollute the search operators or break out
+#: of the embedded query.  We accept dotted Python identifiers (e.g.
+#: ``foo.bar.Baz``), digits, hyphen, and underscore — nothing else.
 _QUERY_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
+#: Substrings rejected in a search query argument because they could alter operators or escape the query.
 _FORBIDDEN_QUERY_SUBSTRINGS: tuple[str, ...] = ("..", '"', ":", "`", "$", "(", ")", "<", ">", "\\")
 
 

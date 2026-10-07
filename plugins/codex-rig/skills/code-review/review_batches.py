@@ -45,53 +45,58 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Match preparation's sibling import boundary for path-based doctest collection.
+#: Match preparation's sibling import boundary for path-based doctest collection.
 SKILL_DIRECTORY = Path(__file__).resolve().parent
 if str(SKILL_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SKILL_DIRECTORY))
 
 
+#: Largest reviewer context, in bytes, that a prompt prefix plus batch material may occupy.
 CONTEXT_LIMIT = 65536
+#: Current response-format instruction, as bytes, appended to every batch reviewer prompt.
 BATCH_FINDINGS_INSTRUCTION = (
-    "\n## Required batch response profile 1\nReturn only ## Reviewer Findings, one fenced json array, optional "
-    "## Finding Dispositions, then ## Reviewer Confidence (one fenced json object), then ## Reviewer Assessment followed by separate lines Rating: <1-5> and Rationale: <one line>. "
-    "Each finding object has exactly id (unique reviewer-local identifier matching [A-Za-z][A-Za-z0-9_-]{0,63}), severity (critical|high|medium|low), "
-    "title, summary (exact claim), required_change (one nonempty string), "
-    "closure_evidence (one nonempty string, never an array), and evidence "
-    "(array of {path,start_line,end_line} frozen project coordinates; empty only when evidence is unavailable). "
-    "Declare every distinct obligation, including minor findings, in the array; use [] only for no findings. "
-    "For a retained source finding, reuse its original JSON record id only when unique in the current response; "
-    "otherwise choose a valid unique local id while retaining its qualified Source finding ID for provenance and "
-    "dispositions. Do not copy that qualified origin into id. "
-    "Do not place findings in prose or invent hashes/global IDs. Keep missing evidence honest. "
-    "Confidence has exactly score (number 0..1), scope (nonempty inspected boundary), and gaps "
-    "(array of {gap,status,rationale}; status closed|unresolved|deferred with nonempty evidence or rationale). "
-    "Name every material gap; a completion claim requires score >=0.90. "
-    "Dispositions use only Source disposition <original ID>: closed|rejected; Evidence: <path>:<start>-<end> - "
-    "Existing behavior: <specific frozen behavior> or False positive: <specific mistaken assumption>. "
-    "A clean assessment never silently dismisses earlier findings.\n"
-).encode()
+    b"\n## Required batch response profile 1\nReturn only ## Reviewer Findings, one fenced json array, optional "
+    b"## Finding Dispositions, then ## Reviewer Confidence (one fenced json object), then ## Reviewer Assessment followed by separate lines Rating: <1-5> and Rationale: <one line>. "
+    b"Each finding object has exactly id (unique reviewer-local identifier matching [A-Za-z][A-Za-z0-9_-]{0,63}), severity (critical|high|medium|low), "
+    b"title, summary (exact claim), required_change (one nonempty string), "
+    b"closure_evidence (one nonempty string, never an array), and evidence "
+    b"(array of {path,start_line,end_line} frozen project coordinates; empty only when evidence is unavailable). "
+    b"Declare every distinct obligation, including minor findings, in the array; use [] only for no findings. "
+    b"For a retained source finding, reuse its original JSON record id only when unique in the current response; "
+    b"otherwise choose a valid unique local id while retaining its qualified Source finding ID for provenance and "
+    b"dispositions. Do not copy that qualified origin into id. "
+    b"Do not place findings in prose or invent hashes/global IDs. Keep missing evidence honest. "
+    b"Confidence has exactly score (number 0..1), scope (nonempty inspected boundary), and gaps "
+    b"(array of {gap,status,rationale}; status closed|unresolved|deferred with nonempty evidence or rationale). "
+    b"Name every material gap; a completion claim requires score >=0.90. "
+    b"Dispositions use only Source disposition <original ID>: closed|rejected; Evidence: <path>:<start>-<end> - "
+    b"Existing behavior: <specific frozen behavior> or False positive: <specific mistaken assumption>. "
+    b"A clean assessment never silently dismisses earlier findings.\n"
+)
 
-# Keep issued prompt bytes independent of future producer wording; historical selection still reconstructs all evidence.
+#: Frozen earlier batch response instruction, kept so issued prompt bytes stay independent of future producer wording;
+#: historical selection still reconstructs all evidence.
 HISTORICAL_BATCH_PROFILE = (
-    "\n## Required batch response profile 1\nReturn only ## Reviewer Findings, one fenced json array, optional "
-    "## Finding Dispositions, then ## Reviewer Confidence (one fenced json object), then ## Reviewer Assessment with Rating: <1-5> and Rationale: <one line>. "
-    "Each finding object has exactly id (unique reviewer-local identifier), severity (critical|high|medium|low), "
-    "title, summary (exact claim), required_change (one nonempty string), "
-    "closure_evidence (one nonempty string, never an array), and evidence "
-    "(array of {path,start_line,end_line} frozen project coordinates; empty only when evidence is unavailable). "
-    "Declare every distinct obligation, including minor findings, in the array; use [] only for no findings. "
-    "Do not place findings in prose or invent hashes/global IDs. Keep missing evidence honest. "
-    "Confidence has exactly score (number 0..1), scope (nonempty inspected boundary), and gaps "
-    "(array of {gap,status,rationale}; status closed|unresolved|deferred with nonempty evidence or rationale). "
-    "Name every material gap; a completion claim requires score >=0.90. "
-    "Dispositions use only Source disposition <original ID>: closed|rejected; Evidence: <path>:<start>-<end> - "
-    "Existing behavior: <specific frozen behavior> or False positive: <specific mistaken assumption>. "
-    "A clean assessment never silently dismisses earlier findings.\n"
-).encode()
+    b"\n## Required batch response profile 1\nReturn only ## Reviewer Findings, one fenced json array, optional "
+    b"## Finding Dispositions, then ## Reviewer Confidence (one fenced json object), then ## Reviewer Assessment with Rating: <1-5> and Rationale: <one line>. "
+    b"Each finding object has exactly id (unique reviewer-local identifier), severity (critical|high|medium|low), "
+    b"title, summary (exact claim), required_change (one nonempty string), "
+    b"closure_evidence (one nonempty string, never an array), and evidence "
+    b"(array of {path,start_line,end_line} frozen project coordinates; empty only when evidence is unavailable). "
+    b"Declare every distinct obligation, including minor findings, in the array; use [] only for no findings. "
+    b"Do not place findings in prose or invent hashes/global IDs. Keep missing evidence honest. "
+    b"Confidence has exactly score (number 0..1), scope (nonempty inspected boundary), and gaps "
+    b"(array of {gap,status,rationale}; status closed|unresolved|deferred with nonempty evidence or rationale). "
+    b"Name every material gap; a completion claim requires score >=0.90. "
+    b"Dispositions use only Source disposition <original ID>: closed|rejected; Evidence: <path>:<start>-<end> - "
+    b"Existing behavior: <specific frozen behavior> or False positive: <specific mistaken assumption>. "
+    b"A clean assessment never silently dismisses earlier findings.\n"
+)
+#: Prompt text, as bytes, explaining the meaning of each numeric reviewer rating from 1 to 5.
 RATING_LEGEND = (
     b"Rating legend: 1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject.\n"
 )
+#: Prompt text, as bytes, requiring each confidence gap to carry a deduction that sums to 1 minus the score.
 CONFIDENCE_ACCOUNTING = (
     b"Every confidence gap or limit needs an ASCII (-0.NN) deduction in its existing gap/rationale strings. "
     b"Deductions total exactly 1 minus score; closed or zero-impact gaps explicitly use (-0.00). "
@@ -488,7 +493,7 @@ def validate_inventory(out: Path) -> dict[str, Any]:
         for path in inventory["selections"][role]:
             record = records[path]
             expected = f"### {path} ({record['kind']}, SHA-256: {record['sha256']})\n```text\n{record['content']}\n```\n".encode()
-            if expected not in original or path in sections and sections[path] not in original:
+            if expected not in original or (path in sections and sections[path] not in original):
                 raise ValueError(f"review-batch-selected-source-missing:{role}:{path}")
     if set(inventory["segments"]) != set(inventory["selections"]) or inventory["wave_count"] != max(
         map(len, inventory["segments"].values())
@@ -839,7 +844,7 @@ def _interaction_wave_paths(out: Path) -> list[Path]:
 
 def consolidation_contexts(out: Path, inventory: dict[str, Any]) -> dict[str, bytes]:
     """Retain independently reviewed dispositions and immutable original evidence references for final review."""
-    _, validator = _helpers()
+    _, _validator = _helpers()
     reviewed = _wave_outputs(out, _interaction_wave_paths(out))
     original = _source_ledger(out, inventory, include_interactions=True)
     # Native attempt machinery stays in hash-bound manifests; reviewers receive exact individual identity and output.
@@ -1392,7 +1397,10 @@ def validate_aggregate(
             raise ValueError("review-batch-waves-not-serial")
         previous_end = max(ends)
         final = wave
-    assert final is not None and summary is not None
+    if final is None:
+        raise RuntimeError("final must not be None")
+    if summary is None:
+        raise RuntimeError("summary must not be None")
     if source_only:
         ledger = _source_ledger(out, inventory)
         if manifest.get("source_findings") != ledger:

@@ -125,7 +125,8 @@ def test_invalid_override_missing_binary_hard_fails() -> None:
 
     resolved, diag = cli.resolve_interpreter({"CODEMAP_PYTHON": "/no/such/py"}, "linux", probe=_probe)
     assert resolved is None
-    assert diag is not None and "CODEMAP_PYTHON" in diag
+    assert diag is not None
+    assert "CODEMAP_PYTHON" in diag
 
 
 def test_invalid_override_wrong_version_does_not_fall_through() -> None:

@@ -56,17 +56,17 @@ import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
-from collect_diff import capture_source_snapshot  # noqa: E402
-from adversarial_loop import ledger_digest, load_ledger, rounds_path, validate_ledger  # noqa: E402
+from adversarial_loop import ledger_digest, load_ledger, rounds_path, validate_ledger
+from collect_diff import capture_source_snapshot
 
-
+#: Default per-chunk size budget, in bytes, for the --budget-bytes planner option.
 DEFAULT_BUDGET_BYTES = 1_000_000
 
 
 def _git(repository: Path, *arguments: str) -> bytes:
     """Read one local Git result and fail when source inspection is incomplete."""
-    result = subprocess.run(
-        ["git", "-C", os.fspath(repository), "--literal-pathspecs", *arguments],
+    result = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "-C", os.fspath(repository), "--literal-pathspecs", *arguments],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
         capture_output=True,
         check=False,
     )
@@ -107,8 +107,8 @@ def _safe_output(repository: Path, output: Path) -> Path:
         relative = destination.relative_to(repository.resolve()).as_posix()
     except ValueError:
         return destination
-    ignored = subprocess.run(
-        ["git", "-C", os.fspath(repository), "check-ignore", "-q", "--no-index", "--", relative],
+    ignored = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "-C", os.fspath(repository), "check-ignore", "-q", "--no-index", "--", relative],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
         capture_output=True,
         check=False,
     )
@@ -130,7 +130,8 @@ def _artifact(root: Path, raw: object) -> Path:
 def _prior_ledger_artifact(root: Path, raw: object) -> Path:
     """Resolve a pinned prior ledger header whose sibling round log must also stay inside the run."""
     header = _artifact(root, raw)
-    assert isinstance(raw, str)
+    if not isinstance(raw, str):
+        raise TypeError(f"raw must be str, got {type(raw).__name__}")
     _artifact(root, rounds_path(Path(raw)).as_posix())
     return header
 
@@ -490,8 +491,7 @@ def _check_prior_manifest(root: Path, manifest: dict[str, object]) -> None:
             or ids != sorted(set(ids))
             or any(chunk_id not in by_id for chunk_id in ids)
             or len(ids) != {"chunk": 1, "interaction": 2, "group": len(ids)}[kind]
-            or kind == "group"
-            and len(ids) < 3
+            or (kind == "group" and len(ids) < 3)
         ):
             raise ValueError("prior-coverage-invalid")
         seen.add(signature)
@@ -650,8 +650,7 @@ def check_stopped(manifest_path: Path, results_path: Path) -> dict[str, object]:
             or entry["decision"] not in {"reviewed", "no-interaction"}
             or not isinstance(entry["evidence"], str)
             or not entry["evidence"].strip()
-            or entry["result_path"] is not None
-            and not isinstance(entry["result_path"], str)
+            or (entry["result_path"] is not None and not isinstance(entry["result_path"], str))
         ):
             raise ValueError("chunk-stopped-interactions-invalid")
         declared_pairs.add(tuple(pair))
@@ -682,8 +681,7 @@ def check_stopped(manifest_path: Path, results_path: Path) -> dict[str, object]:
             or tuple(ids) in supplied_groups
             or not isinstance(entry["evidence"], str)
             or not entry["evidence"].strip()
-            or entry["result_path"] is not None
-            and not isinstance(entry["result_path"], str)
+            or (entry["result_path"] is not None and not isinstance(entry["result_path"], str))
         ):
             raise ValueError("chunk-stopped-groups-invalid")
         supplied_groups.add(tuple(ids))
@@ -940,7 +938,7 @@ def _check_clean_run(
     if (run / "current.diff").read_bytes() != diff:
         raise ValueError(f"chunk-result-diff-mismatch:{label}")
     validator = Path(__file__).resolve().parents[2] / "shared" / "validate-artifacts.py"
-    validated = subprocess.run(
+    validated = subprocess.run(  # noqa: S603 - argv list, no shell
         [
             sys.executable,
             str(validator),

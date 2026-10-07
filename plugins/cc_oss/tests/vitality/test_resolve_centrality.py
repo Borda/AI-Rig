@@ -10,7 +10,6 @@ import io
 import json
 
 import pytest
-
 import resolve_centrality as rc
 
 _MODS = [("pkg", "src/pkg/__init__.py"), ("pkg.auth", "src/pkg/auth.py")]

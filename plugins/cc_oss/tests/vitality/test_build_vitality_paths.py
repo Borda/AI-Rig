@@ -9,9 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import build_vitality_paths as bvp
+import pytest
 
 
 class _FakeCompleted:
@@ -146,17 +145,24 @@ class TestDryRun:
     never produced, and the hook denial that followed blocked an unrelated question.
     """
 
-    def test_writes_no_sentinels(self, tmp_sentinels: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """--dry-run leaves the sentinel directory empty and exits 0."""
-        assert bvp.main(["--owner", "owner", "--repo", "repo", "--quick", "false", "--dry-run"]) == 0
-        assert list(tmp_sentinels.glob("*")) == []
+    @pytest.mark.parametrize(
+        ("extra_args", "expect_written"),
+        [
+            pytest.param(["--dry-run"], False, id="dry-run-writes-no-sentinels"),
+            pytest.param([], True, id="default-still-writes"),
+        ],
+    )
+    def test_sentinels_written_only_without_dry_run(
+        self, tmp_sentinels: Path, extra_args: list[str], expect_written: bool
+    ) -> None:
+        """--dry-run leaves the sentinel directory empty and exits 0.
+
+        Without the flag the real skill path is unchanged and writes its sentinels.
+        """
+        assert bvp.main(["--owner", "owner", "--repo", "repo", "--quick", "false", *extra_args]) == 0
+        assert (list(tmp_sentinels.glob("*")) != []) is expect_written
 
     def test_announces_what_it_would_write(self, tmp_sentinels: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Each suppressed write is still reported, so a verifier sees the computed value."""
         assert bvp.main(["--owner", "owner", "--repo", "repo", "--quick", "false", "--dry-run"]) == 0
         assert "[dry-run] would write " in capsys.readouterr().out
-
-    def test_default_still_writes(self, tmp_sentinels: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Without the flag the real skill path is unchanged."""
-        assert bvp.main(["--owner", "owner", "--repo", "repo", "--quick", "false"]) == 0
-        assert list(tmp_sentinels.glob("*")) != []

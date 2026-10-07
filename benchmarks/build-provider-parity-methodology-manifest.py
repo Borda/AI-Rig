@@ -14,27 +14,36 @@ import json
 import os
 import sys
 from collections import Counter
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
-
+#: Repository root, from which tracked file paths are made relative.
 ROOT = Path(__file__).resolve().parents[1]
+#: Benchmarks directory that holds the suites, policy and manifests, also added to the import path.
 BENCHMARKS = ROOT / "benchmarks"
-# Self-named so a rename cannot leave the stale-output hint pointing at a missing script.
+#: Self-named so a rename cannot leave the stale-output hint pointing at a missing script.
 REBUILD_COMMAND = f"uv run python {Path(__file__).resolve().relative_to(ROOT).as_posix()}"
+#: Methodology manifest this script writes or verifies.
 OUTPUT_MANIFEST = BENCHMARKS / "manifests" / "provider-parity-methodology.json"
+#: Committed policy file the manifest is seeded from.
 POLICY_SEED = BENCHMARKS / "policy" / "provider-parity-methodology.json"
+#: Expected SHA-256 of the policy seed; a mismatch aborts the build so the seed cannot drift unnoticed.
 POLICY_SEED_SHA256 = "1e5b1cad389513db9402ca2da39f58c1ff9b7cb36b0fdc4a23ce03886e12f1f1"
+#: Revision label of the experiment design; change it when the design changes.
 EXPERIMENT_REVISION = "provider-parity-agentic-nested-package-imports-2026-09-09"
+#: Repository-relative path of the structural task suite.
 TASKS_BENCH = "benchmarks/suites/tasks-bench.json"
+#: Repository-relative path of the agentic task suite.
 TASKS_AGENTIC = "benchmarks/suites/tasks-agentic.json"
-# Root temp dir, not the per-user one: patch-index-locks.json locks canonical_scan_root
-# to /private/tmp/codemap-provider-parity-pl-2.6.5. tempfile.gettempdir() honours $TMPDIR
-# and would name a different directory.
+#: Root temp dir, not the per-user one: patch-index-locks.json locks canonical_scan_root
+#: to /private/tmp/codemap-provider-parity-pl-2.6.5. tempfile.gettempdir() honours $TMPDIR
+#: and would name a different directory.
 CANONICAL_TARGET = Path(
     os.environ.get("CODEMAP_PARITY_REPO")
     or f"{os.sep}tmp{os.sep}codemap-provider-parity-pl-2.6.5"  # portable-paths: canonical-target
 ).resolve()
+#: Identity of the frozen Codemap index of the canonical target (hashes, scan version, module count).
 INDEX_LOCK = {
     "change_reason": (
         "Scanner schema 13 preserves static reverse-import edges for relative imports and known from-package "
@@ -50,6 +59,7 @@ INDEX_LOCK = {
     "scan_version": 13,
     "scanned_at": "2026-08-06T09:04:54.432797+00:00",
 }
+#: Thresholds a future run must meet for Codemap to be accepted, copied into the manifest.
 PRODUCT_ACCEPTANCE_POLICY = {
     "efficiency_path": {
         "c_a_gross_input_ratio_95_upper": "< 1.00",
@@ -64,8 +74,8 @@ PRODUCT_ACCEPTANCE_POLICY = {
     "historical_evidence": "Historical nonpoolable evidence cannot satisfy this prospective policy.",
 }
 
-# These descriptions are current suite metadata, not snapshots of a previous
-# run. Task IDs, ordering, hashes, and policy rows are rebuilt from each suite.
+#: These descriptions are current suite metadata, not snapshots of a previous
+#: run. Task IDs, ordering, hashes, and policy rows are rebuilt from each suite.
 SUITE_METADATA: dict[str, dict[str, str]] = {
     TASKS_AGENTIC: {
         "current_consumer": "run-claude-agentic.py and run-codex-agentic.py defaults",
@@ -103,6 +113,7 @@ SUITE_METADATA: dict[str, dict[str, str]] = {
         "root_shape": "bare_list",
     },
 }
+#: Raw task types whose oracle is classed as a static reference rather than independent.
 STATIC_REFERENCE_TYPES = frozenset({"symbol_extraction", "real_issue"})
 
 sys.path.insert(0, str(BENCHMARKS))
@@ -245,9 +256,9 @@ def _build_suites(policy: Mapping[str, Any]) -> list[dict[str, Any]]:
     return suites
 
 
-# Runners whose implementation lives in a package behind a thin re-export shim: the pin has to
-# cover the package too, or it would only prove the shim is unchanged. Keyed exactly as before so
-# every consumer of ``artifact_sha256`` keeps reading the same names.
+#: Runners whose implementation lives in a package behind a thin re-export shim: the pin has to
+#: cover the package too, or it would only prove the shim is unchanged. Keyed exactly as before so
+#: every consumer of ``artifact_sha256`` keeps reading the same names.
 RUNNER_PACKAGES = {
     "run_claude_agentic": ("benchmarks/run-claude-agentic.py", "benchmarks/_bench_claude/agentic"),
     "run_claude_structural": ("benchmarks/run-claude-structural.py", "benchmarks/_bench_claude/structural"),

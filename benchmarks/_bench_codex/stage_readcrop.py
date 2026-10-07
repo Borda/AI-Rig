@@ -10,23 +10,39 @@ import ast
 import hashlib
 import importlib.util
 import json
-from pathlib import Path
 import re
 import sys
 import time
-from typing import Any, Mapping
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
 
-
+#: The ``benchmarks/`` directory, one level above this package.
 BENCHMARKS = Path(__file__).resolve().parents[1]
+#: The repository root, the parent of the ``benchmarks/`` directory.
 ROOT = BENCHMARKS.parent
+#: Task suite file for the read-crop stage.
 TASKS_PATH = BENCHMARKS / "suites" / "tasks-readcrop.json"
+#: Provider-parity methodology manifest that governs the read-crop stage.
 METHODOLOGY_PATH = BENCHMARKS / "manifests" / "provider-parity-methodology.json"
+#: Structural runner script loaded for arm isolation; its hash is recorded in run provenance.
 STRUCTURAL_PATH = BENCHMARKS / "run-codex-structural.py"
+#: Canonical arm labels the read-crop stage runs: plain, optional Codemap, required Codemap.
 ARMS = ("A_plain", "B_auto", "C_strict")
+#: Map from stage arm label to the label used by the native structural runner; every arm maps to itself.
 _NATIVE_ARMS = {"A_plain": "A_plain", "B_auto": "B_auto", "C_strict": "C_strict"}
+#: Pattern extracting the JSON payload between the read-crop answer begin and end markers.
 _ANSWER_RE = re.compile(r"BEGIN_READ_CROP_JSON\s*(?P<payload>\{.*?\})\s*END_READ_CROP_JSON", re.DOTALL)
 
 sys.path.insert(0, str(BENCHMARKS))
+from _bench_common.paid_lifecycle import (  # noqa: E402
+    PaidStageCallbacks,
+    paid_approval_matches,
+    run_paid_stage,
+    verify_checksums,
+    write_checksums,
+)
+from _bench_common.presentation import fmt_time, fmt_tok, format_artifact_block, format_probe_row  # noqa: E402
 from _bench_common.provider_parity_contracts import (  # noqa: E402
     canonical_task_hash,
     fresh_input_tokens,
@@ -42,22 +58,10 @@ from _bench_common.readcrop_contracts import (  # noqa: E402
     score_readcrop_answer,
     validate_provider_binding,
 )
-from _bench_common.paid_lifecycle import (  # noqa: E402
-    PaidStageCallbacks,
-    paid_approval_matches,
-    run_paid_stage,
-    verify_checksums,
-    write_checksums,
-)
+
 from . import runtime  # noqa: E402
-from _bench_common.presentation import (  # noqa: E402
-    format_artifact_block,
-    format_probe_row,
-    fmt_time,
-    fmt_tok,
-)
 
-
+#: Cache for the structural runner module, filled the first time ``_structural()`` loads it.
 _STRUCTURAL_MODULE: Any = None
 
 
@@ -743,7 +747,10 @@ def run_stage(
             f"--model {model} --tasks {task_ids} --dry-run\n"
             "Do not reuse the previous --paid-approval value or run directory."
         )
-    assert auth_source is not None and run_dir is not None
+    if auth_source is None:
+        raise RuntimeError("auth_source must not be None")
+    if run_dir is None:
+        raise RuntimeError("run_dir must not be None")
     run_path = run_paid(
         tasks,
         scope=scope,

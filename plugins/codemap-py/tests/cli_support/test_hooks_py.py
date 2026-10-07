@@ -40,6 +40,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -50,7 +51,8 @@ _SEED = _HOOKS / "seed-session.py"
 _SKILL = _HOOKS / "log-skill-start.py"
 
 _INJECT_SPEC = importlib.util.spec_from_file_location("codemap_inject_preamble", _INJECT)
-assert _INJECT_SPEC and _INJECT_SPEC.loader
+assert _INJECT_SPEC
+assert _INJECT_SPEC.loader
 _INJECT_MODULE = importlib.util.module_from_spec(_INJECT_SPEC)
 _INJECT_SPEC.loader.exec_module(_INJECT_MODULE)
 
@@ -257,7 +259,7 @@ class TestInjectPreambleCurrency:
     @pytest.mark.parametrize("runtime", ["claude", "codex"])
     @pytest.mark.parametrize("indexed", [False, True])
     @pytest.mark.parametrize(
-        "source,config,ignore",
+        ("source", "config", "ignore"),
         [
             pytest.param(None, "", "", id="tooling-only"),
             pytest.param(".venv/lib/pkg.py", "", "", id="virtualenv-only"),
@@ -999,7 +1001,8 @@ class TestInjectPreambleSessionMarker:
         time.sleep(0.01)
         second = _run_inject_with_event(repo, idx_dir, plugin_root, tmpdir, {"prompt": "hi", "session_id": "sid-dedup"})
 
-        assert first.returncode == 0 and second.returncode == 0
+        assert first.returncode == 0
+        assert second.returncode == 0
         assert second.stdout == "", "second current-index turn must dedup to a silent exit"
         second_ts = json.loads(_session_marker(repo).read_text())["ts"]
         assert second_ts >= first_ts, "marker ts must advance even on a deduped turn"
@@ -1063,7 +1066,8 @@ class TestInjectPreambleSessionMarker:
             runtime="codex",
         )
 
-        assert claude.returncode == 0 and codex.returncode == 0
+        assert claude.returncode == 0
+        assert codex.returncode == 0
         assert json.loads(_session_marker(repo, "claude").read_text())["session_id"] == "claude-session"
         assert json.loads(_session_marker(repo, "codex").read_text())["session_id"] == "codex-thread"
 
@@ -1276,7 +1280,7 @@ class TestGuardCommandAnchoring:
     """
 
     _SESSION = "sess-anchor"
-    _MODULES = ["mypackage.auth", "mypackage/auth"]
+    _MODULES: ClassVar = ["mypackage.auth", "mypackage/auth"]
 
     @pytest.mark.parametrize(
         "command",
@@ -1462,7 +1466,8 @@ class TestSeedSession:
         claude = _run_seed({"session_id": "claude-session"}, repo, tmpdir)
         codex = _run_seed({"thread_id": "codex-thread"}, repo, tmpdir, runtime="codex")
 
-        assert claude.returncode == 0 and codex.returncode == 0
+        assert claude.returncode == 0
+        assert codex.returncode == 0
         assert sidfile.read_text() == "claude-session"
 
 
@@ -1519,22 +1524,17 @@ class TestLogSkillStart:
         assert records[0]["runtime"] == "claude"
         assert records[0]["v"] not in ("", "?")
 
-    def test_non_codemap_skill_ignored(self, tmp_path: Path) -> None:
-        """A non-codemap skill is ignored — no record written."""
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            pytest.param({"tool_name": "Skill", "tool_input": {"skill": "foundry:audit"}}, id="non-codemap-skill"),
+            pytest.param({"tool_name": "Bash", "tool_input": {"command": "ls"}}, id="non-skill-tool"),
+        ],
+    )
+    def test_unrelated_call_ignored(self, tmp_path: Path, payload: dict) -> None:
+        """A non-codemap skill or a non-Skill tool call is ignored — no record written."""
         tmpdir = tmp_path / "tmp"
         tmpdir.mkdir()
-        payload = {"tool_name": "Skill", "tool_input": {"skill": "foundry:audit"}}
-
-        result = _run_skill(payload, tmp_path, tmpdir)
-
-        assert result.returncode == 0, result.stderr
-        assert _skill_records(tmp_path) == []
-
-    def test_non_skill_tool_ignored(self, tmp_path: Path) -> None:
-        """A non-Skill tool call is ignored — no record written."""
-        tmpdir = tmp_path / "tmp"
-        tmpdir.mkdir()
-        payload = {"tool_name": "Bash", "tool_input": {"command": "ls"}}
 
         result = _run_skill(payload, tmp_path, tmpdir)
 
@@ -1623,20 +1623,34 @@ class TestSessionKeyAgreement:
         assert (tmpdir / f"codemap-{repo.name}-session").read_text() == "sid-sub"
         assert not (tmpdir / f"codemap-{nested.name}-session").exists()
 
-    def test_tool_hook_from_subdir_joins_the_seeded_session(self, tmp_path: Path) -> None:
-        """A tool record written from a subdirectory carries the seeded session id."""
+    @pytest.mark.parametrize(
+        ("hook", "payload", "layer"),
+        [
+            pytest.param(_TOOL_HOOK, {"tool_name": "Grep", "tool_input": {"pattern": "x"}}, "tools", id="tool-hook"),
+            pytest.param(
+                _SKILL,
+                {"tool_name": "Skill", "tool_input": {"skill": "codemap-py:query-code"}},
+                "skills",
+                id="skill-hook",
+            ),
+        ],
+    )
+    def test_hook_from_subdir_joins_the_seeded_session(
+        self, tmp_path: Path, hook: Path, payload: dict, layer: str
+    ) -> None:
+        """A tool or skill record written from a subdirectory carries the seeded session id."""
         tmpdir, repo, nested = self._repo_with_subdir(tmp_path)
         (tmpdir / f"codemap-{repo.name}-session").write_text("sid-sub")
 
-        result = self._run(self._TOOL_HOOK, {"tool_name": "Grep", "tool_input": {"pattern": "x"}}, nested, tmpdir)
+        result = self._run(hook, payload, nested, tmpdir)
 
         assert result.returncode == 0, result.stderr
         # Shard is asserted at the REPOSITORY root, not at *nested*: the hook anchors its
         # log dir to the project root, so a subdirectory invocation joins the same shard
         # the cli layer writes. Asserting `nested/.cache/...` here pinned the split-log
         # defect itself — two halves of one session in two directories, neither an error.
-        shard = repo / ".cache" / "codemap" / "logs" / "claude" / "tools_sid-sub.jsonl"
-        assert shard.exists(), "subdirectory tool record did not join the seeded session shard"
+        shard = repo / ".cache" / "codemap" / "logs" / "claude" / f"{layer}_sid-sub.jsonl"
+        assert shard.exists(), f"subdirectory {layer} record did not join the seeded session shard"
         record = json.loads(shard.read_text().strip())
         assert record["session"] == "sid-sub"
         assert record["runtime"] == "claude"
@@ -1683,22 +1697,6 @@ class TestSessionKeyAgreement:
         record = json.loads(shard.read_text())
         assert record["session"] == "environment-session"
         assert record["project"] == repo.resolve().as_posix()
-
-    def test_skill_hook_from_subdir_joins_the_seeded_session(self, tmp_path: Path) -> None:
-        """A skill record written from a subdirectory carries the same seeded session id."""
-        tmpdir, repo, nested = self._repo_with_subdir(tmp_path)
-        (tmpdir / f"codemap-{repo.name}-session").write_text("sid-sub")
-        payload = {"tool_name": "Skill", "tool_input": {"skill": "codemap-py:query-code"}}
-
-        result = self._run(_SKILL, payload, nested, tmpdir)
-
-        assert result.returncode == 0, result.stderr
-        shard = repo / ".cache" / "codemap" / "logs" / "claude" / "skills_sid-sub.jsonl"
-        assert shard.exists(), "subdirectory skill record did not join the seeded session shard"
-        record = json.loads(shard.read_text().strip())
-        assert record["session"] == "sid-sub"
-        assert record["runtime"] == "claude"
-        assert record["v"] not in ("", "?")
 
     def test_skill_hook_does_not_mint_a_second_session(self, tmp_path: Path) -> None:
         """Reading the marker from a subdirectory must not look absent and mint a rival id."""

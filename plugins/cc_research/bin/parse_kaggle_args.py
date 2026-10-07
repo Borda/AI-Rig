@@ -45,10 +45,14 @@ from pathlib import Path
 #: hyphenated and so not importable, and a shared module would add import machinery to a
 #: script five skills already depend on. Keep the two regexes in step.
 _KEEP_RE = re.compile(r'--keep[ \t\r\f\v]+"([^"]+)"')
+#: Matches a --type <lowercase word> option and captures the word.
 _TYPE_RE = re.compile(r"--type[ \t\r\f\v]+([a-z]+)")
+#: Matches a --resume <value> option and captures the value, which is the run to resume.
 _RESUME_RE = re.compile(r"--resume[ \t\r\f\v]+(\S+)")
 
+#: Compaction-contract file that is removed when the skill starts a fresh run.
 _CONTRACT = Path(".temp/state/skill-contract.md")
+#: Directory holding Kaggle experiment runs, created if missing when a run starts.
 _EXPERIMENTS_DIR = Path(".experiments/kaggle")
 
 

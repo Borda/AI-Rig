@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import build_analyse_paths as bap
+import pytest
 
 
 class _FakeCompleted:
@@ -74,10 +73,24 @@ def test_cache_slug_keeps_more_than_report_slug(raw: str, expected: str) -> None
     assert bap.cache_slug(raw) == expected
 
 
-def test_build_report_path() -> None:
-    """The report path embeds subdir, slug, argument and date."""
-    got = bap.build_report_path("thread", "owner-repo", "42", "2026-09-11")
-    assert got == ".reports/analyse/thread/output-analyse-thread-owner-repo-42-2026-09-11.md"
+@pytest.mark.parametrize(
+    ("clean_args", "expected"),
+    [
+        pytest.param(
+            "42",
+            ".reports/analyse/thread/output-analyse-thread-owner-repo-42-2026-09-11.md",
+            id="embeds-subdir-slug-argument-and-date",
+        ),
+        pytest.param(
+            "../../etc",
+            ".reports/analyse/thread/output-analyse-thread-owner-repo-etc-2026-09-11.md",
+            id="traversal-shaped-clean-args-cannot-escape-subdir",
+        ),
+    ],
+)
+def test_build_report_path(clean_args: str, expected: str) -> None:
+    """The report path embeds subdir, slug, argument and date; a traversal-shaped ``clean_args`` cannot escape it."""
+    assert bap.build_report_path("thread", "owner-repo", clean_args, "2026-09-11") == expected
 
 
 def test_build_cache_path_disabled_without_slug() -> None:
@@ -97,12 +110,6 @@ def test_build_cache_path_disabled_without_slug() -> None:
 def test_sanitize_clean_args(raw: str, expected: str) -> None:
     """Only alphanumerics and dashes survive sanitisation, mirroring ``report_slug``'s allowlist."""
     assert bap.sanitize_clean_args(raw) == expected
-
-
-def test_build_report_path_sanitizes_clean_args() -> None:
-    """A traversal-shaped ``clean_args`` cannot escape the report subdirectory."""
-    got = bap.build_report_path("thread", "owner-repo", "../../etc", "2026-09-11")
-    assert got == ".reports/analyse/thread/output-analyse-thread-owner-repo-etc-2026-09-11.md"
 
 
 def test_build_cache_path_sanitizes_clean_args() -> None:
@@ -215,17 +222,24 @@ class TestDryRun:
     never produced, and the hook denial that followed blocked an unrelated question.
     """
 
-    def test_writes_no_sentinels(self, tmp_sentinels: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """--dry-run leaves the sentinel directory empty and exits 0."""
-        assert bap.main(["--clean-args", "42", "--today", "2026-09-11", "--dry-run"]) == 0
-        assert list(tmp_sentinels.glob("*")) == []
+    @pytest.mark.parametrize(
+        ("extra_args", "expect_written"),
+        [
+            pytest.param(["--dry-run"], False, id="dry-run-writes-no-sentinels"),
+            pytest.param([], True, id="default-still-writes"),
+        ],
+    )
+    def test_sentinels_written_only_without_dry_run(
+        self, tmp_sentinels: Path, extra_args: list[str], expect_written: bool
+    ) -> None:
+        """--dry-run leaves the sentinel directory empty and exits 0.
+
+        Without the flag the real skill path is unchanged and writes its sentinels.
+        """
+        assert bap.main(["--clean-args", "42", "--today", "2026-09-11", *extra_args]) == 0
+        assert (list(tmp_sentinels.glob("*")) != []) is expect_written
 
     def test_announces_what_it_would_write(self, tmp_sentinels: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Each suppressed write is still reported, so a verifier sees the computed value."""
         assert bap.main(["--clean-args", "42", "--today", "2026-09-11", "--dry-run"]) == 0
         assert "[dry-run] would write " in capsys.readouterr().out
-
-    def test_default_still_writes(self, tmp_sentinels: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Without the flag the real skill path is unchanged."""
-        assert bap.main(["--clean-args", "42", "--today", "2026-09-11"]) == 0
-        assert list(tmp_sentinels.glob("*")) != []

@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 
-
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _BUILDER = _PLUGIN_ROOT / "scripts" / "build_package.py"
 if str(_BUILDER.parent) not in sys.path:

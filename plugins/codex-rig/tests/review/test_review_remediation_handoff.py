@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 import test_review_batches as batches
 import test_review_prepare as preparation
 from test_review_completion_gate import FINDER, PLUGIN_ROOT, _assessed_pr, _finalize_parent_fallback, _module
@@ -198,7 +197,8 @@ def _finalize_native_review(
         if manifest.get("manifest_kind") == "batched-review"
         else json.loads((run / "inspection-plan.json").read_bytes())
     )
-    assert manifest["passes"] and all(item["mode"] == "inspection" for item in manifest["passes"])
+    assert manifest["passes"]
+    assert all(item["mode"] == "inspection" for item in manifest["passes"])
     assert {item["role"] for item in manifest["passes"]} == set(children)
     validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
     gap = "Synthetic offline native receipts; no live reviewer launched."
@@ -341,7 +341,8 @@ def _finalize_native_review(
     producer_files += [path for path in home.rglob("*") if path.is_file()]
     before = {path: path.read_bytes() for path in producer_files}
     result_path = run / "result.json"
-    assert not result_path.exists() and not (run / "result.candidate.json").exists()
+    assert not result_path.exists()
+    assert not (run / "result.candidate.json").exists()
     finalized = subprocess.run(
         [
             sys.executable,
@@ -388,7 +389,8 @@ def _finalize_native_review(
         check=False,
     )
     if failure != "none":
-        assert finalized.returncode == 1 and outcome["promoted"] is False, outcome
+        assert finalized.returncode == 1, outcome
+        assert outcome["promoted"] is False, outcome
         assert outcome["steps"][-1]["step"] == "review-validate", outcome
         expected = {
             "malformed-proof": "review-inspection-context-read-call-mismatch:challenger:2",
@@ -397,9 +399,11 @@ def _finalize_native_review(
         }[failure]
         assert expected in json.dumps(outcome), outcome
         assert not result_path.exists()
-        assert completed.returncode == 1 and completed.stdout == b""
+        assert completed.returncode == 1
+        assert completed.stdout == b""
     else:
-        assert finalized.returncode == 0 and outcome["promoted"] is True, outcome
+        assert finalized.returncode == 0, outcome
+        assert outcome["promoted"] is True, outcome
         assert outcome["result"] == str(result_path)
         result = json.loads(result_path.read_bytes())
         assert result["metadata"]["specialist_passes"] == manifest["passes"]
@@ -456,7 +460,8 @@ def test_fast_native_review_completes_and_enters_intake(tmp_path: Path, batched:
     summary = json.loads((run / "inspection-summary.json").read_bytes())
     assert summary["actual_mode"] == "independent-spawned"
     assert summary["capacity_limited"] is False
-    assert summary["independence_required"] is True and summary["independence_satisfied"] is True
+    assert summary["independence_required"] is True
+    assert summary["independence_satisfied"] is True
     _finalize_native_review(tmp_path, run, home, children)
 
 
@@ -478,7 +483,8 @@ def test_fast_conditional_review_completes_with_existing_policy(tmp_path: Path, 
                 assert summary["actual_mode"] == "independent-spawned"
                 assert summary["independence_satisfied"] is False
                 conditional_waves.append(wave["wave"])
-        assert conditional_waves and min(conditional_waves) > 1
+        assert conditional_waves
+        assert min(conditional_waves) > 1
         assembled = batches._batch_command(run, "assemble-batches", home)
         final = json.loads((run / "batches/interactions/specialist-manifest.json").read_bytes())
         validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
@@ -495,7 +501,8 @@ def test_fast_conditional_review_completes_with_existing_policy(tmp_path: Path, 
     assert assembled.returncode == 0, assembled.stderr
     summary = json.loads((run / "inspection-summary.json").read_bytes())
     assert summary["actual_mode"] == "independent-spawned"
-    assert summary["independence_required"] is batched and summary["independence_satisfied"] is batched
+    assert summary["independence_required"] is batched
+    assert summary["independence_satisfied"] is batched
     _finalize_native_review(tmp_path, run, home, children)
 
 
@@ -516,7 +523,8 @@ def test_conditional_native_roster_does_not_satisfy_explicit_core_independence(t
     assembled = preparation._assemble(run, home)
     assert assembled.returncode == 0, assembled.stderr
     summary = json.loads((run / "inspection-summary.json").read_bytes())
-    assert summary["independence_required"] is True and summary["independence_satisfied"] is False
+    assert summary["independence_required"] is True
+    assert summary["independence_satisfied"] is False
     _finalize_native_review(tmp_path, run, home, children, "conditional-requirement")
 
 

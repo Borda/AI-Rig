@@ -8,13 +8,13 @@ prompt withholding the convention it scores against.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from benchmarks._bench_common import agentic_contracts
-
 
 _AGENTIC_TASK_IDS = (
     "BA-01",
@@ -151,22 +151,28 @@ def test_same_named_scripts_outside_any_package_stay_distinct(nested_package_tre
     assert oracle.expected["production_importers"] == ("examples.dcgan.train", "examples.fabric.train")
 
 
-def test_mixed_from_import_credits_package_and_submodule(mixed_import_tree: Path) -> None:
-    """A partially resolving ``from`` import still credits its package.
+@pytest.mark.parametrize(
+    ("task_overrides", "source_root"),
+    [
+        pytest.param({}, lambda tree: tree, id="mixed-from-import-credits-package-and-submodule"),
+        pytest.param(
+            {"primary_module": "pkg.utilities.parsing"},
+            lambda tree: tree,
+            id="concrete-submodule-keeps-credit-alongside-package",
+        ),
+        pytest.param({}, lambda tree: tree.parent, id="src-layout-directory-does-not-prefix-module-names"),
+    ],
+)
+def test_mixed_from_import_credits_package_and_submodule(
+    mixed_import_tree: Path, task_overrides: dict[str, Any], source_root: Callable[[Path], Path]
+) -> None:
+    """A partially resolving ``from`` import still credits its package, and the concrete submodule keeps its credit.
 
     Before the fix a single concretely resolving alias suppressed package credit entirely, so the importer the task
-    exists to find never appeared in the expected set and a correct answer was scored as a false positive.
+    exists to find never appeared in the expected set and a correct answer was scored as a false positive. A source root
+    containing ``src/`` still reports package-relative module names.
     """
-    oracle = agentic_contracts.build_oracle(_task(), mixed_import_tree)
-    assert oracle.expected["production_importers"] == ("pkg.consumer",)
-
-
-def test_package_import_credit_is_not_all_or_nothing(mixed_import_tree: Path) -> None:
-    """The concrete submodule keeps its credit alongside the package."""
-    oracle = agentic_contracts.build_oracle(
-        _task(primary_module="pkg.utilities.parsing"),
-        mixed_import_tree,
-    )
+    oracle = agentic_contracts.build_oracle(_task(**task_overrides), source_root(mixed_import_tree))
     assert oracle.expected["production_importers"] == ("pkg.consumer",)
 
 
@@ -220,13 +226,6 @@ def test_duplicate_ranking_is_rejected_before_semantic_grading() -> None:
         agentic_contracts.parse_labeled_answer(
             task, 'BEGIN_ANSWER_JSON\n{"ranking": ["pkg.a", "pkg.a"]}\nEND_ANSWER_JSON'
         )
-
-
-def test_src_layout_directory_does_not_prefix_oracle_module_names(mixed_import_tree: Path) -> None:
-    """A source root containing ``src/`` still reports package-relative module names."""
-    oracle = agentic_contracts.build_oracle(_task(), mixed_import_tree.parent)
-
-    assert oracle.expected["production_importers"] == ("pkg.consumer",)
 
 
 def test_ba12_defers_to_the_shared_test_module_convention(agentic_tasks: list[dict[str, Any]]) -> None:

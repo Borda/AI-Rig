@@ -35,6 +35,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+#: Deliverable placeholder meaning the agent writes no file and is judged only by its returned envelope.
 _ENVELOPE_ONLY = "-"
 
 

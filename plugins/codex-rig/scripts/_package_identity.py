@@ -48,12 +48,17 @@ from typing import Any, NoReturn
 
 from _safe_package_io import inventory_package_files, read_safe_file
 
-
+#: Largest package manifest, in bytes (4 MiB), that package verification will read.
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
+#: Largest individual package file, in bytes (16 MiB), that package verification will read.
 MAX_PACKAGE_FILE_BYTES = 16 * 1024 * 1024
+#: Directory names skipped when inventorying package files (caches and generated report folders).
 EXCLUDED_PARTS = frozenset({"__pycache__", ".pytest_cache", ".reports"})
+#: File names skipped when inventorying package files, including the manifest that records the inventory.
 EXCLUDED_FILES = frozenset({".coverage", "package-manifest.json"})
+#: Pattern for a lowercase 64-character hexadecimal SHA-256 digest string.
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+#: Pattern for a four-digit octal file-mode string such as 0644.
 MODE_PATTERN = re.compile(r"0[0-7]{3}")
 
 

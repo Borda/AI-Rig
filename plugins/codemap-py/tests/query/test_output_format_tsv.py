@@ -36,37 +36,27 @@ class TestTabularKey:
 
         assert _tabular_key(payload) == "central"
 
-    def test_rejects_two_candidate_tables(self) -> None:
-        """Two tables are ambiguous — TSV has one header, so there is no correct pick."""
-        payload = {"a": [{"x": 1}], "b": [{"y": 2}]}
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            pytest.param({"a": [{"x": 1}], "b": [{"y": 2}]}, id="two-candidate-tables"),
+            pytest.param({"rows": [{"x": 1}, {"x": 1, "y": 2}]}, id="rows-with-differing-keys"),
+            pytest.param({"rows": [{"name": "a", "tags": ["x", "y"]}]}, id="nested-value"),
+            pytest.param({"imported_by": ["a.b", "c.d"], "importer_count": 2}, id="list-of-strings"),
+            pytest.param({"central": []}, id="empty-table"),
+            pytest.param({"rows": [{}, {}]}, id="zero-column-table"),
+        ],
+    )
+    def test_rejects_payload_that_is_not_one_flat_table(self, payload: dict) -> None:
+        """A payload with no single renderable table is refused (``None``) rather than flattened.
 
-        assert _tabular_key(payload) is None
-
-    def test_rejects_rows_with_differing_keys(self) -> None:
-        """Ragged rows cannot share one header line without silently dropping a field."""
-        payload = {"rows": [{"x": 1}, {"x": 1, "y": 2}]}
-
-        assert _tabular_key(payload) is None
-
-    def test_rejects_a_nested_value(self) -> None:
-        """A list or dict in a cell must be refused, never stringified.
-
-        Stringifying produces a cell no consumer can parse back, which is worse than an explicit refusal because it
-        fails silently.
+        Two tables are ambiguous (TSV has one header, so there is no correct pick); ragged rows cannot share one header
+        line without silently dropping a field; a list or dict in a cell must be refused, never stringified, because a
+        stringified cell no consumer can parse back fails silently; ``rdeps``-style flat name lists are not tables and
+        JSON already encodes them tightly; an empty list carries no column order, so there is no header to emit; rows
+        with no keys render as blank lines that lose the row count entirely.
         """
-        payload = {"rows": [{"name": "a", "tags": ["x", "y"]}]}
-
         assert _tabular_key(payload) is None
-
-    def test_rejects_a_list_of_strings(self) -> None:
-        """``rdeps``-style flat name lists are not tables; JSON already encodes them tightly."""
-        payload = {"imported_by": ["a.b", "c.d"], "importer_count": 2}
-
-        assert _tabular_key(payload) is None
-
-    def test_rejects_an_empty_table(self) -> None:
-        """An empty list carries no column order, so there is no header to emit."""
-        assert _tabular_key({"central": []}) is None
 
     def test_a_lone_empty_result_is_an_empty_table_not_an_error(self) -> None:
         """A query that matched nothing is data, not a format failure.
@@ -79,10 +69,6 @@ class TestTabularKey:
     def test_two_lists_are_not_an_unambiguous_empty_result(self) -> None:
         """With two lists present, an empty one is not unambiguously the result."""
         assert _query_mod._empty_table_key({"a": [], "b": [{"x": 1}]}) is None
-
-    def test_rejects_a_zero_column_table(self) -> None:
-        """Rows with no keys render as blank lines that lose the row count entirely."""
-        assert _tabular_key({"rows": [{}, {}]}) is None
 
     def test_a_non_qualifying_sibling_list_does_not_veto_a_valid_table(self) -> None:
         """One renderable table beside an unrenderable list is still renderable.

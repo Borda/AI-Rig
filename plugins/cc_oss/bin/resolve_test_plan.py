@@ -34,10 +34,15 @@ import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
+#: Matches Python test file names, ``test_*.py`` or ``*_test.py``.
 _TEST_NAME = re.compile(r"(^test_.*|.*_test)\.py$")
+#: Contributor documentation files scanned for the project's documented test commands.
 _DOC_SOURCES = ("AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", ".github/CONTRIBUTING.md")
+#: Matches inline Markdown code spans, capturing the text between the backticks.
 _CODE_SPAN = re.compile(r"`([^`\n]+)`")
+#: Recognizes a test runner invocation (pytest, make test/check, tox, nox) in a documented command.
 _RUNNER_HINT = re.compile(r"\b(pytest|make (?:test|check)|tox|nox)\b")
+#: Layout prefixes dropped from a file path when deriving its dotted module name.
 _SOURCE_ROOTS = ("src/", "lib/")
 
 
@@ -53,7 +58,7 @@ def _run(args: list[str], cwd: Path, timeout: int = 60) -> tuple[int, str]:
         ``(returncode, stdout)``; the code is 1 and stdout empty when the command cannot run at all.
     """
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S603 - argv list, no shell
             args, cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False, encoding="utf-8"
         )
     except (OSError, subprocess.SubprocessError):

@@ -20,19 +20,20 @@ import argparse
 import hashlib
 import json
 import re
-from collections import deque
-from pathlib import Path
 import subprocess
 import sys
+from collections import deque
+from pathlib import Path
 from typing import Any, TypedDict
 
 # Keep sibling imports valid when repository-wide doctest collection imports this
 # file without launching it as a script from its installed ``bin`` directory.
+#: This script's own directory, put on sys.path so sibling modules import even when the file is not run directly.
 _BIN_DIRECTORY = str(Path(__file__).resolve().parent)
 if _BIN_DIRECTORY not in sys.path:
     sys.path.insert(0, _BIN_DIRECTORY)
 
-from bridge_call import BridgePaths, DEFAULT_EFFORT, DEFAULT_MODEL, DEFAULT_TIMEOUTS, Request, run_request  # noqa: E402
+from bridge_call import DEFAULT_EFFORT, DEFAULT_MODEL, DEFAULT_TIMEOUTS, BridgePaths, Request, run_request  # noqa: E402
 
 
 class PayloadIdentity(TypedDict):
@@ -120,6 +121,7 @@ def diagnose(direction: str, workspace: Path, live: bool) -> DiagnoseResult:
     }
 
 
+#: Relative paths whose presence and contents define the installed runtime closure hashed into the payload fingerprint.
 PAYLOAD_FILES = (
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
@@ -182,6 +184,7 @@ def _regular_payload_file(path: Path) -> bool:
     return path.is_file() and not path.is_symlink()
 
 
+#: Number of trailing health.jsonl lines read when summarizing faults, bounding work on an unrotated log.
 MAX_HEALTH_LINES = 5_000
 
 
@@ -243,11 +246,10 @@ def _static_result(target: str, baseline: dict[str, list[str]]) -> StaticResult:
     executable = "codex" if target == "codex" else "claude"
     command = [executable, "exec", "--help"] if target == "codex" else [executable, "--help"]
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv list, no shell
             command,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             encoding="utf-8",
             errors="replace",
             check=False,

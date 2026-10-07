@@ -34,15 +34,8 @@ from pathlib import Path  # noqa: F401
 
 from codemap_py.schema import EntityType, Resolution, SymbolType  # noqa: F401
 
-from .calls import (  # noqa: F401
-    BUILTINS,
-    _extract_class_symbol,
-    _walk_calls,
-    extract_symbols,
-    resolve_call,
-    resolve_call_chain,
-)
-from .discovery import (  # noqa: F401
+from .calls import BUILTINS, _extract_class_symbol, _walk_calls, extract_symbols, resolve_call, resolve_call_chain
+from .discovery import (
     _DOCS_PATH_RE,
     _EXAMPLES_PATH_RE,
     _GIT_TIMEOUT_S,
@@ -69,7 +62,7 @@ from .discovery import (  # noqa: F401
     has_main_guard,
     path_to_module,
 )
-from .docs_xrefs import (  # noqa: F401
+from .docs_xrefs import (
     _CONFIG_SCAN_PATTERNS,
     _DOTTED_NAME_RE,
     _MKDOCS_BACKTICK_RE,
@@ -85,11 +78,11 @@ from .docs_xrefs import (  # noqa: F401
     scan_mkdocs_xrefs,
     scan_rst_xrefs,
 )
-from .exclusions import (  # noqa: F401
-    Exclusions,
+from .exclusions import (
+    _GLOB_META_RE,
     INDEXED_PATHSPEC,
     SKIP_DIRS,
-    _GLOB_META_RE,
+    Exclusions,
     _load_exclusions,
     _match_exclusion,
     _parse_codemap_exclude_toml,
@@ -98,7 +91,7 @@ from .exclusions import (  # noqa: F401
     is_excluded,
     load_src_roots,
 )
-from .imports import (  # noqa: F401
+from .imports import (
     _STDLIB_MODULES,
     _drop_top_level_rebindings,
     _extract_imports_and_scope,
@@ -114,7 +107,7 @@ from .imports import (  # noqa: F401
     extract_module_symbol_alias_limitations,
     extract_module_symbol_aliases,
 )
-from .mocks import (  # noqa: F401
+from .mocks import (
     _MOCK_FORM_CALL,
     _MOCK_FORM_DECORATOR,
     _MOCK_FORM_MOCKER,
@@ -125,18 +118,9 @@ from .mocks import (  # noqa: F401
     _resolve_patch_object,
     extract_mock_patches,
 )
-from .models import (  # noqa: F401
-    CallEdge,
-    Symbol,
-    _DOCSTRING_FIRST_LINE_MAX,
-    _docstring_fields,
-)
-from .parse_file import (  # noqa: F401
-    _parse_file,
-    _parse_file_star,
-    _strip_stub_call_edges,
-)
-from .test_tooling import (  # noqa: F401
+from .models import _DOCSTRING_FIRST_LINE_MAX, CallEdge, Symbol, _docstring_fields
+from .parse_file import _parse_file, _parse_file_star, _strip_stub_call_edges
+from .test_tooling import (
     _PYTEST_BUILTIN_FIXTURES,
     _SUBPROCESS_PY_TOKENS,
     _body_yields,
@@ -160,11 +144,8 @@ from .test_tooling import (  # noqa: F401
 
 __all__ = [
     "BUILTINS",
-    "CallEdge",
-    "Exclusions",
     "INDEXED_PATHSPEC",
     "SKIP_DIRS",
-    "Symbol",
     "_CONFIG_SCAN_PATTERNS",
     "_DOCSTRING_FIRST_LINE_MAX",
     "_DOCS_PATH_RE",
@@ -185,6 +166,9 @@ __all__ = [
     "_STDLIB_MODULES",
     "_SUBPROCESS_PY_TOKENS",
     "_TEST_PATH_RE",
+    "CallEdge",
+    "Exclusions",
+    "Symbol",
     "_body_yields",
     "_classify_entity",
     "_collect_module_aliases",

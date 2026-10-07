@@ -36,41 +36,52 @@ class TestClassify:
         tier, reason = rit.classify(payload, _callers(("pkg.core::run", "src/pkg/core.py")))
         assert (tier, "pkg.core::run" in reason) == ("FULL", True)
 
-    def test_public_symbol_without_internal_callers_is_full(self) -> None:
-        """A changed public function is user-facing API even when nothing inside the repo calls it."""
-        payload = _payload(_module("src/pkg/core.py", "pkg.core::run"))
-        assert rit.classify(payload, _callers())[0] == "FULL"
-
     @pytest.mark.parametrize(
-        "module",
+        ("module", "callers", "expected_tier"),
         [
-            pytest.param(_module("src/pkg/viz/draw.py", "pkg.viz.draw::box"), id="leaf-viz-public"),
-            pytest.param(_module("tests/test_core.py", "tests.test_core::test_run"), id="test-module"),
-            pytest.param(_module("src/pkg/core.py", "pkg.core::_unused"), id="private-no-callers"),
+            pytest.param(
+                _module("src/pkg/core.py", "pkg.core::run"), _callers(), "FULL", id="public-symbol-without-callers-full"
+            ),
+            pytest.param(
+                _module("src/pkg/testing/utils.py", "pkg.testing.utils::make_sample"),
+                _callers(),
+                "FULL",
+                id="public-testing-helpers-are-not-test-code",
+            ),
+            pytest.param(
+                _module("src/pkg/plot.py", "pkg.plot::render"),
+                _callers(("pkg.api::export", "src/pkg/api.py")),
+                "FULL",
+                id="leaf-function-called-from-main-path-full",
+            ),
+            pytest.param(
+                _module("src/pkg/core.py", "pkg.core::_x", rdeps=5),
+                _callers(),
+                "FULL",
+                id="widely-imported-module-full",
+            ),
+            pytest.param(_module("src/pkg/core.py"), _callers(), "FULL", id="module-level-change-on-main-path-full"),
+            pytest.param(
+                _module("src/pkg/viz/draw.py", "pkg.viz.draw::box"), _callers(), "LIGHT", id="leaf-viz-public-light"
+            ),
+            pytest.param(
+                _module("tests/test_core.py", "tests.test_core::test_run"), _callers(), "LIGHT", id="test-module-light"
+            ),
+            pytest.param(
+                _module("src/pkg/core.py", "pkg.core::_unused"), _callers(), "LIGHT", id="private-no-callers-light"
+            ),
         ],
     )
-    def test_off_main_path_is_light(self, module: dict) -> None:
-        """Changes reaching only leaf, test or uncalled private code get the light review."""
-        assert rit.classify(_payload(module), _callers())[0] == "LIGHT"
+    def test_tier_follows_the_code_path_a_change_sits_on(self, module: dict, callers, expected_tier: str) -> None:
+        """Review depth follows the code path: main-path or API changes are FULL, leaf/test/uncalled ones LIGHT.
 
-    def test_public_testing_helpers_are_not_test_code(self) -> None:
-        """A public `pkg.testing` helper module is shipped API, so a change there is full, not test-only."""
-        payload = _payload(_module("src/pkg/testing/utils.py", "pkg.testing.utils::make_sample"))
-        assert rit.classify(payload, _callers())[0] == "FULL"
-
-    def test_leaf_function_called_from_main_path_is_full(self) -> None:
-        """A leaf-path match never lowers the tier when a main-path function calls into it."""
-        payload = _payload(_module("src/pkg/plot.py", "pkg.plot::render"))
-        assert rit.classify(payload, _callers(("pkg.api::export", "src/pkg/api.py")))[0] == "FULL"
-
-    def test_widely_imported_module_is_full(self) -> None:
-        """A main-path module with five or more importers is full even for a private-only change."""
-        payload = _payload(_module("src/pkg/core.py", "pkg.core::_x", rdeps=5))
-        assert rit.classify(payload, _callers())[0] == "FULL"
-
-    def test_module_level_change_on_main_path_is_full(self) -> None:
-        """A change with no mapped symbol (constants, imports) in a main-path module is full."""
-        assert rit.classify(_payload(_module("src/pkg/core.py")), _callers())[0] == "FULL"
+        A changed public function is user-facing API even when nothing inside the repo calls it, and a public
+        ``pkg.testing`` helper module is shipped API, not test-only. A leaf-path match never lowers the tier when a
+        main-path function calls into it; a main-path module with five or more importers is full even for a private-only
+        change; and a change with no mapped symbol (constants, imports) in a main-path module is full. Changes reaching
+        only leaf, test or uncalled private code get the light review.
+        """
+        assert rit.classify(_payload(module), callers)[0] == expected_tier
 
 
 class TestFailSafe:

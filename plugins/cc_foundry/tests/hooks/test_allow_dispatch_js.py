@@ -19,11 +19,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import pytest
-
 import build_blueprint_manifest as bbm
+import pytest
 from _audit_harness import install
-
 
 DISPATCH_HOOK = "allow-dispatch.js"
 SENTINEL_HOOK = "sentinel-read-allow.js"
@@ -113,7 +111,8 @@ class TestEffectiveVerdict:
         """
         payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
         proc = env.run(DISPATCH_HOOK, payload)
-        assert proc.stdout == b"" and proc.returncode == 0
+        assert proc.stdout == b""
+        assert proc.returncode == 0
 
         # Both lanes return `none` here, so no row is written — scanning `env.rows()` for a bad verdict would pass
         # whether the module answered cleanly or threw. The verdict has to be read from `evaluate` directly.
@@ -132,7 +131,8 @@ class TestEffectiveVerdict:
     def test_both_none_writes_no_row_at_all(self, env) -> None:
         """With neither lane reaching a decision there is no opinion to record, so nothing is written."""
         proc = env.run(DISPATCH_HOOK, _payload("anything", tool_name="Read"))
-        assert proc.stdout == b"" and proc.returncode == 0
+        assert proc.stdout == b""
+        assert proc.returncode == 0
         assert env.rows() == []
 
     def test_digest_is_absent_when_the_blueprint_lane_never_normalized(self, tmp_path: Path) -> None:
@@ -262,7 +262,7 @@ class TestPrivacyAndFootprint:
 
         The limit is stated honestly in the docs; the file itself must be clean.
         """
-        secret = 'echo "correct-horse-battery-staple"'
+        secret = 'echo "correct-horse-battery-staple"'  # noqa: S105 - dummy command fixture, not a credential
         env.run(DISPATCH_HOOK, _payload(secret))
         written = env.log_files()[0].read_text(encoding="utf-8")
         assert "correct-horse" not in written
@@ -289,7 +289,8 @@ class TestPrivacyAndFootprint:
         env.run(DISPATCH_HOOK, _payload(SHAPE_ALLOWED, session_id=None, tool_use_id=None))
         assert [path.name for path in env.log_files()] == ["_no-session.jsonl"]
         (row,) = env.rows()
-        assert row["session_id"] is None and row["tool_use_id"] is None
+        assert row["session_id"] is None
+        assert row["tool_use_id"] is None
 
 
 @_skip_node_unavailable

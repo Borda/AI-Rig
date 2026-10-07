@@ -36,7 +36,9 @@ import argparse
 import sys
 from pathlib import Path
 
+#: Default source-tree directory that contains the plugin folders searched for an agent file.
 PLUGINS_ROOT = Path("plugins")
+#: Plugin assumed when the requested agent name carries no ``plugin:`` prefix.
 DEFAULT_PLUGIN = "foundry"
 
 

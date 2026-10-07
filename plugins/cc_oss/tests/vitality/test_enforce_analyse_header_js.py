@@ -139,21 +139,21 @@ def test_missing_report_is_denied_for_every_mode(tmp_path: Path, repo: Path, mod
 
 
 @_skip_node_unavailable
-def test_empty_report_is_denied(tmp_path: Path, repo: Path, analyse_run: Path) -> None:
-    """A zero-byte report counts as not written → deny."""
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param("", id="zero-byte-report"),
+        pytest.param("---\nTitle: oss:analyse — thread\n---\n", id="written-report-without-delivery"),
+    ],
+)
+def test_incomplete_report_is_denied(tmp_path: Path, repo: Path, analyse_run: Path, content: str) -> None:
+    """A zero-byte report counts as not written, and a written but undelivered one blocks the follow-up transition.
+
+    Unverified report delivery must block only the follow-up transition.
+    """
     report = repo / MODE_REPORTS["thread"]
     report.parent.mkdir(parents=True)
-    report.touch()
-
-    assert _denial_reason(_run(tmp_path, _ask_payload(cwd=str(repo)))) is not None
-
-
-@_skip_node_unavailable
-def test_written_report_without_delivery_is_denied(tmp_path: Path, repo: Path, analyse_run: Path) -> None:
-    """Unverified report delivery must block only the follow-up transition."""
-    report = repo / MODE_REPORTS["thread"]
-    report.parent.mkdir(parents=True)
-    report.write_text("---\nTitle: oss:analyse — thread\n---\n", encoding="utf-8")
+    report.write_text(content, encoding="utf-8")
 
     assert _denial_reason(_run(tmp_path, _ask_payload(cwd=str(repo)))) is not None
 

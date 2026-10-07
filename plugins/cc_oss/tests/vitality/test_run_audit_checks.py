@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 import run_audit_checks as rac
 
 
@@ -163,15 +162,6 @@ def test_happy_path_emits_all_check_banners(
         assert banner in out, f"missing banner: {banner!r}"
 
 
-def test_happy_path_exits_0(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """All checks pass → exit 0."""
-    monkeypatch.setattr(rac, "which", lambda cmd: "/fake/" + cmd)
-    monkeypatch.setattr(rac.subprocess, "run", _happy_dispatch())
-    monkeypatch.chdir(tmp_path)
-    rc = rac.main(["--range", "v1.0.0..HEAD"])
-    assert rc == 0
-
-
 def test_tag_arg_emitted_in_version_section(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -218,54 +208,101 @@ def test_pip_audit_present_does_not_emit_missing_signal(
 
 
 # ---------------------------------------------------------------------------
-# _grep_version_files
+# _grep_version_files / _grep_code_signals
 # ---------------------------------------------------------------------------
 
 
-def test_grep_version_files_finds_py_match(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Python file with ``__version__`` → match returned in results."""
-    (tmp_path / "mod.py").write_text('__version__ = "1.0.0"\n')
+@pytest.mark.parametrize(
+    ("scan", "filename", "content", "needle"),
+    [
+        pytest.param(rac._grep_version_files, "mod.py", '__version__ = "1.0.0"\n', "__version__", id="version-py"),
+        pytest.param(
+            rac._grep_version_files, "pyproject.toml", '[project]\nversion = "0.1.0"\n', "version", id="version-toml"
+        ),
+        pytest.param(rac._grep_code_signals, "src.py", "# FIXME: clean this up\nx = 1\n", "FIXME", id="signal-fixme"),
+        pytest.param(
+            rac._grep_code_signals,
+            "src.py",
+            "# TODO before release: update changelog\n",
+            "TODO",
+            id="signal-todo-release",
+        ),
+    ],
+)
+def test_grep_finds_match(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, scan: Any, filename: str, content: str, needle: str
+) -> None:
+    """A Python ``__version__`` or TOML ``version =`` line, and a FIXME or release-TODO comment, are returned."""
+    (tmp_path / filename).write_text(content)
     monkeypatch.chdir(tmp_path)
-    results = rac._grep_version_files()
-    assert any("__version__" in r for r in results)
+    results = scan()
+    assert any(needle in r for r in results)
 
 
-def test_grep_version_files_finds_toml_match(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """TOML file with ``version =`` → match returned."""
-    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n')
+@pytest.mark.parametrize(
+    ("scan", "dirname", "filename", "content", "needle"),
+    [
+        pytest.param(
+            rac._grep_version_files, ".git", "config.py", '__version__ = "0.0.1"\n', ".git", id="version-git-dir"
+        ),
+        pytest.param(
+            rac._grep_code_signals, "tests", "test_x.py", "# FIXME in test\n", "FIXME", id="signals-tests-dir"
+        ),
+    ],
+)
+def test_grep_excludes_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, scan: Any, dirname: str, filename: str, content: str, needle: str
+) -> None:
+    """Files inside ``.git/`` are not scanned for versions, and files inside ``tests/`` not for code signals."""
+    excluded = tmp_path / dirname
+    excluded.mkdir()
+    (excluded / filename).write_text(content)
     monkeypatch.chdir(tmp_path)
-    results = rac._grep_version_files()
-    assert any("version" in r for r in results)
+    results = scan()
+    assert not any(needle in r for r in results)
 
 
-def test_grep_version_files_excludes_git_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Files inside ``.git/`` are not scanned."""
-    git_dir = tmp_path / ".git"
-    git_dir.mkdir()
-    (git_dir / "config.py").write_text('__version__ = "0.0.1"\n')
+@pytest.mark.parametrize(
+    ("scan", "limit_name", "prefix", "content"),
+    [
+        pytest.param(rac._grep_version_files, "_MAX_VERSION_LINES", "m", '__version__ = "{i}"\n', id="version-lines"),
+        pytest.param(rac._grep_code_signals, "_MAX_SIGNAL_LINES", "s", "# FIXME item {i}\n", id="signal-lines"),
+    ],
+)
+def test_grep_results_capped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, scan: Any, limit_name: str, prefix: str, content: str
+) -> None:
+    """Results are capped at ``_MAX_VERSION_LINES`` / ``_MAX_SIGNAL_LINES``."""
+    limit = getattr(rac, limit_name)
+    for i in range(limit + 5):
+        (tmp_path / f"{prefix}{i}.py").write_text(content.format(i=i))
     monkeypatch.chdir(tmp_path)
-    results = rac._grep_version_files()
-    assert not any(".git" in r for r in results)
+    results = scan()
+    assert len(results) <= limit
 
 
-def test_grep_version_files_cap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Results capped at ``_MAX_VERSION_LINES``."""
-    for i in range(rac._MAX_VERSION_LINES + 5):
-        (tmp_path / f"m{i}.py").write_text(f'__version__ = "{i}"\n')
+@pytest.mark.parametrize("scan", [rac._grep_version_files, rac._grep_code_signals])
+def test_grep_returns_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scan: Any) -> None:
+    """Always returns a list (empty when no matches or signals)."""
     monkeypatch.chdir(tmp_path)
-    results = rac._grep_version_files()
-    assert len(results) <= rac._MAX_VERSION_LINES
-
-
-def test_grep_version_files_returns_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Always returns a list (empty when no matches)."""
-    monkeypatch.chdir(tmp_path)
-    results = rac._grep_version_files()
+    results = scan()
     assert isinstance(results, list)
 
 
-def test_grep_version_files_truncation_signal(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("scan", "prefix", "content"),
+    [
+        pytest.param(rac._grep_version_files, "m", '__version__ = "{i}"\n', id="version-files"),
+        pytest.param(rac._grep_code_signals, "s", "# FIXME item {i}\n", id="code-signals"),
+    ],
+)
+def test_grep_truncation_signal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    scan: Any,
+    prefix: str,
+    content: str,
 ) -> None:
     """Hitting the file-count cap prints SCAN_TRUNCATED_SIGNAL and still returns a bounded list.
 
@@ -274,89 +311,29 @@ def test_grep_version_files_truncation_signal(
     """
     monkeypatch.setattr(rac, "_MAX_SCAN_FILES", 2)
     for i in range(4):
-        (tmp_path / f"m{i}.py").write_text(f'__version__ = "{i}"\n')
+        (tmp_path / f"{prefix}{i}.py").write_text(content.format(i=i))
     monkeypatch.chdir(tmp_path)
-    results = rac._grep_version_files()
+    results = scan()
     assert len(results) <= 2
     assert rac.SCAN_TRUNCATED_SIGNAL in capsys.readouterr().err
 
 
-def test_grep_version_files_skips_oversized_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("scan", "content"),
+    [
+        pytest.param(
+            rac._grep_version_files, '__version__ = "0.0.0"  # padding beyond the size cap\n', id="version-files"
+        ),
+        pytest.param(rac._grep_code_signals, "# FIXME padding beyond the size cap\n", id="code-signals"),
+    ],
+)
+def test_grep_skips_oversized_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, scan: Any, content: str) -> None:
     """A file above ``_MAX_SCAN_FILE_SIZE`` is never read, even if it would otherwise match."""
     monkeypatch.setattr(rac, "_MAX_SCAN_FILE_SIZE", 10)
-    (tmp_path / "huge.py").write_text('__version__ = "0.0.0"  # padding beyond the size cap\n')
+    (tmp_path / "huge.py").write_text(content)
     monkeypatch.chdir(tmp_path)
-    results = rac._grep_version_files()
+    results = scan()
     assert results == []
-
-
-# ---------------------------------------------------------------------------
-# _grep_code_signals
-# ---------------------------------------------------------------------------
-
-
-def test_grep_code_signals_finds_fixme(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Python file with ``FIXME`` → match returned."""
-    (tmp_path / "src.py").write_text("# FIXME: clean this up\nx = 1\n")
-    monkeypatch.chdir(tmp_path)
-    results = rac._grep_code_signals()
-    assert any("FIXME" in r for r in results)
-
-
-def test_grep_code_signals_finds_todo_release(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Match release tasks through the configured pattern."""
-    (tmp_path / "src.py").write_text("# TODO before release: update changelog\n")
-    monkeypatch.chdir(tmp_path)
-    results = rac._grep_code_signals()
-    assert any("TODO" in r for r in results)
-
-
-def test_grep_code_signals_excludes_tests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Files inside ``tests/`` directory not scanned."""
-    tests_dir = tmp_path / "tests"
-    tests_dir.mkdir()
-    (tests_dir / "test_x.py").write_text("# FIXME in test\n")
-    monkeypatch.chdir(tmp_path)
-    results = rac._grep_code_signals()
-    assert not any("FIXME" in r for r in results)
-
-
-def test_grep_code_signals_cap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Results capped at ``_MAX_SIGNAL_LINES``."""
-    for i in range(rac._MAX_SIGNAL_LINES + 5):
-        (tmp_path / f"s{i}.py").write_text(f"# FIXME item {i}\n")
-    monkeypatch.chdir(tmp_path)
-    results = rac._grep_code_signals()
-    assert len(results) <= rac._MAX_SIGNAL_LINES
-
-
-def test_grep_code_signals_truncation_signal(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Hitting the file-count cap prints SCAN_TRUNCATED_SIGNAL and still returns a bounded list."""
-    monkeypatch.setattr(rac, "_MAX_SCAN_FILES", 2)
-    for i in range(4):
-        (tmp_path / f"s{i}.py").write_text(f"# FIXME item {i}\n")
-    monkeypatch.chdir(tmp_path)
-    results = rac._grep_code_signals()
-    assert len(results) <= 2
-    assert rac.SCAN_TRUNCATED_SIGNAL in capsys.readouterr().err
-
-
-def test_grep_code_signals_skips_oversized_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """A file above ``_MAX_SCAN_FILE_SIZE`` is never read, even if it would otherwise match."""
-    monkeypatch.setattr(rac, "_MAX_SCAN_FILE_SIZE", 10)
-    (tmp_path / "huge.py").write_text("# FIXME padding beyond the size cap\n")
-    monkeypatch.chdir(tmp_path)
-    results = rac._grep_code_signals()
-    assert results == []
-
-
-def test_grep_code_signals_returns_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Always returns a list (empty when no signals)."""
-    monkeypatch.chdir(tmp_path)
-    results = rac._grep_code_signals()
-    assert isinstance(results, list)
 
 
 # ---------------------------------------------------------------------------
@@ -364,37 +341,20 @@ def test_grep_code_signals_returns_list(tmp_path: Path, monkeypatch: pytest.Monk
 # ---------------------------------------------------------------------------
 
 
-def test_detect_trunk_parses_head_branch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """'HEAD branch: develop' in remote output → returns 'develop'."""
-    monkeypatch.setattr(
-        rac.subprocess,
-        "run",
-        _dispatch({"git remote": (0, "  HEAD branch: develop\n")}),
-    )
-    result = rac._detect_trunk("/fake/git")
-    assert result == "develop"
-
-
-def test_detect_trunk_fallback_main(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No 'HEAD branch' line in remote output → falls back to 'main'."""
-    monkeypatch.setattr(
-        rac.subprocess,
-        "run",
-        _dispatch({"git remote": (0, "  origin  https://example.com (fetch)\n")}),
-    )
-    result = rac._detect_trunk("/fake/git")
-    assert result == "main"
-
-
-def test_detect_trunk_remote_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Git remote show fails → falls back to 'main'."""
-    monkeypatch.setattr(
-        rac.subprocess,
-        "run",
-        _dispatch({"git remote": (1, "")}),
-    )
-    result = rac._detect_trunk("/fake/git")
-    assert result == "main"
+@pytest.mark.parametrize(
+    ("remote_response", "expected"),
+    [
+        pytest.param((0, "  HEAD branch: develop\n"), "develop", id="parses-head-branch"),
+        pytest.param(
+            (0, "  origin  https://example.com (fetch)\n"), "main", id="no-head-branch-line-falls-back-to-main"
+        ),
+        pytest.param((1, ""), "main", id="remote-failure-falls-back-to-main"),
+    ],
+)
+def test_detect_trunk(monkeypatch: pytest.MonkeyPatch, remote_response: tuple[int, str], expected: str) -> None:
+    """'HEAD branch: develop' in remote output → 'develop'; no such line, or a failing remote show → 'main'."""
+    monkeypatch.setattr(rac.subprocess, "run", _dispatch({"git remote": remote_response}))
+    assert rac._detect_trunk("/fake/git") == expected
 
 
 # ---------------------------------------------------------------------------

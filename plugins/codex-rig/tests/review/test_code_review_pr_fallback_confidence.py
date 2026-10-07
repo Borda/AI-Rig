@@ -8,7 +8,6 @@ from types import ModuleType
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 REVIEW_VALIDATOR_PATH = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
 SHARED_VALIDATOR_PATH = PLUGIN_ROOT / "shared" / "validate-artifacts.py"
@@ -23,7 +22,8 @@ def _load_validator() -> ModuleType:
     """Load the shipped standalone code-review validator without installation."""
     assert REVIEW_VALIDATOR_PATH.is_file(), REVIEW_VALIDATOR_PATH
     specification = importlib.util.spec_from_file_location("code_review_pr_fallback_validator", REVIEW_VALIDATOR_PATH)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -32,7 +32,8 @@ def _load_validator() -> ModuleType:
 def _load_shared_validator() -> ModuleType:
     """Load the shared validator used by PR remediation without installation."""
     specification = importlib.util.spec_from_file_location("shared_pr_fallback_validator", SHARED_VALIDATOR_PATH)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module

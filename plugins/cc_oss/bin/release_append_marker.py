@@ -75,10 +75,10 @@ from pathlib import Path
 from shutil import which
 from urllib.parse import quote
 
-# git argv guard: sha reaches `git merge-base --is-ancestor <sha> ...` argv,
-# so a value starting with '-' would be parsed as an option. Not applied to
-# last_tag — real tags (e.g. "release-2024-05") aren't hex, and --end-of-options
-# below already neutralizes the injection risk for that position.
+#: git argv guard: sha reaches `git merge-base --is-ancestor <sha> ...` argv,
+#: so a value starting with '-' would be parsed as an option. Not applied to
+#: last_tag — real tags (e.g. "release-2024-05") aren't hex, and --end-of-options
+#: below already neutralizes the injection risk for that position.
 _SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
 
 

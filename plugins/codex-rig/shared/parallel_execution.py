@@ -59,23 +59,30 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
 import os
 import re
 import sys
-from copy import deepcopy
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, NamedTuple
 
-
+#: Schema revision of the parallel-execution preflight records.
 SCHEMA_VERSION = 1
+#: Schema revision of the parallel-execution runtime records.
 RUNTIME_SCHEMA_VERSION = 2
+#: Execution modes a wave may claim; any other claimed mode is rejected.
 _MODES = {"parallel", "independent-spawned", "serial", "serial-fallback"}
+#: Task statuses that mean a child task has finished and will not change again.
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+#: Error types treated as transient, so a first failure with one of them may be retried.
 _TRANSIENT_ERRORS = {"rate_limited", "timeout", "transport_error"}
+#: Dotted prefixes of item types or call names that mark a child's response-log entry as external network access.
 _EXTERNAL_NETWORK_PREFIXES = ("app", "browser", "connector", "mcp", "network", "search", "web")
+#: Known local response item types that are skipped when scanning for external access; unlisted types are rejected.
 _LOCAL_RESPONSE_ITEM_TYPES = {
     "agent_message",
     "message",
@@ -83,8 +90,11 @@ _LOCAL_RESPONSE_ITEM_TYPES = {
     "function_call_output",
     "custom_tool_call_output",
 }
+#: Known local function-call names that are allowed when scanning for external access; unlisted names are rejected.
 _LOCAL_RESPONSE_CALL_NAMES = {"exec"}
+#: Skills whose read-only parallel execution has been promoted; other consumer ids are rejected.
 _PROMOTED_PORTABLE_READ_CONSUMERS = frozenset({"code-review", "implement", "manage"})
+#: Regular expressions for credential shapes that must not appear in recorded telemetry or logs.
 _SECRET_PATTERNS = (
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
     re.compile(r"(?i)authorization\s*:\s*bearer\s+\S+"),
@@ -528,7 +538,7 @@ def _validate_manifest_header(payload: dict[str, Any]) -> tuple[str, int]:
 
 def _validate_stage_barriers(stage_order: list[str], by_stage: dict[str, dict[str, Any]]) -> None:
     """Require each stage to declare its predecessor as a dependency, forming a barrier chain."""
-    for previous_stage, stage_id in zip(stage_order, stage_order[1:], strict=False):
+    for previous_stage, stage_id in itertools.pairwise(stage_order):
         if previous_stage not in _string_list(by_stage[stage_id].get("depends_on"), "stage-depends-on"):
             raise ValueError(f"stage-barrier-required:{stage_id}")
 

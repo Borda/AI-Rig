@@ -31,12 +31,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-# ``--root <value>`` where value is one of:
-#   - single-quoted: '...'  (no embedded single quotes)
-#   - double-quoted: "..."  (no embedded double quotes)
-#   - unquoted: any run of non-whitespace characters
-# Matches first occurrence anywhere in the string. The three branches mirror
-# the original sed pipeline's `t`-branch fallthrough semantics.
+#: ``--root <value>`` where value is one of:
+#:   - single-quoted: '...'  (no embedded single quotes)
+#:   - double-quoted: "..."  (no embedded double quotes)
+#:   - unquoted: any run of non-whitespace characters
+#: Matches first occurrence anywhere in the string. The three branches mirror
+#: the original sed pipeline's `t`-branch fallthrough semantics.
 _ROOT_RE = re.compile(
     r"--root\s+(?:'([^']*)'|\"([^\"]*)\"|(\S+))",
 )
@@ -125,7 +125,7 @@ def format_scan_args(tokens: list[str]) -> str:
     quoted_tokens: list[str] = []
     it = iter(tokens)
     for token in it:
-        if token == "--root":
+        if token == "--root":  # noqa: S105 - CLI flag name, not a credential
             root_val = next(it, "")
             quoted_tokens.append(f"--root {shlex.quote(root_val)}")
         else:
@@ -207,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     quoted_tokens: list[str] = []
     it = iter(tokens)
     for token in it:
-        if token == "--root":
+        if token == "--root":  # noqa: S105 - CLI flag name, not a credential
             root_val = next(it, "")
             quoted_tokens.append(f"--root {shlex.quote(root_val)}")
         else:

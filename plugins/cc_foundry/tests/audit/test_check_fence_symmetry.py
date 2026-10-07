@@ -7,40 +7,48 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import check_fence_symmetry as cfs
+import pytest
 
 
 class TestCheckFile:
     """Covers check_file() for individual file scenarios."""
 
-    def test_clean_simple_fence_returns_empty(self, tmp_path: Path) -> None:
-        """Balanced ```lang / ``` pair returns no violations."""
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("```python\ncode\n```\n", id="lang-fence"),
+            pytest.param("```\ncode\n```\n", id="plain-fence"),
+            pytest.param("```bash\necho hi\n```\n\n```python\npass\n```\n", id="two-sequential-fences"),
+            pytest.param("````markdown\n```python\ncode\n```\n````\n", id="outer-four-inner-three"),
+            pytest.param("# Title\n\nJust prose, no code.\n", id="no-fences"),
+        ],
+    )
+    def test_balanced_text_returns_empty(self, tmp_path: Path, text: str) -> None:
+        """Balanced fences, valid nesting, and text with no fences return no violations.
+
+        Covers a language-tagged and a plain fence pair, two sequential fences, an outer four-backtick fence wrapping an
+        inner three-backtick one, and prose without any fence delimiter.
+        """
         f = tmp_path / "ok.md"
-        f.write_text("```python\ncode\n```\n", encoding="utf-8")
+        f.write_text(text, encoding="utf-8")
         assert cfs.check_file(f) == []
 
-    def test_clean_plain_fence_returns_empty(self, tmp_path: Path) -> None:
-        """Balanced plain ``` / ``` pair returns no violations."""
-        f = tmp_path / "plain.md"
-        f.write_text("```\ncode\n```\n", encoding="utf-8")
-        assert cfs.check_file(f) == []
-
-    def test_multiple_separate_fences_clean(self, tmp_path: Path) -> None:
-        """Two sequential balanced fences both pass."""
-        f = tmp_path / "multi.md"
-        f.write_text("```bash\necho hi\n```\n\n```python\npass\n```\n", encoding="utf-8")
-        assert cfs.check_file(f) == []
-
-    def test_unclosed_fence_detected(self, tmp_path: Path) -> None:
-        """Opening fence with no closing returns one violation."""
+    @pytest.mark.parametrize(
+        ("text", "line"),
+        [
+            pytest.param("```python\nno close\n", "line 1", id="first-line"),
+            pytest.param("\n\n```bash\nno close\n", "line 3", id="after-blank-lines"),
+        ],
+    )
+    def test_unclosed_fence_detected(self, tmp_path: Path, text: str, line: str) -> None:
+        """Opening fence with no closing returns one violation naming the fence's line number."""
         f = tmp_path / "unclosed.md"
-        f.write_text("```python\nno close\n", encoding="utf-8")
+        f.write_text(text, encoding="utf-8")
         violations = cfs.check_file(f)
         assert len(violations) == 1
         assert "unclosed" in violations[0]
-        assert "line 1" in violations[0]
+        assert line in violations[0]
 
     def test_timeout_comment_on_closing_fence_detected(self, tmp_path: Path) -> None:
         """Closing fence with trailing comment is treated as opener — both reported."""
@@ -96,23 +104,17 @@ class TestCheckFile:
         for fragment in expected_fragments:
             assert fragment in joined
 
-    def test_valid_nesting_outer_four_inner_three(self, tmp_path: Path) -> None:
-        """Outer ```` wrapping inner ``` is valid nesting — no violations."""
-        f = tmp_path / "nested_ok.md"
-        f.write_text("````markdown\n```python\ncode\n```\n````\n", encoding="utf-8")
-        assert cfs.check_file(f) == []
-
-    def test_bad_nesting_same_count_detected(self, tmp_path: Path) -> None:
-        """Inner fence with same backtick count as outer returns nesting violation."""
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("```outer\n```inner\ncode\n```\n```\n", id="same-backtick-count"),
+            pytest.param("```outer\n````inner\ncode\n````\n```\n", id="inner-more-backticks"),
+        ],
+    )
+    def test_bad_nesting_detected(self, tmp_path: Path, text: str) -> None:
+        """An inner fence with the same or more backticks than the outer returns a nesting violation."""
         f = tmp_path / "nest_bad.md"
-        f.write_text("```outer\n```inner\ncode\n```\n```\n", encoding="utf-8")
-        violations = cfs.check_file(f)
-        assert any("nesting violation" in v for v in violations)
-
-    def test_bad_nesting_inner_more_backticks_detected(self, tmp_path: Path) -> None:
-        """Inner fence with more backticks than outer returns nesting violation."""
-        f = tmp_path / "nest_more.md"
-        f.write_text("```outer\n````inner\ncode\n````\n```\n", encoding="utf-8")
+        f.write_text(text, encoding="utf-8")
         violations = cfs.check_file(f)
         assert any("nesting violation" in v for v in violations)
 
@@ -122,19 +124,6 @@ class TestCheckFile:
         result = cfs.check_file(fake)
         assert len(result) == 1
         assert "cannot read" in result[0]
-
-    def test_no_fences_returns_empty(self, tmp_path: Path) -> None:
-        """File with no fence delimiters returns no violations."""
-        f = tmp_path / "prose.md"
-        f.write_text("# Title\n\nJust prose, no code.\n", encoding="utf-8")
-        assert cfs.check_file(f) == []
-
-    def test_violation_includes_line_number(self, tmp_path: Path) -> None:
-        """Violation message includes the line number of the offending fence."""
-        f = tmp_path / "linenum.md"
-        f.write_text("\n\n```bash\nno close\n", encoding="utf-8")
-        violations = cfs.check_file(f)
-        assert any("line 3" in v for v in violations)
 
     @pytest.mark.parametrize("count", [3, 4, 5])
     def test_various_backtick_counts_balanced(self, tmp_path: Path, count: int) -> None:

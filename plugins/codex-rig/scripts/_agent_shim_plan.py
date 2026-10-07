@@ -44,10 +44,11 @@ from dataclasses import dataclass
 from typing import Any, NoReturn
 
 from _agent_shim_lifecycle import LifecycleDataError, TargetObservation, classify_targets, parse_state
-from generate_roles import GeneratedRole, GeneratedRoster, ROLE_IDS, SEMVER_PATTERN, roster_identity_hash
+from generate_roles import ROLE_IDS, SEMVER_PATTERN, GeneratedRole, GeneratedRoster, roster_identity_hash
 
-
+#: Pattern for a lowercase 64-character hexadecimal SHA-256 digest string.
 DIGEST = re.compile(r"[0-9a-f]{64}")
+#: Maximum number of roles (active plus persisted targets) a single plan may cover.
 MAX_OPERATION_ROLES = 256
 
 
@@ -189,7 +190,8 @@ def _semver_precedence(version: str) -> tuple[tuple[int, int, int], tuple[str, .
     without_build = version.split("+", maxsplit=1)[0]
     core_text, separator, prerelease = without_build.partition("-")
     core = tuple(int(part) for part in core_text.split("."))
-    assert len(core) == 3
+    if not (len(core) == 3):
+        raise ValueError(f"SemVer core must have 3 numeric parts: {version!r}")
     return core, tuple(prerelease.split(".")) if separator else None
 
 

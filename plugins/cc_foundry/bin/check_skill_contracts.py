@@ -40,10 +40,13 @@ MIN_MODE_LINES = 20
 #: Overlapping substantive lines before an inline twin is reported.
 MIN_OVERLAP = 20
 
+#: Matches an inline `# timeout: N` comment that marks a Bash call as carrying an explicit timeout.
 _TIMEOUT_COMMENT = re.compile(r"#\s*timeout:\s*\d")
+#: Matches a shell ``timeout N`` wrapper on a command line.
 _SHELL_TIMEOUT = re.compile(r"\btimeout \d+ ")
+#: Matches a ``subprocess.check_output``, ``run``, ``call`` or ``Popen`` call.
 _SUBPROCESS_CALL = re.compile(r"subprocess\.(check_output|run|call|Popen)")
-# `[^)]` already spans newlines, so a wrapped `add_argument(\n    "--timeout",` matches.
+#: `[^)]` already spans newlines, so a wrapped `add_argument(\n    "--timeout",` matches.
 _TIMEOUT_ARGUMENT = re.compile(r"add_argument\([^)]*--timeout")
 
 #: Matched against the whole POSIX path, the way ``find -path`` matched it: ``*``

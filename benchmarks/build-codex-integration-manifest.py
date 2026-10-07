@@ -18,29 +18,42 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-
+#: Repository root, from which tracked file paths are made relative.
 ROOT = Path(__file__).resolve().parents[1]
+#: Benchmarks directory that holds the suites and manifests, also added to the import path.
 BENCHMARKS = ROOT / "benchmarks"
 
 sys.path.insert(0, str(BENCHMARKS))
 from _bench_common.artifact_hashing import module_sha256, runner_sha256  # noqa: E402
 
-# Self-named so a rename cannot leave the stale-output hint pointing at a missing script.
+#: Self-named so a rename cannot leave the stale-output hint pointing at a missing script.
 REBUILD_COMMAND = f"uv run python {Path(__file__).resolve().relative_to(ROOT).as_posix()}"
+#: Directory holding the generated manifests.
 MANIFESTS = BENCHMARKS / "manifests"
+#: Provider-parity methodology manifest this manifest is derived from and hashed against.
 SOURCE_MANIFEST = MANIFESTS / "provider-parity-methodology.json"
+#: Machine-readable JSON manifest this script writes or verifies.
 OUTPUT_MANIFEST = MANIFESTS / "codex-integration.json"
+#: Human-readable Markdown companion of the JSON manifest.
 OUTPUT_HUMAN_MANIFEST = MANIFESTS / "codex-integration.md"
+#: Stable identifier of the Codex integration experiment, recorded as experiment_id.
 EXPERIMENT_ID = "codex-integration-v1"
+#: Revision label of the experiment design; change it when the design changes.
 EXPERIMENT_REVISION = "codex-integration-unified-task-cli-2026-08-11"
+#: Identifier of the telemetry contract that runs must satisfy, recorded in the manifest.
 TELEMETRY_CONTRACT_ID = "installed-skill-binding-locked-query-components-v3"
+#: The one Codemap query command form accepted as valid use in the manifest and its description.
 CANONICAL_QUERY_FORM = '"$CODEMAP_BIN" query --compact <subcommand> [arguments]'
+#: Text describing how arm order is counterbalanced across tasks, recorded as the arm_order policy.
 ARM_ORDER_POLICY = (
     "deterministic six-permutation counterbalancing by frozen structural task ordinal; "
     "across the 55-task single-repetition execution suite, every arm occupies every ordinal 18 or 19 times"
 )
+#: Repetitions per task selected for the structural stage; other stages select one.
 TASK_SELECTION_REPETITIONS = 3
+#: Seconds one coordinate may run, recorded in the task-selection section of the manifest.
 TASK_SELECTION_COORDINATE_TIMEOUT_SECONDS = 600
+#: Codex CLI version string that was reviewed for this experiment, recorded as reviewed_version.
 REVIEWED_CODEX_CLI_VERSION = "codex-cli 0.146.1"
 
 
@@ -79,8 +92,8 @@ def _codex_cli_identity() -> dict[str, str | bool]:
     }
 
 
-# The structural runner is a thin re-export shim over a package, so the pin has to cover the
-# package too: the runtime gate in _validate_execution_manifest recomputes this exact value.
+#: The structural runner is a thin re-export shim over a package, so the pin has to cover the
+#: package too: the runtime gate in _validate_execution_manifest recomputes this exact value.
 RUNNER_PACKAGES = {
     "run_codex_structural": ("benchmarks/run-codex-structural.py", "benchmarks/_bench_codex/structural"),
 }
@@ -153,7 +166,7 @@ def _codemap_package_manifest_sha256() -> str:
             [sys.executable, str(validator), "--package", str(candidate)],
             [sys.executable, str(builder), "--out", str(candidate), "--check", *mode_map_args],
         ):
-            completed = subprocess.run(command, cwd=ROOT, check=False, capture_output=True, text=True)
+            completed = subprocess.run(command, cwd=ROOT, check=False, capture_output=True, text=True)  # noqa: S603 - argv list, no shell
             if completed.returncode != 0:
                 detail = completed.stderr.strip() or completed.stdout.strip()
                 raise ValueError(f"Codemap package freeze failed: {detail}")
@@ -247,7 +260,7 @@ def _execution_controls(source: dict[str, Any]) -> dict[str, Any]:
     )
     controls["arm_order"] = ARM_ORDER_POLICY
     controls["token_prompt_cache_policy"] = (
-        "Console and primary efficiency reports use gross provider input tokens only. "
+        "Console and primary efficiency reports use gross provider input tokens only. "  # noqa: S105 - policy text about LLM tokens, not a credential
         "Cached and fresh input counts are retained as raw telemetry diagnostics. "
         "The Codex CLI exposes no supported per-cell provider prompt-cache reset or disable control. "
         "Deterministic arm-order counterbalancing mitigates order exposure without claiming cache elimination."

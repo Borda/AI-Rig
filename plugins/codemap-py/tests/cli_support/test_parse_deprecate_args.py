@@ -7,14 +7,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-import pytest
-
 import parse_deprecate_args
-from parse_deprecate_args import (
-    format_shell_assignments,
-    main,
-    parse_deprecate_args as parse,
-)
+import pytest
+from parse_deprecate_args import format_shell_assignments, main
+from parse_deprecate_args import parse_deprecate_args as parse
 
 
 def _file_symlink_is_available() -> bool:
@@ -55,17 +51,18 @@ _skip_private_mode_unavailable = pytest.mark.skipif(
 class TestBareDeprecateFlag:
     """Bare ``--deprecate`` enables deprecation with empty decorator value."""
 
-    def test_bare_flag_alone(self) -> None:
-        assert parse("--deprecate") == (True, "")
-
-    def test_bare_flag_with_surrounding_args(self) -> None:
-        assert parse("--dry-run --deprecate --since 1.0") == (True, "")
-
-    def test_bare_flag_at_end(self) -> None:
-        assert parse("--since 1.0 --deprecate") == (True, "")
-
-    def test_bare_flag_at_start(self) -> None:
-        assert parse("--deprecate --since 1.0") == (True, "")
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            pytest.param("--deprecate", id="alone"),
+            pytest.param("--dry-run --deprecate --since 1.0", id="with-surrounding-args"),
+            pytest.param("--since 1.0 --deprecate", id="at-end"),
+            pytest.param("--deprecate --since 1.0", id="at-start"),
+        ],
+    )
+    def test_bare_flag_enables_with_empty_decorator(self, arguments: str) -> None:
+        """A bare ``--deprecate`` is recognised wherever it sits in the argument string."""
+        assert parse(arguments) == (True, "")
 
 
 class TestDeprecateValueExtraction:
@@ -90,6 +87,11 @@ class TestDeprecateValueExtraction:
                 "@deprecated(target=fn,deprecated_in='1.0')",
                 id="unquoted-with-embedded-single-quote",
             ),
+            pytest.param(
+                "--dry-run --deprecate=@mydecorator --since 1.0",
+                "@mydecorator",
+                id="value-form-with-surrounding-args",
+            ),
         ],
     )
     def test_value_extraction(self, arguments: str, expected_decorator: str) -> None:
@@ -97,58 +99,32 @@ class TestDeprecateValueExtraction:
         assert deprecate is True
         assert decorator == expected_decorator
 
-    def test_value_form_with_surrounding_args(self) -> None:
-        assert parse("--dry-run --deprecate=@mydecorator --since 1.0") == (
-            True,
-            "@mydecorator",
-        )
 
+class TestDeprecationNotRequested:
+    """Arguments that do not request deprecation yield DEPRECATE=false with an empty decorator.
 
-class TestNoDeprecateFlag:
-    """Give the explicit negative deprecation flag precedence."""
-
-    def test_no_deprecate_alone(self) -> None:
-        assert parse("--no-deprecate") == (False, "")
-
-    def test_no_deprecate_overrides_bare_deprecate(self) -> None:
-        # Negation wins even when both flags present.
-        assert parse("--deprecate --no-deprecate") == (False, "")
-
-    def test_no_deprecate_overrides_deprecate_value(self) -> None:
-        assert parse("--deprecate=@mydecorator --no-deprecate") == (False, "")
-
-    def test_no_deprecate_at_start(self) -> None:
-        assert parse("--no-deprecate --since 1.0") == (False, "")
-
-
-class TestAbsent:
-    """No ``--deprecate`` flag at all → DEPRECATE=false, empty decorator."""
-
-    def test_empty_string(self) -> None:
-        assert parse("") == (False, "")
-
-    def test_only_whitespace(self) -> None:
-        assert parse("   ") == (False, "")
-
-    def test_unrelated_flags(self) -> None:
-        assert parse("--dry-run --since 1.0 --removed-in 2.0") == (False, "")
-
-    def test_subcommand_only(self) -> None:
-        assert parse("symbol mypkg::old_fn mypkg::new_fn") == (False, "")
-
-
-class TestSimilarButDistinctFlags:
-    """Flags that share a prefix with ``--deprecate`` must not trigger detection.
-
-    ``--deprecated`` and ``--deprecate-foo`` are not the same flag — guard against accidental matches.
+    Covers the explicit ``--no-deprecate`` flag (which wins over any ``--deprecate`` form), the total absence of the
+    flag, and flags that merely share a prefix with ``--deprecate`` — ``--deprecated`` and ``--deprecate-foo`` are
+    distinct tokens and must not trigger an accidental match.
     """
 
-    def test_deprecated_suffix_does_not_match(self) -> None:
-        # `--deprecated` is a distinct token; should not be treated as `--deprecate`.
-        assert parse("--deprecated") == (False, "")
-
-    def test_deprecate_dash_suffix_does_not_match(self) -> None:
-        assert parse("--deprecate-foo") == (False, "")
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            pytest.param("--no-deprecate", id="no-deprecate-alone"),
+            pytest.param("--deprecate --no-deprecate", id="no-deprecate-overrides-bare-deprecate"),
+            pytest.param("--deprecate=@mydecorator --no-deprecate", id="no-deprecate-overrides-deprecate-value"),
+            pytest.param("--no-deprecate --since 1.0", id="no-deprecate-at-start"),
+            pytest.param("", id="absent-empty-string"),
+            pytest.param("   ", id="absent-only-whitespace"),
+            pytest.param("--dry-run --since 1.0 --removed-in 2.0", id="absent-unrelated-flags"),
+            pytest.param("symbol mypkg::old_fn mypkg::new_fn", id="absent-subcommand-only"),
+            pytest.param("--deprecated", id="similar-deprecated-suffix"),
+            pytest.param("--deprecate-foo", id="similar-deprecate-dash-suffix"),
+        ],
+    )
+    def test_deprecation_stays_disabled(self, arguments: str) -> None:
+        assert parse(arguments) == (False, "")
 
 
 # ---------------------------------------------------------------------------
@@ -157,20 +133,26 @@ class TestSimilarButDistinctFlags:
 
 
 class TestFormatShellAssignments:
-    def test_true_with_empty_decorator(self) -> None:
-        assert format_shell_assignments(True, "") == "DEPRECATE=true\nDEPRECATE_DECORATOR=''"
-
-    def test_false_with_empty_decorator(self) -> None:
-        assert format_shell_assignments(False, "") == "DEPRECATE=false\nDEPRECATE_DECORATOR=''"
-
-    def test_true_with_simple_decorator(self) -> None:
-        out = format_shell_assignments(True, "@deprecated")
-        assert out == "DEPRECATE=true\nDEPRECATE_DECORATOR=@deprecated"
-
-    def test_true_with_decorator_containing_parens_and_quotes(self) -> None:
-        # Single quotes must come back shell-quoted so `eval` rebuilds one token.
-        out = format_shell_assignments(True, "@deprecated(target=bar)")
-        assert out == "DEPRECATE=true\nDEPRECATE_DECORATOR='@deprecated(target=bar)'"
+    @pytest.mark.parametrize(
+        ("deprecate", "decorator", "expected"),
+        [
+            pytest.param(True, "", "DEPRECATE=true\nDEPRECATE_DECORATOR=''", id="true-with-empty-decorator"),
+            pytest.param(False, "", "DEPRECATE=false\nDEPRECATE_DECORATOR=''", id="false-with-empty-decorator"),
+            pytest.param(
+                True, "@deprecated", "DEPRECATE=true\nDEPRECATE_DECORATOR=@deprecated", id="true-with-simple-decorator"
+            ),
+            # Single quotes must come back shell-quoted so `eval` rebuilds one token.
+            pytest.param(
+                True,
+                "@deprecated(target=bar)",
+                "DEPRECATE=true\nDEPRECATE_DECORATOR='@deprecated(target=bar)'",
+                id="true-with-decorator-containing-parens-and-quotes",
+            ),
+        ],
+    )
+    def test_assignments_are_formatted_for_eval(self, deprecate: bool, decorator: str, expected: str) -> None:
+        """The flag and the shell-quoted decorator are rendered as two ``eval``-ready assignment lines."""
+        assert format_shell_assignments(deprecate, decorator) == expected
 
     def test_true_with_decorator_containing_spaces(self) -> None:
         out = format_shell_assignments(True, "@deprecated(target=bar, in='1.0')")
@@ -211,65 +193,38 @@ class TestMain:
     fixed names.
     """
 
-    def test_main_with_bare_deprecate(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    @pytest.mark.parametrize(
+        ("argv", "expected"),
+        [
+            pytest.param(["--arguments=--deprecate"], ("true", ""), id="bare-deprecate"),
+            pytest.param(["--arguments=--deprecate=@mydecorator"], ("true", "@mydecorator"), id="deprecate-value-raw"),
+            pytest.param(["--arguments=--no-deprecate"], ("false", ""), id="no-deprecate"),
+            pytest.param(["--arguments=--dry-run --since 1.0"], ("false", ""), id="absent-flag"),
+            pytest.param(["--arguments="], ("false", ""), id="empty-arguments"),
+            pytest.param([], ("false", ""), id="no-argv-defaults-empty"),
+            pytest.param(
+                ["--arguments", "symbol mypkg::old mypkg::new"], ("false", ""), id="space-separated-arguments-value"
+            ),
+        ],
+    )
+    def test_main_writes_flag_and_decorator_files(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        argv: list[str],
+        expected: tuple[str, str],
     ) -> None:
-        """Bare ``--deprecate`` → flag=true, decorator=empty."""
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        rc = main(["--arguments=--deprecate"])
-        assert rc == 0
-        assert _read_outputs(capsys) == ("true", "")
+        """``main`` exits 0 and writes the flag and raw decorator values to the temp files it prints.
 
-    def test_main_with_deprecate_value(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Verify command-line option behavior.
-
-        ``--deprecate=<value>`` → flag=true, decorator=raw value (no shell quoting).
+        A bare ``--deprecate`` gives flag=true with an empty decorator; ``--deprecate=<value>`` gives the raw value (no
+        shell quoting); ``--no-deprecate``, an absent flag, empty arguments and omitted ``--arguments`` all give
+        flag=false. The space-separated form works for payloads that do not start with ``--``.
         """
         monkeypatch.setenv("TMPDIR", str(tmp_path))
-        rc = main(["--arguments=--deprecate=@mydecorator"])
+        rc = main(argv)
         assert rc == 0
-        assert _read_outputs(capsys) == ("true", "@mydecorator")
-
-    def test_main_with_no_deprecate(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Verify command-line option behavior.
-
-        ``--no-deprecate`` → flag=false, decorator=empty.
-        """
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        rc = main(["--arguments=--no-deprecate"])
-        assert rc == 0
-        assert _read_outputs(capsys) == ("false", "")
-
-    def test_main_with_absent_flag(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """No ``--deprecate`` flag → flag=false, decorator=empty."""
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        rc = main(["--arguments=--dry-run --since 1.0"])
-        assert rc == 0
-        assert _read_outputs(capsys) == ("false", "")
-
-    def test_main_with_empty_arguments(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Empty arguments → flag=false, decorator=empty."""
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        rc = main(["--arguments="])
-        assert rc == 0
-        assert _read_outputs(capsys) == ("false", "")
-
-    def test_main_with_no_argv(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Default empty string when ``--arguments`` omitted → flag=false."""
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        rc = main([])
-        assert rc == 0
-        assert _read_outputs(capsys) == ("false", "")
+        assert _read_outputs(capsys) == expected
 
     def test_main_decorator_written_raw_not_shell_quoted(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -281,15 +236,6 @@ class TestMain:
         flag, decorator = _read_outputs(capsys)
         assert flag == "true"
         assert "@deprecated(target=bar" in decorator
-
-    def test_main_with_space_separated_arguments_value(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Space-separated form works for payloads not starting with ``--``."""
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        rc = main(["--arguments", "symbol mypkg::old mypkg::new"])
-        assert rc == 0
-        assert _read_outputs(capsys) == ("false", "")
 
     def test_main_uses_sys_argv_when_none(
         self,

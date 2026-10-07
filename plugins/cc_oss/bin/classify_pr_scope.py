@@ -48,10 +48,10 @@ class PRScope(str, Enum):
     MIXED = "MIXED"
 
 
-# Substrings that, when present in PR labels (csv) or title, upgrade a FIX
-# verdict to REFACTOR — a short-diff change can still be a refactor when it
-# spans multiple concerns. Matched case-insensitively against the joined
-# ``labels + " " + title`` haystack so callers can pass either field.
+#: Substrings that, when present in PR labels (csv) or title, upgrade a FIX
+#: verdict to REFACTOR — a short-diff change can still be a refactor when it
+#: spans multiple concerns. Matched case-insensitively against the joined
+#: ``labels + " " + title`` haystack so callers can pass either field.
 _REFACTOR_SIGNAL_TOKENS: tuple[str, ...] = (
     "perf",
     "performance",

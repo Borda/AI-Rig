@@ -11,9 +11,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import pytest
-
 import check_base_fresh as cbf
+import pytest
 
 _skip_no_git = pytest.mark.skipif(shutil.which("git") is None, reason="git CLI not available")
 _GIT_ENV = {

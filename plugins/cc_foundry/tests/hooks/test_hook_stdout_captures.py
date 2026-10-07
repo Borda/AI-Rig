@@ -25,14 +25,12 @@ from __future__ import annotations
 import base64
 import json
 import shutil
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
-
-import pytest
 
 import build_blueprint_manifest as bbm
-from _audit_harness import install
-
+import pytest
+from _audit_harness import AuditEnv, install
 
 CAPTURES = json.loads(
     (Path(__file__).resolve().parent.parent / "fixtures" / "hook_stdout_captures.json").read_text(encoding="utf-8")
@@ -55,19 +53,36 @@ RAW_STDIN = {
     "command-not-string": '{"tool_name": "Bash", "tool_input": {"command": 42}}',
 }
 
+#: Slices each large captured scenario is split into, so xdist can spread one scenario's spawns across its workers.
+LARGE_SCENARIO_SLICES = 4
+
+#: Scenarios with at least this many commands are sliced; smaller ones replay as one case.
+LARGE_SCENARIO_MIN_COMMANDS = 50
+
 NODE_UNAVAILABLE = shutil.which("node") is None
 _skip_node_unavailable = pytest.mark.skipif(NODE_UNAVAILABLE, reason="requires node to execute the hooks")
+
+
+def _payload(command: str, scenario: str) -> str:
+    """Return the PreToolUse stdin the capture used for this scenario."""
+    tool = "Read" if scenario == NON_BASH else "Bash"
+    return json.dumps({"tool_name": tool, "tool_input": {"command": command}})
+
+
+@pytest.fixture(scope="module", name="bare_env")
+def _bare_env(tmp_path_factory: pytest.TempPathFactory) -> AuditEnv:
+    """Return one installed plugin root without a manifest, shared read-only by the manifest-free cases.
+
+    Every run passes ``RIG_AUDIT=0``, which stops the only write the hooks can make, so the root and its throwaway home
+    stay exactly as installed. A fresh install per case cost 214 installs for the shape corpus alone.
+    """
+    return install(tmp_path_factory.mktemp("bare-hook-env"))
 
 
 @pytest.fixture(name="replay")
 def _replay(tmp_path: Path) -> Callable[..., None]:
     """Return a callable that replays one captured scenario and asserts every case matches."""
     env = install(tmp_path)
-
-    def _payload(command: str, scenario: str) -> str:
-        """Return the PreToolUse stdin the capture used for this scenario."""
-        tool = "Read" if scenario == NON_BASH else "Bash"
-        return json.dumps({"tool_name": tool, "tool_input": {"command": command}})
 
     def _install_manifest(scenario: str, command: str) -> None:
         """Install the manifest the capture used for this scenario."""
@@ -79,10 +94,15 @@ def _replay(tmp_path: Path) -> Callable[..., None]:
         described = CAPTURES["manifests"].get(name)
         env.write_manifest(None if described is None else base64.b64decode(described["b64"]))
 
-    def _run(scenario: str, hook: str, expected_for: Callable[[str], dict]) -> None:
-        """Replay every command of ``scenario`` through ``hook`` and compare raw stdout bytes."""
+    def _run(scenario: str, part: tuple[int, int], hook: str, expected_for: Callable[[str], dict]) -> None:
+        """Replay one ``(index, count)`` slice of ``scenario``'s commands through ``hook`` and compare raw stdout bytes.
+
+        Slices take every ``count``-th command of the sorted corpus starting at ``index``, so the ``count`` slices of a
+        scenario partition it exactly: every captured command is replayed by exactly one case.
+        """
+        index, count = part
         mismatches = []
-        for command in CAPTURES["blueprint"][scenario] if scenario in CAPTURES["blueprint"] else []:
+        for command in sorted(CAPTURES["blueprint"].get(scenario, {}))[index::count]:
             expected = expected_for(command)
             if expected is None:
                 continue
@@ -92,49 +112,55 @@ def _replay(tmp_path: Path) -> Callable[..., None]:
                 mismatches.append((command, proc.stdout, base64.b64decode(expected["stdout_b64"])))
         assert mismatches == [], f"{len(mismatches)} case(s) diverged from the frozen capture: {mismatches[:3]}"
 
-    _run.env = env
-    _run.payload = _payload
-    _run.install_manifest = _install_manifest
     return _run
 
 
 def _blueprint_scenarios() -> list:
-    """Return one param per captured blueprint scenario."""
-    return [pytest.param(name, id=name) for name in sorted(CAPTURES["blueprint"])]
+    """Return one param per slice of every captured blueprint scenario, as ``(scenario, (index, count))``.
+
+    A whole 214-command scenario in one case was the longest single test of the suite (about 25 s on Windows CI) and
+    pinned one xdist worker while the others idled; slicing it lets the scheduler balance the same spawns.
+    """
+    params = []
+    for name in sorted(CAPTURES["blueprint"]):
+        count = LARGE_SCENARIO_SLICES if len(CAPTURES["blueprint"][name]) >= LARGE_SCENARIO_MIN_COMMANDS else 1
+        params.extend(pytest.param(name, (index, count), id=f"{name}-{index + 1}of{count}") for index in range(count))
+    return params
 
 
 @_skip_node_unavailable
 class TestDecisionModuleDrivers:
     """Each module's standalone driver still writes the bytes it wrote before the refactor."""
 
-    @pytest.mark.parametrize("scenario", _blueprint_scenarios())
-    def test_blueprint_driver_bytes_unchanged(self, scenario: str, replay: Callable[..., None]) -> None:
-        """Replay the blueprint module over every command of one manifest scenario."""
-        replay(scenario, BLUEPRINT_HOOK, lambda command: CAPTURES["blueprint"][scenario][command])
+    @pytest.mark.parametrize(("scenario", "part"), _blueprint_scenarios())
+    def test_blueprint_driver_bytes_unchanged(
+        self, scenario: str, part: tuple[int, int], replay: Callable[..., None]
+    ) -> None:
+        """Replay the blueprint module over one slice of a manifest scenario's commands."""
+        replay(scenario, part, BLUEPRINT_HOOK, lambda command: CAPTURES["blueprint"][scenario][command])
 
     @pytest.mark.parametrize("command", sorted(CAPTURES["shape"]["bash"]))
-    def test_shape_driver_bytes_unchanged(self, command: str, replay: Callable[..., None]) -> None:
+    def test_shape_driver_bytes_unchanged(self, command: str, bare_env: AuditEnv) -> None:
         """Replay the shape module, which reads no manifest, over the whole corpus.
 
         The shape module gained a ``require.main`` guard and had its driver body moved into a function. Both are exactly
         the kind of change that silently alters what reaches stdout, which is why the comparison is on bytes.
         """
-        replay.env.write_manifest(None)
         expected = CAPTURES["shape"]["bash"][command]
-        proc = replay.env.run(SENTINEL_HOOK, replay.payload(command, "bash"), RIG_AUDIT="0")
+        proc = bare_env.run(SENTINEL_HOOK, _payload(command, "bash"), RIG_AUDIT="0")
         assert base64.b64encode(proc.stdout).decode() == expected["stdout_b64"]
         assert proc.returncode == expected["exit"]
 
     @pytest.mark.parametrize("case", sorted(RAW_STDIN))
     @pytest.mark.parametrize("module", [BLUEPRINT_HOOK, SENTINEL_HOOK, DISPATCH_HOOK])
-    def test_malformed_stdin_bytes_unchanged(self, module: str, case: str, replay: Callable[..., None]) -> None:
+    def test_malformed_stdin_bytes_unchanged(self, module: str, case: str, bare_env: AuditEnv) -> None:
         """Malformed stdin writes nothing and exits 0, for both modules and for the dispatcher.
 
         The dispatcher shares the modules' captured expectation here: neither lane reaches a decision, so it has nothing
         to print and nothing to record.
         """
         expected = CAPTURES["raw_stdin"]["blueprint" if module != SENTINEL_HOOK else "shape"][case]
-        proc = replay.env.run(module, RAW_STDIN[case], RIG_AUDIT="0")
+        proc = bare_env.run(module, RAW_STDIN[case], RIG_AUDIT="0")
         assert base64.b64encode(proc.stdout).decode() == expected["stdout_b64"]
         assert proc.returncode == 0
 
@@ -143,8 +169,10 @@ class TestDecisionModuleDrivers:
 class TestDispatcherParity:
     """The dispatcher's stdout is the two modules' composition, byte-for-byte."""
 
-    @pytest.mark.parametrize("scenario", _blueprint_scenarios())
-    def test_dispatcher_equals_blueprint_or_shape(self, scenario: str, replay: Callable[..., None]) -> None:
+    @pytest.mark.parametrize(("scenario", "part"), _blueprint_scenarios())
+    def test_dispatcher_equals_blueprint_or_shape(
+        self, scenario: str, part: tuple[int, int], replay: Callable[..., None]
+    ) -> None:
         """For every captured command, dispatcher stdout equals blueprint's bytes, else shape's, else empty.
 
         This is the load-bearing half of the registration change's safety argument, and its limit is worth stating.
@@ -164,16 +192,15 @@ class TestDispatcherParity:
             blueprint = CAPTURES["blueprint"][scenario][command]
             return blueprint if blueprint["stdout_b64"] else shape
 
-        replay(scenario, DISPATCH_HOOK, expected_for)
+        replay(scenario, part, DISPATCH_HOOK, expected_for)
 
-    def test_never_serializes_null(self, replay: Callable[..., None]) -> None:
+    def test_never_serializes_null(self, bare_env: AuditEnv) -> None:
         """A passthrough is silence, never the four bytes ``null``.
 
         ``JSON.stringify(null)`` returns the string ``"null"``, which a host would parse as a decision object. The
         oracle is ``payload ? JSON.stringify(payload) : <empty>`` precisely to keep that unreachable.
         """
-        replay.env.write_manifest(None)
-        proc = replay.env.run(DISPATCH_HOOK, replay.payload("ls -la", "bash"), RIG_AUDIT="0")
+        proc = bare_env.run(DISPATCH_HOOK, _payload("ls -la", "bash"), RIG_AUDIT="0")
         assert proc.stdout == b""
 
     def test_blueprint_wins_when_both_allow(self, tmp_path: Path) -> None:
@@ -191,7 +218,8 @@ class TestDispatcherParity:
         shape = env.run(SENTINEL_HOOK, payload, RIG_AUDIT="0")
         blueprint = env.run(BLUEPRINT_HOOK, payload, RIG_AUDIT="0")
         dispatched = env.run(DISPATCH_HOOK, payload, RIG_AUDIT="0")
-        assert blueprint.stdout and shape.stdout, "the fixture must make BOTH lanes allow"
+        assert blueprint.stdout, "the fixture must make BOTH lanes allow"
+        assert shape.stdout, "the fixture must make BOTH lanes allow"
         assert dispatched.stdout == blueprint.stdout
         assert dispatched.stdout != shape.stdout
 
@@ -205,11 +233,14 @@ class TestCaptureFixtureIsHonest:
         blueprint_allows = sum(1 for case in CAPTURES["blueprint"]["seeded"].values() if case["stdout_b64"])
         shape_allows = sum(1 for case in CAPTURES["shape"]["bash"].values() if case["stdout_b64"])
         tampered_allows = sum(1 for case in CAPTURES["blueprint"]["tampered-self"].values() if case["stdout_b64"])
-        assert blueprint_allows > 0 and shape_allows > 0 and tampered_allows > 0
+        assert blueprint_allows > 0
+        assert shape_allows > 0
+        assert tampered_allows > 0
 
     def test_records_the_revision_and_runtime_it_came_from(self) -> None:
         """A baseline with no provenance cannot be reasoned about when it later disagrees with the code."""
-        assert CAPTURES["captured_at_rev"] and not CAPTURES["captured_at_rev"].endswith("-dirty")
+        assert CAPTURES["captured_at_rev"]
+        assert not CAPTURES["captured_at_rev"].endswith("-dirty")
         assert CAPTURES["node_version"].startswith("v")
 
     def test_manifest_bytes_are_pinned_by_digest(self) -> None:

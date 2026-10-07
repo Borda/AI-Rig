@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
-
 
 BENCHMARKS = Path(__file__).resolve().parent.parent
 
@@ -25,7 +24,8 @@ def _load() -> Any:
     spec = importlib.util.spec_from_file_location(
         "benchmarks_codex_runtime", BENCHMARKS / "_bench_codex" / "runtime.py"
     )
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -396,7 +396,7 @@ def test_checksum_ledger_detects_retained_artifact_changes(tmp_path: Path) -> No
     lifecycle.verify_checksums(tmp_path)
 
     telemetry.write_text('{"task_id": "changed"}\n', encoding="utf-8")
-    with pytest.raises(ValueError, match="checksum mismatch: telemetry.jsonl"):
+    with pytest.raises(ValueError, match=r"checksum mismatch: telemetry.jsonl"):
         lifecycle.verify_checksums(tmp_path)
 
 
@@ -426,7 +426,7 @@ def test_root_checksum_ledger_covers_each_child_stage_ledger(tmp_path: Path) -> 
     lifecycle.verify_checksums(tmp_path)
 
     telemetry.write_text('{"task_id": "changed"}\n', encoding="utf-8")
-    with pytest.raises(ValueError, match="checksum mismatch: readcrop/telemetry.jsonl"):
+    with pytest.raises(ValueError, match=r"checksum mismatch: readcrop/telemetry.jsonl"):
         lifecycle.verify_checksums(tmp_path)
 
 
@@ -466,10 +466,14 @@ def test_progress_scope_restores_stage_local_output_after_an_exception(
     """A failed child stage cannot leak aggregate presentation into later runs."""
     runtime = _load()
 
-    with pytest.raises(RuntimeError, match="fixture failure"):
+    def _run_expected_failure() -> None:
+        """Run the statements expected to fail as one callable."""
         with runtime.progress_scope(completed_offset=3, total_cells=12):
             runtime.print_arm_row("(1/3) ✓ T-01 A_plain", "A_plain")
             raise RuntimeError("fixture failure")
+
+    with pytest.raises(RuntimeError, match="fixture failure"):
+        _run_expected_failure()
     runtime.print_arm_row("(1/3) ✓ T-01 A_plain", "A_plain")
 
     assert capsys.readouterr().out.splitlines() == ["(4/12) ✓ T-01 A_plain", "(1/3) ✓ T-01 A_plain"]

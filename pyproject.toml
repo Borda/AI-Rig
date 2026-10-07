@@ -20,7 +20,7 @@ dev = [
 # Test tooling + benchmark runtime deps (benchmark tests import the run-codemap scripts).
 test = [
   "mkdocs>=1.6",
-  "pytest",
+  "pytest>=9",
   "pytest-cov",
   # "pytest-randomly",
   "pytest-rerunfailures",
@@ -59,26 +59,78 @@ extend-exclude = [
   "plugins/codemap-py/tests/data/corpus/", # frozen-grammar fixtures — intentional post-3.11 syntax, parse-errors under py310 target
   "site/",                                 # MkDocs build output — generated, not source
 ]
-format = {}
+# Like Black, indent with spaces, rather than tabs.
+format.indent-style = "space"
+# Like Black, use double quotes for strings.
+format.quote-style = "double"
+# Like Black, automatically detect the appropriate line ending.
+format.line-ending = "auto"
+# Like Black, respect magic trailing commas.
+format.skip-magic-trailing-comma = false
+# Enable linting rules for code style, imports, and best practices.
+lint.select = [
+  "A",   # flake8-builtins - https://docs.astral.sh/ruff/rules/#flake8-builtins-a
+  "E",   # pycodestyle errors - https://docs.astral.sh/ruff/rules/#error-e
+  "F",   # Pyflakes - https://docs.astral.sh/ruff/rules/#pyflakes-f
+  "I",   # isort - https://docs.astral.sh/ruff/rules/#isort-i
+  "PT",  # pytest - https://docs.astral.sh/ruff/rules/#flake8-pytest-style-pt
+  "Q",   # flake8-quotes - https://docs.astral.sh/ruff/rules/#flake8-quotes-q
+  "RUF", # Ruff-specific rules - https://docs.astral.sh/ruff/rules/#ruff-specific-rules-ruf
+  "S",   # bandit - https://docs.astral.sh/ruff/rules/#flake8-bandit-s
+  "UP",  # pyupgrade - https://docs.astral.sh/ruff/rules/#pyupgrade-up
+  "W",   # pycodestyle warnings - https://docs.astral.sh/ruff/rules/#pycodestyle-w
+]
 # Complexity gate — enforced for codemap-py only (the negated pattern below ignores the
 # rules everywhere else). The other plugins carry their own, much larger, backlog of
 # complexity findings; gating them is a separate decision.
-lint.extend-select = [ "C901", "D401", "D402", "D403", "PLR0911", "PLR0912", "PLR0915", "W505" ]
-# Accepted debt, frozen at today's offender set: the gate exists to stop NEW complexity
-# entering the plugin, not to force a refactor of the scanner and graph internals. Each
-# entry is a ceiling, never a licence — a function added to one of these files that
-# exceeds the limits still needs splitting, it just is not machine-enforced here.
-# Re-measure with `ruff check --select C901,PLR0911,PLR0912,PLR0915` after touching them.
-lint.per-file-ignores."!plugins/codemap-py/**" = [ "C901", "PLR0911", "PLR0912", "PLR0915" ]
-# 1 PLR0911 each
-lint.per-file-ignores."plugins/codemap-py/bin/resolve_index_env.py" = [ "PLR0911" ]
-lint.per-file-ignores."plugins/codemap-py/src/codemap_py/cli.py" = [ "PLR0911" ]
-# graph.py needs no entry: _recompute_metrics and the scan/incremental_scan statement
-# counts were brought under the limits by extraction, so they stay machine-enforced.
-# 5 C901 (worst: _drop_top_level_rebindings, 30) + 8 PLR
-lint.per-file-ignores."plugins/codemap-py/src/codemap_py/scanner/*.py" = [ "C901", "PLR0911", "PLR0912", "PLR0915" ]
-lint.per-file-ignores."plugins/codemap-py/src/codemap_py/schema.py" = [ "PLR0911" ]
-lint.per-file-ignores."plugins/codemap-py/tests/data/parity_golden/_schema.py" = [ "PLR0911" ]
+lint.extend-select = [
+  "C901",    # mccabe - function too complex (cyclomatic complexity above the limit)
+  "D401",    # pydocstyle - docstring first line should be in imperative mood
+  "D402",    # pydocstyle - docstring first line should not be the function signature
+  "D403",    # pydocstyle - docstring first word should be capitalized
+  "PLR0911", # pylint - too many return statements
+  "PLR0912", # pylint - too many branches
+  "PLR0915", # pylint - too many statements
+]
+lint.ignore = [
+  "E501", # line too long; the formatter wraps code, but long string literals, prompts, and fixtures cannot be wrapped
+]
+# A `!` pattern ignores the listed rules in every file NOT matching it, so this keeps the gate
+# active inside codemap-py only. Any codemap-py exception is an inline `# noqa` with a reason.
+lint.per-file-ignores."!plugins/codemap-py/**" = [
+  "C901",    # function too complex
+  "PLR0911", # too many return statements
+  "PLR0912", # too many branches
+  "PLR0915", # too many statements
+]
+# Tests assert by design (pytest introspection), drive subprocess tooling (PATH-resolved git, gh, node)
+# with repo-controlled argv, and use fake /tmp paths.
+lint.per-file-ignores."**/conftest.py" = [
+  "S101", # bandit - use of assert
+  "S108", # bandit - hardcoded /tmp path
+  "S603", # bandit - subprocess call without shell=True (check for untrusted input)
+  "S607", # bandit - subprocess started with a partial executable path
+]
+lint.per-file-ignores."**/test_*.py" = [
+  "S101", # bandit - use of assert
+  "S108", # bandit - hardcoded /tmp path
+  "S603", # bandit - subprocess call without shell=True (check for untrusted input)
+  "S607", # bandit - subprocess started with a partial executable path
+]
+lint.per-file-ignores."**/tests/**" = [
+  "S101", # bandit - use of assert
+  "S108", # bandit - hardcoded /tmp path
+  "S603", # bandit - subprocess call without shell=True (check for untrusted input)
+  "S607", # bandit - subprocess started with a partial executable path
+]
+# Full-width letters are the documented confusable example this generator emits and tests.
+lint.per-file-ignores."plugins/codemap-py/bin/gen_deprecation_wrapper.py" = [
+  "RUF001", # ambiguous unicode character in a string
+  "RUF002", # ambiguous unicode character in a docstring
+  "RUF003", # ambiguous unicode character in a comment
+]
+# Typographic characters that real output strings, docs, and test expectations use on purpose.
+lint.allowed-confusables = [ "ℹ", "×", "–", "’", "−", "∪" ]
 lint.mccabe.max-complexity = 12
 lint.pycodestyle.max-doc-length = 120
 lint.pylint = { max-returns = 6, max-branches = 12, max-statements = 50 }
@@ -112,14 +164,6 @@ ini_options.addopts = [
   "--import-mode=importlib",
   "--color=yes",
   "--doctest-modules",
-  "--cov=plugins/codemap-py/bin",
-  "--cov=plugins/codemap-py/src",
-  "--cov=plugins/cc_develop/bin",
-  "--cov=plugins/cc_foundry/bin",
-  "--cov=plugins/cc_oss/bin",
-  "--cov=plugins/cc_research/bin",
-  "--cov-report=term-missing",
-  "--cov-report=html:.reports/coverage",
   "--ignore=benchmarks/results",
   # Limit each test to 120 seconds so a hung test reports the offender promptly.
   # timeout_method is left at the default

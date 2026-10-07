@@ -28,11 +28,10 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-import pytest
-
-import _rwgate as rw
 import _index_identity as ii
 import _runtime_log as rl
+import _rwgate as rw
+import pytest
 
 _BIN = Path(__file__).resolve().parents[2] / "bin"
 SCAN_INDEX = _BIN / "scan-index"
@@ -257,7 +256,8 @@ def test_split_index_roots_diagnostic(tmp_path: Path) -> None:
     a = ii.resolve_index(root=tmp_path / "a")
     b = ii.resolve_index(root=tmp_path / "b")
     diag = ii.diagnose_split_index_roots(a.index_path, b.index_path)
-    assert diag is not None and diag.code == ii.SPLIT_INDEX_ROOTS
+    assert diag is not None
+    assert diag.code == ii.SPLIT_INDEX_ROOTS
     assert ii.diagnose_split_index_roots(a.index_path, a.index_path) is None
 
 
@@ -378,6 +378,7 @@ def test_concurrent_scans_are_serialized_and_publish_a_valid_index(project: Path
     assert _count(counter) == 2  # both ran; the lease ordered them, it did not drop one
     # The point of the lease: whichever finished last, the published file is complete.
     published = json.loads(ident.index_path.read_bytes())
-    assert published.get("scan_version") and published.get("file_shas")
+    assert published.get("scan_version")
+    assert published.get("file_shas")
     # No temp leaked — a crashed or superseded writer must not litter the index dir.
     assert not list(ident.index_dir.glob(".*.tmp"))

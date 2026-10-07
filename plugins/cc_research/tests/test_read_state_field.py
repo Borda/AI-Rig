@@ -42,28 +42,45 @@ def _write_state(path: Path, payload: object) -> Path:
 class TestReadFieldPure:
     """Unit tests for the pure ``read_field()`` function."""
 
-    def test_top_level_field(self) -> None:
-        """Single segment resolves to top-level value."""
-        assert read_field({"status": "completed"}, "status") == "completed"
+    @pytest.mark.parametrize(
+        ("data", "dotted_path", "expected"),
+        [
+            pytest.param({"status": "completed"}, "status", "completed", id="top-level-field"),
+            pytest.param(
+                {"config": {"metric": {"direction": "higher"}}},
+                "config.metric.direction",
+                "higher",
+                id="nested-dotted-field",
+            ),
+            pytest.param({"n": 42}, "n", "42", id="numeric-terminal-coerced-to-string"),
+        ],
+    )
+    def test_present_field_resolves_to_string(self, data: dict[str, object], dotted_path: str, expected: str) -> None:
+        """A present field resolves to its value as a string.
 
-    def test_nested_dotted_field(self) -> None:
-        """Canonical case: ``config.metric.direction``."""
-        data = {"config": {"metric": {"direction": "higher"}}}
-        assert read_field(data, "config.metric.direction") == "higher"
+        A single segment resolves to the top-level value; the canonical nested case is ``config.metric.direction``; a
+        non-string terminal value is converted via ``str()``.
+        """
+        assert read_field(data, dotted_path) == expected
 
-    def test_default_when_segment_missing(self) -> None:
-        """Default returned when intermediate key is absent."""
-        data = {"config": {"metric": {}}}
-        assert read_field(data, "config.metric.direction", default="higher") == "higher"
+    @pytest.mark.parametrize(
+        ("data", "dotted_path", "default", "expected"),
+        [
+            pytest.param(
+                {"config": {"metric": {}}}, "config.metric.direction", "higher", "higher", id="segment-missing"
+            ),
+            pytest.param({"a": "scalar"}, "a.b", "fallback", "fallback", id="terminal-not-dict"),
+        ],
+    )
+    def test_default_returned_when_path_unresolvable(
+        self, data: dict[str, object], dotted_path: str, default: str, expected: str
+    ) -> None:
+        """The default is returned when an intermediate key is absent or a scalar stops the traversal.
 
-    def test_default_when_terminal_not_dict(self) -> None:
-        """Scalar at intermediate position stops traversal — default returned."""
-        data = {"a": "scalar"}
-        assert read_field(data, "a.b", default="fallback") == "fallback"
-
-    def test_numeric_terminal_coerced_to_string(self) -> None:
-        """Non-string terminal value is converted via ``str()``."""
-        assert read_field({"n": 42}, "n") == "42"
+        With ``config.metric`` present but empty, the missing ``direction`` segment yields the default. With a scalar at
+        ``a``, the traversal cannot descend into ``a.b`` and likewise yields the default rather than raising.
+        """
+        assert read_field(data, dotted_path, default=default) == expected
 
     @pytest.mark.parametrize("dotted_path", ["", ".", "a.", ".a", "a..b"])
     def test_invalid_dotted_path_raises(self, dotted_path: str) -> None:

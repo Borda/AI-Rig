@@ -40,9 +40,13 @@ import sys
 import time
 from pathlib import Path
 
+#: Age in days past which a result run becomes eligible for pruning unless the command line overrides it.
 DEFAULT_RETENTION_DAYS = 30
+#: Seconds in a day, to convert the retention window into a cutoff timestamp.
 _SECONDS_PER_DAY = 86400
+#: Bytes in a megabyte, to report freed space.
 _BYTES_PER_MB = 1024 * 1024
+#: Seconds a git subprocess may run before it is abandoned.
 _GIT_TIMEOUT_S = 30
 
 
@@ -84,8 +88,8 @@ def cited_names(repo_root: Path) -> set[str]:
             everything.
     """
     try:
-        completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
-            ["git", "grep", "--no-color", "-ohI", "-E", r"results/[A-Za-z0-9._-]+"],
+        completed = subprocess.run(
+            ["git", "grep", "--no-color", "-ohI", "-E", r"results/[A-Za-z0-9._-]+"],  # noqa: S607 - git/tool resolved via PATH on purpose
             cwd=str(repo_root),
             capture_output=True,
             text=True,

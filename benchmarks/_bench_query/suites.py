@@ -8,10 +8,9 @@ import subprocess
 import time
 from pathlib import Path
 
-from _bench_query.models import ScenarioResult, THRESHOLDS, Task, TimingStats
-from _bench_query.tasks import load_oss_tasks, load_tasks
-from _bench_query.sources import module_to_grep_pattern, module_to_package, verify_importer
 from _bench_query.cold import count_cold_calls_deps, count_cold_calls_rdeps, time_command, time_commands
+from _bench_query.models import THRESHOLDS, ScenarioResult, Task, TimingStats
+from _bench_query.output import log
 from _bench_query.queries import (
     codemap_rdeps_result,
     grep_importers_boundary,
@@ -20,11 +19,12 @@ from _bench_query.queries import (
     run_scan_query_result,
 )
 from _bench_query.scoring import score_rdeps_accuracy
-from _bench_query.output import log
-
+from _bench_query.sources import module_to_grep_pattern, module_to_package, verify_importer
+from _bench_query.tasks import load_oss_tasks, load_tasks
 
 # ---- SUITE: CALLS ----
 
+#: Task risk tiers treated as high risk, held to the stricter accuracy thresholds.
 _HIGH_RISK_TIERS = {"high", "very-high", "moderate-high"}
 
 
@@ -459,11 +459,11 @@ def run_measure_accuracy(repo_path: Path, scan_query_bin: Path, index_path: Path
 
 # ---- SUITE: LATENCY ----
 
-# Assumed number of structural queries a skill session issues before the index goes stale.
-# This is an explicit stated assumption, NOT telemetry: it is the divisor used to amortize the
-# one-time scan-index build cost over a session and to fold the build into the honest
-# build-inclusive speedup. A conservative value; on a large repo the real build cost dominates
-# and L3 is expected to fail under it — that failure is owned by the primary verdict, not hidden.
+#: Assumed number of structural queries a skill session issues before the index goes stale.
+#: This is an explicit stated assumption, NOT telemetry: it is the divisor used to amortize the
+#: one-time scan-index build cost over a session and to fold the build into the honest
+#: build-inclusive speedup. A conservative value; on a large repo the real build cost dominates
+#: and L3 is expected to fail under it — that failure is owned by the primary verdict, not hidden.
 _QUERIES_PER_SESSION = 10
 
 
@@ -554,7 +554,7 @@ def run_measure_latency(
         start = time.perf_counter()
         try:
             try:
-                subprocess.run(["python3", si, "--root", str(repo_path)], capture_output=True, text=True, timeout=120)
+                subprocess.run(["python3", si, "--root", str(repo_path)], capture_output=True, text=True, timeout=120)  # noqa: S603, S607 - argv list, no shell; tool resolved via PATH on purpose
             except subprocess.TimeoutExpired:
                 log("[latency] L3: scan-index timed out at 120s")
         finally:
@@ -985,7 +985,7 @@ def run_suite_health(
             if cmd not in ("undocumented", "uncovered"):
                 continue
 
-            args = [cmd] + q.get("args", [])
+            args = [cmd, *q.get("args", [])]
             sq = run_scan_query_result(scan_query_bin, args, index_path, repo_path)
 
             # ``*_count`` is now the independent AST oracle's authoritative value (see
@@ -1121,7 +1121,7 @@ def run_suite_xrefs(
         if q is None:
             continue
 
-        args = ["xrefs"] + q.get("args", [])
+        args = ["xrefs", *q.get("args", [])]
         sq = run_scan_query_result(scan_query_bin, args, index_path, repo_path)
         x_total += 1
 

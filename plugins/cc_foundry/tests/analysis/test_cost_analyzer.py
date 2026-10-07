@@ -238,7 +238,8 @@ class TestMainCli:
         assert str(out) in capsys.readouterr().out
         body = out.read_text(encoding="utf-8")
         assert "Sessions ranked by cost" in body
-        assert "sid1" in body and "sid2" in body
+        assert "sid1" in body
+        assert "sid2" in body
 
     def test_window_mode_empty_returns_1(self, tmp_path: Path, capsys):
         """No sessions with usage in the projects root exits 1 with a stderr message."""

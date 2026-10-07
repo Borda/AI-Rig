@@ -6,13 +6,13 @@ import copy
 import hashlib
 import json
 import runpy
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
-
 from test_gate_source import _python_command
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -26,15 +26,28 @@ def _evidence(directory: Path, name: str, payload: object) -> dict[str, str]:
     return {"path": name, "sha256": hashlib.sha256(content).hexdigest()}
 
 
-@pytest.fixture
-def audit_run(tmp_path: Path) -> tuple[Any, Path, dict[str, Any]]:
-    """Prepare a complete historical audit with executed review and retained cost evidence."""
-    validator = runpy.run_path(str(PLUGIN_ROOT / "shared" / "validate-artifacts.py"))
-    arguments = [sys.executable, str(PLUGIN_ROOT / "shared" / "run_gates.py"), "--out", str(tmp_path)]
+@pytest.fixture(scope="module", name="validator")
+def _validator() -> dict[str, Any]:
+    """Load the shipped validator module once; every test only reads its definitions."""
+    return runpy.run_path(str(PLUGIN_ROOT / "shared" / "validate-artifacts.py"))
+
+
+@pytest.fixture(scope="module", name="gate_template")
+def _gate_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Run the gate runner once; its retained files hold no absolute location, so each test copies them."""
+    template = tmp_path_factory.mktemp("audit-gates")
+    arguments = [sys.executable, str(PLUGIN_ROOT / "shared" / "run_gates.py"), "--out", str(template)]
     command = _python_command("print(1)")
     for gate in GATES:
         arguments.extend((f"--{gate}", command))
     subprocess.run(arguments, capture_output=True, check=True)
+    return template
+
+
+@pytest.fixture
+def audit_run(tmp_path: Path, validator: dict[str, Any], gate_template: Path) -> tuple[Any, Path, dict[str, Any]]:
+    """Prepare a complete historical audit with executed review and retained cost evidence."""
+    shutil.copytree(gate_template, tmp_path, dirs_exist_ok=True)
     for name, sections in validator["SKILL_REQUIREMENTS"]["audit"]["files"].items():
         (tmp_path / name).write_text(
             "\n\n".join(f"## {section}\n\nRetained local evidence." for section in sections), encoding="utf-8"

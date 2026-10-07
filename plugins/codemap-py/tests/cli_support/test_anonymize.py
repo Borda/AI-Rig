@@ -25,9 +25,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 import anonymize
+import pytest
 
 _SALT = b"x" * 32
 _BIN = Path(anonymize.__file__)
@@ -210,7 +209,8 @@ class TestCommandFieldLeak:
         record = {"tool": "Grep", "target": "validate_token", "search_path": "src/auth_service/tokens.py"}
         out = anonymize.anonymize_record(record, _SALT)
 
-        assert "auth_service" not in out["search_path"] and "tokens" not in out["search_path"]
+        assert "auth_service" not in out["search_path"]
+        assert "tokens" not in out["search_path"]
         assert out["search_path"].endswith(".py")
 
     def test_intent_prose_is_scrubbed(self) -> None:
@@ -225,7 +225,8 @@ class TestCommandFieldLeak:
         out = anonymize.anonymize_record({"tool": "Read", "target": "/Users/someone/proj/src/auth.py"}, _SALT)
 
         target = out["target"]
-        assert "someone" not in target and "auth" not in target
+        assert "someone" not in target
+        assert "auth" not in target
         assert target.endswith(".py"), "the file type is diagnostic and must survive"
         assert target.count("/") == 5, "the path shape must survive"
         assert "/src/" in target, "a conventional directory name is not identifying"
@@ -259,17 +260,23 @@ class TestCommandFieldLeak:
 class TestSessionPseudonymization:
     """The session id correlates an export back to the machine that produced it."""
 
-    def test_session_field_is_pseudonymized(self) -> None:
-        """The raw session id never survives in a record."""
-        out = anonymize.anonymize_record({"layer": "tool", "session": "8f14e45f-ea"}, _SALT)
+    @pytest.mark.parametrize(
+        ("record", "field", "raw_id"),
+        [
+            pytest.param({"layer": "tool", "session": "8f14e45f-ea"}, "session", "8f14e45f-ea", id="session"),
+            pytest.param(
+                {"layer": "skill", "hook_session": "hook-sid-9"}, "hook_session", "hook-sid-9", id="hook-session"
+            ),
+        ],
+    )
+    def test_session_fields_are_pseudonymized(self, record: dict[str, str], field: str, raw_id: str) -> None:
+        """The raw session id never survives in a record, in either session field.
 
-        assert out["session"] == anonymize._pseudo("8f14e45f-ea", _SALT)
+        The tool layer carries ``session``; the skill layer's second field, ``hook_session``, is covered too.
+        """
+        out = anonymize.anonymize_record(record, _SALT)
 
-    def test_hook_session_field_is_pseudonymized(self) -> None:
-        """The skill layer's second session field is covered too."""
-        out = anonymize.anonymize_record({"layer": "skill", "hook_session": "hook-sid-9"}, _SALT)
-
-        assert out["hook_session"] == anonymize._pseudo("hook-sid-9", _SALT)
+        assert out[field] == anonymize._pseudo(raw_id, _SALT)
 
     def test_session_pseudonym_joins_across_layers(self) -> None:
         """One session id maps to one pseudonym, so cross-layer joins still work."""
@@ -358,16 +365,20 @@ def test_default_out_dir_is_export_not_salt_dir() -> None:
     assert "logs" not in resolved.parent.name
 
 
-def test_explicit_out_dir_used() -> None:
-    """An explicit ``--out-dir`` places the derived ``-anon`` file inside it."""
-    resolved = anonymize._resolve_output(Path("logs/skills.jsonl"), "my-export", None)
-    assert resolved == Path("my-export") / "skills-anon.jsonl"
-
-
-def test_explicit_output_wins() -> None:
-    """An explicit ``--output`` overrides ``--out-dir`` derivation."""
-    resolved = anonymize._resolve_output(Path("logs/cli.jsonl"), "ignored", "out/custom.jsonl")
-    assert resolved == Path("out/custom.jsonl")
+@pytest.mark.parametrize(
+    ("source", "out_dir", "output", "expected"),
+    [
+        pytest.param(
+            Path("logs/skills.jsonl"), "my-export", None, Path("my-export") / "skills-anon.jsonl", id="explicit-out-dir"
+        ),
+        pytest.param(
+            Path("logs/cli.jsonl"), "ignored", "out/custom.jsonl", Path("out/custom.jsonl"), id="explicit-output"
+        ),
+    ],
+)
+def test_explicit_target_options_resolve_output(source: Path, out_dir: str, output: str | None, expected: Path) -> None:
+    """An explicit ``--out-dir`` places the derived ``-anon`` file inside it; an explicit ``--output`` overrides it."""
+    assert anonymize._resolve_output(source, out_dir, output) == expected
 
 
 def test_cli_default_target_has_no_salt(tmp_path: Path) -> None:
@@ -492,7 +503,7 @@ def test_salt_file_0600_regardless_of_umask(tmp_path: Path) -> None:
 def test_load_salt_defers_to_existing_salt(tmp_path: Path) -> None:
     """An existing salt is read as-is (never overwritten), so its value stays stable across calls."""
     salt_file = tmp_path / ".salt"
-    salt_file.write_text(("ab" * 32))
+    salt_file.write_text("ab" * 32)
     assert anonymize._load_salt(salt_file) == bytes.fromhex("ab" * 32)
 
 

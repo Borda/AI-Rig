@@ -32,6 +32,7 @@ import json
 import sys
 from pathlib import Path
 
+#: Remediation hint appended to findings that the setup skill can repair.
 _SETUP_FIX = "  Fix: run /foundry:setup"
 
 
@@ -106,6 +107,7 @@ def _settings_findings(settings: dict) -> list[tuple[str, str]]:
     return findings
 
 
+#: Success message printed for each passing settings sub-check (I2a to I2d).
 _I2_PASS = {
     "I2a": "✓: Check I2a — statusLine set",
     "I2b": "✓: Check I2b — permissions.allow populated",
@@ -166,7 +168,7 @@ def _is_foundry_target(target: str) -> bool:
 def _rule_links(home: Path) -> list[tuple[Path, str, bool]]:
     """Return (path, target, resolves) for the symlinks that should exist."""
     claude = home / ".claude"
-    candidates = list((claude / "rules").glob("*.md")) + [claude / "TEAM_PROTOCOL.md"]
+    candidates = [*list((claude / "rules").glob("*.md")), claude / "TEAM_PROTOCOL.md"]
     links: list[tuple[Path, str, bool]] = []
     for path in sorted(candidates):
         if path.is_symlink():

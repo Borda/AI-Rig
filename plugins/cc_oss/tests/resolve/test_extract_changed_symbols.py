@@ -10,9 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import extract_changed_symbols as ecs
+import pytest
 
 
 class _FakeCompleted:
@@ -42,45 +41,36 @@ def _patch_git(
     monkeypatch.setattr(ecs, "which", lambda _: "/fake/git")
 
 
-def test_invalid_left_ref_exits_0(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    "ref",
+    [
+        pytest.param("nonexistent..HEAD", id="left-ref-of-range-unresolved"),
+        pytest.param("nonexistent_ref", id="single-ref-unresolved"),
+    ],
+)
+def test_unresolvable_ref_exits_0_with_empty_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str], ref: str
 ) -> None:
-    """Left ref of range does not resolve → exit 0, empty stdout."""
+    """A range whose left ref, or a single ref, does not resolve → exit 0, empty stdout."""
     _patch_git(monkeypatch, rev_parse_rc=1)
     monkeypatch.chdir(tmp_path)
-    rc = ecs.main(["nonexistent..HEAD"])
+    rc = ecs.main([ref])
     assert rc == 0
     assert capsys.readouterr().out.strip() == ""
 
 
-def test_invalid_single_ref_exits_0(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        pytest.param("module.py", "class Foo: pass\n", id="no-init-py-in-tree"),
+        pytest.param("__init__.py", "", id="empty-diff-for-unchanged-initializer"),
+    ],
+)
+def test_nothing_to_extract_exits_0_with_empty_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str], filename: str, content: str
 ) -> None:
-    """Non-existent single ref → exit 0, empty stdout."""
-    _patch_git(monkeypatch, rev_parse_rc=1)
-    monkeypatch.chdir(tmp_path)
-    rc = ecs.main(["nonexistent_ref"])
-    assert rc == 0
-    assert capsys.readouterr().out.strip() == ""
-
-
-def test_no_init_py_exits_0(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """No ``__init__.py`` in tree → exit 0, empty stdout."""
-    (tmp_path / "module.py").write_text("class Foo: pass\n")
-    _patch_git(monkeypatch)
-    monkeypatch.chdir(tmp_path)
-    rc = ecs.main(["HEAD~1..HEAD"])
-    assert rc == 0
-    assert capsys.readouterr().out.strip() == ""
-
-
-def test_empty_diff_exits_0(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Return empty successful output for an unchanged initializer."""
-    (tmp_path / "__init__.py").write_text("")
+    """No ``__init__.py`` in the tree, or an empty diff for an unchanged initializer → exit 0, empty stdout."""
+    (tmp_path / filename).write_text(content)
     _patch_git(monkeypatch, diff_stdout="")
     monkeypatch.chdir(tmp_path)
     rc = ecs.main(["HEAD~1..HEAD"])
@@ -88,66 +78,38 @@ def test_empty_diff_exits_0(
     assert capsys.readouterr().out.strip() == ""
 
 
-def test_extracts_class_and_def_names(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("diff_stdout", "expected"),
+    [
+        pytest.param("+class Foo:\n+def bar():\n+    pass\n", ["Foo", "bar"], id="class-and-def-names-extracted"),
+        pytest.param(
+            "+def zoo():\n+class Alpha:\n+def Beta():\n", ["Alpha", "Beta", "zoo"], id="symbols-sorted-sort-u-behaviour"
+        ),
+        pytest.param("+class Dup:\n-class Dup:\n+class Dup:\n", ["Dup"], id="repeated-symbol-printed-once"),
+        pytest.param(" class Context: pass\n+class Added:\n", ["Added"], id="context-lines-not-extracted"),
+        pytest.param(
+            "--- a/__init__.py\n+++ b/__init__.py\n+class Real:\n", ["Real"], id="diff-header-lines-not-symbol-lines"
+        ),
+    ],
+)
+def test_symbols_extracted_from_changed_lines(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    diff_stdout: str,
+    expected: list[str],
 ) -> None:
-    """Diff with class and def additions → both symbol names in stdout."""
+    """Only added or removed ``class``/``def`` lines yield symbols, printed sorted and without duplicates.
+
+    Context lines (no leading +/-) and the ``---``/``+++`` diff header lines are not symbol lines; the same name from
+    several diff lines is printed once; output order is the ``sort -u`` order.
+    """
     (tmp_path / "__init__.py").write_text("")
-    _patch_git(monkeypatch, diff_stdout="+class Foo:\n+def bar():\n+    pass\n")
+    _patch_git(monkeypatch, diff_stdout=diff_stdout)
     monkeypatch.chdir(tmp_path)
     rc = ecs.main(["HEAD~1..HEAD"])
     assert rc == 0
-    symbols = capsys.readouterr().out.splitlines()
-    assert "Foo" in symbols
-    assert "bar" in symbols
-
-
-def test_symbols_sorted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Output symbols are sorted (sort -u behaviour)."""
-    (tmp_path / "__init__.py").write_text("")
-    _patch_git(monkeypatch, diff_stdout="+def zoo():\n+class Alpha:\n+def Beta():\n")
-    monkeypatch.chdir(tmp_path)
-    ecs.main(["HEAD~1..HEAD"])
-    symbols = capsys.readouterr().out.splitlines()
-    assert symbols == sorted(symbols)
-
-
-def test_symbols_deduplicated(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Same symbol name from multiple diff lines → printed only once."""
-    (tmp_path / "__init__.py").write_text("")
-    _patch_git(monkeypatch, diff_stdout="+class Dup:\n-class Dup:\n+class Dup:\n")
-    monkeypatch.chdir(tmp_path)
-    ecs.main(["HEAD~1..HEAD"])
-    symbols = capsys.readouterr().out.splitlines()
-    assert symbols.count("Dup") == 1
-
-
-def test_context_lines_not_extracted(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Diff context lines (no leading +/-) not included in output."""
-    (tmp_path / "__init__.py").write_text("")
-    _patch_git(monkeypatch, diff_stdout=" class Context: pass\n+class Added:\n")
-    monkeypatch.chdir(tmp_path)
-    ecs.main(["HEAD~1..HEAD"])
-    symbols = capsys.readouterr().out.splitlines()
-    assert "Context" not in symbols
-    assert "Added" in symbols
-
-
-def test_diff_header_lines_ignored(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Diff ``---``/``+++`` header lines not treated as symbol lines."""
-    (tmp_path / "__init__.py").write_text("")
-    _patch_git(monkeypatch, diff_stdout="--- a/__init__.py\n+++ b/__init__.py\n+class Real:\n")
-    monkeypatch.chdir(tmp_path)
-    ecs.main(["HEAD~1..HEAD"])
-    symbols = capsys.readouterr().out.splitlines()
-    assert "Real" in symbols
-    assert len(symbols) == 1
+    assert capsys.readouterr().out.splitlines() == expected
 
 
 def test_default_range_used_when_no_args(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

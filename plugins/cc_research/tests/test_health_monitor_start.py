@@ -17,9 +17,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-import pytest
-
 import health_monitor_start
+import pytest
 
 SCRIPT = Path(health_monitor_start.__file__)
 
@@ -94,13 +93,6 @@ class TestValidation:
 
 class TestHappyPath:
     """Integration tests for valid invocations."""
-
-    def test_exit_zero(self, capsys: pytest.CaptureFixture[str], sentinel_cleanup: list[str]) -> None:
-        """Valid skill-id → exit 0."""
-        skill_id = "test-skill-exitcode"
-        sentinel_cleanup.append(skill_id)
-        rc = health_monitor_start.main([skill_id])
-        assert rc == 0
 
     def test_emits_launch_at_and_sentinel(
         self, capsys: pytest.CaptureFixture[str], sentinel_cleanup: list[str]

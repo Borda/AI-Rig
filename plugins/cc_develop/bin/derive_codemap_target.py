@@ -36,10 +36,12 @@ from typing import Final
 # A dotted Python-ish path, then `::`, then a bare function name. The module half allows
 # dots so `pkg.mod::fn` keeps `pkg.mod` together; the function half does not, so a trailing
 # `.` in prose cannot be pulled into the name.
+#: Matches a qualified function reference of the form module.path::function in free-text goal text.
 _QUALIFIED: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*::[A-Za-z_][A-Za-z0-9_]*")
 
 # Two or more dot-joined identifier segments. Requiring the second segment keeps ordinary
 # prose ending in a period from reading as a module path.
+#: Matches a dotted module path of two or more identifier segments in free-text goal text.
 _DOTTED: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+")
 
 

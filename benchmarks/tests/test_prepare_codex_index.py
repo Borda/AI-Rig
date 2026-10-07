@@ -5,12 +5,11 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-from pathlib import Path, PureWindowsPath
 import subprocess
+from pathlib import Path, PureWindowsPath
 from types import ModuleType
 
 import pytest
-
 
 SCRIPT = Path(__file__).resolve().parent.parent / "prepare-codex-index.py"
 
@@ -22,7 +21,8 @@ def _load_script() -> ModuleType:
     'prepare_codex_index'
     """
     spec = importlib.util.spec_from_file_location("prepare_codex_index", SCRIPT)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

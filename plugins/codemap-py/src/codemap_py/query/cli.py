@@ -1,6 +1,7 @@
 """Parse the query command line and dispatch one command to its handler."""
 
 from __future__ import annotations
+
 import argparse
 import os
 import re
@@ -10,7 +11,9 @@ import sys
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from codemap_py import index_paths, query_state as state
+
+from codemap_py import index_paths
+from codemap_py import query_state as state
 
 # Transitional seam: exclusion rules live in codemap_py.scanner, but this
 # module still reaches them through the old bare-name ``_exclusions`` import
@@ -18,14 +21,21 @@ from codemap_py import index_paths, query_state as state
 # bin/-relative sys.path insert, the same route bin/scan-index used to take.
 # Every other import below is a direct package-internal import.
 # parents[3] not [2]: this file sits one level deeper than the pre-split query.py
+#: Plugin bin/ directory, added to sys.path so the _exclusions shim can be imported.
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
-from codemap_py.schema import (  # noqa: E402
-    EntityType,
-)
+from codemap_py.schema import EntityType  # noqa: E402
 from codemap_py.telemetry import CliInvocation  # noqa: E402
-from .callgraph import cmd_fn_blast, cmd_fn_central, cmd_fn_deps, cmd_fn_rdeps, cmd_mock_rdeps, cmd_test_impact  # noqa: E402
+
+from .callgraph import (  # noqa: E402
+    cmd_fn_blast,
+    cmd_fn_central,
+    cmd_fn_deps,
+    cmd_fn_rdeps,
+    cmd_mock_rdeps,
+    cmd_test_impact,
+)
 from .diff_batch import cmd_batch, cmd_diff_impact  # noqa: E402
 from .docs_coverage import UncoveredSort, cmd_coverage, cmd_coverage_gap, cmd_uncovered, cmd_undocumented  # noqa: E402
 from .errors import _EXIT_BAD_INPUT, _die_json  # noqa: E402
@@ -52,7 +62,12 @@ from .modules import (  # noqa: E402
     cmd_rdeps,
 )
 from .output import _print  # noqa: E402
-from .subprocess_fixtures import cmd_fixture_graph, cmd_fixture_rdeps, cmd_subprocess_deps, cmd_subprocess_rdeps  # noqa: E402
+from .subprocess_fixtures import (  # noqa: E402
+    cmd_fixture_graph,
+    cmd_fixture_rdeps,
+    cmd_subprocess_deps,
+    cmd_subprocess_rdeps,
+)
 from .symbols import _reject_multiline_args, cmd_find_symbol, cmd_symbol, cmd_symbols  # noqa: E402
 from .xrefs_dead import cmd_dead_modules, cmd_dead_symbols, cmd_xrefs  # noqa: E402
 
@@ -516,7 +531,7 @@ def _resolve_index_path(args: argparse.Namespace) -> Path:
     try:
         git_root = Path(
             subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"],
+                ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
                 text=True,
                 stderr=subprocess.DEVNULL,
                 timeout=_GIT_TIMEOUT_S,
@@ -596,7 +611,7 @@ def _run_query(argv: Sequence[str]) -> None:
 
     if args.timeout > 0 and hasattr(signal, "SIGALRM"):
 
-        def _timeout_handler(signum: int, frame: object) -> None:  # noqa: ARG001
+        def _timeout_handler(signum: int, frame: object) -> None:
             """Retain timeout evidence while preserving the CLI's existing exit contract."""
             if state._invocation is not None:
                 state._invocation.result = {"error": "timeout", "timeout_seconds": args.timeout}
@@ -647,43 +662,44 @@ def _run_query(argv: Sequence[str]) -> None:
 # if/elif chain. project_root is unused by most handlers; args is passed
 # through whole to the two (uncovered, dead-symbols/-modules) that take the
 # full namespace rather than individual fields.
+#: Dispatch table from query subcommand name to a callable that runs it against the loaded index.
 _COMMAND_HANDLERS: dict[str, Callable[[dict, argparse.Namespace, Path], None]] = {
-    "deps": lambda i, a, r: cmd_deps(  # noqa: ARG005 (r unused — shared handler signature)
+    "deps": lambda i, a, r: cmd_deps(
         i, a.module, stdlib_only=a.stdlib, third_party_only=a.third_party, internal_only=a.internal
     ),
-    "rdeps": lambda i, a, r: cmd_rdeps(  # noqa: ARG005
+    "rdeps": lambda i, a, r: cmd_rdeps(
         i, a.module, exclude_tests=a.exclude_tests, entity=_as_entity(a.entity), limit=a.limit
     ),
-    "central": lambda i, a, r: cmd_central(  # noqa: ARG005
+    "central": lambda i, a, r: cmd_central(
         i, a.top, exclude_tests=a.exclude_tests, entity=_as_entity(a.entity), among=_as_module_list(a.among)
     ),
-    "coupled": lambda i, a, r: cmd_coupled(i, a.top, exclude_tests=a.exclude_tests, entity=_as_entity(a.entity)),  # noqa: ARG005
-    "path": lambda i, a, r: cmd_path(i, a.frm, a.to),  # noqa: ARG005
-    "list": lambda i, a, r: cmd_list(i, limit=a.limit),  # noqa: ARG005
-    "packages": lambda i, a, r: cmd_packages(i),  # noqa: ARG005
+    "coupled": lambda i, a, r: cmd_coupled(i, a.top, exclude_tests=a.exclude_tests, entity=_as_entity(a.entity)),
+    "path": lambda i, a, r: cmd_path(i, a.frm, a.to),
+    "list": lambda i, a, r: cmd_list(i, limit=a.limit),
+    "packages": lambda i, a, r: cmd_packages(i),
     "symbol": lambda i, a, r: cmd_symbol(
         i, a.name, a.limit, exclude_tests=a.exclude_tests, with_imports=a.with_imports, project_root=r
     ),
-    "symbols": lambda i, a, r: cmd_symbols(i, a.module),  # noqa: ARG005
-    "find-symbol": lambda i, a, r: cmd_find_symbol(i, a.pattern, a.limit, exclude_tests=a.exclude_tests),  # noqa: ARG005
-    "fn-deps": lambda i, a, r: cmd_fn_deps(i, a.qname),  # noqa: ARG005
-    "fn-rdeps": lambda i, a, r: cmd_fn_rdeps(i, a.qname, exclude_tests=a.exclude_tests),  # noqa: ARG005
-    "fn-central": lambda i, a, r: cmd_fn_central(i, a.top, exclude_tests=a.exclude_tests),  # noqa: ARG005
-    "fn-blast": lambda i, a, r: cmd_fn_blast(i, a.qname),  # noqa: ARG005
-    "test-impact": lambda i, a, r: cmd_test_impact(i, a.qname, include_mocks=a.include_mocks),  # noqa: ARG005
-    "mock-rdeps": lambda i, a, r: cmd_mock_rdeps(i, a.query),  # noqa: ARG005
-    "subprocess-deps": lambda i, a, r: cmd_subprocess_deps(i, a.module),  # noqa: ARG005
-    "subprocess-rdeps": lambda i, a, r: cmd_subprocess_rdeps(i, a.module),  # noqa: ARG005
-    "fixture-rdeps": lambda i, a, r: cmd_fixture_rdeps(i, a.fixture_name),  # noqa: ARG005
-    "fixture-graph": lambda i, a, r: cmd_fixture_graph(i, a.test_file),  # noqa: ARG005
-    "import-types": lambda i, a, r: cmd_import_types(i, a.module),  # noqa: ARG005
-    "undocumented": lambda i, a, r: cmd_undocumented(i, a.module, all_modules=a.all_modules),  # noqa: ARG005
-    "uncovered": lambda i, a, r: cmd_uncovered(i, a),  # noqa: ARG005
-    "coverage": lambda i, a, r: cmd_coverage(i, a.qname),  # noqa: ARG005
-    "coverage-gap": lambda i, a, r: cmd_coverage_gap(i, a.module, all_modules=a.all_modules, threshold=a.threshold),  # noqa: ARG005
-    "xrefs": lambda i, a, r: cmd_xrefs(i, a.query, broken=a.broken),  # noqa: ARG005
-    "dead-symbols": lambda i, a, r: cmd_dead_symbols(i, a),  # noqa: ARG005
-    "dead-modules": lambda i, a, r: cmd_dead_modules(i, a),  # noqa: ARG005
+    "symbols": lambda i, a, r: cmd_symbols(i, a.module),
+    "find-symbol": lambda i, a, r: cmd_find_symbol(i, a.pattern, a.limit, exclude_tests=a.exclude_tests),
+    "fn-deps": lambda i, a, r: cmd_fn_deps(i, a.qname),
+    "fn-rdeps": lambda i, a, r: cmd_fn_rdeps(i, a.qname, exclude_tests=a.exclude_tests),
+    "fn-central": lambda i, a, r: cmd_fn_central(i, a.top, exclude_tests=a.exclude_tests),
+    "fn-blast": lambda i, a, r: cmd_fn_blast(i, a.qname),
+    "test-impact": lambda i, a, r: cmd_test_impact(i, a.qname, include_mocks=a.include_mocks),
+    "mock-rdeps": lambda i, a, r: cmd_mock_rdeps(i, a.query),
+    "subprocess-deps": lambda i, a, r: cmd_subprocess_deps(i, a.module),
+    "subprocess-rdeps": lambda i, a, r: cmd_subprocess_rdeps(i, a.module),
+    "fixture-rdeps": lambda i, a, r: cmd_fixture_rdeps(i, a.fixture_name),
+    "fixture-graph": lambda i, a, r: cmd_fixture_graph(i, a.test_file),
+    "import-types": lambda i, a, r: cmd_import_types(i, a.module),
+    "undocumented": lambda i, a, r: cmd_undocumented(i, a.module, all_modules=a.all_modules),
+    "uncovered": lambda i, a, r: cmd_uncovered(i, a),
+    "coverage": lambda i, a, r: cmd_coverage(i, a.qname),
+    "coverage-gap": lambda i, a, r: cmd_coverage_gap(i, a.module, all_modules=a.all_modules, threshold=a.threshold),
+    "xrefs": lambda i, a, r: cmd_xrefs(i, a.query, broken=a.broken),
+    "dead-symbols": lambda i, a, r: cmd_dead_symbols(i, a),
+    "dead-modules": lambda i, a, r: cmd_dead_modules(i, a),
 }
 
 

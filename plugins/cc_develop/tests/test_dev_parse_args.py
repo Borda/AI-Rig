@@ -4,20 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import dev_parse_args
-from dev_parse_args import (
-    SKILL_SPECS,
-    FlagSpec,
-    SpecType,
-    extract_flags,
-    main,
-    parse_specs,
-    run,
-    write_skill_files,
-)
-
+import pytest
+from dev_parse_args import SKILL_SPECS, FlagSpec, SpecType, extract_flags, main, parse_specs, run, write_skill_files
 
 # ---------------------------------------------------------------------------
 # parse_specs
@@ -27,45 +16,44 @@ from dev_parse_args import (
 class TestParseSpecs:
     """parse_specs converts token list into FlagSpec objects."""
 
-    def test_bool_spec(self):
-        """Verify command-line option behavior.
+    @pytest.mark.parametrize(
+        ("tokens", "expected"),
+        [
+            pytest.param(
+                ["--bool", "team", "TEAM_MODE", "false"],
+                FlagSpec(kind=SpecType.BOOL, flag="team", var="TEAM_MODE", default="false"),
+                id="bool",
+            ),
+            pytest.param(
+                ["--neg-bool", "no-challenge", "CHALLENGE_ENABLED", "true"],
+                FlagSpec(kind=SpecType.NEG_BOOL, flag="no-challenge", var="CHALLENGE_ENABLED", default="true"),
+                id="neg-bool",
+            ),
+            pytest.param(
+                ["--codemap", "CODEMAP_RAW", "auto"],
+                FlagSpec(kind=SpecType.CODEMAP, flag="", var="CODEMAP_RAW", default="auto"),
+                id="codemap-no-flag-token",
+            ),
+            pytest.param(
+                ["--int", "max-depth", "MAX_DEPTH", "3"],
+                FlagSpec(kind=SpecType.INT, flag="max-depth", var="MAX_DEPTH", default="3"),
+                id="int-default-kept-as-string",
+            ),
+            pytest.param(
+                ["--str", "plan", "PLAN_FILE", ""],
+                FlagSpec(kind=SpecType.STR, flag="plan", var="PLAN_FILE", default=""),
+                id="str-empty-default",
+            ),
+        ],
+    )
+    def test_spec_keyword_produces_flag_spec(self, tokens: list[str], expected: FlagSpec):
+        """Each spec keyword produces one FlagSpec with the matching kind, flag, variable and default.
 
-        --bool produces FlagSpec with correct fields.
+        --codemap takes only VAR + DEFAULT (no FLAG token) and --int keeps its default as a string; every other keyword
+        takes KIND FLAG VAR DEFAULT.
         """
-        specs = parse_specs(["--bool", "team", "TEAM_MODE", "false"])
-        assert specs == [FlagSpec(kind=SpecType.BOOL, flag="team", var="TEAM_MODE", default="false")]
-
-    def test_neg_bool_spec(self):
-        """Verify command-line option behavior.
-
-        --neg-bool produces FlagSpec with neg-bool kind.
-        """
-        specs = parse_specs(["--neg-bool", "no-challenge", "CHALLENGE_ENABLED", "true"])
-        assert specs == [FlagSpec(kind=SpecType.NEG_BOOL, flag="no-challenge", var="CHALLENGE_ENABLED", default="true")]
-
-    def test_codemap_spec(self):
-        """Verify command-line option behavior.
-
-        --codemap takes only VAR + DEFAULT (no FLAG token).
-        """
-        specs = parse_specs(["--codemap", "CODEMAP_RAW", "auto"])
-        assert specs == [FlagSpec(kind=SpecType.CODEMAP, flag="", var="CODEMAP_RAW", default="auto")]
-
-    def test_int_spec(self):
-        """Verify command-line option behavior.
-
-        --int spec stored with default as string.
-        """
-        specs = parse_specs(["--int", "max-depth", "MAX_DEPTH", "3"])
-        assert specs == [FlagSpec(kind=SpecType.INT, flag="max-depth", var="MAX_DEPTH", default="3")]
-
-    def test_str_spec(self):
-        """Verify command-line option behavior.
-
-        --str spec with empty default.
-        """
-        specs = parse_specs(["--str", "plan", "PLAN_FILE", ""])
-        assert specs == [FlagSpec(kind=SpecType.STR, flag="plan", var="PLAN_FILE", default="")]
+        specs = parse_specs(tokens)
+        assert specs == [expected]
 
     def test_multiple_specs(self):
         """Multiple specs parsed in order."""
@@ -74,16 +62,17 @@ class TestParseSpecs:
         assert specs[0].kind == SpecType.BOOL
         assert specs[1].kind == SpecType.CODEMAP
 
-    def test_unknown_keyword_exits(self):
-        """Unknown spec keyword calls sys.exit(1)."""
+    @pytest.mark.parametrize(
+        "tokens",
+        [
+            pytest.param(["--unknown", "foo", "BAR", "baz"], id="unknown-keyword"),
+            pytest.param(["--bool", "team"], id="insufficient-tokens"),
+        ],
+    )
+    def test_malformed_spec_exits(self, tokens: list[str]):
+        """An unknown spec keyword, or too few tokens after a keyword, calls sys.exit(1)."""
         with pytest.raises(SystemExit) as exc:
-            parse_specs(["--unknown", "foo", "BAR", "baz"])
-        assert exc.value.code == 1
-
-    def test_insufficient_tokens_exits(self):
-        """Too few tokens after keyword calls sys.exit(1)."""
-        with pytest.raises(SystemExit) as exc:
-            parse_specs(["--bool", "team"])
+            parse_specs(tokens)
         assert exc.value.code == 1
 
 
@@ -95,53 +84,61 @@ class TestParseSpecs:
 class TestBoolFlags:
     """Boolean and negated-boolean flag extraction."""
 
-    def test_bool_present(self):
-        """Verify command-line option behavior.
+    @pytest.mark.parametrize(
+        ("spec_tokens", "var", "arguments", "expected_value", "expected_clean"),
+        [
+            pytest.param(
+                ["--bool", "team", "S", "false"], "S", "--team fix auth.py", "true", "fix auth.py", id="bool-present"
+            ),
+            pytest.param(
+                ["--bool", "team", "S", "false"], "S", "fix auth.py", "false", "fix auth.py", id="bool-absent"
+            ),
+            pytest.param(
+                ["--neg-bool", "no-challenge", "CHALLENGE", "true"],
+                "CHALLENGE",
+                "--no-challenge fix auth.py",
+                "false",
+                "fix auth.py",
+                id="neg-bool-present",
+            ),
+            pytest.param(
+                ["--neg-bool", "no-challenge", "CHALLENGE", "true"],
+                "CHALLENGE",
+                "fix auth.py",
+                "true",
+                "fix auth.py",
+                id="neg-bool-absent",
+            ),
+            pytest.param(
+                ["--bool", "team", "S", "false"],
+                "S",
+                "--teamx fix auth.py",
+                "false",
+                "--teamx fix auth.py",
+                id="bool-near-miss-leading",
+            ),
+            pytest.param(
+                ["--bool", "team", "S", "false"],
+                "S",
+                "fix --teamx auth.py",
+                "false",
+                "fix --teamx auth.py",
+                id="bool-near-miss-inline",
+            ),
+        ],
+    )
+    def test_bool_flag_extraction(
+        self, spec_tokens: list[str], var: str, arguments: str, expected_value: str, expected_clean: str
+    ):
+        """A boolean flag flips its default only when present as a full token, and is stripped from the clean args.
 
-        --team present → true.
+        --team present gives true and --no-challenge present gives false; an absent flag keeps its default. A substring
+        prefix such as --teamx is not the flag: the default holds and the token stays in the clean args.
         """
-        specs = parse_specs(["--bool", "team", "S", "false"])
-        vals, clean = extract_flags("--team fix auth.py", specs)
-        assert vals["S"] == "true"
-        assert clean == "fix auth.py"
-
-    def test_bool_absent(self):
-        """Verify command-line option behavior.
-
-        --team absent → default.
-        """
-        specs = parse_specs(["--bool", "team", "S", "false"])
-        vals, clean = extract_flags("fix auth.py", specs)
-        assert vals["S"] == "false"
-        assert clean == "fix auth.py"
-
-    def test_neg_bool_present(self):
-        """Verify command-line option behavior.
-
-        --no-challenge present → false.
-        """
-        specs = parse_specs(["--neg-bool", "no-challenge", "CHALLENGE", "true"])
-        vals, clean = extract_flags("--no-challenge fix auth.py", specs)
-        assert vals["CHALLENGE"] == "false"
-        assert clean == "fix auth.py"
-
-    def test_neg_bool_absent(self):
-        """Verify command-line option behavior.
-
-        --no-challenge absent → default.
-        """
-        specs = parse_specs(["--neg-bool", "no-challenge", "CHALLENGE", "true"])
-        vals, clean = extract_flags("fix auth.py", specs)
-        assert vals["CHALLENGE"] == "true"
-        assert clean == "fix auth.py"
-
-    @pytest.mark.parametrize("arguments", ["--teamx fix auth.py", "fix --teamx auth.py"])
-    def test_bool_near_miss_not_consumed(self, arguments: str):
-        """Flag extraction requires a full token, not a substring prefix."""
-        specs = parse_specs(["--bool", "team", "S", "false"])
+        specs = parse_specs(spec_tokens)
         vals, clean = extract_flags(arguments, specs)
-        assert vals["S"] == "false"
-        assert clean == arguments
+        assert vals[var] == expected_value
+        assert clean == expected_clean
 
 
 # ---------------------------------------------------------------------------
@@ -152,40 +149,24 @@ class TestBoolFlags:
 class TestCodemapFlag:
     """Codemap paired-flag extraction with double-condition guard."""
 
-    def test_codemap_absent(self):
-        """Neither flag → auto."""
-        specs = parse_specs(["--codemap", "CODEMAP_RAW", "auto"])
-        vals, _ = extract_flags("fix auth.py", specs)
-        assert vals["CODEMAP_RAW"] == "auto"
+    @pytest.mark.parametrize(
+        ("arguments", "expected_value"),
+        [
+            pytest.param("fix auth.py", "auto", id="neither-flag-auto"),
+            pytest.param("--codemap fix auth.py", "strict", id="codemap-only-strict"),
+            pytest.param("--no-codemap fix auth.py", "off", id="no-codemap-off"),
+            pytest.param("--codemap --no-codemap fix auth.py", "off", id="both-no-codemap-wins"),
+        ],
+    )
+    def test_codemap_flag_resolution(self, arguments: str, expected_value: str):
+        """The --codemap / --no-codemap pair resolves to one mode and both flags are stripped from the clean args.
 
-    def test_codemap_strict(self):
-        """Verify command-line option behavior.
-
-        --codemap only → strict.
+        Neither flag keeps the auto default, --codemap alone is strict, --no-codemap is off, and with both together
+        --no-codemap wins.
         """
         specs = parse_specs(["--codemap", "CODEMAP_RAW", "auto"])
-        vals, clean = extract_flags("--codemap fix auth.py", specs)
-        assert vals["CODEMAP_RAW"] == "strict"
-        assert clean == "fix auth.py"
-
-    def test_no_codemap_off(self):
-        """Verify command-line option behavior.
-
-        --no-codemap → off.
-        """
-        specs = parse_specs(["--codemap", "CODEMAP_RAW", "auto"])
-        vals, clean = extract_flags("--no-codemap fix auth.py", specs)
-        assert vals["CODEMAP_RAW"] == "off"
-        assert clean == "fix auth.py"
-
-    def test_both_no_codemap_wins(self):
-        """Verify command-line option behavior.
-
-        --codemap + --no-codemap together → off (--no-codemap wins).
-        """
-        specs = parse_specs(["--codemap", "CODEMAP_RAW", "auto"])
-        vals, clean = extract_flags("--codemap --no-codemap fix auth.py", specs)
-        assert vals["CODEMAP_RAW"] == "off"
+        vals, clean = extract_flags(arguments, specs)
+        assert vals["CODEMAP_RAW"] == expected_value
         assert clean == "fix auth.py"
 
 
@@ -197,35 +178,6 @@ class TestCodemapFlag:
 class TestValueFlags:
     """Integer and string flag extraction."""
 
-    def test_int_space_form(self):
-        """Verify command-line option behavior.
-
-        --max-depth 5 → 5.
-        """
-        specs = parse_specs(["--int", "max-depth", "MAX_DEPTH", "3"])
-        vals, clean = extract_flags("--max-depth 5 fix auth.py", specs)
-        assert vals["MAX_DEPTH"] == "5"
-        assert clean == "fix auth.py"
-
-    def test_int_eq_form(self):
-        """Verify command-line option behavior.
-
-        --max-depth=5 → 5.
-        """
-        specs = parse_specs(["--int", "max-depth", "MAX_DEPTH", "3"])
-        vals, clean = extract_flags("--max-depth=5 fix auth.py", specs)
-        assert vals["MAX_DEPTH"] == "5"
-        assert clean == "fix auth.py"
-
-    def test_int_absent_default(self):
-        """Verify command-line option behavior.
-
-        --max-depth absent → default.
-        """
-        specs = parse_specs(["--int", "max-depth", "MAX_DEPTH", "3"])
-        vals, _ = extract_flags("fix auth.py", specs)
-        assert vals["MAX_DEPTH"] == "3"
-
     def test_int_non_integer_exits(self):
         """Non-integer value for --int flag exits with code 2."""
         specs = parse_specs(["--int", "max-depth", "MAX_DEPTH", "3"])
@@ -233,68 +185,73 @@ class TestValueFlags:
             extract_flags("--max-depth notanumber", specs)
         assert exc.value.code == 2
 
-    def test_str_space_form(self):
-        """Verify command-line option behavior.
-
-        --plan path/to/file.md → value extracted.
-        """
-        specs = parse_specs(["--str", "plan", "PLAN_FILE", ""])
-        vals, clean = extract_flags("--plan .plans/active/plan.md fix auth.py", specs)
-        assert vals["PLAN_FILE"] == ".plans/active/plan.md"
-        assert clean == "fix auth.py"
-
-    def test_str_eq_form(self):
-        """Verify command-line option behavior.
-
-        --plan=path/to/file.md → value extracted.
-        """
-        specs = parse_specs(["--str", "plan", "PLAN_FILE", ""])
-        vals, clean = extract_flags("--plan=.plans/active/plan.md fix auth.py", specs)
-        assert vals["PLAN_FILE"] == ".plans/active/plan.md"
-        assert clean == "fix auth.py"
-
-    def test_str_absent_empty_default(self):
-        """Verify command-line option behavior.
-
-        --str absent → empty string default.
-        """
-        specs = parse_specs(["--str", "plan", "PLAN_FILE", ""])
-        vals, _ = extract_flags("fix auth.py", specs)
-        assert vals["PLAN_FILE"] == ""
-
-    def test_str_ci_run(self):
-        """Verify command-line option behavior.
-
-        --ci-run value extracted correctly.
-        """
-        specs = parse_specs(["--str", "ci-run", "CI_RUN_ID", ""])
-        vals, clean = extract_flags("--ci-run 12345678 fix auth.py", specs)
-        assert vals["CI_RUN_ID"] == "12345678"
-        assert clean == "fix auth.py"
-
     @pytest.mark.parametrize(
-        "arguments,expected_value,expected_clean",
+        ("arguments", "expected_value", "expected_clean"),
         [
             pytest.param(
                 "fix --max-depths 5 auth.py", "3", "fix --max-depths 5 auth.py", id="fix---max-depths-5-auth.py"
             ),
             pytest.param("fix --max-depth 5 auth.py", "5", "fix auth.py", id="fix---max-depth-5-auth.py"),
             pytest.param("fix --max-depth=7 auth.py", "7", "fix auth.py", id="fix---max-depth-7-auth.py"),
+            pytest.param("--max-depth 5 fix auth.py", "5", "fix auth.py", id="leading-space-form"),
+            pytest.param("--max-depth=5 fix auth.py", "5", "fix auth.py", id="leading-eq-form"),
+            pytest.param("fix auth.py", "3", "fix auth.py", id="absent-default"),
         ],
     )
     def test_int_token_boundaries(self, arguments: str, expected_value: str, expected_clean: str):
-        """Value flags require exact flag names and preserve near-miss flags."""
+        """Value flags require exact flag names and preserve near-miss flags.
+
+        An integer flag takes its value in both the space and equals forms, keeps its default when absent, and leaves a
+        near-miss such as --max-depths in the clean args.
+        """
         specs = parse_specs(["--int", "max-depth", "MAX_DEPTH", "3"])
         vals, clean = extract_flags(arguments, specs)
         assert vals["MAX_DEPTH"] == expected_value
         assert clean == expected_clean
 
-    def test_value_flag_followed_by_another_flag_uses_default(self):
-        """A following flag token is not consumed as the value."""
-        specs = parse_specs(["--str", "plan", "PLAN_FILE", ""])
-        vals, clean = extract_flags("--plan --team fix auth.py", specs)
-        assert vals["PLAN_FILE"] == ""
-        assert clean == "--plan --team fix auth.py"
+    @pytest.mark.parametrize(
+        ("flag", "var", "arguments", "expected_value", "expected_clean"),
+        [
+            pytest.param(
+                "plan",
+                "PLAN_FILE",
+                "--plan .plans/active/plan.md fix auth.py",
+                ".plans/active/plan.md",
+                "fix auth.py",
+                id="space-form",
+            ),
+            pytest.param(
+                "plan",
+                "PLAN_FILE",
+                "--plan=.plans/active/plan.md fix auth.py",
+                ".plans/active/plan.md",
+                "fix auth.py",
+                id="eq-form",
+            ),
+            pytest.param("plan", "PLAN_FILE", "fix auth.py", "", "fix auth.py", id="absent-empty-default"),
+            pytest.param(
+                "ci-run", "CI_RUN_ID", "--ci-run 12345678 fix auth.py", "12345678", "fix auth.py", id="ci-run-value"
+            ),
+            pytest.param(
+                "plan",
+                "PLAN_FILE",
+                "--plan --team fix auth.py",
+                "",
+                "--plan --team fix auth.py",
+                id="followed-by-flag-uses-default",
+            ),
+        ],
+    )
+    def test_str_flag_extraction(self, flag: str, var: str, arguments: str, expected_value: str, expected_clean: str):
+        """A string flag takes its value in the space and equals forms, and falls back to its empty default.
+
+        --plan and --ci-run extract their value and are stripped from the clean args; when absent the empty default
+        holds, and a following flag token is never consumed as the value.
+        """
+        specs = parse_specs(["--str", flag, var, ""])
+        vals, clean = extract_flags(arguments, specs)
+        assert vals[var] == expected_value
+        assert clean == expected_clean
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +280,7 @@ class TestRunOutput:
         assert "CLEAN_ARGS='fix auth.py'" in out
 
     @pytest.mark.parametrize(
-        "arguments,expected",
+        ("arguments", "expected"),
         [
             pytest.param("it's a test", "CLEAN_ARGS='it'\\''s a test'", id="it-s-a-test"),
             pytest.param('say "hello"', "CLEAN_ARGS='say \"hello\"'", id="say-hello"),
@@ -441,17 +398,21 @@ class TestWriteSkillFiles:
             assert path.read_text().endswith("\n"), f"{path.name} is not newline-terminated"
 
     @pytest.mark.parametrize("skill", ["feature", "fix", "refactor", "debug", "review"])
-    def test_worktree_flag_enabled_persisted(self, skill: str, tmp_path: Path):
-        """Worktree-capable skills: ``--worktree`` persists 'true' to its per-skill sentinel (legacy=None → no legacy
-        file)."""
-        write_skill_files(skill, "--worktree do the thing", tmp_dir=tmp_path)
-        assert (tmp_path / f"dev-{skill}-worktree-shared").read_text() == "true\n"
+    @pytest.mark.parametrize(
+        ("arguments", "expected"),
+        [
+            pytest.param("--worktree do the thing", "true\n", id="flag-enabled"),
+            pytest.param("do the thing", "false\n", id="flag-absent-defaults-false"),
+        ],
+    )
+    def test_worktree_flag_persisted(self, skill: str, arguments: str, expected: str, tmp_path: Path):
+        """Worktree-capable skills: ``--worktree`` persists 'true' to its per-skill sentinel, absent it persists
+        'false'.
 
-    @pytest.mark.parametrize("skill", ["feature", "fix", "refactor", "debug", "review"])
-    def test_worktree_flag_absent_defaults_false(self, skill: str, tmp_path: Path):
-        """Worktree-capable skills: absent ``--worktree`` defaults the sentinel to 'false'."""
-        write_skill_files(skill, "do the thing", tmp_dir=tmp_path)
-        assert (tmp_path / f"dev-{skill}-worktree-shared").read_text() == "false\n"
+        The flag has no legacy file (legacy=None), so only the per-skill sentinel is checked.
+        """
+        write_skill_files(skill, arguments, tmp_dir=tmp_path)
+        assert (tmp_path / f"dev-{skill}-worktree-shared").read_text() == expected
 
     def test_worktree_not_registered_for_plan(self):
         """Plan is analysis-only (never edits) — it must not register ``--worktree``."""
@@ -459,17 +420,21 @@ class TestWriteSkillFiles:
         assert "worktree" not in flags
 
     @pytest.mark.parametrize("skill", ["feature", "refactor"])
-    def test_batch_flag_absent_defaults_true(self, skill: str, tmp_path: Path):
-        """Batch-capable skills: absent ``--no-batch`` defaults the sentinel to 'true' — batch mode ships default-on."""
-        write_skill_files(skill, "do the thing", tmp_dir=tmp_path)
-        assert (tmp_path / f"dev-{skill}-no-batch-shared").read_text() == "true\n"
+    @pytest.mark.parametrize(
+        ("arguments", "expected"),
+        [
+            pytest.param("do the thing", "true\n", id="flag-absent-defaults-true"),
+            pytest.param("--no-batch do the thing", "false\n", id="flag-disables"),
+        ],
+    )
+    def test_no_batch_flag_persisted(self, skill: str, arguments: str, expected: str, tmp_path: Path):
+        """Batch-capable skills: absent ``--no-batch`` persists 'true' (batch mode ships default-on), ``--no-batch``
+        'false'.
 
-    @pytest.mark.parametrize("skill", ["feature", "refactor"])
-    def test_no_batch_flag_disables(self, skill: str, tmp_path: Path):
-        """Batch-capable skills: ``--no-batch`` persists 'false' to its per-skill sentinel (legacy=None → no legacy
-        file)."""
-        write_skill_files(skill, "--no-batch do the thing", tmp_dir=tmp_path)
-        assert (tmp_path / f"dev-{skill}-no-batch-shared").read_text() == "false\n"
+        The flag has no legacy file (legacy=None), so only the per-skill sentinel is checked.
+        """
+        write_skill_files(skill, arguments, tmp_dir=tmp_path)
+        assert (tmp_path / f"dev-{skill}-no-batch-shared").read_text() == expected
 
     @pytest.mark.parametrize("skill", ["fix", "debug", "review", "plan"])
     def test_no_batch_not_registered_outside_feature_and_refactor(self, skill: str):

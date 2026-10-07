@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 import resolve_preflight as rp
 
 
@@ -149,34 +148,30 @@ def _preflight_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, home: Path) 
     )
 
 
-def test_gh_ok_bridge_enabled_exits_0(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Authenticated gh, bridge installed and enabled → CODEX_AVAILABLE file=true.
+@pytest.mark.parametrize(
+    ("enabled", "expected"),
+    [
+        pytest.param(True, "true\n", id="bridge-installed-and-enabled"),
+        pytest.param(False, "false\n", id="bridge-user-opted-out"),
+    ],
+)
+def test_gh_ok_codex_availability_follows_bridge_enablement(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, enabled: bool, expected: str
+) -> None:
+    """Authenticated gh with the bridge installed → CODEX_AVAILABLE is true only while the bridge is enabled.
 
     Availability is resolved from the plugin registry through the shared detector rather than from
-    ``claude plugin list`` text, so the fixture is a registry, not a listing.
+    ``claude plugin list`` text, so the fixture is a registry, not a listing. A bridge the user opted out of must not
+    be handed to callers as available: the registry lists it as installed, so a presence-only check would report it
+    usable and every downstream dispatch would fail against a plugin the host refuses to load.
     """
     home = tmp_path / "home"
-    _install_bridge(home)
+    _install_bridge(home, enabled=enabled)
     _preflight_env(monkeypatch, tmp_path, home)
     monkeypatch.chdir(tmp_path)
     rc = rp.main([])
     assert rc == 0
-    assert (tmp_path / "resolve-preflight-CODEX_AVAILABLE-shared").read_text() == "true\n"
-
-
-def test_gh_ok_bridge_disabled_is_unavailable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """A bridge the user opted out of must not be handed to callers as available.
-
-    The registry lists it as installed, so a presence-only check would report it usable and every downstream dispatch
-    would fail against a plugin the host refuses to load.
-    """
-    home = tmp_path / "home"
-    _install_bridge(home, enabled=False)
-    _preflight_env(monkeypatch, tmp_path, home)
-    monkeypatch.chdir(tmp_path)
-    rc = rp.main([])
-    assert rc == 0
-    assert (tmp_path / "resolve-preflight-CODEX_AVAILABLE-shared").read_text() == "false\n"
+    assert (tmp_path / "resolve-preflight-CODEX_AVAILABLE-shared").read_text() == expected
 
 
 def test_sentinel_writes_end_with_trailing_newline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -219,17 +214,38 @@ def test_gh_cache_hit_skips_auth(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert not any("gh auth" in c for c in calls)
 
 
-def test_remote_ahead_pulls(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("remote_stdout", "log_stdout", "pull_rc", "expected_rc", "expected_message"),
+    [
+        pytest.param(
+            "origin\t... (fetch)\n",
+            "abc123 commit1\ndef456 commit2\n",
+            0,
+            0,
+            "git pull: merged",
+            id="remote-ahead-by-2-pulls-and-merges",
+        ),
+        pytest.param("", "abc123 commit\n", 1, 1, "git pull had conflicts", id="pull-conflict-exits-1"),
+    ],
+)
+def test_remote_ahead_triggers_pull_and_reports_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    remote_stdout: str,
+    log_stdout: str,
+    pull_rc: int,
+    expected_rc: int,
+    expected_message: str,
 ) -> None:
-    """Remote ahead by 2 commits → git pull invoked, exit 0."""
+    """Remote ahead → git pull invoked; the exit code and stderr message follow the pull outcome.
+
+    A clean pull exits 0 with 'merged'; a non-zero pull exits 1 with a conflict message.
+    """
     monkeypatch.setattr(rp, "which", lambda cmd: "/fake/" + cmd)
 
-    call_n = [0]
-
     def _seq_run(cmd: list[str], **_: Any) -> _FakeCompleted:
-        """Advance the scripted preflight response sequence for each call."""
-        call_n[0] += 1
+        """Return a successful bridge check, the parametrized remote/log output and the parametrized pull status."""
         binary = Path(cmd[0]).name
         subcmd = cmd[1] if len(cmd) > 1 else ""
         if binary == "claude":
@@ -237,55 +253,22 @@ def test_remote_ahead_pulls(
         if binary == "gh" and subcmd == "auth":
             return _FakeCompleted(returncode=0, stdout="")
         if binary == "git" and subcmd == "remote":
-            return _FakeCompleted(returncode=0, stdout="origin\t... (fetch)\n")
+            return _FakeCompleted(returncode=0, stdout=remote_stdout)
         if binary == "git" and subcmd == "rev-parse":
             return _FakeCompleted(returncode=0, stdout="origin/main")
         if binary == "git" and subcmd == "fetch":
             return _FakeCompleted(returncode=0)
         if binary == "git" and subcmd == "log":
-            return _FakeCompleted(returncode=0, stdout="abc123 commit1\ndef456 commit2\n")
+            return _FakeCompleted(returncode=0, stdout=log_stdout)
         if binary == "git" and subcmd == "pull":
-            return _FakeCompleted(returncode=0)
+            return _FakeCompleted(returncode=pull_rc)
         return _FakeCompleted(returncode=0, stdout="")
 
     monkeypatch.setattr(rp.subprocess, "run", _seq_run)
     monkeypatch.chdir(tmp_path)
     rc = rp.main([])
-    assert rc == 0
-    assert "git pull: merged" in capsys.readouterr().err
-
-
-def test_pull_conflict_exits_1(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Git pull returns non-zero → exit 1 with conflict message."""
-    monkeypatch.setattr(rp, "which", lambda cmd: "/fake/" + cmd)
-
-    def _conflict_run(cmd: list[str], **_: Any) -> _FakeCompleted:
-        """Return a successful bridge check and a failed Git pull response."""
-        binary = Path(cmd[0]).name
-        subcmd = cmd[1] if len(cmd) > 1 else ""
-        if binary == "claude":
-            return _FakeCompleted(returncode=0, stdout="")
-        if binary == "gh" and subcmd == "auth":
-            return _FakeCompleted(returncode=0, stdout="")
-        if binary == "git" and subcmd == "remote":
-            return _FakeCompleted(returncode=0, stdout="")
-        if binary == "git" and subcmd == "rev-parse":
-            return _FakeCompleted(returncode=0, stdout="origin/main")
-        if binary == "git" and subcmd == "fetch":
-            return _FakeCompleted(returncode=0)
-        if binary == "git" and subcmd == "log":
-            return _FakeCompleted(returncode=0, stdout="abc123 commit\n")
-        if binary == "git" and subcmd == "pull":
-            return _FakeCompleted(returncode=1)
-        return _FakeCompleted(returncode=0, stdout="")
-
-    monkeypatch.setattr(rp.subprocess, "run", _conflict_run)
-    monkeypatch.chdir(tmp_path)
-    rc = rp.main([])
-    assert rc == 1
-    assert "git pull had conflicts" in capsys.readouterr().err
+    assert rc == expected_rc
+    assert expected_message in capsys.readouterr().err
 
 
 def test_preflight_ok_expired_returns_false(tmp_path: Path) -> None:

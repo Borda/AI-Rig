@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pytest
 
-
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _REPO_ROOT = _PLUGIN_ROOT.parents[1]
 _BIN = _PLUGIN_ROOT / "bin"

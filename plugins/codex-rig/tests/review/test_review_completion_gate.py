@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 FINDER = PLUGIN_ROOT / "shared" / "find-review-report.py"
 PARALLEL = PLUGIN_ROOT / "shared" / "parallel_execution.py"
@@ -20,7 +19,8 @@ PARALLEL = PLUGIN_ROOT / "shared" / "parallel_execution.py"
 def _module(path: Path):
     """Load existing fixture builders and installed helpers without import-path changes."""
     spec = importlib.util.spec_from_file_location(path.stem.replace("-", "_"), path)
-    assert spec and spec.loader
+    assert spec
+    assert spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -499,11 +499,15 @@ def test_current_assessed_completion_requires_presentation_three(assessed_pr: Pa
     result_path.write_text(json.dumps(result), encoding="utf-8", newline="\n")
     finder = _module(FINDER)
 
-    with pytest.raises(LookupError, match="review-current-handoff-presentation-v3-required"):
+    def _run_expected_failure() -> None:
+        """Run the statements expected to fail as one callable."""
         if filename == "result.json":
             finder.complete_review_run(assessed_pr, parent_thread_id="thread")
         else:
             finder.validate_review_result(result_path, parent_thread_id="thread")
+
+    with pytest.raises(LookupError, match="review-current-handoff-presentation-v3-required"):
+        _run_expected_failure()
 
 
 @pytest.mark.parametrize("filename", ["result.candidate.json", "result.json"])
@@ -538,11 +542,15 @@ def test_current_assessed_completion_rejects_caller_contract_branch(assessed_pr:
     result_path.write_text(json.dumps(result), encoding="utf-8", newline="\n")
     finder = _module(FINDER)
 
-    with pytest.raises(LookupError, match="code-review-final-handoff-branch-mismatch"):
+    def _run_expected_failure() -> None:
+        """Run the statements expected to fail as one callable."""
         if filename == "result.json":
             finder.complete_review_run(assessed_pr, parent_thread_id="thread")
         else:
             finder.validate_review_result(result_path, parent_thread_id="thread")
+
+    with pytest.raises(LookupError, match="code-review-final-handoff-branch-mismatch"):
+        _run_expected_failure()
     if filename == "result.json":
         result["schema_version"] = 2
         result_path.write_text(json.dumps(result), encoding="utf-8", newline="\n")
@@ -633,7 +641,7 @@ def test_v2_source_validation_rejects_routing_oids_mismatching_pr_metadata(asses
 
 
 @pytest.mark.parametrize(
-    "method, command",
+    ("method", "command"),
     [
         pytest.param("gh-pr-checkout", "gh pr checkout https://github.com/acme/widgets/pull/123", id="native-checkout"),
         pytest.param("already-at-head", "not-run: already at expected PR head", id="verified-existing-head"),
@@ -656,7 +664,7 @@ def test_v2_review_accepts_truthful_collector_checkout_receipts(assessed_pr: Pat
 
 
 @pytest.mark.parametrize(
-    "field, value",
+    ("field", "value"),
     [
         pytest.param("command", "gh pr checkout https://github.com/acme/other/pull/123", id="wrong-repository"),
         pytest.param("checkout_method", "already-at-head", id="method-disagreement"),
@@ -677,7 +685,7 @@ def test_v2_review_rejects_checkout_receipt_disagreement(assessed_pr: Path, fiel
     checkout[field] = value
     checkout_path.write_text(json.dumps(checkout), encoding="utf-8")
     validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
-    with pytest.raises(SystemExit, match="^pr-routing-checkout-command-invalid$"):
+    with pytest.raises(SystemExit, match=r"^pr-routing-checkout-command-invalid$"):
         validator._validate_result(assessed_pr, assessed_pr / "result.json", assessed_pr, "thread", assessed_pr)
 
 
@@ -691,7 +699,7 @@ def test_modern_review_receipt_requires_explicit_mode(assessed_pr: Path) -> None
         payload.pop("checkout_mode", None)
         path.write_text(json.dumps(payload), encoding="utf-8")
     validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
-    with pytest.raises(SystemExit, match="^pr-routing-checkout-command-invalid$"):
+    with pytest.raises(SystemExit, match=r"^pr-routing-checkout-command-invalid$"):
         validator._validate_result(assessed_pr, assessed_pr / "result.json", assessed_pr, "thread", assessed_pr)
 
 

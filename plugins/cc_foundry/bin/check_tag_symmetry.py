@@ -102,6 +102,7 @@ class Finding:
 #: Head and word-segment of a structural tag name, shared by every grammar below so the
 #: underscore and discovery patterns cannot drift apart as the convention evolves.
 _NAME_HEAD = r"[a-z][a-z0-9]*"
+#: Regex for each further word segment of a structural tag name after the head.
 _NAME_SEGMENT = r"[a-z0-9]+"
 
 #: A block-level tag line whose name carries an underscore. CommonMark's raw-HTML
@@ -116,6 +117,7 @@ UNDERSCORE_TAG_LINE = re.compile(rf"^[ \t]*</?({_NAME_HEAD}(?:_{_NAME_SEGMENT})+
 #: must be reported alongside the rename advice rather than waiting for the rename.
 STRUCTURAL_TAG_LINE = re.compile(rf"^[ \t]*</?({_NAME_HEAD}(?:[_-]{_NAME_SEGMENT})*)>[ \t]*$", re.MULTILINE)
 
+#: Known structural tag names always checked for escaping and open/close balance.
 STRUCTURAL_TAGS = (
     "objective",
     "workflow",

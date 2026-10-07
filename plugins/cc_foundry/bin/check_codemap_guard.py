@@ -65,7 +65,9 @@ ANCHORED = re.compile(r"CODEMAP_INDEX_DIR:-\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/\.cach
 #: Sanitization invariant: the project name must never be filtered through tr/sed.
 SANITIZED = re.compile(r"basename[^\n]*\|\s*(?:tr|sed)\b")
 
+#: File extensions that are scanned for codemap index path usage.
 _SCAN_SUFFIXES = frozenset({".md", ".py", ".js", ".sh"})
+#: Path components that exclude a file from scanning, such as tests and caches.
 _SKIP_PARTS = frozenset({"__pycache__", ".reports", "tests", ".cache", "node_modules"})
 
 #: The provider plugin *defines* the index layout; consumers mirror it. Scanning it would

@@ -56,11 +56,15 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlparse
 from urllib.request import Request, urlopen
 
-
+#: Largest response body or command output, in bytes, accepted from a GitHub read.
 MAX_OUTPUT_BYTES = 16 * 1024 * 1024
+#: Only host the unauthenticated public-HTTPS fallback is allowed to contact.
 PUBLIC_GITHUB_API_HOST = "api.github.com"
+#: `gh` subcommands whose `view` action is a read-only resource lookup and therefore allowed.
 VIEW_RESOURCE_COMMANDS = frozenset({"gist", "issue", "pr", "project", "release", "repo", "ruleset", "run", "workflow"})
+#: Lowercase URL query keys that signal credentials; a URL carrying one is ineligible for the public fallback.
 SENSITIVE_QUERY_KEYS = frozenset({"access_token", "auth", "authorization", "client_secret", "password", "token"})
+#: Well-known system CA bundle locations searched for TLS verification, in priority order.
 SYSTEM_CA_FILE_CANDIDATES = (
     Path("/etc/ssl/cert.pem"),
     Path("/etc/ssl/certs/ca-certificates.crt"),
@@ -69,6 +73,7 @@ SYSTEM_CA_FILE_CANDIDATES = (
 RunCommand = Callable[..., subprocess.CompletedProcess[bytes]]
 OpenUrl = Callable[..., Any]
 FallbackUrl = str | Callable[[], str | None]
+#: Default subprocess runner for `gh` calls; a caller passing exactly this object gets the dedicated gh runner.
 DEFAULT_RUN_COMMAND = subprocess.run
 
 
@@ -401,7 +406,7 @@ def public_github_get(url: str, *, timeout: int, label: str, open_url: OpenUrl =
     """Read one public GitHub REST resource through unauthenticated HTTPS GET."""
     if not _is_public_github_api_url(url):
         raise GitHubReadError(f"unsafe-github-fallback-url:{label}")
-    request = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "codex-rig-read"})
+    request = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "codex-rig-read"})  # noqa: S310 - URL validated as public GitHub API HTTPS above
     try:
         with open_url(request, timeout=timeout, context=_public_github_ssl_context()) as response:
             payload = response.read(MAX_OUTPUT_BYTES + 1)

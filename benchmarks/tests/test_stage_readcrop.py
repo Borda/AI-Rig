@@ -6,14 +6,13 @@ import hashlib
 import inspect
 import io
 import json
-from pathlib import Path
 import subprocess
 import sys
-from typing import Any
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
-
 
 BENCHMARKS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCHMARKS))
@@ -207,11 +206,11 @@ def test_emit_progress_keeps_native_log_while_terminal_uses_aggregate_counter(
 
 @pytest.mark.parametrize(
     ("arm", "ansi_code"),
-    (
+    [
         pytest.param("A_plain", "33", id="a_plain"),
         pytest.param("B_auto", "36", id="b_auto"),
         pytest.param("C_strict", "35", id="c_strict"),
-    ),
+    ],
 )
 def test_readcrop_rows_are_compatible_with_the_shared_arm_palette(arm: str, ansi_code: str) -> None:
     """ReadCrop labels retain the structural A/B/C palette when ANSI is forced."""

@@ -9,9 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import check_plugin_layout as cpl
+import pytest
 
 
 def _make_plugin(root: Path, *, name: str = "foundry") -> Path:
@@ -39,11 +38,23 @@ def _make_plugin(root: Path, *, name: str = "foundry") -> Path:
 class TestCheckManifest:
     """Covers Check 8a."""
 
-    def test_valid_manifest_passes(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """A manifest with all required fields and the expected name reports no failure."""
-        plugin = _make_plugin(tmp_path)
-        assert cpl.check_manifest(plugin, "foundry") == 0
-        assert "✓: Check 8a" in capsys.readouterr().out
+    @pytest.mark.parametrize(
+        ("name", "expected", "fragment"),
+        [
+            pytest.param("foundry", 0, "✓: Check 8a", id="expected-name"),
+            pytest.param("other", 1, "manifest name is 'other', expected 'foundry'", id="different-plugin-name"),
+        ],
+    )
+    def test_manifest_name_must_match_expectation(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], name: str, expected: int, fragment: str
+    ) -> None:
+        """A manifest with all required fields passes only when it names the expected plugin.
+
+        A manifest naming a different plugin is reported as HIGH and counts as one failure.
+        """
+        plugin = _make_plugin(tmp_path, name=name)
+        assert cpl.check_manifest(plugin, "foundry") == expected
+        assert fragment in capsys.readouterr().out
 
     def test_missing_manifest_is_critical(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """An absent plugin.json is reported as CRITICAL and counts as a failure."""
@@ -64,12 +75,6 @@ class TestCheckManifest:
             json.dumps({"name": "foundry", "version": "0.1.0"}), encoding="utf-8"
         )
         assert cpl.check_manifest(plugin, "foundry") == 1
-
-    def test_wrong_name_is_high(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """A manifest naming a different plugin is reported as HIGH."""
-        plugin = _make_plugin(tmp_path, name="other")
-        assert cpl.check_manifest(plugin, "foundry") == 1
-        assert "manifest name is 'other', expected 'foundry'" in capsys.readouterr().out
 
 
 class TestCheckDirectories:
@@ -137,39 +142,37 @@ class TestCheckHooks:
 class TestCheckPermissionsDrift:
     """Covers Check 8f."""
 
-    def test_in_sync_passes(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Identical allow lists report in-sync and no failure."""
-        plugin = _make_plugin(tmp_path)
-        (plugin / ".claude-plugin" / "permissions-allow.json").write_text(json.dumps(["Bash(ls:*)"]), encoding="utf-8")
-        claude = tmp_path / ".claude"
-        claude.mkdir()
-        (claude / "settings.json").write_text(json.dumps({"permissions": {"allow": ["Bash(ls:*)"]}}), encoding="utf-8")
-        assert cpl.check_permissions_drift(plugin, claude) == 0
-        assert "in sync" in capsys.readouterr().out
-
-    def test_entry_missing_from_plugin_is_medium_failure(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    @pytest.mark.parametrize(
+        ("plugin_allow", "settings_allow", "expected", "fragment"),
+        [
+            pytest.param(["Bash(ls:*)"], ["Bash(ls:*)"], 0, "in sync", id="identical-lists-in-sync"),
+            # An entry only in settings.json is a MEDIUM finding and counts as a failure.
+            pytest.param([], ["Bash(ls:*)"], 1, "absent from permissions-allow.json", id="entry-only-in-settings"),
+            # An entry only in the plugin is LOW and does not fail the check.
+            pytest.param(["Bash(ls:*)"], [], 0, "⚠ LOW: Check 8f", id="entry-only-in-plugin"),
+        ],
+    )
+    def test_allow_list_drift_severity(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        plugin_allow: list[str],
+        settings_allow: list[str],
+        expected: int,
+        fragment: str,
     ) -> None:
-        """An allow entry only in settings.json is a MEDIUM finding and a failure."""
-        plugin = _make_plugin(tmp_path)
-        (plugin / ".claude-plugin" / "permissions-allow.json").write_text(json.dumps([]), encoding="utf-8")
-        claude = tmp_path / ".claude"
-        claude.mkdir()
-        (claude / "settings.json").write_text(json.dumps({"permissions": {"allow": ["Bash(ls:*)"]}}), encoding="utf-8")
-        assert cpl.check_permissions_drift(plugin, claude) == 1
-        assert "absent from permissions-allow.json" in capsys.readouterr().out
+        """Identical allow lists are in sync, and the drift direction decides the severity.
 
-    def test_entry_missing_from_settings_is_low_not_failure(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """An allow entry only in the plugin is LOW and does not fail the check."""
+        An entry present only in settings.json is a MEDIUM failure; an entry present only in the plugin is LOW and
+        leaves the check passing.
+        """
         plugin = _make_plugin(tmp_path)
-        (plugin / ".claude-plugin" / "permissions-allow.json").write_text(json.dumps(["Bash(ls:*)"]), encoding="utf-8")
+        (plugin / ".claude-plugin" / "permissions-allow.json").write_text(json.dumps(plugin_allow), encoding="utf-8")
         claude = tmp_path / ".claude"
         claude.mkdir()
-        (claude / "settings.json").write_text(json.dumps({"permissions": {"allow": []}}), encoding="utf-8")
-        assert cpl.check_permissions_drift(plugin, claude) == 0
-        assert "⚠ LOW: Check 8f" in capsys.readouterr().out
+        (claude / "settings.json").write_text(json.dumps({"permissions": {"allow": settings_allow}}), encoding="utf-8")
+        assert cpl.check_permissions_drift(plugin, claude) == expected
+        assert fragment in capsys.readouterr().out
 
     def test_no_settings_file_skips(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """A marketplace install with no .claude/settings.json skips the drift check."""

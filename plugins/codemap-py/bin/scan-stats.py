@@ -32,8 +32,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-# DoS guard, held at the query engine's ceiling (``query._MAX_INDEX_SIZE_BYTES``):
-# a helper that refuses an index the engine serves reports a healthy project as broken.
+#: DoS guard, held at the query engine's ceiling (``query._MAX_INDEX_SIZE_BYTES``):
+#: a helper that refuses an index the engine serves reports a healthy project as broken.
 MAX_INDEX_SIZE = 512 * 1024 * 1024
 MAX_SCAN_ARGS = 4096  # chars — cap SCAN_ARGS before shlex.split to bound parsing cost (DoS guard)
 
@@ -63,7 +63,7 @@ def _resolve_root(scan_args: str, timeout: int = 15) -> str:
     try:
         return (
             subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"],
+                ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
                 stderr=subprocess.DEVNULL,
                 timeout=timeout,
             )
@@ -85,7 +85,7 @@ def _allowed_index_roots() -> tuple[Path, ...]:
     try:
         git_root = (
             subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"],
+                ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
                 stderr=subprocess.DEVNULL,
                 timeout=5,
             )
@@ -150,6 +150,7 @@ def _load_index(root: str) -> dict:
         sys.exit(1)
 
 
+#: Seconds allowed for the subprocess that resolves the scan root from ``SCAN_ARGS``.
 _DEFAULT_TIMEOUT = 15
 
 

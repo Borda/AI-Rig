@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-# Directory (repo-relative) where every runner writes its results JSONL.
+#: Directory (repo-relative) where every runner writes its results JSONL.
 RESULTS_DIR = Path("benchmarks/results")
 
-# The package lives under benchmarks/_bench_common/, while suites are direct children of
-# benchmarks/. Resolve from the benchmark root rather than this package directory.
+#: The package lives under benchmarks/_bench_common/, while suites are direct children of
+#: benchmarks/. Resolve from the benchmark root rather than this package directory.
 TASKS_BENCH_FILE = Path(__file__).resolve().parents[1] / "suites" / "tasks-bench.json"
 
 

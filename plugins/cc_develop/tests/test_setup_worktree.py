@@ -19,7 +19,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 import setup_worktree
 
 SCRIPT = Path(setup_worktree.__file__)
@@ -167,7 +166,7 @@ class TestSentinelFlag:
         assert (sentinel_dir / f"{sentinel_name}-{ts}").exists()
 
     @pytest.mark.parametrize(
-        "raw_name,expected_sanitized",
+        ("raw_name", "expected_sanitized"),
         [
             pytest.param("../evil-{pid}", "evil-{pid}", id="posix-traversal"),
             pytest.param(r"..\evil-{pid}", "evil-{pid}", id="windows-traversal"),
@@ -196,20 +195,20 @@ class TestSentinelFlag:
         if raw_name != sanitized:
             assert not (sentinel_dir / f"{raw_name}-{ts}").exists()
 
-    def test_all_unsafe_sentinel_name_skipped(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sentinel_dir: Path
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            # a name that sanitizes to empty must not create a broad timestamp file
+            pytest.param(["--sentinel", "!!!"], id="all-unsafe-name"),
+            pytest.param(["--sentinel"], id="name-omitted"),
+        ],
+    )
+    def test_sentinel_without_usable_name_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sentinel_dir: Path, argv: list[str]
     ) -> None:
-        """A sentinel name that sanitizes to empty does not create a broad timestamp file."""
+        """No sentinel is created when its name is all unsafe characters or omitted entirely."""
         monkeypatch.chdir(tmp_path)
-        setup_worktree.main(["--sentinel", "!!!"])
-        assert list(sentinel_dir.iterdir()) == []
-
-    def test_sentinel_without_name_skipped(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sentinel_dir: Path
-    ) -> None:
-        """Avoid creating a sentinel when its name is omitted."""
-        monkeypatch.chdir(tmp_path)
-        setup_worktree.main(["--sentinel"])
+        setup_worktree.main(argv)
         assert list(sentinel_dir.iterdir()) == []
 
 

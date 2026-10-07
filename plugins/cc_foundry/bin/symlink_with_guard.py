@@ -80,19 +80,20 @@ class GuardMode(str, Enum):
     CREATE = "create"
 
 
+#: Default substring of a symlink target that identifies a foundry-managed link.
 _DEFAULT_MARKER = "borda-ai-rig/foundry/"
 
-# Rules land in Claude's flat ``~/.claude/rules/`` namespace, which every plugin
-# shares. Four plugins ship a ``rules/quality-gates.md``, so source basenames
-# would collide; each rule installs as ``foundry-<source-name>.md`` instead. The
-# prefix is inert — verified against Claude Code 2.1.220 that it changes neither
-# unconditional loading nor ``paths:`` frontmatter matching.
+#: Rules land in Claude's flat ``~/.claude/rules/`` namespace, which every plugin
+#: shares. Four plugins ship a ``rules/quality-gates.md``, so source basenames
+#: would collide; each rule installs as ``foundry-<source-name>.md`` instead. The
+#: prefix is inert — verified against Claude Code 2.1.220 that it changes neither
+#: unconditional loading nor ``paths:`` frontmatter matching.
 _RULE_PREFIX = "foundry-"
 
-# Marker is used in substring matches against `readlink` output (see
-# `_is_foundry_managed`). Restricting to filesystem-safe characters prevents a
-# caller from sneaking shell metacharacters or path traversal sequences past
-# downstream consumers that may interpret matches loosely.
+#: Marker is used in substring matches against `readlink` output (see
+#: `_is_foundry_managed`). Restricting to filesystem-safe characters prevents a
+#: caller from sneaking shell metacharacters or path traversal sequences past
+#: downstream consumers that may interpret matches loosely.
 _MARKER_ALLOWED = re.compile(r"^[A-Za-z0-9_/.-]+$")
 
 

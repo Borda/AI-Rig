@@ -30,7 +30,6 @@ from pathlib import Path
 
 import pytest
 
-
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _BUILDER = _PLUGIN_ROOT / "scripts" / "build_package.py"
 if str(_BUILDER.parent) not in sys.path:
@@ -233,7 +232,7 @@ def test_untracked_required_doc_position_still_raises_via_mode_map(tmp_path: Pat
     tracked_modes = builder._git_exec_modes(real_repo)
     incomplete_map = {k: v for k, v in tracked_modes.items() if k != "README.md"}
 
-    with pytest.raises(ValueError, match="missing mode-map entry for shipped payload path: README.md"):
+    with pytest.raises(ValueError, match=r"missing mode-map entry for shipped payload path: README.md"):
         builder.build_package(real_repo, tmp_path / "built", mode_map=incomplete_map)
 
 
@@ -264,7 +263,7 @@ def test_load_mode_map_rejects_malformed_payload(tmp_path: Path, payload: str) -
     path = tmp_path / "modes.json"
     path.write_text(payload)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"cannot read mode map|must be a JSON object"):
         builder._load_mode_map(path)
 
 
@@ -320,7 +319,7 @@ def test_new_native_assets_require_explicit_modes_without_admitting_other_untrac
     provider.parent.mkdir()
     provider.write_bytes(b"print('stdio provider')\n")
     (provider.parent / "unrelated.py").write_bytes(b"raise RuntimeError('untracked')\n")
-    with pytest.raises(ValueError, match="missing mode-map entry for shipped payload path: .codex-mcp.json"):
+    with pytest.raises(ValueError, match=r"missing mode-map entry for shipped payload path: .codex-mcp.json"):
         builder.build_package(source, tmp_path / "missing-modes", mode_map=tracked_modes)
     declared_modes = {**tracked_modes, ".codex-mcp.json": False, "shared/user_questions_mcp.py": False}
     manifest = builder.build_package(source, tmp_path / "candidate", mode_map=declared_modes)

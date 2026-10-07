@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import check_rtk_alignment as cra
+import pytest
 
 _HOOK_SRC = """
 const RTK_PREFIXES = [
@@ -67,45 +66,47 @@ class TestCompare:
     """Covers the two-direction comparison."""
 
     def test_aligned_lists_report_nothing(self) -> None:
-        """Hook prefixes matching the non-meta commands produce no findings."""
+        """Hook prefixes matching the non-meta commands produce no findings.
+
+        The meta command ``gain`` is not expected in the hook, so it is never reported as missing.
+        """
         invalid, missing = cra.compare(["search", "read", "grep"], _HELP)
         assert invalid == []
         assert missing == []
 
-    def test_unknown_prefix_is_invalid(self) -> None:
-        """A hook prefix RTK does not advertise is reported as invalid."""
-        invalid, _ = cra.compare(["search", "bogus"], _HELP)
-        assert invalid == ["bogus"]
+    @pytest.mark.parametrize(
+        ("prefixes", "help_text", "expected_invalid"),
+        [
+            pytest.param(["search", "bogus"], _HELP, ["bogus"], id="unknown-prefix"),
+            # Word matching does not degrade to substring: `sea` is not `search`.
+            pytest.param(["sea"], _HELP, ["sea"], id="substring-alone"),
+            # `grep -w` treats `-` as a boundary, so `bar` matches inside `foo-bar`.
+            pytest.param(["bar"], "  foo-bar   does things\n", [], id="hyphen-is-a-word-boundary"),
+            # A prefix mentioned anywhere in help is valid, as `grep -qw` treated it.
+            pytest.param(
+                ["lint", "build"],
+                "Usage: rtk <cmd>\n\n  build   build stuff\n\nSee also: lint for linting\n",
+                [],
+                id="prefix-named-outside-the-command-list",
+            ),
+        ],
+    )
+    def test_prefix_validity_is_word_matching_against_help(
+        self, prefixes: list[str], help_text: str, expected_invalid: list[str]
+    ) -> None:
+        """A hook prefix is invalid unless RTK's help names it as a whole word.
+
+        Restricting validity to the indented command list would turn every prose mention into a spurious high-severity
+        finding, while degrading to substring matching would accept ``sea`` for ``search``; ``-`` counts as a word
+        boundary.
+        """
+        invalid, _ = cra.compare(prefixes, help_text)
+        assert invalid == expected_invalid
 
     def test_unlisted_command_is_missing(self) -> None:
         """A filterable command the hook omits is reported as missing."""
         _, missing = cra.compare(["search"], _HELP)
         assert missing == ["grep", "read"]
-
-    def test_meta_command_never_reported_missing(self) -> None:
-        """`gain` is a meta command and is not expected in the hook."""
-        _, missing = cra.compare(["search", "read", "grep"], _HELP)
-        assert "gain" not in missing
-
-    def test_prefix_named_outside_the_command_list_is_not_invalid(self) -> None:
-        """A prefix mentioned anywhere in help is valid, as `grep -qw` treated it.
-
-        Restricting validity to the indented command list turns every prose mention into a spurious **high**-severity
-        finding.
-        """
-        help_text = "Usage: rtk <cmd>\n\n  build   build stuff\n\nSee also: lint for linting\n"
-        invalid, _ = cra.compare(["lint", "build"], help_text)
-        assert invalid == []
-
-    def test_hyphen_is_a_word_boundary(self) -> None:
-        """`grep -w` treats `-` as a boundary, so `bar` matches inside `foo-bar`."""
-        invalid, _ = cra.compare(["bar"], "  foo-bar   does things\n")
-        assert invalid == []
-
-    def test_substring_alone_is_still_invalid(self) -> None:
-        """Word matching does not degrade to substring: `sea` is not `search`."""
-        invalid, _ = cra.compare(["sea"], _HELP)
-        assert invalid == ["sea"]
 
 
 class TestCli:

@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REVIEW_SKILL = PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md"
 REVIEW_VALIDATOR = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
@@ -36,7 +35,8 @@ CONFIDENCE_GAP = "Detailed source review was intentionally skipped after the clo
 def _load_validator() -> object:
     """Load the standalone review validator from its shipped location."""
     specification = importlib.util.spec_from_file_location("code_review_close_validator", REVIEW_VALIDATOR)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     validator = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(validator)
     return validator
@@ -45,7 +45,8 @@ def _load_validator() -> object:
 def _load_shared_validator() -> object:
     """Load the shared artifact validator used after the review-specific gate."""
     specification = importlib.util.spec_from_file_location("shared_close_validator", SHARED_VALIDATOR)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     validator = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(validator)
     return validator
@@ -428,7 +429,9 @@ def test_close_gate_precedes_detailed_review_and_documents_blocking_defaults() -
     assert close_gate < skill.index("### 03: T1 primary diff review")
     assert "If evidence is inconclusive, continue to T1/T2" in skill
     assert "Missing CHANGELOG entry alone" in skill
-    assert "Merge conflicts" in skill and "not blocking" in skill
-    assert "Missing CLA/DCO" in skill and "only when the project requires it" in skill
+    assert "Merge conflicts" in skill
+    assert "not blocking" in skill
+    assert "Missing CLA/DCO" in skill
+    assert "only when the project requires it" in skill
     for code in CLOSE_CODES:
         assert f"`{code}`" in skill

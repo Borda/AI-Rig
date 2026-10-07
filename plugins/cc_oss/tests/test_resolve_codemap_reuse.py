@@ -12,9 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 import codemap_cache
+import pytest
 
 
 @pytest.mark.integration
@@ -150,7 +149,11 @@ def test_one_query_per_module_in_shipped_preloop(
         encoding="utf-8",
         newline="\n",
     )
-    relay = f"{shlex.quote(Path(sys.executable).as_posix())} {shlex.quote(native_output.as_posix())} {line_endings}"
+    # The relay is harness-only and imports nothing beyond the standard library, so it runs on the base interpreter in
+    # isolated, site-free mode: no venv launcher process on Windows and no site start-up per relayed command. The
+    # relayed `python` itself stays `sys.executable`, so the shipped commands still run in the project environment.
+    relay_python = Path(getattr(sys, "_base_executable", None) or sys.executable).as_posix()
+    relay = f"{shlex.quote(relay_python)} -I -S {shlex.quote(native_output.as_posix())} {line_endings}"
     # Only external commands are substituted; the skill's real cache helper and loop execute.
     prelude = f"""
 python() {{ {relay} python {shlex.quote(Path(sys.executable).as_posix())} "$@"; }}

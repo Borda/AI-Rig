@@ -6,13 +6,12 @@ path (empty diff) and the stage-and-commit path, including commit-failure forwar
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any
-import subprocess
-
-import pytest
 
 import commit_lint_fixes as clf
+import pytest
 
 
 class _FakeCompleted:

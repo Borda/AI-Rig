@@ -31,9 +31,12 @@ import pathlib
 import re
 from dataclasses import dataclass
 
+#: Resolver scripts whose invocations in skill Markdown are counted and classified.
 SCRIPTS = ("resolve_shared_path.py", "resolve_skill_subdir.py")
 
+#: Matches a fenced ``bash`` block, capturing its body.
 FENCE_RE = re.compile(r"```bash\n(.*?)```", re.DOTALL)
+#: Matches a ``_VAR=...`` assignment whose value calls one of the resolver scripts, capturing variable and script.
 ASSIGN_RE = re.compile(r"^\s*(_[A-Z][A-Z0-9_]*)\s*=.*(" + "|".join(re.escape(s) for s in SCRIPTS) + r")")
 
 

@@ -8,14 +8,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-
-from _bench_common.codemap_discovery import (
-    git_toplevel,
-    resolve_index_path as _util_resolve_index_path,
-)
+from _bench_common.codemap_discovery import git_toplevel
+from _bench_common.codemap_discovery import resolve_index_path as _util_resolve_index_path
 
 from _bench_query.output import log
-
 
 # ---- MAIN ----
 
@@ -79,9 +75,9 @@ def _resolve_plugin_root() -> Path | None:
     return git_toplevel()
 
 
-# Lowest index scan_version the self-consistency track (S/H/X) needs: the X suite's
-# ``xrefs --broken`` is gated by SPHINX_XREFS_MIN_VER (5) in codemap _schema.py; an
-# older index makes those suites fail cryptically, so we skip them instead.
+#: Lowest index scan_version the self-consistency track (S/H/X) needs: the X suite's
+#: ``xrefs --broken`` is gated by SPHINX_XREFS_MIN_VER (5) in codemap _schema.py; an
+#: older index makes those suites fail cryptically, so we skip them instead.
 _SELF_CONSISTENCY_MIN_VER = 5
 
 
@@ -124,7 +120,7 @@ def _ensure_index(index_path: Path, repo_path: Path, scan_index_bin: Path | None
         log("Then retry, or pass --index-path <path-to-index.json>.")
         sys.exit(1)
     log(f"[index] building now via {scan_index_bin} --root {repo_path} ...")
-    result = subprocess.run(
+    result = subprocess.run(  # noqa: S603 - argv list, no shell
         [sys.executable, str(scan_index_bin), "--root", str(repo_path)], capture_output=True, text=True, timeout=360
     )
     if result.returncode != 0:

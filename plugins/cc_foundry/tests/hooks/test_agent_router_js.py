@@ -25,7 +25,6 @@ from pathlib import Path
 import pytest
 from _hook_env import _hook_tmp_base
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
@@ -94,23 +93,21 @@ def _session_start(session_id: str) -> dict:
 class TestAgentRouting:
     """agent-router.js: tier-1 passthrough vs tier-3 fallback to general-purpose."""
 
-    def test_builtin_agent_passes_through(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """Built-in 'general-purpose' is recognised; hook exits with empty stdout."""
-        result = run_hook("agent-router.js", _pre_agent("general-purpose", sid), home=tmp_home)
+    @pytest.mark.parametrize(
+        "subagent_type",
+        [
+            pytest.param("general-purpose", id="builtin-general-purpose"),
+            pytest.param("claude", id="builtin-claude-catchall"),
+            pytest.param("foundry:sw-engineer", id="known-plugin-agent"),
+        ],
+    )
+    def test_recognised_agent_passes_through(self, sid: str, tmp_home: Path, run_hook, subagent_type: str) -> None:
+        """A recognised agent resolves via tier 1; the hook exits 0 with empty stdout.
 
-        assert result.returncode == 0, result.stderr
-        assert result.stdout == ""
-
-    def test_claude_catchall_passes_through(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """Built-in 'claude' catch-all is recognised; no silent reroute to general-purpose."""
-        result = run_hook("agent-router.js", _pre_agent("claude", sid), home=tmp_home)
-
-        assert result.returncode == 0, result.stderr
-        assert result.stdout == ""
-
-    def test_known_plugin_agent_passes_through(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """Known plugin agent 'foundry:sw-engineer' resolves via tier 1; stdout empty."""
-        result = run_hook("agent-router.js", _pre_agent("foundry:sw-engineer", sid), home=tmp_home)
+        Scenario: built-in 'general-purpose', the built-in 'claude' catch-all (no silent reroute to general-purpose) and
+        the known plugin agent 'foundry:sw-engineer' are all recognised.
+        """
+        result = run_hook("agent-router.js", _pre_agent(subagent_type, sid), home=tmp_home)
 
         assert result.returncode == 0, result.stderr
         assert result.stdout == ""

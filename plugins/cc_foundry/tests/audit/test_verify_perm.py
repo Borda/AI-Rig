@@ -10,9 +10,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-
-import verify_perm  # noqa: E402
+import verify_perm
 
 
 def _write_settings(path: Path, allow: list[str] | None) -> None:
@@ -66,28 +64,23 @@ class TestRuleInSettings:
         """Missing settings.json → False (no error)."""
         assert verify_perm.rule_in_settings("Bash(ls:*)", tmp_path / "nope.json") is False
 
-    def test_malformed_json(self, tmp_path: Path) -> None:
-        """Malformed JSON → False (no error)."""
-        p = tmp_path / "bad.json"
-        p.write_text("{not json", encoding="utf-8")
-        assert verify_perm.rule_in_settings("Bash(ls:*)", p) is False
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param("{not json", id="malformed-json"),
+            pytest.param("{}", id="missing-permissions-key"),
+            pytest.param(json.dumps({"permissions": {"allow": "not-a-list"}}), id="allow-not-a-list"),
+            pytest.param("[]", id="top-level-not-an-object"),
+        ],
+    )
+    def test_unusable_settings_content_is_not_a_match(self, tmp_path: Path, content: str) -> None:
+        """Settings that cannot hold an allow list report the rule as absent, never an error.
 
-    def test_missing_permissions_key(self, tmp_path: Path) -> None:
-        """Reject settings that omit the permissions mapping."""
+        Covers malformed JSON, a document without the permissions mapping, an allow value that is not a list, and a top-
+        level JSON value that is a list rather than an object.
+        """
         p = tmp_path / "s.json"
-        p.write_text("{}", encoding="utf-8")
-        assert verify_perm.rule_in_settings("Bash(ls:*)", p) is False
-
-    def test_allow_not_a_list(self, tmp_path: Path) -> None:
-        """Reject a permissions allow value that is not a list."""
-        p = tmp_path / "s.json"
-        p.write_text(json.dumps({"permissions": {"allow": "not-a-list"}}), encoding="utf-8")
-        assert verify_perm.rule_in_settings("Bash(ls:*)", p) is False
-
-    def test_top_level_not_object(self, tmp_path: Path) -> None:
-        """Top-level JSON is a list, not an object → False."""
-        p = tmp_path / "s.json"
-        p.write_text("[]", encoding="utf-8")
+        p.write_text(content, encoding="utf-8")
         assert verify_perm.rule_in_settings("Bash(ls:*)", p) is False
 
 
@@ -145,89 +138,47 @@ class TestMain:
         _write_guide(g, guide_rules)
         return s, g
 
-    def test_present_mode_both_ok(
+    @pytest.mark.parametrize(
+        ("rule", "allow", "guide_rules", "mode", "expected_rc", "settings_status", "guide_status"),
+        [
+            pytest.param("Bash(ls:*)", ["Bash(ls:*)"], ["Bash(ls:*)"], "present", 0, "OK", "OK", id="present-both-ok"),
+            pytest.param(
+                "Bash(ls:*)", [], ["Bash(ls:*)"], "present", 1, "MISSING", "OK", id="present-settings-missing"
+            ),
+            pytest.param("Bash(ls:*)", ["Bash(ls:*)"], [], "present", 1, "OK", "MISSING", id="present-guide-missing"),
+            pytest.param("Bash(rm:*)", ["Bash(ls:*)"], ["Bash(ls:*)"], "absent", 0, "OK", "OK", id="absent-both-clean"),
+            pytest.param(
+                "Bash(ls:*)", ["Bash(ls:*)"], [], "absent", 1, "STILL_PRESENT", "OK", id="absent-lingering-in-settings"
+            ),
+            pytest.param(
+                "Bash(ls:*)", [], ["Bash(ls:*)"], "absent", 1, "OK", "STILL_PRESENT", id="absent-lingering-in-guide"
+            ),
+        ],
+    )
+    def test_status_lines_and_exit_code_per_mode(
         self,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
+        rule: str,
+        allow: list[str],
+        guide_rules: list[str],
+        mode: str,
+        expected_rc: int,
+        settings_status: str,
+        guide_status: str,
     ) -> None:
-        """Present mode + rule in both → "OK / OK", exit 0."""
-        rule = "Bash(ls:*)"
-        s, g = self._setup(tmp_path, [rule], [rule])
-        rc = verify_perm.main([rule, str(s), str(g), "present"])
-        out = capsys.readouterr().out
-        assert rc == 0
-        assert "settings: OK" in out
-        assert "guide: OK" in out
+        """Each (mode, settings presence, guide presence) combination prints its status tokens and exit code.
 
-    def test_present_mode_settings_missing(
-        self,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """Present mode + missing from settings → "MISSING / OK", exit 1."""
-        rule = "Bash(ls:*)"
-        s, g = self._setup(tmp_path, [], [rule])
-        rc = verify_perm.main([rule, str(s), str(g), "present"])
+        Present mode expects the rule in both files, absent mode expects it in neither: a rule missing from one file
+        reports ``MISSING`` and a lingering rule reports ``STILL_PRESENT``, both with exit 1, while a satisfied mode
+        reports ``OK`` for both files with exit 0.
+        """
+        s, g = self._setup(tmp_path, allow, guide_rules)
+        rc = verify_perm.main([rule, str(s), str(g), mode])
         out = capsys.readouterr().out
-        assert rc == 1
-        assert "settings: MISSING" in out
-        assert "guide: OK" in out
-
-    def test_present_mode_guide_missing(
-        self,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """Present mode + missing from guide → "OK / MISSING", exit 1."""
-        rule = "Bash(ls:*)"
-        s, g = self._setup(tmp_path, [rule], [])
-        rc = verify_perm.main([rule, str(s), str(g), "present"])
-        out = capsys.readouterr().out
-        assert rc == 1
-        assert "settings: OK" in out
-        assert "guide: MISSING" in out
-
-    def test_absent_mode_both_clean(
-        self,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """Absent mode + rule absent from both → "OK / OK", exit 0."""
-        rule = "Bash(rm:*)"
-        s, g = self._setup(tmp_path, ["Bash(ls:*)"], ["Bash(ls:*)"])
-        rc = verify_perm.main([rule, str(s), str(g), "absent"])
-        out = capsys.readouterr().out
-        assert rc == 0
-        assert "settings: OK" in out
-        assert "guide: OK" in out
-
-    def test_absent_mode_still_present_in_settings(
-        self,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """Absent mode + lingering in settings → "STILL_PRESENT / OK", exit 1."""
-        rule = "Bash(ls:*)"
-        s, g = self._setup(tmp_path, [rule], [])
-        rc = verify_perm.main([rule, str(s), str(g), "absent"])
-        out = capsys.readouterr().out
-        assert rc == 1
-        assert "settings: STILL_PRESENT" in out
-        assert "guide: OK" in out
-
-    def test_absent_mode_still_present_in_guide(
-        self,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """Absent mode + lingering in guide → "OK / STILL_PRESENT", exit 1."""
-        rule = "Bash(ls:*)"
-        s, g = self._setup(tmp_path, [], [rule])
-        rc = verify_perm.main([rule, str(s), str(g), "absent"])
-        out = capsys.readouterr().out
-        assert rc == 1
-        assert "settings: OK" in out
-        assert "guide: STILL_PRESENT" in out
+        assert rc == expected_rc
+        assert f"settings: {settings_status}" in out
+        assert f"guide: {guide_status}" in out
 
     def test_invalid_mode_exits_2(self) -> None:
         """Invalid mode token → exit 2 (argparse choices)."""

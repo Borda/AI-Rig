@@ -7,7 +7,6 @@ import contextlib
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import stat
 import subprocess
@@ -15,11 +14,11 @@ import sys
 import tempfile
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 
 BIN_ROOT = Path(__file__).resolve().parents[1] / "bin"
 if str(BIN_ROOT) not in sys.path:
@@ -283,7 +282,8 @@ def test_fresh_review_and_resume_argv_preserve_routing_contract(tmp_path: Path) 
 
     assert fresh[:2] == ["codex", "exec"]
     assert ["-s", "read-only"] == fresh[fresh.index("-s") : fresh.index("-s") + 2]
-    assert "--ephemeral" in fresh and "--ignore-user-config" in fresh
+    assert "--ephemeral" in fresh
+    assert "--ignore-user-config" in fresh
     assert all(
         "sandbox_workspace_write.network_access=false" in command for command in (fresh, review, implement, resumed)
     )
@@ -328,7 +328,7 @@ def test_artifact_store_rejects_a_preexisting_temp_symlink_before_any_write(tmp_
     outside.mkdir()
     (tmp_path / ".temp").symlink_to(outside, target_is_directory=True)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"bridge artifact root escapes the trusted workspace"):
         bridge_call.run_request(_request(tmp_path, effort="bogus"))
 
     assert not (outside / "bridge").exists()
@@ -478,7 +478,7 @@ def test_mcp_containment_rejection_returns_a_generic_error_without_provider_disp
     assert set(tool["name"] for tool in responses[1]["result"]["tools"]) == set(bridge_mcp.EXPECTED_TOOL_INVENTORY)
 
 
-@pytest.mark.parametrize("timeout", ("nan", "inf", "-inf"))
+@pytest.mark.parametrize("timeout", ["nan", "inf", "-inf"])
 def test_cli_rejects_nonfinite_timeout_before_provider_dispatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], timeout: str
 ) -> None:
@@ -603,11 +603,11 @@ def test_budget_prompt_and_timeout_terminate_held_process(tmp_path: Path) -> Non
 
 @pytest.mark.parametrize(
     "emitter",
-    (
+    [
         "import sys, time; sys.stdout.buffer.write(b'x' * 400000); sys.stdout.flush(); time.sleep(30)",
         "import sys, time; sys.stderr.buffer.write(b'x' * 400000); sys.stderr.flush(); time.sleep(30)",
         "import sys, time; sys.stdout.buffer.write(b'x' * 200000); sys.stderr.buffer.write(b'y' * 200000); sys.stdout.flush(); sys.stderr.flush(); time.sleep(30)",
-    ),
+    ],
 )
 def test_child_output_limit_stops_a_noisy_peer_and_caps_its_transcript(tmp_path: Path, emitter: str) -> None:
     """Prevent a verbose peer from growing supervisor memory or transcript storage without a bound."""
@@ -1373,7 +1373,7 @@ def test_job_lifecycle_uses_workspace_local_record_and_missing_signal_doubles(
     assert bridge_call.job_status(tmp_path, job_id)["status"] == "cancel_requested"
 
 
-@pytest.mark.parametrize("command", ("status", "result", "cancel"))
+@pytest.mark.parametrize("command", ["status", "result", "cancel"])
 def test_lifecycle_cli_rejects_job_identifier_traversal(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], command: str
 ) -> None:
@@ -1653,7 +1653,8 @@ def test_simulated_windows_stalled_probe_uses_tasklist_and_never_signals(
     monkeypatch.setattr(bridge_call.subprocess, "run", _fake_tasklist)
 
     assert bridge_call.job_status(tmp_path, job_id)["status"] == "stalled"
-    assert probes and probes[0][0] == "tasklist"
+    assert probes
+    assert probes[0][0] == "tasklist"
 
 
 def test_cancelling_a_stalled_job_keeps_the_terminal_stalled_signal(tmp_path: Path) -> None:
@@ -2009,11 +2010,11 @@ def test_codex_diagnostic_baseline_covers_every_runtime_argv_flag(tmp_path: Path
 
 @pytest.mark.parametrize(
     ("verb", "expected_sandbox"),
-    (
+    [
         pytest.param("implement", "workspace-write", id="implement-write"),
         pytest.param("advise", "read-only", id="advise-read-only"),
         pytest.param("review", "read-only", id="review-read-only"),
-    ),
+    ],
 )
 def test_cli_implement_is_the_only_write_capable_verb(
     tmp_path: Path,
@@ -2167,11 +2168,11 @@ def test_mcp_rejects_model_supplied_workspace_and_reverse_session(tmp_path: Path
 
 @pytest.mark.parametrize(
     ("request_id", "timeout"),
-    (
+    [
         pytest.param(1, float("nan"), id="nan"),
         pytest.param(2, float("inf"), id="positive-infinity"),
         pytest.param(3, float("-inf"), id="negative-infinity"),
-    ),
+    ],
 )
 def test_mcp_rejects_nonfinite_timeout_before_provider_dispatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request_id: int, timeout: float
@@ -2197,7 +2198,7 @@ def test_mcp_rejects_nonfinite_timeout_before_provider_dispatch(
     assert response["error"]["code"] == -32602
 
 
-@pytest.mark.parametrize("task", (pytest.param("a" * 70000, id="ascii"), pytest.param("🙂" * 20000, id="multibyte")))
+@pytest.mark.parametrize("task", [pytest.param("a" * 70000, id="ascii"), pytest.param("🙂" * 20000, id="multibyte")])
 def test_mcp_rejects_an_encoded_task_over_the_transport_budget_before_artifacts_or_dispatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, task: str
 ) -> None:
@@ -2224,7 +2225,7 @@ def test_mcp_rejects_an_encoded_task_over_the_transport_budget_before_artifacts_
 
 @pytest.mark.parametrize(
     "task",
-    (pytest.param("a" * (16 * 1024), id="ascii-boundary"), pytest.param("🙂" * (4 * 1024), id="multibyte-boundary")),
+    [pytest.param("a" * (16 * 1024), id="ascii-boundary"), pytest.param("🙂" * (4 * 1024), id="multibyte-boundary")],
 )
 def test_transport_budget_accepts_all_host_safe_utf8_boundaries(tmp_path: Path, task: str) -> None:
     """Keep accepted task text below the portable byte ceiling for both single- and multibyte input."""
@@ -2242,10 +2243,10 @@ def test_windows_command_measurement_uses_list2cmdline_utf16_units() -> None:
 
 @pytest.mark.parametrize(
     ("executable", "rejects"),
-    (
+    [
         pytest.param("C:\\\\Bridge\\\\codex.cmd", True, id="batch-shim"),
         pytest.param("C:\\\\Bridge\\\\codex.exe", False, id="native-executable"),
-    ),
+    ],
 )
 def test_windows_batch_shim_uses_a_stricter_resolved_command_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, executable: str, rejects: bool
@@ -2263,11 +2264,11 @@ def test_windows_batch_shim_uses_a_stricter_resolved_command_budget(
 
 @pytest.mark.parametrize(
     "message",
-    (
+    [
         pytest.param({"jsonrpc": "1.0", "id": 1, "method": "tools/list"}, id="wrong-version"),
         pytest.param({"jsonrpc": "2.0", "id": 2}, id="missing-method"),
         pytest.param({"jsonrpc": "2.0", "id": 3, "method": ["tools/list"]}, id="method-not-string"),
-    ),
+    ],
 )
 def test_mcp_rejects_invalid_request_shapes_with_the_standard_error_code(message: dict[str, object]) -> None:
     """Prevent malformed JSON-RPC requests from being treated as unknown methods."""
@@ -2347,20 +2348,22 @@ def test_mcp_refuses_write_verbs_from_a_home_or_root_workspace(monkeypatch: pyte
         trusted_workspace=Path.home(),
     )
 
-    assert response is not None and response["error"]["code"] == -32602
+    assert response is not None
+    assert response["error"]["code"] == -32602
     assert "workspace" in response["error"]["message"]
-    assert advisory is not None and "error" not in advisory
+    assert advisory is not None
+    assert "error" not in advisory
     assert dispatched == ["advise"]
 
 
 @pytest.mark.parametrize(
     "invalid_arguments",
-    (
+    [
         pytest.param({"depth": True}, id="boolean-depth"),
         pytest.param({"timeout_seconds": True}, id="boolean-timeout"),
         pytest.param({"timeout_seconds": 360.1}, id="timeout-over-host-safe-maximum"),
         pytest.param({"supported_efforts": []}, id="empty-supported-efforts"),
-    ),
+    ],
 )
 def test_mcp_rejects_values_that_disagree_with_its_json_schema(
     tmp_path: Path, invalid_arguments: dict[str, object]
@@ -2487,7 +2490,8 @@ def test_mcp_implement_runs_real_supervisor_with_claude_write_permissions(
     assert marker.read_text(encoding="utf-8") == "implemented by fake Claude child\n"
     assert command[command.index("--permission-mode") + 1] == "acceptEdits"
     assert "--disallowed-tools" not in command
-    assert "Edit" not in command and "Write" not in command
+    assert "Edit" not in command
+    assert "Write" not in command
     assert envelope["status"] == "complete"
     assert envelope["verb"] == "implement"
     assert envelope["direction"] == "codex_to_claude"
@@ -2499,17 +2503,17 @@ def test_mcp_implement_runs_real_supervisor_with_claude_write_permissions(
 
 @pytest.mark.parametrize(
     "invalid_core",
-    (
+    [
         pytest.param(_core(details=["detail"] * 33), id="too-many-details"),
         pytest.param(_core(details=["x" * 2001]), id="detail-too-long"),
         pytest.param(_core(verdict="x" * 501), id="verdict-too-long"),
         pytest.param(_core(findings=["finding"] * 9), id="too-many-findings"),
         pytest.param(_core(findings=["x" * 501]), id="finding-too-long"),
-    ),
+    ],
 )
 def test_peer_summary_limits_reject_oversized_model_output(invalid_core: dict[str, object]) -> None:
     """Prevent a peer from smuggling unbounded verbose or summary content across the bridge boundary."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"model result (details|findings|verdict) must"):
         bridge_call.validate_model_core(invalid_core)
 
 
@@ -2960,6 +2964,75 @@ def test_posix_termination_falls_back_when_killpg_is_unavailable(
     )
 
 
+class _ReapedLeader:
+    """Provide a group leader that was already reaped, leaving only its process group's liveness in question."""
+
+    pid = 4242
+    returncode = 0
+
+    def wait(self, timeout: float) -> int:
+        """Report the leader's exit status immediately, as a reaped child does."""
+        return self.returncode
+
+
+def _simulate_group_probe(
+    monkeypatch: pytest.MonkeyPatch, grace_seconds: float, probe_error: type[OSError] | None
+) -> list[tuple[int, int]]:
+    """Install a fake POSIX group whose signal-0 probe raises ``probe_error`` or reports the group alive."""
+    signals: list[tuple[int, int]] = []
+
+    def fake_killpg(process_group: int, signal_number: int) -> None:
+        """Record the signal; only the existence probe and the final SIGKILL see an absent or inaccessible group."""
+        signals.append((process_group, signal_number))
+        if probe_error is not None and signal_number in (0, 9):
+            raise probe_error
+
+    monkeypatch.setattr(bridge_call.os, "name", "posix")
+    monkeypatch.setattr(bridge_call.os, "killpg", fake_killpg, raising=False)
+    monkeypatch.setattr(bridge_call.signal, "SIGKILL", 9, raising=False)
+    monkeypatch.setattr(bridge_call, "CLEANUP_GRACE_SECONDS", grace_seconds)
+    return signals
+
+
+def test_cleanup_grace_ends_once_the_process_group_is_gone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the rest of the cleanup grace when SIGTERM has already emptied the child's process group.
+
+    A tree that exits promptly must not make every termination wait out the full grace; the force-kill still follows so
+    the outcome matches the full-wait path.
+    """
+    signals = _simulate_group_probe(monkeypatch, grace_seconds=10.0, probe_error=ProcessLookupError)
+
+    started = time.monotonic()
+    bridge_call._terminate_process_group(_ReapedLeader())
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 5.0
+    assert signals == [(4242, bridge_call.signal.SIGTERM), (4242, 0), (4242, 9)]
+
+
+@pytest.mark.parametrize(
+    "probe_error",
+    [pytest.param(None, id="member-alive"), pytest.param(PermissionError, id="member-not-signalable")],
+)
+def test_cleanup_grace_is_fully_waited_while_the_process_group_has_a_member(
+    monkeypatch: pytest.MonkeyPatch, probe_error: type[OSError] | None
+) -> None:
+    """Keep waiting the whole grace after the leader exits while a descendant still occupies its group.
+
+    Leader exit alone is no proof the tree ended: descendants can outlive it holding inherited pipes, and a member the
+    user may not signal still counts as alive.
+    """
+    grace_seconds = 0.3
+    signals = _simulate_group_probe(monkeypatch, grace_seconds=grace_seconds, probe_error=probe_error)
+
+    started = time.monotonic()
+    bridge_call._terminate_process_group(_ReapedLeader())
+    elapsed = time.monotonic() - started
+
+    assert elapsed >= grace_seconds
+    assert signals[-1] == (4242, 9)
+
+
 @pytest.mark.parametrize("tree_status", [0, 1])
 def test_simulated_windows_termination_uses_tree_kill_before_the_leader_can_exit(
     monkeypatch: pytest.MonkeyPatch,
@@ -3168,7 +3241,7 @@ def test_wait_failure_reaps_child_and_drains_readers(tmp_path: Path, monkeypatch
     monkeypatch.setattr(threading.Thread, "start", record_reader_start)
     monkeypatch.setattr(bridge_call.time, "sleep", fail_first_wait)
     try:
-        with pytest.raises(OSError) as raised:
+        with pytest.raises(OSError, match=r"OS wait interrupted") as raised:
             bridge_call._run_child([sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, 0.2)
         assert raised.value is failure
         assert len(processes) == 1

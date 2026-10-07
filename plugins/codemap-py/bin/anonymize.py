@@ -69,6 +69,7 @@ MAX_LOG_SIZE = 50_000_000
 
 #: Exit code returned when the resolved output directory holds a salt file.
 _EXIT_UNSAFE_OUT_DIR = 2
+#: Exit code returned when ``--output`` is combined with a directory ``--input``.
 _EXIT_DIRECTORY_OUTPUT = 2
 
 #: Matches a qualified-name token embedded in free text: an identifier followed by
@@ -555,7 +556,9 @@ def anonymize_record(record: dict, salt: bytes) -> dict:
         'bench'
     """
     out = _scrub_special_fields(record, salt)
-    assert isinstance(out, dict)  # a dict in always yields a dict out
+    # a dict in always yields a dict out
+    if not isinstance(out, dict):
+        raise TypeError(f"out must be dict, got {type(out).__name__}")
     if "args" in out and isinstance(out["args"], dict):
         out["args"] = _anonymize_value(out["args"], salt)
     if "argv" in out and isinstance(out["argv"], list):
@@ -735,7 +738,7 @@ def process(input_path: Path, output_path: Path, salt: bytes) -> tuple[int, int]
                 anon = anonymize_record(record, salt)
                 fout.write(json.dumps(anon, separators=(",", ":")) + "\n")
                 processed += 1
-            except Exception:  # noqa: BLE001
+            except Exception:
                 skipped += 1
     return processed, skipped
 

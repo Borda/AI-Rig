@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
 from _bench_codex import runtime
 from _bench_codex.structural.config import PARITY_CODEX_MODEL
 from _bench_codex.structural.diff_impact import build_codex_command
 from _bench_codex.structural.runner import CodexRunner
 from _bench_common import change_impact_stage
-
 
 BENCHMARKS = Path(__file__).resolve().parents[1]
 _PLATFORM_TESTS_DIR = BENCHMARKS.parent / "plugins" / "codex-rig" / "tests"
@@ -23,7 +21,6 @@ if str(_PLATFORM_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PLATFORM_TESTS_DIR))
 
 from _platform import POSIX_BASH  # noqa: E402
-
 
 MODELS = ["gpt-6.1-sol", "gpt-6-luna", "gpt-6-sol", "gpt-6-astra"]
 _requires_bash = pytest.mark.skipif(POSIX_BASH is None, reason="requires a working POSIX Bash executable")

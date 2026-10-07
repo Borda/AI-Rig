@@ -9,7 +9,6 @@ from types import ModuleType
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR_PATH = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
 
@@ -17,7 +16,8 @@ VALIDATOR_PATH = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py
 def _load_validator() -> ModuleType:
     """Load the standalone review validator without package installation."""
     specification = importlib.util.spec_from_file_location("codex_rig_review_validator", VALIDATOR_PATH)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -295,15 +295,36 @@ def test_candidate_assessments_keep_parent_substitute_role_bound(tmp_path: Path)
     _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
 
 
-def test_candidate_rejects_rating_not_stated_by_reviewer(tmp_path: Path) -> None:
-    """A metadata rating must match the retained scoped reviewer judgment."""
-    (tmp_path / "qa.md").write_text(
-        "## Reviewer Assessment\n\nRating: 2\nRationale: Coverage is incomplete.\n", encoding="utf-8"
-    )
-    passes = {"qa-specialist": {"role": "qa-specialist", "mode": "inspection", "output_path": "qa.md"}}
-    metadata = {"reviewer_assessments": [{"role": "QA specialist", "rating": 1, "evidence": "qa.md"}]}
+@pytest.mark.parametrize(
+    ("assessment", "rating", "error"),
+    [
+        pytest.param(
+            "## Reviewer Assessment\n\nRating: 2\nRationale: Coverage is incomplete.\n",
+            1,
+            "review-assessment-rating-mismatch:qa-specialist",
+            id="rating-not-stated-by-reviewer",
+        ),
+        pytest.param(
+            "## Reviewer Assessment\n\nRating: 3\n",
+            3,
+            "review-assessment-content-invalid:qa-specialist",
+            id="reviewer-without-rationale",
+        ),
+    ],
+)
+def test_candidate_rejects_unsupported_reviewer_assessment(
+    tmp_path: Path, assessment: str, rating: int, error: str
+) -> None:
+    """A metadata rating must match the retained scoped reviewer judgment, and a bare rating is never supported.
 
-    with pytest.raises(SystemExit, match="review-assessment-rating-mismatch:qa-specialist"):
+    The retained reviewer output either states a different rating than the metadata claims, or states a rating with no
+    rationale; both leave the recorded assessment unsupported by its evidence file.
+    """
+    (tmp_path / "qa.md").write_text(assessment, encoding="utf-8")
+    passes = {"qa-specialist": {"role": "qa-specialist", "mode": "inspection", "output_path": "qa.md"}}
+    metadata = {"reviewer_assessments": [{"role": "QA specialist", "rating": rating, "evidence": "qa.md"}]}
+
+    with pytest.raises(SystemExit, match=error):
         _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
 
 
@@ -382,16 +403,6 @@ def test_candidate_rejects_main_reviewer_evidence_from_unrelated_file(tmp_path: 
         _load_validator()._validate_reviewer_assessments(tmp_path, metadata, {})
 
 
-def test_candidate_rejects_reviewer_without_rationale(tmp_path: Path) -> None:
-    """A bare rating cannot become a supported reviewer assessment."""
-    (tmp_path / "qa.md").write_text("## Reviewer Assessment\n\nRating: 3\n", encoding="utf-8")
-    passes = {"qa-specialist": {"role": "qa-specialist", "mode": "inspection", "output_path": "qa.md"}}
-    metadata = {"reviewer_assessments": [{"role": "QA specialist", "rating": 3, "evidence": "qa.md"}]}
-
-    with pytest.raises(SystemExit, match="review-assessment-content-invalid:qa-specialist"):
-        _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
-
-
 def test_candidate_binds_local_reviewer_wave_rating_to_structured_output(tmp_path: Path) -> None:
     """A clean structured reviewer response supplies its own scoped rating."""
     (tmp_path / "qa.md").write_text(
@@ -466,7 +477,7 @@ def test_unattributed_review_rejects_an_author_column(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("recommendation", ["accept-as-is", "minor-changes"])
 @pytest.mark.parametrize(
-    "status,checks_failed",
+    ("status", "checks_failed"),
     [
         pytest.param("fail", ["tests"], id="failed-check"),
         pytest.param("timeout", ["tests"], id="timeout"),

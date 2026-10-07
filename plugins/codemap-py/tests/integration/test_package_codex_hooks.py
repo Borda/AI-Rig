@@ -8,9 +8,7 @@ import json
 from pathlib import Path
 
 import pytest
-
 from codemap_py import integration
-
 
 _PLUGIN_ROOT = Path(__file__).parents[2]
 
@@ -18,7 +16,8 @@ _PLUGIN_ROOT = Path(__file__).parents[2]
 def _load_script(name: str):
     """Import one packaging script without treating ``scripts`` as a package."""
     spec = importlib.util.spec_from_file_location(name, _PLUGIN_ROOT / "scripts" / f"{name}.py")
-    assert spec and spec.loader
+    assert spec
+    assert spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

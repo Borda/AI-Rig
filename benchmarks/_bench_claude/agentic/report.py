@@ -3,34 +3,24 @@
 import statistics
 from collections import defaultdict
 from collections.abc import Mapping
+from typing import ClassVar
 
 import pandas as pd
-
-
-from _bench_common.claude_transport import MODELS
 from _bench_common import agentic_reporting
-from _bench_common.agentic_reporting import cell_passes, cell_quality, summary_lines
-from _bench_common.presentation import (
-    fmt_time,
-    fmt_tok,
-)
 
 # Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
-from _bench_common.agentic_contracts import (
-    AGENTIC_ARMS,
-    AgenticOracle,  # noqa: F401
-    AnswerScore,  # noqa: F401
-)
+from _bench_common.agentic_contracts import AGENTIC_ARMS, AgenticOracle, AnswerScore  # noqa: F401
+from _bench_common.agentic_reporting import cell_passes, cell_quality, summary_lines
+from _bench_common.claude_transport import MODELS
+from _bench_common.presentation import fmt_time, fmt_tok
 
 # Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
 # Every name it defines is re-exported here, including ones this file no longer calls itself: callers and tests
 # reach these through the runner module, so pruning an apparently unused re-export breaks patch.object targets.
-
 from _bench_claude.agentic.models import BenchmarkRun, Task
 from _bench_claude.agentic.scope import run_cost_usd
-from _bench_claude.agentic.tasks import _canonical_agentic_row
 from _bench_claude.agentic.scoring import aggregate
-
+from _bench_claude.agentic.tasks import _canonical_agentic_row
 
 # ---------------------------------------------------------------------------
 # Report renderer
@@ -51,7 +41,7 @@ class Report:
     _NO_PAIRS_MD = "_(no completed baseline + injected arm pairs)_"
 
     # Limitations appended verbatim to every report
-    _LIMITATIONS_MD = [
+    _LIMITATIONS_MD: ClassVar = [
         "## Limitations",
         "",
         "- Purely quantitative — answer quality / correctness is not scored",
@@ -92,7 +82,7 @@ class Report:
     # Key metrics first — these are the headline savings signal.
     # Diagnostic metrics follow (tool breakdown, tool-only time).
     # cost_usd is the fair cross-arm metric (arms run different-priced models).
-    _METRICS = [
+    _METRICS: ClassVar = [
         ("elapsed_s", "Elapsed (s)", _fmt_s),
         ("cost_usd", "Cost ($)", _fmt_usd),
         ("input_tokens", "Input tokens (k)", fmt_tokens),
@@ -103,7 +93,7 @@ class Report:
 
     # Quality lenses rendered as absolute per-arm medians (never as savings — higher is better).
     # chunk_hit_rate is the semble-native lens and is None (rendered "—") for plain / codemap.
-    _QUALITY_METRICS = [
+    _QUALITY_METRICS: ClassVar = [
         ("erec", "Exposure recall (erec)", _fmt_pct),
         ("rrec", "Report recall (rrec)", _fmt_pct),
         ("chunk_hit_rate", "Chunk hit rate (semble lens)", _fmt_pct),
@@ -358,8 +348,8 @@ class Report:
 # ---------------------------------------------------------------------------
 
 
-# rich styles for run-line output — arm colors make quads easy to scan; matches README's documented
-# canonical scheme (A_plain=yellow, B_auto=cyan, C_strict=magenta) and legacy quad colors.
+#: rich styles for run-line output — arm colors make quads easy to scan; matches README's documented
+#: canonical scheme (A_plain=yellow, B_auto=cyan, C_strict=magenta) and legacy quad colors.
 _ARM_STYLE = {
     "plain": "yellow",
     "A_plain": "yellow",

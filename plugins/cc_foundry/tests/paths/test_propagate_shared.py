@@ -20,7 +20,8 @@ from _hook_env import _bash_runs_posix_script
 
 _MOD_PATH = Path(__file__).resolve().parent.parent.parent / "bin" / "propagate_shared.py"
 _spec = importlib.util.spec_from_file_location("propagate_shared", _MOD_PATH)
-assert _spec and _spec.loader
+assert _spec
+assert _spec.loader
 ps = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ps)
 

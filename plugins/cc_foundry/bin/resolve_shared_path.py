@@ -63,8 +63,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+#: Allowed shape of a plugin name: letters, digits, underscore and hyphen only.
 _PLUGIN_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+#: Allowed shape of a plugin-relative subdirectory: letters, digits, underscore, hyphen and slash.
 _SUBDIR_RE = re.compile(r"^[a-zA-Z0-9_/-]+$")
+#: Marketplace name under which plugins are cached, used to locate the plugin cache directory.
 _MARKETPLACE = "borda-ai-rig"
 
 
@@ -320,7 +323,7 @@ def resolve(plugin: str, subdir: str, *, home: Path | None = None, env_root: str
 
             try:
                 env_plugin = _json.loads(plugin_json.read_text(encoding="utf-8")).get("name", "")
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: S110 - unreadable plugin.json falls back to the default plugin name
                 pass
         # Allow Tier 0 when: no plugin constraint, names match, or plugin.json absent (dev tree).
         if not plugin or not env_plugin or env_plugin.lower() == plugin.lower():

@@ -49,10 +49,13 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-
+#: Module logger for worktree pilot lifecycle events.
 LOGGER = logging.getLogger(__name__)
+#: Path components every generated develop pilot path must begin with.
 _GENERATED_PREFIX = (".reports", "codex", "develop")
+#: Path components every code-remediate pilot path must begin with.
 _CODE_REMEDIATE_PREFIX = (".reports", "codex", "code-remediate")
+#: Authority a pilot plan must request exactly: serial edits plus one local pilot, no network or remote changes.
 _EXPECTED_AUTHORITY = {
     "serial_repository_edits": True,
     "one_local_parallel_write_pilot": True,
@@ -64,6 +67,7 @@ _EXPECTED_AUTHORITY = {
     "automatic_retry_count": 0,
     "general_parallel_write_enablement": False,
 }
+#: Scope an approval must grant exactly, matching the requested authority with network recorded as plain `False`.
 _EXPECTED_APPROVAL_SCOPE = {**_EXPECTED_AUTHORITY, "network": False}
 
 
@@ -109,14 +113,13 @@ def _git_environment() -> dict[str, str]:
 
 def _git(repository: Path, *arguments: str) -> str:
     """Run Git without a shell or inherited Git redirection overrides."""
-    completed = subprocess.run(
-        ["git", "-C", str(repository), *arguments],
+    completed = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "-C", str(repository), *arguments],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
         check=False,
         text=True,
         shell=False,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         env=_git_environment(),
     )
     if completed.returncode != 0:
@@ -126,19 +129,40 @@ def _git(repository: Path, *arguments: str) -> str:
 
 def _git_bytes(repository: Path, *arguments: str) -> bytes:
     """Run Git and return exact stdout bytes for patch hashing."""
-    completed = subprocess.run(
-        ["git", "-C", str(repository), *arguments],
+    completed = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "-C", str(repository), *arguments],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
         check=False,
         text=False,
         shell=False,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         env=_git_environment(),
     )
     if completed.returncode != 0:
         raise PilotError(f"git-command-failed:{arguments[0] if arguments else 'unknown'}")
     return completed.stdout
+
+
+def _git_batched_lines(repository: Path, *arguments: str, expected: int) -> list[str] | None:
+    """Answer ``expected`` single-line read-only questions with one Git process.
+
+    Returns ``None`` when Git fails or does not answer with exactly one line per question, so the caller can ask each
+    question on its own and surface the exact result or error of the unbatched command.
+    """
+    try:
+        output = _git(repository, *arguments)
+    except PilotError:
+        return None
+    lines = [line.strip() for line in output.split("\n")]
+    return lines if len(lines) == expected else None
+
+
+def _git_head_and_tree(repository: Path) -> tuple[str, str]:
+    """Return the checked-out commit and its tree identifiers from one Git process."""
+    answers = _git_batched_lines(repository, "rev-parse", "HEAD", "HEAD^{tree}", expected=2)
+    if answers is None:
+        return _git(repository, "rev-parse", "HEAD"), _git(repository, "rev-parse", "HEAD^{tree}")
+    return answers[0], answers[1]
 
 
 def _git_filtered_oid(repository: Path, relative_path: str) -> str:
@@ -479,8 +503,7 @@ def prepare_write_pilot(
         raise PilotError("fixture-repository-invalid")
     if _git(repository, "status", "--porcelain=v1", "--untracked-files=all"):
         raise PilotError("fixture-repository-dirty")
-    baseline_head = _git(repository, "rev-parse", "HEAD")
-    baseline_tree = _git(repository, "rev-parse", "HEAD^{tree}")
+    baseline_head, baseline_tree = _git_head_and_tree(repository)
     nodes = _validated_nodes(stage, repository)
     prior_fingerprint = _prior_attempt_fingerprint(plan, stage, workspace_root)
     if worktree_root.exists():
@@ -1056,17 +1079,24 @@ def _is_code_remediate_state(state: dict[str, Any]) -> bool:
     return state.get("schema_version") == 2 and state.get("consumer") == "code-remediate"
 
 
+#: Pending-operation marker files inside the Git directory as (marker name, label), in reporting order.
+_PENDING_OPERATIONS = (
+    ("MERGE_HEAD", "merging"),
+    ("CHERRY_PICK_HEAD", "cherry-picking"),
+    ("REVERT_HEAD", "reverting"),
+)
+
+
 def _git_operation(repository: Path) -> str | None:
     """Return a pending Git operation that makes source state unsafe to apply."""
-    for name, label in (
-        ("MERGE_HEAD", "merging"),
-        ("CHERRY_PICK_HEAD", "cherry-picking"),
-        ("REVERT_HEAD", "reverting"),
-    ):
-        candidate = repository / _git(repository, "rev-parse", "--git-path", name)
-        if candidate.is_file():
+    queries = [argument for name, _ in _PENDING_OPERATIONS for argument in ("--git-path", name)]
+    # One process answers every marker path plus the Git directory; None sends each question to its own process.
+    answers = _git_batched_lines(repository, "rev-parse", *queries, "--git-dir", expected=len(_PENDING_OPERATIONS) + 1)
+    for index, (name, label) in enumerate(_PENDING_OPERATIONS):
+        marker = answers[index] if answers is not None else _git(repository, "rev-parse", "--git-path", name)
+        if (repository / marker).is_file():
             return label
-    git_dir = repository / _git(repository, "rev-parse", "--git-dir")
+    git_dir = repository / (answers[-1] if answers is not None else _git(repository, "rev-parse", "--git-dir"))
     if (git_dir / "rebase-apply").exists() or (git_dir / "rebase-merge").exists():
         return "rebasing"
     return None
@@ -1180,7 +1210,7 @@ def _code_remediate_nodes(plan: dict[str, Any], repository: Path, evidence_root:
         ):
             raise PilotError(f"bucket-metadata-invalid:{node_id}")
         rationale = raw.get("singleton_rationale")
-        if (len(selected_indexes) == 1) != isinstance(rationale, str) or isinstance(rationale, str) and not rationale:
+        if (len(selected_indexes) == 1) != isinstance(rationale, str) or (isinstance(rationale, str) and not rationale):
             raise PilotError(f"bucket-metadata-invalid:{node_id}")
         owned = raw.get("owned_paths")
         if not isinstance(owned, list) or not owned:
@@ -1304,8 +1334,7 @@ def prepare_code_remediate_pilot(
     )
     nodes = _code_remediate_nodes(plan, source, evidence_root)
     _require_unchanged_code_remediate_source(source, [path for node in nodes for path in node["owned_paths"]])
-    baseline_head = _git(source, "rev-parse", "HEAD")
-    baseline_tree = _git(source, "rev-parse", "HEAD^{tree}")
+    baseline_head, baseline_tree = _git_head_and_tree(source)
     if plan.get("baseline_head") != baseline_head or plan.get("baseline_tree") != baseline_tree:
         raise PilotError("source-repository-baseline-mismatch")
     for output in [*(node["output"] for node in nodes), "source-application.patch", "rollback.patch"]:

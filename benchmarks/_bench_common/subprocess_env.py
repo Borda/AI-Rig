@@ -8,15 +8,15 @@ is not minimal there — it is broken.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import os
 import sys
+from collections.abc import Mapping
 
-# Windows-only names a freshly spawned CPython needs before it reaches the payload:
-# ``SystemRoot``/``SYSTEMROOT``/``SystemDrive`` locate the CSPRNG used by
-# ``_Py_HashRandomization_Init``, ``COMSPEC``/``PATHEXT`` keep executable resolution
-# intact, and ``TEMP``/``TMP`` keep ``tempfile`` usable. None of them carry user
-# configuration, so forwarding them does not widen what the child can observe.
+#: Windows-only names a freshly spawned CPython needs before it reaches the payload:
+#: ``SystemRoot``/``SYSTEMROOT``/``SystemDrive`` locate the CSPRNG used by
+#: ``_Py_HashRandomization_Init``, ``COMSPEC``/``PATHEXT`` keep executable resolution
+#: intact, and ``TEMP``/``TMP`` keep ``tempfile`` usable. None of them carry user
+#: configuration, so forwarding them does not widen what the child can observe.
 _WINDOWS_STARTUP_NAMES: tuple[str, ...] = (
     "SystemRoot",
     "SYSTEMROOT",

@@ -56,7 +56,7 @@ from typing import Any
 
 from live_contract import Layout, build_prompt, candidate_findings, prompt_sha256, role_context, task_contract_sha256
 
-
+#: Skill names the calibration run requires to be packaged and covered by the task and case files.
 SKILLS = (
     "challenge-resolve",
     "code-review",
@@ -72,6 +72,7 @@ SKILLS = (
     "optimize",
     "research",
 )
+#: Role names the calibration run requires as the complete packaged role roster.
 AGENTS = (
     "sw-engineer",
     "qa-specialist",
@@ -89,6 +90,7 @@ AGENTS = (
     "scientist",
     "delegation-lead",
 )
+#: Per-role phrase that the role's declared task-routing text must contain.
 ROLE_TASK_CUES = {
     "sw-engineer": "production `.py` or `.pyi` file changes",
     "qa-specialist": "regression verification",
@@ -106,11 +108,17 @@ ROLE_TASK_CUES = {
     "scientist": "ablations",
     "delegation-lead": "separable workstreams",
 }
+#: Model identifier expected as the project-level default and used for fixture attempts.
 DEFAULT_MODEL = "gpt-6.1-sol"
+#: Model identifier that the configured review_model setting must equal.
 REVIEW_MODEL = "gpt-6.1-sol"
+#: Model identifier assigned to roles on the critical (Sol) model tier.
 CRITICAL_MODEL = "gpt-6.1-sol"
+#: Model identifier assigned to lighter support roles on the Luna tier.
 SUPPORT_MODEL = "gpt-6-luna"
+#: Models a role file may declare; any other model value fails the role-model check.
 SUPPORTED_ACTIVE_MODELS = {DEFAULT_MODEL, CRITICAL_MODEL, SUPPORT_MODEL}
+#: Roles expected to run on the support (Luna) model instead of the critical model.
 LUNA_MODEL_AGENTS = {
     "cicd-steward",
     "curator",
@@ -120,12 +128,19 @@ LUNA_MODEL_AGENTS = {
     "oss-shepherd",
     "web-explorer",
 }
+#: Roles expected to run on the critical (Sol) model: every role not assigned to Luna.
 SOL_MODEL_AGENTS = set(AGENTS) - LUNA_MODEL_AGENTS
+#: Roles expected to declare medium reasoning effort.
 MEDIUM_EFFORT_AGENTS = {"linting-expert", "qa-specialist", "squeezer", "sw-engineer", "web-explorer"}
+#: Roles expected to declare high reasoning effort: every role not listed as medium effort.
 HIGH_EFFORT_AGENTS = set(AGENTS) - MEDIUM_EFFORT_AGENTS
+#: Relative link to the recurrence and root-cause policy section that policy-bearing skills and roles must contain.
 RECURRENCE_POLICY_LINK = "../../shared/native-skill-contract.md#recurrence-and-root-cause-policy"
+#: Skills that must link the recurrence policy; every other skill must not.
 RECURRENCE_POLICY_SKILLS = frozenset({"code-remediate", "implement", "investigate"})
+#: Roles that must link the recurrence policy; every other role must not.
 RECURRENCE_POLICY_ROLES = frozenset({"delegation-lead"})
+#: Expected recurrence behavioral cases: case id to (target skill or role, expected finding codes).
 RECURRENCE_CASE_CONTRACT: dict[str, tuple[str, tuple[str, ...]]] = {
     "recurrence-initial-obstacle": ("implement", ("initial-obstacle-not-recorded",)),
     "recurrence-second-occurrence-investigate": (
@@ -146,6 +161,7 @@ RECURRENCE_CASE_CONTRACT: dict[str, tuple[str, tuple[str, ...]]] = {
         ),
     ),
 }
+#: Expected model-stall behavioral cases: case id to (target role, expected finding codes).
 MODEL_STALL_CASE_CONTRACT: dict[str, tuple[str, tuple[str, ...]]] = {
     "model-stall-advisory-escalation": (
         "delegation-lead",
@@ -188,6 +204,7 @@ MODEL_STALL_CASE_CONTRACT: dict[str, tuple[str, tuple[str, ...]]] = {
         ),
     ),
 }
+#: Expected explicit-Sol routing cases: case id to (target role, expected finding codes).
 EXPLICIT_SOL_ROUTING_CASE_CONTRACT: dict[str, tuple[str, tuple[str, ...]]] = {
     "explicit-sol-automatic-route-rejected": (
         "delegation-lead",
@@ -258,7 +275,7 @@ class Paths:
     result: Path
 
     @classmethod
-    def create(cls, layout: str = "plugin", root: Path | None = None) -> "Paths":
+    def create(cls, layout: str = "plugin", root: Path | None = None) -> Paths:
         """Create the output directory and return resolved calibration paths."""
         project_root = (root or Path.cwd()).resolve()
         asset_root = Path(__file__).resolve().parents[2] if layout == "plugin" else project_root / ".codex"
@@ -613,8 +630,8 @@ def check_accepted_route_evidence(run: CalibrationRun) -> None:
 
 def _head_path_exists(repository: Path, path: str) -> bool:
     """Distinguish an absent HEAD path from a failed Git tree lookup."""
-    result = subprocess.run(
-        ["git", "ls-tree", "-r", "--name-only", "HEAD", "--", path],
+    result = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "ls-tree", "-r", "--name-only", "HEAD", "--", path],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
         cwd=repository,
         text=True,
         capture_output=True,
@@ -650,7 +667,11 @@ def check_behavioral_cases_version(run: CalibrationRun) -> None:
         return
     try:
         git_root = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"], cwd=cases.parent, text=True, capture_output=True, check=False
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - git resolved via PATH on purpose
+            cwd=cases.parent,
+            text=True,
+            capture_output=True,
+            check=False,
         )
     except OSError:
         run.fail_and_leak("behavioral-version-policy", "behavioral-version-gap:Git checkout lookup failed")
@@ -685,8 +706,12 @@ def check_behavioral_cases_version(run: CalibrationRun) -> None:
     head_content = None
     if case_tracked:
         try:
-            head_cases = subprocess.run(
-                ["git", "show", f"HEAD:{case_path}"], cwd=repository, text=True, capture_output=True, check=False
+            head_cases = subprocess.run(  # noqa: S603 - argv list, no shell
+                ["git", "show", f"HEAD:{case_path}"],  # noqa: S607 - git resolved via PATH on purpose
+                cwd=repository,
+                text=True,
+                capture_output=True,
+                check=False,
             )
         except OSError:
             run.fail_and_leak("behavioral-version-policy", "behavioral-version-gap:HEAD fixture read failed")
@@ -1554,7 +1579,7 @@ def run_command(
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a command and return captured text output."""
-    return subprocess.run(
+    return subprocess.run(  # noqa: S603 - argv list, no shell
         [str(arg) for arg in args],
         cwd=cwd,
         env=env,
@@ -1571,7 +1596,7 @@ def check_python_syntax(run: CalibrationRun, path: Path, label: str) -> None:
         return
     env = os.environ.copy()
     env["PYTHONPYCACHEPREFIX"] = str(run.paths.out_dir / "pycache")
-    result = subprocess.run(
+    result = subprocess.run(  # noqa: S603 - argv list, no shell
         [sys.executable, "-m", "py_compile", str(path)],
         text=True,
         capture_output=True,
@@ -1612,7 +1637,8 @@ def check_shared_scripts(run: CalibrationRun) -> None:
         cli_paths["challenge-resolve-evidence"] = run.paths.skills_dir / "challenge-resolve" / "validate_evidence.py"
         cli_paths["challenge-resolve-chunks"] = run.paths.skills_dir / "challenge-resolve" / "chunk_diff.py"
         cli_paths["codemap-adapter"] = run.paths.codemap_adapter
-        assert run.paths.github_read is not None
+        if run.paths.github_read is None:
+            raise RuntimeError("run.paths.github_read must not be None")
         cli_paths["github-read"] = run.paths.github_read
     if run.paths.codex_harness.exists():
         if run.paths.layout == "source":

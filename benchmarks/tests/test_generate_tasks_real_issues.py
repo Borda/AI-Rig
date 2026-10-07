@@ -10,10 +10,9 @@ variants, boundary values, and adversarial inputs.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
-
 
 GENERIC_TITLES = ("bug", "question", "help", "feature request", "feature", "issue", "error")
 
@@ -105,7 +104,7 @@ class TestDifficultyFor:
     """
 
     @pytest.mark.parametrize(
-        "file_count,expected",
+        ("file_count", "expected"),
         [
             pytest.param(1, "simple", id="1"),  # documented boundary: exactly 1 -> simple
             pytest.param(2, "medium", id="2"),  # lower boundary of medium band
@@ -134,7 +133,7 @@ class TestDifficultyFor:
         """
         assert script_gen_real_issues.difficulty_for(0) == "simple"
 
-    @pytest.mark.parametrize("count", (1, 2, 4))
+    @pytest.mark.parametrize("count", [1, 2, 4])
     def test_difficulty_for_returns_string(self, script_gen_real_issues: Any, count: int) -> None:
         """Verify return type is always str for representative inputs.
 
@@ -158,7 +157,7 @@ class TestIsTestPath:
     """
 
     @pytest.mark.parametrize(
-        "path,expected",
+        ("path", "expected"),
         [
             # --- test directory segment ---
             pytest.param("tests/unit/test_trainer.py", True, id="tests-unit-test_trainer.py"),
@@ -230,7 +229,7 @@ class TestModuleFor:
     """
 
     @pytest.mark.parametrize(
-        "path,expected",
+        ("path", "expected"),
         [
             # --- src/ prefix stripping ---
             pytest.param(
@@ -379,7 +378,7 @@ class TestIsMeaningfulIssue:
     """
 
     @pytest.mark.parametrize(
-        "title,body,expected",
+        ("title", "body", "expected"),
         [
             # --- happy path: specific title + real body ---
             pytest.param(
@@ -456,7 +455,7 @@ class TestBuildTask:
     issue_number, issue_url, pr_number, pr_url, prompt, ground_truth, primary_module, scoreable, pr_closes_issue.
     """
 
-    _REQUIRED_KEYS = {
+    _REQUIRED_KEYS: ClassVar = {
         "id",
         "type",
         "source",
@@ -484,7 +483,7 @@ class TestBuildTask:
         assert not missing, f"Missing keys in task dict: {missing}"
 
     @pytest.mark.parametrize(
-        "index,expected_id",
+        ("index", "expected_id"),
         [
             pytest.param(1, "OSS-01", id="1"),
             pytest.param(9, "OSS-09", id="9"),
@@ -537,7 +536,7 @@ class TestBuildTask:
         assert gt["file_count"] == 2
 
     @pytest.mark.parametrize(
-        "source_files,expected_difficulty",
+        ("source_files", "expected_difficulty"),
         [
             pytest.param(["src/a.py"], "simple", id="src-a.py"),
             pytest.param(["src/a.py", "src/b.py"], "medium", id="src-a.py-src-b.py"),
@@ -626,14 +625,22 @@ class TestBuildTask:
         assert prompt.startswith("Trainer crashes on TPU")
         assert "Reproducible on v2.0." in prompt
 
-    def test_build_task_workflow_subtype(self, script_gen_real_issues: Any) -> None:
-        """Verify workflow_subtype is always 'pre_implementation_research'.
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            pytest.param("workflow_subtype", "pre_implementation_research", id="workflow-subtype"),
+            pytest.param("primary_module_basis", "first_file", id="primary-module-basis-first-file"),
+        ],
+    )
+    def test_build_task_fixed_default_fields(self, script_gen_real_issues: Any, field: str, expected: str) -> None:
+        """Verify fixed fields keep their documented defaults for a record without change-size data.
 
-        Scenario: harness routes task to appropriate workflow based on this
-        field; any other value changes the harness behavior.
+        Scenario: the harness routes a task to its workflow based on workflow_subtype, so any value other than
+        'pre_implementation_research' changes harness behavior; a stub/hand-authored PR carries no additions/deletions,
+        so primary_module selection falls back to the first file and basis flags the arbitrariness as 'first_file'.
         """
         task = script_gen_real_issues.build_task(1, _make_record(script_gen_real_issues))
-        assert task["workflow_subtype"] == "pre_implementation_research"
+        assert task[field] == expected
 
     def test_build_task_primary_module_picks_most_changed_file(self, script_gen_real_issues: Any) -> None:
         """Verify primary_module reflects the most-changed file, not the first one.
@@ -649,15 +656,6 @@ class TestBuildTask:
         assert task["primary_module"] == "lightning.pytorch.loops.fit_loop"
         assert task["primary_module_basis"] == "most_changed"
 
-    def test_build_task_primary_module_basis_first_file_without_signal(self, script_gen_real_issues: Any) -> None:
-        """Verify basis is 'first_file' when no change-size data is available.
-
-        Scenario: a stub/hand-authored PR carries no additions/deletions, so the
-        selection falls back to the first file and flags the arbitrariness.
-        """
-        task = script_gen_real_issues.build_task(1, _make_record(script_gen_real_issues))
-        assert task["primary_module_basis"] == "first_file"
-
 
 # ===========================================================================
 # class TestSelectPrimaryModule
@@ -668,7 +666,7 @@ class TestSelectPrimaryModule:
     """Tests for select_primary_module(source_files, source_changes) -> (module, basis)."""
 
     @pytest.mark.parametrize(
-        "source_files,source_changes,expected_module,expected_basis",
+        ("source_files", "source_changes", "expected_module", "expected_basis"),
         [
             # most-changed wins even when it is not first
             pytest.param(
@@ -805,36 +803,30 @@ class TestInspectPrSourceFiltering:
         assert result.source_changes == {"src/pkg/core.py": 5}
         assert result.closes_issue is True
 
-    def test_all_test_files_returns_none(self, script_gen_real_issues: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A PR with Python changes only in tests is not a source-backed task."""
-
-        def _fake_gh_json(args: list[str], timeout: int = 60) -> dict:
-            """Return the scenario-specific merged-PR response without contacting GitHub."""
-            return {
-                "state": "MERGED",
-                "mergedAt": "2026-01-01T00:00:00Z",
-                "body": "Fixes #42",
-                "files": [
+    @pytest.mark.parametrize(
+        "files",
+        [
+            pytest.param(
+                [
                     {"path": "tests/test_core.py", "additions": 10, "deletions": 0},
                     {"path": "src/pkg/core_test.py", "additions": 1, "deletions": 1},
                 ],
-            }
+                id="python-changes-only-in-tests",
+            ),
+            pytest.param([{"path": "README.md", "additions": 10, "deletions": 0}], id="no-python-files"),
+        ],
+    )
+    def test_pr_without_python_source_returns_none(
+        self, script_gen_real_issues: Any, monkeypatch: pytest.MonkeyPatch, files: list[dict[str, Any]]
+    ) -> None:
+        """A PR with Python changes only in tests, or without Python files, is not a source-backed task.
 
-        monkeypatch.setattr(script_gen_real_issues, "_gh_json", _fake_gh_json)
-
-        assert script_gen_real_issues._inspect_pr(123, min_py=1, max_py=5, issue_number=42) is None
-
-    def test_no_python_files_returns_none(self, script_gen_real_issues: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A PR without Python files cannot produce Python source ground truth."""
+        Scenario: test-only Python changes and a PR without Python files cannot produce Python source ground truth.
+        """
 
         def _fake_gh_json(args: list[str], timeout: int = 60) -> dict:
             """Return the scenario-specific merged-PR response without contacting GitHub."""
-            return {
-                "state": "MERGED",
-                "mergedAt": "2026-01-01T00:00:00Z",
-                "body": "Fixes #42",
-                "files": [{"path": "README.md", "additions": 10, "deletions": 0}],
-            }
+            return {"state": "MERGED", "mergedAt": "2026-01-01T00:00:00Z", "body": "Fixes #42", "files": files}
 
         monkeypatch.setattr(script_gen_real_issues, "_gh_json", _fake_gh_json)
 

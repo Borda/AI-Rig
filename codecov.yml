@@ -1,0 +1,9 @@
+# Coverage is reported for information only; no Codecov status may block a merge.
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true

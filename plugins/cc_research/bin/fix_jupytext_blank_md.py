@@ -28,8 +28,11 @@ import re
 import sys
 from pathlib import Path
 
+#: Matches a Jupytext percent-format cell marker line (`# %%`).
 CELL_MARKER = re.compile(r"^# %%(\s|$)")
+#: Matches a Jupytext cell marker that opens a markdown cell.
 MARKDOWN_MARKER = re.compile(r"^# %%.*\[markdown\]")
+#: Matches a line made only of `#` characters, which Jupyter renders as an empty heading.
 BARE_HASH_LINE = re.compile(r"^#+\s*$")
 
 

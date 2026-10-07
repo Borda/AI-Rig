@@ -27,6 +27,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -108,22 +109,53 @@ def test_fn_rdeps_records_module_portion(command: str, session: str, tmp_path: P
     assert {"mypackage.auth", "mypackage/auth"} <= set(sentinel.read_text().split())
 
 
-def test_non_exhaustive_writes_no_sentinel(tmp_path: Path) -> None:
-    """A non-exhaustive result must NOT arm the guard."""
-    _run('scan-query rdeps "mypackage.auth"', _NONEXHAUSTIVE_RESPONSE, "sess-nonexh", tmp_path)
-    assert not (tmp_path / "codemap-exhausted-sess-nonexh").exists()
+_TRUNCATED_PREVIEW_RESPONSE = _response(
+    "mypackage.auth",
+    {"query_complete": True, "exhaustive": True, "truncated": True, "total_available": 1000},
+)
 
 
-def test_truncated_rdeps_preview_writes_no_sentinel(tmp_path: Path) -> None:
-    """A graph-complete display slice cannot suppress a later exhaustive caller query."""
-    preview = _response(
-        "mypackage.auth",
-        {"query_complete": True, "exhaustive": True, "truncated": True, "total_available": 1000},
-    )
+@pytest.mark.parametrize(
+    ("command", "response", "session"),
+    [
+        pytest.param(
+            'scan-query rdeps "mypackage.auth"', _NONEXHAUSTIVE_RESPONSE, "sess-nonexh", id="non-exhaustive-result"
+        ),
+        # A graph-complete display slice cannot suppress a later exhaustive caller query.
+        pytest.param(
+            'scan-query rdeps "mypackage.auth" --limit 20',
+            _TRUNCATED_PREVIEW_RESPONSE,
+            "sess-preview",
+            id="truncated-rdeps-preview",
+        ),
+        pytest.param('grep -r "import mypackage.auth" .', _EXHAUSTIVE_RESPONSE, "sess-grep", id="unrelated-command"),
+        # A complete result whose own identity is another module must not arm this one.
+        pytest.param(
+            'scan-query rdeps "mypackage.auth"',
+            _response("mypackage.other", _COMPLETE_BLOCK),
+            "sess-foreign",
+            id="response-for-a-different-module",
+        ),
+        # Output the hook cannot parse fails open — it never guesses completeness.
+        pytest.param(
+            'scan-query rdeps "mypackage.auth"',
+            "mypackage.auth is query_complete: true, trust me",
+            "sess-prose",
+            id="unparsable-response",
+        ),
+    ],
+)
+def test_sentinel_not_written_when_the_result_does_not_arm(
+    command: str, response: object, session: str, tmp_path: Path
+) -> None:
+    """A non-exhaustive, truncated, unrelated, foreign-module or unparsable result must NOT arm the guard.
 
-    _run('scan-query rdeps "mypackage.auth" --limit 20', preview, "sess-preview", tmp_path)
+    Completeness is taken only from the queried target's own, parseable, graph-complete result of a scan-query rdeps/fn-
+    rdeps command; anything else leaves no sentinel behind.
+    """
+    _run(command, response, session, tmp_path)
 
-    assert not (tmp_path / "codemap-exhausted-sess-preview").exists()
+    assert not (tmp_path / f"codemap-exhausted-{session}").exists()
 
 
 def test_query_complete_alone_arms_sentinel(tmp_path: Path) -> None:
@@ -133,12 +165,6 @@ def test_query_complete_alone_arms_sentinel(tmp_path: Path) -> None:
     sentinel = tmp_path / "codemap-exhausted-sess-qc-only"
     assert sentinel.exists(), "query_complete:true alone must write the sentinel"
     assert "mypackage.auth" in sentinel.read_text().split()
-
-
-def test_unrelated_command_ignored(tmp_path: Path) -> None:
-    """A command that is not a scan-query rdeps/fn-rdeps must be ignored."""
-    _run('grep -r "import mypackage.auth" .', _EXHAUSTIVE_RESPONSE, "sess-grep", tmp_path)
-    assert not (tmp_path / "codemap-exhausted-sess-grep").exists()
 
 
 def test_codemap_hooks_read_stdin_by_fd_for_simulated_windows() -> None:
@@ -176,11 +202,6 @@ class TestCompletenessScoping:
 
         assert not (tmp_path / "codemap-exhausted-sess-mixed").exists()
 
-    def test_response_for_a_different_module_does_not_arm(self, tmp_path: Path) -> None:
-        """A complete result whose own identity is another module must not arm this one."""
-        _run(self._COMMAND, _response("mypackage.other", _COMPLETE_BLOCK), "sess-foreign", tmp_path)
-        assert not (tmp_path / "codemap-exhausted-sess-foreign").exists()
-
     def test_bash_stdout_envelope_arms(self, tmp_path: Path) -> None:
         """The Bash tool's ``{"stdout": ...}`` response envelope is parsed, not stringified."""
         envelope = {"stdout": _EXHAUSTIVE_RESPONSE, "stderr": "", "interrupted": False, "isImage": False}
@@ -189,11 +210,6 @@ class TestCompletenessScoping:
         sentinel = tmp_path / "codemap-exhausted-sess-envelope"
         assert sentinel.exists(), "a Bash stdout envelope carrying a complete result must arm the guard"
         assert "mypackage.auth" in sentinel.read_text().split()
-
-    def test_unparsable_response_does_not_arm(self, tmp_path: Path) -> None:
-        """Output the hook cannot parse fails open — it never guesses completeness."""
-        _run(self._COMMAND, "mypackage.auth is query_complete: true, trust me", "sess-prose", tmp_path)
-        assert not (tmp_path / "codemap-exhausted-sess-prose").exists()
 
 
 class TestEditInvalidation:
@@ -207,21 +223,27 @@ class TestEditInvalidation:
         assert sentinel.exists(), "precondition: sentinel armed"
         return sentinel
 
-    @pytest.mark.parametrize("tool_name", ["Edit", "Write", "apply_patch", "MultiEdit", "NotebookEdit"])
-    def test_python_edit_drops_sentinel(self, tool_name: str, tmp_path: Path) -> None:
-        """Editing a Python source file invalidates the recorded caller set."""
+    @pytest.mark.parametrize(
+        ("tool_name", "tool_input"),
+        [
+            pytest.param("Edit", {"file_path": "/repo/mypackage/auth.py"}, id="edit-python-file"),
+            pytest.param("Write", {"file_path": "/repo/mypackage/auth.py"}, id="write-python-file"),
+            pytest.param("apply_patch", {"file_path": "/repo/mypackage/auth.py"}, id="apply-patch-python-file"),
+            pytest.param("MultiEdit", {"file_path": "/repo/mypackage/auth.py"}, id="multi-edit-python-file"),
+            pytest.param("NotebookEdit", {"file_path": "/repo/mypackage/auth.py"}, id="notebook-edit-python-file"),
+            # An edit whose path cannot be read invalidates anyway — fail safe, not open.
+            pytest.param("Write", {}, id="pathless-edit"),
+        ],
+    )
+    def test_source_edit_drops_sentinel(self, tool_name: str, tool_input: dict, tmp_path: Path) -> None:
+        """Editing a Python source file, or an edit with an unreadable path, invalidates the recorded caller set."""
         sentinel = self._arm(tmp_path)
 
-        _drive(
-            {
-                "tool_name": tool_name,
-                "tool_input": {"file_path": "/repo/mypackage/auth.py"},
-                "session_id": "sess-edit",
-            },
-            tmp_path,
-        )
+        _drive({"tool_name": tool_name, "tool_input": tool_input, "session_id": "sess-edit"}, tmp_path)
 
-        assert not sentinel.exists(), f"{tool_name} on a .py file must invalidate the sentinel"
+        assert not sentinel.exists(), (
+            f"{tool_name} on {tool_input or 'an unreadable target'} must invalidate the sentinel"
+        )
 
     def test_non_source_edit_keeps_sentinel(self, tmp_path: Path) -> None:
         """Editing a file that cannot change the import graph leaves the sentinel armed."""
@@ -233,14 +255,6 @@ class TestEditInvalidation:
         )
 
         assert sentinel.exists(), "a docs edit must not discard a still-valid caller set"
-
-    def test_pathless_edit_drops_sentinel(self, tmp_path: Path) -> None:
-        """An edit whose path cannot be read invalidates anyway — fail safe, not open."""
-        sentinel = self._arm(tmp_path, "sess-pathless")
-
-        _drive({"tool_name": "Write", "tool_input": {}, "session_id": "sess-pathless"}, tmp_path)
-
-        assert not sentinel.exists(), "an unreadable edit target must be treated as a source change"
 
     def test_invalidation_without_sentinel_is_a_noop(self, tmp_path: Path) -> None:
         """Invalidating when nothing is armed must not fail the hook."""
@@ -258,7 +272,10 @@ class TestMissingSessionKey:
     session id wrote to — and denied each other through — the same file.
     """
 
-    _EVENT = {"tool_input": {"command": 'scan-query rdeps "mypackage.auth"'}, "tool_response": _EXHAUSTIVE_RESPONSE}
+    _EVENT: ClassVar = {
+        "tool_input": {"command": 'scan-query rdeps "mypackage.auth"'},
+        "tool_response": _EXHAUSTIVE_RESPONSE,
+    }
 
     def test_fallback_key_is_not_the_literal_nosession(self, tmp_path: Path) -> None:
         """The fallback still records, but never under a project-agnostic name."""

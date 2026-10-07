@@ -50,8 +50,11 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from shutil import which
 
+#: Matches each run of characters outside ``[a-z0-9]``, which slugification replaces with a hyphen.
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+#: Matches ASCII control characters, including newlines, that must not reach a commit message.
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+#: Parses a Conventional Commits subject into type, optional scope, optional ``!`` marker and description.
 _CC_SUBJECT_RE = re.compile(r"^(?P<type>[a-z]+)(?:\((?P<scope>[^()]*)\))?(?P<bang>!)?: (?P<desc>\S.*)$")
 #: Conventional Commits types accepted as an item subject's own prefix.
 _CC_TYPES = frozenset({"feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert"})
@@ -59,7 +62,9 @@ _CC_TYPES = frozenset({"feat", "fix", "docs", "style", "refactor", "perf", "test
 _TOPIC_TYPES = {"tests": "test", "logic": "fix", "misc": "chore", "config": "chore"}
 #: Grouped-subject length cap, matching the documented ``grouped`` contract in action-item-dispatch.md.
 _GROUP_SUBJECT_MAX = 72
+#: Co-author trailer appended to every commit message this script builds.
 _CLAUDE_TRAILER = "Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>"
+#: Extra co-author trailer added when Codex contributed to the change (``include_codex``).
 _CODEX_TRAILER = "Co-authored-by: Codex <codex@openai.com>"
 
 
@@ -389,6 +394,7 @@ def build_group_message(fields: GroupMessageFields) -> str:
     )
 
 
+#: CLI flags that consume exactly one following argument during argument parsing.
 _SINGLE_VALUE_FLAGS = frozenset(
     {
         "--message-file",
@@ -403,6 +409,7 @@ _SINGLE_VALUE_FLAGS = frozenset(
         "--items",
     }
 )
+#: CLI flags that select message-building mode, as opposed to committing from ``--message-file``.
 _BUILD_MODES = ("--build", "--build-group")
 
 

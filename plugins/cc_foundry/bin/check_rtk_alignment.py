@@ -32,11 +32,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+#: Matches the ``RTK_PREFIXES = [...]`` array in the hook source, capturing its body.
 _PREFIX_ARRAY = re.compile(r"RTK_PREFIXES\s*=\s*\[([^\]]*)\]", re.DOTALL)
+#: Matches a single- or double-quoted string, capturing its contents.
 _QUOTED = re.compile(r"""["']([^"']+)["']""")
-# `rtk --help` lists subcommands indented two to four spaces.
+#: `rtk --help` lists subcommands indented two to four spaces.
 _HELP_COMMAND = re.compile(r"^\s{2,4}([a-z][a-z0-9_-]+)", re.MULTILINE)
 
+#: ``rtk`` subcommands that manage the tool itself and need no entry in the prefix list.
 META_COMMANDS = frozenset({"gain", "discover", "proxy", "init", "version", "help"})
 
 
@@ -98,7 +101,7 @@ def main() -> int:
         return 0
 
     try:
-        result = subprocess.run(  # noqa: S603 — fixed argv, no user input
+        result = subprocess.run(
             ["rtk", "--help"],  # noqa: S607
             capture_output=True,
             text=True,

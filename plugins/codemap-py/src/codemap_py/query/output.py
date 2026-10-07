@@ -1,11 +1,13 @@
 """Emit one command's result as JSON or TSV, honouring batch capture."""
 
 from __future__ import annotations
+
 import csv
 import io
 import json
 import sys
 from pathlib import Path
+
 from codemap_py import query_state as state
 
 # Transitional seam: exclusion rules live in codemap_py.scanner, but this
@@ -14,6 +16,7 @@ from codemap_py import query_state as state
 # bin/-relative sys.path insert, the same route bin/scan-index used to take.
 # Every other import below is a direct package-internal import.
 # parents[3] not [2]: this file sits one level deeper than the pre-split query.py
+#: Plugin bin/ directory, added to sys.path so the _exclusions shim can be imported.
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
@@ -42,7 +45,7 @@ def _print(*args: object, **kwargs: object) -> None:
     raw = str(args[0]) if args else ""
     try:
         result = json.loads(raw)
-    except Exception:  # noqa: BLE001 — non-JSON stdout still logs an empty result
+    except Exception:
         result = {}
     # Direct imported cmd_* calls are not CLI invocations and must not pollute telemetry
     # with the host process's argv or import-age timing.

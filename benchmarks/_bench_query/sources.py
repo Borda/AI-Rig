@@ -6,9 +6,7 @@ import ast
 import os
 from pathlib import Path
 
-
-from _bench_common.python_source import extract_import_targets, resolve_relative_base  # noqa: E402
-
+from _bench_common.python_source import extract_import_targets, resolve_relative_base
 
 # ---- HELPERS ----
 

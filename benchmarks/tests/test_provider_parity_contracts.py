@@ -17,7 +17,6 @@ import pytest
 from benchmarks._bench_common import agentic_contracts
 from benchmarks._bench_common import provider_parity_contracts as core
 
-
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = BENCHMARKS_DIR / "manifests" / "provider-parity-methodology.json"
 SUITE_PATH = BENCHMARKS_DIR / "suites" / "tasks-bench.json"
@@ -387,7 +386,7 @@ class TestTaskPolicies:
         with pytest.raises(AttributeError):
             policies["FN-02"].scoreable = False
 
-    @pytest.mark.parametrize("task_id", ("SE-01", "RV-05", "CQ-02", "CQ-03", "CQ-04", "CQ-05", "RI-05"))
+    @pytest.mark.parametrize("task_id", ["SE-01", "RV-05", "CQ-02", "CQ-03", "CQ-04", "CQ-05", "RI-05"])
     def test_manifest_policy_keeps_known_diagnostic_tasks_out_of_headline_pairing(self, task_id: str) -> None:
         """Policy, not optional record flags, blocks approved diagnostic and unscoreable tasks."""
         policies = core.load_task_policies(MANIFEST_PATH)
@@ -491,19 +490,21 @@ class TestResultEligibility:
                 policies=_synthetic_policies(),
             )
 
-    @pytest.mark.parametrize("arm", ["B_auto", "B_auto"])
-    def test_zero_query_b_cell_is_adherent_on_both_providers(self, arm: str) -> None:
-        """B is an optional-use canary, so declining to query is compliant.
+    @pytest.mark.parametrize(
+        ("arm", "expected_adherent"),
+        [
+            pytest.param("B_auto", True, id="optional-use-b-is-adherent"),
+            pytest.param("C_strict", False, id="required-use-c-is-non-adherent"),
+        ],
+    )
+    def test_zero_query_cell_adherence_follows_the_arm_use_contract(self, arm: str, expected_adherent: bool) -> None:
+        """B is an optional-use canary so skipping queries is compliant; the strict arm keeps its required-use contract.
 
         Treating the Codex B arm as required-use marked exactly the no-query cells non-adherent, dropping them from
-        pooling and biasing the pooled B result toward the runs that happened to use Codemap.
+        pooling and biasing the pooled B result toward the runs that happened to use Codemap. The same holds on both
+        providers.
         """
-        assert core.treatment_adherence(arm, codemap_use_compliance=False, contaminated=False) is True
-
-    @pytest.mark.parametrize("arm", ["C_strict", "C_strict"])
-    def test_zero_query_c_cell_remains_non_adherent(self, arm: str) -> None:
-        """The strict arm keeps its required-use contract on both providers."""
-        assert core.treatment_adherence(arm, codemap_use_compliance=False, contaminated=False) is False
+        assert core.treatment_adherence(arm, codemap_use_compliance=False, contaminated=False) is expected_adherent
 
     def test_contamination_still_overrides_optional_use_adherence(self) -> None:
         """Optional use never excuses a contaminated cell."""
@@ -558,7 +559,7 @@ class TestResultEligibility:
     )
     def test_result_eligibility_rejects_unknown_policy_or_revision(self, record: Any) -> None:
         """An omitted or mismatched policy coordinate cannot become headline-eligible by default."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"no locked task policy|does not match task policy"):
             core.result_eligibility(record, _synthetic_policies())
 
 
@@ -724,7 +725,7 @@ class TestPairedEffects:
     )
     def test_pair_effects_rejects_missing_or_duplicate_cells(self, records: list[Any]) -> None:
         """Missing arms and duplicate arm cells must fail instead of being silently discarded."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"missing paired cell|duplicate A_plain cell"):
             core.pair_effects(
                 records,
                 baseline_arm="A_plain",
@@ -759,7 +760,7 @@ class TestPairedEffects:
         """Invalid token and quality values cannot produce undefined or misleading effects."""
         records = [_record(arm="A_plain", **overrides), _record(arm="B_auto")]
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"positive integer|finite value in \[0, 1\]"):
             core.pair_effects(
                 records,
                 baseline_arm="A_plain",
@@ -1028,36 +1029,44 @@ class TestAgenticAnswerContracts:
 
         assert parsed == {"production_importers": ["pkg.caller"]}
 
-    def test_parse_labeled_answer_rejects_unclosed_markdown_fence(self) -> None:
-        """A cosmetic fence must close before its enclosed payload is accepted."""
-        task = {
-            "id": "T-03c",
-            "primary_module": "pkg.target",
-            "answer_contract": {"fields": ["production_importers"], "params": {}},
-        }
-
-        with pytest.raises(ValueError, match="markdown code fence"):
-            agentic_contracts.parse_labeled_answer(
-                task,
+    @pytest.mark.parametrize(
+        ("task", "answer", "match"),
+        [
+            pytest.param(
+                {
+                    "id": "T-03c",
+                    "primary_module": "pkg.target",
+                    "answer_contract": {"fields": ["production_importers"], "params": {}},
+                },
                 'BEGIN_ANSWER_JSON\n```json\n{"production_importers": ["pkg.caller"]}\nEND_ANSWER_JSON',
-            )
-
-    def test_parse_labeled_answer_rejects_missing_contract_label(self) -> None:
-        """A partial answer cannot be converted into accidental component credit."""
-        task = {
-            "id": "T-04",
-            "primary_module": "pkg.target",
-            "answer_contract": {
-                "fields": ["production_importers", "production_importer_count"],
-                "params": {},
-            },
-        }
-
-        with pytest.raises(ValueError, match="missing"):
-            agentic_contracts.parse_labeled_answer(
-                task,
+                "markdown code fence",
+                id="unclosed-markdown-fence",
+            ),
+            pytest.param(
+                {
+                    "id": "T-04",
+                    "primary_module": "pkg.target",
+                    "answer_contract": {
+                        "fields": ["production_importers", "production_importer_count"],
+                        "params": {},
+                    },
+                },
                 'BEGIN_ANSWER_JSON\n{"production_importers": []}\nEND_ANSWER_JSON',
-            )
+                "missing",
+                id="missing-contract-label",
+            ),
+        ],
+    )
+    def test_parse_labeled_answer_rejects_malformed_answer_envelopes(
+        self, task: dict[str, Any], answer: str, match: str
+    ) -> None:
+        """A cosmetic fence must close before its payload is accepted, and a partial answer earns no component credit.
+
+        An unclosed markdown fence is rejected before its enclosed payload is accepted, and a partial answer cannot be
+        converted into accidental component credit.
+        """
+        with pytest.raises(ValueError, match=match):
+            agentic_contracts.parse_labeled_answer(task, answer)
 
     def test_answer_contract_changes_the_shared_delivered_prompt_and_hash(self) -> None:
         """Both providers must hash the same labelled-answer instruction bytes."""

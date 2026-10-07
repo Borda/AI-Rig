@@ -32,6 +32,7 @@ from pathlib import Path
 
 import fire
 
+#: Benchmarks directory, added to the import path and used to locate the runner and default task suite.
 BENCHMARKS = Path(__file__).resolve().parent
 sys.path.insert(0, str(BENCHMARKS))
 

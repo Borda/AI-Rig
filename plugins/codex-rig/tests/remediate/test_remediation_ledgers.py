@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from test_finding_presentation import VALIDATOR, _write_remediation_candidate
 from test_remediation_finalize import HELPER
 
@@ -107,7 +106,7 @@ class TestStatusEventAppend:
         """Only the named growing ledgers accept appended records; rendered documents stay helper-owned."""
         run, _ = selected_run
 
-        with pytest.raises(HELPER.DeriveError, match="append-ledger-unsupported:action-items.md"):
+        with pytest.raises(HELPER.DeriveError, match=r"append-ledger-unsupported:action-items.md"):
             HELPER.append_record(run, "action-items.md")
 
     @pytest.mark.parametrize(
@@ -172,7 +171,8 @@ class TestRenderedTablesFromEvents:
 
         text = (run / "action-items.md").read_text(encoding="utf-8")
         assert metadata["final_resolution_table"]["items"][0]["resolved_how"] == "Guard added after review."
-        assert "[O1] Guard added after review." in text and "| direct-diff |" in text
+        assert "[O1] Guard added after review." in text
+        assert "| direct-diff |" in text
         assert "## Review Report Intake\n\nTwo report items already closed." in text
         assert "## Expanded Item Records\n\nR1 affects `src/guard.py`." in text
         VALIDATOR._validate_code_remediate_final_resolution_table(metadata, run)
@@ -201,7 +201,8 @@ class TestRenderedTablesFromEvents:
         HELPER.render_workplan(run, metadata, None)
 
         text = (run / "resolution-workplan.md").read_text(encoding="utf-8")
-        assert "| verified |" in text and "| in-progress |" not in text
+        assert "| verified |" in text
+        assert "| in-progress |" not in text
         assert "Ineligibility reason: One selected closure item forms one coherent bucket." in text
         assert (run / "work-bucket-plan.json").read_bytes() == plan_bytes
         VALIDATOR._validate_code_remediate_workplan(metadata, run)
@@ -242,7 +243,8 @@ class TestReviewResolutionFeedback:
             ("R1", "fixed", "abc1234"),
             ("R2", "fixed", "abc1234"),
         ]
-        assert records[0]["why"] == "Added the guard." and records[0]["schema_version"] == 1
+        assert records[0]["why"] == "Added the guard."
+        assert records[0]["schema_version"] == 1
 
     def test_resumed_run_does_not_duplicate_identical_records(
         self, selected_run: tuple[Path, dict], tmp_path_factory: pytest.TempPathFactory

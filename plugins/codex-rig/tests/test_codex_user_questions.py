@@ -1,11 +1,10 @@
 """Check independently loadable Codex question guidance and its authorization boundaries."""
 
 import json
-from pathlib import Path
 import re
+from pathlib import Path
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 QUESTION_REFERENCE = "shared/codex-user-questions.md"

@@ -646,6 +646,8 @@ python3 -m pytest -q plugins/codex-rig
 NO_MKDOCS_2_WARNING=1 python3 -m mkdocs build --strict
 ```
 
+The test suite requires pytest 9 or newer: several tests use pytest's built-in `subtests` fixture so that each case of a shared, expensive setup still reports independently.
+
 Packaged helper recipes use the explicit launcher described in [Helper CLI Contract](shared/helper-cli-contract.md). On Windows, `build_package.py --check`, package validation, calibration, and tests are native. Authoritative manifest regeneration (`--update`) remains POSIX-only because released mode bits are part of package contract.
 
 The repository's `codex-rig-changelog-version` pre-commit hook requires an exact `## <version>` heading in `CHANGELOG.md` for the current `.codex-plugin/plugin.json` version. The heading may appear anywhere; the hook checks presence, not release-note content. This guard is pre-commit-only, not part of package validation or pytest.

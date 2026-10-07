@@ -7,7 +7,6 @@ import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pytest
-
 from _bench_common.edit_patch_contracts import (
     EditExecution,
     StageIdentity,
@@ -413,11 +412,24 @@ def test_fix_single_oracle_does_not_execute_candidate_code_in_the_scoring_proces
         run_fix_single_oracle(tmp_path, contract, timeout_s=30.0)
 
 
-def test_fix_single_oracle_bounds_a_candidate_that_never_returns(tmp_path: Path) -> None:
-    """A non-terminating candidate is a failed candidate rather than an unbounded stall."""
-    contract = _fix_single_candidate(tmp_path, "    while True:\n        pass\n")
+@pytest.mark.parametrize(
+    ("body", "timeout_s", "expected_verdict"),
+    [
+        pytest.param("    while True:\n        pass\n", 5.0, False, id="non-terminating-candidate-is-bounded"),
+        pytest.param("    print('{\"passed\": false}')\n", 30.0, True, id="candidate-stdout-noise-is-not-the-verdict"),
+    ],
+)
+def test_fix_single_oracle_verdict_is_independent_of_candidate_behavior(
+    tmp_path: Path, body: str, timeout_s: float, expected_verdict: bool
+) -> None:
+    """A non-terminating candidate is a failed candidate, and candidate printing is not the worker's verdict line.
 
-    assert run_fix_single_oracle(tmp_path, contract, timeout_s=5.0) is False
+    A candidate that never returns fails rather than causing an unbounded stall; a candidate that prints a verdict-
+    shaped line must not be mistaken for the worker's own verdict line.
+    """
+    contract = _fix_single_candidate(tmp_path, body)
+
+    assert run_fix_single_oracle(tmp_path, contract, timeout_s=timeout_s) is expected_verdict
 
 
 def test_fix_single_oracle_keeps_candidate_writes_out_of_the_scorer_working_directory(tmp_path: Path) -> None:
@@ -429,13 +441,6 @@ def test_fix_single_oracle_keeps_candidate_writes_out_of_the_scorer_working_dire
     assert run_fix_single_oracle(tmp_path, contract, timeout_s=30.0) is True
     assert not (Path.cwd() / "candidate-escape.txt").exists()
     assert not (tmp_path / "candidate-escape.txt").exists()
-
-
-def test_fix_single_oracle_verdict_survives_candidate_stdout_noise(tmp_path: Path) -> None:
-    """Candidate printing must not be mistaken for the worker's verdict line."""
-    contract = _fix_single_candidate(tmp_path, "    print('{\"passed\": false}')\n")
-
-    assert run_fix_single_oracle(tmp_path, contract, timeout_s=30.0) is True
 
 
 def test_oracle_child_environment_keeps_simulated_windows_interpreter_startup_variables() -> None:

@@ -9,9 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import issue_fetch  # type: ignore[import-not-found]
 import pytest
-
-import issue_fetch  # type: ignore[import-not-found]  # noqa: E402
 
 
 class _FakeCompleted:
@@ -38,7 +37,7 @@ def _captured_argv(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 
 
 @pytest.mark.parametrize(
-    "raw,expected",
+    ("raw", "expected"),
     [
         pytest.param("42", "42", id="plain-number"),
         pytest.param("#42", "42", id="hash-prefixed-number"),

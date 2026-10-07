@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
 import os
-from pathlib import Path, PureWindowsPath
 import queue
 import shutil
 import stat
@@ -14,16 +12,19 @@ import sys
 import tempfile
 import threading
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
-from typing import Any, Iterator
+from typing import Any
 
 import pytest
 
 SERVER = Path(__file__).resolve().parents[1] / "bin/bridge_mcp.py"
 if str(SERVER.parent) not in sys.path:
     sys.path.insert(0, str(SERVER.parent))
-import bridge_mcp  # noqa: E402
 import bridge_call  # noqa: E402
+import bridge_mcp  # noqa: E402
 
 
 class Client:
@@ -485,7 +486,9 @@ def test_cached_artifact_paths_reject_parent_replacement(seam: str, tmp_path: Pa
     outside.mkdir()
     root.rename(workspace / "prior-bridge")
     root.symlink_to(outside, target_is_directory=True)
-    with pytest.raises(bridge_call.ArtifactBoundaryError, match="artifact member"):
+
+    def _run_expected_failure() -> None:
+        """Run the statements expected to fail as one callable."""
         if seam == "transcript":
             bridge_call._write_transcript(paths, "bounded output", "")
         elif seam == "atomic-job":
@@ -506,6 +509,9 @@ def test_cached_artifact_paths_reject_parent_replacement(seam: str, tmp_path: Pa
                     "depth": 1,
                 },
             )
+
+    with pytest.raises(bridge_call.ArtifactBoundaryError, match="artifact member"):
+        _run_expected_failure()
     assert list(outside.iterdir()) == []
 
 

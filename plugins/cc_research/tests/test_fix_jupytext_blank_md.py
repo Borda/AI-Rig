@@ -13,9 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import fix_jupytext_blank_md as gate
+import pytest
 
 
 class TestFixText:
@@ -41,23 +40,21 @@ class TestFixText:
         _fixed, count = gate.fix_text(text)
         assert count == 1
 
-    def test_leaves_bare_hash_in_code_cell_untouched(self) -> None:
-        """A lone ``#`` inside a code cell is not a markdown-cell artifact.
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("# %%\nx = 1\n#\ny = 2\n", id="bare-hash-in-code-cell"),
+            pytest.param("# %% [markdown]\n# ## Heading\n# Some real sentence.\n", id="real-content-lines"),
+        ],
+    )
+    def test_leaves_non_spacer_text_untouched(self, text: str) -> None:
+        """Text that is not a markdown-cell spacer survives unchanged with a zero count.
 
-        The gate is scoped to markdown cells only — a stray ``#`` comment line in a code cell has no heading-rendering
-        consequence and must survive unchanged.
+        A lone ``#`` inside a code cell is not a markdown-cell artifact: the gate is scoped to markdown cells only, so a
+        stray ``#`` comment line in a code cell has no heading-rendering consequence. Markdown lines carrying actual
+        text are never modified — this guards against an overly broad pattern that would also strip legitimate ``# ``
+        prefixed prose.
         """
-        text = "# %%\nx = 1\n#\ny = 2\n"
-        fixed, count = gate.fix_text(text)
-        assert fixed == text
-        assert count == 0
-
-    def test_leaves_real_content_lines_untouched(self) -> None:
-        """Markdown lines carrying actual text are never modified.
-
-        Guards against an overly broad pattern that would also strip legitimate ``# `` prefixed prose.
-        """
-        text = "# %% [markdown]\n# ## Heading\n# Some real sentence.\n"
         fixed, count = gate.fix_text(text)
         assert fixed == text
         assert count == 0

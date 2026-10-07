@@ -16,7 +16,8 @@ import pytest
 
 _MOD_PATH = Path(__file__).resolve().parent.parent.parent / "bin" / "audit_static.py"
 _spec = importlib.util.spec_from_file_location("audit_static", _MOD_PATH)
-assert _spec and _spec.loader
+assert _spec
+assert _spec.loader
 aud = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(aud)
 
@@ -108,8 +109,14 @@ def test_layer1_catches_seeded_defect(
     assert expected_text in lines
 
 
-def test_clean_scope_passes_scope_aware_checks(tmp_path: Path) -> None:
-    """A defect-free plugin passes every scope-aware check (no false positives)."""
+def test_clean_scope_passes_scope_aware_checks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A defect-free plugin passes every scope-aware check (no false positives).
+
+    Only the scope-aware checks are asserted, so only they run: the whole-repo checks ignore the clean scope and walk
+    the real repository, which dominated this test's runtime (about 28 s per Windows CI leg) without informing it.
+    ``seeded_jsonl`` still runs the full registry through the CLI, so every checker keeps a real subprocess run.
+    """
+    monkeypatch.setattr(aud, "CHECKS", [check for check in aud.CHECKS if check["id"] in SCOPE_AWARE])
     plugins = tmp_path / "plugins"
     plugin = plugins / "clean"
     (plugin / ".claude-plugin").mkdir(parents=True)

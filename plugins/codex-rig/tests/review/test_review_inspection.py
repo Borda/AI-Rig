@@ -11,7 +11,6 @@ from types import ModuleType
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR_PATH = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
 ROLES = ("qa-specialist", "challenger")
@@ -20,7 +19,8 @@ ROLES = ("qa-specialist", "challenger")
 def _module(path: Path) -> ModuleType:
     """Load one test dependency without changing the import path."""
     spec = importlib.util.spec_from_file_location(path.stem.replace("-", "_"), path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -521,7 +521,7 @@ def test_schema_six_rejects_broken_context_read(tmp_path: Path, mutation: str) -
         rows.append(output)
     _write_jsonl(child, rows)
 
-    with pytest.raises(SystemExit, match="provenance-parent-spawn-mismatch|review-inspection-context-read"):
+    with pytest.raises(SystemExit, match=r"provenance-parent-spawn-mismatch|review-inspection-context-read"):
         _validator()._validate_manifest_preflight(fixture["run"], fixture["sessions"], "parent-thread", fixture["run"])
 
 

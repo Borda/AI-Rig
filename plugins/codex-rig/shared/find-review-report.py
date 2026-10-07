@@ -176,11 +176,17 @@ def read_archive_result(result_path: Path) -> dict[str, Any]:
     }
 
 
+#: Directory searched first for code-review reports, relative to the repository root.
 CURRENT_REPORTS_DIR = Path(".reports/codex/code-review")
+#: Older review-report directory, searched as a fallback after the current one.
 LEGACY_REPORTS_DIR = Path(".reports/codex/review")
+#: File name of a not-yet-finalized review result, accepted alongside `result.json`.
 CANDIDATE_RESULT_NAME = "result.candidate.json"
+#: Pattern for a `pr-N` report directory; the capture group is the pull-request number.
 PR_DIRECTORY_PATTERN = re.compile(r"pr-([1-9][0-9]*)")
+#: Pattern for a `run-NNN` report directory; the capture group is the run sequence number.
 RUN_DIRECTORY_PATTERN = re.compile(r"run-([0-9]{3,})")
+#: Pattern for a GitHub pull-request URL; the capture group is the pull-request number.
 PR_URL_PATTERN = re.compile(r"https://github[.]com/[^/]+/[^/]+/pull/([1-9][0-9]*)")
 
 
@@ -381,7 +387,7 @@ def validate_review_result(
     ]
     result_bytes = result_path.read_bytes()
     for command in (review_command, shared_command):
-        completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=120)
+        completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=120)  # noqa: S603 - argv list, no shell
         if completed.returncode:
             diagnostic = (completed.stderr or completed.stdout).strip()
             raise LookupError(f"review-validation-failed:{diagnostic}")
@@ -430,8 +436,11 @@ def complete_review_run(run_dir: Path, *, codex_home: Path | None = None, parent
     return final_bytes
 
 
+#: Matches a trailing `:line[-line]` or `#anchor` locator suffix on a report reference.
 LOCATOR_PATTERN = re.compile(r"(?::[1-9][0-9]*(?:-[1-9][0-9]*)?|#.*)$")
+#: File name of the per-run ledger that records how each review finding was resolved.
 RESOLUTION_LEDGER = "resolution.jsonl"
+#: Allowed verdicts for a record in the resolution ledger.
 RESOLUTION_VERDICTS = frozenset({"fixed", "rejected", "skipped", "deferred"})
 
 

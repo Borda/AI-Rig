@@ -1,17 +1,19 @@
 """Parse the ``integrate`` command line and dispatch one mode."""
 
 from __future__ import annotations
+
 import argparse
-from datetime import date
 import json
 import sys
 from collections.abc import Callable, Sequence
+from datetime import date
 from pathlib import Path
+
 from .apply_sync import cmd_apply, cmd_sync
 from .audit import cmd_audit
 from .demo import cmd_demo
 from .plan import cmd_plan
-from .types import IntegrationError, Runtime, Source, _EXIT_USAGE
+from .types import _EXIT_USAGE, IntegrationError, Runtime, Source
 
 
 def _add_runtime_flag(sub: argparse.ArgumentParser) -> None:
@@ -87,6 +89,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: Dispatch table from integrate subcommand name to its handler, which returns an exit code.
 _COMMANDS: dict[str, Callable[[argparse.Namespace, Path], int]] = {
     "audit": cmd_audit,
     "plan": cmd_plan,
@@ -128,5 +131,5 @@ def run(argv: Sequence[str], plugin_root: Path) -> int:
         return _COMMANDS[namespace.mode](namespace, plugin_root)
     except IntegrationError as exc:
         return _emit_bounded_error(exc)
-    except Exception as exc:  # noqa: BLE001 - CLI boundary: bounded error, never a traceback
+    except Exception as exc:
         return _emit_bounded_error(IntegrationError("internal_error", f"{type(exc).__name__}: {exc}"))

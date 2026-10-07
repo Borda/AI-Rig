@@ -70,13 +70,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# The per-module queries oss:review's pre-flight issues, and therefore the only
-# `cmd` values `_module_answers_from_batch` will group. Authority is oss's own
-# review block (skills/review/modes/codemap-context.md); tests assert the two
-# stay equal. cc_develop's build_codemap_batch.py keeps a deliberately shorter
-# list — this is NOT a mirror of it, and nothing here detects drift against it:
-# grouping keys on the emitted `cmd`, so a batch from any producer contributes
-# whichever of these queries it happens to carry.
+#: The per-module queries oss:review's pre-flight issues, and therefore the only
+#: `cmd` values `_module_answers_from_batch` will group. Authority is oss's own
+#: review block (skills/review/modes/codemap-context.md); tests assert the two
+#: stay equal. cc_develop's build_codemap_batch.py keeps a deliberately shorter
+#: list — this is NOT a mirror of it, and nothing here detects drift against it:
+#: grouping keys on the emitted `cmd`, so a batch from any producer contributes
+#: whichever of these queries it happens to carry.
 PER_MODULE_QUERIES: tuple[str, ...] = (
     "rdeps",
     "fn-rdeps",
@@ -87,10 +87,10 @@ PER_MODULE_QUERIES: tuple[str, ...] = (
     "undocumented",
 )
 
-# Mirrors resolve_shared_path.py::_validate_subdir's shape. Leading '.' and
-# '-' are legitimate in real module names (e.g. ".github.scripts.x",
-# "plugins.codemap-py.bin.foo") so the class stays permissive; '..' and '\\'
-# are rejected explicitly since a module builds a path under ``--cache-dir``.
+#: Mirrors resolve_shared_path.py::_validate_subdir's shape. Leading '.' and
+#: '-' are legitimate in real module names (e.g. ".github.scripts.x",
+#: "plugins.codemap-py.bin.foo") so the class stays permissive; '..' and '\\'
+#: are rejected explicitly since a module builds a path under ``--cache-dir``.
 _MODULE_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 

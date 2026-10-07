@@ -1,12 +1,15 @@
 """Extract a module's symbols and resolve the call edges between them."""
 
 from __future__ import annotations
+
 import ast
 import builtins
+
 from codemap_py.schema import Resolution, SymbolType
+
 from .models import CallEdge, Symbol, _docstring_fields
 
-
+#: Names of Python builtins, used to classify a call's first component as a builtin.
 BUILTINS = frozenset(dir(builtins))
 
 
@@ -31,6 +34,74 @@ def resolve_call_chain(func_node: ast.expr) -> str | None:
     if isinstance(func_node, ast.Attribute):
         base = resolve_call_chain(func_node.value)
         return f"{base}.{func_node.attr}" if base else None
+    return None
+
+
+def _qualified_call_edge(qualified: str, chain: str) -> CallEdge:
+    """Build an import edge from a fully qualified dotted name.
+
+    A qualified name without a dot names no module member, so the call stays
+    unresolved under its original *chain*.
+
+    Examples:
+        >>> _qualified_call_edge("pkg.db.fetch_user", "fetch_user").target
+        'pkg.db::fetch_user'
+        >>> _qualified_call_edge("os", "os").resolution == Resolution.UNRESOLVED
+        True
+    """
+    if "." in qualified:
+        mod, sym = qualified.rsplit(".", 1)
+        return CallEdge(target=f"{mod}::{sym}", resolution=Resolution.IMPORT)
+    return CallEdge(target=chain, resolution=Resolution.UNRESOLVED)
+
+
+def _resolve_imported_call(
+    chain: str,
+    first_component: str,
+    name_map: dict[str, str],
+    module_map: dict[str, str],
+) -> CallEdge | None:
+    """Resolve a call chain through the module's import scope.
+
+    Returns ``None`` when no import binds the chain or its first component, so the caller falls through to local, self,
+    star, and builtin resolution.
+    """
+    # Exact match in name_map (handles `from pkg.db import fetch_user; fetch_user()`)
+    if chain in name_map:
+        return _qualified_call_edge(name_map[chain], chain)
+
+    # Dotted chains where the first component is in name_map
+    if first_component in name_map and first_component != chain:
+        rest = chain[len(first_component) + 1 :]
+        return _qualified_call_edge(f"{name_map[first_component]}.{rest}", chain)
+
+    # Prefix match in module_map (handles `import pkg.db; pkg.db.fetch_user()`)
+    if first_component in module_map:
+        full_module = module_map[first_component]
+        rest = chain[len(first_component) + 1 :] if len(chain) > len(first_component) else ""
+        return _qualified_call_edge(f"{full_module}.{rest}" if rest else full_module, chain)
+    return None
+
+
+def _resolve_self_call(chain: str, current_class: str, current_module: str) -> CallEdge | None:
+    """Resolve a ``self.`` or enclosing-class call chain, or return ``None``.
+
+    Examples:
+        >>> _resolve_self_call("self.save", "Repo", "pkg.db").target
+        'pkg.db::Repo.save'
+        >>> _resolve_self_call("helper", "Repo", "pkg.db") is None
+        True
+    """
+    if chain.startswith("self."):
+        method_attr = chain[5:]  # strip "self."
+        if current_class:
+            return CallEdge(
+                target=f"{current_module}::{current_class}.{method_attr}",
+                resolution=Resolution.SELF,
+            )
+        return CallEdge(target=chain, resolution=Resolution.SELF)
+    if current_class and chain.startswith(f"{current_class}."):
+        return CallEdge(target=chain, resolution=Resolution.SELF)
     return None
 
 
@@ -65,46 +136,19 @@ def resolve_call(
     """
     first_component = chain.split(".")[0]
 
-    # 1. Exact match in name_map (handles `from pkg.db import fetch_user; fetch_user()`)
-    if chain in name_map:
-        fqn = name_map[chain]
-        if "." in fqn:
-            mod, sym = fqn.rsplit(".", 1)
-            return CallEdge(target=f"{mod}::{sym}", resolution=Resolution.IMPORT)
-        return CallEdge(target=chain, resolution=Resolution.UNRESOLVED)
-
-    # Also handle dotted chains where the first component is in name_map
-    if first_component in name_map and first_component != chain:
-        fqn_base = name_map[first_component]
-        rest = chain[len(first_component) + 1 :]
-        mod, sym = f"{fqn_base}.{rest}".rsplit(".", 1)
-        return CallEdge(target=f"{mod}::{sym}", resolution=Resolution.IMPORT)
-
-    # 2. Prefix match in module_map (handles `import pkg.db; pkg.db.fetch_user()`)
-    if first_component in module_map:
-        full_module = module_map[first_component]
-        rest = chain[len(first_component) + 1 :] if len(chain) > len(first_component) else ""
-        full_chain = f"{full_module}.{rest}" if rest else full_module
-        if "." in full_chain:
-            mod, sym = full_chain.rsplit(".", 1)
-            return CallEdge(target=f"{mod}::{sym}", resolution=Resolution.IMPORT)
-        return CallEdge(target=chain, resolution=Resolution.UNRESOLVED)
+    # 1-3. Import scope: exact name, dotted name prefix, or imported module prefix
+    edge = _resolve_imported_call(chain, first_component, name_map, module_map)
+    if edge is not None:
+        return edge
 
     # 3. Local names (functions/classes defined in the same file)
     if first_component in local_names:
         return CallEdge(target=f"{current_module}::{chain}", resolution=Resolution.LOCAL)
 
     # 4. Self / class reference
-    if chain.startswith("self."):
-        method_attr = chain[5:]  # strip "self."
-        if current_class:
-            return CallEdge(
-                target=f"{current_module}::{current_class}.{method_attr}",
-                resolution=Resolution.SELF,
-            )
-        return CallEdge(target=chain, resolution=Resolution.SELF)
-    if current_class and chain.startswith(f"{current_class}."):
-        return CallEdge(target=chain, resolution=Resolution.SELF)
+    edge = _resolve_self_call(chain, current_class, current_module)
+    if edge is not None:
+        return edge
 
     # 5. Star import — name may come from a star-imported module
     if star_imports:

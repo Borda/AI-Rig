@@ -2,22 +2,27 @@
 
 from __future__ import annotations
 
-import importlib.util
+import atexit
+import functools
 import hashlib
+import importlib.util
 import io
+import itertools
 import json
 import math
 import os
 import re
 import runpy
 import shlex
+import shutil
 import subprocess
 import sys
-from pathlib import Path
+import tempfile
+from collections.abc import Callable
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SKILL = PLUGIN_ROOT / "skills/code-review"
@@ -26,7 +31,109 @@ _CONTEXT_READER = runpy.run_path(str(SKILL / "review_context.py"))["read_context
 _CONTEXT_READ_CALL = runpy.run_path(str(SKILL / "review_context.py"))["render_read_call"]
 
 
+#: Built review-input trees keyed by options and build environment; read only, copied for every caller.
+_REVIEW_INPUT_TEMPLATES: dict[tuple[object, ...], Path] = {}
+
+
+def _remove_review_input_templates(root: Path) -> None:
+    """Delete this worker's template trees, including Git's read-only object files on Windows."""
+
+    def retry_writable(function: Callable[[str], object], path: str, _: object) -> None:
+        """Clear the read-only bit Git sets on objects, then retry the failed removal."""
+        os.chmod(path, 0o700)
+        function(path)
+
+    # Python 3.12 renamed the error hook; both receive the same three arguments.
+    handler = "onexc" if sys.version_info >= (3, 12) else "onerror"
+    shutil.rmtree(root, **{handler: retry_writable})
+
+
+@functools.cache
+def _review_input_template_root() -> Path:
+    """Create this worker's template directory once and remove it when the interpreter exits."""
+    root = Path(tempfile.mkdtemp(prefix="review-inputs-")).resolve()
+    atexit.register(_remove_review_input_templates, root)
+    return root
+
+
 def _review_inputs(
+    tmp_path: Path,
+    *,
+    source_name: str = "widget.py",
+    untracked: bool = False,
+    second_file: bool = False,
+    unchanged_caller: bool = False,
+    deleted: bool = False,
+    large_source: bool = False,
+    large_patch: bool = False,
+    unchanged: bool = False,
+) -> Path:
+    """Give the caller a private review-input tree without rebuilding identical Git evidence per test.
+
+    Building the tree runs Git and the shipped diff collector about sixty times, which dominates these tests on
+    Windows. The first request for an option set builds it once in a worker-private template directory; every caller
+    receives its own copy whose absolute paths are rebased onto ``tmp_path``. The result is the tree the collector
+    would have produced there: the receipt and snapshot paths are rewritten, the detached worktree is relinked to the
+    copied repository, and Git-derived digests stay valid because they cover only repository-relative content.
+    The cache key includes the process environment, working directory, interpreter, and the ``Path`` text and byte
+    writers, so a test that changes Git configuration or text defaults before building still gets a fresh build under
+    its own conditions. A shared fixture that patches the text writer tags it with a ``template_identity`` so every
+    test under the same default reuses one tree instead of rebuilding for a fresh closure.
+    """
+    options = {
+        "source_name": source_name,
+        "untracked": untracked,
+        "second_file": second_file,
+        "unchanged_caller": unchanged_caller,
+        "deleted": deleted,
+        "large_source": large_source,
+        "large_patch": large_patch,
+        "unchanged": unchanged,
+    }
+    environment = frozenset(item for item in os.environ.items() if item[0] != "PYTEST_CURRENT_TEST")
+    writer = getattr(Path.write_text, "template_identity", Path.write_text)
+    key = (tuple(options.items()), environment, os.getcwd(), sys.executable, writer, Path.write_bytes)
+    template = _REVIEW_INPUT_TEMPLATES.get(key)
+    if template is None:
+        template = _review_input_template_root() / str(len(_REVIEW_INPUT_TEMPLATES))
+        template.mkdir()
+        _build_review_inputs(template, **options)
+        _REVIEW_INPUT_TEMPLATES[key] = template
+    return _relocate_review_inputs(template, tmp_path)
+
+
+def _relocate_review_inputs(template: Path, tmp_path: Path) -> Path:
+    """Copy one template tree into ``tmp_path`` and rebase every recorded absolute location onto the copy."""
+    target = tmp_path.resolve()
+    for name in ("repository", "review"):
+        shutil.copytree(template / name, target / name, symlinks=True)
+    # The collector writes resolved POSIX paths into ASCII-escaped JSON receipts.
+    old_text, new_text = (json.dumps(path.as_posix())[1:-1] for path in (template, target))
+    for receipt in sorted((target / "review/local-source").glob("*.json")):
+        content = receipt.read_text(encoding="utf-8")
+        receipt.write_text(content.replace(old_text, new_text), encoding="utf-8", newline="\n")
+    # Git links a linked worktree to its administrative directory through two absolute "gitdir" files.
+    administrative = target / "repository/.git/worktrees"
+    for admin in sorted(administrative.iterdir()) if administrative.is_dir() else []:
+        linked = Path((admin / "gitdir").read_text(encoding="utf-8").strip())
+        worktree_git = target / linked.relative_to(template)
+        (admin / "gitdir").write_text(worktree_git.as_posix() + "\n", encoding="utf-8", newline="\n")
+        # Git for Windows marks a file named .git hidden, Python 3.12+ copytree preserves that attribute through
+        # CopyFile2, and truncating a hidden file with open(..., "w") fails with PermissionError there. Replacing the
+        # copy sidesteps the truncate; no assertion depends on the hidden attribute.
+        worktree_git.unlink()
+        worktree_git.write_text(f"gitdir: {admin.as_posix()}\n", encoding="utf-8", newline="\n")
+    template_markers = {os.fsencode(form) for form in (template.as_posix(), str(template), old_text)}
+    stale = [
+        path
+        for path in target.rglob("*")
+        if path.is_file() and not path.is_symlink() and any(marker in path.read_bytes() for marker in template_markers)
+    ]
+    assert not stale, f"review-input-template-path-retained:{stale}"
+    return tmp_path / "review"
+
+
+def _build_review_inputs(
     tmp_path: Path,
     *,
     source_name: str = "widget.py",
@@ -158,7 +265,8 @@ def test_fast_conditional_native_roster_preserves_independence_policy(tmp_path: 
     assert {item["role"] for item in manifest["passes"]} == {"doc-scribe", "web-explorer"}
     assert summary["actual_mode"] == "independent-spawned"
     assert summary["capacity_limited"] is False
-    assert summary["independence_required"] is False and summary["independence_satisfied"] is False
+    assert summary["independence_required"] is False
+    assert summary["independence_satisfied"] is False
 
 
 def test_review_source_fixture_preserves_utf8_lf_under_windows_defaults(
@@ -837,35 +945,67 @@ def _assemble(run: Path, home: Path, *, challenge_only: bool = False) -> subproc
 
 
 @pytest.mark.parametrize(
-    "case",
+    ("challenge", "cases"),
     [
-        "repair",
-        "parent-miscopy",
-        "wrapper-control",
-        "wrapper-prefix",
-        "wrapper-extra",
-        "source-read",
-        "no-diagnostic",
-        "wrong-parent",
-        "challenge-raw",
-        "challenge-fenced",
-        "challenge-nonblocker",
-        "challenge-malformed",
-        "challenge-malformed-shape",
-        "challenge-unproven",
-        "challenge-partial-digest",
-        "challenge-with-findings",
+        pytest.param(
+            False,
+            [
+                "repair",
+                "parent-miscopy",
+                "wrapper-control",
+                "wrapper-prefix",
+                "wrapper-extra",
+                "source-read",
+                "no-diagnostic",
+                "wrong-parent",
+            ],
+            id="five-role-wave",
+        ),
+        pytest.param(
+            True,
+            [
+                "challenge-raw",
+                "challenge-fenced",
+                "challenge-nonblocker",
+                "challenge-malformed",
+                "challenge-malformed-shape",
+                "challenge-unproven",
+                "challenge-partial-digest",
+                "challenge-with-findings",
+            ],
+            id="challenge-only",
+        ),
     ],
 )
-def test_same_wave_dispatch_repair_requires_observed_preassessment_failure(tmp_path: Path, case: str) -> None:
-    """Recover a failed reader dispatch without dropping original allocation or valid sibling evidence."""
-    challenge = case.startswith("challenge-")
+def test_same_wave_dispatch_repair_requires_observed_preassessment_failure(
+    tmp_path: Path, subtests: pytest.Subtests, challenge: bool, cases: list[str]
+) -> None:
+    """Recover a failed reader dispatch without dropping original allocation or valid sibling evidence.
+
+    Every case of one wave shape alters the same prepared and assembled wave, so that wave is built once per shape and
+    each case runs as an independent subtest from a byte-exact restore of it.
+    """
+    run, home, children, digests = _same_wave_repair_base(tmp_path, challenge=challenge)
+    assembled = _tree_state(tmp_path)
+    for case in cases:
+        with subtests.test(case=case):
+            _restore_tree(tmp_path, assembled)
+            _check_same_wave_repair(run, home, children, case, challenge=challenge, digests=digests)
+
+
+def _same_wave_repair_base(
+    tmp_path: Path, *, challenge: bool
+) -> tuple[Path, Path, dict[str, Path], tuple[str, str] | None]:
+    """Prepare and record one complete five-role or challenge-only wave before a reader dispatch fails."""
     run = _review_inputs(tmp_path) if challenge else _five_role_review_inputs(tmp_path)
+    digests = None
     final_message = ""
     if challenge:
         source_bytes = (run / "local-source/source-snapshot.json").read_bytes()
         diff_bytes = (run / "diff.patch").read_bytes()
-        source_digest, diff_digest = (hashlib.sha256(content).hexdigest() for content in (source_bytes, diff_bytes))
+        source_digest, diff_digest = digests = tuple(
+            hashlib.sha256(content).hexdigest() for content in (source_bytes, diff_bytes)
+        )
         request = {
             "goal": "Review the frozen implementation",
             "specification": f"Use source_sha256={source_digest} and diff_sha256={diff_digest}; return structured findings and assessment.",
@@ -896,6 +1036,21 @@ def test_same_wave_dispatch_repair_requires_observed_preassessment_failure(tmp_p
         findings={"challenger": final_message} if challenge else None,
         final_header="missing" if challenge else "complete",
     )
+    return run, home, children, digests
+
+
+def _check_same_wave_repair(
+    run: Path,
+    home: Path,
+    children: dict[str, Path],
+    case: str,
+    *,
+    challenge: bool,
+    digests: tuple[str, str] | None,
+) -> None:
+    """Replace one reader dispatch with an observed or unproved failure and check repair plus reassembly."""
+    if challenge:
+        source_digest, diff_digest = digests
     role = "challenger" if challenge else "sw-engineer"
     child = children[role]
     original_rows = [json.loads(line) for line in child.read_text().splitlines()]
@@ -1035,7 +1190,8 @@ def test_same_wave_dispatch_repair_requires_observed_preassessment_failure(tmp_p
             "challenge-partial-digest": "assessment-content-invalid",
             "challenge-with-findings": "assessment-content-invalid",
         }[case]
-        assert prepared.returncode != 0 and expected in prepared.stderr
+        assert prepared.returncode != 0
+        assert expected in prepared.stderr
         return
     if case not in {"repair", "parent-miscopy", "wrapper-control", "challenge-raw", "challenge-fenced"}:
         assert prepared.returncode != 0
@@ -1126,15 +1282,41 @@ def test_same_wave_dispatch_repair_requires_observed_preassessment_failure(tmp_p
     )
 
 
-def _partial_dispatch_evidence(
-    tmp_path: Path,
-    *,
-    parent_typo: bool,
-    copied_reader: bool = False,
-    failure: str = "missing-reader",
-    opaque_transport: bool = False,
-) -> tuple[Path, Path, dict[str, Path], list[dict[str, object]], str]:
-    """Retain an actual reader-launch failure among ordered successful context reads."""
+def _tree_state(root: Path) -> dict[str, tuple[bytes, int] | None]:
+    """Capture every directory and file below ``root`` with its exact bytes and modification time."""
+    return {
+        path.relative_to(root).as_posix(): None if path.is_dir() else (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in sorted(root.rglob("*"))
+    }
+
+
+def _restore_tree(root: Path, state: dict[str, tuple[bytes, int] | None]) -> None:
+    """Return ``root`` to a captured state so a subtest starts from exactly the bytes its shared build produced.
+
+    Entries added since the capture are removed (children before parents), entries whose kind or bytes changed are
+    rewritten with their recorded modification time, and removed directories are recreated. Restoring at the start of
+    every subtest means leftovers of a failed subtest can never reach the next one.
+    """
+    for path in sorted(root.rglob("*"), reverse=True):
+        recorded = state.get(path.relative_to(root).as_posix(), False)
+        if recorded is not False and (recorded is None) == path.is_dir():
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    for relative, recorded in state.items():
+        path = root / relative
+        if recorded is None:
+            path.mkdir(exist_ok=True)
+        elif not path.is_file() or path.read_bytes() != recorded[0]:
+            path.write_bytes(recorded[0])
+            os.utime(path, ns=(recorded[1], recorded[1]))
+    assert _tree_state(root).keys() == state.keys(), "subtest-tree-restore-incomplete"
+
+
+def _partial_dispatch_base(tmp_path: Path) -> tuple[Path, Path, dict[str, Path]]:
+    """Prepare one bounded batch and record complete native context reads before any launch failure is injected."""
     root = _review_inputs(tmp_path)
     source_root = json.loads((root / "local-source/review-worktree.json").read_bytes())["review_worktree"]
     prepared = subprocess.run(
@@ -1160,6 +1342,21 @@ def _partial_dispatch_evidence(
     assert prepared.returncode == 0, prepared.stderr
     run = root / "batches/source-001"
     _, home, children = _assembly_evidence(tmp_path, prepared_run=run)
+    return run, home, children
+
+
+def _inject_partial_dispatch_failure(
+    tmp_path: Path,
+    run: Path,
+    home: Path,
+    children: dict[str, Path],
+    *,
+    parent_typo: bool,
+    copied_reader: bool = False,
+    failure: str = "missing-reader",
+    opaque_transport: bool = False,
+) -> tuple[list[dict[str, object]], str]:
+    """Retain an actual reader-launch failure among ordered successful context reads of a prepared batch."""
     if copied_reader:
         installed_reader = tmp_path / "installed reader café" / "review_context.py"
         installed_reader.parent.mkdir()
@@ -1224,7 +1421,8 @@ def _partial_dispatch_evidence(
             arguments = json.loads(call["input"].split("tools.exec_command(", 1)[1].split("); text", 1)[0])
             command = arguments["cmd"] if os.name == "nt" else shlex.split(arguments["cmd"])
             successful = subprocess.run(command, capture_output=True, check=False)
-            assert successful.returncode == 0 and successful.stderr == b""
+            assert successful.returncode == 0
+            assert successful.stderr == b""
             commands.append(
                 {
                     "type": "event_msg",
@@ -1260,9 +1458,11 @@ def _partial_dispatch_evidence(
         )
         diagnostic = (failed.stdout + failed.stderr).decode("utf-8")
         if duplicate:
-            assert failed.returncode == 1 and "SyntaxError:" in diagnostic
+            assert failed.returncode == 1
+            assert "SyntaxError:" in diagnostic
         else:
-            assert failed.returncode == 2 and "[Errno 2]" in diagnostic
+            assert failed.returncode == 2
+            assert "[Errno 2]" in diagnostic
             # Missing-script repr doubles Windows path separators.
             assert repr(str(missing_reader)) in diagnostic
         commands.append(
@@ -1324,13 +1524,33 @@ def _partial_dispatch_evidence(
         ] = sent
     _write_jsonl(child, rows)
     _write_jsonl(parent_path, parent)
+    return complete, partial
+
+
+def _partial_dispatch_evidence(
+    tmp_path: Path,
+    *,
+    parent_typo: bool,
+    copied_reader: bool = False,
+    failure: str = "missing-reader",
+    opaque_transport: bool = False,
+) -> tuple[Path, Path, dict[str, Path], list[dict[str, object]], str]:
+    """Retain an actual reader-launch failure among ordered successful context reads."""
+    run, home, children = _partial_dispatch_base(tmp_path)
+    complete, partial = _inject_partial_dispatch_failure(
+        tmp_path,
+        run,
+        home,
+        children,
+        parent_typo=parent_typo,
+        copied_reader=copied_reader,
+        failure=failure,
+        opaque_transport=opaque_transport,
+    )
     return run, home, children, complete, partial
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("opaque_transport", [False, True])
-@pytest.mark.parametrize("parent_typo", [False, True])
-@pytest.mark.parametrize("replacement", ["complete", "missing-page"])
 @pytest.mark.parametrize("copied_reader", [False, True])
 @pytest.mark.parametrize(
     "failure",
@@ -1345,16 +1565,55 @@ def _partial_dispatch_evidence(
 def test_partial_dispatch_repair_retains_original_and_requires_complete_replacement(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    subtests: pytest.Subtests,
+    copied_reader: bool,
+    failure: str,
+) -> None:
+    """Recover proved reader-launch copy errors while requiring complete independent replacement reads.
+
+    Each reader-launch failure is crossed with every parent-typo, opaque-transport, and replacement-completeness
+    combination. The prepared batch and its complete native reads are identical for all of them, so they are built once
+    and every combination runs as an independent subtest from a byte-exact restore of that build.
+    """
+    monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
+    run, home, children = _partial_dispatch_base(tmp_path)
+    prepared_batch = _tree_state(tmp_path)
+    for parent_typo, opaque_transport, replacement in itertools.product(
+        [False, True], [False, True], ["complete", "missing-page"]
+    ):
+        with subtests.test(parent_typo=parent_typo, opaque_transport=opaque_transport, replacement=replacement):
+            _restore_tree(tmp_path, prepared_batch)
+            _check_partial_dispatch_replacement(
+                tmp_path,
+                run,
+                home,
+                children,
+                parent_typo=parent_typo,
+                replacement=replacement,
+                copied_reader=copied_reader,
+                failure=failure,
+                opaque_transport=opaque_transport,
+            )
+
+
+def _check_partial_dispatch_replacement(
+    tmp_path: Path,
+    run: Path,
+    home: Path,
+    children: dict[str, Path],
+    *,
     parent_typo: bool,
     replacement: str,
     copied_reader: bool,
     failure: str,
     opaque_transport: bool,
 ) -> None:
-    """Recover proved reader-launch copy errors while requiring complete independent replacement reads."""
-    monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
-    run, home, children, complete, partial = _partial_dispatch_evidence(
+    """Inject one proved reader-launch failure, then require the repair to retain it and read every page again."""
+    complete, partial = _inject_partial_dispatch_failure(
         tmp_path,
+        run,
+        home,
+        children,
         parent_typo=parent_typo,
         copied_reader=copied_reader,
         failure=failure,
@@ -1470,20 +1729,34 @@ def test_partial_dispatch_repair_retains_original_and_requires_complete_replacem
         if copied_reader
         else (SKILL / "review_context.py").resolve()
     )
-    assert repaired["selected_attempt"] == 2 and len(repaired["attempts"]) == 2
+    assert repaired["selected_attempt"] == 2
+    assert len(repaired["attempts"]) == 2
     assert (run / repaired["attempts"][0]["raw_output_path"]).read_bytes() == partial.encode("utf-8")
     assert (run / repaired["attempts"][1]["raw_output_path"]).read_bytes() == terminal["last_agent_message"].encode(
         "utf-8"
     )
-    assert sibling["selected_attempt"] == 1 and len(sibling["attempts"]) == 1
+    assert sibling["selected_attempt"] == 1
+    assert len(sibling["attempts"]) == 1
     assert repaired["attempts"][1]["agent_thread_id"] == new_thread
     assert json.loads((run / "inspection-summary.json").read_bytes())["actual_mode"] == "parallel"
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize(
-    "damage",
-    [
+def test_opaque_partial_dispatch_repair_requires_bound_delivery_and_unavailable_assessment(
+    tmp_path: Path, subtests: pytest.Subtests
+) -> None:
+    """Opaque partial recovery cannot substitute delivery, source coordinates, or an unavailable assessment.
+
+    Every damage alters the same recorded opaque reader-launch failure, so that evidence is built once and each damage
+    runs as an independent subtest from a byte-exact restore of it. A refusal here is only meaningful while the
+    undamaged evidence is accepted; that baseline is asserted by the ``duplicate-interpreter-first`` opaque-transport
+    case of ``test_partial_dispatch_repair_retains_original_and_requires_complete_replacement``.
+    """
+    run, home, children, _, _ = _partial_dispatch_evidence(
+        tmp_path, parent_typo=False, failure="duplicate-interpreter-first", opaque_transport=True
+    )
+    recorded = _tree_state(tmp_path)
+    for damage in [
         "missing-delivery",
         "different-delivery",
         "duplicate-delivery",
@@ -1494,15 +1767,14 @@ def test_partial_dispatch_repair_retains_original_and_requires_complete_replacem
         "missing-rationale",
         "clean-rating",
         "out-of-section-rating",
-    ],
-)
-def test_opaque_partial_dispatch_repair_requires_bound_delivery_and_unavailable_assessment(
-    tmp_path: Path, damage: str
-) -> None:
-    """Opaque partial recovery cannot substitute delivery, source coordinates, or an unavailable assessment."""
-    run, home, children, _, _ = _partial_dispatch_evidence(
-        tmp_path, parent_typo=False, failure="duplicate-interpreter-first", opaque_transport=True
-    )
+    ]:
+        with subtests.test(damage=damage):
+            _restore_tree(tmp_path, recorded)
+            _check_opaque_repair_damage(run, home, children, damage)
+
+
+def _check_opaque_repair_damage(run: Path, home: Path, children: dict[str, Path], damage: str) -> None:
+    """Apply one delivery or assessment damage and require the opaque repair to refuse without writing."""
     child = children["challenger"]
     rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
     parent_path = home / "sessions/rollout-parent.jsonl"
@@ -1587,9 +1859,19 @@ def test_opaque_partial_dispatch_repair_requires_bound_delivery_and_unavailable_
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize(
-    "damage",
-    [
+def test_duplicate_interpreter_repair_rejects_unproved_launch_failures(
+    tmp_path: Path, subtests: pytest.Subtests
+) -> None:
+    """Keep a proved executable-as-source failure distinct from arbitrary syntax errors or missing coverage.
+
+    Every damage alters the same recorded duplicate-interpreter launch failure, so that evidence is built once and each
+    damage runs as an independent subtest from a byte-exact restore of it. A refusal here is only meaningful while the
+    undamaged evidence is accepted; that baseline is asserted by the ``duplicate-interpreter`` cases of
+    ``test_partial_dispatch_repair_retains_original_and_requires_complete_replacement``.
+    """
+    run, home, children, _, _ = _partial_dispatch_evidence(tmp_path, parent_typo=False, failure="duplicate-interpreter")
+    recorded = _tree_state(tmp_path)
+    for damage in [
         "generic-syntax",
         "wrong-diagnostic-path",
         "wrong-exit",
@@ -1604,11 +1886,16 @@ def test_opaque_partial_dispatch_repair_requires_bound_delivery_and_unavailable_
         "changed-trailing-read",
         "second-duplicate",
         "missing-trailing-page",
-    ],
-)
-def test_duplicate_interpreter_repair_rejects_unproved_launch_failures(tmp_path: Path, damage: str) -> None:
-    """Keep a proved executable-as-source failure distinct from arbitrary syntax errors or missing coverage."""
-    run, home, children, _, _ = _partial_dispatch_evidence(tmp_path, parent_typo=False, failure="duplicate-interpreter")
+    ]:
+        with subtests.test(damage=damage):
+            _restore_tree(tmp_path, recorded)
+            _check_duplicate_interpreter_damage(tmp_path, run, home, children, damage)
+
+
+def _check_duplicate_interpreter_damage(
+    tmp_path: Path, run: Path, home: Path, children: dict[str, Path], damage: str
+) -> None:
+    """Apply one receipt or coordinate damage and require the exact repair refusal without rewriting the child."""
     child = children["challenger"]
     rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
     calls = [row["payload"] for row in rows if row.get("payload", {}).get("type") == "custom_tool_call"]
@@ -1730,26 +2017,49 @@ def test_duplicate_interpreter_repair_rejects_unproved_launch_failures(tmp_path:
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    "damage",
+    ("copied_reader", "damages"),
     [
-        "unknown-tool",
-        "changed-plan",
-        "changed-role",
-        "changed-page",
-        "changed-attempt",
-        "changed-interpreter",
-        "mixed-command",
-        "success-after-failure",
-        "prefix-provenance",
-        "changed-context",
-        "altered-reader",
+        pytest.param(
+            False,
+            [
+                "unknown-tool",
+                "changed-plan",
+                "changed-role",
+                "changed-page",
+                "changed-attempt",
+                "changed-interpreter",
+                "mixed-command",
+                "success-after-failure",
+                "prefix-provenance",
+                "changed-context",
+            ],
+            id="shipped-reader",
+        ),
+        pytest.param(True, ["altered-reader"], id="copied-reader"),
     ],
 )
-def test_partial_dispatch_repair_rejects_unproved_command_changes(tmp_path: Path, damage: str) -> None:
-    """Do not turn unrelated commands or changed review coordinates into a reader-path correction."""
+def test_partial_dispatch_repair_rejects_unproved_command_changes(
+    tmp_path: Path, subtests: pytest.Subtests, copied_reader: bool, damages: list[str]
+) -> None:
+    """Do not turn unrelated commands or changed review coordinates into a reader-path correction.
+
+    Damages that share one reader installation alter the same recorded failure, so that evidence is built once per
+    installation and each damage runs as an independent subtest from a byte-exact restore of it.
+    """
     run, home, children, complete, _ = _partial_dispatch_evidence(
-        tmp_path, parent_typo=False, copied_reader=damage == "altered-reader"
+        tmp_path, parent_typo=False, copied_reader=copied_reader
     )
+    recorded = _tree_state(tmp_path)
+    for damage in damages:
+        with subtests.test(damage=damage):
+            _restore_tree(tmp_path, recorded)
+            _check_unproved_command_change(tmp_path, run, home, children, complete, damage)
+
+
+def _check_unproved_command_change(
+    tmp_path: Path, run: Path, home: Path, children: dict[str, Path], complete: list[dict[str, object]], damage: str
+) -> None:
+    """Apply one command or coordinate change and require the repair to refuse without rewriting the child."""
     child = children["challenger"]
     rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
     calls = [row["payload"] for row in rows if row.get("payload", {}).get("type") == "custom_tool_call"]
@@ -1830,19 +2140,30 @@ def test_partial_dispatch_repair_rejects_unproved_command_changes(tmp_path: Path
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize(
-    ("file_name", "expected"),
-    [
-        pytest.param("review-routing.json", "review-wave-selection-changed", id="changed-routing"),
-        pytest.param("review-briefs.json", "review-batch-briefs-changed", id="changed-briefs"),
-        pytest.param("diff.patch", "manifest-review-input-hash-mismatch", id="changed-input"),
-    ],
-)
 def test_partial_dispatch_repair_rejects_changed_governing_evidence_before_dispatch(
-    tmp_path: Path, file_name: str, expected: str
+    tmp_path: Path, subtests: pytest.Subtests
 ) -> None:
-    """Reject changed governing evidence before allocating a correction that cannot pass assembly."""
+    """Reject changed governing evidence before allocating a correction that cannot pass assembly.
+
+    Routing, briefs, and review input each change on the same recorded reader-launch failure, so that evidence is built
+    once and each change runs as an independent subtest from a byte-exact restore of it.
+    """
     run, home, children, _, _ = _partial_dispatch_evidence(tmp_path, parent_typo=False)
+    recorded = _tree_state(tmp_path)
+    for case, file_name, expected in [
+        ("changed-routing", "review-routing.json", "review-wave-selection-changed"),
+        ("changed-briefs", "review-briefs.json", "review-batch-briefs-changed"),
+        ("changed-input", "diff.patch", "manifest-review-input-hash-mismatch"),
+    ]:
+        with subtests.test(case=case):
+            _restore_tree(tmp_path, recorded)
+            _check_changed_governing_evidence(run, home, children, file_name, expected)
+
+
+def _check_changed_governing_evidence(
+    run: Path, home: Path, children: dict[str, Path], file_name: str, expected: str
+) -> None:
+    """Change one governing input and require the repair to refuse before writing any correction."""
     path = (run.parent.parent if file_name == "review-briefs.json" else run) / file_name
     path.write_bytes(path.read_bytes() + b"\n")
     original = {child: child.read_bytes() for child in children.values()}
@@ -2238,7 +2559,7 @@ def test_assemble_binds_native_wave_and_preserves_child_outputs(tmp_path: Path, 
 
 
 @pytest.mark.parametrize(
-    "diagnostic, expected",
+    ("diagnostic", "expected"),
     [
         pytest.param(
             "/resolved/python3: can't open file '/missing/review_context.py': [Errno 2] No such file or directory\n",
@@ -2291,7 +2612,7 @@ _WINDOWS_PYTHON = "D:\\a\\repo\\.venv\\Scripts\\python.exe"
 
 
 @pytest.mark.parametrize(
-    "diagnostic, executable, expected",
+    ("diagnostic", "executable", "expected"),
     [
         pytest.param(
             "SyntaxError: source code cannot contain null bytes\n", _POSIX_PYTHON, False, id="bare-null-bytes-unbound"
@@ -2318,8 +2639,44 @@ _WINDOWS_PYTHON = "D:\\a\\repo\\.venv\\Scripts\\python.exe"
         pytest.param(
             f'  File "{_POSIX_PYTHON}", line 1\n    \x7fELF\x02\x01\x01\n    ^\nSyntaxError: invalid syntax\n',
             _POSIX_PYTHON,
+            True,
+            id="framed-invalid-syntax-elf-python310",
+        ),
+        pytest.param(
+            f'  File "{_POSIX_PYTHON}", line 1\r\n    \x7fELF\x02\x01\x01\r\n    ^\r\nSyntaxError: invalid syntax\r\n',
+            _POSIX_PYTHON,
+            True,
+            id="framed-invalid-syntax-elf-crlf",
+        ),
+        pytest.param(
+            '  File "/other/python3", line 1\n    \x7fELF\x02\x01\x01\n    ^\nSyntaxError: invalid syntax\n',
+            _POSIX_PYTHON,
             False,
-            id="framed-invalid-syntax-unobserved",
+            id="framed-invalid-syntax-names-other-file",
+        ),
+        pytest.param(
+            f'  File "{_POSIX_PYTHON}", line 7\n    \x7fELF\x02\x01\x01\n    ^\nSyntaxError: invalid syntax\n',
+            _POSIX_PYTHON,
+            False,
+            id="framed-invalid-syntax-wrong-line",
+        ),
+        pytest.param(
+            f'  File "{_POSIX_PYTHON}", line 1\n    \x7fELF\x02\x01\x01\n    ^\nSyntaxError: invalid syntax\nextra\n',
+            _POSIX_PYTHON,
+            False,
+            id="framed-invalid-syntax-trailing-output",
+        ),
+        pytest.param(
+            f'  File "{_POSIX_PYTHON}", line 1\n    x = 1\n    ^\nSyntaxError: invalid syntax\n',
+            _POSIX_PYTHON,
+            False,
+            id="framed-invalid-syntax-not-elf-echo",
+        ),
+        pytest.param(
+            f'  File "{_POSIX_PYTHON}", line 1\n    \x7fELF\x02\x01\x01\nSyntaxError: invalid syntax\n',
+            _POSIX_PYTHON,
+            False,
+            id="framed-invalid-syntax-no-caret",
         ),
         pytest.param(
             f"SyntaxError: Non-UTF-8 code starting with '\\xcf' in file {_POSIX_PYTHON} on line 1, but no encoding "
@@ -2365,7 +2722,8 @@ def test_binary_source_diagnostic_accepts_interpreter_specific_receipts(
 ) -> None:
     """Running the interpreter binary as a script is proved across Python versions and binary formats.
 
-    The ELF and Mach-O shapes were printed by real interpreters (3.10 through 3.14) reading their own executable; the
+    The ELF and Mach-O shapes were printed by real interpreters (3.10 through 3.14) reading their own executable,
+    including the framed ``invalid syntax`` form that Python 3.10 prints for a python-build-standalone Linux binary; the
     Windows path form is a synthetic variant of the framed shape. The rejected shapes are unbound or unrelated output
     that must never prove a duplicated interpreter token. Development runs on a newer interpreter than CI, so this table
     is what keeps every version's output covered on every host.
@@ -2375,9 +2733,19 @@ def test_binary_source_diagnostic_accepts_interpreter_specific_receipts(
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize(
-    "damage",
-    [
+@pytest.mark.parametrize("pragma_omission", ["neither", "failed", "retry", "both"])
+@pytest.mark.parametrize("failed_coordinate", ["plan", "reader"])
+def test_completed_reads_admit_only_one_proved_missing_plan_retry(
+    tmp_path: Path, subtests: pytest.Subtests, pragma_omission: str, failed_coordinate: str
+) -> None:
+    """A nonexistent plan or reader may precede its exact page retry without replacing frozen source reads.
+
+    Every damage rewrites the challenger rollout of the same assembled native wave, so that wave is built once per
+    pragma and coordinate combination and each damage runs as an independent subtest from a byte-exact restore of it.
+    """
+    run, home, children = _assembly_evidence(tmp_path)
+    assembled = _tree_state(tmp_path)
+    for damage in [
         "none",
         "none-first",
         "none-last",
@@ -2407,15 +2775,31 @@ def test_binary_source_diagnostic_accepts_interpreter_specific_receipts(
         "changed-second-coordinate",
         "wrapper-prefix",
         "wrapper-extra",
-    ],
-)
-@pytest.mark.parametrize("pragma_omission", ["neither", "failed", "retry", "both"])
-@pytest.mark.parametrize("failed_coordinate", ["plan", "reader"])
-def test_completed_reads_admit_only_one_proved_missing_plan_retry(
-    tmp_path: Path, damage: str, pragma_omission: str, failed_coordinate: str
+    ]:
+        with subtests.test(damage=damage):
+            _restore_tree(tmp_path, assembled)
+            _check_missing_plan_retry(
+                tmp_path,
+                run,
+                home,
+                children,
+                damage=damage,
+                pragma_omission=pragma_omission,
+                failed_coordinate=failed_coordinate,
+            )
+
+
+def _check_missing_plan_retry(
+    tmp_path: Path,
+    run: Path,
+    home: Path,
+    children: dict[str, Path],
+    *,
+    damage: str,
+    pragma_omission: str,
+    failed_coordinate: str,
 ) -> None:
-    """A nonexistent plan or reader may precede its exact page retry without replacing frozen source reads."""
-    run, home, children = _assembly_evidence(tmp_path)
+    """Insert one real missing-plan or missing-reader failure before its retry and check read admission."""
     spec = importlib.util.spec_from_file_location("retry_prepare", HELPER)
     prepare = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(prepare)
@@ -2428,7 +2812,8 @@ def test_completed_reads_admit_only_one_proved_missing_plan_retry(
         result = subprocess.run(
             args["cmd"] if os.name == "nt" else shlex.split(args["cmd"]), capture_output=True, check=False
         )
-        assert result.returncode == 0 and result.stderr == b""
+        assert result.returncode == 0
+        assert result.stderr == b""
         commands.append(
             {
                 "type": "event_msg",
@@ -2604,7 +2989,7 @@ def test_completed_reads_admit_only_one_proved_missing_plan_retry(
             rows, plan, "challenger", attempt, manifest, context_path.read_text(encoding="utf-8")
         )
     else:
-        with pytest.raises(SystemExit, match="review-inspection-context-(?:read|command)-.*:challenger"):
+        with pytest.raises(SystemExit, match=r"review-inspection-context-(?:read|command)-.*:challenger"):
             prepare.validator._validate_context_read(
                 rows, plan, "challenger", attempt, manifest, context_path.read_text(encoding="utf-8")
             )
@@ -2612,9 +2997,15 @@ def test_completed_reads_admit_only_one_proved_missing_plan_retry(
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize(
-    "damage",
-    [
+def test_current_reader_admits_only_exact_optional_pragma_omission(tmp_path: Path, subtests: pytest.Subtests) -> None:
+    """Optional outer decoration never relaxes the inner read, command receipt, or frozen source bytes.
+
+    Every damage rewrites the challenger rollout of the same assembled native wave, so that wave is built once and each
+    damage runs as an independent subtest from a byte-exact restore of it.
+    """
+    run, home, children = _assembly_evidence(tmp_path)
+    assembled = _tree_state(tmp_path)
+    for damage in [
         "none",
         "no-final-newline",
         "different-pragma",
@@ -2626,11 +3017,14 @@ def test_completed_reads_admit_only_one_proved_missing_plan_retry(
         "missing-command",
         "historical-schema",
         "historical-reader",
-    ],
-)
-def test_current_reader_admits_only_exact_optional_pragma_omission(tmp_path: Path, damage: str) -> None:
-    """Optional outer decoration never relaxes the inner read, command receipt, or frozen source bytes."""
-    run, home, children = _assembly_evidence(tmp_path)
+    ]:
+        with subtests.test(damage=damage):
+            _restore_tree(tmp_path, assembled)
+            _check_optional_pragma_omission(run, home, children, damage)
+
+
+def _check_optional_pragma_omission(run: Path, home: Path, children: dict[str, Path], damage: str) -> None:
+    """Omit the optional outer pragma from executed reads, apply one damage, and check read admission."""
     spec = importlib.util.spec_from_file_location("pragma_prepare", HELPER)
     prepare = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(prepare)
@@ -2643,7 +3037,8 @@ def test_current_reader_admits_only_exact_optional_pragma_omission(tmp_path: Pat
         completed = subprocess.run(
             args["cmd"] if os.name == "nt" else shlex.split(args["cmd"]), capture_output=True, check=False
         )
-        assert completed.returncode == 0 and completed.stderr == b""
+        assert completed.returncode == 0
+        assert completed.stderr == b""
         commands.append(
             {
                 "type": "event_msg",
@@ -2700,7 +3095,7 @@ def test_current_reader_admits_only_exact_optional_pragma_omission(tmp_path: Pat
         assembled = _assemble(run, home)
         assert assembled.returncode == 0, assembled.stderr
     else:
-        with pytest.raises(SystemExit, match="review-inspection-context-(?:read|command)-.*:challenger"):
+        with pytest.raises(SystemExit, match=r"review-inspection-context-(?:read|command)-.*:challenger"):
             prepare.validator._validate_context_read(
                 rows, plan, "challenger", attempt, manifest, context_path.read_text(encoding="utf-8")
             )
@@ -2708,9 +3103,17 @@ def test_current_reader_admits_only_exact_optional_pragma_omission(tmp_path: Pat
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize(
-    "damage",
-    [
+def test_completed_reads_admit_only_one_proved_pre_execution_pragma_retry(
+    tmp_path: Path, subtests: pytest.Subtests
+) -> None:
+    """A host-rejected missing-braces pragma requires an immediate exact retry and complete executed reads.
+
+    Every damage rewrites the challenger rollout of the same assembled native wave, so that wave is built once and each
+    damage runs as an independent subtest from a byte-exact restore of it.
+    """
+    run, home, children = _assembly_evidence(tmp_path)
+    assembled = _tree_state(tmp_path)
+    for damage in [
         "none",
         "omitted-retry-pragma",
         "truncated-json",
@@ -2731,11 +3134,14 @@ def test_current_reader_admits_only_exact_optional_pragma_omission(tmp_path: Pat
         "changed-source",
         "historical-schema",
         "historical-reader",
-    ],
-)
-def test_completed_reads_admit_only_one_proved_pre_execution_pragma_retry(tmp_path: Path, damage: str) -> None:
-    """A host-rejected missing-braces pragma requires an immediate exact retry and complete executed reads."""
-    run, home, children = _assembly_evidence(tmp_path)
+    ]:
+        with subtests.test(damage=damage):
+            _restore_tree(tmp_path, assembled)
+            _check_pre_execution_pragma_retry(run, home, children, damage)
+
+
+def _check_pre_execution_pragma_retry(run: Path, home: Path, children: dict[str, Path], damage: str) -> None:
+    """Insert one host-rejected pragma before its retry, apply one damage, and check read admission."""
     spec = importlib.util.spec_from_file_location("rejected_pragma_prepare", HELPER)
     prepare = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(prepare)
@@ -2847,7 +3253,7 @@ def test_completed_reads_admit_only_one_proved_pre_execution_pragma_retry(tmp_pa
         assembled = _assemble(run, home)
         assert assembled.returncode == 0, assembled.stderr
     else:
-        with pytest.raises(SystemExit, match="review-inspection-context-(?:read|command)-.*:challenger"):
+        with pytest.raises(SystemExit, match=r"review-inspection-context-(?:read|command)-.*:challenger"):
             prepare.validator._validate_context_read(
                 rows, plan, "challenger", attempt, manifest, context_path.read_text()
             )
@@ -2855,13 +3261,24 @@ def test_completed_reads_admit_only_one_proved_pre_execution_pragma_retry(tmp_pa
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("delivery", ["plain", "opaque"])
-@pytest.mark.parametrize("agent_type", ["omitted", "default", "custom", "null"])
-def test_native_assembly_accepts_only_default_host_agent_selection(
-    tmp_path: Path, delivery: str, agent_type: str
-) -> None:
-    """Accept hosts without an agent selector while retaining model, delivery and lineage checks."""
+def test_native_assembly_accepts_only_default_host_agent_selection(tmp_path: Path, subtests: pytest.Subtests) -> None:
+    """Accept hosts without an agent selector while retaining model, delivery and lineage checks.
+
+    Every delivery and agent-selector combination rewrites the launches of the same assembled native wave, so that wave
+    is built once and each combination runs as an independent subtest from a byte-exact restore of it.
+    """
     run, home, children = _assembly_evidence(tmp_path)
+    assembled = _tree_state(tmp_path)
+    for delivery, agent_type in itertools.product(["plain", "opaque"], ["omitted", "default", "custom", "null"]):
+        with subtests.test(delivery=delivery, agent_type=agent_type):
+            _restore_tree(tmp_path, assembled)
+            _check_host_agent_selection(run, home, children, delivery=delivery, agent_type=agent_type)
+
+
+def _check_host_agent_selection(
+    run: Path, home: Path, children: dict[str, Path], *, delivery: str, agent_type: str
+) -> None:
+    """Rewrite every launch with one agent selector and delivery mode and check assembly admission."""
     parent_path = home / "sessions/rollout-parent.jsonl"
     parent_rows = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
     for row in parent_rows:
@@ -2891,9 +3308,17 @@ def test_native_assembly_accepts_only_default_host_agent_selection(
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize(
-    "damage",
-    [
+def test_native_assembly_binds_opaque_delivery_to_exact_audited_execution(
+    tmp_path: Path, subtests: pytest.Subtests
+) -> None:
+    """Admit transported messages only with intact child delivery, exact controls, and source reads.
+
+    Every damage alters the same prepared and assembled native wave, so that wave is built once and each damage runs as
+    an independent subtest from a byte-exact restore of it.
+    """
+    run, home, children = _assembly_evidence(tmp_path)
+    assembled = _tree_state(tmp_path)
+    for damage in [
         "none",
         "missing-delivery",
         "different-delivery",
@@ -2904,11 +3329,14 @@ def test_native_assembly_accepts_only_default_host_agent_selection(
         "page",
         "later-page",
         "boolean-blockers",
-    ],
-)
-def test_native_assembly_binds_opaque_delivery_to_exact_audited_execution(tmp_path: Path, damage: str) -> None:
-    """Admit transported messages only with intact child delivery, exact controls, and source reads."""
-    run, home, children = _assembly_evidence(tmp_path)
+    ]:
+        with subtests.test(damage=damage):
+            _restore_tree(tmp_path, assembled)
+            _check_opaque_delivery_damage(run, home, children, damage)
+
+
+def _check_opaque_delivery_damage(run: Path, home: Path, children: dict[str, Path], damage: str) -> None:
+    """Replace delivered messages with opaque transport, apply one damage, and check assembly admission."""
     parent_path = home / "sessions/rollout-parent.jsonl"
     parent_rows = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
     for row in parent_rows:
@@ -3125,16 +3553,46 @@ def _retain_legacy_native_recipe(
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("protocol", ["paged-context-v6", "paged-context-v7"])
-@pytest.mark.parametrize("reader_fixture", ["legacy-context-reader", "legacy-all-page-context-reader"])
-@pytest.mark.parametrize("tampered_reader", [False, True])
-def test_manifest_consumer_preserves_known_historical_reader_recipe(
-    tmp_path: Path, protocol: str, reader_fixture: str, tampered_reader: bool
-) -> None:
-    """Admit issued historical page recipes while rejecting unknown reader bytes at consumer intake."""
+def test_manifest_consumer_preserves_known_historical_reader_recipe(tmp_path: Path, subtests: pytest.Subtests) -> None:
+    """Admit issued historical page recipes while rejecting unknown reader bytes at consumer intake.
+
+    Every protocol, historical reader, and reader-tampering combination rewrites the same assembled wave, so that wave
+    is built and assembled once and each combination runs as an independent subtest from a byte-exact restore of it.
+    """
     run, home, children = _assembly_evidence(tmp_path)
     assembled = _assemble(run, home)
     assert assembled.returncode == 0, assembled.stderr
+    manifested = _tree_state(tmp_path)
+    for protocol, reader_fixture, tampered_reader in itertools.product(
+        ["paged-context-v6", "paged-context-v7"],
+        ["legacy-context-reader", "legacy-all-page-context-reader"],
+        [False, True],
+    ):
+        with subtests.test(protocol=protocol, reader_fixture=reader_fixture, tampered_reader=tampered_reader):
+            _restore_tree(tmp_path, manifested)
+            _check_historical_reader_recipe(
+                tmp_path,
+                run,
+                home,
+                children,
+                protocol=protocol,
+                reader_fixture=reader_fixture,
+                tampered=tampered_reader,
+            )
+
+
+def _check_historical_reader_recipe(
+    tmp_path: Path,
+    run: Path,
+    home: Path,
+    children: dict[str, Path],
+    *,
+    protocol: str,
+    reader_fixture: str,
+    tampered: bool,
+) -> None:
+    """Retain one historical recipe in an assembled manifest and check consumer intake of its reader identity."""
+    tampered_reader = tampered
     reader_path = _retain_legacy_native_recipe(
         run, home, children, provenance_header=protocol == "paged-context-v6", reader_fixture=reader_fixture
     )
@@ -3288,7 +3746,7 @@ def test_assemble_rejects_unparseable_rating_before_promoting_manifest(tmp_path:
 
 @pytest.mark.parametrize("main", [False, True])
 @pytest.mark.parametrize(
-    "body, expected",
+    ("body", "expected"),
     [
         pytest.param(
             "No findings.\n\nRating: 1\nRationale: Evidence is complete.\n\nConfidence: 0.97.",
@@ -3352,24 +3810,40 @@ def test_assemble_admits_ordinary_composed_assessment_unchanged(tmp_path: Path) 
     assert "Put findings and confidence under their own separate headings" in context
 
 
-def test_retained_rating_rejects_duplicate_reviewer_assessment(tmp_path: Path) -> None:
-    """A second assessment must not hide a conflicting rating behind the first one."""
+@pytest.mark.parametrize(
+    "response_text",
+    [
+        pytest.param(
+            "## Reviewer Assessment\n\nRating: 1\nRationale: Looks clean.\n\n"
+            "## Reviewer Assessment\n\nRating: 5/5\nRationale: Conflicting.\n",
+            id="duplicate-assessment",
+        ),
+        pytest.param(
+            "**Reviewer Assessment**\n\nRating: 1\nRationale: Retained response.\n", id="bold-heading-rating-1"
+        ),
+        pytest.param(
+            "**Reviewer Assessment**\n\nRating: 4\nRationale: Retained response.\n", id="bold-heading-rating-4"
+        ),
+    ],
+)
+def test_retained_reviewer_rating_rejects_noncanonical_assessment(tmp_path: Path, response_text: str) -> None:
+    """A completed reviewer output certifies its rating only through one canonical assessment heading.
+
+    Two failure shapes are covered: a second assessment section that would hide a conflicting rating behind the
+    first one, and an equivalent bold "incomplete-original" heading that is never accepted for a completed reviewer
+    output whatever rating it carries.
+    """
     spec = importlib.util.spec_from_file_location("rating_validator", SKILL / "validate_artifacts.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     response = tmp_path / "response.md"
-    response.write_text(
-        "## Reviewer Assessment\n\nRating: 1\nRationale: Looks clean.\n\n"
-        "## Reviewer Assessment\n\nRating: 5/5\nRationale: Conflicting.\n",
-        encoding="utf-8",
-        newline="\n",
-    )
+    response.write_text(response_text, encoding="utf-8", newline="\n")
     with pytest.raises(SystemExit, match="review-assessment-content-invalid:challenger"):
         module._retained_reviewer_rating(response, local_reviewer_wave=False, main=False, role="challenger")
 
 
 @pytest.mark.parametrize(
-    "assessment, expected",
+    ("assessment", "expected"),
     [
         pytest.param("Rating: 2\nRationale: One obligation remains.", 2, id="canonical-lines"),
         pytest.param("Rating: 2. Rationale: One obligation remains.", 2, id="same-sentence"),
@@ -3483,22 +3957,6 @@ def test_inline_metadata_assessment_requires_validated_batch_profile(
             )
 
 
-@pytest.mark.parametrize("rating", [1, 4])
-def test_completed_reviewer_rating_still_requires_canonical_heading(tmp_path: Path, rating: int) -> None:
-    """An equivalent incomplete-original heading never certifies a completed reviewer output."""
-    spec = importlib.util.spec_from_file_location("completed_rating_validator", SKILL / "validate_artifacts.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    response = tmp_path / "response.md"
-    response.write_text(
-        f"**Reviewer Assessment**\n\nRating: {rating}\nRationale: Retained response.\n",
-        encoding="utf-8",
-        newline="\n",
-    )
-    with pytest.raises(SystemExit, match="review-assessment-content-invalid:challenger"):
-        module._retained_reviewer_rating(response, local_reviewer_wave=False, main=False, role="challenger")
-
-
 def test_pr_pass_import_proof_rejects_missing_test_origins(tmp_path: Path) -> None:
     """A passing PR test gate must prove selected test files came from the reviewed tree."""
     spec = importlib.util.spec_from_file_location("pr_proof_validator", SKILL / "validate_artifacts.py")
@@ -3568,22 +4026,31 @@ def test_assemble_rejects_changed_preparation_semantics(tmp_path: Path, file_nam
     assert not (run / "specialist-manifest.json").exists()
 
 
-@pytest.mark.parametrize(
-    "problem, expected",
-    [
-        pytest.param("missing-child", "review-child-session-not-unique", id="missing-child"),
-        pytest.param("wrong-receipt", "review-inspection-context-read-output-mismatch", id="mismatched-read-receipt"),
-        pytest.param("extra-tool", "review-inspection-context-read-count-mismatch", id="extra-child-tool"),
-        pytest.param("wrong-model", "provenance-role-model-policy-mismatch", id="wrong-child-model"),
-        pytest.param("wrong-output", "review-inspection-parent-join-missing", id="wrong-joined-output"),
-        pytest.param("interrupted-launches", "review-inspection-dispatch-interrupted", id="interrupted-wave"),
-    ],
-)
 def test_assemble_rejects_unbound_or_incomplete_wave(
-    tmp_path: Path, problem: str, expected: str, text_newline_default: None
+    tmp_path: Path, subtests: pytest.Subtests, text_newline_default: None
 ) -> None:
-    """Reject plausible rollout tampering instead of accepting a fabricated pass."""
+    """Reject plausible rollout tampering instead of accepting a fabricated pass.
+
+    Every tampering alters the same assembled native wave, so that wave is built once per newline default and each
+    tampering runs as an independent subtest from a byte-exact restore of it.
+    """
     run, home, children = _assembly_evidence(tmp_path)
+    assembled = _tree_state(tmp_path)
+    for case, problem, expected in [
+        ("missing-child", "missing-child", "review-child-session-not-unique"),
+        ("mismatched-read-receipt", "wrong-receipt", "review-inspection-context-read-output-mismatch"),
+        ("extra-child-tool", "extra-tool", "review-inspection-context-read-count-mismatch"),
+        ("wrong-child-model", "wrong-model", "provenance-role-model-policy-mismatch"),
+        ("wrong-joined-output", "wrong-output", "review-inspection-parent-join-missing"),
+        ("interrupted-wave", "interrupted-launches", "review-inspection-dispatch-interrupted"),
+    ]:
+        with subtests.test(case=case):
+            _restore_tree(tmp_path, assembled)
+            _check_unbound_wave_rejected(run, home, children, problem, expected)
+
+
+def _check_unbound_wave_rejected(run: Path, home: Path, children: dict[str, Path], problem: str, expected: str) -> None:
+    """Tamper with one child or parent rollout and require assembly to refuse without promoting outputs."""
     child = children["challenger"]
     rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
     parent = home / "sessions" / "rollout-parent.jsonl"
@@ -3641,14 +4108,14 @@ def test_assemble_rejects_unbound_or_incomplete_wave(
 
 
 @pytest.mark.parametrize(
-    "page, expected_body",
-    [pytest.param(1, b"\r\n" * 3000, id="crlf-page"), pytest.param(2, "é".encode("utf-8"), id="utf8-tail")],
+    ("page", "expected_body"),
+    [pytest.param(1, b"\r\n" * 3000, id="crlf-page"), pytest.param(2, "é".encode(), id="utf8-tail")],
 )
 def test_context_reader_preserves_native_stdout_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, page: int, expected_body: bytes
 ) -> None:
     """Dispatch and native stdout preserve frozen CRLF and Unicode across a byte boundary."""
-    content = b"\r\n" * 3000 + "é".encode("utf-8")
+    content = b"\r\n" * 3000 + "é".encode()
     (tmp_path / "context.md").write_bytes(content)
     plan = tmp_path / "inspection-plan.json"
     plan.write_text(

@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+#: Plugin root directory (two levels above the package), used to locate .claude-plugin/plugin.json for the version.
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -37,7 +38,7 @@ def _read_version() -> str:
     try:
         manifest = _PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
         return str(json.loads(manifest.read_text()).get("version", "?"))
-    except Exception:  # noqa: BLE001 - version lookup must never break import
+    except Exception:
         return "?"
 
 

@@ -49,10 +49,13 @@ from typing import Any
 
 from _package_identity import verify_package
 
-
+#: Root directory of the codex-rig plugin package, derived from this script's location.
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+#: Location of the generated package-manifest.json that this script writes or checks.
 MANIFEST_PATH = PACKAGE_ROOT / "package-manifest.json"
+#: Location of the plugin's own .codex-plugin/plugin.json manifest.
 PLUGIN_MANIFEST_PATH = PACKAGE_ROOT / ".codex-plugin" / "plugin.json"
+#: Identifiers of the workflow skills the package must ship, each with a skills/<id>/SKILL.md file.
 WORKFLOW_SKILLS = (
     "agent-shims",
     "challenge-resolve",
@@ -70,6 +73,7 @@ WORKFLOW_SKILLS = (
     "research",
     "sync",
 )
+#: Identifiers of the roles the package must ship, each with a roles/<id>/ROLE.md card.
 ROLE_IDS = (
     "challenger",
     "cicd-steward",
@@ -87,8 +91,11 @@ ROLE_IDS = (
     "sw-engineer",
     "web-explorer",
 )
+#: Role card frontmatter keys that must be non-empty and are recorded as the role's runtime settings.
 RUNTIME_KEYS = ("model", "model_reasoning_effort", "approval_policy", "sandbox_mode")
+#: Directory names skipped when inventorying package files (caches and generated report folders).
 EXCLUDED_PARTS = frozenset({"__pycache__", ".pytest_cache", ".reports"})
+#: File names skipped when inventorying package files, including the manifest that records the inventory.
 EXCLUDED_FILES = frozenset({".coverage", "package-manifest.json"})
 
 

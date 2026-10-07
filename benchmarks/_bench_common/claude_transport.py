@@ -9,21 +9,20 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 try:  # imported as a package member (benchmarks._bench_common.claude_transport)
     from .process_group import NEW_PROCESS_GROUP, terminate_process_group
 except ImportError:  # loaded standalone by file path; the benchmarks dir is on sys.path
     from _bench_common.process_group import NEW_PROCESS_GROUP, terminate_process_group
 
-# Short tier name → concrete model id, shared by the agentic and real-codebase runners.
+#: Short tier name → concrete model id, shared by the agentic and real-codebase runners.
 MODELS: dict[str, str] = {
     "haiku": "claude-haiku-4-5",
     "sonnet": "claude-sonnet-5",
     "opus": "claude-opus-5",
 }
 
-# Per-model wall-clock timeout (seconds). Opus needs more time for complex reasoning.
+#: Per-model wall-clock timeout (seconds). Opus needs more time for complex reasoning.
 MODEL_TIMEOUT: dict[str, int] = {"haiku": 210, "sonnet": 420, "opus": 600}
 
 
@@ -82,9 +81,9 @@ class StreamOutcome:
     """Result of :func:`stream_claude` — mechanics only; callers map to their own run dataclass."""
 
     elapsed_s: float = 0.0
-    returncode: Optional[int] = None  # process exit code (negative → killed by signal)
+    returncode: int | None = None  # process exit code (negative → killed by signal)
     stderr: str = ""  # captured stderr, only when the process was waited on cleanly
-    error: Optional[str] = None  # message from an unexpected exception (not a timeout)
+    error: str | None = None  # message from an unexpected exception (not a timeout)
     exc_timeout: bool = False  # True when proc.wait() raised TimeoutExpired
 
 
@@ -95,7 +94,7 @@ def stream_claude(
     cwd: Path | str,
     env: dict[str, str],
     on_event: Callable[[dict, float], None],
-    update_fn: Optional[Callable[[float], None]] = None,
+    update_fn: Callable[[float], None] | None = None,
 ) -> StreamOutcome:
     """Run a ``claude -p`` stream-json subprocess: kill-timer, line-by-line event parse, timing.
 
@@ -123,7 +122,7 @@ def stream_claude(
     last_update = 0.0
     proc = None
     try:
-        proc = subprocess.Popen(
+        proc = subprocess.Popen(  # noqa: S603 - argv list, no shell
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -138,7 +137,8 @@ def stream_claude(
         kill_timer = threading.Timer(timeout, terminate_process_group, args=(proc,))
         kill_timer.start()
         try:
-            assert proc.stdout is not None
+            if proc.stdout is None:
+                raise RuntimeError("proc.stdout must not be None")
             for raw_line in proc.stdout:
                 ts = time.monotonic()
                 line = raw_line.strip()
@@ -162,7 +162,7 @@ def stream_claude(
         if proc is not None:
             proc.kill()
         outcome.exc_timeout = True
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         outcome.error = str(exc)[:300]
     finally:
         outcome.elapsed_s = time.monotonic() - t0

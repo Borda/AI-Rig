@@ -138,7 +138,7 @@ from pathlib import Path, PurePath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from extract_code_blocks import iter_md_files, parse_blocks  # noqa: E402
+from extract_code_blocks import iter_md_files, parse_blocks
 
 #: Plugins that ship a blueprint manifest. ``codemap-py`` is excluded on purpose: its
 #: hooks are Python-only by contract, so it ships no Node PreToolUse hook to consume one.
@@ -146,9 +146,12 @@ TARGET_PLUGINS: tuple[str, ...] = ("cc_foundry", "cc_oss", "cc_develop", "cc_res
 
 #: Subtrees walked for Markdown inside each plugin, plus the plugin-root files.
 SCAN_SUBDIRS: tuple[str, ...] = ("skills", "agents", "rules")
+#: Plugin-root files, in addition to the scanned subdirectories, that are included in the manifest.
 SCAN_ROOT_FILES: tuple[str, ...] = ("CLAUDE.md",)
 
+#: File name of the generated manifest, written inside each plugin directory.
 MANIFEST_NAME = "blueprint-manifest.json"
+#: Schema revision stored in the manifest's ``schema`` field.
 SCHEMA_VERSION = 1
 
 #: Commands that are destructive enough that no auto-allow is ever warranted.
@@ -180,13 +183,17 @@ DEFERRING_COMMANDS: frozenset[str] = frozenset(
 )
 #: git subcommands that mutate history, a remote, or the working tree.
 GIT_DANGER_TOKENS: frozenset[str] = frozenset({"push", "commit", "reset", "revert"})
+#: Force-push style flags that mark a git command as dangerous when present.
 GIT_FORCE_TOKENS: frozenset[str] = frozenset({"--force", "--force-with-lease", "-f"})
 
+#: Matches a leading ``NAME=value`` environment assignment that precedes the real command word.
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+#: Characters that split a shell line into separate commands: ``;``, ``&``, ``|`` and newline.
 _SEGMENT_SEPARATORS = ";&|\n"
 
 # Guard against pathological inputs that would exhaust heap memory when read in one
 # shot. 10 MB is well above any realistic Markdown file.
+#: Files larger than this many bytes (10 MiB) are skipped when scanning.
 _MAX_FILE_SIZE = 10 * 1024 * 1024
 
 

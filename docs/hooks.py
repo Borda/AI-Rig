@@ -32,6 +32,7 @@ from mkdocs.config.defaults import MkDocsConfig
 from mkdocs.structure.files import File, Files, InclusionLevel
 from mkdocs.structure.pages import Page
 
+#: Matches a snippet include line that embeds a plugin README and captures the README path.
 _README_INCLUDE = re.compile(r'^--8<-- "(plugins/[^"\n]+/README\.md)"\s*$', re.MULTILINE)
 _sources: dict[str, Path] = {}
 _published: dict[Path, File] = {}
@@ -143,6 +144,7 @@ def on_page_markdown(markdown: str, page: Page, config: MkDocsConfig, files: Fil
     return markdown
 
 
+#: JSON-LD structured data block inserted before the closing head tag of generated pages.
 _SCHEMA_JSON_LD = """\
 <script type="application/ld+json">
   {

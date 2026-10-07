@@ -41,24 +41,29 @@ import json
 import re
 import subprocess
 import sys
-
-import fire
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import fire
+
+#: GitHub repository (owner/name) whose closed issues are mined for tasks.
 REPO = "Lightning-AI/pytorch-lightning"
+#: Web URL of the mined repository, used to build issue and pull request links.
 REPO_URL = f"https://github.com/{REPO}"
+#: Default file the generated task suite is written to.
 DEFAULT_OUTPUT = Path(__file__).parent / "tasks-oss.json"
 
+#: Maximum characters of an issue body copied into a task prompt.
 PROMPT_BODY_LIMIT = 1200
 
-# Titles that carry no actionable signal -> skip the issue.
+#: Titles that carry no actionable signal -> skip the issue.
 GENERIC_TITLES = {"bug", "question", "help", "feature request", "feature", "issue", "error"}
 
-# How many closed issues to fetch per qualifying task wanted. Issues that fail the
-# merged-PR / file-count filters are common, so we over-fetch.
+#: How many closed issues to fetch per qualifying task wanted. Issues that fail the
+#: merged-PR / file-count filters are common, so we over-fetch.
 FETCH_MULTIPLIER = 12
+#: Minimum number of closed issues to fetch, however few tasks are requested.
 FETCH_FLOOR = 60
 
 
@@ -123,8 +128,8 @@ def _run_gh(args: list[str], *, timeout: int = 60) -> str:
         GenerationError: If ``gh`` is missing, times out, or exits non-zero.
     """
     try:
-        proc = subprocess.run(
-            ["gh", *args],
+        proc = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["gh", *args],  # noqa: S607 - git/tool resolved via PATH on purpose
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -378,7 +383,7 @@ def difficulty_for(file_count: int) -> str:
     """
     if file_count <= 1:
         return "simple"
-    if file_count <= 3:  # noqa: PLR2004 - inline difficulty boundary documented in docstring
+    if file_count <= 3:
         return "medium"
     return "hard"
 

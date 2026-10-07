@@ -1,19 +1,14 @@
 """Turn one source file into its index entry, orchestrating every other extractor."""
 
 from __future__ import annotations
+
 import ast
 import sys
 from pathlib import Path
 
 from . import discovery
 from .calls import extract_symbols
-from .discovery import (
-    _TEST_PATH_RE,
-    _classify_entity,
-    _count_loc_and_main_guard,
-    _package_src_root,
-    path_to_module,
-)
+from .discovery import _TEST_PATH_RE, _classify_entity, _count_loc_and_main_guard, _package_src_root, path_to_module
 from .docs_xrefs import extract_sphinx_xrefs
 from .imports import (
     _extract_imports_and_scope,

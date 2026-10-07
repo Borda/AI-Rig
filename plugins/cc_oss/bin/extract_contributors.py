@@ -41,10 +41,14 @@ import subprocess
 import sys
 from shutil import which
 
+#: Matches the ``[bot]`` suffix GitHub puts on bot account names.
 _BOT_LOGIN_RE = re.compile(r"\[bot\]", re.IGNORECASE)
+#: Matches ``noreply`` addresses, which identify automated or anonymised authors.
 _NOREPLY_RE = re.compile(r"noreply", re.IGNORECASE)
+#: Parses a ``Name <email>`` line into its name and email groups.
 _LINE_RE = re.compile(r"^(?P<name>.*?)\s*<(?P<email>[^>]+)>\s*$")
 
+#: ``git log --format`` string emitting each commit's author followed by its Co-authored-by trailer values.
 _GIT_FORMAT = "%aN <%aE>%n%(trailers:key=Co-authored-by,valueonly)"
 
 

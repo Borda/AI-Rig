@@ -270,7 +270,8 @@ def test_writer_blocks_later_readers(index: Path, tmp_path: Path, eventlog: str)
     ev = _events(eventlog)
     exit_pos = _pos(ev, "writer_exclusive_exit")
     open_positions = [i for i, e in enumerate(ev) if e["event"] == "index_open"]
-    assert open_positions and min(open_positions) > exit_pos, "a later reader opened before the writer released"
+    assert open_positions, "a later reader opened before the writer released"
+    assert min(open_positions) > exit_pos, "a later reader opened before the writer released"
 
 
 def test_no_index_open_during_exclusive_phase(index: Path, tmp_path: Path, eventlog: str) -> None:
@@ -447,7 +448,8 @@ def test_single_registry_handle_serializes_in_process(index: Path) -> None:
             order.append("b_in")
     release.set()
     ta.join(5.0)
-    assert "b_in" not in order and order == ["a_in", "a_out"]
+    assert "b_in" not in order
+    assert order == ["a_in", "a_out"]
     # sequential reacquire reuses the single per-process handle
     with reg.mutex(time.monotonic() + 5.0):
         pass
@@ -462,7 +464,7 @@ def _run_in_fork(child) -> int:
         code = 0
         try:
             child()
-        except BaseException:  # noqa: BLE001 - any failure → nonzero child exit
+        except BaseException:
             code = 1
         os._exit(code)
     _, status = os.waitpid(pid, 0)

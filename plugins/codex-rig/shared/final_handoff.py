@@ -49,11 +49,15 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-
+#: Schema revision of the final-handoff JSON document.
 SCHEMA_VERSION = 1
+#: Identifiers of the verification gates, in the order a handoff must report them.
 GATE_IDS = ("lint", "format", "types", "tests", "review")
+#: Allowed result statuses for a verification gate.
 GATE_STATUSES = {"pass", "fail", "missing-command", "not-applicable", "timeout"}
+#: Allowed closure statuses for a confidence gap listed in a handoff.
 GAP_STATUSES = {"closed", "unresolved", "deferred"}
+#: Required column headings of the challenge-resolve handoff table, with one column per severity tier.
 CHALLENGE_SEVERITY_COLUMNS = (
     "Challenge",
     "Security",
@@ -66,7 +70,9 @@ CHALLENGE_SEVERITY_COLUMNS = (
     "Decision",
     "Evidence",
 )
+#: Column headings of the older challenge-resolve table layout, still accepted so earlier handoffs stay readable.
 LEGACY_CHALLENGE_COLUMNS = ("Iteration", "Open findings", "Weighted score", "Decision", "Evidence")
+#: Required table column headings for each skill's handoff table.
 STANDARD_COLUMNS = {
     "challenge-resolve": CHALLENGE_SEVERITY_COLUMNS,
     "audit": ("Item", "Severity / impact", "Decision", "Evidence", "Next action"),
@@ -84,16 +90,21 @@ STANDARD_COLUMNS = {
     "research": ("Recommendation", "Evidence", "Decision", "Caveat / next check"),
     "sync": ("Surface", "Outcome", "Verification", "Remaining limit"),
 }
+#: Skills the handoff renderer and validator accept: every standard-table skill plus code-review.
 SUPPORTED_SKILLS = frozenset((*STANDARD_COLUMNS, "code-review"))
+#: Allowed overall recommendations for a code-review handoff.
 REVIEW_RECOMMENDATIONS = frozenset({"accept-as-is", "minor-changes", "needs-more-work", "reject", "not-aligned"})
+#: Required column headings for each named table in a code-review handoff.
 REVIEW_TABLE_COLUMNS = {
     "PR Snapshot": ("Field", "Value"),
     "Review Snapshot": ("Field", "Value"),
     "Review Findings and Merge Blocks": ("Finding / area", "Required change", "Evidence", "Status"),
 }
+#: Legend line printed under the reviewers row to explain the 1-5 rating scale.
 REVIEWER_LEGEND = (
     "Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject."
 )
+#: Exact set of top-level fields a handoff document must contain.
 HANDOFF_FIELDS = {
     "schema_version",
     "skill",
@@ -109,7 +120,9 @@ HANDOFF_FIELDS = {
     "artifacts",
     "caller_contract",
 }
+#: Current presentation layout revision for rendered handoffs, written into new handoff documents.
 PRESENTATION_VERSION = 3
+#: One-sentence plain-English summary shown for each code-review recommendation.
 REVIEW_PLAIN_SUMMARIES = {
     "accept-as-is": "This review found no blocking change requests.",
     "minor-changes": "This review can proceed after minor changes.",

@@ -1,8 +1,10 @@
 """Record types for one parsed symbol and one call edge."""
 
 from __future__ import annotations
+
 import ast
 from dataclasses import dataclass
+
 from codemap_py.schema import Resolution, SymbolType
 
 
@@ -52,6 +54,7 @@ class Symbol:
         }
 
 
+#: Maximum characters kept from a docstring's first line in the index.
 _DOCSTRING_FIRST_LINE_MAX = 80
 
 

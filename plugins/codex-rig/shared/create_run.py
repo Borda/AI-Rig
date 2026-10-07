@@ -48,10 +48,13 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-
+#: Pattern for a valid skill id: lowercase words joined by single hyphens.
 SKILL_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+#: Pattern for a timestamp-named run directory, which is the only kind eligible for promotion.
 TIMESTAMP_RUN_ID = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{6}Z\Z")
+#: Pattern for a promoted `run-NNN` directory name; the capture group is its sequence number.
 PROMOTED_RUN_ID = re.compile(r"run-(\d{3,})\Z")
+#: Number of attempts to claim the next `run-NNN` name before promotion gives up.
 PROMOTION_RETRIES = 100
 
 

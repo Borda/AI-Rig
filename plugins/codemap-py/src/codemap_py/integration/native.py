@@ -1,6 +1,7 @@
 """Observe the host CLIs and installed plugin state without mutating anything."""
 
 from __future__ import annotations
+
 import hashlib
 import json
 import os
@@ -8,23 +9,28 @@ import shutil
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+
 from .managed_block import _CODEX_RIG_AGENTS_BEGIN_RE, _CODEX_RIG_AGENTS_END
-from .types import IntegrationError, MARKETPLACE_NAME, Runtime
+from .types import MARKETPLACE_NAME, IntegrationError, Runtime
 from .util import _MAX_JSON_BYTES, _sha256_bytes
 
-
+#: Timeout in seconds for each native plugin CLI subprocess call.
 _NATIVE_TIMEOUT_S = 30
 
 
+#: Maximum number of files hashed when fingerprinting the provider plugin's identity.
 _MAX_PROVIDER_IDENTITY_FILES = 2_048
 
 
+#: Maximum total bytes hashed when fingerprinting the provider plugin's identity.
 _MAX_PROVIDER_IDENTITY_BYTES = 8 * _MAX_JSON_BYTES
 
 
+#: Chunk size in bytes used when streaming files into the identity hash.
 _IDENTITY_READ_CHUNK_BYTES = 64 * 1_024
 
 
+#: Plugin subdirectories whose files contribute to the provider identity fingerprint.
 _PROVIDER_IDENTITY_DIRS = (
     ".claude-plugin",
     ".codex-plugin",
@@ -38,14 +44,17 @@ _PROVIDER_IDENTITY_DIRS = (
 )
 
 
+#: Top-level plugin documents that also contribute to the provider identity fingerprint.
 _PROVIDER_IDENTITY_DOCS = ("README.md", "LICENSE", "NOTICE", "CHANGELOG.md")
 
 
+#: Path components that exclude a file from the provider identity fingerprint (caches, tests, local state).
 _PROVIDER_IDENTITY_EXCLUDED_PARTS = frozenset(
     {"__pycache__", ".cache", ".reports", ".temp", ".pytest_cache", ".claude", "tests"}
 )
 
 
+#: Characters that make an argument unsafe to pass through a Windows .bat or .cmd launcher.
 _WINDOWS_BATCH_METACHARACTERS = frozenset('&|<>^()%!"')
 
 
@@ -90,7 +99,7 @@ def _run_native(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
     """Run one resolved native command (argv-only; Windows batch launchers quoted safely)."""
     resolved, shell = _resolve_native_command(argv, windows=os.name == "nt")
     try:
-        return subprocess.run(
+        return subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
             resolved,
             shell=shell,
             capture_output=True,
@@ -125,7 +134,7 @@ def _native_json_probe(argv: Sequence[str]) -> object | None:
     except IntegrationError:
         return None
     try:
-        completed = subprocess.run(
+        completed = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
             resolved,
             shell=shell,
             capture_output=True,

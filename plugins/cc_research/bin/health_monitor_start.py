@@ -29,6 +29,7 @@ import tempfile
 import time
 from pathlib import Path
 
+#: Allowed shape of a skill id: letters, digits, underscore and hyphen only.
 _SKILL_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
@@ -38,7 +39,7 @@ def _sentinel_dir() -> Path:
     Mirrors JS ``getSentinelDir()`` so sentinel paths match hook expectations on all platforms while preserving the
     existing ``/tmp`` path on POSIX.
     """
-    return Path(tempfile.gettempdir()) if sys.platform == "win32" else Path("/tmp")
+    return Path(tempfile.gettempdir()) if sys.platform == "win32" else Path("/tmp")  # noqa: S108 - POSIX temp root; sentinels are session-scoped
 
 
 def main(argv: list[str] | None = None) -> int:

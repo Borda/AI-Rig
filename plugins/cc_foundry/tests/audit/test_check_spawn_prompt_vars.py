@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import check_spawn_prompt_vars as cspv
+import pytest
 
 
 def _file(tmp_path: Path, content: str, name: str = "SKILL.md") -> Path:
@@ -37,10 +36,48 @@ def _file(tmp_path: Path, content: str, name: str = "SKILL.md") -> Path:
 class TestCheckFile:
     """Covers check_file() violation detection."""
 
-    def test_clean_no_markdown_blocks(self, tmp_path: Path) -> None:
-        """File with no markdown blocks has no violations."""
-        f = _file(tmp_path, "```bash\n$_FOUNDRY_SHARED/foo.md\n```\n")
-        assert cspv.check_file(f) == []
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param("```bash\n$_FOUNDRY_SHARED/foo.md\n```\n", id="no-markdown-block"),
+            pytest.param("```markdown\nWrite to $RUN_DIR/out.md\n```\n", id="caller-substituted-var"),
+            pytest.param("```markdown\nProcess $ARGUMENTS\n```\n", id="runtime-injected-arguments"),
+            pytest.param("```markdown\nWrite to <RUN_DIR>/out.md\n```\n", id="angle-bracket-template"),
+            pytest.param(
+                "Prose with $_FOUNDRY_SHARED.\n```bash\necho $_FOUNDRY_SHARED\n```\n", id="var-outside-markdown-block"
+            ),
+            # Class 1: a bare $VAR is suppressed when the same file uses ${VAR:-default} anywhere.
+            pytest.param(
+                "```bash\n_IDX=${CODEMAP_INDEX_DIR:-/x}\n```\n```markdown\nread $CODEMAP_INDEX_DIR/y\n```\n",
+                id="default-form-elsewhere-in-file",
+            ),
+            # Class 2: a $VAR documented as an env var name is not orchestrator payload.
+            pytest.param("```markdown\nRemove; use env var `$MY_KEY` instead\n```\n", id="env-var-phrase"),
+            # Class 3: a substitute/expand/replace directive naming the token suppresses it.
+            pytest.param(
+                "Block header: expand `${PROGRAM_PATH}` before passing.\n"
+                "```markdown\nRead the program at ${PROGRAM_PATH}.\n```\n",
+                id="directive-before-block",
+            ),
+            pytest.param(
+                "```markdown\nRead `<MANAGE_TPL>/x.md` (substitute resolved `$MANAGE_TPL`).\n```\n",
+                id="directive-inside-block",
+            ),
+            # Class 4: $VAR inside a [...] editorial span is an orchestrator instruction.
+            pytest.param(
+                "```markdown\n[Continue with section template from $TEMPLATE_FILE]\n```\n",
+                id="square-bracket-editorial",
+            ),
+        ],
+    )
+    def test_text_without_unexpanded_var_has_no_findings(self, tmp_path: Path, content: str) -> None:
+        """Variables that need no caller expansion, and non-markdown text, are never flagged.
+
+        Covers a file with no markdown block, caller-substituted and runtime-injected names, ``<VAR>`` templates, a
+        ``$VAR`` outside markdown fences, and the suppression classes: a ``${VAR:-default}`` form elsewhere in the file,
+        a documented env var name, a substitute directive (before or inside the block) and a ``[...]`` editorial span.
+        """
+        assert cspv.check_file(_file(tmp_path, content)) == []
 
     def test_dollar_var_in_markdown_block_flagged(self, tmp_path: Path) -> None:
         """$VAR inside markdown block is flagged C42."""
@@ -58,30 +95,6 @@ class TestCheckFile:
         f = _file(tmp_path, content)
         findings = cspv.check_file(f)
         assert any("_FOUNDRY_SHARED" in x for x in findings)
-
-    def test_caller_substituted_var_not_flagged(self, tmp_path: Path) -> None:
-        """Known caller-substituted vars like $RUN_DIR are not flagged."""
-        content = "```markdown\nWrite to $RUN_DIR/out.md\n```\n"
-        f = _file(tmp_path, content)
-        assert cspv.check_file(f) == []
-
-    def test_arguments_not_flagged(self, tmp_path: Path) -> None:
-        """$ARGUMENTS is a valid runtime-injected var — not flagged."""
-        content = "```markdown\nProcess $ARGUMENTS\n```\n"
-        f = _file(tmp_path, content)
-        assert cspv.check_file(f) == []
-
-    def test_angle_bracket_template_not_flagged(self, tmp_path: Path) -> None:
-        """<VAR> templates (no $) are not flagged."""
-        content = "```markdown\nWrite to <RUN_DIR>/out.md\n```\n"
-        f = _file(tmp_path, content)
-        assert cspv.check_file(f) == []
-
-    def test_dollar_var_outside_markdown_block_not_flagged(self, tmp_path: Path) -> None:
-        """$VAR in prose or bash blocks outside markdown fences is not flagged."""
-        content = "Prose with $_FOUNDRY_SHARED.\n```bash\necho $_FOUNDRY_SHARED\n```\n"
-        f = _file(tmp_path, content)
-        assert cspv.check_file(f) == []
 
     def test_same_var_reported_once_per_block(self, tmp_path: Path) -> None:
         """Same var on multiple lines in one block yields one finding."""
@@ -135,43 +148,10 @@ class TestSuppressionClasses:
         f = _file(tmp_path, content)
         assert cspv.check_file(f) == []
 
-    def test_default_form_elsewhere_suppresses_bare_occurrence(self, tmp_path: Path) -> None:
-        """Bare $VAR is suppressed when the same file uses ${VAR:-default} anywhere (class 1)."""
-        content = "```bash\n_IDX=${CODEMAP_INDEX_DIR:-/x}\n```\n```markdown\nread $CODEMAP_INDEX_DIR/y\n```\n"
-        f = _file(tmp_path, content)
-        assert cspv.check_file(f) == []
-
     @pytest.mark.parametrize("var", ["TMPDIR", "HOME", "PWD", "CLAUDE_PLUGIN_ROOT"])
     def test_well_known_env_var_not_flagged(self, tmp_path: Path, var: str) -> None:
         """Bare well-known env vars (class 2) resolve in the subagent's own env — not flagged."""
         content = f"```markdown\nread ${var}/thing\n```\n"
-        f = _file(tmp_path, content)
-        assert cspv.check_file(f) == []
-
-    def test_env_var_phrase_placeholder_not_flagged(self, tmp_path: Path) -> None:
-        """A $VAR documented as an env var name (class 2) is not orchestrator payload."""
-        content = "```markdown\nRemove; use env var `$MY_KEY` instead\n```\n"
-        f = _file(tmp_path, content)
-        assert cspv.check_file(f) == []
-
-    def test_substitute_directive_suppresses_var(self, tmp_path: Path) -> None:
-        """A substitute/expand/replace directive naming the token (class 3) suppresses it."""
-        content = (
-            "Block header: expand `${PROGRAM_PATH}` before passing.\n"
-            "```markdown\nRead the program at ${PROGRAM_PATH}.\n```\n"
-        )
-        f = _file(tmp_path, content)
-        assert cspv.check_file(f) == []
-
-    def test_substitute_directive_inside_block_suppresses_var(self, tmp_path: Path) -> None:
-        """Directive line within the block itself (class 3) also suppresses the var."""
-        content = "```markdown\nRead `<MANAGE_TPL>/x.md` (substitute resolved `$MANAGE_TPL`).\n```\n"
-        f = _file(tmp_path, content)
-        assert cspv.check_file(f) == []
-
-    def test_square_bracket_editorial_placeholder_not_flagged(self, tmp_path: Path) -> None:
-        """$VAR inside a [...] editorial span (class 4) is an orchestrator instruction."""
-        content = "```markdown\n[Continue with section template from $TEMPLATE_FILE]\n```\n"
         f = _file(tmp_path, content)
         assert cspv.check_file(f) == []
 
@@ -202,15 +182,17 @@ class TestContextHelpers:
 class TestMain:
     """Covers main() CLI integration."""
 
-    def test_clean_file_exits_zero(self, tmp_path: Path) -> None:
-        """All-clean files produce exit code 0."""
-        _file(tmp_path, "```bash\necho hi\n```\n")
-        assert cspv.main(["--scan-dir", str(tmp_path)]) == 0
-
-    def test_violation_exits_one(self, tmp_path: Path) -> None:
-        """File with unexpanded var produces exit code 1."""
-        _file(tmp_path, "```markdown\nRead $_FOUNDRY_SHARED/x.md\n```\n")
-        assert cspv.main(["--scan-dir", str(tmp_path)]) == 1
+    @pytest.mark.parametrize(
+        ("content", "expected"),
+        [
+            pytest.param("```bash\necho hi\n```\n", 0, id="clean-file"),
+            pytest.param("```markdown\nRead $_FOUNDRY_SHARED/x.md\n```\n", 1, id="unexpanded-var"),
+        ],
+    )
+    def test_scan_dir_exit_code_mirrors_findings(self, tmp_path: Path, content: str, expected: int) -> None:
+        """A scanned tree exits 0 when clean and 1 when a markdown block holds an unexpanded variable."""
+        _file(tmp_path, content)
+        assert cspv.main(["--scan-dir", str(tmp_path)]) == expected
 
     def test_explicit_file_arg(self, tmp_path: Path) -> None:
         """Explicit file path argument is checked."""

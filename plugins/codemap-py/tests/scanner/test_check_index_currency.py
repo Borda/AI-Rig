@@ -81,25 +81,29 @@ class TestResult:
         assert code == 0
         assert r["status"] == "current"
 
-    def test_stale_exit_1(self) -> None:
-        """Map to exit code 1."""
-        _, code = cic._result("stale", "changed")
-        assert code == 1
+    @pytest.mark.parametrize(
+        ("status", "reason", "expected_code"),
+        [
+            pytest.param("stale", "changed", 1, id="stale-exit-1"),
+            pytest.param("no_index", "missing", 2, id="no-index-exit-2"),
+        ],
+    )
+    def test_status_maps_to_documented_exit_code(self, status: str, reason: str, expected_code: int) -> None:
+        """Map a stale or missing-index status to its documented exit code."""
+        _, code = cic._result(status, reason)
+        assert code == expected_code
 
-    def test_no_index_exit_2(self) -> None:
-        """Map a missing-index status to the documented exit code."""
-        _, code = cic._result("no_index", "missing")
-        assert code == 2
-
-    def test_changed_count_default_zero(self) -> None:
-        """changed_count defaults to 0."""
-        r, _ = cic._result("current", "ok")
-        assert r["changed_count"] == 0
-
-    def test_changed_count_passed_through(self) -> None:
-        """changed_count is stored in result dict."""
-        r, _ = cic._result("stale", "x", 5)
-        assert r["changed_count"] == 5
+    @pytest.mark.parametrize(
+        ("args", "expected_count"),
+        [
+            pytest.param(("current", "ok"), 0, id="default-zero"),
+            pytest.param(("stale", "x", 5), 5, id="passed-through"),
+        ],
+    )
+    def test_changed_count(self, args: tuple, expected_count: int) -> None:
+        """changed_count defaults to 0 and is stored in the result dict when given."""
+        r, _ = cic._result(*args)
+        assert r["changed_count"] == expected_count
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +142,7 @@ class TestParseScannedAt:
     """Tests for ``_parse_scanned_at``."""
 
     @pytest.mark.parametrize(
-        "value,expected",
+        ("value", "expected"),
         [
             pytest.param(
                 "2026-01-15T12:30:00Z",
@@ -193,21 +197,22 @@ class TestReadIndex:
         result = cic._read_index(p)
         assert result == {"a": 1}
 
-    def test_corrupt_json(self, tmp_path: Path) -> None:
-        """Corrupt JSON returns None."""
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param("{not json}", id="corrupt-json"),
+            pytest.param("[1, 2, 3]", id="json-list-not-dict"),
+        ],
+    )
+    def test_non_dict_or_corrupt_content_returns_none(self, tmp_path: Path, content: str) -> None:
+        """Corrupt JSON and a JSON array (not a dict) both return None."""
         p = tmp_path / "idx.json"
-        p.write_text("{not json}")
+        p.write_text(content)
         assert cic._read_index(p) is None
 
     def test_missing_file(self, tmp_path: Path) -> None:
         """Missing file returns None."""
         assert cic._read_index(tmp_path / "missing.json") is None
-
-    def test_json_list_not_dict(self, tmp_path: Path) -> None:
-        """JSON array (not dict) returns None."""
-        p = tmp_path / "idx.json"
-        p.write_text("[1, 2, 3]")
-        assert cic._read_index(p) is None
 
     def test_oversized_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """File exceeding size limit returns None."""
@@ -283,7 +288,7 @@ class TestCheckCurrencyTier1:
         """SHA matches but uncommitted .py changes → stale."""
         monkeypatch.setattr(cic, "_git_head", lambda root: SHA_A)
         monkeypatch.setattr(cic, "_git_dirty_py_count", lambda root: 3)
-        r, code = cic.check_currency(index_file, tmp_path)
+        r, _code = cic.check_currency(index_file, tmp_path)
         assert r["status"] == "stale"
         assert r["changed_count"] == 3
 
@@ -306,7 +311,7 @@ class TestCheckCurrencyTier1:
         _write_index(p, _minimal_index())  # no git_sha
         monkeypatch.setattr(cic, "_git_head", lambda root: SHA_A)
         # No file_shas either → stale (old format)
-        r, code = cic.check_currency(p, tmp_path)
+        r, _code = cic.check_currency(p, tmp_path)
         assert r["status"] == "stale"
 
 
@@ -346,7 +351,7 @@ class TestCheckCurrencyTier2:
         self._write_py(tmp_path, "new_module.py")
         p = tmp_path / "idx.json"
         _write_index(p, _minimal_index(file_shas={"existing.py": sha_existing}))
-        r, code = cic.check_currency(p, tmp_path)
+        r, _code = cic.check_currency(p, tmp_path)
         assert r["status"] == "stale"
         assert r["changed_count"] >= 1
 
@@ -354,7 +359,7 @@ class TestCheckCurrencyTier2:
         """File in file_shas but missing on disk → stale."""
         p = tmp_path / "idx.json"
         _write_index(p, _minimal_index(file_shas={"ghost.py": "abc123"}))
-        r, code = cic.check_currency(p, tmp_path)
+        r, _code = cic.check_currency(p, tmp_path)
         assert r["status"] == "stale"
         assert "delete" in r["reason"].lower()
 
@@ -370,7 +375,7 @@ class TestCheckCurrencyTier2:
             p,
             _minimal_index(file_shas={"mod.py": old_sha}, scanned_at="2020-01-01T00:00:00Z"),
         )
-        r, code = cic.check_currency(p, tmp_path)
+        r, _code = cic.check_currency(p, tmp_path)
         assert r["status"] == "stale"
         assert r["changed_count"] >= 1
 
@@ -431,29 +436,30 @@ class TestCheckCurrencyTier2GitBlobs:
         r, code = cic.check_currency(index_file, tmp_path)
         assert (r["status"], code) == ("current", 0)
 
-    def test_stale_when_blob_differs(self, index_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """One rewritten blob SHA → stale, counting only that file."""
-        blobs = {"one.py": self.BLOB_ONE, "two.py": "3" * 40}
+    @pytest.mark.parametrize(
+        ("blobs", "expected_count"),
+        [
+            # One rewritten blob SHA → stale, counting only that file.
+            pytest.param({"one.py": BLOB_ONE, "two.py": "3" * 40}, 1, id="blob-differs"),
+            # A file git reports no blob for counts as changed.
+            pytest.param({"one.py": BLOB_ONE}, 1, id="blob-absent"),
+            # Handle failure by marking every stored file changed rather than assuming current.
+            pytest.param(None, 2, id="git-listing-unavailable"),
+        ],
+    )
+    def test_stale_when_blobs_do_not_match(
+        self,
+        index_file: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        blobs: dict[str, str] | None,
+        expected_count: int,
+    ) -> None:
+        """A rewritten, missing or unlistable git blob SHA → stale, counting only the affected files."""
         monkeypatch.setattr(cic, "_git_blob_shas", lambda root: blobs)
         r, code = cic.check_currency(index_file, tmp_path)
         assert (r["status"], code) == ("stale", 1)
-        assert r["changed_count"] == 1
-
-    def test_stale_when_blob_absent(self, index_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A file git reports no blob for counts as changed."""
-        monkeypatch.setattr(cic, "_git_blob_shas", lambda root: {"one.py": self.BLOB_ONE})
-        r, _ = cic.check_currency(index_file, tmp_path)
-        assert r["status"] == "stale"
-        assert r["changed_count"] == 1
-
-    def test_stale_when_git_listing_unavailable(
-        self, index_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Handle failure by marks every stored file changed rather than assuming current."""
-        monkeypatch.setattr(cic, "_git_blob_shas", lambda root: None)
-        r, _ = cic.check_currency(index_file, tmp_path)
-        assert r["status"] == "stale"
-        assert r["changed_count"] == 2
+        assert r["changed_count"] == expected_count
 
 
 # ---------------------------------------------------------------------------

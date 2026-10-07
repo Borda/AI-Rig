@@ -23,16 +23,21 @@ this correlation and form lifecycle. Cached receipts are process-local and confe
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import json
 import re
 import sys
+from dataclasses import dataclass
 from typing import Any, TextIO
 
+#: MCP protocol revisions the server accepts; an unsupported client request falls back to the last entry.
 PROTOCOLS = ("2025-06-18", "2025-11-25")
+#: Most distinct decisions retained per process; further new decisions fail with a capacity-exhausted error.
 MAX_DECISIONS = 128
+#: Most questions that may await a client answer at once; further new questions fail with a capacity error.
 MAX_PENDING = 16
+#: Longest accepted input line in characters; longer JSON-RPC messages are discarded with a parse error.
 MAX_LINE = 65536
+#: JSON Schema for ask_user arguments, advertised as the tool's input schema and used to reject unknown keys.
 ARGUMENT_SCHEMA = {
     "type": "object",
     "properties": {

@@ -27,7 +27,7 @@ read_variant_name = _mod.read_variant_name
 main = _mod.main
 
 
-@pytest.fixture()
+@pytest.fixture
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
     """Return ``(sentinel_dir, fortify_dir)`` with a fixed session token."""
     sentinels = tmp_path / "sentinels"
@@ -61,33 +61,24 @@ def test_normalise_variant_name(raw: str, expected: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("line", "expected"),
+    ("line", "index", "expected"),
     [
-        ('{"variant_name": "a"}', "a"),
-        ('{"variant_name": null}', ""),
-        ("{}", ""),
-        ("not json", ""),
+        pytest.param('{"variant_name": "a"}', 1, "a", id="ok"),
+        pytest.param('{"variant_name": null}', 1, "", id="null"),
+        pytest.param("{}", 1, "", id="missing-key"),
+        pytest.param("not json", 1, "", id="malformed"),
+        pytest.param('{"variant_name": "a"}', 5, "", id="out-of-range"),
     ],
-    ids=["ok", "null", "missing-key", "malformed"],
 )
-def test_read_variant_name(tmp_path: Path, line: str, expected: str) -> None:
+def test_read_variant_name(tmp_path: Path, line: str, index: int, expected: str) -> None:
+    """The variant name at a 1-based line index, or an empty string when unreadable, null, absent or out of range.
+
+    A well-formed line yields its name. A null name, a missing key and malformed JSON all degrade to an empty string,
+    and so does an index past the last line, which lets the caller report a blocked variant instead of crashing.
+    """
     target = tmp_path / "variants.jsonl"
     target.write_text(line + "\n", encoding="utf-8")
-    assert read_variant_name(target, 1) == expected
-
-
-def test_read_variant_name_out_of_range(tmp_path: Path) -> None:
-    target = tmp_path / "variants.jsonl"
-    target.write_text('{"variant_name": "a"}\n', encoding="utf-8")
-    assert read_variant_name(target, 5) == ""
-
-
-def test_loop_done_when_cursor_past_last(env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]) -> None:
-    sentinels, fortify = env
-    _write_variants(fortify, ["one", "two"])
-    (sentinels / "fortify-variant-idx-testsess").write_text("3\n", encoding="utf-8")
-    assert main(["--", str(fortify)]) == 0
-    assert "FORTIFY_LOOP_DONE=1 — all 2 variants processed" in capsys.readouterr().out
+    assert read_variant_name(target, index) == expected
 
 
 def test_missing_variants_file_is_loop_done(env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]) -> None:
@@ -159,23 +150,31 @@ def test_resume_guard_retries_timeout_status(env: tuple[Path, Path], capsys: pyt
     assert "FORTIFY_SKIP_VARIANT=1" not in capsys.readouterr().out
 
 
-def test_resume_guard_matches_unprefixed_variant_field(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("content", "name", "expected"),
+    [
+        pytest.param(
+            '{"variant":"alpha","status":"completed"}\n', "alpha", True, id="matches-unprefixed-variant-field"
+        ),
+        pytest.param(
+            '{"variant":"alpha","status":"running"}\n{"variant":"beta","status":"completed"}\n',
+            "alpha",
+            False,
+            id="requires-same-line",
+        ),
+        pytest.param('{"variant":"axb","status":"completed"}\n', "a.b", False, id="treats-name-literally"),
+    ],
+)
+def test_resume_guard_is_already_terminal(tmp_path: Path, content: str, name: str, expected: bool) -> None:
+    """The resume guard flags a variant terminal only on its own results line with a terminal status.
+
+    The unprefixed ``variant`` field matches. A terminal status on a different variant's line does not count — status
+    and name must share a line. ``re.escape`` keeps a metacharacter-carrying name (``a.b``) from matching a different
+    variant (``axb``).
+    """
     results = tmp_path / "results.jsonl"
-    results.write_text('{"variant":"alpha","status":"completed"}\n', encoding="utf-8")
-    assert is_already_terminal(results, "alpha") is True
-
-
-def test_resume_guard_requires_same_line(tmp_path: Path) -> None:
-    results = tmp_path / "results.jsonl"
-    results.write_text('{"variant":"alpha","status":"running"}\n{"variant":"beta","status":"completed"}\n', "utf-8")
-    assert is_already_terminal(results, "alpha") is False
-
-
-def test_resume_guard_treats_name_literally(tmp_path: Path) -> None:
-    """``re.escape`` keeps a metacharacter-carrying name from matching a different variant."""
-    results = tmp_path / "results.jsonl"
-    results.write_text('{"variant":"axb","status":"completed"}\n', encoding="utf-8")
-    assert is_already_terminal(results, "a.b") is False
+    results.write_text(content, encoding="utf-8")
+    assert is_already_terminal(results, name) is expected
 
 
 def test_blank_lines_do_not_count_toward_total(env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]) -> None:
@@ -187,9 +186,27 @@ def test_blank_lines_do_not_count_toward_total(env: tuple[Path, Path], capsys: p
     assert "all 1 variants processed" in capsys.readouterr().out
 
 
-def test_corrupt_cursor_falls_back_to_one(env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize(
+    ("names", "cursor", "expected_out"),
+    [
+        pytest.param(
+            ["one", "two"], "3\n", "FORTIFY_LOOP_DONE=1 — all 2 variants processed", id="cursor-past-last-is-loop-done"
+        ),
+        pytest.param(
+            ["alpha"], "not-a-number\n", "→ variant 1/1: variant-alpha", id="corrupt-cursor-falls-back-to-one"
+        ),
+    ],
+)
+def test_cursor_sentinel_drives_loop_position(
+    env: tuple[Path, Path], capsys: pytest.CaptureFixture[str], names: list[str], cursor: str, expected_out: str
+) -> None:
+    """The cursor sentinel decides where the loop resumes.
+
+    A cursor past the last variant ends the loop (``FORTIFY_LOOP_DONE=1``); an unparsable cursor falls back to the first
+    variant.
+    """
     sentinels, fortify = env
-    _write_variants(fortify, ["alpha"])
-    (sentinels / "fortify-variant-idx-testsess").write_text("not-a-number\n", encoding="utf-8")
+    _write_variants(fortify, names)
+    (sentinels / "fortify-variant-idx-testsess").write_text(cursor, encoding="utf-8")
     assert main(["--", str(fortify)]) == 0
-    assert "→ variant 1/1: variant-alpha" in capsys.readouterr().out
+    assert expected_out in capsys.readouterr().out

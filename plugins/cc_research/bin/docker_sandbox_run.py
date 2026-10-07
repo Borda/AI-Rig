@@ -43,15 +43,20 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+#: Docker image every sandbox container runs.
 IMAGE = "python:3.11-slim"
+#: Size of the in-memory /tmp mounted inside the sandbox container, as a docker size string.
 TMPFS_SIZE = "256m"
-TMPFS_MOUNT = f"/tmp:rw,size={TMPFS_SIZE}"
+TMPFS_MOUNT = f"/tmp:rw,size={TMPFS_SIZE}"  # noqa: S108 - mount point inside the container, not a host temp file
+#: Docker network mode used when SANDBOX_NETWORK is unset; none gives the container no network access.
 DEFAULT_NETWORK = "none"
 # Wall-clock cap for one ``docker run``; override via ``SANDBOX_TIMEOUT_SEC``.  The resource
 # quotas below throttle a runaway container but never end it, so this deadline stays the only
 # thing that stops a merely *slow* command.  Callers with their own shorter cap hit theirs first.
+#: Default wall-clock limit in seconds for one docker run, overridable with SANDBOX_TIMEOUT_SEC.
 DEFAULT_TIMEOUT_SEC = 600
 # Cap for the post-timeout ``docker kill`` itself — a wedged daemon must not re-hang the exit path.
+#: Seconds allowed for the docker kill issued after a timeout, so a stuck daemon cannot hang the exit path.
 _KILL_TIMEOUT_SEC = 15
 # Per-container resource quotas, sized for the workload these sandboxes actually run — a pytest
 # metric command or a short exploratory script — on a developer laptop: high enough that a
@@ -59,24 +64,31 @@ _KILL_TIMEOUT_SEC = 15
 # 2 cores: fits pytest with a couple of workers while leaving cores for the host on a 4-core
 # machine; a spin loop then pins 2 cores instead of every core.  A host with fewer cores to
 # spare lowers it via ``SANDBOX_CPUS`` — fractional values are allowed (``0.5``).
+#: Default CPU allowance passed to docker --cpus, overridable with SANDBOX_CPUS; fractions are allowed.
 DEFAULT_CPUS = 2.0
 # 2 GiB: covers the interpreter plus the usual scientific imports with headroom.  A leaking run
 # is OOM-killed inside the container instead of pushing the host into swap.
+#: Default memory limit passed to docker --memory, as a docker size string; also the fallback for an invalid override.
 DEFAULT_MEMORY = "2g"
 # 512 processes: far above what pytest and its subprocesses need, low enough that a fork bomb
 # exhausts the container's own allowance rather than the host pid table.
+#: Default process-count limit passed to docker --pids-limit, which contains a fork bomb inside the container.
 DEFAULT_PIDS_LIMIT = 512
 # Accepted ``SANDBOX_MEMORY`` shape: positive number, optional docker size suffix (``512m``,
 # ``2g``, ``1.5g``, or a bare byte count).  Anything else falls back to the default.
+#: Shape accepted for a SANDBOX_MEMORY override: a positive number with an optional b, k, m or g suffix.
 _MEMORY_PATTERN = re.compile(r"^\d+(?:\.\d+)?[bkmg]?$", re.IGNORECASE)
+#: Docker size suffix letters, stripped from a memory string to read its numeric part.
 _MEMORY_SUFFIXES = "bkmgBKMG"
 # Docker network modes that preserve sandbox isolation.  ``host`` is excluded by
 # policy: it removes network namespace isolation and would allow exfiltration
 # from inside the verify-mode container.
+#: Network modes a SANDBOX_NETWORK override may select; host is excluded because it breaks network isolation.
 _ALLOWED_NETWORK_MODES: frozenset[str] = frozenset({"none", "bridge", "internal"})
 # Shell metacharacters forbidden in verify-mode command strings.  These reach
 # ``sh -c`` inside the container; ``SANDBOX_NETWORK=host`` would otherwise allow
 # network exfiltration via embedded ``$(...)``, backticks, redirection, etc.
+#: Shell metacharacters rejected in a verify-mode command, which blocks chaining, substitution and redirection.
 _VERIFY_FORBIDDEN_CHARS = frozenset(";&|$`<>\n\r\\")
 # Destructive binaries forbidden as bare command tokens in verify mode.  The
 # ``.experiments`` host dir is the one read-write mount; the metachar filter
@@ -89,6 +101,7 @@ _VERIFY_FORBIDDEN_CHARS = frozenset(";&|$`<>\n\r\\")
 # cannot stop deliberate destruction expressed as a ``python -c`` interpreter payload.
 # Such a payload token-splits to nothing here. Containment is the Docker
 # isolation flags in the argv builders below, not this blocklist.
+#: Destructive command names rejected as whole-word tokens in a verify-mode command, a guard against accidents.
 _VERIFY_FORBIDDEN_TOKENS: frozenset[str] = frozenset(
     {"rm", "rmdir", "unlink", "shred", "truncate", "dd", "mv", "mkfs", "find", "chmod", "chown"}
 )
@@ -541,9 +554,7 @@ def _kill_container(cidfile: str) -> None:
     with contextlib.suppress(OSError, subprocess.SubprocessError):
         cid = Path(cidfile).read_text(encoding="utf-8").strip()
         if cid:
-            subprocess.run(  # noqa: S603 — fixed binary; cid read from our own cidfile.
-                ["docker", "kill", cid], check=False, timeout=_KILL_TIMEOUT_SEC, capture_output=True
-            )
+            subprocess.run(["docker", "kill", cid], check=False, timeout=_KILL_TIMEOUT_SEC, capture_output=True)  # noqa: S603, S607 — fixed binary resolved via PATH; cid read from our own cidfile.
 
 
 def _run_docker(cmd: list[str], timeout: float, cidfile: str) -> int:

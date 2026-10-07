@@ -9,11 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-import pytest
-
-
 import build_blueprint_manifest as bbm
-
+import pytest
 
 PLUGIN_JSON = '{"name": "foundry", "version": "1.2.3"}\n'
 
@@ -85,15 +82,6 @@ class TestNormalize:
             pytest.param("#!/usr/bin/env bash\necho a", "echo a", id="hash-at-line-start-is-comment"),
             pytest.param("echo   a    b", "echo   a    b", id="no-intra-line-collapse"),
             pytest.param('echo "a  b"', 'echo "a  b"', id="no-quote-rewriting"),
-        ],
-    )
-    def test_pipeline_steps(self, raw: str, expected: str) -> None:
-        """Each documented normalization step produces the documented result."""
-        assert bbm.normalize(raw) == expected
-
-    @pytest.mark.parametrize(
-        ("raw", "expected"),
-        [
             pytest.param("curl http://x#y", "curl http://x#y", id="url-fragment-survives"),
             pytest.param("curl http://x#y  # fetch", "curl http://x#y", id="url-fragment-plus-comment"),
             pytest.param('echo "${V:-#x}"', 'echo "${V:-#x}"', id="parameter-default-hash-survives"),
@@ -101,20 +89,24 @@ class TestNormalize:
             pytest.param("echo '# literal'", "echo '# literal'", id="single-quoted-hash-survives"),
             pytest.param('echo "# literal"', 'echo "# literal"', id="double-quoted-hash-survives"),
             pytest.param("echo a\t# tabbed", "echo a", id="tab-before-hash-is-comment"),
+            # A ``#`` inside a multi-line quoted string is not treated as a comment.
+            pytest.param(
+                'echo "line one\n# still inside\nline three"',
+                'echo "line one\n# still inside\nline three"',
+                id="quote-state-spans-lines",
+            ),
+            # A lone comment line between commands collapses to exactly one blank line.
+            pytest.param("echo a\n# note\necho b", "echo a\n\necho b", id="comment-only-line-leaves-single-blank"),
         ],
     )
-    def test_quote_aware_comment_stripping(self, raw: str, expected: str) -> None:
-        """A ``#`` is a comment only when unquoted and at a word start."""
+    def test_normalize_vectors(self, raw: str, expected: str) -> None:
+        """Each documented normalization step, and the quote-aware comment rule, produces the documented result.
+
+        Covers line-ending and whitespace cleanup, blank-run collapsing, and trailing-comment stripping where a ``#`` is
+        a comment only when unquoted and at a word start (URL fragments, parameter defaults and quoted hashes survive,
+        including a quote spanning several lines), and a lone comment line leaving exactly one blank line.
+        """
         assert bbm.normalize(raw) == expected
-
-    def test_quote_state_spans_lines(self) -> None:
-        """A ``#`` inside a multi-line quoted string is not treated as a comment."""
-        raw = 'echo "line one\n# still inside\nline three"'
-        assert bbm.normalize(raw) == raw
-
-    def test_comment_only_line_leaves_single_blank(self) -> None:
-        """A lone comment line between commands collapses to exactly one blank line."""
-        assert bbm.normalize("echo a\n# note\necho b") == "echo a\n\necho b"
 
     def test_spacing_variants_do_not_collide(self) -> None:
         """Step (d): commands differing only in spacing keep distinct digests."""
@@ -159,17 +151,25 @@ class TestSharedVectors:
 class TestSplitLogicalCommands:
     """split_logical_commands: newline-only splitting with verbatim continuations."""
 
-    def test_never_splits_on_operators(self) -> None:
-        """Keep shell separators inside one logical command."""
-        assert bbm.split_logical_commands("a; b && c") == ["a; b && c"]
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            pytest.param("a; b && c", ["a; b && c"], id="never-splits-on-operators"),
+            pytest.param(
+                "cmd \\\n  --flag\nnext",
+                ["cmd \\\n  --flag", "next"],
+                id="continuation-kept-verbatim",
+            ),
+            pytest.param("echo a\\\\\necho b", ["echo a\\\\", "echo b"], id="escaped-backslash-is-not-a-continuation"),
+        ],
+    )
+    def test_splits_only_on_newlines(self, text: str, expected: list[str]) -> None:
+        """Commands split on newlines only, never on shell operators, with continuations kept verbatim.
 
-    def test_continuation_kept_verbatim(self) -> None:
-        """Backslash-newlines are preserved so the text still matches what is sent."""
-        assert bbm.split_logical_commands("cmd \\\n  --flag\nnext") == ["cmd \\\n  --flag", "next"]
-
-    def test_escaped_backslash_is_not_a_continuation(self) -> None:
-        """An even run of trailing backslashes ends the command."""
-        assert bbm.split_logical_commands("echo a\\\\\necho b") == ["echo a\\\\", "echo b"]
+        Backslash-newlines are preserved so the text still matches what is sent, and an even run of trailing backslashes
+        ends the command instead of continuing it.
+        """
+        assert bbm.split_logical_commands(text) == expected
 
 
 class TestBailout:
@@ -190,12 +190,6 @@ class TestBailout:
         """Bail-out fires on heredoc markers and unterminated quotes."""
         assert bbm.needs_bailout(text) is expected
 
-    def test_heredoc_block_emits_only_whole_block(self) -> None:
-        """A heredoc block yields exactly one entry, kind ``block``."""
-        entries, dropped = bbm.block_entries("cat <<EOF\nline one\nline two\nEOF", "f.md:1")
-        assert [record["kind"] for record in entries.values()] == ["block"]
-        assert dropped == 0
-
 
 class TestDangerFilter:
     """The danger filter's effect on manifest entries.
@@ -204,12 +198,6 @@ class TestDangerFilter:
     same cases bind the JS hook too; what remains here is how a dangerous verdict shapes the entries and the reported
     drop count.
     """
-
-    def test_dangerous_block_still_yields_safe_commands(self) -> None:
-        """Each entry is judged on its own text, so safe lines survive a dropped block."""
-        entries, dropped = bbm.block_entries("echo safe\nrm -rf x", "f.md:1")
-        assert [record["kind"] for record in entries.values()] == ["command"]
-        assert dropped == 2
 
     def test_dropped_count_reported_on_stderr(self, scan_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """The danger-filter drop count is always printed, never silent."""
@@ -228,6 +216,23 @@ class TestHashing:
         assert entries[bbm.sha256_text("echo alpha\necho beta")]["kind"] == "block"
         assert entries[bbm.sha256_text("echo alpha")]["kind"] == "command"
         assert entries[bbm.sha256_text("echo beta")]["kind"] == "command"
+
+    @pytest.mark.parametrize(
+        ("text", "kinds", "dropped"),
+        [
+            pytest.param("cat <<EOF\nline one\nline two\nEOF", ["block"], 0, id="heredoc-emits-only-whole-block"),
+            pytest.param("echo safe\nrm -rf x", ["command"], 2, id="dangerous-block-keeps-safe-commands"),
+        ],
+    )
+    def test_block_entry_kinds_and_dropped_count(self, text: str, kinds: list[str], dropped: int) -> None:
+        """Entry kinds and the danger-filter drop count follow from each entry being judged on its own text.
+
+        A heredoc block yields exactly one ``block`` entry; a dangerous block is dropped while its safe lines survive as
+        ``command`` entries, and the number of dropped entries is reported.
+        """
+        entries, dropped_count = bbm.block_entries(text, "f.md:1")
+        assert [record["kind"] for record in entries.values()] == kinds
+        assert dropped_count == dropped
 
     def test_single_command_block_emitted_once_as_block(self) -> None:
         """When block and command text coincide, only the block entry is recorded."""
@@ -251,9 +256,18 @@ class TestHashing:
 class TestPosixSrc:
     """posix_src: provenance paths are forward-slashed on every host."""
 
-    def test_simulated_windows_path_normalized(self) -> None:
-        """A Windows-flavoured path emits forward slashes."""
-        assert bbm.posix_src(PureWindowsPath(r"skills\demo\SKILL.md"), 7) == "skills/demo/SKILL.md:7"
+    @pytest.mark.parametrize(
+        ("path", "line", "expected"),
+        [
+            pytest.param(
+                PureWindowsPath(r"skills\demo\SKILL.md"), 7, "skills/demo/SKILL.md:7", id="simulated-windows-path"
+            ),
+            pytest.param(PurePosixPath("agents/curator.md"), 1, "agents/curator.md:1", id="posix-path-unchanged"),
+        ],
+    )
+    def test_provenance_path_is_forward_slashed(self, path, line: int, expected: str) -> None:
+        """A Windows-flavoured path emits forward slashes, and a POSIX path passes through untouched."""
+        assert bbm.posix_src(path, line) == expected
 
     def test_simulated_windows_src_is_forward_slashed_in_emitted_json(self) -> None:
         """The encoded manifest contains no backslash in a Windows-derived src."""
@@ -262,10 +276,6 @@ class TestPosixSrc:
         text = payload.decode("utf-8")
         assert '"src": "rules/_full/claude-config.md:42"' in text
         assert "\\\\" not in text
-
-    def test_posix_path_unchanged(self) -> None:
-        """A POSIX path passes through untouched."""
-        assert bbm.posix_src(PurePosixPath("agents/curator.md"), 1) == "agents/curator.md:1"
 
     def test_generated_manifest_has_no_backslash_src(self, scan_dir: Path) -> None:
         """No src emitted by a real build contains a backslash."""

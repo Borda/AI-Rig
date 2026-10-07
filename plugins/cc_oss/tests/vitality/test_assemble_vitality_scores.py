@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from assemble_vitality_scores import assemble_scores, load_weights, main
 
 
@@ -201,20 +200,21 @@ class TestAssembleScores:
         assert result["health_score_pct"] > 0.0
         assert result["axis3_202_pending"] is True
 
-    def test_axis3_202_pending_flag_false(self, partials: tuple, scoring_file: Path) -> None:
+    @pytest.mark.parametrize(
+        ("key", "expected"),
+        [
+            pytest.param("axis3_202_pending", False, id="axis3-202-pending-flag-false"),
+            pytest.param("analysis_now", "1700000000", id="scored-at-from-partial-a"),
+            pytest.param("axis3_weeks", 52, id="axis3-weeks-from-partial-c"),
+        ],
+    )
+    def test_assembled_field_comes_from_its_partial(
+        self, partials: tuple, scoring_file: Path, key: str, expected: object
+    ) -> None:
+        """Complete partials assemble with axis 3 not pending, the scored-at from partial A and weeks from partial C."""
         pa, pb, pc = partials
         result = assemble_scores(pa, pb, pc, scoring_file)
-        assert result["axis3_202_pending"] is False
-
-    def test_scored_at_from_partial_a(self, partials: tuple, scoring_file: Path) -> None:
-        pa, pb, pc = partials
-        result = assemble_scores(pa, pb, pc, scoring_file)
-        assert result["analysis_now"] == "1700000000"
-
-    def test_axis3_weeks_from_partial_c(self, partials: tuple, scoring_file: Path) -> None:
-        pa, pb, pc = partials
-        result = assemble_scores(pa, pb, pc, scoring_file)
-        assert result["axis3_weeks"] == 52
+        assert result[key] == expected
 
     def test_exact_weighted_score_renormalizes_available_axes(self, tmp_path: Path) -> None:
         scoring = tmp_path / "scoring.md"

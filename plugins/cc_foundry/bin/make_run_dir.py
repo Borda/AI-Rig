@@ -23,10 +23,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Absolute path prefixes that must never be writable targets — system roots and
-# multi-user predictable directories (CWE-22).  Stored as the slash-joined form
-# of individual root names so a source-level grep for the literal substring
-# ``/`` + ``tmp`` (Windows-portability sanity check) still passes.
+#: Absolute path prefixes that must never be writable targets — system roots and
+#: multi-user predictable directories (CWE-22).  Stored as the slash-joined form
+#: of individual root names so a source-level grep for the literal substring
+#: ``/`` + ``tmp`` (Windows-portability sanity check) still passes.
 _FORBIDDEN_ABSOLUTE_PREFIXES: tuple[str, ...] = tuple(
     "/" + name for name in ("etc", "usr", "var", "tmp", "bin", "sbin", "boot")
 )

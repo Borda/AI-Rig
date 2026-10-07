@@ -17,9 +17,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import pytest
-
 import join_avoidance as ja
+import pytest
 
 _EXIT_USAGE = 2  # join_avoidance.main's own bare literal (bin/join_avoidance.py:610) — no exported constant to import
 
@@ -291,17 +290,26 @@ class TestFindAvoidanceEvents:
         assert flagged[0].tool == "Grep"
         assert flagged[0].gap_seconds == pytest.approx(120.0)
 
-    def test_grep_before_answer_flags_nothing(self) -> None:
-        """A grep BEFORE the complete answer is legitimate discovery — never an avoidance."""
-        answers = ja.parse_cli_records([_cli("pkg.auth", 5.0)])
-        events = ja.parse_tool_records([_tool("import pkg.auth", 2.0)])
+    @pytest.mark.parametrize(
+        ("answer_at", "tool_target", "tool_at", "answer_session", "tool_session"),
+        [
+            pytest.param(5.0, "import pkg.auth", 2.0, "s1", "s1", id="grep-before-answer"),
+            pytest.param(0.0, "import pkg.billing", 2.0, "s1", "s1", id="grep-on-unrelated-module"),
+            pytest.param(0.0, "import pkg.auth", 12.0, "s1", "s1", id="grep-outside-window"),
+            pytest.param(0.0, "import pkg.auth", 2.0, "s1", "s2", id="answer-in-other-session"),
+        ],
+    )
+    def test_grep_that_is_not_avoidance_flags_nothing(
+        self, answer_at: float, tool_target: str, tool_at: float, answer_session: str, tool_session: str
+    ) -> None:
+        """A grep that is legitimate discovery, off-target, too late, or in another session is never an avoidance.
 
-        assert ja.find_avoidance_events(answers, events, window_min=10) == []
-
-    def test_grep_on_unrelated_module_flags_nothing(self) -> None:
-        """A grep on a module the answer did not cover is not an avoidance."""
-        answers = ja.parse_cli_records([_cli("pkg.auth", 0.0)])
-        events = ja.parse_tool_records([_tool("import pkg.billing", 2.0)])
+        A grep BEFORE the complete answer is legitimate discovery; a grep on a module the answer did not cover is not an
+        avoidance; a grep past the 10-minute window is too late to attribute to the earlier answer; and the join key is
+        the session, so a grep in another session never matches.
+        """
+        answers = ja.parse_cli_records([_cli("pkg.auth", answer_at, session=answer_session)])
+        events = ja.parse_tool_records([_tool(tool_target, tool_at, session=tool_session)])
 
         assert ja.find_avoidance_events(answers, events, window_min=10) == []
 
@@ -311,20 +319,6 @@ class TestFindAvoidanceEvents:
         events = ja.parse_tool_records([_tool("import pkg.auth", 2.0)])
 
         assert answers == []
-        assert ja.find_avoidance_events(answers, events, window_min=10) == []
-
-    def test_grep_outside_window_flags_nothing(self) -> None:
-        """A grep past the window is too late to attribute to the earlier answer."""
-        answers = ja.parse_cli_records([_cli("pkg.auth", 0.0)])
-        events = ja.parse_tool_records([_tool("import pkg.auth", 12.0)])
-
-        assert ja.find_avoidance_events(answers, events, window_min=10) == []
-
-    def test_answer_in_other_session_flags_nothing(self) -> None:
-        """The join key is the session — a grep in another session never matches."""
-        answers = ja.parse_cli_records([_cli("pkg.auth", 0.0, session="s1")])
-        events = ja.parse_tool_records([_tool("import pkg.auth", 2.0, session="s2")])
-
         assert ja.find_avoidance_events(answers, events, window_min=10) == []
 
 

@@ -47,13 +47,13 @@ import sys
 import tempfile
 from pathlib import Path
 
-
+#: Program name used as the argparse ``prog`` and as the prefix of this script's stderr messages.
 _SCRIPT_NAME = "resolve_index_env"
 
-# ``--output-prefix`` must be a single bare token — no path separators — blocking traversal
-# out of TMPDIR (CWE-22). A leading/trailing dot-run is still rejected via the
-# fullmatch below (no bare "." or ".." token), but an embedded "." is legitimate (project
-# basenames like "Borda.local", "site.com" are common).
+#: ``--output-prefix`` must be a single bare token — no path separators — blocking traversal
+#: out of TMPDIR (CWE-22). A leading/trailing dot-run is still rejected via the
+#: fullmatch below (no bare "." or ".." token), but an embedded "." is legitimate (project
+#: basenames like "Borda.local", "site.com" are common).
 _VALID_OUTPUT_PREFIX_RE = re.compile(r"(?!\.\.?$)[a-zA-Z0-9_.-]+")
 
 
@@ -355,7 +355,7 @@ def _run_resolver(plugin_root: str) -> str:
     """
     resolver = str(Path(plugin_root) / "bin" / "resolve_proj_index.py")
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
             [sys.executable, resolver],
             capture_output=True,
             text=True,
@@ -369,7 +369,7 @@ def _run_resolver(plugin_root: str) -> str:
     return result.stdout
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:  # noqa: PLR0911
     """CLI entry point - returns the process exit code.
 
     Always writes PROJ/INDEX to temp files before any failure exit so callers

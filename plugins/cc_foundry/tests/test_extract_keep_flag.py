@@ -13,10 +13,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 # Loaded by conftest.py — `extract_keep_flag` is registered in sys.modules there.
 import extract_keep_flag as ekf
+import pytest
 
 
 @pytest.fixture
@@ -37,7 +36,7 @@ class TestOptionValue:
     """Hand-rolled option parsing — the spellings five live call sites actually pass."""
 
     @pytest.mark.parametrize(
-        "argv,expected",
+        ("argv", "expected"),
         [
             pytest.param(["--out-file", "/x/y"], "/x/y", id="spaced"),
             pytest.param(["--out-file=/x/y"], "/x/y", id="attached"),
@@ -145,25 +144,19 @@ class TestOutFile:
 class TestVenue:
     """``--venue-choices`` validation, which runs after the keep value is already written."""
 
-    def test_valid_venue_is_persisted(self, session: Path) -> None:
-        """A venue in the allowed list is written to its own sentinel."""
-        exit_code = ekf.main(
-            [
-                "extract-keep-flag.py",
-                "myskill",
-                '--keep "v" --venue pr',
-                "--venue-choices",
-                "pr,issue",
-            ]
-        )
+    @pytest.mark.parametrize(
+        ("keep_arg", "expected"),
+        [
+            pytest.param('--keep "v" --venue pr', "pr\n", id="valid-venue-persisted"),
+            # No ``--venue`` is legal and writes an empty venue for the caller's skip rule.
+            pytest.param('--keep "v"', "\n", id="absent-venue-writes-empty-value"),
+        ],
+    )
+    def test_venue_is_persisted(self, session: Path, keep_arg: str, expected: str) -> None:
+        """A venue in the allowed list is written to its own sentinel; an absent venue writes an empty one."""
+        exit_code = ekf.main(["extract-keep-flag.py", "myskill", keep_arg, "--venue-choices", "pr,issue"])
         assert exit_code == 0
-        assert (session / "myskill-venue-sess1").read_text(encoding="utf-8") == "pr\n"
-
-    def test_absent_venue_writes_empty_value(self, session: Path) -> None:
-        """No ``--venue`` is legal and writes an empty venue for the caller's skip rule."""
-        exit_code = ekf.main(["extract-keep-flag.py", "myskill", '--keep "v"', "--venue-choices", "pr,issue"])
-        assert exit_code == 0
-        assert (session / "myskill-venue-sess1").read_text(encoding="utf-8") == "\n"
+        assert (session / "myskill-venue-sess1").read_text(encoding="utf-8") == expected
 
     def test_invalid_venue_returns_two_after_keep_is_written(self, session: Path) -> None:
         """An unlisted venue exits 2, but the keep value written earlier still stands.

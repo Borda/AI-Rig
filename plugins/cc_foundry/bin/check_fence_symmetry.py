@@ -61,6 +61,7 @@ from pathlib import Path
 
 # Matches a fence delimiter line: optional leading whitespace, 3+ backticks, optional info string.
 # Group 1 = backticks, group 2 = info string (stripped).
+#: Matches a code fence line of three or more backticks, capturing the fence and any info string.
 _FENCE_RE = re.compile(r"^\s*(`{3,})(.*?)$")
 
 

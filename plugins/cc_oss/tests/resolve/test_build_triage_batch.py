@@ -9,9 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import build_triage_batch  # type: ignore[import-not-found]
+import pytest
 
 
 def test_build_queries_module_vs_symbol() -> None:
@@ -69,13 +68,3 @@ def test_main_empty_file_writes_empty_array(tmp_path: Path, capsys: pytest.Captu
     assert build_triage_batch.main([str(cand), str(out)]) == 0
     assert capsys.readouterr().out.strip() == "0"
     assert json.loads(out.read_text()) == []
-
-
-def test_golden_invocation_two_positionals(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Documented call site ``build_triage_batch.py CANDIDATE_FILE OUT_FILE`` succeeds."""
-    cand = tmp_path / "_CAND"
-    cand.write_text("pkg.mod\nSymbol\n")
-    out = tmp_path / "_BATCH"
-    assert build_triage_batch.main([str(cand), str(out)]) == 0
-    assert capsys.readouterr().out.strip() == "2"
-    assert [q["cmd"] for q in json.loads(out.read_text())] == ["rdeps", "find-symbol"]

@@ -35,12 +35,12 @@ def plugin_version() -> str:
         >>> isinstance(plugin_version(), str)
         True
     """
-    global _PLUGIN_VERSION  # noqa: PLW0603 — read-once cache; one file read per process
+    global _PLUGIN_VERSION
     if _PLUGIN_VERSION is None:
         try:
             manifest = Path(__file__).resolve().parent.parent / ".claude-plugin" / "plugin.json"
             _PLUGIN_VERSION = str(json.loads(manifest.read_text()).get("version", "?"))
-        except Exception:  # noqa: BLE001 — telemetry must never break the CLI
+        except Exception:
             _PLUGIN_VERSION = "?"
     return _PLUGIN_VERSION
 
@@ -55,7 +55,7 @@ def session_id() -> str:
             timeout=2,
         ).strip()
         proj = Path(root).name
-    except Exception:  # noqa: BLE001 — git absent / not a repo → fall back to cwd
+    except Exception:
         proj = Path.cwd().name
     sid_file = Path(os.environ.get("TMPDIR") or tempfile.gettempdir()) / f"codemap-{proj}-session"
     try:
@@ -111,5 +111,5 @@ def log_cli(cmd: str, argv: list[str], result: object, t0: float, *, log_dir: Pa
             record["source"] = source
         with log_file.open("a") as fh:
             fh.write(json.dumps(record, separators=(",", ":")) + "\n")
-    except Exception:  # noqa: BLE001 — telemetry must never break the CLI
+    except Exception:  # noqa: S110 - best-effort diagnostics; failure ignored
         pass

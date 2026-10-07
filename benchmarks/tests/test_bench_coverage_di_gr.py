@@ -94,11 +94,20 @@ class TestDiGrTaskSchema:
         assert set(data) >= {"repo", "tasks"}
         assert isinstance(data["tasks"], list)
 
-    def test_has_six_di_tasks(self, tasks: list[dict[str, Any]]) -> None:
-        """DI roster contains exactly six diff-impact records."""
-        di = [t for t in tasks if t["id"].startswith("DI-")]
-        assert len(di) == 6
-        assert all(t["type"] == "diff_impact" for t in di)
+    @pytest.mark.parametrize(
+        ("prefix", "expected_count", "expected_type"),
+        [
+            pytest.param("DI-", 6, "diff_impact", id="diff-impact-roster"),
+            pytest.param("MB-", 5, "module_blast_radius", id="module-blast-radius-roster"),
+        ],
+    )
+    def test_roster_has_exact_count_of_typed_records(
+        self, tasks: list[dict[str, Any]], prefix: str, expected_count: int, expected_type: str
+    ) -> None:
+        """The DI roster has exactly six diff-impact records; the MB roster exactly five module-blast-radius records."""
+        records = [t for t in tasks if t["id"].startswith(prefix)]
+        assert len(records) == expected_count
+        assert all(t["type"] == expected_type for t in records)
 
     def test_has_four_gr_tasks(self, tasks: list[dict[str, Any]]) -> None:
         """GR roster contains declared graph types and its graph-path record."""
@@ -106,12 +115,6 @@ class TestDiGrTaskSchema:
         assert len(gr) == 4
         assert {t["type"] for t in gr} == {"graph_central", "graph_path", "graph_fn_blast"}
         assert [task["id"] for task in gr if task["type"] == "graph_path"] == ["GR-02"]
-
-    def test_has_five_mb_tasks(self, tasks: list[dict[str, Any]]) -> None:
-        """MB roster contains exactly five module-blast-radius records."""
-        mb = [t for t in tasks if t["id"].startswith("MB-")]
-        assert len(mb) == 5
-        assert all(t["type"] == "module_blast_radius" for t in mb)
 
     @pytest.mark.parametrize("task", _MB_TASK_CASES)
     def test_mb_tasks_have_materialized_importer_gt(self, task: dict[str, Any]) -> None:
@@ -128,7 +131,8 @@ class TestDiGrTaskSchema:
     def test_di_tasks_have_stage_spec_and_primary_fn(self, task: dict[str, Any]) -> None:
         """Each DI task exposes a callable target and executable stage specification."""
         assert "::" in task["primary_fn"], task["id"]
-        assert isinstance(task.get("stage"), list) and task["stage"], task["id"]
+        assert isinstance(task.get("stage"), list), task["id"]
+        assert task["stage"], task["id"]
         for edit in task["stage"]:
             assert edit.get("file"), task["id"]
             assert ("append" in edit) or ("find" in edit and "replace" in edit), task["id"]
@@ -193,7 +197,9 @@ class TestDiffImpactValidator:
     def test_rejects_malformed_primary_fn(self, script_gen_bench: Any, mini_repo: Path) -> None:
         task = {"type": "diff_impact", "id": "DI-x", "primary_fn": "no_colons", "ground_truth": {}}
         ok, live, reason = script_gen_bench._validate_diff_impact(task, None, None, mini_repo)
-        assert ok is False and live is None and "primary_fn" in reason
+        assert ok is False
+        assert live is None
+        assert "primary_fn" in reason
 
 
 class TestGraphValidators:
@@ -220,7 +226,9 @@ class TestGraphValidators:
     def test_path_requires_source_and_target(self, script_gen_bench: Any, mini_repo: Path) -> None:
         task = {"type": "graph_path", "id": "GR-p", "ground_truth": {"gt_pending": True}}
         ok, live, reason = script_gen_bench._validate_graph_path(task, None, None, mini_repo)
-        assert ok is False and live is None and "source" in reason
+        assert ok is False
+        assert live is None
+        assert "source" in reason
 
     def test_fn_blast_depth2_closure(self, script_gen_bench: Any, mini_repo: Path) -> None:
         task = {
@@ -305,7 +313,7 @@ class TestGtPending:
         assert script_gen_bench.gt_is_pending({"ground_truth": {}}) is False
 
     @pytest.mark.parametrize(
-        "ttype", ("diff_impact", "graph_central", "graph_path", "graph_fn_blast", "module_blast_radius")
+        "ttype", ["diff_impact", "graph_central", "graph_path", "graph_fn_blast", "module_blast_radius"]
     )
     def test_new_types_are_oracle_backed(self, script_gen_bench: Any, ttype: str) -> None:
         """Each new benchmark task type uses an oracle-backed update path."""
@@ -342,10 +350,15 @@ class TestDiffImpactStager:
     def test_revert_runs_even_on_exception(self, script_run_bench: Any, git_repo: Path) -> None:
         original = (git_repo / "src.py").read_text()
         stager = script_run_bench.DiffImpactStager(git_repo, self._spec())
-        with pytest.raises(RuntimeError):
+
+        def _run_expected_failure() -> None:
+            """Run the statements expected to fail as one callable."""
             with stager:
                 assert "new_arg=None" in (git_repo / "src.py").read_text()
                 raise RuntimeError("arm blew up mid-task")
+
+        with pytest.raises(RuntimeError):
+            _run_expected_failure()
         assert (git_repo / "src.py").read_text() == original
 
     def test_refuses_dirty_tree(self, script_run_bench: Any, git_repo: Path) -> None:
@@ -391,14 +404,17 @@ class TestBatchParsing:
         cmd = 'scan-query batch <<< \'[{"cmd": "fn-rdeps", "args": ["m::f"]}, {"cmd": "rdeps", "args": ["m"]}]\''
         assert script_run_bench._parse_batch_subcommands(cmd) == ["fn-rdeps", "rdeps"]
 
-    def test_non_batch_returns_empty(self, script_run_bench: Any) -> None:
-        assert script_run_bench._parse_batch_subcommands("scan-query symbol Trainer") == []
-
-    def test_unknown_inner_cmd_dropped(self, script_run_bench: Any) -> None:
-        assert script_run_bench._parse_batch_subcommands('scan-query batch <<< \'[{"cmd": "bogus"}]\'') == []
-
-    def test_malformed_json_returns_empty(self, script_run_bench: Any) -> None:
-        assert script_run_bench._parse_batch_subcommands("scan-query batch <<< '[not json'") == []
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            pytest.param("scan-query symbol Trainer", id="non-batch"),
+            pytest.param('scan-query batch <<< \'[{"cmd": "bogus"}]\'', id="unknown-inner-cmd-dropped"),
+            pytest.param("scan-query batch <<< '[not json'", id="malformed-json"),
+        ],
+    )
+    def test_unparseable_batch_returns_empty(self, script_run_bench: Any, cmd: str) -> None:
+        """A non-batch command, an unknown inner subcommand, or malformed JSON yields no inner subcommands."""
+        assert script_run_bench._parse_batch_subcommands(cmd) == []
 
     def test_batch_and_diff_impact_are_subcommands(self, script_run_bench: Any) -> None:
         assert "batch" in script_run_bench._SCAN_QUERY_SUBCOMMANDS
@@ -453,23 +469,31 @@ class TestDiffImpactEvaluator:
             },
         }
 
-    def test_both_recalls_high_is_correct(self, script_run_bench: Any) -> None:
-        out = "## Callers\nlightning.a::Foo.bar\nlightning.b::Baz.qux\n## Tests\ntests.test_a\ntests.test_b\n"
+    @pytest.mark.parametrize(
+        ("out", "expected_correct", "expected_test_recall"),
+        [
+            pytest.param(
+                "## Callers\nlightning.a::Foo.bar\nlightning.b::Baz.qux\n## Tests\ntests.test_a\ntests.test_b\n",
+                True,
+                1.0,
+                id="both-recalls-high",
+            ),
+            pytest.param(
+                "## Callers\nlightning.a::Foo.bar\nlightning.b::Baz.qux\n",
+                False,
+                0.0,
+                id="missing-tests-fails-even-with-all-callers",
+            ),
+        ],
+    )
+    def test_correct_requires_caller_and_test_recall(
+        self, script_run_bench: Any, out: str, expected_correct: bool, expected_test_recall: float
+    ) -> None:
+        """An answer is correct only when both caller recall and test-file recall clear the threshold."""
         q = script_run_bench._evaluate_diff_impact(self._task(), out)
-        assert q.correct is True
+        assert q.correct is expected_correct
         assert q.scoring_detail["caller_recall"] == 1.0
-        assert q.scoring_detail["test_recall"] == 1.0
-
-    def test_missing_tests_fails_even_with_all_callers(self, script_run_bench: Any) -> None:
-        out = "## Callers\nlightning.a::Foo.bar\nlightning.b::Baz.qux\n"
-        q = script_run_bench._evaluate_diff_impact(self._task(), out)
-        assert q.correct is False
-        assert q.scoring_detail["caller_recall"] == 1.0
-        assert q.scoring_detail["test_recall"] == 0.0
-
-    def test_empty_gt_not_scored(self, script_run_bench: Any) -> None:
-        task = {"type": "diff_impact", "id": "DI-x", "ground_truth": {"fn_callers": [], "test_modules": []}}
-        assert script_run_bench._evaluate_diff_impact(task, "anything").scored is False
+        assert q.scoring_detail["test_recall"] == expected_test_recall
 
 
 class TestGraphEvaluators:
@@ -486,25 +510,24 @@ class TestGraphEvaluators:
         assert q.recall == pytest.approx(2 / 3, abs=0.01)
         assert q.correct is False  # 0.67 < 0.70
 
-    def test_path_ordered_chain_correct(self, script_run_bench: Any) -> None:
+    @pytest.mark.parametrize(
+        ("out", "expected_correct"),
+        [
+            pytest.param("## Path\nlightning.x.a\nlightning.x.b\nlightning.x.c\n", True, id="ordered-chain-correct"),
+            pytest.param(
+                "lightning.x.c came from lightning.x.b came from lightning.x.a", False, id="reversed-order-incorrect"
+            ),
+        ],
+    )
+    def test_path_scores_the_ordered_chain(self, script_run_bench: Any, out: str, expected_correct: bool) -> None:
+        """A path answer is correct only when its modules appear in the ground-truth import order."""
         task = {
             "type": "graph_path",
             "id": "GR-p",
             "ground_truth": {"import_path": ["lightning.x.a", "lightning.x.b", "lightning.x.c"]},
         }
-        out = "## Path\nlightning.x.a\nlightning.x.b\nlightning.x.c\n"
         q = script_run_bench._evaluate_graph_path(task, out)
-        assert q.correct is True
-
-    def test_path_out_of_order_incorrect(self, script_run_bench: Any) -> None:
-        task = {
-            "type": "graph_path",
-            "id": "GR-p",
-            "ground_truth": {"import_path": ["lightning.x.a", "lightning.x.b", "lightning.x.c"]},
-        }
-        out = "lightning.x.c came from lightning.x.b came from lightning.x.a"
-        q = script_run_bench._evaluate_graph_path(task, out)
-        assert q.correct is False  # reversed order
+        assert q.correct is expected_correct
 
     def test_fn_blast_recall(self, script_run_bench: Any) -> None:
         task = {
@@ -620,7 +643,32 @@ class TestModuleBlastRadiusValidator:
     def test_rejects_missing_primary_module(self, script_gen_bench: Any, mini_repo: Path) -> None:
         task = {"type": "module_blast_radius", "id": "MB-x", "ground_truth": {}}
         ok, live, reason = script_gen_bench._validate_module_blast_radius(task, None, None, mini_repo)
-        assert ok is False and live is None and "primary_module" in reason
+        assert ok is False
+        assert live is None
+        assert "primary_module" in reason
+
+
+class TestEmptyGroundTruthEvaluators:
+    """Evaluators never score a task whose ground truth is empty."""
+
+    @pytest.mark.parametrize(
+        ("evaluator_name", "task"),
+        [
+            pytest.param(
+                "_evaluate_diff_impact",
+                {"type": "diff_impact", "id": "DI-x", "ground_truth": {"fn_callers": [], "test_modules": []}},
+                id="diff-impact",
+            ),
+            pytest.param(
+                "_evaluate_module_blast_radius",
+                {"type": "module_blast_radius", "id": "MB-x", "ground_truth": {"importers": []}},
+                id="module-blast-radius",
+            ),
+        ],
+    )
+    def test_empty_gt_not_scored(self, script_run_bench: Any, evaluator_name: str, task: dict[str, Any]) -> None:
+        """An empty ground-truth set leaves the result unscored regardless of the answer text."""
+        assert getattr(script_run_bench, evaluator_name)(task, "anything").scored is False
 
 
 class TestModuleBlastRadiusEvaluator:
@@ -654,10 +702,6 @@ class TestModuleBlastRadiusEvaluator:
         q = script_run_bench._evaluate_module_blast_radius(self._task(), "no modules named here")
         assert q.extraction_failed is True
         assert q.recall == 0.0
-
-    def test_empty_gt_not_scored(self, script_run_bench: Any) -> None:
-        task = {"type": "module_blast_radius", "id": "MB-x", "ground_truth": {"importers": []}}
-        assert script_run_bench._evaluate_module_blast_radius(task, "anything").scored is False
 
     def test_bare_leaf_does_not_match(self, script_run_bench: Any) -> None:
         """A bare single-component leaf (`states`) must NOT count — only ≥2-component dotted forms."""
@@ -714,7 +758,8 @@ class TestDevelopBrTailRecall:
         out = "## Callers\nlightning.a::Foo.bar\n"
         q = script_run_bench._evaluate_develop_br(self._task(), out)
         detail = asdict(q)["scoring_detail"]
-        assert "matched_callers" in detail and "missed_callers" in detail
+        assert "matched_callers" in detail
+        assert "missed_callers" in detail
 
     def test_turn_count_serialises(self, script_run_bench: Any) -> None:
         """BenchRun.turn_count already serialises via asdict (tail-recall diagnostics companion)."""

@@ -9,40 +9,30 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, ClassVar
 
-
-from _bench_common.claude_transport import parse_result_usage, stream_claude
-from _bench_common.codemap_discovery import codemap_bin_on_path
+from _bench_common.agentic_contracts import AgenticOracle, AnswerScore  # noqa: F401
 
 # Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
-from _bench_common.agentic_contracts import (
-    AgenticOracle,  # noqa: F401
-    AnswerScore,  # noqa: F401
-)
-from _bench_common.mutation_isolation import (
-    relocate_frozen_index_for_worktree,
-)
-
 # Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
 # Every name it defines is re-exported here, including ones this file no longer calls itself: callers and tests
 # reach these through the runner module, so pruning an apparently unused re-export breaks patch.object targets.
-from _bench_common.claude_stages import (
-    _claude_codemap_evidence,
-    _claude_message_blocks,
-)
+from _bench_common.claude_stages import _claude_codemap_evidence, _claude_message_blocks
+from _bench_common.claude_transport import parse_result_usage, stream_claude
+from _bench_common.codemap_discovery import codemap_bin_on_path
+from _bench_common.mutation_isolation import relocate_frozen_index_for_worktree
 
 from _bench_claude.agentic.config import REPO_ROOT
-from _bench_claude.agentic.models import BenchmarkRun, Task, parity_arm_identity
-from _bench_claude.agentic.provenance import _invokes_scan_query
 from _bench_claude.agentic.discovery import _tool_key_arg
 from _bench_claude.agentic.evidence import (
     _benchmark_evidence_roots,
     _claude_evidence_settings_file,
     _staged_codemap_runtime,
 )
+from _bench_claude.agentic.models import BenchmarkRun, Task, parity_arm_identity
+from _bench_claude.agentic.provenance import _invokes_scan_query
 from _bench_claude.agentic.scoring import _capture_tool_result_text, _iter_tool_result_texts
 
 
@@ -63,7 +53,7 @@ class ModelRunner:
     # in _arm_isolation_flags (the tools under test must survive isolation). Subscription auth is
     # not a setting source, so it is unaffected.
     # ``--no-session-persistence`` makes every cell non-resumable, preventing conversational state reuse.
-    _CMD = [
+    _CMD: ClassVar = [
         "claude",
         "-p",
         "--no-session-persistence",
@@ -74,13 +64,13 @@ class ModelRunner:
         "project,local",
     ]
     # Tools counted as exploration overhead
-    EXPLORATION_TOOLS = {"Grep", "Glob", "Bash", "Skill", "mcp__semble__search", "mcp__semble__find_related"}
+    EXPLORATION_TOOLS: ClassVar = {"Grep", "Glob", "Bash", "Skill", "mcp__semble__search", "mcp__semble__find_related"}
     # Tools blocked per arm via ``--disallowed-tools`` to enforce mutual exclusion
     # Bash is kept available for every non-plain arm (and plain) so each has the same read-only
     # shell fallback on a primary-tool error; blocking it for semble alone was an asymmetric
     # handicap. Only the primary discriminator differs: codemap blocks semble MCP,
     # semble blocks the Skill tool, plain blocks both structural entry points.
-    _ARM_DISALLOWED: dict[str, list[str]] = {
+    _ARM_DISALLOWED: ClassVar[dict[str, list[str]]] = {
         "codemap": ["--disallowed-tools", "mcp__semble__search,mcp__semble__find_related"],
         "B_auto": ["--disallowed-tools", "Agent,Task,mcp__semble__search,mcp__semble__find_related"],
         "C_strict": ["--disallowed-tools", "Agent,Task,mcp__semble__search,mcp__semble__find_related"],
@@ -99,7 +89,7 @@ class ModelRunner:
     # production Skill's absolute-launcher form (including its closing quote) as well as the PATH
     # form; a successful Skill wrapper alone does not prove its nested call used the frozen index.
     _CODEMAP_SKILLS = "Skill(codemap:query-code),Skill(codemap-py:query-code)"
-    _ARM_ALLOWED: dict[str, list[str]] = {
+    _ARM_ALLOWED: ClassVar[dict[str, list[str]]] = {
         "codemap": [
             "--allowedTools",
             f"Bash(scan-query:*),Bash(codemap-py query:*),Bash(*/bin/codemap-py* query:*),{_CODEMAP_SKILLS}",
@@ -122,7 +112,7 @@ class ModelRunner:
     # Arm system prompts -------------------------------------------------------
     # PLAIN arm:   minimal fix/feature/refactor/review skill, no codemap.
     # CODEMAP arm: same skill + /codemap:query instruction.
-    _PLAIN_SKILLS: dict[str, str] = {
+    _PLAIN_SKILLS: ClassVar[dict[str, str]] = {
         "fix": (
             "You are a software engineer fixing a bug in a Python codebase. "
             "Before writing any fix, investigate the affected module: understand what "
@@ -457,7 +447,7 @@ If a structural tool returns <tool_use_error>, run one Grep/Bash fallback for th
         task: Task,
         arm: str,
         diff_capture: list[str],
-        test_capture: list[Optional[bool]],
+        test_capture: list[bool | None],
         index_relocations: list[dict[str, str]] | None = None,
     ) -> Iterator[Path]:
         """Yield an isolated sandbox copy of the repo for one run, capturing its aftermath.
@@ -511,8 +501,8 @@ If a structural tool returns <tool_use_error>, run one Grep/Bash fallback for th
                 # cache tree the sandbox was seeded with selectively (.cache) as a
                 # difference — artifact bloat at best, and a spurious `+` line in fix
                 # scoring the moment anything writes under .cache during the run.
-                proc = _sp.run(
-                    [
+                proc = _sp.run(  # noqa: S603 - argv list, no shell
+                    [  # noqa: S607 - git/tool resolved via PATH on purpose
                         "diff",
                         "-ru",
                         "--no-dereference",
@@ -536,7 +526,7 @@ If a structural tool returns <tool_use_error>, run one Grep/Bash fallback for th
         self,
         task: Task,
         arm: str,
-        update_fn: Optional[Callable[[float, "BenchmarkRun"], None]] = None,
+        update_fn: Callable[[float, "BenchmarkRun"], None] | None = None,
     ) -> BenchmarkRun:
         """Run one task in one arm and return the parsed metrics.
 
@@ -564,7 +554,7 @@ If a structural tool returns <tool_use_error>, run one Grep/Bash fallback for th
         # wall-clock budget. Legacy agentic labels keep their original fixed 40-turn control.
         turn_flags = [] if parity_arm_identity(arm) else ["--max-turns", "40"]
         _diff_capture: list[str] = []
-        _test_capture: list[Optional[bool]] = []
+        _test_capture: list[bool | None] = []
 
         _MAX_API_RETRIES = 2
         denied_evidence = _benchmark_evidence_roots()
@@ -641,7 +631,7 @@ If a structural tool returns <tool_use_error>, run one Grep/Bash fallback for th
             result.targeted_test_passed = _test_capture[0]
         return result
 
-    def _run_targeted_test(self, cwd: Path, test_target: str) -> Optional[bool]:
+    def _run_targeted_test(self, cwd: Path, test_target: str) -> bool | None:
         """Run a task's declared pytest target on the post-edit sandbox and report pass/fail.
 
         Args:
@@ -656,7 +646,7 @@ If a structural tool returns <tool_use_error>, run one Grep/Bash fallback for th
         import subprocess as _sp
 
         try:
-            proc = _sp.run(
+            proc = _sp.run(  # noqa: S603 - argv list, no shell
                 [sys.executable, "-m", "pytest", test_target, "-q", "-p", "no:cacheprovider"],
                 cwd=str(cwd),
                 capture_output=True,
@@ -704,10 +694,12 @@ If a structural tool returns <tool_use_error>, run one Grep/Bash fallback for th
 
     # Semble MCP definition, re-supplied under isolation (excluding user config drops the user's
     # semble server). Mirrors `claude mcp get semble` — a local stdio server, no auth/env.
-    _SEMBLE_MCP: dict = {"mcpServers": {"semble": {"command": "uvx", "args": ["--from", "semble[mcp]", "semble"]}}}
+    _SEMBLE_MCP: ClassVar[dict] = {
+        "mcpServers": {"semble": {"command": "uvx", "args": ["--from", "semble[mcp]", "semble"]}}
+    }
 
     @staticmethod
-    def _codemap_plugin_dir() -> Optional[str]:
+    def _codemap_plugin_dir() -> str | None:
         """Return the repository Codemap fixture, or None when it is incomplete.
 
         The benchmark must not inherit a mutable user plugin cache. The checked-out plugin is the
@@ -817,7 +809,7 @@ If a structural tool returns <tool_use_error>, run one Grep/Bash fallback for th
         candidate = Path(sys.executable).resolve()
         if not candidate.is_file() or not os.access(candidate, os.X_OK):
             raise RuntimeError("Codemap treatment requires an executable CPython >=3.11,<3.15")
-        probe = subprocess.run(
+        probe = subprocess.run(  # noqa: S603 - argv list, no shell
             [
                 str(candidate),
                 "-c",
@@ -835,8 +827,8 @@ If a structural tool returns <tool_use_error>, run one Grep/Bash fallback for th
         self,
         cmd: list[str],
         result: BenchmarkRun,
-        update_fn: Optional[Callable[[float, "BenchmarkRun"], None]] = None,
-        cwd: Optional[Path] = None,
+        update_fn: Callable[[float, "BenchmarkRun"], None] | None = None,
+        cwd: Path | None = None,
         arm: str = "",
     ) -> None:
         """Launch the claude subprocess, enforce wall-clock timeout, and parse stream-json events.

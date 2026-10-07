@@ -12,30 +12,13 @@ import hashlib
 import json
 import re
 import shlex
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Sequence
-from _bench_common.claude_transport import parse_result_usage  # noqa: E402
-from _bench_common.python_source import resolve_relative_base  # noqa: E402,F401
-from _bench_common.agentic_contracts import (  # noqa: E402
-    AgenticOracle,  # noqa: F401
-    AnswerScore,  # noqa: F401
-)
-from _bench_common.provider_parity_contracts import (  # noqa: E402
-    canonical_task_hash,
-    fresh_input_tokens,
-    load_task_suite,
-    prompt_hash,
-    semantic_suite_hash,
-    token_accounting_inconsistent,
-)
-from _bench_common.readcrop_contracts import (  # noqa: E402
-    ReadcropUsage,
-    build_readcrop_contract,
-    parse_readcrop_answer,
-    score_readcrop_answer,
-)
-from _bench_common.edit_patch_contracts import (  # noqa: E402
+from typing import Any
+
+from _bench_common.agentic_contracts import AgenticOracle, AnswerScore  # noqa: F401
+from _bench_common.claude_transport import parse_result_usage
+from _bench_common.edit_patch_contracts import (
     EditTaskContract,
     FixMultiContract,
     FixSingleContract,
@@ -45,7 +28,21 @@ from _bench_common.edit_patch_contracts import (  # noqa: E402
     build_fix_single_contract,
     stage_contract_sha256,
 )
-
+from _bench_common.provider_parity_contracts import (
+    canonical_task_hash,
+    fresh_input_tokens,
+    load_task_suite,
+    prompt_hash,
+    semantic_suite_hash,
+    token_accounting_inconsistent,
+)
+from _bench_common.python_source import resolve_relative_base  # noqa: F401
+from _bench_common.readcrop_contracts import (
+    ReadcropUsage,
+    build_readcrop_contract,
+    parse_readcrop_answer,
+    score_readcrop_answer,
+)
 
 #: This module sits one level below the benchmarks directory, so every suite and manifest path is derived from
 #: that parent rather than from this file's own directory.
@@ -54,20 +51,30 @@ BENCHMARKS_DIR = Path(__file__).resolve().parents[1]
 #: split that moved these stages out of it.
 RUNNER_PATH = BENCHMARKS_DIR / "run-claude-agentic.py"
 
+#: Default provider-parity methodology manifest that each Claude stage validates its tasks against.
 PARITY_MANIFEST_PATH = BENCHMARKS_DIR / "manifests" / "provider-parity-methodology.json"
+#: Default task suite for the read-crop stage.
 READCROP_TASKS_PATH = BENCHMARKS_DIR / "suites" / "tasks-readcrop.json"
+#: Default task suite for the single-caller fix stage.
 FIX_SINGLE_TASKS_PATH = BENCHMARKS_DIR / "suites" / "tasks-fix-single.json"
+#: Default task suite for the multi-caller fix stage.
 FIX_MULTI_TASKS_PATH = BENCHMARKS_DIR / "suites" / "tasks-fix-multi.json"
+#: Default task suite for the patch stage.
 PATCH_TASKS_PATH = BENCHMARKS_DIR / "suites" / "tasks-patch.json"
+#: Treatment arms the read-crop stage runs, in cycle order.
 READCROP_ARMS = ("A_plain", "B_auto", "C_strict")
+#: Treatment arms the single-caller fix stage runs; the same set as read-crop.
 FIX_SINGLE_ARMS = READCROP_ARMS
+#: Matches the BEGIN/END_READ_CROP_JSON envelope in model output and captures its JSON payload.
 _READCROP_ANSWER_RE = re.compile(r"BEGIN_READ_CROP_JSON\s*(?P<payload>\{.*?\})\s*END_READ_CROP_JSON", re.DOTALL)
+#: Per-task Codemap query (command, symbol) offered to the strict arm for single-caller fix tasks.
 _FIX_SINGLE_QUERY_ARGUMENTS = {
     "FS-01": ("symbol", "EarlyStopping.__init__"),
     "FS-02": ("symbol", "EarlyStopping.__init__"),
     "FS-03": ("symbol", "ModelCheckpoint._save_checkpoint"),
     "FS-04": ("symbol", "ModelCheckpoint.__init__"),
 }
+#: Per-task Codemap query arguments offered to the strict arm for multi-caller fix tasks.
 _FIX_MULTI_QUERY_ARGUMENTS = {
     "FM-01": (
         "fn-rdeps",
@@ -81,6 +88,7 @@ _FIX_MULTI_QUERY_ARGUMENTS = {
     ),
     "FM-03": ("find-symbol", r"Strategy\.setup_environment$", "--exclude-tests", "--limit", "0"),
 }
+#: Per-task Codemap query (command, symbol) offered to the strict arm for patch tasks.
 _PATCH_QUERY_ARGUMENTS = {
     "PT-01": ("symbol", "FitLoop.setup_data"),
     "PT-02": ("symbol", "DistributedSamplerWrapper"),
@@ -276,7 +284,7 @@ def _query_command_tail(command: str) -> tuple[str, int] | None:
 
 def _command_arguments(value: str) -> tuple[str, ...]:
     """Drop shell-only redirections from one already-isolated command tail."""
-    return tuple(token for token in shlex.split(value) if token != "--compact" and not re.match(r"(?:\d?>|>&)", token))
+    return tuple(token for token in shlex.split(value) if token != "--compact" and not re.match(r"(?:\d?>|>&)", token))  # noqa: S105 - shell-argument token, not a credential
 
 
 def _absolute_codemap_launchers(command: str) -> set[PurePosixPath]:
@@ -796,7 +804,8 @@ def load_claude_patch_tasks(
     identity = _patch_stage_identity(tasks_path, contracts)
     for item in loaded:
         contract = item["contract"]
-        assert isinstance(contract, EditTaskContract)
+        if not isinstance(contract, EditTaskContract):
+            raise TypeError(f"contract must be EditTaskContract, got {type(contract).__name__}")
         item["stage_identity"] = identity
         item["provider_binding"] = dict(contract.scientific_field_hashes(identity))
     return loaded

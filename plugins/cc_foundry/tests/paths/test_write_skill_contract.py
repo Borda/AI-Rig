@@ -9,7 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 import write_skill_contract as wsc
 
 _ARGS = ["foundry:distill", "gap-analysis", ".reports/x", "run-dir=n/a", "Step 3 → Step 4"]
@@ -31,22 +30,29 @@ class TestContractFile:
             "- next: Step 3 → Step 4",
         ]
 
-    def test_labelled_list_appended(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The 7-argument form appends the ledger a `next:` string refers to.
-
-        Without it a post-compaction resume is told to skip candidates "above" that were never written, and re-probes
-        what it already ruled out.
-        """
+    @pytest.mark.parametrize(
+        ("label", "items", "tail"),
+        [
+            # Without the appended ledger a post-compaction resume is told to skip candidates "above" that were never
+            # written, and re-probes what it already ruled out.
+            pytest.param(
+                "probed (do NOT re-probe)",
+                "hypothesis A :: Ruled-out\nhypothesis B :: Confirmed",
+                ["- probed (do NOT re-probe):", "    - hypothesis A :: Ruled-out", "    - hypothesis B :: Confirmed"],
+                id="labelled-list-appended",
+            ),
+            # A trailing newline from a `head`/`tail` capture does not emit an empty bullet.
+            pytest.param("tried", "only one\n\n", ["- tried:", "    - only one"], id="blank-list-lines-dropped"),
+        ],
+    )
+    def test_labelled_list_appended(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, label: str, items: str, tail: list[str]
+    ) -> None:
+        """The 7-argument form appends the ledger a `next:` string refers to, one bullet per non-blank line."""
         monkeypatch.chdir(tmp_path)
-        assert (
-            wsc.main([*_ARGS, "probed (do NOT re-probe)", "hypothesis A :: Ruled-out\nhypothesis B :: Confirmed"]) == 0
-        )
+        assert wsc.main([*_ARGS, label, items]) == 0
         text = (tmp_path / ".temp" / "state" / "skill-contract.md").read_text(encoding="utf-8")
-        assert text.splitlines()[-3:] == [
-            "- probed (do NOT re-probe):",
-            "    - hypothesis A :: Ruled-out",
-            "    - hypothesis B :: Confirmed",
-        ]
+        assert text.splitlines()[-len(tail) :] == tail
 
     def test_empty_list_omits_block(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """An empty ledger produces no label line, so callers need not branch."""
@@ -55,13 +61,6 @@ class TestContractFile:
         text = (tmp_path / ".temp" / "state" / "skill-contract.md").read_text(encoding="utf-8")
         assert "tried" not in text
         assert text.splitlines()[-1].startswith("- next:")
-
-    def test_blank_list_lines_dropped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A trailing newline from a `head`/`tail` capture does not emit an empty bullet."""
-        monkeypatch.chdir(tmp_path)
-        assert wsc.main([*_ARGS, "tried", "only one\n\n"]) == 0
-        text = (tmp_path / ".temp" / "state" / "skill-contract.md").read_text(encoding="utf-8")
-        assert text.splitlines()[-2:] == ["- tried:", "    - only one"]
 
     def test_creates_parent_directories(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """.temp/state/ is created when absent."""

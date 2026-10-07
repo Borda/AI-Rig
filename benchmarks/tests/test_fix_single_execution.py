@@ -5,13 +5,12 @@ from __future__ import annotations
 import difflib
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
 from _launcher_capability import _pinned_frozen_checkout_is_available
 
 SUITE_PATH = Path(__file__).resolve().parents[1] / "suites" / "tasks-fix-single.json"
@@ -128,15 +127,6 @@ def test_invalid_source_is_rejected_before_creating_a_cell(
             timeout=10,
         ).stdout
         assert worktrees_after == worktrees_before
-
-
-def test_pinned_frozen_checkout_rejects_git_directory_without_head(tmp_path: Path) -> None:
-    """A partial Git directory cannot admit source-dependent lifecycle coverage."""
-    source = tmp_path / "source"
-    (source / ".git").mkdir(parents=True)
-
-    assert source.is_dir()
-    assert _pinned_frozen_checkout_is_available(source, FROZEN_REPO_COMMIT) is False
 
 
 @_requires_frozen_repo

@@ -68,15 +68,21 @@ class SyncAction(str, Enum):
     CLEAR = "clear"
 
 
+#: Name of the Codex plugin marketplace that this script registers, upgrades, and removes.
 MARKETPLACE = "borda-ai-rig"
+#: GitHub repository (owner/name) the marketplace is added from.
 MARKETPLACE_SOURCE = "Borda/AI-Rig"
+#: Display name and plugin id of every plugin this script installs and verifies.
 MANAGED_PLUGINS = (
     ("Codex Rig", f"codex-rig@{MARKETPLACE}"),
     ("Codemap", f"codemap-py@{MARKETPLACE}"),
     ("Claude Code and Codex Bridge", f"bridge@{MARKETPLACE}"),
 )
+#: Largest JSON payload or config file, in bytes (1 MiB), that this script will read or write.
 MAX_JSON_BYTES = 1_048_576
+#: Oldest Python (major, minor) version accepted for the fixed python command that launches MCP servers.
 MINIMUM_MCP_PYTHON = (3, 10)
+#: Characters that make a Windows batch-file argument unsafe to pass through the command interpreter.
 WINDOWS_BATCH_METACHARACTERS = frozenset('&|<>^()%!"')
 RunCommand = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -110,7 +116,7 @@ def _resolve_system_command(command: list[str], *, windows: bool) -> tuple[list[
 def _system_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
     """Run one resolved native command, including Windows batch launchers."""
     resolved, shell = _resolve_system_command(command, windows=os.name == "nt")
-    return subprocess.run(resolved, shell=shell, **kwargs)
+    return subprocess.run(resolved, shell=shell, **kwargs)  # noqa: S603 - argv list, no shell
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -322,7 +328,7 @@ def sync_codex(
     stdout: TextIO = sys.stdout,
 ) -> int:
     """Execute one Codex-only restore or teardown with argv-safe subprocesses."""
-    if sys.version_info < (3, 10):
+    if sys.version_info < (3, 10):  # noqa: UP036 - runtime guard for an interpreter older than the declared floor
         found = ".".join(str(part) for part in sys.version_info[:3])
         raise SyncError(f"sync requires Python 3.10 or newer; found Python {found} at {sys.executable}")
     if sys.version_info < (3, 11) and importlib.util.find_spec("tomli") is None:

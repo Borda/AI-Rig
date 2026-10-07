@@ -10,7 +10,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 import setup_release_dir as srd
 
 
@@ -312,4 +311,5 @@ def test_delegated_changelog_audit_validates_prepare_paths_before_read_or_write(
     assert 'IFS= read -r VERSION < "${TMPDIR:-/tmp}/release-prepare-version-${CSID}"' in dispatch
     assert "`$RELEASE_MODE`, `$VERSION`" in prompt
     assert agent_a.index("--validate-only") < agent_a.index("Read classified change table")
-    assert "<RELEASE_MODE>" in agent_a and "<VERSION>" in agent_a
+    assert "<RELEASE_MODE>" in agent_a
+    assert "<VERSION>" in agent_a

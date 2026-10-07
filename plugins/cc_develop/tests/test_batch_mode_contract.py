@@ -169,16 +169,42 @@ def _fence_unassigned_var_refs(fence_body: str) -> set[str]:
 class TestBatchModeDesign:
     """Pins the per-edit snapshot/bisect mechanism — see plan blocker 5."""
 
-    def test_revert_uses_real_patch_apply_not_bare_checkout(self) -> None:
-        """Bisect reverts via ``git apply -R`` on a per-edit patch file, not a file-scoped checkout.
+    @pytest.mark.parametrize(
+        ("first", "second"),
+        [
+            # Bisect reverts via ``git apply -R`` on a per-edit patch file, not a file-scoped checkout.
+            # ``quality-stack.md:106``'s ``git checkout HEAD -- <file>`` is file-scoped, the wrong tool for isolating
+            # one edit's diff — a prior draft cited it as reusable precedent for per-edit revert, which the challenger
+            # review found false (no command existed to reuse).
+            pytest.param("git apply -R", 'git diff "$PRE_N" "$PRE_N_PLUS_1"', id="revert-uses-real-patch-apply"),
+            # The doc states snapshots are dangling commits, unsafe across a ``git gc --prune``. Round-2 review (R4)
+            # flagged this as undocumented; the snapshots are reachable only through sentinel files, never a ref or
+            # branch, so a prune between snapshot and bisect would silently break the revert.
+            pytest.param("dangling", "git gc --prune", id="snapshot-lifetime-documented-as-dangling"),
+            # ``BATCH_ID``/``N`` are computed by a shipped command, never left as unassigned prose variables. A prior
+            # draft named them in prose ("BATCH_ID = e.g. the batch's start timestamp") without a producing command —
+            # both expanded empty at runtime, so every snapshot in a batch collided on one path.
+            pytest.param(
+                "BATCH_ID=$(date -u +%Y%m%dT%H%M%SZ)", "N=$((N + 1))", id="batch-id-and-n-derived-not-assumed"
+            ),
+            # Non-overlap holds on edited files AND test-impact sets, not test sets alone.
+            pytest.param("shares no test", "touches no source file", id="non-overlap-covers-both-files-and-tests"),
+            # Batch size is capped at 4 edits, bounding worst-case bisect cost.
+            pytest.param("Cap: 4 edits per batch", "ceil(log2(4)) = 2", id="batch-cap-is-four-edits"),
+            # Batch mode's own doc states it never applies to the review loops.
+            pytest.param("Step 4 review loop", "Step 5's review loop", id="batch-scoped-to-named-loops-only"),
+        ],
+    )
+    def test_batch_mode_doc_states_design_marker_pair(self, first: str, second: str) -> None:
+        """``batch-mode.md`` still states both halves of each design fact its contract pins.
 
-        ``quality-stack.md:106``'s ``git checkout HEAD -- <file>`` is file-scoped, the wrong tool for isolating one
-        edit's diff — a prior draft cited it as reusable precedent for per-edit revert, which the challenger review
-        found false (no command existed to reuse).
+        The pairs cover the per-edit revert via ``git apply -R``, the dangling-snapshot lifetime, the derived
+        ``BATCH_ID``/``N``, the non-overlap predicate, the 4-edit batch cap, and the scoping of batch mode away from the
+        review loops. The rationale for each pair is in the comment above its case.
         """
         text = _text(_BATCH_MODE)
-        assert "git apply -R" in text
-        assert 'git diff "$PRE_N" "$PRE_N_PLUS_1"' in text
+        assert first in text
+        assert second in text
 
     def test_snapshot_uses_git_index_file_not_bare_diff(self) -> None:
         """The pre-edit snapshot is a real commit object built via a throwaway ``GIT_INDEX_FILE``.
@@ -198,52 +224,49 @@ class TestBatchModeDesign:
         assert "git diff > " not in text
         assert "git add -N ." not in text
 
-    def test_snapshot_add_uses_repo_root_pathspec_not_cwd(self) -> None:
-        """The snapshot's ``git add`` stages the whole repo root, never just the caller's cwd.
+    @pytest.mark.parametrize(
+        ("present", "absent"),
+        [
+            # The snapshot's ``git add`` stages the whole repo root, never just the caller's cwd. Round-2 review (R4)
+            # found ``git add -A .`` CWD-scoped: ``read-tree HEAD`` seeds the whole tree but ``add -A .`` only
+            # re-stages the current directory down, so a skill run from a subdirectory would silently record files
+            # outside it as unchanged-from-HEAD and omit their edits from every isolated patch. ``:/`` pathspec magic
+            # matches the repo root regardless of cwd — verified live (scratch repo, snapshot taken from a
+            # subdirectory, both a root-level and a sub-level file staged).
+            pytest.param("git add -A :/", "git add -A .", id="snapshot-add-uses-repo-root-pathspec-not-cwd"),
+            # The closing batch size is written to a sentinel the caller's cap-check fence reads back. ``BATCH_SIZE``
+            # with no assignment anywhere always defaults to 1, silently capping the batch cap at edits-per-cycle
+            # instead of edits-per-batch — this pins that the batch itself writes the value, off by one corrected
+            # (``N`` counts every snapshot including the closing one, so edits processed is ``N - 1``). The sentinel
+            # path is a real shell variable (``_SKILL``), never a literal ``<skill>`` placeholder — round-4 review
+            # (N9) found the placeholder can never match the permission manifest and the caller's own reader side
+            # already expects a real skill name (``dev-feature-batch-size-...``, ``dev-refactor-batch-size-...``).
+            pytest.param(
+                'echo "$((N - 1))" > "${TMPDIR:-/tmp}/dev-${_SKILL}-batch-size-${CSID}"',
+                "dev-<skill>-batch-size",
+                id="batch-size-persisted-for-cap-accounting",
+            ),
+            # The Cap Accounting prose states the base edit count only — not a phantom bisect-re-run addition. Round-4
+            # review (N11) found the prose claimed a failing, bisecting batch "consumes 4 plus the bisect re-runs'
+            # edits" while the shipped fence only ever writes the base edit count — no mechanism anywhere accumulates
+            # the bisect re-runs on top of it. Documented behavior must match implemented behavior.
+            pytest.param(
+                "also consumes its base edit count",
+                "plus the bisect re-runs' edits",
+                id="cap-accounting-prose-matches-what-the-fence-writes",
+            ),
+        ],
+    )
+    def test_batch_mode_doc_states_marker_and_omits_stale_text(self, present: str, absent: str) -> None:
+        """``batch-mode.md`` carries the current wording of a pinned design fact and none of its superseded form.
 
-        Round-2 review (R4) found ``git add -A .`` CWD-scoped: `read-tree HEAD`` seeds the whole tree but ``add -A .``
-        only re-stages the current directory down, so a skill run from a subdirectory would silently record files
-        outside it as unchanged-from-HEAD and omit their edits from every isolated patch. ``:/`` pathspec magic matches
-        the repo root regardless of cwd — verified live (scratch repo, snapshot taken from a subdirectory, both a root-
-        level and a sub-level file staged).
+        Covers the repo-root pathspec of the snapshot ``git add``, the persisted batch size (a real ``_SKILL`` variable
+        rather than a ``<skill>`` placeholder) and the cap-accounting prose. The rationale for each is in the comment
+        above its case.
         """
         text = _text(_BATCH_MODE)
-        assert "git add -A :/" in text
-        assert "git add -A ." not in text
-
-    def test_snapshot_lifetime_documented_as_dangling(self) -> None:
-        """The doc states snapshots are dangling commits, unsafe across a ``git gc --prune``.
-
-        Round-2 review (R4) flagged this as undocumented; the snapshots are reachable only through sentinel files, never
-        a ref or branch, so a prune between snapshot and bisect would silently break the revert.
-        """
-        text = _text(_BATCH_MODE)
-        assert "dangling" in text
-        assert "git gc --prune" in text
-
-    def test_batch_id_and_n_are_derived_not_assumed(self) -> None:
-        """``BATCH_ID``/``N`` are computed by a shipped command, never left as unassigned prose variables.
-
-        A prior draft named them in prose ("BATCH_ID = e.g. the batch's start timestamp") without a producing
-        command — both expanded empty at runtime, so every snapshot in a batch collided on one path.
-        """
-        text = _text(_BATCH_MODE)
-        assert "BATCH_ID=$(date -u +%Y%m%dT%H%M%SZ)" in text
-        assert "N=$((N + 1))" in text
-
-    def test_batch_size_persisted_for_cap_accounting(self) -> None:
-        """The closing batch size is written to a sentinel the caller's cap-check fence reads back.
-
-        ``BATCH_SIZE`` with no assignment anywhere always defaults to 1, silently capping the batch cap at edits-per-
-        cycle instead of edits-per-batch — this pins that the batch itself writes the value, off by one corrected
-        (``N`` counts every snapshot including the closing one, so edits processed is ``N - 1``). The sentinel path is
-        a real shell variable (``_SKILL``), never a literal ``<skill>`` placeholder — round-4 review (N9) found the
-        placeholder can never match the permission manifest and the caller's own reader side already expects a real
-        skill name (``dev-feature-batch-size-...``, ``dev-refactor-batch-size-...``).
-        """
-        text = _text(_BATCH_MODE)
-        assert 'echo "$((N - 1))" > "${TMPDIR:-/tmp}/dev-${_SKILL}-batch-size-${CSID}"' in text
-        assert "dev-<skill>-batch-size" not in text
+        assert present in text
+        assert absent not in text
 
     def test_batch_run_reads_n_and_gates_sentinel_writes_on_success(self) -> None:
         """The batch-run write fence reads ``N`` back and only writes the size sentinel on success.
@@ -346,129 +369,129 @@ class TestBatchModeDesign:
             violations = _fence_unassigned_var_refs(fence)
             assert not violations, f"{path.name} fence #{i} references unassigned var(s) {violations}:\n{fence}"
 
-    def test_non_overlap_predicate_covers_both_files_and_tests(self) -> None:
-        """Non-overlap holds on edited files AND test-impact sets, not test sets alone."""
-        text = _text(_BATCH_MODE)
-        assert "shares no test" in text
-        assert "touches no source file" in text
+    @pytest.mark.parametrize(
+        ("marker", "anchor", "later"),
+        [
+            # The bisect loop aborts on a missing pre-snapshot instead of diffing an empty path. Round-4 review (N10)
+            # found both ``PRE_N``/``PRE_N_PLUS_1`` default to empty on a missing sentinel; ``git diff "" "<sha>"``
+            # exits 128 but the redirect has already created an empty patch file, and ``git apply -R`` on an empty
+            # patch succeeds as a silent no-op — bisect believes it reverted an edit it never touched.
+            pytest.param(
+                '[ -n "$PRE_N" ] && [ -n "$PRE_N_PLUS_1" ] || { echo',
+                '[ -n "$PRE_N" ] && [ -n "$PRE_N_PLUS_1" ]',
+                'git diff "$PRE_N" "$PRE_N_PLUS_1"',
+                id="bisect-loop-guards-missing-snapshot-before-diffing",
+            ),
+            # ``_BATCH_EDITS`` cannot go negative — a missing ``batch-n`` sentinel aborts instead of underflowing.
+            # Round-4 review (N12) found ``_BATCH_EDITS=$((_N_TOTAL - 1))`` with the sentinel absent (``_N_TOTAL``
+            # defaults to 0) yields ``-1``, which ``seq 1 -1`` silently turns into zero patches and which step 7 would
+            # then persist as a negative batch size, decrementing the caller's cap counter.
+            pytest.param(
+                '[ "$_N_TOTAL" -ge 1 ] || { echo',
+                '[ "$_N_TOTAL" -ge 1 ]',
+                "_BATCH_EDITS=$((_N_TOTAL - 1))",
+                id="bisect-guards-missing-n-total-before-subtracting",
+            ),
+        ],
+    )
+    def test_bisect_guard_precedes_the_command_it_guards(self, marker: str, anchor: str, later: str) -> None:
+        """A bisect-fence guard is present in ``batch-mode.md`` and comes before the command it protects.
 
-    def test_batch_cap_is_four_edits(self) -> None:
-        """Batch size is capped at 4 edits, bounding worst-case bisect cost."""
-        text = _text(_BATCH_MODE)
-        assert "Cap: 4 edits per batch" in text
-        assert "ceil(log2(4)) = 2" in text
-
-    def test_cap_accounting_counts_edits_not_batches(self) -> None:
-        """MAX_INNER_CYCLES / INNER_CYCLE count edits processed, so the no-batch path is unaffected."""
-        text = _text(_BATCH_MODE)
-        assert "counts **edits processed**, not batches or cycles" in text
-
-    def test_cap_accounting_prose_matches_what_the_fence_writes(self) -> None:
-        """The Cap Accounting prose states the base edit count only — not a phantom bisect-re-run addition.
-
-        Round-4 review (N11) found the prose claimed a failing, bisecting batch "consumes 4 plus the bisect re-runs'
-        edits" while the shipped fence only ever writes the base edit count — no mechanism anywhere accumulates the
-        bisect re-runs on top of it. Documented behavior must match implemented behavior.
+        Covers the missing pre-snapshot guard ahead of ``git diff`` and the missing ``batch-n`` total guard ahead of the
+        ``_BATCH_EDITS`` subtraction. The rationale for each is in the comment above its case.
         """
         text = _text(_BATCH_MODE)
-        assert "plus the bisect re-runs' edits" not in text
-        assert "also consumes its base edit count" in text
-
-    def test_bisect_loop_guards_missing_snapshot_before_diffing(self) -> None:
-        """The bisect loop aborts on a missing pre-snapshot instead of diffing an empty path.
-
-        Round-4 review (N10) found both ``PRE_N``/``PRE_N_PLUS_1`` default to empty on a missing sentinel; ``git diff ""
-        "<sha>"`` exits 128 but the redirect has already created an empty patch file, and ``git apply -R`` on an empty
-        patch succeeds as a silent no-op — bisect believes it reverted an edit it never touched.
-        """
-        text = _text(_BATCH_MODE)
-        assert '[ -n "$PRE_N" ] && [ -n "$PRE_N_PLUS_1" ] || { echo' in text
-        guard_idx = text.index('[ -n "$PRE_N" ] && [ -n "$PRE_N_PLUS_1" ]')
-        diff_idx = text.index('git diff "$PRE_N" "$PRE_N_PLUS_1"')
-        assert guard_idx < diff_idx
-
-    def test_bisect_guards_missing_n_total_before_subtracting(self) -> None:
-        """``_BATCH_EDITS`` cannot go negative — a missing ``batch-n`` sentinel aborts instead of underflowing.
-
-        Round-4 review (N12) found ``_BATCH_EDITS=$((_N_TOTAL - 1))`` with the sentinel absent (``_N_TOTAL`` defaults
-        to 0) yields ``-1``, which ``seq 1 -1`` silently turns into zero patches and which step 7 would then persist as
-        a negative batch size, decrementing the caller's cap counter.
-        """
-        text = _text(_BATCH_MODE)
-        assert '[ "$_N_TOTAL" -ge 1 ] || { echo' in text
-        guard_idx = text.index('[ "$_N_TOTAL" -ge 1 ]')
-        subtract_idx = text.index("_BATCH_EDITS=$((_N_TOTAL - 1))")
-        assert guard_idx < subtract_idx
+        assert marker in text
+        assert text.index(anchor) < text.index(later)
 
 
 class TestBatchModeWiring:
     """Pins the opt-in flag wiring into feature Step 3 and refactor Step 4."""
 
-    def test_feature_batch_defaults_true(self) -> None:
-        """feature/SKILL.md reads BATCH_ENABLED with a true default when the sentinel is absent — batch mode ships
-        default-on, ``--no-batch`` opts out."""
-        text = _text(_FEATURE_SKILL)
-        assert '[ "$BATCH_ENABLED" = "false" ] || BATCH_ENABLED=true' in text
+    @pytest.mark.parametrize(
+        ("path", "marker"),
+        [
+            # batch mode ships default-on, ``--no-batch`` opts out: BATCH_ENABLED defaults to true when the sentinel is
+            # absent.
+            pytest.param(
+                _FEATURE_SKILL,
+                '[ "$BATCH_ENABLED" = "false" ] || BATCH_ENABLED=true',
+                id="feature-batch-defaults-true",
+            ),
+            pytest.param(
+                _REFACTOR_SKILL,
+                '[ "$BATCH_ENABLED" = "false" ] || BATCH_ENABLED=true',
+                id="refactor-batch-defaults-true",
+            ),
+            # the cap-accounting increment defaults BATCH_SIZE to 1 — the no-batch path is unchanged.
+            pytest.param(
+                _FEATURE_SKILL,
+                "TDD_CYCLE=$((TDD_CYCLE + ${BATCH_SIZE:-1}))",
+                id="feature-cap-accounting-uses-batch-size",
+            ),
+            pytest.param(
+                _REFACTOR_SKILL,
+                "INNER_CYCLE=$((INNER_CYCLE + ${BATCH_SIZE:-1}))",
+                id="refactor-cap-accounting-uses-batch-size",
+            ),
+            # MAX_INNER_CYCLES / INNER_CYCLE count edits processed, so the no-batch path is unaffected.
+            pytest.param(
+                _BATCH_MODE,
+                "counts **edits processed**, not batches or cycles",
+                id="cap-accounting-counts-edits-not-batches",
+            ),
+        ],
+    )
+    def test_cap_and_default_wiring_marker_present(self, path: Path, marker: str) -> None:
+        """The feature/refactor skills and ``batch-mode.md`` still carry the opt-in default and cap-accounting wiring.
 
-    def test_refactor_batch_defaults_true(self) -> None:
-        """refactor/SKILL.md reads BATCH_ENABLED with a true default when the sentinel is absent — batch mode ships
-        default-on, ``--no-batch`` opts out."""
-        text = _text(_REFACTOR_SKILL)
-        assert '[ "$BATCH_ENABLED" = "false" ] || BATCH_ENABLED=true' in text
-
-    def test_feature_cap_accounting_uses_batch_size(self) -> None:
-        """feature/SKILL.md's TDD_CYCLE increment defaults BATCH_SIZE to 1 — no-batch path unchanged."""
-        text = _text(_FEATURE_SKILL)
-        assert "TDD_CYCLE=$((TDD_CYCLE + ${BATCH_SIZE:-1}))" in text
-
-    def test_refactor_cap_accounting_uses_batch_size(self) -> None:
-        """refactor/SKILL.md's INNER_CYCLE increment defaults BATCH_SIZE to 1 — no-batch path unchanged."""
-        text = _text(_REFACTOR_SKILL)
-        assert "INNER_CYCLE=$((INNER_CYCLE + ${BATCH_SIZE:-1}))" in text
-
-    def test_feature_reads_batch_size_sentinel_before_increment(self) -> None:
-        """feature/SKILL.md reads the real ``BATCH_SIZE`` batch-mode.md wrote, not just the ``:-1`` default."""
-        text = _text(_FEATURE_SKILL)
-        assert 'IFS= read -r BATCH_SIZE < "${TMPDIR:-/tmp}/dev-feature-batch-size-${CSID}"' in text
-        read_idx = text.index('IFS= read -r BATCH_SIZE < "${TMPDIR:-/tmp}/dev-feature-batch-size-${CSID}"')
-        increment_idx = text.index("TDD_CYCLE=$((TDD_CYCLE + ${BATCH_SIZE:-1}))")
-        assert read_idx < increment_idx
-
-    def test_refactor_reads_batch_size_sentinel_before_increment(self) -> None:
-        """refactor/SKILL.md reads the real ``BATCH_SIZE`` batch-mode.md wrote, not just the ``:-1`` default."""
-        text = _text(_REFACTOR_SKILL)
-        assert 'IFS= read -r BATCH_SIZE < "${TMPDIR:-/tmp}/dev-refactor-batch-size-${CSID}"' in text
-        read_idx = text.index('IFS= read -r BATCH_SIZE < "${TMPDIR:-/tmp}/dev-refactor-batch-size-${CSID}"')
-        increment_idx = text.index("INNER_CYCLE=$((INNER_CYCLE + ${BATCH_SIZE:-1}))")
-        assert read_idx < increment_idx
-
-    def test_batch_scoped_to_named_loops_only(self) -> None:
-        """Batch mode's own doc states it never applies to the review loops."""
-        text = _text(_BATCH_MODE)
-        assert "Step 4 review loop" in text
-        assert "Step 5's review loop" in text
-
-    def test_feature_writes_skill_name_sentinel_before_loading_batch_mode(self) -> None:
-        """feature/SKILL.md writes its own skill name to the sentinel batch-mode.md's fences read back.
-
-        Round-4 review (N9) found batch-mode.md's size-write fences used a literal ``<skill>`` placeholder — a fenced
-        block can never substitute a ``<placeholder>`` at runtime, and it can never match the permission manifest
-        either. The fix has each calling skill write its own name once, inside the same gate that decides whether to
-        load batch-mode.md at all — so a no-batch run never writes the sentinel.
+        BATCH_ENABLED defaults to true when its sentinel is absent, the cycle increment defaults ``BATCH_SIZE`` to 1 so
+        the no-batch path is unchanged, and the cap counts edits processed rather than batches or cycles.
         """
-        text = _text(_FEATURE_SKILL)
-        assert 'echo "feature" > "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}"' in text
-        write_idx = text.index('echo "feature" > "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}"')
-        load_idx = text.index('cat "$_DEV_SHARED/batch-mode.md"')
-        assert write_idx < load_idx
+        assert marker in _text(path)
 
-    def test_refactor_writes_skill_name_sentinel_before_loading_batch_mode(self) -> None:
-        """refactor/SKILL.md writes its own skill name to the sentinel batch-mode.md's fences read back.
+    @pytest.mark.parametrize(
+        ("path", "marker", "later"),
+        [
+            # feature/SKILL.md reads the real ``BATCH_SIZE`` batch-mode.md wrote, not just the ``:-1`` default.
+            pytest.param(
+                _FEATURE_SKILL,
+                'IFS= read -r BATCH_SIZE < "${TMPDIR:-/tmp}/dev-feature-batch-size-${CSID}"',
+                "TDD_CYCLE=$((TDD_CYCLE + ${BATCH_SIZE:-1}))",
+                id="feature-reads-batch-size-sentinel-before-increment",
+            ),
+            # refactor/SKILL.md reads the real ``BATCH_SIZE`` batch-mode.md wrote, not just the ``:-1`` default.
+            pytest.param(
+                _REFACTOR_SKILL,
+                'IFS= read -r BATCH_SIZE < "${TMPDIR:-/tmp}/dev-refactor-batch-size-${CSID}"',
+                "INNER_CYCLE=$((INNER_CYCLE + ${BATCH_SIZE:-1}))",
+                id="refactor-reads-batch-size-sentinel-before-increment",
+            ),
+            # Round-4 review (N9) found batch-mode.md's size-write fences used a literal ``<skill>`` placeholder — a
+            # fenced block can never substitute a ``<placeholder>`` at runtime, and it can never match the permission
+            # manifest either. The fix has each calling skill write its own name once, inside the same gate that
+            # decides whether to load batch-mode.md at all — so a no-batch run never writes the sentinel.
+            pytest.param(
+                _FEATURE_SKILL,
+                'echo "feature" > "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}"',
+                'cat "$_DEV_SHARED/batch-mode.md"',
+                id="feature-writes-skill-name-sentinel-before-loading-batch-mode",
+            ),
+            # Same N9 fix as feature/SKILL.md, mirrored for refactor's own batch-mode gate.
+            pytest.param(
+                _REFACTOR_SKILL,
+                'echo "refactor" > "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}"',
+                'cat "$_DEV_SHARED/batch-mode.md"',
+                id="refactor-writes-skill-name-sentinel-before-loading-batch-mode",
+            ),
+        ],
+    )
+    def test_skill_orders_wiring_marker_before_later_marker(self, path: Path, marker: str, later: str) -> None:
+        """A skill reads or writes its batch sentinel before the step that depends on it.
 
-        Same N9 fix as feature/SKILL.md, mirrored for refactor's own batch-mode gate.
+        The skill reads the real ``BATCH_SIZE`` batch-mode.md wrote before incrementing its cycle counter, and writes
+        its own skill name to the sentinel batch-mode.md's fences read back before loading batch-mode.md.
         """
-        text = _text(_REFACTOR_SKILL)
-        assert 'echo "refactor" > "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}"' in text
-        write_idx = text.index('echo "refactor" > "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}"')
-        load_idx = text.index('cat "$_DEV_SHARED/batch-mode.md"')
-        assert write_idx < load_idx
+        text = _text(path)
+        assert marker in text
+        assert text.index(marker) < text.index(later)

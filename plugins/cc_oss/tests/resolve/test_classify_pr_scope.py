@@ -6,9 +6,8 @@ override and CLI plumbing.
 
 from __future__ import annotations
 
-import pytest
-
 import classify_pr_scope as cps  # type: ignore[import-not-found]
+import pytest
 
 
 class TestClassify:
@@ -66,6 +65,7 @@ class TestRefactorOverride:
             pytest.param("", "Refactor parser into helper", id="title-refactor"),
             pytest.param("", "perf: faster loop", id="title-perf-prefix"),
             pytest.param("", "Rewrite hot path", id="title-rewrite"),
+            pytest.param("PERF", "Speed UP", id="signal-case-insensitive"),
         ],
     )
     def test_signal_promotes_fix_to_refactor(self, labels: str, title: str) -> None:
@@ -74,59 +74,74 @@ class TestRefactorOverride:
             cps.classify(py_files=2, loc_delta=30, new_api_lines=0, labels=labels, title=title) == cps.PRScope.REFACTOR
         )
 
-    def test_no_signal_stays_fix(self) -> None:
-        """Tiny diff without signal stays FIX."""
-        assert (
-            cps.classify(py_files=2, loc_delta=30, new_api_lines=0, labels="bug", title="fix typo in docstring")
-            == cps.PRScope.FIX
-        )
+    @pytest.mark.parametrize(
+        ("new_api_lines", "labels", "title", "expected"),
+        [
+            pytest.param(0, "bug", "fix typo in docstring", cps.PRScope.FIX, id="no-signal-stays-fix"),
+            pytest.param(5, "refactor", "Add new export", cps.PRScope.FEATURE, id="signal-ignored-for-feature"),
+        ],
+    )
+    def test_without_override_the_base_scope_is_kept(
+        self, new_api_lines: int, labels: str, title: str, expected: cps.PRScope
+    ) -> None:
+        """A tiny diff without a signal stays FIX, and a refactor signal never overrides FEATURE.
 
-    def test_signal_case_insensitive(self) -> None:
-        """Signal matching is case-insensitive."""
+        New API lines take precedence over the refactor signal, so the override only upgrades FIX.
+        """
         assert (
-            cps.classify(py_files=2, loc_delta=30, new_api_lines=0, labels="PERF", title="Speed UP")
-            == cps.PRScope.REFACTOR
-        )
-
-    def test_signal_ignored_for_feature(self) -> None:
-        """Refactor signal does not override FEATURE — new API takes precedence."""
-        assert (
-            cps.classify(py_files=2, loc_delta=30, new_api_lines=5, labels="refactor", title="Add new export")
-            == cps.PRScope.FEATURE
+            cps.classify(py_files=2, loc_delta=30, new_api_lines=new_api_lines, labels=labels, title=title) == expected
         )
 
 
 class TestHasRefactorSignal:
     """Direct coverage of the helper — boundary tokens, empties."""
 
-    def test_empty_inputs(self) -> None:
-        """Empty labels and title → False."""
-        assert cps._has_refactor_signal("", "") is False
-
-    def test_signal_in_labels_only(self) -> None:
-        """Signal token in labels alone is enough."""
-        assert cps._has_refactor_signal("cleanup", "") is True
-
-    def test_signal_in_title_only(self) -> None:
-        """Signal token in title alone is enough."""
-        assert cps._has_refactor_signal("", "architecture rewrite") is True
+    @pytest.mark.parametrize(
+        ("labels", "title", "expected"),
+        [
+            pytest.param("", "", False, id="empty-inputs"),
+            pytest.param("cleanup", "", True, id="signal-in-labels-only"),
+            pytest.param("", "architecture rewrite", True, id="signal-in-title-only"),
+        ],
+    )
+    def test_signal_is_found_in_labels_or_title(self, labels: str, title: str, expected: bool) -> None:
+        """A signal token in labels alone or in title alone is enough; empty labels and title carry no signal."""
+        assert cps._has_refactor_signal(labels, title) is expected
 
 
 class TestMain:
     """CLI behaviour — argparse plumbing and stdout shape."""
 
-    def test_prints_scope_only(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Stdout is the bare scope label — no ``SCOPE=`` prefix, no trailing data."""
-        rc = cps.main(["--py-files", "0", "--loc-delta", "0", "--new-api-lines", "0", "--labels", "", "--title", ""])
-        assert rc == 0
-        captured = capsys.readouterr()
-        assert captured.out.strip() == "CHORE"
+    @pytest.mark.parametrize(
+        ("py_files", "loc_delta", "new_api_lines", "expected"),
+        [
+            pytest.param("0", "0", "0", "CHORE", id="bare-scope-label-no-prefix"),
+            pytest.param("2", "10", "5", "FEATURE", id="new-api-lines-route-to-feature"),
+        ],
+    )
+    def test_prints_scope_label_only(
+        self, capsys: pytest.CaptureFixture[str], py_files: str, loc_delta: str, new_api_lines: str, expected: str
+    ) -> None:
+        """Stdout is the bare scope label — no ``SCOPE=`` prefix, no trailing data.
 
-    def test_feature_via_cli(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """New-api-lines > 0 routes to FEATURE end-to-end."""
-        rc = cps.main(["--py-files", "2", "--loc-delta", "10", "--new-api-lines", "5", "--labels", "", "--title", ""])
+        Zero changed files prints CHORE; new-api-lines > 0 routes to FEATURE end-to-end.
+        """
+        rc = cps.main(
+            [
+                "--py-files",
+                py_files,
+                "--loc-delta",
+                loc_delta,
+                "--new-api-lines",
+                new_api_lines,
+                "--labels",
+                "",
+                "--title",
+                "",
+            ]
+        )
         assert rc == 0
-        assert capsys.readouterr().out.strip() == "FEATURE"
+        assert capsys.readouterr().out.strip() == expected
 
     def test_missing_required_arg_exits_nonzero(self) -> None:
         """Argparse exits 2 when a required flag is missing."""

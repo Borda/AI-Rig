@@ -11,9 +11,8 @@ import argparse
 import json
 from pathlib import Path
 
-import pytest
-
 import audit_hook_coverage as ahc
+import pytest
 
 
 def _write_transcript(path: Path, records: list[dict]) -> Path:
@@ -95,17 +94,18 @@ class TestVerdictOf:
 class TestRate:
     """Share formatting, including the empty-denominator case."""
 
-    def test_formats_percentage(self):
-        """A share renders with a single decimal."""
-        assert ahc.rate(72, 1140) == "6.3%"
-
-    def test_empty_denominator_is_not_an_error(self):
-        """Zero examined calls yields `n/a` rather than raising.
-
-        Filters can legitimately match no transcript at all (a project substring that hits nothing); the summary must
-        still print instead of dying on ZeroDivision.
-        """
-        assert ahc.rate(0, 0) == "n/a"
+    @pytest.mark.parametrize(
+        ("covered", "total", "expected"),
+        [
+            pytest.param(72, 1140, "6.3%", id="single-decimal-percentage"),
+            # Filters can legitimately match no transcript at all (a project substring that hits nothing); the summary
+            # must still print instead of dying on ZeroDivision.
+            pytest.param(0, 0, "n/a", id="empty-denominator"),
+        ],
+    )
+    def test_formats_share_with_empty_denominator_guard(self, covered, total, expected):
+        """A share renders with a single decimal, and an empty denominator yields `n/a` rather than raising."""
+        assert ahc.rate(covered, total) == expected
 
 
 class TestParseSince:
@@ -117,7 +117,7 @@ class TestParseSince:
         Silently ignoring it would include pre-hook sessions and quietly deflate the measured rate — the exact
         contamination ``--since`` exists to remove.
         """
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"isoformat"):
             ahc.parse_since("last tuesday")
 
 
@@ -161,26 +161,29 @@ class TestReadTranscript:
 class TestLoadDigests:
     """Manifest union across installed plugins."""
 
-    def test_unions_every_plugin(self, tmp_path, monkeypatch):
-        """Digests from all installed plugins are merged into one lookup.
+    @pytest.mark.parametrize(
+        ("plugins", "expected"),
+        [
+            # A block committed in `foundry` is allowed by foundry's hook copy and passed through by every other
+            # plugin's copy; since all copies run on each Bash call, the effective set is the union.
+            pytest.param(
+                {"oss": {"1.0.0": ["aa"]}, "foundry": {"1.0.0": ["bb"]}},
+                {"aa": "oss", "bb": "foundry"},
+                id="union-of-every-plugin",
+            ),
+            # Stale versions linger in the cache; counting them would credit coverage to manifest text that is no longer
+            # what runs.
+            pytest.param({"oss": {"0.9.0": ["old"], "0.10.0": ["new"]}}, {"new": "oss"}, id="newest-version-only"),
+        ],
+    )
+    def test_digests_union_plugins_at_their_newest_version(self, tmp_path, monkeypatch, plugins, expected):
+        """Digests from all installed plugins merge into one lookup, each plugin at its newest version only.
 
-        A block committed in `foundry` is allowed by foundry's hook copy and passed through by every other plugin's
-        copy; since all copies run on each Bash call, the effective set is the union. Probing one plugin under-reports
-        coverage.
+        Probing one plugin under-reports coverage, and counting a stale version would credit coverage to manifest text
+        that no longer runs.
         """
-        monkeypatch.setattr(
-            ahc, "PLUGIN_CACHE", _fake_cache(tmp_path, {"oss": {"1.0.0": ["aa"]}, "foundry": {"1.0.0": ["bb"]}})
-        )
-        assert ahc.load_digests() == {"aa": "oss", "bb": "foundry"}
-
-    def test_uses_newest_version_only(self, tmp_path, monkeypatch):
-        """Only the newest installed version of a plugin contributes digests.
-
-        Stale versions linger in the cache; counting them would credit coverage to manifest text that is no longer what
-        runs.
-        """
-        monkeypatch.setattr(ahc, "PLUGIN_CACHE", _fake_cache(tmp_path, {"oss": {"0.9.0": ["old"], "0.10.0": ["new"]}}))
-        assert ahc.load_digests() == {"new": "oss"}
+        monkeypatch.setattr(ahc, "PLUGIN_CACHE", _fake_cache(tmp_path, plugins))
+        assert ahc.load_digests() == expected
 
     def test_version_selection_holds_for_nested_paths(self, tmp_path, monkeypatch):
         """Version ranking uses the directory under the plugin, not the file's parent.
@@ -275,24 +278,23 @@ class TestCollect:
         monkeypatch.setattr(ahc, "TRANSCRIPT_ROOT", root)
         return root
 
-    def test_project_filter_selects_by_substring(self, transcripts):
-        """Narrow to matching project directories."""
-        _, sessions = ahc.collect(_make_args(project="beta"), ahc.Classifier({}, None))
-        assert [row["project"] for row in sessions] == ["proj-beta"]
+    @pytest.mark.parametrize(
+        ("overrides", "field", "expected"),
+        [
+            pytest.param({"project": "beta"}, "project", ["proj-beta"], id="project-substring"),
+            # Ad-hoc engineering sessions run almost no blueprint text, so mixing them in dilutes the rate toward zero.
+            pytest.param({"skills_only": True}, "session", ["b"], id="skills-only-drops-ad-hoc"),
+            pytest.param({"since": "2099-01-01"}, "session", [], id="since-excludes-older"),
+        ],
+    )
+    def test_filters_select_sessions(self, transcripts, overrides, field, expected):
+        """Each collection filter narrows the sessions that are reported.
 
-    def test_skills_only_drops_ad_hoc_sessions(self, transcripts):
-        """Keep sessions that invoked a plugin skill.
-
-        Ad-hoc engineering sessions run almost no blueprint text, so mixing them in dilutes the rate toward zero and
-        hides what skill runs actually achieve.
+        A project substring keeps matching project directories, ``skills_only`` keeps sessions that invoked a plugin
+        skill, and a ``since`` cutoff excludes transcripts last modified before it.
         """
-        _, sessions = ahc.collect(_make_args(skills_only=True), ahc.Classifier({}, None))
-        assert [row["session"] for row in sessions] == ["b"]
-
-    def test_since_excludes_older_transcripts(self, transcripts):
-        """Exclude transcripts last modified before the requested cutoff."""
-        _, sessions = ahc.collect(_make_args(since="2099-01-01"), ahc.Classifier({}, None))
-        assert sessions == []
+        _, sessions = ahc.collect(_make_args(**overrides), ahc.Classifier({}, None))
+        assert [row[field] for row in sessions] == expected
 
     def test_vanished_transcript_is_skipped(self, transcripts, monkeypatch):
         """A transcript deleted between glob and read does not abort the scan.

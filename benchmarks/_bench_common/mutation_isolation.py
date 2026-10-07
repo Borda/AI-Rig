@@ -6,17 +6,17 @@ that cleanup is attempted on every ordinary exit and that a cleanup failure cann
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
 import contextlib
 import hashlib
 import json
 import os
-from pathlib import Path
 import shlex
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, TypeVar
 
 from .edit_patch_contracts import (
@@ -30,7 +30,6 @@ from .edit_patch_contracts import (
     run_fix_single_oracle,
 )
 
-
 ResultT = TypeVar("ResultT")
 
 
@@ -38,8 +37,11 @@ class MutationCleanupError(RuntimeError):
     """Raised when a cell's frozen baseline cannot be restored."""
 
 
+#: Maximum characters of a test command's output kept in the recorded excerpt.
 _COMMAND_OUTPUT_LIMIT = 4_096
+#: Seconds a targeted test command may run before it is stopped and counted as failed.
 _TEST_TIMEOUT_SECONDS = 300
+#: Environment variable naming the pytest command used for patch tests; the PATH pytest is the fallback.
 PATCH_PYTEST_ENV = "CODEMAP_BENCH_PATCH_PYTEST"
 
 
@@ -47,7 +49,7 @@ PATCH_PYTEST_ENV = "CODEMAP_BENCH_PATCH_PYTEST"
 class PatchTaskAgentWorkspace:
     """Editable patch-task worktree with a staged immutable target-test fixture."""
 
-    workspace: "ExecutableAgentWorkspace"
+    workspace: ExecutableAgentWorkspace
     contract: EditTaskContract
     fixture_sha256_by_path: Mapping[str, str]
     baseline_target_failed: bool
@@ -134,8 +136,8 @@ class FixExecution:
 
 def _workspace_git(repo_path: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     """Run one bounded Git command against an explicit benchmark repository."""
-    return subprocess.run(
-        ["git", "-C", str(repo_path), *args],
+    return subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "-C", str(repo_path), *args],  # noqa: S607 - git/tool resolved via PATH on purpose
         check=check,
         capture_output=True,
         text=True,
@@ -164,12 +166,12 @@ def _apply_fixture(worktree: Path, contract: EditTaskContract) -> None:
         fixture_path.unlink(missing_ok=True)
 
 
-# The launcher reports its own runtime rather than being parsed for one. A console-script
-# launcher is a text file with a Python shebang only on POSIX; the same entry point installs
-# as a binary trampoline on Windows, where reading a shebang out of it fails outright
-# (`UnicodeDecodeError` on the first line). Asking the admitted launcher to print what it
-# actually loaded is both platform-neutral and a stricter binding: it fingerprints the
-# interpreter that will run the Patch command, not the one a header claims.
+#: The launcher reports its own runtime rather than being parsed for one. A console-script
+#: launcher is a text file with a Python shebang only on POSIX; the same entry point installs
+#: as a binary trampoline on Windows, where reading a shebang out of it fails outright
+#: (`UnicodeDecodeError` on the first line). Asking the admitted launcher to print what it
+#: actually loaded is both platform-neutral and a stricter binding: it fingerprints the
+#: interpreter that will run the Patch command, not the one a header claims.
 _RUNTIME_PROBE_CONFTEST = """
 import importlib.metadata as metadata
 import json, pathlib, pytest, sys
@@ -181,6 +183,7 @@ print({token!r} + json.dumps({{'python_executable': sys.executable, 'python_pref
     'python_version': sys.version.split()[0], 'pytest_module': str(pathlib.Path(pytest.__file__).resolve()),
     'pytest_plugins': plugins, 'pytest_version': pytest.__version__}}, sort_keys=True))
 """
+#: Seconds the runtime probe may run before it is abandoned.
 _RUNTIME_PROBE_TIMEOUT_S = 120.0
 
 
@@ -209,7 +212,7 @@ def _probe_patch_test_runtime(pytest_executable: Path) -> dict[str, Any]:
         root = Path(probe_root)
         (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
         (root / "conftest.py").write_text(_RUNTIME_PROBE_CONFTEST.format(token=token), encoding="utf-8")
-        probe = subprocess.run(
+        probe = subprocess.run(  # noqa: S603 - argv list, no shell
             [str(pytest_executable), "-c", str(root / "pytest.ini"), "--rootdir", str(root), "-s", "-q", str(root)],
             cwd=probe_root,
             check=False,
@@ -300,7 +303,7 @@ def _run_test_command(
     runtime = _validated_patch_test_runtime(runtime_identity)
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(worktree / "src")
-    completed = subprocess.run(
+    completed = subprocess.run(  # noqa: S603 - argv list, no shell
         [runtime["pytest_executable"], *argv[1:]],
         cwd=worktree,
         check=False,
@@ -504,7 +507,7 @@ def execute_fix_multi_patch(repo_path: Path, contract: FixMultiContract, diff: s
 
 def stage_patch_task_agent_workspace(
     source: Path,
-    workspace: "ExecutableAgentWorkspace",
+    workspace: ExecutableAgentWorkspace,
     contract: EditTaskContract,
     *,
     runtime_identity: Mapping[str, str] | None = None,

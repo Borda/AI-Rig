@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from _platform import (
     POSIX_DESCRIPTOR_PRIMITIVES_AVAILABLE,
     POSIX_EXECUTABLE_SCRIPTS_AVAILABLE,
@@ -52,7 +51,8 @@ def _load_package_builder() -> Any:
     """Load the package builder that owns publication file discovery."""
     path = PLUGIN_ROOT / "scripts" / "build_package.py"
     spec = importlib.util.spec_from_file_location("codex_rig_cache_package_builder", path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -328,7 +328,7 @@ def test_verifier_rejects_unsupported_package_schema(tmp_path: Path, schema: int
 @pytest.mark.packaging
 def test_verifier_bounds_invalid_role_envelope(tmp_path: Path) -> None:
     """Prevent malformed role arguments from expanding or injecting diagnostics."""
-    home, installed_root, codex_binary = _installed_fixture(tmp_path)
+    home, installed_root, _codex_binary = _installed_fixture(tmp_path)
     verifier = installed_root / "scripts" / "verify_role_link.py"
     result = subprocess.run(
         [sys.executable, str(verifier), "--role", "bad\n" + "x" * 1000],

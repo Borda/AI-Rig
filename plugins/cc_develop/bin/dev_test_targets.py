@@ -54,8 +54,11 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
+#: Matches a Python test file name: test_*.py or *_test.py.
 _TEST_NAME = re.compile(r"(^test_.*|.*_test)\.py$")
+#: Layout prefixes dropped from a path when turning it into a dotted module name.
 _SOURCE_ROOTS = ("src/", "lib/")
+#: Guidance returned when no targeted tests were found: run only the tests the step names, not the full suite.
 _EMPTY_NOTE = (
     "no targeted tests found for this change — run only the tests this step already names (regression or"
     " characterization); the full suite runs at the final gate, never here"
@@ -95,7 +98,7 @@ def _run(args: list[str], cwd: Path, timeout: int = 60) -> tuple[int, str]:
         ``(returncode, stdout)``; the code is 1 and stdout empty when the command cannot run at all.
     """
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S603 - argv list, no shell
             args, cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False, encoding="utf-8"
         )
     except (OSError, subprocess.SubprocessError):

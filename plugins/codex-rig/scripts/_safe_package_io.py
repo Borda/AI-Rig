@@ -42,9 +42,11 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-
+#: Maximum UTF-8 length, in bytes, of a package-relative path accepted by the safe readers.
 MAX_PATH_BYTES = 16_384
+#: Size, in bytes, of each chunk requested when reading a file descriptor in bounded pieces.
 _READ_CHUNK_BYTES = 65_536
+#: Windows file-attribute bit that marks a reparse point (link or junction), which package reads must reject.
 _REPARSE_POINT = 0x400
 
 

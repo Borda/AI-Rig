@@ -69,7 +69,7 @@ def _check_currency(index_path: Path) -> tuple[str, str]:
     if not currency_bin:
         return "current", ""
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv list, no shell
             [sys.executable, currency_bin, "--index-path", str(index_path)],
             capture_output=True,
             text=True,
@@ -99,7 +99,7 @@ def _project_root() -> Path:
     """
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - git resolved via PATH on purpose
             capture_output=True,
             text=True,
             timeout=5,

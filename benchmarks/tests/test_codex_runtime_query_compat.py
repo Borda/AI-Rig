@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import importlib.util
 import hashlib
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -13,7 +13,6 @@ from typing import Any
 import pytest
 
 from benchmarks._bench_common import provider_parity_contracts as core
-
 
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 
@@ -137,12 +136,36 @@ def _completed_stream(
         pytest.param('{ "$CODEMAP_BIN" query --compact rdeps pkg.core; }', False, id="brace-group"),
         pytest.param('"$CODEMAP_BIN" query --compact rdeps pkg.core > out.json', False, id="historical-redirect"),
         pytest.param('"$CODEMAP_BIN" query --compact rdeps pkg.core 2>&1', False, id="historical-stderr-redirect"),
+        pytest.param(
+            "/bin/zsh -lc '\"$CODEMAP_BIN\" query --compact rdeps pkg.core'", True, id="one-outer-transport-wrapper"
+        ),
+        pytest.param(
+            '/bin/zsh -lc \'/bin/zsh -lc "\\"$CODEMAP_BIN\\" query --compact rdeps pkg.core"\'',
+            False,
+            id="nested-wrapper",
+        ),
+        pytest.param(
+            "/bin/zsh -lc '\"$CODEMAP_BIN\" query --compact rdeps pkg.core; echo done'",
+            False,
+            id="historical-compound-wrapper",
+        ),
+        pytest.param(
+            "/bin/zsh -lc '\"$CODEMAP_BIN\" query --compact rdeps pkg.core > out.json'",
+            False,
+            id="historical-redirect-wrapper",
+        ),
+        pytest.param("/bin/zsh -lc", False, id="missing-wrapper-command"),
     ],
 )
-def test_historical_shell_query_shapes_reject_the_native_item_contract(
+def test_native_item_shell_shapes_classify_as_codemap_commands(
     script_run_codex: Any, command: str, expected: bool
 ) -> None:
-    """Standalone native commands remain evidence across quoted launcher spellings."""
+    """Only standalone native query commands are recognized as the native item contract.
+
+    Standalone native commands remain evidence across quoted launcher spellings, while inspection, help, background,
+    redirect, substitution, and group shapes are rejected. Only one exact Codex transport wrapper may contain the native
+    payload: nested, compound, redirected, or commandless wrappers are rejected.
+    """
     assert script_run_codex.runtime._is_codemap_command(command) is expected
 
 
@@ -575,37 +598,6 @@ def test_variable_launcher_observation_survives_a_later_reassignment(script_run_
     assert parsed.codemap_calls == 0
 
 
-@pytest.mark.parametrize(
-    ("command", "expected"),
-    [
-        pytest.param(
-            "/bin/zsh -lc '\"$CODEMAP_BIN\" query --compact rdeps pkg.core'", True, id="one-outer-transport-wrapper"
-        ),
-        pytest.param(
-            '/bin/zsh -lc \'/bin/zsh -lc "\\"$CODEMAP_BIN\\" query --compact rdeps pkg.core"\'',
-            False,
-            id="nested-wrapper",
-        ),
-        pytest.param(
-            "/bin/zsh -lc '\"$CODEMAP_BIN\" query --compact rdeps pkg.core; echo done'",
-            False,
-            id="historical-compound-wrapper",
-        ),
-        pytest.param(
-            "/bin/zsh -lc '\"$CODEMAP_BIN\" query --compact rdeps pkg.core > out.json'",
-            False,
-            id="historical-redirect-wrapper",
-        ),
-        pytest.param("/bin/zsh -lc", False, id="missing-wrapper-command"),
-    ],
-)
-def test_one_outer_transport_wrapper_preserves_the_native_item_contract(
-    script_run_codex: Any, command: str, expected: bool
-) -> None:
-    """Only one exact Codex transport wrapper may contain the native payload."""
-    assert script_run_codex.runtime._is_codemap_command(command) is expected
-
-
 def test_historical_wrapped_C_delivery_rejects_native_item_contract(script_run_codex: Any, tmp_path: Path) -> None:
     """Historical wrapped C evidence stays available but cannot score a new cell."""
     skill_path = tmp_path / "codex-skills" / "query-code" / "SKILL.md"
@@ -833,81 +825,104 @@ def test_historical_bound_launcher_query_rejects_native_item_contract(script_run
     assert script_run_codex._arm_compliance("C_strict", reversed_parsed) is False
 
 
-def test_historical_uppercase_launcher_assignment_rejects_native_item_contract(
-    script_run_codex: Any, tmp_path: Path
-) -> None:
-    """A historical assigned launcher is not a future standalone native item."""
-    skill_path = tmp_path / "codex-skills" / "query-code" / "SKILL.md"
-    skill_path.parent.mkdir(parents=True)
-    skill_bytes = b"# query-code\nUse the compact query.\n"
-    skill_path.write_bytes(skill_bytes)
-    launcher = tmp_path / "plugins" / "codemap-py" / "bin" / "codemap-py"
-    launcher.parent.mkdir(parents=True)
-    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    launcher.chmod(0o755)
-    events = [
-        {
-            "type": "item.completed",
-            "item": {
-                "id": "skill-read",
-                "type": "command_execution",
-                "command": 'cat "$CODEMAP_SKILL_FILE"',
-                "status": "completed",
-                "exit_code": 0,
-                "aggregated_output": skill_bytes.decode(),
-            },
-        },
-        {
-            "type": "item.completed",
-            "item": {
-                "id": "query",
-                "type": "command_execution",
-                "command": (
-                    "/bin/zsh -lc '"
-                    f'CODEMAP_BIN="${{CODEMAP_BIN:-{launcher}}}"; '
-                    '"$CODEMAP_BIN" query --compact fn-rdeps "pkg.core::target"\''
-                ),
-                "status": "completed",
-                "exit_code": 0,
-                "aggregated_output": json.dumps({"index": {"query_complete": True, "compact": True}}),
-            },
-        },
-        {"type": "turn.completed"},
-    ]
-
-    parsed = script_run_codex.runtime.parse_codex_jsonl(
-        "\n".join(json.dumps(event) for event in events),
-        launcher_path=launcher,
-        skill_path=skill_path,
-        skill_sha256=hashlib.sha256(skill_bytes).hexdigest(),
-    )
-
-    assert parsed.skill_delivery_observed is True
-    assert parsed.codemap_calls == 0
-    assert parsed.codemap_direct_successful_calls == 0
-    assert script_run_codex._arm_compliance("C_strict", parsed) is False
-
-
 @pytest.mark.parametrize(
     "command",
     [
-        'CODEMAP_BIN="${CODEMAP_BIN:-/wrong/codemap-py}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'CODEMAP_BIN="{launcher}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; CODEMAP_BIN=/wrong/codemap-py; '
-        '"$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'export CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'readonly CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'typeset CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; unset CODEMAP_BIN; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'CODEMAP_BIN="$(printf \'%s\' {launcher})"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'payload="CODEMAP_BIN=/wrong/codemap-py"; eval "$payload"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'if true; then CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; fi; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+        pytest.param(
+            'CODEMAP_BIN="${CODEMAP_BIN:-/wrong/codemap-py}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+            id="wrong-default-fallback",
+        ),
+        pytest.param('CODEMAP_BIN="{launcher}"; "$CODEMAP_BIN" query --compact rdeps pkg.core', id="plain-assignment"),
+        pytest.param(
+            'CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; CODEMAP_BIN=/wrong/codemap-py; '
+            '"$CODEMAP_BIN" query --compact rdeps pkg.core',
+            id="fallback-then-wrong-reassignment",
+        ),
+        pytest.param(
+            'export CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+            id="exported-fallback",
+        ),
+        pytest.param(
+            'readonly CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+            id="readonly-fallback",
+        ),
+        pytest.param(
+            'typeset CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+            id="typeset-fallback",
+        ),
+        pytest.param(
+            'CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; unset CODEMAP_BIN; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+            id="unset-after-fallback",
+        ),
+        pytest.param(
+            'CODEMAP_BIN="$(printf \'%s\' {launcher})"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+            id="command-substitution-assignment",
+        ),
+        pytest.param(
+            'payload="CODEMAP_BIN=/wrong/codemap-py"; eval "$payload"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+            id="eval-payload-assignment",
+        ),
+        pytest.param(
+            'if true; then CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; fi; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+            id="conditional-fallback-block",
+        ),
+        pytest.param(
+            'CODEMAP_BIN=/wrong/codemap-py; "$CODEMAP_BIN" query --compact rdeps pkg.core', id="wrong-assignment"
+        ),
+        pytest.param(
+            'export CODEMAP_BIN=/wrong/codemap-py; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+            id="exported-wrong-assignment",
+        ),
+        pytest.param(
+            'codemap_bin="${CODEMAP_BIN:-{launcher}}"; codemap_bin=/wrong; "$codemap_bin" query --compact rdeps pkg.core',
+            id="lowercase-alias-reassigned",
+        ),
+        pytest.param(
+            'name=CODEMAP_BIN; typeset "$name"=/wrong/codemap-py; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+            id="indirect-typeset-name",
+        ),
+        pytest.param(
+            'for CODEMAP_BIN in /wrong/codemap-py; do "$CODEMAP_BIN" query --compact rdeps pkg.core; done',
+            id="for-loop-binding",
+        ),
+        pytest.param(
+            "printf 'CODEMAP_BIN=%s\\n' \"${CODEMAP_BIN-}\"; "
+            "CODEMAP_BIN=/wrong/codemap-py; "
+            'if [ -n "${CODEMAP_BIN-}" ]; then '
+            '"$CODEMAP_BIN" query --compact rdeps pkg.core; fi',
+            id="diagnostic-assignment-conditional-query",
+        ),
+        pytest.param(
+            'while IFS= read -r CODEMAP_BIN; do "$CODEMAP_BIN" query --compact '
+            "rdeps pkg.core; break; done <<< /wrong/codemap-py",
+            id="while-read-binding",
+        ),
+        pytest.param(
+            'codemap_bin="${CODEMAP_BIN:-/wrong/codemap-py}"; "$codemap_bin" query --compact rdeps pkg.core',
+            id="lowercase-wrong-default-fallback",
+        ),
+        pytest.param(
+            'codemap_bin="${CODEMAP_BIN:-{launcher}}"; "$codemap_bin" --version', id="lowercase-version-probe"
+        ),
+        pytest.param(
+            'codemap_bin="{launcher}"; "$codemap_bin" query --compact rdeps pkg.core', id="lowercase-plain-assignment"
+        ),
+        pytest.param(
+            'runner="${CODEMAP_BIN:-{launcher}}"; "$runner" query --compact rdeps pkg.core',
+            id="unrelated-variable-fallback",
+        ),
+        pytest.param('echo "$CODEMAP_BIN query --compact rdeps pkg.core"', id="echo-inspection"),
     ],
 )
-def test_uppercase_launcher_fallback_rejects_untrusted_shell_forms(
+def test_launcher_variable_forms_are_not_credited_as_the_bound_query(
     script_run_codex: Any, tmp_path: Path, command: str
 ) -> None:
-    """Assignments never substitute for the future standalone native item."""
+    """Shell forms that rebind, indirect, or merely mention the launcher never count as a native query.
+
+    Assignments never substitute for the future standalone native item, shell reassignment cannot swap an unlocked
+    executable for the staged launcher, and query evidence is not widened to unrelated variables, paths, or non-query
+    commands.
+    """
     launcher = tmp_path / "codemap-py"
     launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     launcher.chmod(0o755)
@@ -968,45 +983,47 @@ def test_historical_multiline_direct_query_rejects_native_item_contract(script_r
 @pytest.mark.parametrize(
     "command",
     [
-        'printf \'CODEMAP_BIN=%s\\n\' "$CODEMAP_BIN"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'printf ready &&\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'false ||\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'printf ready |\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'CODEMAP_BIN=/wrong/codemap-py\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'printf \'CODEMAP_BIN=/wrong\\n\' "$CODEMAP_BIN" "$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'printf \'CODEMAP_BIN=%s\\n\n"$CODEMAP_BIN" query --compact rdeps pkg.core\' "$CODEMAP_BIN"',
-        'printf \'CODEMAP_BIN=%s\\n\' "$CODEMAP_BIN" \\\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
+        pytest.param(
+            'printf \'CODEMAP_BIN=%s\\n\' "$CODEMAP_BIN"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+            id="printf-echo-then-query",
+        ),
+        pytest.param('printf ready &&\n"$CODEMAP_BIN" query --compact rdeps pkg.core', id="and-continuation-newline"),
+        pytest.param('false ||\n"$CODEMAP_BIN" query --compact rdeps pkg.core', id="or-continuation-newline"),
+        pytest.param('printf ready |\n"$CODEMAP_BIN" query --compact rdeps pkg.core', id="pipe-continuation-newline"),
+        pytest.param(
+            'CODEMAP_BIN=/wrong/codemap-py\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
+            id="wrong-assignment-newline",
+        ),
+        pytest.param(
+            'printf \'CODEMAP_BIN=/wrong\\n\' "$CODEMAP_BIN" "$CODEMAP_BIN" query --compact rdeps pkg.core',
+            id="printf-doubled-launcher-argument",
+        ),
+        pytest.param(
+            'printf \'CODEMAP_BIN=%s\\n\n"$CODEMAP_BIN" query --compact rdeps pkg.core\' "$CODEMAP_BIN"',
+            id="printf-format-spanning-newline",
+        ),
+        pytest.param(
+            'printf \'CODEMAP_BIN=%s\\n\' "$CODEMAP_BIN" \\\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
+            id="backslash-continuation",
+        ),
+        pytest.param(
+            "printf 'CODEMAP_BIN=%s\\n' \"${CODEMAP_BIN-}\"; "
+            "rg -n target .; "
+            'if [ -n "${CODEMAP_BIN-}" ]; then '
+            '"$CODEMAP_BIN" query --compact fn-rdeps "pkg.core::target"; '
+            "else printf 'CODEMAP_BIN is unset\\n'; fi",
+            id="diagnostic-conditional-query",
+        ),
     ],
 )
-def test_historical_newline_shell_forms_reject_native_item_contract(script_run_codex: Any, command: str) -> None:
-    """No multiline shell form is the dedicated future native query item."""
-    parsed = script_run_codex.runtime.parse_codex_jsonl(
-        _completed_stream(
-            commands=[
-                {
-                    "type": "command_execution",
-                    "command": command,
-                    "status": "completed",
-                    "exit_code": 0,
-                    "aggregated_output": json.dumps({"index": {"query_complete": True, "compact": True}}),
-                }
-            ]
-        )
-    )
+def test_historical_newline_and_diagnostic_shell_forms_reject_native_item_contract(
+    script_run_codex: Any, command: str
+) -> None:
+    """No multiline or diagnostic/control shell form is the dedicated future native query item.
 
-    assert parsed.codemap_direct_compact_successful_calls == 0
-    assert script_run_codex._arm_compliance("B_auto", parsed) is False
-
-
-def test_historical_diagnostic_conditional_query_rejects_native_item_contract(script_run_codex: Any) -> None:
-    """A historical diagnostic/control command cannot score a future direct query."""
-    command = (
-        "printf 'CODEMAP_BIN=%s\\n' \"${CODEMAP_BIN-}\"; "
-        "rg -n target .; "
-        'if [ -n "${CODEMAP_BIN-}" ]; then '
-        '"$CODEMAP_BIN" query --compact fn-rdeps "pkg.core::target"; '
-        "else printf 'CODEMAP_BIN is unset\\n'; fi"
-    )
+    Historical multiline shell forms and a diagnostic/conditional control command stay evidence only: none can score a
+    future direct query or satisfy B compliance.
+    """
     parsed = script_run_codex.runtime.parse_codex_jsonl(
         _completed_stream(
             commands=[
@@ -1225,9 +1242,12 @@ def test_historical_conditional_launcher_alias_replay_is_not_canonical_C_complia
         'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
         'else CODEMAP_LAUNCHER="{launcher}"; fi; printf ready\n'
         '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-        'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
-        'else CODEMAP_LAUNCHER="/wrong/codemap-py"; fi\n'
-        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        pytest.param(
+            "/bin/zsh -lc '"
+            'CODEMAP_BIN="${{CODEMAP_BIN:-{launcher}}}"; '
+            '"$CODEMAP_BIN" query --compact fn-rdeps "pkg.core::target"\'',
+            id="zsh-wrapped-launcher-assignment",
+        ),
     ],
 )
 def test_conditional_launcher_alias_rejects_unproven_forms(
@@ -1236,7 +1256,8 @@ def test_conditional_launcher_alias_rejects_unproven_forms(
     """Keep conditional alias credit limited to one immutable two-branch form.
 
     Each case could execute a launcher-like command, so a recognizer that only matches ``CODEMAP_LAUNCHER query`` would
-    incorrectly satisfy C compliance.
+    incorrectly satisfy C compliance. A historical assigned launcher, including one inside a transport wrapper, is not a
+    future standalone native item either.
     """
     skill_path = tmp_path / "codex-skills" / "query-code" / "SKILL.md"
     skill_path.parent.mkdir(parents=True)
@@ -1282,6 +1303,7 @@ def test_conditional_launcher_alias_rejects_unproven_forms(
     assert parsed.skill_delivery_observed is True
     assert parsed.codemap_calls == 0
     assert parsed.codemap_skill_compact_successful_calls == 0
+    assert parsed.codemap_direct_successful_calls == 0
     assert script_run_codex._arm_compliance("C_strict", parsed) is False
 
 
@@ -1527,58 +1549,6 @@ def test_historical_query_then_skill_read_rejects_native_item_contract(script_ru
     assert parsed.codemap_direct_compact_successful_calls == 0
     assert parsed.codemap_skill_compact_successful_calls == 0
     assert script_run_codex._arm_compliance("C_strict", parsed) is False
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        'CODEMAP_BIN=/wrong/codemap-py; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'export CODEMAP_BIN=/wrong/codemap-py; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'codemap_bin="${CODEMAP_BIN:-{launcher}}"; codemap_bin=/wrong; "$codemap_bin" query --compact rdeps pkg.core',
-        'payload="CODEMAP_BIN=/wrong/codemap-py"; eval "$payload"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'name=CODEMAP_BIN; typeset "$name"=/wrong/codemap-py; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-        'for CODEMAP_BIN in /wrong/codemap-py; do "$CODEMAP_BIN" query --compact rdeps pkg.core; done',
-        "printf 'CODEMAP_BIN=%s\\n' \"${CODEMAP_BIN-}\"; "
-        "CODEMAP_BIN=/wrong/codemap-py; "
-        'if [ -n "${CODEMAP_BIN-}" ]; then '
-        '"$CODEMAP_BIN" query --compact rdeps pkg.core; fi',
-        'while IFS= read -r CODEMAP_BIN; do "$CODEMAP_BIN" query --compact '
-        "rdeps pkg.core; break; done <<< /wrong/codemap-py",
-    ],
-)
-def test_query_credit_rejects_launcher_variable_mutation(script_run_codex: Any, tmp_path: Path, command: str) -> None:
-    """Shell reassignment cannot substitute an unlocked executable for the staged launcher."""
-    launcher = tmp_path / "codemap-py"
-    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    launcher.chmod(0o755)
-
-    assert not script_run_codex.runtime._is_codemap_command(
-        command.replace("{launcher}", str(launcher)),
-        launcher_path=launcher,
-    )
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        'codemap_bin="${CODEMAP_BIN:-/wrong/codemap-py}"; "$codemap_bin" query --compact rdeps pkg.core',
-        'codemap_bin="${CODEMAP_BIN:-{launcher}}"; "$codemap_bin" --version',
-        'codemap_bin="{launcher}"; "$codemap_bin" query --compact rdeps pkg.core',
-        'runner="${CODEMAP_BIN:-{launcher}}"; "$runner" query --compact rdeps pkg.core',
-        'echo "$CODEMAP_BIN query --compact rdeps pkg.core"',
-    ],
-)
-def test_bound_launcher_query_rejects_ambiguous_or_unlocked_shell_forms(
-    script_run_codex: Any, tmp_path: Path, command: str
-) -> None:
-    """Do not widen query evidence to unrelated variables, paths, or non-query commands."""
-    launcher = tmp_path / "codemap-py"
-    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    launcher.chmod(0o755)
-
-    assert not script_run_codex.runtime._is_codemap_command(
-        command.replace("{launcher}", str(launcher)), launcher_path=launcher
-    )
 
 
 @pytest.mark.parametrize(

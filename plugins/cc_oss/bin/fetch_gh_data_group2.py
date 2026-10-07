@@ -35,14 +35,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
 
-# Enforce safe owner/repo/branch shapes to defuse URL-path injection (A03:2021).
+#: Enforce safe owner/repo/branch shapes to defuse URL-path injection (A03:2021).
 _NAME_RE = re.compile(r"^[a-zA-Z0-9._-]+$")
-# Branch names allow ``/`` (e.g. ``release/1.x``) but no path traversal or shell metachars.
+#: Branch names allow ``/`` (e.g. ``release/1.x``) but no path traversal or shell metachars.
 _BRANCH_RE = re.compile(r"^[a-zA-Z0-9._/-]+$")
 
-# Max workflow files whose content is fetched and concatenated into
-# the ``workflow_files`` record. Mirrors the original shell pipeline's
-# ``head -2`` and keeps the response payload bounded.
+#: Max workflow files whose content is fetched and concatenated into
+#: the ``workflow_files`` record. Mirrors the original shell pipeline's
+#: ``head -2`` and keeps the response payload bounded.
 _WORKFLOW_FETCH_CAP = 2
 
 

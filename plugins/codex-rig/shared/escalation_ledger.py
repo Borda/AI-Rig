@@ -66,10 +66,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-
+#: Current schema revision of the escalation ledger header; any other version is rejected.
 SCHEMA_VERSION = 3
 #: Historical single-file schema with every cycle inline; validated only as an archive, never as an active ledger.
 HISTORICAL_SCHEMA_VERSION = 2
+#: Allowed values for the outcome of an escalation cycle.
 _OUTCOMES = {"working", "advisory", "recovery", "human_handoff", "closed"}
 
 

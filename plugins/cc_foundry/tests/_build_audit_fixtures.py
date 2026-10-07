@@ -180,7 +180,7 @@ def _write(path: Path, rows: list[dict], *, truncate_last: bool = False, torn_at
     path.write_text(text, encoding="utf-8")
 
 
-def build(fixture_dir: Path) -> dict:  # noqa: PLR0915  (a flat catalogue of cases; splitting it hides the corpus)
+def build(fixture_dir: Path) -> dict:
     """Write the whole corpus and return the expectations map."""
     logs = fixture_dir / "logs"
     if logs.exists():

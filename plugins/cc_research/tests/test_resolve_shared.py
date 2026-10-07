@@ -12,29 +12,26 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 import resolve_shared
 
 SCRIPT = Path(resolve_shared.__file__)
 
 
-def test_cache_hit_returns_newest_version(tmp_path: Path) -> None:
-    """Newest cached research version's ``_shared`` is returned."""
-    base = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "research"
-    (base / "0.1.0" / "skills" / "_shared").mkdir(parents=True)
-    newer = base / "0.5.2" / "skills" / "_shared"
-    newer.mkdir(parents=True)
-    path, from_cache = resolve_shared.resolve(home=tmp_path)
-    assert from_cache is True
-    assert Path(path) == newer
-
-
 @pytest.mark.parametrize(
-    "older_version,newer_version",
-    [pytest.param("0.9.0", "0.10.0", id="0.9.0"), pytest.param("0.20.0", "1.0.0", id="0.20.0")],
+    ("older_version", "newer_version"),
+    [
+        pytest.param("0.1.0", "0.5.2", id="plain-newest-wins"),
+        pytest.param("0.9.0", "0.10.0", id="semver-minor-0.9-vs-0.10"),
+        pytest.param("0.20.0", "1.0.0", id="semver-major-0.20-vs-1.0"),
+    ],
 )
-def test_cache_hit_uses_semver_ordering(tmp_path: Path, older_version: str, newer_version: str) -> None:
-    """Newest cached research version is selected semantically, not lexicographically."""
+def test_cache_hit_returns_newest_version(tmp_path: Path, older_version: str, newer_version: str) -> None:
+    """Newest cached research version's ``_shared`` is returned, selected semantically, not lexicographically.
+
+    A plain newest-wins pair, a pair where lexicographic ordering would pick the wrong winner (``0.9.0`` sorts after
+    ``0.10.0`` as text), and a pair spanning a major bump (``0.20.0`` vs ``1.0.0``) show versions are compared as
+    numbers.
+    """
     base = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "research"
     (base / older_version / "skills" / "_shared").mkdir(parents=True)
     newer = base / newer_version / "skills" / "_shared"

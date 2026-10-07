@@ -20,13 +20,11 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import pytest
-
 from _audit_harness import HOOKS_DIR, install
-
 
 LIBRARY = HOOKS_DIR / "lib" / "audit-log.js"
 VECTORS = json.loads(
@@ -157,25 +155,26 @@ class TestCanonicalForm:
         without = call_lib('lib.recordHash({"a": 1})')
         assert with_hash == without
 
-    def test_float_is_rejected(self, call_lib: Callable[..., object]) -> None:
-        """No float may be serialized: JavaScript and Python format them differently, so the hash would diverge."""
-        assert (
-            call_lib(
-                '(() => { try { lib.canonicalize({"a": 1.5}); return "accepted"; } '
-                'catch (e) { return "rejected"; } })()'
-            )
-            == "rejected"
-        )
+    @pytest.mark.parametrize(
+        "record",
+        [
+            # JavaScript and Python format floats differently, so the hash would diverge.
+            pytest.param('{"a": 1.5}', id="float"),
+            # A lone surrogate cannot be UTF-8 encoded by the Python reader, so the writer must refuse it.
+            pytest.param('{"a": "x\\uD800"}', id="ill-formed-string"),
+        ],
+    )
+    def test_unserializable_value_is_rejected(self, call_lib: Callable[..., object], record: str) -> None:
+        """A value the Python reader would hash differently must be refused rather than serialized.
 
-    def test_ill_formed_string_is_rejected(self, call_lib: Callable[..., object]) -> None:
-        """A lone surrogate cannot be UTF-8 encoded by the Python reader, so the writer must refuse it."""
-        assert (
-            call_lib(
-                '(() => { try { lib.canonicalize({"a": "x\\uD800"}); return "accepted"; } '
-                'catch (e) { return "rejected"; } })()'
-            )
-            == "rejected"
+        Scenario: no float may be serialized, and an ill-formed string (a lone surrogate) is refused, because either
+        would make the two languages' hashes diverge.
+        """
+        script = (
+            f'(() => {{ try {{ lib.canonicalize({record}); return "accepted"; }} '
+            'catch (e) { return "rejected"; } })()'
         )
+        assert call_lib(script) == "rejected"
 
     def test_proto_key_cannot_silently_vanish(self, call_lib: Callable[..., object]) -> None:
         """``__proto__`` is rejected, and would not be lost even if it were not.
@@ -300,7 +299,8 @@ class TestFailureIsReturnedNeverRaised:
     def test_disabled_writes_nothing(self, audit_env, call_lib: Callable[..., object]) -> None:
         """``RIG_AUDIT=0`` writes no file at all and reports why."""
         result = call_lib('lib.appendRecord({"session_id": "s", "action_type": "tool.bash"})', RIG_AUDIT="0")
-        assert result["_unwritten"] is True and result["reason"] == "disabled"
+        assert result["_unwritten"] is True
+        assert result["reason"] == "disabled"
         assert not audit_env.audit_dir.exists()
 
     @_skip_owner_write_denial_unavailable
@@ -323,13 +323,15 @@ class TestFailureIsReturnedNeverRaised:
         (audit_env.home / ".claude" / "logs").mkdir(parents=True)
         (audit_env.home / ".claude" / "logs" / "audit").symlink_to(elsewhere, target_is_directory=True)
         result = call_lib('lib.appendRecord({"session_id": "s", "action_type": "tool.bash"})')
-        assert result["_unwritten"] is True and result["reason"] == "log-dir-symlink"
+        assert result["_unwritten"] is True
+        assert result["reason"] == "log-dir-symlink"
         assert list(elsewhere.iterdir()) == []
 
     def test_unserializable_record_returns_instead_of_throwing(self, call_lib: Callable[..., object]) -> None:
         """A record the canonical form forbids is reported, not raised."""
         result = call_lib('lib.appendRecord({"session_id": "s", "action_type": "tool.bash", "n": 1.5})')
-        assert result["_unwritten"] is True and result["reason"].startswith("unserializable")
+        assert result["_unwritten"] is True
+        assert result["reason"].startswith("unserializable")
 
 
 @_skip_node_unavailable
@@ -345,7 +347,8 @@ class TestNoSessionCutoff:
             'lib.appendRecord({"session_id": null, "action_type": "tool.bash"})',
             RIG_AUDIT_NOSESSION_MAX_BYTES="1",
         )
-        assert result["_unwritten"] is True and result["reason"] == "no-session-cutoff"
+        assert result["_unwritten"] is True
+        assert result["reason"] == "no-session-cutoff"
         assert target.read_bytes() == before
 
 

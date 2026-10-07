@@ -11,7 +11,6 @@ from typing import Any
 import pytest
 import yaml
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "benchmarks" / "check-portable-paths.py"
 
@@ -24,26 +23,54 @@ def _checker() -> ModuleType:
     'check_portable_paths'
     """
     spec = importlib.util.spec_from_file_location("check_portable_paths", SCRIPT)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
 @pytest.mark.parametrize(
-    ("source", "fragment"),
+    ("filename", "source", "expected_violation"),
     [
-        pytest.param('LOCK = "/private/tmp/frozen/index.json"\n', "/private/tmp/frozen/index.json", id="private-tmp"),
-        pytest.param('HOME = "/Users/alice/project"\n', "/Users/alice/project", id="personal-home"),
-        pytest.param('TMP = "/tmp/runtime/state"\n', "/tmp/runtime/state", id="tmp"),
+        pytest.param(
+            "source.py",
+            'LOCK = "/private/tmp/frozen/index.json"\n',
+            "/private/tmp/frozen/index.json",
+            id="python-private-tmp",
+        ),
+        pytest.param("source.py", 'HOME = "/Users/alice/project"\n', "/Users/alice/project", id="python-personal-home"),
+        pytest.param("source.py", 'TMP = "/tmp/runtime/state"\n', "/tmp/runtime/state", id="python-tmp"),
+        pytest.param(
+            "source.sh", 'ROOT="/private/tmp/benchmark"\n', 'ROOT="/private/tmp/benchmark"', id="shell-assignment"
+        ),
+        pytest.param(
+            "policy.json",
+            '{"validation_worktree": "/private/tmp/benchmark"}\n',
+            '{"validation_worktree": "/private/tmp/benchmark"}',
+            id="json-policy",
+        ),
+        pytest.param(
+            "README.md",
+            "Run the benchmark from `/Users/alice/project`.\n",
+            "Run the benchmark from `/Users/alice/project`.",
+            id="markdown-machine-path",
+        ),
     ],
 )
-def test_python_literals_are_rejected(checker: ModuleType, tmp_path: Path, source: str, fragment: str) -> None:
-    """Machine-bound Python literals fail with their exact line and value."""
-    path = tmp_path / "source.py"
+def test_machine_bound_literals_are_rejected(
+    checker: ModuleType, tmp_path: Path, filename: str, source: str, expected_violation: str
+) -> None:
+    """Machine-bound literals fail with their exact line and value.
+
+    Python literals report the offending path value; executable shell assignments receive the same temporary-path guard,
+    committed JSON policy cannot reintroduce a machine-specific worktree, and current benchmark documentation cannot
+    publish a machine-specific command, so those report the whole offending line.
+    """
+    path = tmp_path / filename
     path.write_text(source, encoding="utf-8")
 
-    assert checker.find_violations(path) == [(1, fragment)]
+    assert checker.find_violations(path) == [(1, expected_violation)]
 
 
 def test_comments_placeholders_and_relative_paths_pass(checker: ModuleType, tmp_path: Path) -> None:
@@ -55,30 +82,6 @@ def test_comments_placeholders_and_relative_paths_pass(checker: ModuleType, tmp_
     )
 
     assert checker.find_violations(path) == []
-
-
-def test_shell_literal_is_rejected(checker: ModuleType, tmp_path: Path) -> None:
-    """Executable shell assignments receive the same temporary-path guard."""
-    path = tmp_path / "source.sh"
-    path.write_text('ROOT="/private/tmp/benchmark"\n', encoding="utf-8")
-
-    assert checker.find_violations(path) == [(1, 'ROOT="/private/tmp/benchmark"')]
-
-
-def test_json_policy_literal_is_rejected(checker: ModuleType, tmp_path: Path) -> None:
-    """Committed JSON policy cannot reintroduce a machine-specific worktree."""
-    path = tmp_path / "policy.json"
-    path.write_text('{"validation_worktree": "/private/tmp/benchmark"}\n', encoding="utf-8")
-
-    assert checker.find_violations(path) == [(1, '{"validation_worktree": "/private/tmp/benchmark"}')]
-
-
-def test_markdown_machine_path_is_rejected(checker: ModuleType, tmp_path: Path) -> None:
-    """Current benchmark documentation cannot publish a machine-specific command."""
-    path = tmp_path / "README.md"
-    path.write_text("Run the benchmark from `/Users/alice/project`.\n", encoding="utf-8")
-
-    assert checker.find_violations(path) == [(1, "Run the benchmark from `/Users/alice/project`.")]
 
 
 def test_main_reports_violation_and_fails(

@@ -53,12 +53,13 @@ class ThreadType(str, Enum):
     UNKNOWN = "unknown"
 
 
-# Match the number at the end of a GitHub thread URL:
-# https://github.com/<owner>/<repo>/(issues|pull|discussions)/<N>
+#: Match the number at the end of a GitHub thread URL:
+#: https://github.com/<owner>/<repo>/(issues|pull|discussions)/<N>
 _URL_NUMBER_RE = re.compile(
     r"https?://github\.com/[^/]+/[^/]+/(?:issues|pull|discussions)/(\d+)",
 )
 
+#: GraphQL query fetching a discussion's title and update time, used to probe whether a number is a discussion.
 _DISCUSSION_QUERY = (
     "query($owner:String!,$repo:String!,$number:Int!){"
     "repository(owner:$owner,name:$repo){"

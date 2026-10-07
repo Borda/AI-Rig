@@ -30,10 +30,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from shutil import which
 
-# GitHub allows owner and repo names matching [A-Za-z0-9._-]; we enforce the
-# combined ``owner/repo`` shape strictly to defuse URL-path injection (A03:2021).
+#: GitHub allows owner and repo names matching [A-Za-z0-9._-]; we enforce the
+#: combined ``owner/repo`` shape strictly to defuse URL-path injection (A03:2021).
 _REPO_RE = re.compile(r"^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$")
 
+#: GraphQL query listing the 100 most recently updated discussions with number, title, state and creation time.
 _DISCUSSIONS_QUERY = (
     "query($owner:String!,$repo:String!){"
     "repository(owner:$owner,name:$repo){"
@@ -41,6 +42,7 @@ _DISCUSSIONS_QUERY = (
     "nodes { number title closed createdAt }"
     "}}}"
 )
+#: GraphQL query fetching recent issues and PRs with first-comment data to measure response times.
 _RESPONSIVENESS_QUERY = (
     "query($owner:String!,$repo:String!){"
     "repository(owner:$owner,name:$repo){"
@@ -51,6 +53,7 @@ _RESPONSIVENESS_QUERY = (
     " reviews(states:[APPROVED,CHANGES_REQUESTED,COMMENTED],first:1){nodes{createdAt author{login}}}"
     " comments(first:1){nodes{createdAt author{login}}}}}}}"
 )
+#: GraphQL query fetching the last 30 merged PRs with their approving reviewers to measure review coverage.
 _REVIEW_COVERAGE_QUERY = (
     "query($owner:String!,$repo:String!){"
     "repository(owner:$owner,name:$repo){"
@@ -117,7 +120,7 @@ def _build_datasets(
     owner_repo: str,
     cutoff_3y: str,
     cutoff_90d: str,
-    cutoff_180d: str,  # noqa: ARG001 — reserved for future axes
+    cutoff_180d: str,
 ) -> list[tuple[str, list[str]]]:
     """Build the full list of ``(name, gh_command_args)`` for all datasets.
 

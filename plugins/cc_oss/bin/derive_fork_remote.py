@@ -27,6 +27,7 @@ import subprocess
 import sys
 from typing import Final
 
+#: Prefix identifying an SSH-style origin URL, so the derived fork remote URL uses the same transport.
 _SSH_ORIGIN_PREFIX: Final = "git@"
 
 
@@ -41,7 +42,7 @@ def _git(args: list[str], timeout: int) -> tuple[int, str]:
         ``(returncode, stdout)``; the code is 1 and stdout empty when git cannot be run at all.
     """
     try:
-        proc = subprocess.run(["git", *args], capture_output=True, text=True, timeout=timeout, check=False)
+        proc = subprocess.run(["git", *args], capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603, S607 - argv list, no shell; git resolved via PATH on purpose
     except (OSError, subprocess.SubprocessError):
         return 1, ""
     return proc.returncode, proc.stdout.strip()

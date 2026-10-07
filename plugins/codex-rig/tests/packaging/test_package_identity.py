@@ -12,9 +12,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 from _platform import FILE_SYMLINKS_AVAILABLE
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 IDENTITY_PATH = PLUGIN_ROOT / "scripts" / "_package_identity.py"
@@ -23,7 +21,8 @@ IDENTITY_PATH = PLUGIN_ROOT / "scripts" / "_package_identity.py"
 def _load_identity() -> ModuleType:
     """Load the package verifier directly from its installed script path."""
     specification = importlib.util.spec_from_file_location("codex_rig_package_identity", IDENTITY_PATH)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     sys.modules[specification.name] = module
     specification.loader.exec_module(module)
@@ -117,11 +116,11 @@ def test_verify_package_rejects_mode_drift_on_posix(tmp_path: Path) -> None:
     identity = _load_identity()
     _write_fixture(tmp_path, recorded_mode=0)
 
-    with pytest.raises(identity.PackageIdentityError, match="mode mismatch: payload.txt"):
+    with pytest.raises(identity.PackageIdentityError, match=r"mode mismatch: payload.txt"):
         identity.verify_package(tmp_path, enforce_modes=True)
 
 
-@pytest.mark.parametrize("mutation", ("tamper", "extra"))
+@pytest.mark.parametrize("mutation", ["tamper", "extra"])
 @pytest.mark.packaging
 def test_verify_package_rejects_payload_drift(tmp_path: Path, mutation: str) -> None:
     """Reject changed bytes and unrecorded package payloads."""
@@ -163,5 +162,5 @@ def test_verify_package_rejects_symlink_payload(tmp_path: Path) -> None:
     payload.unlink()
     payload.symlink_to(tmp_path / ".codex-plugin" / "plugin.json")
 
-    with pytest.raises(identity.PackageIdentityError, match="unsafe package node: payload.txt"):
+    with pytest.raises(identity.PackageIdentityError, match=r"unsafe package node: payload.txt"):
         identity.verify_package(tmp_path, enforce_modes=True)

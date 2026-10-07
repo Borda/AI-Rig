@@ -58,13 +58,18 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+#: Plugin root directory that is packaged by default.
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
+#: Filename of the JSON manifest written at the root of the built package.
 _MANIFEST = "package-manifest.json"
+#: Schema revision recorded in the package manifest.
 _SCHEMA = 2
+#: File permission bits given to executable files in the built package.
 _MODE_EXEC = 0o755
+#: File permission bits given to non-executable files in the built package.
 _MODE_DATA = 0o644
 
-# Directory subtrees copied whole (minus the exclusions below).
+#: Directory subtrees copied whole (minus the exclusions below).
 _INCLUDE_DIRS: tuple[str, ...] = (
     ".claude-plugin",
     ".codex-plugin",
@@ -76,14 +81,15 @@ _INCLUDE_DIRS: tuple[str, ...] = (
     "shared",
     "hooks",
 )
-# Top-level product documents — all required; a missing one is a closure error.
+#: Top-level product documents — all required; a missing one is a closure error.
 _REQUIRED_DOCS: tuple[str, ...] = ("README.md", "LICENSE", "NOTICE", "CHANGELOG.md")
-# Path components that are never shipped (runtime caches, evidence, state).
+#: Path components that are never shipped (runtime caches, evidence, state).
 _EXCLUDE_COMPONENTS: frozenset[str] = frozenset(
     {"__pycache__", ".cache", ".reports", ".temp", ".pytest_cache", ".claude", "tests"}
 )
+#: Exact file names that are never copied into the package.
 _EXCLUDE_NAMES: frozenset[str] = frozenset({".DS_Store"})
-# Human-readable exclusion policy recorded in the manifest.
+#: Human-readable exclusion policy recorded in the manifest.
 _EXCLUSIONS: tuple[str, ...] = (
     "__pycache__/",
     ".cache/",
@@ -163,8 +169,8 @@ def _git_exec_modes(source_root: Path) -> dict[str, bool]:
             tree, so the executable-mode metadata cannot be derived.
     """
     try:
-        completed = subprocess.run(
-            ["git", "-C", str(source_root), "ls-files", "--stage", "--", "."],
+        completed = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
+            ["git", "-C", str(source_root), "ls-files", "--stage", "--", "."],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             capture_output=True,
             text=True,
             check=True,

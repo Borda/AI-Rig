@@ -63,51 +63,58 @@ _skip_node_unavailable = pytest.mark.skipif(
 
 
 @_skip_node_unavailable
-def test_pipe_table_with_enough_rows_is_detected() -> None:
-    """A `| Field | Value |` table with >= MIN_TABLE_ROWS data rows counts."""
-    text = "| Field | Value |\n| --- | --- |\n| Title | x |\n| PR | #1 |\n| Date | 2026-08-08 |\n"
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        pytest.param(
+            "| Field | Value |\n| --- | --- |\n| Title | x |\n| PR | #1 |\n| Date | 2026-08-08 |\n",
+            True,
+            id="pipe-table-with-enough-rows",
+        ),
+        pytest.param("Title: oss-review\nPR: #1303\nDate: 2026-08-08\n", False, id="raw-yaml-fields-without-pipes"),
+        pytest.param("| Field | Value |\n| --- | --- |\n| Title | x |\n", False, id="table-below-min-rows"),
+        pytest.param("verdict: APPROVE · findings: 3 · file: review-report.md", True, id="fallback-dot-separated-line"),
+        pytest.param("", False, id="empty-text"),
+    ],
+)
+def test_has_header_table_detection(text: str, expected: bool) -> None:
+    """A rendered header table, or the documented one-line fallback, is detected; anything else is not.
 
-    assert _call("hasHeaderTable", text) is True
-
-
-@_skip_node_unavailable
-def test_raw_yaml_fields_without_pipes_is_not_detected() -> None:
-    """The exact failure this module guards against: fields printed one per line, no table."""
-    text = "Title: oss-review\nPR: #1303\nDate: 2026-08-08\n"
-
-    assert _call("hasHeaderTable", text) is False
-
-
-@_skip_node_unavailable
-def test_table_below_min_rows_is_not_detected() -> None:
-    """Fewer than MIN_TABLE_ROWS data rows reads as stray prose pipes, not a rendered header."""
-    text = "| Field | Value |\n| --- | --- |\n| Title | x |\n"
-
-    assert _call("hasHeaderTable", text) is False
-
-
-@_skip_node_unavailable
-def test_fallback_dot_separated_line_is_detected() -> None:
-    """SKILL.md's documented one-line fallback (used when the report read fails) also satisfies the check."""
-    text = "verdict: APPROVE · findings: 3 · file: review-report.md"
-
-    assert _call("hasHeaderTable", text) is True
-
-
-@_skip_node_unavailable
-def test_empty_text_is_not_detected() -> None:
-    """No text at all (unreadable transcript) is never mistaken for a printed table."""
-    assert _call("hasHeaderTable", "") is False
+    Scenario: a `| Field | Value |` table with >= MIN_TABLE_ROWS data rows counts; SKILL.md's `·`-separated one-line
+    fallback (used when the report read fails) also counts; raw fields printed one per line with no table (the exact
+    failure this module guards against), fewer than MIN_TABLE_ROWS data rows (stray prose pipes) and empty text (an
+    unreadable transcript) are never mistaken for a printed table.
+    """
+    assert _call("hasHeaderTable", text) is expected
 
 
 @_skip_node_unavailable
 @pytest.mark.parametrize(
-    "text", ["", "| Field | Value |\n| --- | --- |\n| Title | unrelated |\n| Outcome | PASS |\n| Summary | old |"]
+    ("report_text", "text"),
+    [
+        pytest.param(
+            "---\nTitle: Current review\nOutcome: PASS\nSummary: Verified result\n---\n", "", id="absent-table"
+        ),
+        pytest.param(
+            "---\nTitle: Current review\nOutcome: PASS\nSummary: Verified result\n---\n",
+            "| Field | Value |\n| --- | --- |\n| Title | unrelated |\n| Outcome | PASS |\n| Summary | old |",
+            id="unrelated-table",
+        ),
+        pytest.param(
+            "---\nTitle: Current\nOutcome: PASS\nSummary: Verified\n---\n",
+            "Title Current Outcome PASS Summary Verified\n| Field | Value |\n| --- | --- |\n| Title | Other |\n| Outcome | PASS |\n| Summary | Stale |",
+            id="raw-fields-plus-unrelated-table",
+        ),
+    ],
 )
-def test_delivery_rejects_absent_or_unrelated_table(tmp_path: Path, text: str) -> None:
-    """File presence and another report's table cannot establish this report's delivery."""
+def test_delivery_rejects_absent_or_unrelated_table(tmp_path: Path, report_text: str, text: str) -> None:
+    """File presence and another report's table cannot establish this report's delivery.
+
+    Scenario: an absent table, a table of another report, and header fields that occur as prose beside an unrelated
+    table all fail, because header fields must occur as rows in one matching table.
+    """
     report = tmp_path / "report.md"
-    report.write_text("---\nTitle: Current review\nOutcome: PASS\nSummary: Verified result\n---\n", encoding="utf-8")
+    report.write_text(report_text, encoding="utf-8")
     transcript = _write_transcript(
         tmp_path, [{"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}]
     )
@@ -129,7 +136,8 @@ def test_delivery_problem_reports_zero_visible_chars_for_thinking_only_report(tm
     )
     problem = _call("deliveryProblem", str(report), str(transcript))
     assert isinstance(problem, str)
-    assert "0 chars" in problem and "thinking" in problem
+    assert "0 chars" in problem
+    assert "thinking" in problem
 
 
 _HEADER_REPORT = "---\nTitle: Current review\nOutcome: PASS\nSummary: Verified result\n---\n"
@@ -196,7 +204,8 @@ def test_delivery_gives_up_after_the_flush_wait(tmp_path: Path) -> None:
     proc = _delivery_in_subprocess(report, transcript, wait_ms="400")
     out, _ = proc.communicate(timeout=10)
     problem = json.loads(out)
-    assert isinstance(problem, str) and "0 chars" in problem
+    assert isinstance(problem, str)
+    assert "0 chars" in problem
 
 
 @_skip_node_unavailable
@@ -270,40 +279,37 @@ def test_audit_delivery_preserves_literal_finding(tmp_path: Path, delivered: str
 @pytest.mark.parametrize(
     "skill", ["oss:review", "oss:analyse", "develop:review", "research:topic", "foundry:profile", "foundry:audit"]
 )
-def test_recovery_question_is_not_a_follow_up(skill: str) -> None:
-    """Missing report delivery must not prevent asking how to recover the producer."""
-    question = {
-        "questions": [
-            {"question": "The producer failed. Retry or stop?", "options": [{"label": "Retry"}, {"label": "Stop"}]}
-        ]
-    }
-    assert _call("isWorkflowFollowUp", question, skill) is False
-
-
-@_skip_node_unavailable
 @pytest.mark.parametrize(
-    "skill", ["oss:review", "oss:analyse", "develop:review", "research:topic", "foundry:profile", "foundry:audit"]
+    "question",
+    [
+        pytest.param(
+            {
+                "questions": [
+                    {
+                        "question": "The producer failed. Retry or stop?",
+                        "options": [{"label": "Retry"}, {"label": "Stop"}],
+                    }
+                ]
+            },
+            id="recovery-question",
+        ),
+        pytest.param(
+            {
+                "questions": [
+                    {"question": "What next?", "header": "Recovery", "options": [{"label": "Retry"}, {"label": "Stop"}]}
+                ]
+            },
+            id="unrelated-what-next",
+        ),
+    ],
 )
-def test_unrelated_what_next_is_not_a_follow_up(skill: str) -> None:
-    """A generic question cannot activate a different workflow's report gate."""
-    question = {
-        "questions": [
-            {"question": "What next?", "header": "Recovery", "options": [{"label": "Retry"}, {"label": "Stop"}]}
-        ]
-    }
+def test_question_is_not_a_workflow_follow_up(question: dict, skill: str) -> None:
+    """Neither a recovery question nor a generic one activates a workflow's report gate.
+
+    Scenario: missing report delivery must not prevent asking how to recover the producer, and a generic "What next?"
+    cannot activate a different workflow's report gate.
+    """
     assert _call("isWorkflowFollowUp", question, skill) is False
-
-
-@_skip_node_unavailable
-def test_raw_fields_plus_unrelated_table_do_not_prove_delivery(tmp_path: Path) -> None:
-    """Header fields must occur as rows in one matching table, not elsewhere in prose."""
-    report = tmp_path / "report.md"
-    report.write_text("---\nTitle: Current\nOutcome: PASS\nSummary: Verified\n---\n", encoding="utf-8")
-    text = "Title Current Outcome PASS Summary Verified\n| Field | Value |\n| --- | --- |\n| Title | Other |\n| Outcome | PASS |\n| Summary | Stale |"
-    transcript = _write_transcript(
-        tmp_path, [{"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}]
-    )
-    assert _call("deliveryProblem", str(report), str(transcript)) is not None
 
 
 # ── assistantTextSinceLastUserTurn ─────────────────────────────────────────
@@ -324,63 +330,65 @@ def _write_transcript(tmp_path: Path, rows: list[dict]) -> Path:
 
 
 @_skip_node_unavailable
-def test_collects_assistant_text_after_last_human_turn(tmp_path: Path) -> None:
-    """Text from the current turn's assistant row is returned."""
-    rows = [
-        {"type": "user", "message": {"content": [{"type": "text", "text": "go"}]}},
-        {"type": "assistant", "message": {"content": [{"type": "text", "text": "hello"}]}},
-    ]
+@pytest.mark.parametrize(
+    ("rows", "expected"),
+    [
+        pytest.param(
+            [
+                {"type": "user", "message": {"content": [{"type": "text", "text": "go"}]}},
+                {"type": "assistant", "message": {"content": [{"type": "text", "text": "hello"}]}},
+            ],
+            "hello",
+            id="current-turn-assistant-text",
+        ),
+        pytest.param(
+            [
+                {"type": "user", "message": {"content": [{"type": "text", "text": "go"}]}},
+                {"type": "assistant", "message": {"content": [{"type": "text", "text": "before"}]}},
+                {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read"}]}},
+                {"type": "user", "message": {"content": [{"type": "tool_result", "content": "file contents"}]}},
+                {"type": "assistant", "message": {"content": [{"type": "text", "text": "after"}]}},
+            ],
+            "before\nafter",
+            id="tool-result-row-is-not-a-turn-boundary",
+        ),
+        pytest.param(
+            [
+                {"type": "user", "message": {"content": [{"type": "text", "text": "go"}]}},
+                {"type": "queue-operation", "operation": "noop"},
+                {"type": "attachment", "attachment": {}},
+                {"type": "mode"},
+                {"type": "assistant", "message": {"content": [{"type": "text", "text": "hello"}]}},
+            ],
+            "hello",
+            id="non-turn-rows-are-skipped",
+        ),
+        pytest.param(
+            [
+                {"type": "user", "message": {"content": [{"type": "text", "text": "go"}]}},
+                {
+                    "type": "assistant",
+                    "isSidechain": True,
+                    "message": {"content": [{"type": "text", "text": "sub-agent text"}]},
+                },
+                {"type": "assistant", "message": {"content": [{"type": "text", "text": "orchestrator text"}]}},
+            ],
+            "orchestrator text",
+            id="sidechain-assistant-rows-are-excluded",
+        ),
+    ],
+)
+def test_assistant_text_since_last_human_turn(tmp_path: Path, rows: list[dict], expected: str) -> None:
+    """The text of the orchestrator's own assistant rows since the last human turn is returned.
+
+    Scenario: the current turn's assistant row is returned; a `user` row holding only a tool_result is the previous tool
+    call's return value, not a new human turn; queue-operation / attachment / mode rows are not user or assistant rows
+    and are not mistaken for a boundary; subagent output (isSidechain: true) is not the orchestrator's own reply and
+    does not count.
+    """
     transcript = _write_transcript(tmp_path, rows)
 
-    assert _call("assistantTextSinceLastUserTurn", str(transcript)) == "hello"
-
-
-@_skip_node_unavailable
-def test_tool_result_row_is_not_a_turn_boundary(tmp_path: Path) -> None:
-    """A `user` row holding only a tool_result is the previous tool call's return value, not a new human turn."""
-    rows = [
-        {"type": "user", "message": {"content": [{"type": "text", "text": "go"}]}},
-        {"type": "assistant", "message": {"content": [{"type": "text", "text": "before"}]}},
-        {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read"}]}},
-        {"type": "user", "message": {"content": [{"type": "tool_result", "content": "file contents"}]}},
-        {"type": "assistant", "message": {"content": [{"type": "text", "text": "after"}]}},
-    ]
-    transcript = _write_transcript(tmp_path, rows)
-
-    assert _call("assistantTextSinceLastUserTurn", str(transcript)) == "before\nafter"
-
-
-@_skip_node_unavailable
-def test_non_turn_rows_are_skipped(tmp_path: Path) -> None:
-    """Queue-operation / attachment / mode rows are not user or assistant rows and must not be mistaken for a
-    boundary."""
-    rows = [
-        {"type": "user", "message": {"content": [{"type": "text", "text": "go"}]}},
-        {"type": "queue-operation", "operation": "noop"},
-        {"type": "attachment", "attachment": {}},
-        {"type": "mode"},
-        {"type": "assistant", "message": {"content": [{"type": "text", "text": "hello"}]}},
-    ]
-    transcript = _write_transcript(tmp_path, rows)
-
-    assert _call("assistantTextSinceLastUserTurn", str(transcript)) == "hello"
-
-
-@_skip_node_unavailable
-def test_sidechain_assistant_rows_are_excluded(tmp_path: Path) -> None:
-    """Subagent output (isSidechain: true) is not the orchestrator's own reply and must not count."""
-    rows = [
-        {"type": "user", "message": {"content": [{"type": "text", "text": "go"}]}},
-        {
-            "type": "assistant",
-            "isSidechain": True,
-            "message": {"content": [{"type": "text", "text": "sub-agent text"}]},
-        },
-        {"type": "assistant", "message": {"content": [{"type": "text", "text": "orchestrator text"}]}},
-    ]
-    transcript = _write_transcript(tmp_path, rows)
-
-    assert _call("assistantTextSinceLastUserTurn", str(transcript)) == "orchestrator text"
+    assert _call("assistantTextSinceLastUserTurn", str(transcript)) == expected
 
 
 @_skip_node_unavailable
@@ -446,16 +454,6 @@ def test_stop_blocks_undelivered_report_once(stop_run: tuple[Path, Path]) -> Non
 
 
 @_skip_node_unavailable
-def test_stop_accepts_table_in_final_message_without_transcript(stop_run: tuple[Path, Path]) -> None:
-    """The Stop payload's final message counts as delivery even when the transcript lags."""
-    sentinel, report = stop_run
-
-    assert (
-        _call("stopBlockReason", str(sentinel), str(report), _stop_payload(last_assistant_message=_TABLE), "x") is None
-    )
-
-
-@_skip_node_unavailable
 def test_stop_rechecks_rewritten_report(stop_run: tuple[Path, Path]) -> None:
     """A delivered report that is later rewritten must be delivered again."""
     sentinel, report = stop_run
@@ -469,11 +467,22 @@ def test_stop_rechecks_rewritten_report(stop_run: tuple[Path, Path]) -> None:
 
 
 @_skip_node_unavailable
-def test_stop_never_blocks_a_forced_continuation(stop_run: tuple[Path, Path]) -> None:
-    """`stop_hook_active` means a Stop hook already forced this turn on — never loop."""
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        pytest.param({"last_assistant_message": _TABLE}, id="table-in-final-message-without-transcript"),
+        pytest.param({"stop_hook_active": True}, id="forced-continuation"),
+    ],
+)
+def test_stop_does_not_block(stop_run: tuple[Path, Path], overrides: dict) -> None:
+    """A turn that delivered the table, or that a Stop hook already forced on, is never blocked.
+
+    Scenario: the Stop payload's final message counts as delivery even when the transcript lags; `stop_hook_active`
+    means a Stop hook already forced this turn on, so never loop.
+    """
     sentinel, report = stop_run
 
-    assert _call("stopBlockReason", str(sentinel), str(report), _stop_payload(stop_hook_active=True), "x") is None
+    assert _call("stopBlockReason", str(sentinel), str(report), _stop_payload(**overrides), "x") is None
 
 
 @_skip_node_unavailable

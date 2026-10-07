@@ -52,18 +52,20 @@ def _git(root: Path, *args: str) -> None:
     assert result.returncode == 0, result.stderr
 
 
-@pytest.fixture(name="degraded_project")
-def _degraded_project(tmp_path: Path, scan_index: Path) -> tuple[Path, Path]:
-    """Create a degraded non-Git project for completeness checks.
+@pytest.fixture(name="degraded_project", scope="module")
+def _degraded_project(tmp_path_factory: pytest.TempPathFactory, scan_index: Path) -> tuple[Path, Path]:
+    """Create a degraded non-Git project for completeness checks, built once per module.
 
-    ``consumer`` imports ``leaf``; ``broken.py`` has a syntax error → degraded.
+    ``consumer`` imports ``leaf``; ``broken.py`` has a syntax error → degraded. Every test using it only queries the
+    index (non-Git, so no self-heal rewrite), so one scan is shared across them.
     """
-    root = tmp_path / "degraded"
-    root.mkdir()
+    root = tmp_path_factory.mktemp("degraded")
     (root / "leaf.py").write_text("def leaf_fn(x):\n    return x\n")
     (root / "consumer.py").write_text("import leaf\n\ndef use(x):\n    return leaf.leaf_fn(x)\n")
     (root / "broken.py").write_text("def oops(:\n    return\n")  # SyntaxError → degraded
-    _scan(scan_index, root)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("CODEMAP_LOGGING", "false")  # the autouse gate is function-scoped, so it is off during setup
+        _scan(scan_index, root)
     index_path = root / ".cache" / "codemap" / f"{root.name}.json"
     assert index_path.exists()
     return root, index_path
@@ -239,13 +241,6 @@ class TestUntrackedFileVeto:
         data = _query(scan_query, root, index_path, "deps", "consumer")
         assert any("orphan.py" in p for p in data["index"]["untracked_py"])
 
-    def test_untracked_vetoes_global_in(self, git_project, scan_query):
-        """Rdeps (global-in) is incomplete while an untracked .py could hide an inbound edge."""
-        root, index_path = git_project
-        (root / "orphan.py").write_text("x = 1\n")
-        data = _query(scan_query, root, index_path, "rdeps", "leaf")
-        assert data["index"]["query_complete"] is False
-
     def test_untracked_does_not_veto_local(self, git_project, scan_query):
         """Keep healthy dependency queries complete despite unrelated untracked source.
 
@@ -257,7 +252,10 @@ class TestUntrackedFileVeto:
         assert data["index"]["query_complete"] is True
 
     def test_incomplete_note_matches_flag(self, git_project, scan_query):
-        """Avoid claiming completeness after an untracked-source veto."""
+        """Rdeps (global-in) is incomplete while an untracked .py could hide an inbound edge.
+
+        The note must agree with the flag, so an untracked-source veto is never reported as a complete result.
+        """
         root, index_path = git_project
         (root / "orphan.py").write_text("x = 1\n")
         data = _query(scan_query, root, index_path, "rdeps", "leaf")
@@ -282,37 +280,35 @@ class TestCollisionVeto:
         data = _query(scan_query, root, index_path, "deps", "consumer")
         assert data["index"]["collision_count"] == 1
 
-    def test_collision_vetoes_whole_graph(self, clean_project, scan_query):
-        """Central (whole-graph) is incomplete whenever any collision dropped a module."""
+    @pytest.mark.parametrize(
+        ("collided_name", "query_args", "expected_complete"),
+        [
+            pytest.param("somewhere", ("central", "--top", "5"), False, id="whole-graph-vetoed-by-any-collision"),
+            pytest.param("unrelated.module", ("deps", "consumer"), True, id="unrelated-local-stays-complete"),
+            pytest.param("consumer", ("deps", "consumer"), False, id="own-local-vetoed"),
+        ],
+    )
+    def test_collision_vetoes_by_direction(
+        self, clean_project, scan_query, collided_name, query_args, expected_complete
+    ):
+        """A collision vetoes whole-graph queries always, and a local query only for the colliding module.
+
+        Central (whole-graph) is incomplete whenever any collision dropped a module; ``deps`` stays complete for a
+        module outside the collision and is marked incomplete for the colliding module name itself.
+        """
         root, index_path = clean_project
-        self._inject_collision(index_path, "somewhere")
-        data = _query(scan_query, root, index_path, "central", "--top", "5")
-        assert data["index"]["query_complete"] is False
-
-    def test_collision_does_not_veto_unrelated_local(self, clean_project, scan_query):
-        """Keep dependency queries complete for modules outside a name collision."""
-        root, index_path = clean_project
-        self._inject_collision(index_path, "unrelated.module")
-        data = _query(scan_query, root, index_path, "deps", "consumer")
-        assert data["index"]["query_complete"] is True
-
-    def test_collision_vetoes_own_local(self, clean_project, scan_query):
-        """Mark dependency queries incomplete for a colliding module name."""
-        root, index_path = clean_project
-        self._inject_collision(index_path, "consumer")
-        data = _query(scan_query, root, index_path, "deps", "consumer")
-        assert data["index"]["query_complete"] is False
+        self._inject_collision(index_path, collided_name)
+        data = _query(scan_query, root, index_path, *query_args)
+        assert data["index"]["query_complete"] is expected_complete
 
 
-@pytest.fixture(name="excluded_git_project")
-def _excluded_git_project(tmp_path: Path, scan_index: Path) -> tuple[Path, Path]:
+def _build_excluded_git_project(root: Path, scan_index: Path) -> tuple[Path, Path]:
     """Create a committed project containing files excluded through both mechanisms.
 
     ``vendored/vendored.py`` is excluded via ``.codemapignore`` (dropped from file_shas); ``.claude/ghost.py`` sits in a
     built-in SKIP_DIR but is git-tracked (kept in the git-blob file_shas, since scan-index's git path filters only user
     exclusions).
     """
-    root = tmp_path / "excluded"
     root.mkdir()
     _git(root, "init", "-q")
     _git(root, "config", "user.email", "t@t.t")
@@ -331,42 +327,64 @@ def _excluded_git_project(tmp_path: Path, scan_index: Path) -> tuple[Path, Path]
     return root, index_path
 
 
+@pytest.fixture(name="excluded_git_project")
+def _excluded_git_project(tmp_path: Path, scan_index: Path) -> tuple[Path, Path]:
+    """Create a fresh excluded-files project for tests that add untracked files to it."""
+    return _build_excluded_git_project(tmp_path / "excluded", scan_index)
+
+
+@pytest.fixture(name="pristine_excluded_git_project", scope="module")
+def _pristine_excluded_git_project(tmp_path_factory: pytest.TempPathFactory, scan_index: Path) -> tuple[Path, Path]:
+    """Create the excluded-files project once per module for tests that only query it.
+
+    Every consumer queries with ``--no-heal`` and never writes under the root, so the committed tree and index stay
+    pristine across the tests sharing it.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("CODEMAP_LOGGING", "false")  # the autouse gate is function-scoped, so it is off during setup
+        return _build_excluded_git_project(tmp_path_factory.mktemp("pristine") / "excluded", scan_index)
+
+
 class TestExclusionAwareStaleness:
     """Apply scanner exclusions consistently during query staleness checks."""
 
-    def test_fresh_excluded_repo_not_stale(self, excluded_git_project, scan_query):
+    def test_fresh_excluded_repo_not_stale(self, pristine_excluded_git_project, scan_query):
         """A .codemapignore-excluded tracked .py must not force a false stale on a fresh index."""
-        root, index_path = excluded_git_project
+        root, index_path = pristine_excluded_git_project
         data = _query(scan_query, root, index_path, "--no-heal", "deps", "consumer")
         assert data["index"]["stale"] is False
 
-    def test_excluded_repo_local_complete(self, excluded_git_project, scan_query):
+    def test_excluded_repo_local_complete(self, pristine_excluded_git_project, scan_query):
         """With no real change, local `deps` reaches completeness despite excluded/SKIP_DIR files."""
-        root, index_path = excluded_git_project
+        root, index_path = pristine_excluded_git_project
         data = _query(scan_query, root, index_path, "--no-heal", "deps", "consumer")
         assert data["index"]["query_complete"] is True
 
-    def test_excluded_repo_rdeps_complete(self, excluded_git_project, scan_query):
+    def test_excluded_repo_rdeps_complete(self, pristine_excluded_git_project, scan_query):
         """Global-in `rdeps` reaches completeness — excluded files are not phantom edges."""
-        root, index_path = excluded_git_project
+        root, index_path = pristine_excluded_git_project
         data = _query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
         assert data["index"]["stale"] is False
         assert data["index"]["query_complete"] is True
 
-    def test_untracked_in_excluded_dir_does_not_poison(self, excluded_git_project, scan_query):
-        """An untracked .py inside an excluded dir must not appear in untracked_py or block completeness."""
-        root, index_path = excluded_git_project
-        (root / "vendored" / "new_orphan.py").write_text("y = 2\n")  # untracked, inside excluded dir
-        data = _query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
-        assert not any("new_orphan" in p for p in data["index"]["untracked_py"])
-        assert data["index"]["query_complete"] is True
+    @pytest.mark.parametrize(
+        ("excluded_dir", "orphan_name", "orphan_source"),
+        [
+            pytest.param("vendored", "new_orphan", "y = 2\n", id="codemapignore-excluded-dir"),
+            pytest.param(".claude", "new_scratch", "z = 3\n", id="builtin-skip-dir"),
+        ],
+    )
+    def test_untracked_in_excluded_dir_does_not_poison(
+        self, excluded_git_project, scan_query, excluded_dir, orphan_name, orphan_source
+    ):
+        """An untracked .py inside an excluded dir must not appear in untracked_py or block completeness.
 
-    def test_untracked_in_skip_dir_does_not_poison(self, excluded_git_project, scan_query):
-        """An untracked .py inside a built-in SKIP_DIR must not poison query_complete either."""
+        Covers a ``.codemapignore``-excluded directory and a built-in SKIP_DIR alike.
+        """
         root, index_path = excluded_git_project
-        (root / ".claude" / "new_scratch.py").write_text("z = 3\n")  # untracked, inside SKIP_DIR
+        (root / excluded_dir / f"{orphan_name}.py").write_text(orphan_source)  # untracked, inside an excluded dir
         data = _query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
-        assert not any("new_scratch" in p for p in data["index"]["untracked_py"])
+        assert not any(orphan_name in p for p in data["index"]["untracked_py"])
         assert data["index"]["query_complete"] is True
 
 

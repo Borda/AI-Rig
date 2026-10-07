@@ -48,8 +48,6 @@ Secondary:
 
 from __future__ import annotations
 
-import subprocess  # noqa: F401
-import tempfile  # noqa: F401
 import sys
 from pathlib import Path
 
@@ -59,58 +57,36 @@ import fire
 # regardless of how this script is launched (direct path, symlink, or any cwd).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _bench_claude.structural.config import (  # noqa: E402,F401
-    ARMS,
+import subprocess  # noqa: F401
+import tempfile  # noqa: F401
+
+from _bench_claude.structural.cli import (
+    _StructuralRunLoop,  # noqa: F401
+    main,
+)
+from _bench_claude.structural.config import (  # noqa: F401
+    _ARM_ALLOWED,
+    _CMD,
+    _DIFF_IMPACT_TYPE,
+    _EXTERNAL_TASK_TYPE,
     ARM_CONTRACTS,
+    ARMS,
     LEGACY_EXPERIMENT_REVISION,
-    PARITY_ARMS,
     PARITY_ARM_BY_LEGACY_ARM,
+    PARITY_ARMS,
     PARITY_EXPERIMENT_REVISION,
     PARITY_MANIFEST_FILE,
     PRIMARY_SUITE_HASH,
     PRIMARY_SUITE_RAW_HASH,
     SandboxError,
-    _ARM_ALLOWED,
-    _CMD,
-    _DIFF_IMPACT_TYPE,
-    _EXTERNAL_TASK_TYPE,
     _arm_orders_by_task,
     _console,
     _pin_pytest_interpreter,
 )
-from _bench_claude.structural.models import BenchQuality, BenchRun  # noqa: E402,F401
-from _bench_claude.structural.prompts import _build_system_prompt  # noqa: E402,F401
-from _bench_claude.structural.tasks import (  # noqa: E402,F401
-    TaskSelection,
-    _apply_profile,
-    _correct_by_task,
-    _gate_ri,
-    _index_sha,
-    _is_dev_task,
-    _load_primary_parity_contract,
-    _load_resume_cache,
-    _load_tasks_file,
-    _normalize_external_task,
-    _prompt_hash,
-    _repo_sha,
-    _resume_key,
-    _run_from_cached,
-    _select_tasks,
-    _task_hash,
-    _tiered_tasks,
-    _validate_primary_runtime,
-)
-from _bench_claude.structural.telemetry import (  # noqa: E402,F401
-    _SCAN_QUERY_SUBCOMMANDS,
-    _is_contaminating_access,
-    _max_turns_for_task,
-    _parse_batch_subcommands,
-    _parse_scan_query_subcommand,
-)
-from _bench_claude.structural.evaluators import (  # noqa: E402,F401
-    EvaluatorRegistry,
+from _bench_claude.structural.evaluators import (  # noqa: F401
     _EVALUATORS,
     _SHARED_EVALUATORS,
+    EvaluatorRegistry,
     _answer_region,
     _count_tol_detail,
     _evaluate_debug,
@@ -136,14 +112,9 @@ from _bench_claude.structural.evaluators import (  # noqa: E402,F401
     _stem_matches,
     _wrap_bench_evaluator,
 )
-from _bench_claude.structural.sandbox import (  # noqa: E402,F401
-    DiffImpactStager,
-    DirtyTreeError,
-    PatchSandbox,
-    _extract_diff,
-)
-from _bench_claude.structural.runner import BenchRunner  # noqa: E402,F401
-from _bench_claude.structural.report import (  # noqa: E402,F401
+from _bench_claude.structural.models import BenchQuality, BenchRun  # noqa: F401
+from _bench_claude.structural.prompts import _build_system_prompt  # noqa: F401
+from _bench_claude.structural.report import (  # noqa: F401
     _arm_extracted,
     _arm_pairs,
     _effective_recall,
@@ -157,7 +128,35 @@ from _bench_claude.structural.report import (  # noqa: E402,F401
     _workflow_type_of,
     asdict,
 )
-from _bench_claude.structural.cli import _StructuralRunLoop, main  # noqa: E402,F401
+from _bench_claude.structural.runner import BenchRunner  # noqa: F401
+from _bench_claude.structural.sandbox import DiffImpactStager, DirtyTreeError, PatchSandbox, _extract_diff  # noqa: F401
+from _bench_claude.structural.tasks import (  # noqa: F401
+    TaskSelection,
+    _apply_profile,
+    _correct_by_task,
+    _gate_ri,
+    _index_sha,
+    _is_dev_task,
+    _load_primary_parity_contract,
+    _load_resume_cache,
+    _load_tasks_file,
+    _normalize_external_task,
+    _prompt_hash,
+    _repo_sha,
+    _resume_key,
+    _run_from_cached,
+    _select_tasks,
+    _task_hash,
+    _tiered_tasks,
+    _validate_primary_runtime,
+)
+from _bench_claude.structural.telemetry import (  # noqa: F401
+    _SCAN_QUERY_SUBCOMMANDS,
+    _is_contaminating_access,
+    _max_turns_for_task,
+    _parse_batch_subcommands,
+    _parse_scan_query_subcommand,
+)
 
 if __name__ == "__main__":
     fire.Fire(main)

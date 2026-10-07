@@ -93,7 +93,7 @@ def project_root(timeout: int = 5) -> str:
     """
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - git resolved via PATH on purpose
             capture_output=True,
             text=True,
             timeout=timeout,

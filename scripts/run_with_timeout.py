@@ -31,9 +31,11 @@ import signal
 import subprocess
 import sys
 
-
+#: Exit status returned when the command was stopped for exceeding its time limit.
 TIMEOUT_EXIT_CODE = 124
+#: Exit status returned when the command could not be started.
 LAUNCH_FAILURE_EXIT_CODE = 127
+#: Seconds allowed for the Windows process-tree kill and for the child to exit after it.
 TERMINATION_GRACE_SECONDS = 2.0
 
 
@@ -78,8 +80,8 @@ def terminate_process_tree(process: subprocess.Popen[bytes], platform: str) -> N
     """Terminate the child process tree within a bounded cleanup window."""
     if platform == "win32":
         try:
-            subprocess.run(  # noqa: S603, S607 - fixed Windows process-tree utility and numeric PID.
-                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            subprocess.run(  # noqa: S603 - fixed Windows process-tree utility and numeric PID.
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],  # noqa: S607 - Windows system utility resolved via PATH
                 check=False,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,

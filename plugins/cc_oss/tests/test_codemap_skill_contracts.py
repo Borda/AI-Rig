@@ -12,9 +12,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
 import codemap_cache  # type: ignore[import-not-found]
+import pytest
 
 _OSS_ROOT = Path(__file__).resolve().parents[1]
 _SKILL_MD = sorted(_OSS_ROOT.joinpath("skills").rglob("*.md"))
@@ -82,10 +81,22 @@ class TestQueryInvocations:
 class TestIndexPathConvention:
     """The index path every guard derives must match the provider's own resolver."""
 
-    def test_no_cwd_relative_index_dir(self) -> None:
-        """Index dir defaults are anchored at the git root, never at the CWD."""
-        offenders = [p.name for p in _SKILL_MD if "CODEMAP_INDEX_DIR:-.cache" in p.read_text(encoding="utf-8")]
-        assert offenders == [], f"cwd-relative codemap index dir in: {offenders}"
+    @pytest.mark.parametrize(
+        ("needle", "description"),
+        [
+            pytest.param("CODEMAP_INDEX_DIR:-.cache", "cwd-relative codemap index dir", id="no-cwd-relative-index-dir"),
+            pytest.param("s|^src/||", "sed module derivation", id="no-sed-module-derivation"),
+        ],
+    )
+    def test_banned_text_absent_from_skill_markdown(self, needle: str, description: str) -> None:
+        """Index dir defaults are anchored at the git root, and module names come from the index, never from sed.
+
+        A ``CODEMAP_INDEX_DIR:-.cache`` default is CWD-relative; it must be anchored at the git root. codemap names
+        ``pkg/__init__.py`` after the package (``pkg``); a path-to-dotted sed transform produced ``pkg.__init__``, which
+        matches no index key and no cache key, so package-init changes got no structural context at all.
+        """
+        offenders = [p.name for p in _SKILL_MD if needle in p.read_text(encoding="utf-8")]
+        assert offenders == [], f"{description} in: {offenders}"
 
     def test_no_project_name_sanitization(self) -> None:
         """The project name is the raw basename — no `tr -cd` filtering.
@@ -111,15 +122,6 @@ class TestIndexPathConvention:
         dead = re.compile(r'basename "\$\(git rev-parse[^\n]*\)"[^\n]*\)\s*\|\|')
         offenders = [p.name for p in _SKILL_MD if dead.search(p.read_text(encoding="utf-8"))]
         assert offenders == [], f"dead basename fallback in: {offenders}"
-
-    def test_no_sed_module_derivation(self) -> None:
-        """Module names come from the index, never from a path-to-dotted sed.
-
-        codemap names ``pkg/__init__.py`` after the package (``pkg``); the sed transform produced ``pkg.__init__``,
-        which matches no index key and no cache key, so package-init changes got no structural context at all.
-        """
-        offenders = [p.name for p in _SKILL_MD if "s|^src/||" in p.read_text(encoding="utf-8")]
-        assert offenders == [], f"sed module derivation in: {offenders}"
 
 
 class TestPerModuleQueries:

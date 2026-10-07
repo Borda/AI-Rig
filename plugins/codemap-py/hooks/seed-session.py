@@ -33,11 +33,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-
-# Claude launches this hook as `python "<plugin-root>/hooks/seed-session.py"`, which
-# already puts hooks/ on sys.path — but the test suite loads it through
-# `importlib.util.spec_from_file_location`, which does not. Inserting explicitly makes
-# the shared-helper import resolve under every load mechanism.
+#: Claude launches this hook as `python "<plugin-root>/hooks/seed-session.py"`, which
+#: already puts hooks/ on sys.path — but the test suite loads it through
+#: `importlib.util.spec_from_file_location`, which does not. Inserting explicitly makes
+#: the shared-helper import resolve under every load mechanism.
 _HOOKS_DIR = Path(__file__).resolve().parent
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))

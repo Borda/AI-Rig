@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
-
 from _launcher_capability import _pinned_frozen_checkout_is_available
 
 SUITE_PATH = Path(__file__).resolve().parents[1] / "suites" / "tasks-fix-single.json"
@@ -22,7 +21,6 @@ from _bench_common.edit_patch_contracts import (  # noqa: E402
     run_fix_single_oracle,
     validate_fix_single_binding,
 )
-
 
 _requires_frozen_repo = pytest.mark.skipif(
     not _pinned_frozen_checkout_is_available(FROZEN_REPO, FROZEN_REPO_COMMIT),
@@ -41,17 +39,8 @@ def _tasks() -> dict[str, dict[str, object]]:
     return {task["id"]: task for task in json.loads(SUITE_PATH.read_text(encoding="utf-8"))}
 
 
-def test_pinned_frozen_checkout_rejects_git_directory_without_head(tmp_path: Path) -> None:
-    """A partial Git directory cannot admit source-dependent contract coverage."""
-    source = tmp_path / "source"
-    (source / ".git").mkdir(parents=True)
-
-    assert source.is_dir()
-    assert _pinned_frozen_checkout_is_available(source, FROZEN_REPO_COMMIT) is False
-
-
 @_requires_frozen_repo
-@pytest.mark.parametrize("task_id", ("FS-01", "FS-02", "FS-03", "FS-04"))
+@pytest.mark.parametrize("task_id", ["FS-01", "FS-02", "FS-03", "FS-04"])
 def test_oracle_rejects_the_frozen_unfixed_source(task_id: str) -> None:
     """Each selected task has a real failing baseline at the locked revision."""
     contract = build_fix_single_contract(_tasks()[task_id])
@@ -84,7 +73,7 @@ def test_patience_oracle_accepts_a_behavioral_fix(tmp_path: Path) -> None:
 @_requires_frozen_repo
 @pytest.mark.parametrize(
     ("task_id", "old", "new"),
-    (
+    [
         pytest.param(
             "FS-02",
             "        self.min_delta = min_delta\n",
@@ -111,7 +100,7 @@ def test_patience_oracle_accepts_a_behavioral_fix(tmp_path: Path) -> None:
             "        if self.save_top_k < -1:\n",
             id="fs-04",
         ),
-    ),
+    ],
 )
 def test_each_remaining_oracle_accepts_its_minimal_behavioral_fix(
     tmp_path: Path, task_id: str, old: str, new: str

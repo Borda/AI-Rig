@@ -23,17 +23,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCHMARKS_DIR))
-
-from _bench_common.presentation import BENCHMARK_OUTPUT_WIDTH  # noqa: E402
 
 # Patch seams live in the package modules the runner shim re-exports from: patching the shim
 # would leave each package module's own global binding untouched.
 from _bench_claude.agentic import cli as agentic_cli  # noqa: E402
 from _bench_claude.agentic import paid as agentic_paid  # noqa: E402
 from _bench_claude.agentic import runner as agentic_runner  # noqa: E402
+from _bench_common.presentation import BENCHMARK_OUTPUT_WIDTH  # noqa: E402
 
 AGENTIC_SUITE_PATH = BENCHMARKS_DIR / "suites" / "tasks-agentic.json"
 CLAUDE_RUNNER_PATH = BENCHMARKS_DIR / "run-claude-agentic.py"
@@ -302,7 +300,7 @@ class TestProviderParityTaskIntegration:
         suite_path = tmp_path / "tampered-agentic-suite.json"
         suite_path.write_text(json.dumps([task]), encoding="utf-8")
 
-        with pytest.raises(ValueError, match="(task|prompt).*hash|hash.*(task|prompt)"):
+        with pytest.raises(ValueError, match=r"(task|prompt).*hash|hash.*(task|prompt)"):
             script_run_agentic.load_tasks_with_provenance(suite_path, PARITY_MANIFEST_PATH)
 
     def test_load_tasks_with_provenance_rejects_task_missing_from_manifest_policy(
@@ -342,7 +340,7 @@ class TestProviderParityTaskIntegration:
         assert "must use Codemap at least once" not in runner._system_prompt("fix", "B_auto")
         assert "must use Codemap at least once" in runner._system_prompt("fix", "C_strict")
 
-    @pytest.mark.parametrize("task_type", ("read_crop", "fix_single", "fix_multicaller"))
+    @pytest.mark.parametrize("task_type", ["read_crop", "fix_single", "fix_multicaller"])
     def test_canonical_stage_prompts_use_one_current_skill_contract(
         self, script_run_agentic: Any, tmp_path: Path, task_type: str
     ) -> None:
@@ -428,7 +426,7 @@ class TestProviderParityTaskIntegration:
             patch.object(agentic_cli, "find_index", return_value=tmp_index),
             patch.object(agentic_cli, "_validate_parity_runtime"),
         ):
-            with pytest.raises(SystemExit, match="scope.*SHA|SHA.*scope"):
+            with pytest.raises(SystemExit, match=r"scope.*SHA|SHA.*scope"):
                 script_run_agentic.main(repo_path=tmp_path, run_all=True, repeat=2, dry_run=True)
 
             script_run_agentic.main(
@@ -987,7 +985,8 @@ class TestProviderParityTaskIntegration:
             "index_sha",
         ):
             value = getattr(result, field)
-            assert isinstance(value, str) and value
+            assert isinstance(value, str)
+            assert value
         assert result.arm_contract_hash == "936a684f5b4bb6211669633a17d2a12980b24f2de43b265bbc28ef09d9a65ba7"
 
     def test_auto_no_call_remains_valid_while_required_no_call_is_separate_compliance_failure(
@@ -1059,7 +1058,7 @@ class TestProviderParityTaskIntegration:
         assert required.treatment_adherence is False
 
     @pytest.mark.parametrize(
-        "compact_success,expected",
+        ("compact_success", "expected"),
         [
             pytest.param(False, False, id="attempt-only"),
             pytest.param(True, True, id="matching-compact-result"),
@@ -1120,7 +1119,7 @@ class TestProviderParityTaskIntegration:
         assert result.codemap_compliant is expected
 
     @pytest.mark.parametrize(
-        "command,result",
+        ("command", "result"),
         [
             pytest.param("codemap-py query --help", "usage", id="help"),
             pytest.param("echo codemap-py query --compact rdeps package", "{}", id="spoofed-shell-text"),
@@ -1395,7 +1394,7 @@ class TestToolCounts:
         assert tc.total == 0
 
     @pytest.mark.parametrize(
-        "kwargs,expected_total",
+        ("kwargs", "expected_total"),
         [
             pytest.param({"grep": 3, "bash": 1, "semble": 2}, 6, id="grep-3-bash-1-semble-2"),  # docstring example
             pytest.param(
@@ -1602,47 +1601,28 @@ class TestFindIndex:
         result = script_run_agentic.find_index(tmp_path, index)
         assert result == index.resolve()
 
-    def test_discovers_preferred_name_in_codemap_cache(self, script_run_agentic: Any, tmp_path: Path) -> None:
-        """find_index prefers <repo_name>.json inside .cache/codemap/.
+    @pytest.mark.parametrize(
+        ("cache_dir", "filename"),
+        [
+            pytest.param("codemap", "myrepo.json", id="preferred-name-in-codemap-cache"),
+            pytest.param("codemap", "other.json", id="first-json-fallback-in-codemap-cache"),
+            pytest.param("scan", "myrepo.json", id="legacy-scan-cache-when-codemap-empty"),
+        ],
+    )
+    def test_discovers_index_in_cache_dir(
+        self, script_run_agentic: Any, tmp_path: Path, cache_dir: str, filename: str
+    ) -> None:
+        """find_index discovers the index under ``.cache/codemap/`` or the legacy ``.cache/scan/``.
 
-        Scenario: the repo is named ``myrepo``; a file ``myrepo.json``
-        exists under ``.cache/codemap/``; that file must be returned.
+        Scenario: the repo is named ``myrepo``. A file named after the repo is preferred inside
+        ``.cache/codemap/``; when only ``other.json`` exists there, the lexicographically first ``*.json`` is
+        returned; when ``.cache/codemap/`` has no JSON, the legacy ``.cache/scan/`` directory is searched.
         """
         repo = tmp_path / "myrepo"
         repo.mkdir()
-        cache = repo / ".cache" / "codemap"
+        cache = repo / ".cache" / cache_dir
         cache.mkdir(parents=True)
-        idx = cache / "myrepo.json"
-        idx.write_text("{}")
-        result = script_run_agentic.find_index(repo, None)
-        assert result == idx.resolve()
-
-    def test_falls_back_to_first_json_in_codemap_cache(self, script_run_agentic: Any, tmp_path: Path) -> None:
-        """find_index falls back to lexicographically first *.json when preferred missing.
-
-        Scenario: the repo is named ``myrepo`` but only ``other.json``
-        exists in .cache/codemap/; that file must be returned.
-        """
-        repo = tmp_path / "myrepo"
-        repo.mkdir()
-        cache = repo / ".cache" / "codemap"
-        cache.mkdir(parents=True)
-        idx = cache / "other.json"
-        idx.write_text("{}")
-        result = script_run_agentic.find_index(repo, None)
-        assert result == idx.resolve()
-
-    def test_scans_scan_cache_dir_when_codemap_empty(self, script_run_agentic: Any, tmp_path: Path) -> None:
-        """find_index checks .cache/scan/ when .cache/codemap/ has no JSON.
-
-        Scenario: user stores their index under .cache/scan/ (legacy path);
-        the function must discover it there.
-        """
-        repo = tmp_path / "myrepo"
-        repo.mkdir()
-        scan_cache = repo / ".cache" / "scan"
-        scan_cache.mkdir(parents=True)
-        idx = scan_cache / "myrepo.json"
+        idx = cache / filename
         idx.write_text("{}")
         result = script_run_agentic.find_index(repo, None)
         assert result == idx.resolve()
@@ -1731,7 +1711,7 @@ class TestGroundTruthGenerateMatchSet:
     """Tests for the static pattern-generation helper via its observable effects."""
 
     @pytest.mark.parametrize(
-        "module,corpus,should_match",
+        ("module", "corpus", "should_match"),
         [
             # Full dotted path must match
             pytest.param(
@@ -1872,7 +1852,7 @@ class TestGroundTruthScore:
         assert result.erec == pytest.approx(0.5)
 
     @pytest.mark.parametrize(
-        "found_count,expected_recall",
+        ("found_count", "expected_recall"),
         [pytest.param(7, 0.7, id="7"), pytest.param(6, 0.6, id="6"), pytest.param(10, 1.0, id="10")],
     )
     def test_recall_boundary_values_are_exact(
@@ -1919,10 +1899,20 @@ class TestGroundTruthScore:
         assert result.scored is True
         assert result.delta == pytest.approx(result.erec - result.rrec)
 
-    def test_deff_equals_erec_tp_divided_by_tool_calls(self, script_run_agentic: Any, ground_truth: Any) -> None:
-        """Verify that discovery efficiency accounts for the tool-call count.
+    @pytest.mark.parametrize(
+        ("tool_calls", "denominator"),
+        [
+            pytest.param(4, 4, id="four-tool-calls"),
+            pytest.param(0, 1, id="zero-tool-calls-uses-denominator-one"),
+        ],
+    )
+    def test_deff_equals_erec_tp_divided_by_tool_calls(
+        self, script_run_agentic: Any, ground_truth: Any, tool_calls: int, denominator: int
+    ) -> None:
+        """Verify that discovery efficiency accounts for the tool-call count without dividing by zero.
 
-        Scenario: agent uses 4 tool calls and finds 1 rdep; deff = 1/4 = 0.25.
+        Scenario: agent uses 4 tool calls and finds 1 rdep; deff = 1/4 = 0.25. With tool_calls=0 (e.g. an arm that
+        produced no calls) deff must equal erec_tp / 1 (not raise ZeroDivisionError).
         """
         corpus = "lightning.pytorch.trainer.trainer"
         result = ground_truth.score(
@@ -1930,27 +1920,10 @@ class TestGroundTruthScore:
             output_text=corpus,
             exposure_corpus=corpus,
             report_corpus=corpus,
-            tool_calls=4,
+            tool_calls=tool_calls,
         )
         assert result.scored is True
-        assert result.deff == pytest.approx(result.erec_tp / 4)
-
-    def test_deff_with_zero_tool_calls_uses_denominator_one(self, script_run_agentic: Any, ground_truth: Any) -> None:
-        """Avoid division by zero when computing discovery efficiency without tool calls.
-
-        Scenario: tool_calls=0 (e.g. arm that produced no calls);
-        deff must equal erec_tp / 1 (not raise ZeroDivisionError).
-        """
-        corpus = "lightning.pytorch.trainer.trainer"
-        result = ground_truth.score(
-            task_id="BA-01",
-            output_text=corpus,
-            exposure_corpus=corpus,
-            report_corpus=corpus,
-            tool_calls=0,
-        )
-        assert result.scored is True
-        assert result.deff == pytest.approx(float(result.erec_tp))
+        assert result.deff == pytest.approx(result.erec_tp / denominator)
 
     @pytest.mark.parametrize(
         "test_module",
@@ -2120,7 +2093,7 @@ class TestGroundTruthExtractModules:
     """Tests for the module extractor whose package set is derived from the tasks."""
 
     @pytest.mark.parametrize(
-        "text,expected_subset",
+        ("text", "expected_subset"),
         [
             pytest.param("lightning.pytorch.trainer.trainer", {"lightning.pytorch.trainer.trainer"}, id="dotted"),
             pytest.param(
@@ -2183,6 +2156,14 @@ class TestAggregate:
         run.input_tokens = input_tokens
         run.elapsed_s = elapsed_s
         return run
+
+    def _one_success_two_failures_cell(self, script_agentic: Any) -> dict:
+        """Aggregate one fast success and two wall-clock failures into the codemap cell."""
+        good = self._make_run(script_agentic, "T01", "codemap", "haiku", success=True, elapsed_s=5.0)
+        bad_one = self._make_run(script_agentic, "T01", "codemap", "haiku", success=False, elapsed_s=300.0)
+        bad_two = self._make_run(script_agentic, "T01", "codemap", "haiku", success=False, elapsed_s=300.0)
+        out = script_agentic.aggregate([good, bad_one, bad_two], ["T01"], model_short="haiku")
+        return out["T01"]["codemap"]
 
     def test_returns_empty_dict_for_empty_results(self, script_run_agentic: Any) -> None:
         """Aggregate returns empty nested dicts when results list is empty.
@@ -2259,11 +2240,7 @@ class TestAggregate:
         Scenario: two of three runs failed; the median is still the survivor's, but the
         cell must state that it rests on one run out of three.
         """
-        good = self._make_run(script_run_agentic, "T01", "codemap", "haiku", success=True, elapsed_s=5.0)
-        bad_one = self._make_run(script_run_agentic, "T01", "codemap", "haiku", success=False, elapsed_s=300.0)
-        bad_two = self._make_run(script_run_agentic, "T01", "codemap", "haiku", success=False, elapsed_s=300.0)
-        out = script_run_agentic.aggregate([good, bad_one, bad_two], ["T01"], model_short="haiku")
-        cell = out["T01"]["codemap"]
+        cell = self._one_success_two_failures_cell(script_run_agentic)
         assert cell["elapsed_s"] == pytest.approx(5.0)
         assert cell["n_runs"] == 3
         assert cell["n_failures"] == 2
@@ -2274,11 +2251,7 @@ class TestAggregate:
         Scenario: one fast success and two wall-clock failures; the success-only median
         elapsed time is the survivor's, while the all-runs median reflects the timeouts.
         """
-        good = self._make_run(script_run_agentic, "T01", "codemap", "haiku", success=True, elapsed_s=5.0)
-        bad_one = self._make_run(script_run_agentic, "T01", "codemap", "haiku", success=False, elapsed_s=300.0)
-        bad_two = self._make_run(script_run_agentic, "T01", "codemap", "haiku", success=False, elapsed_s=300.0)
-        out = script_run_agentic.aggregate([good, bad_one, bad_two], ["T01"], model_short="haiku")
-        cell = out["T01"]["codemap"]
+        cell = self._one_success_two_failures_cell(script_run_agentic)
         assert cell["elapsed_s"] == pytest.approx(5.0)
         assert cell["elapsed_s_all"] == pytest.approx(300.0)
         assert cell["input_tokens_all"] == pytest.approx(1000.0)
@@ -2813,23 +2786,24 @@ class TestModelRunnerSystemPrompt:
         prompt = runner._system_prompt(task_type, "plain")
         assert "software engineer" in prompt.lower()
 
-    def test_codemap_arm_prompt_contains_codemap_keyword(self, script_run_agentic: Any, runner: Any) -> None:
-        """Codemap arm system prompt mentions /codemap:query.
+    @pytest.mark.parametrize(
+        ("arm", "keyword"),
+        [
+            pytest.param("codemap", "codemap:query", id="codemap-arm-mentions-codemap-query"),
+            pytest.param("semble", "mcp__semble__search", id="semble-arm-mentions-mcp-search-tool"),
+        ],
+    )
+    def test_tool_arm_prompt_contains_tool_keyword(
+        self, script_run_agentic: Any, runner: Any, arm: str, keyword: str
+    ) -> None:
+        """A tool arm's system prompt mentions its tool: /codemap:query or mcp__semble__search.
 
-        Scenario: user runs the codemap arm; the injected supplement
-        described in the module docstring must reference 'codemap:query'.
+        Scenario: user runs the codemap arm; the injected supplement described in the module docstring must
+        reference 'codemap:query'. User runs the semble arm; the supplement must mention the MCP tool name so
+        the agent knows to use it.
         """
-        prompt = runner._system_prompt("fix", "codemap")
-        assert "codemap:query" in prompt
-
-    def test_semble_arm_prompt_contains_mcp_tool_name(self, script_run_agentic: Any, runner: Any) -> None:
-        """Semble arm system prompt mentions mcp__semble__search.
-
-        Scenario: user runs the semble arm; the supplement must mention
-        the MCP tool name so the agent knows to use it.
-        """
-        prompt = runner._system_prompt("fix", "semble")
-        assert "mcp__semble__search" in prompt
+        prompt = runner._system_prompt("fix", arm)
+        assert keyword in prompt
 
     def test_combined_arm_prompt_contains_both_tools(self, script_run_agentic: Any, runner: Any) -> None:
         """Combined arm system prompt mentions both codemap and semble.
@@ -2965,40 +2939,34 @@ class TestPromptSymmetry:
 class TestToolKeyArg:
     """Validates the tool log formatter against its own docstring examples."""
 
-    def test_grep_with_path(self, script_run_agentic: Any) -> None:
-        """_tool_key_arg for Grep produces 'pattern in path' format.
+    @pytest.mark.parametrize(
+        ("tool", "tool_input", "expected"),
+        [
+            pytest.param(
+                "Grep", {"pattern": "import auth", "path": "src/"}, "'import auth' in src/", id="grep-with-path"
+            ),
+            pytest.param(
+                "mcp__semble__search",
+                {"query": "import checkpoint_connector", "repo": "/tmp/r", "top_k": 20},
+                "query='import checkpoint_connector'",
+                id="semble-search-returns-query-repr",
+            ),
+            pytest.param(
+                "mcp__semble__find_related",
+                {"query": "find related", "line": 42},
+                "query='find related'",
+                id="semble-find-related-returns-query-repr",
+            ),
+            pytest.param("Glob", {"pattern": "**/*.py"}, "**/*.py", id="glob-returns-pattern"),
+        ],
+    )
+    def test_formats_key_argument(self, script_run_agentic: Any, tool: str, tool_input: dict, expected: str) -> None:
+        """_tool_key_arg formats the documented key argument per tool.
 
-        The function docstring shows this example verbatim.
+        Grep produces ``'pattern' in path``, the two semble tools return a ``query=`` repr, and Glob returns the pattern
+        string directly. The function docstring shows the Grep and semble examples verbatim.
         """
-        result = script_run_agentic._tool_key_arg("Grep", {"pattern": "import auth", "path": "src/"})
-        assert result == "'import auth' in src/"
-
-    def test_semble_search_returns_query_repr(self, script_run_agentic: Any) -> None:
-        """_tool_key_arg for mcp__semble__search returns query= repr.
-
-        The function docstring shows this example verbatim.
-        """
-        result = script_run_agentic._tool_key_arg(
-            "mcp__semble__search",
-            {"query": "import checkpoint_connector", "repo": "/tmp/r", "top_k": 20},
-        )
-        assert result == "query='import checkpoint_connector'"
-
-    def test_semble_find_related_returns_query_repr(self, script_run_agentic: Any) -> None:
-        """_tool_key_arg for mcp__semble__find_related returns query= repr.
-
-        The function docstring shows this example verbatim.
-        """
-        result = script_run_agentic._tool_key_arg(
-            "mcp__semble__find_related",
-            {"query": "find related", "line": 42},
-        )
-        assert result == "query='find related'"
-
-    def test_glob_returns_pattern(self, script_run_agentic: Any) -> None:
-        """_tool_key_arg for Glob returns the pattern string directly."""
-        result = script_run_agentic._tool_key_arg("Glob", {"pattern": "**/*.py"})
-        assert result == "**/*.py"
+        assert script_run_agentic._tool_key_arg(tool, tool_input) == expected
 
     def test_bash_truncates_to_120_chars(self, script_run_agentic: Any) -> None:
         """_tool_key_arg for Bash truncates command to 120 characters.
@@ -3059,34 +3027,28 @@ class TestOnToolResult:
         script_run_agentic.ModelRunner._on_tool_result(content, run)
         assert run.tool_result_tokens > 0
 
-    def test_skips_tool_use_error_content(self, script_run_agentic: Any) -> None:
-        """_on_tool_result does not capture content containing <tool_use_error>.
+    @pytest.mark.parametrize(
+        ("content", "flags"),
+        [
+            pytest.param(
+                "<tool_use_error>Permission denied</tool_use_error>", {"is_rdeps": True}, id="tool-use-error-block"
+            ),
+            pytest.param(
+                "Launching skill: codemap:query rdeps ...", {"is_rdeps": True}, id="launching-skill-placeholder"
+            ),
+        ],
+    )
+    def test_skips_error_and_placeholder_content(self, script_run_agentic: Any, content: str, flags: dict) -> None:
+        """_on_tool_result captures neither a ``<tool_use_error>`` block nor a 'Launching skill:' placeholder.
 
-        Scenario: disallowed tool returns an error block; it must not be
-        added to the exposure corpus (codemap_results / semble_results).
+        Scenario: a disallowed tool returns an error block, or the skill executor emits a status line before
+        its result; neither may be added to the exposure corpus (codemap_results / skill_result_text) or
+        captured as an rdep answer.
         """
         run = self._make_run(script_run_agentic)
-        script_run_agentic.ModelRunner._on_tool_result(
-            "<tool_use_error>Permission denied</tool_use_error>",
-            run,
-            is_rdeps=True,
-        )
+        script_run_agentic.ModelRunner._on_tool_result(content, run, **flags)
         assert run.codemap_results == []
         assert run.skill_result_text == ""
-
-    def test_skips_launching_skill_placeholder(self, script_run_agentic: Any) -> None:
-        """_on_tool_result ignores 'Launching skill:' status placeholders.
-
-        Scenario: skill executor emits a status line before result; it
-        must not be captured as an rdep answer.
-        """
-        run = self._make_run(script_run_agentic)
-        script_run_agentic.ModelRunner._on_tool_result(
-            "Launching skill: codemap:query rdeps ...",
-            run,
-            is_rdeps=True,
-        )
-        assert run.codemap_results == []
 
     def test_rdep_result_captured_in_codemap_results(self, script_run_agentic: Any) -> None:
         """_on_tool_result appends is_rdeps=True content to codemap_results.
@@ -3155,7 +3117,8 @@ class TestModelsConstant:
         via ``--model``; an empty string would silently use the wrong model.
         """
         for tier, model_id in script_run_agentic.MODELS.items():
-            assert isinstance(model_id, str) and len(model_id) > 0, f"MODELS[{tier!r}] is empty or not a string"
+            assert isinstance(model_id, str), f"MODELS[{tier!r}] is empty or not a string"
+            assert len(model_id) > 0, f"MODELS[{tier!r}] is empty or not a string"
 
 
 # ===========================================================================
@@ -3258,7 +3221,7 @@ class TestDeriveModuleName:
 
 class TestResolveRelativeBase:
     @pytest.mark.parametrize(
-        "package,level,module,expected",
+        ("package", "level", "module", "expected"),
         [
             pytest.param("a.b", 1, "c", "a.b.c", id="level1-with-module"),
             pytest.param("a.b", 1, None, "a.b", id="level1-bare"),
@@ -3370,7 +3333,8 @@ class TestGroundTruthAstOracle:
         """
         div = ast_gt.divergences["BA-01"]
         assert div["missing_in_index"] == ["app.caller_submodule"]
-        assert div["ast"] == 2 and div["index"] == 1
+        assert div["ast"] == 2
+        assert div["index"] == 1
 
     def test_ast_only_rdep_is_matchable_in_corpus(self, script_run_agentic: Any, ast_gt: Any) -> None:
         """An AST-only expected rdep can still be credited when found in agent output.
@@ -3491,12 +3455,6 @@ class TestSubprocessEnv:
         env = script_run_agentic.ModelRunner._subprocess_env(arm)
         assert env.get("SCAN_NO_AUTOBUILD") == "1"
 
-    @pytest.mark.parametrize("arm", ["plain", "semble", ""])
-    def test_scan_no_autobuild_absent_for_other_arms(self, script_run_agentic: Any, arm: str) -> None:
-        """Non-structural arms do not receive the build opt-out (they never call the skill)."""
-        env = script_run_agentic.ModelRunner._subprocess_env(arm)
-        assert "SCAN_NO_AUTOBUILD" not in env
-
     @pytest.mark.parametrize("arm", ["codemap", "combined", "B_auto", "C_strict"])
     def test_claude_plugin_root_set_for_codemap_arms(self, script_run_agentic: Any, arm: str) -> None:
         """CLAUDE_PLUGIN_ROOT is exported for codemap-consuming arms, pointed at the repo fixture.
@@ -3508,11 +3466,26 @@ class TestSubprocessEnv:
         env = script_run_agentic.ModelRunner._subprocess_env(arm)
         assert env.get("CLAUDE_PLUGIN_ROOT") == script_run_agentic.ModelRunner._codemap_plugin_dir()
 
-    @pytest.mark.parametrize("arm", ["plain", "A_plain", "semble", ""])
-    def test_claude_plugin_root_absent_for_non_codemap_arms(self, script_run_agentic: Any, arm: str) -> None:
-        """A_plain's contract is codemap absent and inaccessible — leaking the var would break isolation."""
+    @pytest.mark.parametrize(
+        ("variable", "arm"),
+        [
+            pytest.param("SCAN_NO_AUTOBUILD", "plain", id="no-autobuild-plain"),
+            pytest.param("SCAN_NO_AUTOBUILD", "semble", id="no-autobuild-semble"),
+            pytest.param("SCAN_NO_AUTOBUILD", "", id="no-autobuild-empty-arm"),
+            pytest.param("CLAUDE_PLUGIN_ROOT", "plain", id="plugin-root-plain"),
+            pytest.param("CLAUDE_PLUGIN_ROOT", "A_plain", id="plugin-root-a-plain"),
+            pytest.param("CLAUDE_PLUGIN_ROOT", "semble", id="plugin-root-semble"),
+            pytest.param("CLAUDE_PLUGIN_ROOT", "", id="plugin-root-empty-arm"),
+        ],
+    )
+    def test_codemap_variable_absent_for_other_arms(self, script_run_agentic: Any, variable: str, arm: str) -> None:
+        """Non-codemap arms receive neither the build opt-out nor the plugin root.
+
+        Non-structural arms never call the skill, so they get no ``SCAN_NO_AUTOBUILD`` opt-out. A_plain's contract is
+        codemap absent and inaccessible, so leaking ``CLAUDE_PLUGIN_ROOT`` would break isolation.
+        """
         env = script_run_agentic.ModelRunner._subprocess_env(arm)
-        assert "CLAUDE_PLUGIN_ROOT" not in env
+        assert variable not in env
 
     @pytest.mark.parametrize("arm", ["plain", "A_plain", "semble", ""])
     def test_codemap_bin_path_absent_for_non_codemap_arms(
@@ -3567,7 +3540,7 @@ class TestSubprocessEnv:
         """A failed external capability probe preserves the staged runtime version gate."""
         _mock_codemap_python_probe(monkeypatch, script_run_agentic, returncode=127)
 
-        with pytest.raises(RuntimeError, match="CPython >=3.11,<3.15"):
+        with pytest.raises(RuntimeError, match=r"CPython >=3.11,<3.15"):
             script_run_agentic.ModelRunner._eligible_codemap_python()
 
     @pytest.mark.parametrize("arm", ["plain", "A_plain", "semble", ""])
@@ -3785,32 +3758,36 @@ class TestReportRendering:
         ).render()
 
         assert "## Canonical graded quality summary" in report
-        assert "quality=50.0%" in report and "exact_pass=" in report
+        assert "quality=50.0%" in report
+        assert "exact_pass=" in report
         assert "quality  A_plain-vs-C_strict" in report
         assert "component=" in report
         assert "both_pass_only" in report
         assert "FAILURE  BA-02 rep=1 C_strict categories=missing_facts" in report
         assert "Savings =" not in report
 
-    def test_render_includes_success_rate_table(self, script_run_agentic: Any, report: Any) -> None:
-        """The rendered report contains a success-rate table."""
-        assert "Success rate (successful / total runs)" in report.render()
+    @pytest.mark.parametrize(
+        "section",
+        [
+            pytest.param("Success rate (successful / total runs)", id="success-rate-table"),
+            pytest.param("Exposure recall (erec)", id="erec-quality-table"),
+            pytest.param("Chunk hit rate (semble lens)", id="chunk-hit-quality-table"),
+            pytest.param("### Failed runs", id="failed-runs-section"),
+        ],
+    )
+    def test_render_includes_section(self, script_run_agentic: Any, report: Any, section: str) -> None:
+        """The rendered report contains its success-rate table, quality tables, and failed-runs section.
 
-    def test_render_includes_quality_tables(self, script_run_agentic: Any, report: Any) -> None:
-        """The rendered report contains erec / rrec / chunk-hit quality tables."""
-        md = report.render()
-        assert "Exposure recall (erec)" in md
-        assert "Chunk hit rate (semble lens)" in md
-
-    def test_render_includes_failed_runs_section(self, script_run_agentic: Any, report: Any) -> None:
-        """Failed runs are listed explicitly, not silently dropped."""
-        assert "### Failed runs" in report.render()
+        The quality tables cover erec and chunk-hit rate; failed runs are listed explicitly, not silently dropped.
+        """
+        assert section in report.render()
 
     def test_savings_summary_has_pair_count_n(self, script_run_agentic: Any, report: Any) -> None:
         """Every savings row carries an 'n' pair-count denominator."""
         agg = script_run_agentic.aggregate(report.results, report.task_ids, model_short="haiku")
         rows = report._savings_summary(agg)
-        assert rows and all("n" in row for row in rows)
+        assert rows
+        assert all("n" in row for row in rows)
 
     def test_success_table_counts_failures(self, script_run_agentic: Any, report: Any) -> None:
         """The success table reports 1/2 for the codemap cell (one success, one failure)."""
@@ -4059,22 +4036,26 @@ class TestFixKeywordNormalization:
         score = script_run_agentic.score_fix(diff, ["patience < 1"], [])
         assert score.erec == pytest.approx(1.0)
 
-    def test_score_read_crop_matches_operator_keyword_despite_whitespace(self, script_run_agentic: Any) -> None:
-        """score_read_crop credits a '< 1' keyword when the answer writes '<1'."""
-        score = script_run_agentic.score_read_crop("guard returns <1 on misconfig", ["< 1"])
-        assert score.erec == pytest.approx(1.0)
+    @pytest.mark.parametrize(
+        ("answer", "keywords", "expected_erec"),
+        [
+            pytest.param("guard returns <1 on misconfig", ["< 1"], 1.0, id="operator-keyword-despite-whitespace"),
+            pytest.param("this text has no such token here", ["raise Error"], 0.0, id="word-boundaries-preserved"),
+        ],
+    )
+    def test_score_read_crop_normalises_whitespace_without_merging_words(
+        self, script_run_agentic: Any, answer: str, keywords: list[str], expected_erec: float
+    ) -> None:
+        """score_read_crop credits a '< 1' keyword when the answer writes '<1', yet never merges distinct words.
 
-    def test_score_read_crop_preserves_word_boundaries(self, script_run_agentic: Any) -> None:
-        """Normalisation keeps word-word spaces so distinct identifiers are not merged.
-
-        Scenario: an answer that never mentions 'raise Error' must not falsely match it just because
-        whitespace was collapsed elsewhere.
+        Normalisation keeps word-word spaces so distinct identifiers are not merged: an answer that never
+        mentions 'raise Error' must not falsely match it just because whitespace was collapsed elsewhere.
         """
-        score = script_run_agentic.score_read_crop("this text has no such token here", ["raise Error"])
-        assert score.erec == pytest.approx(0.0)
+        score = script_run_agentic.score_read_crop(answer, keywords)
+        assert score.erec == pytest.approx(expected_erec)
 
     @pytest.mark.parametrize(
-        "test_passed,expected",
+        ("test_passed", "expected"),
         [pytest.param(True, True, id="passed"), pytest.param(False, False, id="failed")],
     )
     def test_score_fix_records_test_passed_when_supplied(
@@ -4099,17 +4080,20 @@ class TestRunTargetedTest:
         """Build a ModelRunner rooted at the given repo path."""
         return script.ModelRunner("haiku", script.MODELS["haiku"], repo, timeout=300)
 
-    def test_passing_target_returns_true(self, script_run_agentic: Any, tmp_path: Path) -> None:
-        """A passing pytest node yields True."""
-        (tmp_path / "test_ok.py").write_text("def test_ok():\n    assert 1 + 1 == 2\n")
+    @pytest.mark.parametrize(
+        ("filename", "body", "expected"),
+        [
+            pytest.param("test_ok.py", "def test_ok():\n    assert 1 + 1 == 2\n", True, id="passing-target-is-true"),
+            pytest.param("test_bad.py", "def test_bad():\n    assert False\n", False, id="failing-target-is-false"),
+        ],
+    )
+    def test_target_outcome_is_true_or_false(
+        self, script_run_agentic: Any, tmp_path: Path, filename: str, body: str, expected: bool
+    ) -> None:
+        """A passing pytest node yields True; a failing one yields False (not None — the run launched fine)."""
+        (tmp_path / filename).write_text(body)
         runner = self._runner(script_run_agentic, tmp_path)
-        assert runner._run_targeted_test(tmp_path, "test_ok.py") is True
-
-    def test_failing_target_returns_false(self, script_run_agentic: Any, tmp_path: Path) -> None:
-        """A failing pytest node yields False (not None — the run launched fine)."""
-        (tmp_path / "test_bad.py").write_text("def test_bad():\n    assert False\n")
-        runner = self._runner(script_run_agentic, tmp_path)
-        assert runner._run_targeted_test(tmp_path, "test_bad.py") is False
+        assert runner._run_targeted_test(tmp_path, filename) is expected
 
 
 @pytest.mark.parametrize(
@@ -4655,7 +4639,7 @@ def test_installed_claude_sandbox_denies_bash_evidence_via_loopback_model_mock(
         def log_message(self, _format: str, *_args: Any) -> None:
             """Suppress loopback request logs during the focused integration gate."""
 
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             """Return tool use first, then a final text response after the tool result."""
             length = int(self.headers["content-length"])
             requests.append(json.loads(self.rfile.read(length)))
@@ -5267,32 +5251,27 @@ class TestRelocatedIndexAdmission:
 
         assert hashlib.sha256(index_path.read_bytes()).hexdigest() != relocation["frozen_index_sha256"]
 
-    def test_provenance_naming_the_wrong_frozen_source_is_rejected(
-        self, script_run_agentic: Any, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("field", "digest", "message"),
+        [
+            pytest.param("frozen_index_sha256", "0" * 64, "wrong frozen source", id="wrong-frozen-source"),
+            pytest.param("derived_index_sha256", "1" * 64, "changed after relocation", id="bytes-on-disk-disagree"),
+        ],
+    )
+    def test_inconsistent_provenance_is_rejected(
+        self, script_run_agentic: Any, tmp_path: Path, field: str, digest: str, message: str
     ) -> None:
-        """Provenance whose frozen source is not the locked index is rejected.
+        """Provenance whose frozen source is not the locked index, or whose derived hash misses the disk, is rejected.
 
-        Scenario: a caller supplies provenance derived from some other frozen index; admitting it
-        would let an unrelated graph enter the run under the locked manifest's authority.
+        Scenarios: a caller supplies provenance derived from some other frozen index, so admitting it would
+        let an unrelated graph enter the run under the locked manifest's authority; or the relocated copy
+        changed after its provenance was written, so the digest the run would attest to is no longer the index
+        the model actually reads.
         """
         repo, index_path, manifest_path, relocation = _relocated_worktree_index(tmp_path)
-        relocation["frozen_index_sha256"] = "0" * 64
+        relocation[field] = digest
 
-        with pytest.raises(ValueError, match="wrong frozen source"):
-            script_run_agentic._validate_parity_runtime(repo, index_path, manifest_path, relocation)
-
-    def test_provenance_disagreeing_with_the_bytes_on_disk_is_rejected(
-        self, script_run_agentic: Any, tmp_path: Path
-    ) -> None:
-        """Provenance whose derived hash misses the on-disk index is rejected.
-
-        Scenario: the relocated copy changed after its provenance was written, so the digest the
-        run would attest to is no longer the index the model actually reads.
-        """
-        repo, index_path, manifest_path, relocation = _relocated_worktree_index(tmp_path)
-        relocation["derived_index_sha256"] = "1" * 64
-
-        with pytest.raises(ValueError, match="changed after relocation"):
+        with pytest.raises(ValueError, match=message):
             script_run_agentic._validate_parity_runtime(repo, index_path, manifest_path, relocation)
 
     def test_absent_provenance_keeps_the_byte_gate(self, script_run_agentic: Any, tmp_path: Path) -> None:

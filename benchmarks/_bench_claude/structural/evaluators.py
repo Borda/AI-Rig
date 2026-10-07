@@ -7,18 +7,12 @@ import inspect
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
-
-from _bench_common.provider_parity_contracts import (
-    ARM_CONTRACTS,
-    EvaluationResult,
-    EvaluatorRegistry,
-)
+from _bench_common.provider_parity_contracts import ARM_CONTRACTS, EvaluationResult, EvaluatorRegistry
 
 from _bench_claude.structural.config import _REPO_NAMESPACE
 from _bench_claude.structural.models import BenchQuality, _BenchEvaluationResult
-
 
 # ---------------------------------------------------------------------------
 # Quality evaluators — extract key metric from model output text
@@ -32,19 +26,21 @@ _EVAL_VER_DEBUG = "v2"  # _evaluate_debug — v2: structured-block + stem-blockl
 _EVAL_VER_FEATURE = "v4"  # _evaluate_feature — accepts one terminal sentence period after the exact entry point
 _EVAL_VER_REAL_ISSUE = "v2"  # _evaluate_real_issue — v2: path-with-parent matching in answer block
 
-# Substring-inflation guard. Common single-token file/symbol stems that saturate any
-# discussion of the target repo (a bare mention of `trainer` in prose is a free hit). These must
-# appear as a QUALIFIED reference — pathed (`.../trainer`), dotted (`x.trainer`), or with a `.py`
-# suffix — to count; a bare word never does. Applied symmetrically to both arms (scoring is arm-agnostic).
+#: Substring-inflation guard. Common single-token file/symbol stems that saturate any
+#: discussion of the target repo (a bare mention of `trainer` in prose is a free hit). These must
+#: appear as a QUALIFIED reference — pathed (`.../trainer`), dotted (`x.trainer`), or with a `.py`
+#: suffix — to count; a bare word never does. Applied symmetrically to both arms (scoring is arm-agnostic).
 _STEM_BLOCKLIST: frozenset[str] = frozenset({"trainer", "utils", "core", "types", "base"})
 
 # Section headings that mark the start of a structured answer block. Matching is restricted to text
 # AT OR AFTER the earliest such heading so exploration prose before the final answer cannot score.
+#: Heading labels that open the answer block of file-identification tasks.
 _ANSWER_LABELS_FILES: tuple[str, ...] = ("files", "root cause", "root-cause", "answer")
+#: Heading labels that open the answer block of symbol-listing tasks.
 _ANSWER_LABELS_SYMBOLS: tuple[str, ...] = ("symbols", "undocumented", "uncovered", "answer")
-# Conclusion-only headings for numeric/count answers. Deliberately generic (no early working-section
-# nouns like "importers"/"callers") so _answer_region anchors on the FINAL answer, not an exploratory
-# heading — a stray count in exploration ("0 symbols of its own") must never outrank the conclusion.
+#: Conclusion-only headings for numeric/count answers. Deliberately generic (no early working-section
+#: nouns like "importers"/"callers") so _answer_region anchors on the FINAL answer, not an exploratory
+#: heading — a stray count in exploration ("0 symbols of its own") must never outrank the conclusion.
 _ANSWER_LABELS_COUNT: tuple[str, ...] = ("answer", "conclusion", "summary", "result", "total")
 
 
@@ -71,7 +67,7 @@ def _answer_region(output_text: str, labels: tuple[str, ...]) -> tuple[str, bool
         >>> degraded
         True
     """
-    earliest: Optional[int] = None
+    earliest: int | None = None
     for label in labels:
         pat = rf"(?im)^[ \t]*(?:#{{1,6}}[ \t]*)?\*{{0,2}}[ \t]*{re.escape(label)}[ \t]*:?[ \t]*\*{{0,2}}[ \t]*$"
         m = re.search(pat, output_text)
@@ -148,7 +144,7 @@ def _ri_file_matches(file_path: str, region: str) -> bool:
     return any(re.search(r"(?<![\w/.-])" + re.escape(cand) + r"(?![\w/.-])", region) for cand in candidates)
 
 
-def _extract_int(text: str, patterns: list[str]) -> Optional[int]:
+def _extract_int(text: str, patterns: list[str]) -> int | None:
     """Extract the first integer matching any of the given regex patterns.
 
     Args:
@@ -174,7 +170,7 @@ def _extract_int(text: str, patterns: list[str]) -> Optional[int]:
     return None
 
 
-def _numbered_subanswer_count(text: str) -> Optional[int]:
+def _numbered_subanswer_count(text: str) -> int | None:
     """Extract a bare integer answering an enumerated sub-question.
 
     Review tasks pose numbered sub-questions, and a compliant reply may answer the first one with the
@@ -201,7 +197,7 @@ def _numbered_subanswer_count(text: str) -> Optional[int]:
 
 def _extract_count_answer_first(
     output_text: str, patterns: list[str], labels: tuple[str, ...] = _ANSWER_LABELS_COUNT
-) -> Optional[int]:
+) -> int | None:
     """Extract an integer count, preferring the structured answer/conclusion region.
 
     :func:`_extract_int` returns the first pattern that matches *anywhere*, so on verbose codemap
@@ -253,7 +249,7 @@ def _extract_names(text: str) -> list[str]:
     return sorted(set(found))
 
 
-def _int_close(got: Optional[int], expected: int, tolerance: float = 0.10) -> bool:
+def _int_close(got: int | None, expected: int, tolerance: float = 0.10) -> bool:
     """Return True when got is within tolerance of expected.
 
     Args:
@@ -299,7 +295,7 @@ def _count_tol_detail(expected: Any, got: Any, **extra: Any) -> dict[str, Any]:
 
 def _score_required_components(
     *,
-    count_components: list[tuple[str, Any, Optional[int]]],
+    count_components: list[tuple[str, Any, int | None]],
     symbol_components: list[tuple[str, list[str], str, bool]],
     evaluator_used: str,
     evaluator_version: str,
@@ -404,7 +400,7 @@ def _evaluate_symbol(task: dict, output_text: str) -> BenchQuality:
     # left a backtick between the colon and the first digit and defeated every pattern below → !parse.
     cleaned = re.sub(r"[*`]+", "", output_text)
 
-    got_start: Optional[int] = None
+    got_start: int | None = None
 
     # 1. "start_line: N" or "start line: N" — most specific; check before range patterns
     m = re.search(r"\bstart[_ ]line\s*[:\s]+(\d+)", cleaned, re.IGNORECASE)
@@ -523,7 +519,7 @@ def _evaluate_rv(task: dict, output_text: str) -> BenchQuality:
     if count_question_count > 1:
         raise ValueError("review task has multiple required count components without answer scoping")
 
-    count_components: list[tuple[str, Any, Optional[int]]] = []
+    count_components: list[tuple[str, Any, int | None]] = []
     symbol_components: list[tuple[str, list[str], str, bool]] = []
     symbol_region, symbol_degraded = _answer_region(output_text, _ANSWER_LABELS_SYMBOLS)
     for question_id, match, ground_truth in validated_questions:
@@ -804,11 +800,11 @@ def _evaluate_oss(task: dict, output_text: str) -> BenchQuality:
     return BenchQuality(scored=False)
 
 
-# Generic method names that recur across many unrelated classes/modules. A bare
-# Class.method tail ending in one of these is too weak a signal to credit a specific caller via the
-# no-module fallback (Form 11): the same "Trainer.setup" / "Loop.run" tail can name a different
-# caller in a different module. Distinctive names (e.g. `_evaluation_step`) are not blocklisted, so
-# legitimate unqualified codemap answers still score.
+#: Generic method names that recur across many unrelated classes/modules. A bare
+#: Class.method tail ending in one of these is too weak a signal to credit a specific caller via the
+#: no-module fallback (Form 11): the same "Trainer.setup" / "Loop.run" tail can name a different
+#: caller in a different module. Distinctive names (e.g. `_evaluation_step`) are not blocklisted, so
+#: legitimate unqualified codemap answers still score.
 _COMMON_METHOD_NAMES: frozenset[str] = frozenset(
     {
         "run",
@@ -975,7 +971,7 @@ def _match_callers(output_text: str, expected_callers: list[str]) -> set[str]:
     return _normalize_caller_forms(found_raw, output_text, expected_callers)
 
 
-def _extract_caller_raw_forms(output_text: str) -> list[str]:  # noqa: C901
+def _extract_caller_raw_forms(output_text: str) -> list[str]:
     """Extract raw ``module::callee`` tokens from *output_text* across ten regex output shapes.
 
     The first phase of :func:`_match_callers`: scans the agent output for every caller
@@ -1096,7 +1092,7 @@ def _extract_caller_raw_forms(output_text: str) -> list[str]:  # noqa: C901
     return found_raw
 
 
-def _normalize_caller_forms(found_raw: list[str], output_text: str, expected_callers: list[str]) -> set[str]:  # noqa: C901
+def _normalize_caller_forms(found_raw: list[str], output_text: str, expected_callers: list[str]) -> set[str]:
     """Map raw caller tokens to canonical ``module::Class.method`` and match them to *expected_callers*.
 
     The second phase of :func:`_match_callers`: normalizes each raw token from
@@ -1311,6 +1307,7 @@ def _evaluate_feature(task: dict, output_text: str) -> BenchQuality:
     )
 
 
+#: Minimum file-set recall for a real-issue answer to count as correct (0.70 means 70%).
 _RI_RECALL_THRESHOLD = 0.70
 
 
@@ -1371,6 +1368,7 @@ _MB_RECALL_THRESHOLD = 0.70  # module_blast_radius importer (import fan-in) reca
 # scoring_detail so a run's exact hit/miss split can be inspected without re-scoring. They never feed
 # the recall scalar or the pass threshold. Lists are sorted and bounded to keep the JSONL line small on
 # high-fan-in tasks (hundreds of callers/importers); the count fields carry the untruncated totals.
+#: Maximum number of matched and of missed names stored in each scoring detail, keeping result lines small.
 _TAIL_LIST_CAP = 50
 
 
@@ -1614,7 +1612,7 @@ def _evaluate_graph_path(task: dict, output_text: str) -> BenchQuality:
     )
 
 
-def _module_first_pos(module: str, output_text: str) -> Optional[int]:
+def _module_first_pos(module: str, output_text: str) -> int | None:
     """Return the first character offset at which *module* is named, or ``None``.
 
     Uses the same exact/≥2-component-suffix matching as :func:`_module_mentioned`, returning the
@@ -1733,6 +1731,7 @@ def _evaluate_module_blast_radius(task: dict, output_text: str) -> BenchQuality:
     )
 
 
+#: Registry mapping each task type to the function that scores its answer text.
 _EVALUATORS = {
     "symbol_extraction": _evaluate_symbol,
     "fn_call_graph": _evaluate_develop_br,  # name-recall, not count-tolerance: callers are enumerated, not counted
@@ -1826,6 +1825,7 @@ def _wrap_bench_evaluator(
     return _BenchEvaluatorAdapter(evaluator)
 
 
+#: The same evaluators wrapped for the shared registry interface, used when no registry is passed in.
 _SHARED_EVALUATORS = EvaluatorRegistry(
     {task_type: _wrap_bench_evaluator(evaluator) for task_type, evaluator in _EVALUATORS.items()}
 )

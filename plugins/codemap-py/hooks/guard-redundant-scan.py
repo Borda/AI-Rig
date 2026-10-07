@@ -31,6 +31,7 @@ _SENTINEL_TTL_S = 30 * 60
 # which already puts hooks/ on sys.path — but the test suite loads it through
 # `importlib.util.spec_from_file_location`, which does not. Inserting explicitly makes
 # the shared-helper import resolve under every load mechanism.
+#: Directory holding this hook, put on ``sys.path`` so the shared ``_hookutil`` helper imports under any loader.
 _HOOKS_DIR = Path(__file__).resolve().parent
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))

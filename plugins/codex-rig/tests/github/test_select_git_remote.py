@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-
 SELECTOR = Path(__file__).resolve().parents[2] / "shared" / "select-git-remote.py"
 
 
@@ -62,37 +61,40 @@ def test_numeric_target_prefers_origin_over_configured_forks(tmp_path: Path) -> 
 
 
 @pytest.mark.installed_plugin
-def test_numeric_target_rejects_invalid_origin_even_with_one_fork(tmp_path: Path) -> None:
-    """Do not silently switch a bare PR number from origin to a fork."""
-    repo = _repo_with_remotes(tmp_path, ["https://gitlab.com/example/widget.git"])
+@pytest.mark.parametrize(
+    ("origin_url", "git_args", "error"),
+    [
+        pytest.param(
+            "https://gitlab.com/example/widget.git",
+            ("remote", "add", "fork", "https://github.com/contributor/widget.git"),
+            "no-github-origin",
+            id="invalid-origin-with-one-fork",
+        ),
+        pytest.param(
+            "https://github.com/example/widget.git",
+            ("config", "--add", "remote.origin.url", "https://github.com/other/widget.git"),
+            "ambiguous-github-origin",
+            id="conflicting-origin-urls",
+        ),
+    ],
+)
+def test_numeric_target_rejects_unusable_origin(
+    tmp_path: Path, origin_url: str, git_args: tuple[str, ...], error: str
+) -> None:
+    """Refuse a bare PR number when origin cannot give exactly one GitHub repository identity.
+
+    Origin is renamed from the only configured remote and then changed by one more Git command: a fork remote must
+    not silently take over from an invalid origin, and an origin carrying two different URLs is ambiguous.
+    """
+    repo = _repo_with_remotes(tmp_path, [origin_url])
     subprocess.run(["git", "-C", str(repo), "remote", "rename", "remote0", "origin"], check=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "remote", "add", "fork", "https://github.com/contributor/widget.git"],
-        check=True,
-    )
+    subprocess.run(["git", "-C", str(repo), *git_args], check=True)
 
     result = _resolve(repo, "1510")
 
     assert result.returncode != 0
     assert result.stdout == ""
-    assert "no-github-origin" in result.stderr
-
-
-@pytest.mark.installed_plugin
-def test_numeric_target_rejects_conflicting_origin_urls(tmp_path: Path) -> None:
-    """Require one origin identity before binding a bare PR number."""
-    repo = _repo_with_remotes(tmp_path, ["https://github.com/example/widget.git"])
-    subprocess.run(["git", "-C", str(repo), "remote", "rename", "remote0", "origin"], check=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "config", "--add", "remote.origin.url", "https://github.com/other/widget.git"],
-        check=True,
-    )
-
-    result = _resolve(repo, "1510")
-
-    assert result.returncode != 0
-    assert result.stdout == ""
-    assert "ambiguous-github-origin" in result.stderr
+    assert error in result.stderr
 
 
 @pytest.mark.installed_plugin
@@ -124,67 +126,51 @@ def test_explicit_pr_url_selects_named_fork_over_origin(tmp_path: Path) -> None:
 
 
 @pytest.mark.installed_plugin
-def test_numeric_target_rejects_ambiguous_repositories(tmp_path: Path) -> None:
-    """Do not guess a default when origin is absent and repositories conflict."""
-    repo = _repo_with_remotes(
-        tmp_path,
-        ["https://github.com/example/widget.git", "git@github.com:someone/widget.git"],
-    )
+@pytest.mark.parametrize(
+    ("remote_urls", "target", "error"),
+    [
+        pytest.param(
+            ["https://github.com/example/widget.git", "git@github.com:someone/widget.git"],
+            "1510",
+            "ambiguous-github-repositories",
+            id="ambiguous-repositories-without-origin",
+        ),
+        pytest.param(["https://github.com/example/widget.git"], "0", "invalid-pr-number", id="zero-target"),
+        pytest.param(["https://github.com/example/widget.git"], "-1", "invalid-pr-number", id="negative-target"),
+        pytest.param(["https://github.com/example/widget.git"], "1/2", "invalid-pr-number", id="slash-target"),
+        pytest.param(
+            ["https://github.com/example/widget.git"],
+            "https://github.com/example/widget/pull/1",
+            "invalid-pr-number",
+            id="url-target",
+        ),
+        pytest.param(
+            ["https://gitlab.com/example/widget.git"], "1510", "no-github-repository", id="missing-github-remote"
+        ),
+        pytest.param(
+            ["https://github.com/example/widget/extra.git"], "1510", "no-github-repository", id="malformed-remote-path"
+        ),
+        pytest.param(
+            ["https://github.com:bad/example/widget.git"], "1510", "no-github-repository", id="invalid-url-port"
+        ),
+    ],
+)
+def test_canonicalization_rejects_unresolvable_input(
+    tmp_path: Path, remote_urls: list[str], target: str, error: str
+) -> None:
+    """Never guess a repository or number: each unresolvable input exits non-zero with its named error.
 
-    result = _resolve(repo, "1510")
-
-    assert result.returncode != 0
-    assert result.stdout == ""
-    assert "ambiguous-github-repositories" in result.stderr
-
-
-@pytest.mark.installed_plugin
-@pytest.mark.parametrize("target", ["0", "-1", "1/2", "https://github.com/example/widget/pull/1"])
-def test_canonicalization_rejects_non_numeric_targets(tmp_path: Path, target: str) -> None:
-    """Keep the numeric-only preflight distinct from already validated URL input."""
-    repo = _repo_with_remotes(tmp_path, ["https://github.com/example/widget.git"])
+    Covers a default that cannot be chosen when origin is absent and repositories conflict, the numeric-only preflight
+    staying distinct from already validated URL input, and local Git configuration that cannot establish a repository
+    (no GitHub remote, a truncated GitHub path, or a malformed URL port).
+    """
+    repo = _repo_with_remotes(tmp_path, remote_urls)
 
     result = _resolve(repo, target)
 
     assert result.returncode != 0
     assert result.stdout == ""
-    assert "invalid-pr-number" in result.stderr
-
-
-@pytest.mark.installed_plugin
-def test_numeric_target_rejects_missing_github_remote(tmp_path: Path) -> None:
-    """Do not invent a repository when local Git configuration cannot establish one."""
-    repo = _repo_with_remotes(tmp_path, ["https://gitlab.com/example/widget.git"])
-
-    result = _resolve(repo, "1510")
-
-    assert result.returncode != 0
-    assert result.stdout == ""
-    assert "no-github-repository" in result.stderr
-
-
-@pytest.mark.installed_plugin
-def test_numeric_target_ignores_malformed_remote_instead_of_guessing(tmp_path: Path) -> None:
-    """Reject a truncated GitHub path that would otherwise look like a valid base repository."""
-    repo = _repo_with_remotes(tmp_path, ["https://github.com/example/widget/extra.git"])
-
-    result = _resolve(repo, "1510")
-
-    assert result.returncode != 0
-    assert result.stdout == ""
-    assert "no-github-repository" in result.stderr
-
-
-@pytest.mark.installed_plugin
-def test_numeric_target_rejects_invalid_url_port(tmp_path: Path) -> None:
-    """A malformed GitHub URL cannot establish the repository identity."""
-    repo = _repo_with_remotes(tmp_path, ["https://github.com:bad/example/widget.git"])
-
-    result = _resolve(repo, "1510")
-
-    assert result.returncode != 0
-    assert result.stdout == ""
-    assert "no-github-repository" in result.stderr
+    assert error in result.stderr
 
 
 @pytest.mark.installed_plugin

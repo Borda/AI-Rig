@@ -35,9 +35,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-# hooks.json commands reference hook files as ${CLAUDE_PLUGIN_ROOT}/hooks/<name>.js.
+#: hooks.json commands reference hook files as ${CLAUDE_PLUGIN_ROOT}/hooks/<name>.js.
 _HOOK_REF = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT\}/hooks/([^\"'\s]+\.js)")
 
+#: Settings keys the setup skill must mention so it documents everything it merges.
 _SETUP_KEYWORDS = ("statusLine", "permissions.allow", "bridge@borda-ai-rig", "link")
 
 

@@ -11,10 +11,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import check_oss_pr_signals as cops  # type: ignore[import-not-found]
-
+import pytest
 
 # --------------------------------------------------------------------------- #
 # Fake subprocess scaffolding
@@ -56,7 +54,7 @@ def _fake_subprocess(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         # Build candidate keys from longest to shortest using non-flag tokens
         non_flag = [t for t in cmd[1:] if not t.startswith("--") and not t.startswith(":")]
         for take in range(min(4, len(non_flag)), 0, -1):
-            key = ":".join([basename] + non_flag[:take])
+            key = ":".join([basename, *non_flag[:take]])
             if key in state["responses"]:
                 return _FakeCompleted(returncode=0, stdout=state["responses"][key])
         # Default empty
@@ -116,13 +114,16 @@ class TestGrepSecrets:
         diff = "+token=abcdef12345\n+token=abcdef12345\n"
         assert cops._grep_secrets(diff) == ["+token=abcdef12345"]
 
-    def test_case_insensitive_match(self) -> None:
-        """Uppercase keyword still matches."""
-        assert cops._grep_secrets("+PASSWORD = 'longenoughval'") == ["+PASSWORD = 'longenoughval'"]
-
-    def test_aws_access_key_detected(self) -> None:
-        """An AWS-style access key ID is flagged with no ``key=`` prefix needed."""
-        assert cops._grep_secrets("+aws_key = AKIAABCDEFGHIJKLMNOP") == ["+aws_key = AKIAABCDEFGHIJKLMNOP"]
+    @pytest.mark.parametrize(
+        "line",
+        [
+            pytest.param("+PASSWORD = 'longenoughval'", id="uppercase-keyword-still-matches"),
+            pytest.param("+aws_key = AKIAABCDEFGHIJKLMNOP", id="aws-access-key-id-no-key-prefix-needed"),
+        ],
+    )
+    def test_secret_shaped_line_is_flagged(self, line: str) -> None:
+        """An uppercase keyword or an AWS-style access key ID (no ``key=`` prefix needed) is flagged as-is."""
+        assert cops._grep_secrets(line) == [line]
 
     def test_pem_private_key_header_detected(self) -> None:
         """A PEM private-key header line is flagged.

@@ -293,8 +293,8 @@ def _patch_index_locks(path: Path) -> dict[str, dict[str, Any]]:
 
 def _git(source_root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     """Run one bounded Git operation against the explicit source object store."""
-    return subprocess.run(
-        ["git", "-C", str(source_root), *args],
+    return subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "-C", str(source_root), *args],  # noqa: S607 - git/tool resolved via PATH on purpose
         check=check,
         capture_output=True,
         text=True,
@@ -320,7 +320,7 @@ def _release_worktree(source_root: Path, worktree: Path, task_id: str) -> str:
     return ""
 
 
-def _install_patch_task_index(  # noqa: PLR0913 — 7 immutable coordinates of one task's index; a
+def _install_patch_task_index(
     # config object would only rename them
     *,
     source_root: Path,
@@ -341,7 +341,7 @@ def _install_patch_task_index(  # noqa: PLR0913 — 7 immutable coordinates of o
     Raises:
         ValueError: If the scanner fails or the graph drifts from the reviewed lock.
     """
-    scan = subprocess.run(
+    scan = subprocess.run(  # noqa: S603 - argv list, no shell
         [sys.executable, str(scan_index_bin), "--root", str(worktree)],
         check=False,
         capture_output=True,
@@ -566,20 +566,20 @@ def relocate_index_for_run(
     return {**provenance, "derived_index_path": str(derived_path)}
 
 
-def main(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag with a default (0 required)
-    index_path: Path = None,
-    source_root: Path = None,
-    manifest_path: Path = None,
-    methodology_path: Path = None,
-    schema_path: Path = None,
+def main(
+    index_path: Path | None = None,
+    source_root: Path | None = None,
+    manifest_path: Path | None = None,
+    methodology_path: Path | None = None,
+    schema_path: Path | None = None,
     verify: bool = False,
     require_hash: bool = False,
     print_contract: bool = False,
     prepare_patch_bundle: bool = False,
-    patch_locks_path: Path = None,
-    scan_index_bin: Path = None,
-    relocate_into: Path = None,
-    provenance_path: Path = None,
+    patch_locks_path: Path | None = None,
+    scan_index_bin: Path | None = None,
+    relocate_into: Path | None = None,
+    provenance_path: Path | None = None,
 ) -> None:
     """Prepare, verify, or describe one manifest-locked Codemap index.
 

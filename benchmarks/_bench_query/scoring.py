@@ -85,12 +85,12 @@ def score_rdeps_accuracy(
     )
 
 
-# Suites that check codemap against an INDEPENDENT oracle — these alone decide the primary verdict.
-# "correctness" holds the fixture-based deterministic suites (D/B/R/K/U): each builds its own tmp
-# repo with KNOWN ground truth (never scan-query-derived), so a pass is genuine correctness, not
-# self-consistency — they join the verdict alongside calls/accuracy/latency/query-shape.
+#: Suites that check codemap against an INDEPENDENT oracle — these alone decide the primary verdict.
+#: "correctness" holds the fixture-based deterministic suites (D/B/R/K/U): each builds its own tmp
+#: repo with KNOWN ground truth (never scan-query-derived), so a pass is genuine correctness, not
+#: self-consistency — they join the verdict alongside calls/accuracy/latency/query-shape.
 _PRIMARY_SUITES = frozenset({"calls", "accuracy", "latency", "query-shape", "correctness"})
-# Suites validated against frozen scan-query-derived ground truth — determinism/regression only.
+#: Suites validated against frozen scan-query-derived ground truth — determinism/regression only.
 _SELF_CONSISTENCY_SUITES = frozenset({"symbol", "health", "xrefs"})
 
 

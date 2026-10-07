@@ -9,9 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 import extract_contributors as ec
+import pytest
 
 
 class _FakeCompleted:
@@ -101,25 +100,21 @@ def test_build_range(range_arg: str, from_ref: str, to_ref: str, expected: str) 
 # ---------------------------------------------------------------------------
 
 
-def test_no_range_arg_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
-    """No range given → exit 1 with '--range or --from required'."""
-    rc = ec.main([])
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        pytest.param([], "--range or --from required", id="no-range-given"),
+        pytest.param(["--range", "v1..v2", "--from", "v1"], "not both", id="range-and-from-conflict"),
+        pytest.param(["--bogus", "x"], "unknown arg", id="unrecognized-flag"),
+    ],
+)
+def test_invalid_args_exit_1_with_stderr_message(
+    capsys: pytest.CaptureFixture[str], argv: list[str], message: str
+) -> None:
+    """No range, both ``--range`` and ``--from``, or an unrecognized flag → exit 1 with the matching message."""
+    rc = ec.main(argv)
     assert rc == 1
-    assert "--range or --from required" in capsys.readouterr().err
-
-
-def test_range_and_from_conflict_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
-    """Both ``--range`` and ``--from`` → exit 1 with conflict message."""
-    rc = ec.main(["--range", "v1..v2", "--from", "v1"])
-    assert rc == 1
-    assert "not both" in capsys.readouterr().err
-
-
-def test_unknown_arg_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
-    """Unrecognized flag → exit 1 with 'unknown arg'."""
-    rc = ec.main(["--bogus", "x"])
-    assert rc == 1
-    assert "unknown arg" in capsys.readouterr().err
+    assert message in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -127,33 +122,42 @@ def test_unknown_arg_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_emits_deduped_bot_free_list(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    """Successful git log → sorted, bot-free, email-deduped stdout list."""
-    stdout = (
-        "Jane Doe <jane@example.com>\nJ. Doe <jane@example.com>\nbot[bot] <b@noreply.github.com>\nAl <al@example.com>\n"
-    )
-    monkeypatch.setattr(ec, "which", lambda _: "/fake/git")
-    monkeypatch.setattr(ec.subprocess, "run", lambda *_a, **_k: _FakeCompleted(returncode=0, stdout=stdout))
-    rc = ec.main(["--range", "v1..v2"])
-    assert rc == 0
-    assert capsys.readouterr().out == "Al <al@example.com>\nJane Doe <jane@example.com>\n"
-
-
-def test_include_bots_emits_bot_and_privacy_email_human(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("extra_args", "stdout", "expected"),
+    [
+        pytest.param(
+            [],
+            "Jane Doe <jane@example.com>\nJ. Doe <jane@example.com>\nbot[bot] <b@noreply.github.com>\n"
+            "Al <al@example.com>\n",
+            "Al <al@example.com>\nJane Doe <jane@example.com>\n",
+            id="sorted-bot-free-email-deduped",
+        ),
+        pytest.param(
+            ["--include-bots"],
+            "dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>\n"
+            "Jirka Borovec <6035284+Borda@users.noreply.github.com>\n",
+            "dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>\n"
+            "Jirka Borovec <6035284+Borda@users.noreply.github.com>\n",
+            id="include-bots-keeps-bot-and-privacy-email-human",
+        ),
+    ],
+)
+def test_emits_contributor_list_from_git_log(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    extra_args: list[str],
+    stdout: str,
+    expected: str,
 ) -> None:
-    """Release extraction keeps bot credits while retaining GitHub privacy-email humans."""
-    stdout = (
-        "dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>\n"
-        "Jirka Borovec <6035284+Borda@users.noreply.github.com>\n"
-    )
+    """A successful git log → sorted, email-deduped stdout list, bot-free unless ``--include-bots`` is given.
+
+    Release extraction with ``--include-bots`` keeps bot credits while retaining GitHub privacy-email humans.
+    """
     monkeypatch.setattr(ec, "which", lambda _: "/fake/git")
     monkeypatch.setattr(ec.subprocess, "run", lambda *_a, **_k: _FakeCompleted(returncode=0, stdout=stdout))
-
-    rc = ec.main(["--range", "v1..v2", "--include-bots"])
-
+    rc = ec.main(["--range", "v1..v2", *extra_args])
     assert rc == 0
-    assert capsys.readouterr().out == stdout
+    assert capsys.readouterr().out == expected
 
 
 def test_git_failure_exits_2(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

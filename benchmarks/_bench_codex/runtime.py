@@ -2,30 +2,31 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
-from contextvars import ContextVar
-from dataclasses import dataclass, field
 import hashlib
 import json
 import math
 import os
-from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shlex
 import sys
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, TextIO
 from uuid import uuid4
-
-from rich.console import Console
-from rich.panel import Panel
 
 from _bench_common import presentation
 from _bench_common.paid_lifecycle import paid_approval_token
 from _bench_common.presentation import fmt_time, fmt_tok
+from rich.console import Console
+from rich.panel import Panel
 
+#: Codex model names the benchmark accepts; any other model is rejected with a ValueError.
 SUPPORTED_CODEX_MODELS = ("gpt-6.1-sol", "gpt-6-luna", "gpt-6-sol", "gpt-6-astra")
 
+#: Lowercase credential-bearing event keys whose values are replaced with ``<redacted>`` in recorded telemetry.
 _SENSITIVE_EVENT_KEYS = frozenset(
     {"access_token", "refresh_token", "id_token", "authorization", "cookie", "set-cookie"}
 )
@@ -54,6 +55,7 @@ STRUCTURAL_LEGEND_BODY = (
     "  cohort: H headline; D diagnostic",
     "  input tokens: gross total; cached and fresh details remain in telemetry only (lower is better at equal quality)",
 )
+#: The legend body framed by the standard opening and closing rules, for plain (non-panel) output.
 STRUCTURAL_OUTPUT_LEGEND = "\n".join(
     (presentation.LEGEND_OPEN_RULE, *STRUCTURAL_LEGEND_BODY, presentation.LEGEND_CLOSE_RULE)
 )
@@ -437,7 +439,9 @@ def _records_compact_query_attempt(
     )
 
 
+#: Shell operators and control keywords that end one command segment and start the next.
 _SHELL_SEGMENT_BOUNDARIES = frozenset({";", "|", "&&", "||", "do", "then", "else"})
+#: Shell builtins that, when applied to ``CODEMAP_BIN``, can change the injected Codemap launcher.
 _LAUNCHER_MUTATING_BUILTINS = frozenset({"export", "readonly", "typeset", "declare", "local", "unset", "read"})
 
 
@@ -456,7 +460,7 @@ def _mutates_launcher(tokens: Sequence[str]) -> bool:
             return True
         if token in _LAUNCHER_MUTATING_BUILTINS and index + 1 < len(tokens):
             next_token = tokens[index + 1].lstrip("'\"")
-            if next_token == "CODEMAP_BIN" or next_token.startswith("CODEMAP_BIN="):
+            if next_token == "CODEMAP_BIN" or next_token.startswith("CODEMAP_BIN="):  # noqa: S105 - env-var name comparison, not a credential
                 return True
     return False
 
@@ -504,6 +508,7 @@ def _observes_compact_codemap_query(command: str, *, launcher_path: str | Path |
     return _observed_compact_query_arguments(command, launcher_path=launcher_path) is not None
 
 
+#: Command names counted as manual search or read fallback once a Codemap call has failed.
 _FALLBACK_TOOLS = frozenset(
     {
         "ack",
@@ -946,7 +951,9 @@ def print_unified_paid_command(
     print(presentation.format_paid_command_block(lines))
 
 
+#: Rich style for each arm's terminal rows, shared with the common presentation module.
 ARM_ROW_STYLES = presentation.ARM_ROW_STYLES
+#: ANSI color code for each arm's rows when color is forced: yellow, cyan and magenta.
 ARM_ROW_ANSI_CODES = {
     "A_plain": "33",
     "B_auto": "36",
@@ -956,9 +963,13 @@ ARM_ROW_ANSI_CODES = {
 #: availability. B_auto and C_strict both find the binary, so ``codemap=true`` alone made their rows
 #: identical; the obligation belongs in its own field rather than overloading the measured fact.
 ARM_CODEMAP_USE = {"A_plain": "forbidden", "B_auto": "optional", "C_strict": "required"}
+#: Pattern that extracts the canonical arm name from a ``(n/m)`` result row.
 _RESULT_ARM = re.compile(r"^\(\d+/\d+\)\s+.*\b(A_plain|B_auto|C_strict)\b")
+#: Shared Rich console that the arm, plan, section and legend rows are printed through.
 _CONSOLE = presentation.benchmark_console()
+#: Pattern for the leading ``(completed/total)`` progress counter of a terminal row.
 _PROGRESS_PREFIX = re.compile(r"^\((\d+)/(\d+)\)")
+#: Active (completed offset, total cells) aggregate scope used to renumber progress counters; None when unset.
 _PROGRESS_SCOPE: ContextVar[tuple[int, int] | None] = ContextVar("codex_progress_scope", default=None)
 #: Arm names are short enough to print unabbreviated, so the display label is the canonical name.
 _DISPLAY_ARM_COLUMN_WIDTH = max(len(arm) for arm in ARM_ROW_ANSI_CODES)

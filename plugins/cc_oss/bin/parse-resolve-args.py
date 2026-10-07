@@ -53,16 +53,17 @@ class ResolveMode(str, Enum):
     COMMENT_DISPATCH = "comment-dispatch"
 
 
-# ``report`` may lead or trail the target — ``42 report`` and ``report 42`` are the same request.
-# Both positions are captured so either one flips MODE to pr+report.
+#: ``report`` may lead or trail the target — ``42 report`` and ``report 42`` are the same request.
+#: Both positions are captured so either one flips MODE to pr+report.
 _PR_NUMBER_RE: Final = re.compile(r"^\s*(report\s+)?#?(\d+)(\s+report)?\s*$")
-# group(3) captures the PR number from a .../pull/N path. A pasted PR link often carries a tab or
-# thread tail (``/files``, ``/commits``, ``#discussion_r123``, ``?diff=split``); the tail is accepted
-# and dropped so PR_URL is the canonical PR reference ``gh`` understands.
+#: group(3) captures the PR number from a .../pull/N path. A pasted PR link often carries a tab or
+#: thread tail (``/files``, ``/commits``, ``#discussion_r123``, ``?diff=split``); the tail is accepted
+#: and dropped so PR_URL is the canonical PR reference ``gh`` understands.
 _PR_URL_RE: Final = re.compile(r"^\s*(report\s+)?(https://github\.com/\S+?/pull/(\d+))(?:[/#?]\S*)?(\s+report)?\s*$")
-# Any other github.com URL (plain repo link, issue link) still routes on PR_URL alone with PR_NUMBER
-# empty — downstream gates then report ``n/a`` instead of handing the URL to comment dispatch.
+#: Any other github.com URL (plain repo link, issue link) still routes on PR_URL alone with PR_NUMBER
+#: empty — downstream gates then report ``n/a`` instead of handing the URL to comment dispatch.
 _GH_URL_RE: Final = re.compile(r"^\s*(report\s+)?(https://github\.com/\S+?)(\s+report)?\s*$")
+#: Matches an argument string consisting only of the word ``report``.
 _BARE_REPORT_RE: Final = re.compile(r"^\s*report\s*$")
 
 

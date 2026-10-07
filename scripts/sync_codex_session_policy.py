@@ -29,9 +29,13 @@ except ModuleNotFoundError:
         tomllib = None
 
 
+#: Start of the opening marker line of the managed policy block; the body SHA-256 follows it.
 BEGIN_PREFIX = "<!-- borda-local:session-model-policy begin sha256="
+#: Closing marker line of the managed policy block.
 END_MARKER = "<!-- borda-local:session-model-policy end -->\n"
+#: Matches the opening marker line and captures the SHA-256 recorded for the block body.
 BEGIN_PATTERN = re.compile(r"<!-- borda-local:session-model-policy begin sha256=([0-9a-f]{64}) -->\n")
+#: Matches a whole TOML line assigning model, review_model or approvals_reviewer, in any key quoting.
 MODEL_PATTERN = re.compile(
     r"^(?P<indent>\s*)(?P<spelling>model|review_model|approvals_reviewer|"
     '"model"|"review_model"|"approvals_reviewer"|'
@@ -40,15 +44,20 @@ MODEL_PATTERN = re.compile(
     r'"(?:[^"\\]|\\.)*"'
     r"|'[^']*')(?P<suffix>\s*(?:#.*)?)$"
 )
+#: Matches the start of a line assigning model, review_model or approvals_reviewer, in any key quoting.
 MODEL_ASSIGNMENT_PATTERN = re.compile(
     r"^\s*(?:model|review_model|approvals_reviewer|"
     '"model"|"review_model"|"approvals_reviewer"|'
     "'model'|'review_model'|'approvals_reviewer')"
     r"\s*="
 )
+#: Matches a TOML table header line, marking where top-level keys end.
 TABLE_PATTERN = re.compile(r"^\s*\[")
+#: Model keys the policy must define and the sync manages.
 MANAGED_KEYS = frozenset({"model", "review_model"})
+#: Matches the `[auto_review]` TOML table header line in bare, double-quoted, or single-quoted form.
 AUTO_REVIEW_TABLE = re.compile(r"^\s*\[\s*(?:auto_review|\"auto_review\"|'auto_review')\s*\]\s*(?:#.*)?$")
+#: Matches an extra_policy assignment and splits it into its key prefix and value.
 EXTRA_ASSIGNMENT = re.compile(
     r"^(?P<prefix>\s*(?:extra_policy|\"extra_policy\"|'extra_policy')\s*=\s*)(?P<value>.*)$", re.DOTALL
 )
@@ -222,7 +231,8 @@ def _replace_extra_policy(existing: str, policy: str) -> str:
     if assignment_index is not None:
         chunk = lines[assignment_index]
         match = EXTRA_ASSIGNMENT.fullmatch(chunk)
-        assert match is not None
+        if match is None:
+            raise RuntimeError("match must not be None")
         raw_value = match["value"]
         suffix = ""
         # The TOML parser identifies the shortest complete string literal; the

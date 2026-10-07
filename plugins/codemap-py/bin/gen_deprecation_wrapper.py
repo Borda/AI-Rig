@@ -61,6 +61,7 @@ class SymbolType(str, Enum):
 # Import inference
 # ---------------------------------------------------------------------------
 
+#: Maps a ``deprecate`` decorator name to the ``from deprecate import ...`` line the generated wrapper needs.
 _IMPORT_MAP = {
     "deprecated_class": "from deprecate import deprecated_class",
     "deprecated": "from deprecate import deprecated",

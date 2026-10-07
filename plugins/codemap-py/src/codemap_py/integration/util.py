@@ -1,20 +1,24 @@
 """Hashing, canonical JSON, timestamps and report paths shared by every mode."""
 
 from __future__ import annotations
+
 import hashlib
 import json
 import re
 import time
 from pathlib import Path
+
 from .types import ConsumerTarget
 
-
+#: Timeout in seconds for git subprocess calls made by the integration helpers.
 _GIT_TIMEOUT_S = 5
 
 
+#: Largest JSON payload in bytes (1 MiB) accepted from files or subprocess output.
 _MAX_JSON_BYTES = 1_048_576
 
 
+#: Matches a lowercase 64-character hex SHA-256 digest, as required for approval tokens.
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 

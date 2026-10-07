@@ -6,11 +6,9 @@ import json
 import sys
 from typing import Any
 
-
 from _bench_common.presentation import benchmark_console, make_progress
 
 from _bench_query.models import ScenarioResult
-
 
 try:
     # benchmark_console imports rich lazily, so a missing rich still raises ImportError here and
@@ -36,6 +34,7 @@ class _OutputState:
     quiet: bool = False
 
 
+#: Shared output state; its quiet flag is set in --json-only mode to suppress progress narration.
 _OUT = _OutputState()
 
 

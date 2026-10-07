@@ -6,14 +6,16 @@ import json
 import sys
 from pathlib import Path
 
+from _bench_common.codemap_discovery import find_codemap_bin
 
-from _bench_common.codemap_discovery import (
-    find_codemap_bin,
+from _bench_query.fixtures import (
+    run_correctness_batch,
+    run_correctness_diff_impact,
+    run_correctness_self_check,
+    run_correctness_src_roots,
+    run_correctness_uncovered_xrefs,
 )
-
-from _bench_query.scoring import compute_verdict
 from _bench_query.output import _OUT, _run_all_suites, emit, log
-from _bench_query.report import build_summary_envelope, write_report_file
 from _bench_query.paths import (
     _SELF_CONSISTENCY_MIN_VER,
     _ensure_index,
@@ -22,6 +24,8 @@ from _bench_query.paths import (
     resolve_index_path,
     resolve_repo_path,
 )
+from _bench_query.report import build_summary_envelope, write_report_file
+from _bench_query.scoring import compute_verdict
 from _bench_query.suites import (
     run_measure_accuracy,
     run_measure_calls,
@@ -32,18 +36,11 @@ from _bench_query.suites import (
     run_suite_xrefs,
     run_verify_tasks,
 )
-from _bench_query.fixtures import (
-    run_correctness_batch,
-    run_correctness_diff_impact,
-    run_correctness_self_check,
-    run_correctness_src_roots,
-    run_correctness_uncovered_xrefs,
-)
 
 
 def main(
-    repo_path: str = None,
-    index_path: str = None,
+    repo_path: str | None = None,
+    index_path: str | None = None,
     report: bool = False,
     json_only: bool = False,
     verify_tasks: bool = False,

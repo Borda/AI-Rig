@@ -1,12 +1,14 @@
 """Composite verbs: diff impact against git, and batched sub-queries."""
 
 from __future__ import annotations
+
 import argparse
 import json
 import re
 import subprocess
 import sys
 from pathlib import Path
+
 from codemap_py import query_state as state
 
 # Transitional seam: exclusion rules live in codemap_py.scanner, but this
@@ -15,6 +17,7 @@ from codemap_py import query_state as state
 # bin/-relative sys.path insert, the same route bin/scan-index used to take.
 # Every other import below is a direct package-internal import.
 # parents[3] not [2]: this file sits one level deeper than the pre-split query.py
+#: Plugin bin/ directory, added to sys.path so the _exclusions shim can be imported.
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
@@ -23,11 +26,11 @@ from .errors import _EXIT_BAD_INPUT, _EXIT_GENERIC, _die_json  # noqa: E402
 from .index_io import _GIT_TIMEOUT_S  # noqa: E402
 from .output import _print  # noqa: E402
 
-
 # Reverse-dependency count thresholds mapping a module to a blast-radius risk tier.
 # Matches the develop plugin's convention so a diff-impact tier reads the same as the
 # per-module rdeps sizing used elsewhere: 5+ importers reach far (HIGH), 1–4 are
 # contained (MODERATE), a leaf with no importers is self-contained (LOW).
+#: Minimum reverse-dependency count at which a changed module is rated HIGH risk.
 _RISK_HIGH_MIN_RDEPS = 5
 
 
@@ -66,7 +69,7 @@ def _git_diff_paths(base: str) -> list[str] | dict:
     """
     cmd = ["git", "diff", "--name-only", base, "--", "*.py"]
     try:
-        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=_GIT_TIMEOUT_S)
+        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=_GIT_TIMEOUT_S)  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
     except subprocess.CalledProcessError as exc:
         return {"error": "git diff failed", "base": base, "detail": f"exit {exc.returncode}"}
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
@@ -90,7 +93,7 @@ def _git_diff_line_ranges(base: str, path: str) -> list[tuple[int, int]]:
     """
     cmd = ["git", "diff", "--unified=0", base, "--", path]
     try:
-        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=_GIT_TIMEOUT_S)
+        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=_GIT_TIMEOUT_S)  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
         return []
     ranges: list[tuple[int, int]] = []
@@ -416,6 +419,7 @@ def _load_batch_items(source: str) -> list[dict]:
 # Composite commands that run their own in-process sub-queries; nesting either inside
 # a batch item would recurse the capture buffer and is rejected. Kept as a set so
 # diff-impact joins batch under one guard rather than a growing chain of ``==`` checks.
+#: Composite commands that cannot be nested as items of a batch request.
 _NON_NESTABLE_IN_BATCH = frozenset({"batch", "diff-impact"})
 
 
@@ -480,7 +484,7 @@ def _run_subquery(
     state._capture = buf
     # Imported here, not at module scope: cli imports this module for cmd_batch, so a
     # top-level import back into cli is a circular import at package load.
-    from .cli import _dispatch_command  # noqa: PLC0415
+    from .cli import _dispatch_command
 
     try:
         _dispatch_command(index, sub_args, parser, project_root)

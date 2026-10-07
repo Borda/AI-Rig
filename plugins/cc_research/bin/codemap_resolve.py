@@ -43,7 +43,9 @@ import tempfile
 from pathlib import Path
 
 TOOL_LABEL = "codemap-py"  # binary name, warn prefix, and plugin name — all one label
+#: Fallback basename prefix of the index-currency sentinel when the caller passes no --currency-prefix.
 DEFAULT_CURRENCY_PREFIX = "codemap-currency"
+#: Seconds a git subprocess may run before the resolver gives up on it.
 _GIT_TIMEOUT_S = 5
 _CURRENCY_TIMEOUT_S = 15  # currency check may walk the tree (tier 2); bounded, never unbounded
 
@@ -79,7 +81,7 @@ def _canonical_root() -> Path:
     """
     try:
         out = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - git resolved via PATH on purpose
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -112,7 +114,7 @@ def _currency(cic: str, index: Path) -> tuple[str, str]:
     and neither call was time-bounded.
     """
     try:
-        out = subprocess.run(
+        out = subprocess.run(  # noqa: S603 - argv list, no shell
             [sys.executable, cic, "--index-path", str(index)],
             capture_output=True,
             text=True,

@@ -33,7 +33,9 @@ import tempfile
 from pathlib import Path
 from typing import Final
 
+#: Comma-separated JSON fields requested from ``gh pr view`` to resolve a PR's head and base refs.
 _PR_FIELDS: Final = "headRefName,baseRefName,isCrossRepository,headRefOid,headRepositoryOwner"
+#: Extracts the default branch name from the ``HEAD branch:`` line of ``git remote show`` output.
 _HEAD_BRANCH_RE: Final = re.compile(r"HEAD branch:\s*(\S+)")
 
 
@@ -61,7 +63,7 @@ _DRY_RUN = False
 
 def _set_dry_run(enabled: bool) -> None:
     """Enable or disable dry-run mode for this process."""
-    global _DRY_RUN  # noqa: PLW0603 — one process-wide switch, set once from argv
+    global _DRY_RUN
     _DRY_RUN = enabled
 
 
@@ -99,7 +101,7 @@ def _run(cmd: list[str], timeout: int) -> str:
         Stripped stdout on success, otherwise an empty string.
     """
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603 - argv list, no shell
     except (OSError, subprocess.SubprocessError):
         return ""
     return proc.stdout.strip() if proc.returncode == 0 else ""

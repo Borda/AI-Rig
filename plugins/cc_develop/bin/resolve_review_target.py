@@ -25,12 +25,18 @@ import subprocess
 import sys
 from pathlib import Path
 
+#: Matches changed paths that are dependency manifests: pyproject.toml, setup.cfg and requirements files.
 _DEPENDENCY_RE = re.compile(r"(pyproject\.toml|setup\.cfg|requirements.*\.txt)")
+#: Matches changed paths that are container configuration: Dockerfile and docker-compose files.
 _CONTAINER_RE = re.compile(r"(Dockerfile|docker-compose.*\.yml)")
 
+#: Warning shown when the diff touches dependency manifests, which the review does not cover.
 _DEPENDENCY_WARNING = "⚠ dependency changes detected — not reviewed; verify Python imports still resolve"
+#: Warning shown when the diff touches container configuration, which the review does not cover.
 _CONTAINER_WARNING = "⚠ container config changes detected — not reviewed"
+#: Warning shown when every changed Python file is a test, so the review has no source change to examine.
 _TESTS_ONLY_WARNING = "⚠ diff contains only test files (tests/) — no src/ changes; review may be uninformative"
+#: Message printed when the diff contains no Python files, since the review skill is scoped to Python.
 _NO_PYTHON = (
     "! Diff contains non-Python files only. This skill is scoped to Python. "
     "For other languages, use a general-purpose code reviewer."
@@ -50,7 +56,7 @@ def changed_files(timeout: int = 5) -> list[str]:
     """
     try:
         out = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
+            ["git", "diff", "--name-only", "HEAD"],  # noqa: S607 - git resolved via PATH on purpose
             capture_output=True,
             text=True,
             timeout=timeout,

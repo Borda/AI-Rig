@@ -9,26 +9,29 @@ from __future__ import annotations
 
 import ast
 import copy
-from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 import os
-from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import asdict, dataclass, field
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from types import MappingProxyType, SimpleNamespace
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from .provider_parity_contracts import canonical_task_hash, prompt_hash
 from .subprocess_env import minimal_child_env
 
-
+#: Matches a lowercase 64-character hexadecimal SHA-256 digest.
 _SHA256_RE = re.compile(r"[0-9a-f]{64}$")
+#: Matches a lowercase 40-character hexadecimal git commit hash.
 _GIT_COMMIT_RE = re.compile(r"[0-9a-f]{40}$")
+#: Version label hashed into the patch scorer identity; change it when scoring semantics change.
 _SCORER_VERSION = "provider-neutral-edit-score-v1"
+#: Version label of the multi-caller fix scorer for each task, hashed into its scorer identity.
 _FIX_MULTI_SCORER_VERSION = MappingProxyType(
     {
         "FM-01": "provider-neutral-fix-multi-score-v4",
@@ -36,10 +39,15 @@ _FIX_MULTI_SCORER_VERSION = MappingProxyType(
         "FM-03": "provider-neutral-fix-multi-score-v4",
     }
 )
+#: Git commit of the target repository that multi-caller fix tasks start from.
 _FIX_MULTI_BASELINE_COMMIT = "be98784a1a03581b7051a355ae1084fd352d7cea"
+#: Version label of the single-caller fix scorer, hashed into its scorer identity.
 _FIX_SINGLE_SCORER_VERSION = "provider-neutral-fix-single-score-v1"
+#: Git commit of the target repository that single-caller fix tasks start from.
 _FIX_SINGLE_BASELINE_COMMIT = "be98784a1a03581b7051a355ae1084fd352d7cea"
+#: Repository-relative source root under which the multi-caller fix paths live.
 _FIX_MULTI_ROOT = "src/lightning/pytorch"
+#: Files each multi-caller fix task must change, keyed by task id.
 _FIX_MULTI_PATHS = {
     "FM-01": (f"{_FIX_MULTI_ROOT}/callbacks/early_stopping.py",),
     "FM-02": (f"{_FIX_MULTI_ROOT}/callbacks/model_checkpoint.py",),
@@ -48,9 +56,9 @@ _FIX_MULTI_PATHS = {
         for name in ("strategy", "ddp", "fsdp", "deepspeed", "model_parallel", "xla")
     ),
 }
-# These hashes bind each normalized method body to the frozen 2.6.5 baseline.
-# Normalization removes only the requested log or forwarded keyword, so an
-# otherwise deleted, reordered, or rewritten setup path cannot pass the oracle.
+#: These hashes bind each normalized method body to the frozen 2.6.5 baseline.
+#: Normalization removes only the requested log or forwarded keyword, so an
+#: otherwise deleted, reordered, or rewritten setup path cannot pass the oracle.
 _SETUP_ENVIRONMENT_BODY_SHA256 = MappingProxyType(
     {
         "Strategy": "24d96c3bc5817f5d6b37604feb598f2248585db56dd266f58cebb481673ffe9a",
@@ -61,6 +69,7 @@ _SETUP_ENVIRONMENT_BODY_SHA256 = MappingProxyType(
         "XLAStrategy": "c2f6d1d993218a9078b7fbaaf3df80777d72b5f675628c95c408ff1c40e3d4e7",
     }
 )
+#: Rules for dropping a cell from pooling and for metrics kept diagnostic only, hashed into the scorer.
 _EXCLUSIONS = MappingProxyType(
     {
         "excluded_from_pooling_when": (
@@ -270,6 +279,7 @@ class FixSingleContract:
         )
 
 
+#: Executable-oracle definition for each single-caller fix task, keyed by task id.
 _FIX_SINGLE_ORACLES: Mapping[str, Mapping[str, str]] = MappingProxyType(
     {
         "FS-01": {"path": "src/lightning/pytorch/callbacks/early_stopping.py", "oracle": "early_stopping_patience"},
@@ -467,6 +477,7 @@ def _check_save_top_k_warning(tree: ast.Module) -> bool:
     return zero_warned and not warnings
 
 
+#: Behavior checks that run a candidate's parsed source, keyed by oracle id.
 _FIX_SINGLE_CHECKS: Mapping[str, Callable[[ast.Module], bool]] = MappingProxyType(
     {
         "early_stopping_patience": _check_patience,
@@ -509,9 +520,9 @@ def run_fix_single_check(oracle_id: str, source: str, filename: str) -> bool:
     return _FIX_SINGLE_CHECKS[oracle_id](ast.parse(source, filename=filename))
 
 
-# The worker reaches its own package through argv rather than an inherited PYTHONPATH so
-# the child can stay in isolated mode. The verdict carries a parent-generated token because
-# candidate code may print to stdout, and an untokenized last line would be ambiguous.
+#: The worker reaches its own package through argv rather than an inherited PYTHONPATH so
+#: the child can stay in isolated mode. The verdict carries a parent-generated token because
+#: candidate code may print to stdout, and an untokenized last line would be ambiguous.
 _FIX_SINGLE_WORKER_SOURCE = """
 import json
 import sys
@@ -526,8 +537,8 @@ except BaseException as exc:
     verdict = {"error": f"{type(exc).__name__}: {exc}"}
 print(request["token"] + json.dumps(verdict))
 """
-# A candidate that neither returns nor terminates is a failed candidate, not an unbounded
-# scorer stall; the deadline is generous next to the microexecution it bounds.
+#: A candidate that neither returns nor terminates is a failed candidate, not an unbounded
+#: scorer stall; the deadline is generous next to the microexecution it bounds.
 _FIX_SINGLE_ORACLE_TIMEOUT_S = 120.0
 
 
@@ -538,7 +549,7 @@ def _fix_single_worker_verdict(oracle_id: str, source: str, filename: str, *, ti
     package_root = str(Path(__file__).resolve().parent.parent)
     with tempfile.TemporaryDirectory(prefix="codemap-fix-single-oracle-") as sandbox:
         try:
-            completed = subprocess.run(
+            completed = subprocess.run(  # noqa: S603 - argv list, no shell
                 [sys.executable, "-I", "-B", "-c", _FIX_SINGLE_WORKER_SOURCE, package_root],
                 input=request,
                 capture_output=True,

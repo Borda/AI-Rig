@@ -82,10 +82,10 @@ class CommitMode(str, Enum):
     STAGE = "stage"
 
 
-# git argv guard: a sha reaches `git cherry-pick <sha>` unquoted, so a value
-# starting with '-' would be parsed as an option (e.g. --strategy=evil can
-# execute an arbitrary git-<name> from PATH). {7,64} covers both sha1 (7-40)
-# and sha256 (up to 64) short/full forms.
+#: git argv guard: a sha reaches `git cherry-pick <sha>` unquoted, so a value
+#: starting with '-' would be parsed as an option (e.g. --strategy=evil can
+#: execute an arbitrary git-<name> from PATH). {7,64} covers both sha1 (7-40)
+#: and sha256 (up to 64) short/full forms.
 _SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
 
 
@@ -272,9 +272,7 @@ def run_plan(entries: list[PlanEntry], commit_mode: CommitMode, base_sha: str | 
     git = _resolve("git")
     applied: list[str] = []
     for i, entry in enumerate(entries):
-        pick = subprocess.run(  # noqa: S603
-            [git, "cherry-pick", "--end-of-options", entry.sha], check=False, timeout=30
-        )
+        pick = subprocess.run([git, "cherry-pick", "--end-of-options", entry.sha], check=False, timeout=30)  # noqa: S603
         if pick.returncode != 0:
             return {
                 "applied": applied,
@@ -296,9 +294,7 @@ def run_plan(entries: list[PlanEntry], commit_mode: CommitMode, base_sha: str | 
             # run refusing to, stranding real commits in `stage` mode with no recovery route.
             subprocess.run([git, "reset", "--soft", "--end-of-options", base_sha], check=False, timeout=3)  # noqa: S603
         elif applied:
-            subprocess.run(  # noqa: S603
-                [git, "reset", "--soft", "--end-of-options", f"HEAD~{len(applied)}"], check=False, timeout=3
-            )
+            subprocess.run([git, "reset", "--soft", "--end-of-options", f"HEAD~{len(applied)}"], check=False, timeout=3)  # noqa: S603
     return {"applied": applied, "conflict": None, "remaining": []}
 
 

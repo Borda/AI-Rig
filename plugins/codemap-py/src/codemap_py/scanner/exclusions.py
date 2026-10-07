@@ -1,15 +1,16 @@
 """Decide which paths a scan walks, from built-in, config and ignore-file rules."""
 
 from __future__ import annotations
+
 import fnmatch
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
-
 # Built-in directory names pruned from every scan. Never project source, but can hold
 # worktree copies of the whole repo (.claude/, .codex/) that would otherwise inflate the
 # index and create qualname collisions, plus the usual build/cache/venv dirs.
+#: Directory names always pruned from a scan, such as VCS, virtualenv, build and cache directories.
 SKIP_DIRS = {
     ".git",
     ".venv",
@@ -42,6 +43,7 @@ SKIP_DIRS = {
 # Glob metacharacters — an exclusion entry containing any of these (or a "/") is
 # treated as a path glob matched against the posix relpath; otherwise it is a bare
 # directory name pruned during the walk (like SKIP_DIRS).
+#: Matches glob metacharacters or a slash, marking an exclusion entry as a path glob rather than a directory name.
 _GLOB_META_RE = re.compile(r"[*?\[\]/]")
 
 
@@ -285,4 +287,5 @@ def is_excluded(rel_posix: str, exclusions: Exclusions) -> bool:
 # One writer-owned contract for every tracked path that can change index content. Query
 # imports this value; the prompt hook mirrors it locally because importing the scanner on
 # every prompt would pull in the full scan engine. Its contract test pins that mirror.
+#: Git pathspec of every tracked file type that can change index content.
 INDEXED_PATHSPEC: tuple[str, ...] = ("*.py", "*.pyi", "*.rst", "docs/**/*.md")

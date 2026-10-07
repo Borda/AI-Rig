@@ -56,7 +56,7 @@ from typing import Any
 
 from live_contract import Layout, build_prompt, candidate_findings, prompt_sha256, role_context, task_contract_sha256
 
-
+#: Exact set of field names every live observation record must carry for scoring.
 LIVE_FIELDS = {
     "cached_input_tokens",
     "campaign_id",
@@ -79,6 +79,7 @@ LIVE_FIELDS = {
     "task_contract_sha256",
     "tool_failure_count",
 }
+#: Normalized token-cost formula label that live records must match and that the cost metric reports.
 PRICING_REF = "normalized-token-v1:uncached+0.1*cached+4*output"
 
 

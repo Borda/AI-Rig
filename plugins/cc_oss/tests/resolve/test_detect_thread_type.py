@@ -9,9 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import detect_thread_type as dtt
+import pytest
 
 
 class _FakeCompleted:
@@ -75,24 +74,22 @@ def test_parse_iso_to_epoch_returns_none_on_failure(iso: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_compute_drift_no_mtime_returns_false() -> None:
-    """Drift check skipped (mtime=None) → False — caller passes mtime only when ``--report-mtime`` is set."""
-    assert dtt.compute_drift("2024-01-01T00:00:00Z", None) is False
+@pytest.mark.parametrize(
+    ("report_mtime", "expected"),
+    [
+        pytest.param(None, False, id="no-mtime-skips-drift-check"),
+        pytest.param(1704067100, True, id="thread-newer-than-report"),
+        pytest.param(1704067300, False, id="thread-older-than-report"),
+        pytest.param(1704067200, False, id="equal-timestamp-is-not-drifted"),
+    ],
+)
+def test_compute_drift_compares_thread_update_with_report_mtime(report_mtime: int | None, expected: bool) -> None:
+    """Drift is true only when the thread was updated strictly AFTER the report mtime (report stale).
 
-
-def test_compute_drift_thread_newer_than_report() -> None:
-    """Thread updated AFTER report mtime → drift=True (report stale)."""
-    assert dtt.compute_drift("2024-01-01T00:00:00Z", 1704067100) is True
-
-
-def test_compute_drift_thread_older_than_report() -> None:
-    """Thread updated BEFORE report mtime → drift=False (report still fresh)."""
-    assert dtt.compute_drift("2024-01-01T00:00:00Z", 1704067300) is False
-
-
-def test_compute_drift_equal_timestamp_is_not_drifted() -> None:
-    """Updated-at exactly equal to report mtime is still fresh."""
-    assert dtt.compute_drift("2024-01-01T00:00:00Z", 1704067200) is False
+    The thread updated-at is fixed at epoch 1704067200. An mtime of ``None`` means the drift check is skipped — the
+    caller passes mtime only when ``--report-mtime`` is set. An older or exactly equal report mtime is still fresh.
+    """
+    assert dtt.compute_drift("2024-01-01T00:00:00Z", report_mtime) is expected
 
 
 @pytest.mark.parametrize("iso", ["", "bogus"])
@@ -257,10 +254,19 @@ def test_malformed_success_payloads_emit_conservative_results(
     assert (tmp_path / "oss-detect-drift-shared").read_text() in {"false", "true"}
 
 
-def test_drift_true_when_thread_newer_than_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Verify command-line option behavior.
+@pytest.mark.parametrize(
+    ("report_mtime", "expected_drift"),
+    [
+        pytest.param("1700000000", "true", id="report-older-than-thread-drifted"),
+        pytest.param("1800000000", "false", id="report-newer-than-thread-still-valid"),
+    ],
+)
+def test_report_mtime_decides_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, report_mtime: str, expected_drift: str
+) -> None:
+    """``--report-mtime`` older than updatedAt → DRIFT=true; later than updatedAt → DRIFT=false.
 
-    ``--report-mtime`` older than updatedAt → DRIFT=true.
+    A report newer than the thread is a still-valid cached report.
     """
     issue_payload = json.dumps({"number": 1, "updated_at": "2024-01-01T00:00:00Z"})
     monkeypatch.setenv("TMPDIR", str(tmp_path))
@@ -270,28 +276,10 @@ def test_drift_true_when_thread_newer_than_report(tmp_path: Path, monkeypatch: p
         "run",
         lambda *a, **k: _FakeCompleted(returncode=0, stdout=issue_payload),
     )
-    rc = dtt.main(["--number", "1", "--report-mtime", "1700000000"])
+    rc = dtt.main(["--number", "1", "--report-mtime", report_mtime])
     assert rc == 0
     assert (tmp_path / "oss-detect-type-shared").read_text() == "issue"
-    assert (tmp_path / "oss-detect-drift-shared").read_text() == "true"
-
-
-def test_drift_false_when_report_newer_than_thread(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Verify command-line option behavior.
-
-    ``--report-mtime`` later than updatedAt → DRIFT=false (cached report still valid).
-    """
-    issue_payload = json.dumps({"number": 1, "updated_at": "2024-01-01T00:00:00Z"})
-    monkeypatch.setenv("TMPDIR", str(tmp_path))
-    monkeypatch.setattr(dtt, "which", lambda _: "/fake/gh")
-    monkeypatch.setattr(
-        dtt.subprocess,
-        "run",
-        lambda *a, **k: _FakeCompleted(returncode=0, stdout=issue_payload),
-    )
-    rc = dtt.main(["--number", "1", "--report-mtime", "1800000000"])
-    assert rc == 0
-    assert (tmp_path / "oss-detect-drift-shared").read_text() == "false"
+    assert (tmp_path / "oss-detect-drift-shared").read_text() == expected_drift
 
 
 def test_url_input_normalised_before_detection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

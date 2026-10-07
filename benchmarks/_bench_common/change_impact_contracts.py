@@ -21,16 +21,16 @@ Codemap index, invoke a provider, write fixture files, or implement product heur
 from __future__ import annotations
 
 import ast
+import json
+import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
-import json
 from pathlib import Path, PurePosixPath
-import sys
 from types import MappingProxyType, ModuleType
 from typing import Any
 
-
+#: Keys a change-impact answer must carry: four location sets plus the per-location reason codes.
 _ANSWER_FIELDS = (
     "must_update_callsites",
     "compatible_callsites",
@@ -38,13 +38,17 @@ _ANSWER_FIELDS = (
     "compatible_tests",
     "reasons",
 )
+#: Reason code reported for a call site broken by each supported kind of signature change.
 _REASON_BY_CHANGE = {
     "keyword_only": "positional-after-keyword-only",
     "rename_keyword": "renamed-keyword",
     "required_argument": "missing-required-argument",
 }
+#: Reason code given to a call site that still works after the declared signature change.
 _COMPATIBLE_REASON = "compatible-call-shape"
+#: Marker opening the JSON answer envelope in a model response; it must appear exactly once.
 _BEGIN = "BEGIN_CHANGE_IMPACT_JSON"
+#: Marker closing the JSON answer envelope in a model response; it must appear exactly once.
 _END = "END_CHANGE_IMPACT_JSON"
 
 
@@ -507,10 +511,10 @@ def _run_call(task: Mapping[str, Any], source_root: Path, call: _Callsite, *, mi
         target = ModuleType(target_module)
         sys.modules[target_module] = target
         setattr(package, target_module.rsplit(".", maxsplit=1)[1], target)
-        exec(compile(ast.fix_missing_locations(target_tree), str(target_path), "exec"), target.__dict__)
+        exec(compile(ast.fix_missing_locations(target_tree), str(target_path), "exec"), target.__dict__)  # noqa: S102 - intentionally executes the compiled benchmark fixture module
         caller = ModuleType(call.module)
         sys.modules[call.module] = caller
-        exec(compile(call.path.read_text(encoding="utf-8"), str(call.path), "exec"), caller.__dict__)
+        exec(compile(call.path.read_text(encoding="utf-8"), str(call.path), "exec"), caller.__dict__)  # noqa: S102 - intentionally executes the benchmark caller fixture source
         getattr(caller, call.scope)()
         return False
     except TypeError as exc:

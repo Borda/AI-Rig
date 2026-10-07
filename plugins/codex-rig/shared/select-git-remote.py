@@ -84,7 +84,7 @@ def parse_repository_url(raw_url: str) -> RepositoryIdentity:
 def read_remotes(cwd: Path) -> dict[str, list[str]]:
     """Read every configured fetch URL without contacting a remote service."""
     names = subprocess.run(
-        ["git", "remote"],
+        ["git", "remote"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
         cwd=cwd,
         check=True,
         capture_output=True,
@@ -92,8 +92,8 @@ def read_remotes(cwd: Path) -> dict[str, list[str]]:
     ).stdout.splitlines()
     remotes: dict[str, list[str]] = {}
     for name in names:
-        urls = subprocess.run(
-            ["git", "remote", "get-url", "--all", name],
+        urls = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", "remote", "get-url", "--all", name],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             cwd=cwd,
             check=True,
             capture_output=True,

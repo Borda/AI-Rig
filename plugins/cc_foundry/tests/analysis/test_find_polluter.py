@@ -20,10 +20,9 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 # Loaded by conftest.py — `find_polluter` is registered in sys.modules there.
 import find_polluter
+import pytest
 
 
 class _FakeResult:
@@ -159,45 +158,32 @@ def test_binary_midpoint(lo: int, hi: int, expected: int) -> None:
 class TestPassesIsolation:
     """passes_isolation: subprocess output patterns → True / False."""
 
-    def test_summary_1_passed_returns_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """'-q' summary '1 passed' → isolation confirmed."""
+    @pytest.mark.parametrize(
+        ("result", "expected"),
+        [
+            pytest.param(_FakeResult(stdout="1 passed in 0.01s\n"), True, id="summary-1-passed"),
+            pytest.param(_FakeResult(stdout="PASSED tests/test_x.py::test_y\n"), True, id="verbose-passed-marker"),
+            pytest.param(
+                _FakeResult(stdout="FAILED tests/test_x.py::test_y\n", returncode=1), False, id="failed-marker"
+            ),
+            pytest.param(_FakeResult(stdout="", returncode=1), False, id="empty-output"),
+        ],
+    )
+    def test_output_pattern_decides_isolation(
+        self, monkeypatch: pytest.MonkeyPatch, result: _FakeResult, expected: bool
+    ) -> None:
+        """Subprocess output decides isolation: '-q' summary and verbose 'PASSED' confirm it; 'FAILED' or empty do not.
+
+        Scenario: the concise '1 passed' summary and a line-leading verbose 'PASSED' marker both count as an isolation
+        pass; a FAILED marker or output with no recognizable marker is not confirmed.
+        """
 
         def _fake_run(_argv: Sequence[str], **_kw: Any) -> _FakeResult:
-            """Return the concise passing isolation output."""
-            return _FakeResult(stdout="1 passed in 0.01s\n")
+            """Return the configured isolation output."""
+            return result
 
         _patch_run(monkeypatch, _fake_run)
-        assert find_polluter.passes_isolation("tests/test_x.py::test_y", ["pytest"]) is True
-
-    def test_verbose_passed_marker_returns_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Verbose 'PASSED' at line start also counts as isolation pass."""
-
-        def _fake_run(_argv: Sequence[str], **_kw: Any) -> _FakeResult:
-            """Return the verbose passing isolation output."""
-            return _FakeResult(stdout="PASSED tests/test_x.py::test_y\n")
-
-        _patch_run(monkeypatch, _fake_run)
-        assert find_polluter.passes_isolation("tests/test_x.py::test_y", ["pytest"]) is True
-
-    def test_failed_output_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """FAILED marker in output → isolation not confirmed."""
-
-        def _fake_run(_argv: Sequence[str], **_kw: Any) -> _FakeResult:
-            """Return the failing isolation output."""
-            return _FakeResult(stdout="FAILED tests/test_x.py::test_y\n", returncode=1)
-
-        _patch_run(monkeypatch, _fake_run)
-        assert find_polluter.passes_isolation("tests/test_x.py::test_y", ["pytest"]) is False
-
-    def test_empty_output_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """No recognizable markers → returns False."""
-
-        def _fake_run(_argv: Sequence[str], **_kw: Any) -> _FakeResult:
-            """Return output without an isolation-pass marker."""
-            return _FakeResult(stdout="", returncode=1)
-
-        _patch_run(monkeypatch, _fake_run)
-        assert find_polluter.passes_isolation("tests/test_x.py::test_y", ["pytest"]) is False
+        assert find_polluter.passes_isolation("tests/test_x.py::test_y", ["pytest"]) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -208,28 +194,36 @@ class TestPassesIsolation:
 class TestCollectCandidates:
     """collect_candidates: filtering rules and unsafe-node-ID drop."""
 
-    def test_filters_failing_test_and_noise(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Failing test itself, blank lines, and summary lines are excluded."""
-        stdout = "tests/test_a.py::t1\ntests/test_a.py::t2\ntests/test_b.py::t3\n\n3 tests collected\n"
+    @pytest.mark.parametrize(
+        ("stdout", "failing", "expected"),
+        [
+            pytest.param(
+                "tests/test_a.py::t1\ntests/test_a.py::t2\ntests/test_b.py::t3\n\n3 tests collected\n",
+                "tests/test_a.py::t2",
+                ["tests/test_a.py::t1", "tests/test_b.py::t3"],
+                id="filters-failing-test-and-noise",
+            ),
+            pytest.param(
+                "tests/test_only.py::solo\n", "tests/test_only.py::solo", [], id="empty-when-only-failing-test"
+            ),
+            pytest.param("\n\n\n", "tests/x.py::y", [], id="empty-collection-output"),
+        ],
+    )
+    def test_collected_output_is_filtered_to_candidates(
+        self, monkeypatch: pytest.MonkeyPatch, stdout: str, failing: str, expected: list[str]
+    ) -> None:
+        """The failing test itself, blank lines and summary lines are excluded from the candidates.
+
+        Scenario: noise and the failing test drop out of a mixed collection; a collection holding only the failing test
+        and an all-blank collection both yield an empty candidate list.
+        """
 
         def _fake_run(_argv: Sequence[str], **_kw: Any) -> _FakeResult:
-            """Return this test's collected node IDs and summary."""
+            """Return the configured collected node IDs and summary."""
             return _FakeResult(stdout=stdout)
 
         _patch_run(monkeypatch, _fake_run)
-        result = find_polluter.collect_candidates("tests", "tests/test_a.py::t2", ["pytest"])
-        assert result == ["tests/test_a.py::t1", "tests/test_b.py::t3"]
-
-    def test_returns_empty_when_only_failing_test(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Candidate list is empty when failing test is the sole collected item."""
-
-        def _fake_run(_argv: Sequence[str], **_kw: Any) -> _FakeResult:
-            """Return the sole collected failing test."""
-            return _FakeResult(stdout="tests/test_only.py::solo\n")
-
-        _patch_run(monkeypatch, _fake_run)
-        result = find_polluter.collect_candidates("tests", "tests/test_only.py::solo", ["pytest"])
-        assert result == []
+        assert find_polluter.collect_candidates("tests", failing, ["pytest"]) == expected
 
     def test_unsafe_node_ids_dropped_with_warning(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -249,17 +243,6 @@ class TestCollectCandidates:
         assert hostile not in result
         err = capsys.readouterr().err
         assert "unsafe" in err.lower()
-
-    def test_empty_collection_output_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """All-blank pytest --collect-only output returns empty candidate list."""
-
-        def _fake_run(_argv: Sequence[str], **_kw: Any) -> _FakeResult:
-            """Return only blank collection output."""
-            return _FakeResult(stdout="\n\n\n")
-
-        _patch_run(monkeypatch, _fake_run)
-        result = find_polluter.collect_candidates("tests", "tests/x.py::y", ["pytest"])
-        assert result == []
 
 
 # ---------------------------------------------------------------------------

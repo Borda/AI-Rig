@@ -13,10 +13,9 @@ import signal
 import subprocess
 from typing import Any
 
-
-# POSIX gets its own session, so the child leads a new process group and ``killpg``
-# reaches every descendant. Windows gets CREATE_NEW_PROCESS_GROUP, its nearest
-# equivalent for signalling a spawned tree.
+#: POSIX gets its own session, so the child leads a new process group and ``killpg``
+#: reaches every descendant. Windows gets CREATE_NEW_PROCESS_GROUP, its nearest
+#: equivalent for signalling a spawned tree.
 NEW_PROCESS_GROUP: dict[str, Any] = (
     {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
     if os.name == "nt"

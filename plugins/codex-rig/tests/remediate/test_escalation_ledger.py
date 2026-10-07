@@ -13,7 +13,6 @@ from typing import Any
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = PLUGIN_ROOT / "shared" / "escalation_ledger.py"
 
@@ -21,7 +20,8 @@ LEDGER_PATH = PLUGIN_ROOT / "shared" / "escalation_ledger.py"
 def _load_ledger_module() -> ModuleType:
     """Load the standalone ledger helper without package installation."""
     specification = importlib.util.spec_from_file_location("codex_rig_escalation_ledger", LEDGER_PATH)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -216,13 +216,14 @@ def test_append_records_cycles_without_rewriting_earlier_lines(tmp_path: Path) -
         "escalation-ledger-invalid:escalation-required-after-stall-trigger",
     )
     assert (escalated.returncode, escalated.stdout.strip()) == (0, "escalation-ledger-valid")
-    assert log.startswith(first_line) and len(log.splitlines()) == 2
+    assert log.startswith(first_line)
+    assert len(log.splitlines()) == 2
     assert not (tmp_path / "reasoning-cycles.jsonl.rec").exists()
     assert module.load_ledger(ledger_path)["cycles"] == [_cycle(1, False), _cycle(2, False)]
 
 
 @pytest.mark.parametrize(
-    "staged, error",
+    ("staged", "error"),
     [
         pytest.param(_cycle(3, True), "cycle-index-must-be-contiguous", id="skipped-index"),
         pytest.param({**_cycle(2, True), "evidence": []}, "material-progress-evidence-required", id="unproven"),
@@ -247,7 +248,7 @@ def test_append_refuses_invalid_cycle_and_keeps_staged_record(
 
 
 @pytest.mark.parametrize(
-    "payload, flags, expected",
+    ("payload", "flags", "expected"),
     [
         pytest.param(
             _ledger(_cycle(1, True)), (), "escalation-ledger-invalid:ledger-header-inline-cycles-forbidden", id="dup"
@@ -372,7 +373,7 @@ def test_recovery_progress_requires_current_observed_cycle(mismatch: str) -> Non
         active["recovery"]["action"] = "unobserved action"
     else:
         active["cycles"][-1]["evidence"] = []
-    with pytest.raises(ValueError, match="recovery-progress-evidence-required|material-progress-evidence-required"):
+    with pytest.raises(ValueError, match=r"recovery-progress-evidence-required|material-progress-evidence-required"):
         _load_ledger_module().validate_ledger(active)
 
 

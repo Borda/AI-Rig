@@ -40,35 +40,42 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+#: Directory holding this hook, put on ``sys.path`` so the shared ``_hookutil`` helper imports under any loader.
 _HOOKS_DIR = Path(__file__).resolve().parent
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 
 import _hookutil  # noqa: E402  (needs the sys.path insert above)
 
+#: Plugin ``src`` directory, put on ``sys.path`` so the hook imports the bundled ``codemap_py`` scanner.
 _SRC_DIR = _HOOKS_DIR.parent / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 from codemap_py import scanner  # noqa: E402  (resolve from the installed plugin)
 
+#: Largest index file, in bytes, the hook fully parses to count modules; a larger index reports a placeholder instead.
 MAX_PARSE_BYTES = 10 * 1024 * 1024
+#: Age in milliseconds after which an index-refresh lock file is considered stale and may be taken over.
 LOCK_TTL_MS = 10 * 60 * 1000
+#: Number of leading bytes of the index file read to extract its header fields without decoding the whole file.
 HEADER_PEEK_BYTES = 8 * 1024
+#: Milliseconds the once-per-session missing-index directive stays suppressed after it was emitted.
 NOINDEX_TTL_MS = 30 * 60 * 1000
+#: Default lifetime in milliseconds of a sentinel flag checked by :func:`within_ttl`.
 SESSION_TTL_MS = 30 * 60 * 1000
-# Git freshness includes documentation as well as Python sources; the source-eligibility
-# check below deliberately uses only the scanner's Python discovery rules.
+#: Git freshness includes documentation as well as Python sources; the source-eligibility
+#: check below deliberately uses only the scanner's Python discovery rules.
 _INDEXED_PATHSPEC: tuple[str, ...] = ("*.py", "*.pyi", "*.rst", "docs/**/*.md")
 #: The only shape of index-header ``git_sha`` handed to git as a revision argument. The header is
 #: on-disk, unauthenticated input; a value that is not a hex object name never reaches a subprocess.
 _HEX_OBJECT_RE = re.compile(r"[0-9a-fA-F]{7,64}")
 
-#: Identity fields read out of the index header, compiled once at import. They used to be
-#: matched by a pattern built — and an ``import re`` executed — inside a nested closure,
-#: once per field, on every prompt.
-# The value alternation consumes `\"` as one unit so an embedded quote does not end the match
-# early; whatever it captures is still a JSON string body, so `_json_unescape` decodes it.
+#: : Identity fields read out of the index header, compiled once at import. They used to be
+#: : matched by a pattern built — and an ``import re`` executed — inside a nested closure,
+#: : once per field, on every prompt.
+#: The value alternation consumes `\"` as one unit so an embedded quote does not end the match
+#: early; whatever it captures is still a JSON string body, so `_json_unescape` decodes it.
 _HEADER_FIELD_RES = {
     name: re.compile(rf'"{name}"\s*:\s*"((?:[^"\\]|\\.)*)"') for name in ("git_sha", "scanned_at", "scan_root")
 }
@@ -109,8 +116,8 @@ def within_ttl(flag: Path, ttl_ms: int = SESSION_TTL_MS) -> bool:
 def git_output(args: list[str], cwd: Path) -> str:
     """Return a bounded git command result, or an empty string when unavailable."""
     try:
-        return subprocess.run(
-            ["git", *args],
+        return subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
+            ["git", *args],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             cwd=cwd,
             stdin=subprocess.DEVNULL,
             capture_output=True,
@@ -308,8 +315,8 @@ def changed_file_count(root: Path, git_sha: str) -> int | None:
     if not _HEX_OBJECT_RE.fullmatch(git_sha or ""):
         return None
     try:
-        diff = subprocess.run(
-            ["git", "diff", "--cached", "--name-only", "-z", git_sha, "--", *_INDEXED_PATHSPEC],
+        diff = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
+            ["git", "diff", "--cached", "--name-only", "-z", git_sha, "--", *_INDEXED_PATHSPEC],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             cwd=root,
             stdin=subprocess.DEVNULL,
             capture_output=True,
@@ -383,7 +390,7 @@ def spawn_refresh(
         kwargs["start_new_session"] = True
         command = [str(scan_bin), *scan_args]
     try:
-        subprocess.Popen(command, **kwargs)
+        subprocess.Popen(command, **kwargs)  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
     except OSError:
         return False
     return True
@@ -418,7 +425,7 @@ def start_refresh(
         if changed_count is not None:
             try:
                 count = changed_count()
-            except Exception:  # noqa: BLE001 — provenance must never block the refresh or leak the lock
+            except Exception:
                 count = None
         if spawn_refresh(scan_bin, scan_root, cwd, session, count):
             return " - refresh started"

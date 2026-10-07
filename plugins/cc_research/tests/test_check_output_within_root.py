@@ -78,23 +78,22 @@ def _sentinel_text(tmp_path: Path) -> str:
     return (tmp_path / "sentinels" / "sweep-out-path-testsess").read_text(encoding="utf-8")
 
 
-def test_parse_out_persists_relative_path(tmp_path: Path):
-    result = _parse_out("goal text --out docs/program.md --team", tmp_path)
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        pytest.param("goal text --out docs/program.md --team", "docs/program.md\n", id="relative-path-persisted"),
+        pytest.param("some optimization goal", "program.md\n", id="absent-writes-default"),
+        pytest.param("--team --out out.md", "out.md\n", id="leading-dash-payload"),
+    ],
+)
+def test_parse_out_persists_sentinel(arguments: str, expected: str, tmp_path: Path):
+    """``--parse-out`` writes the requested output path, or ``program.md`` when ``--out`` is absent, to the sentinel.
+
+    ``$ARGUMENTS`` often starts with a flag; the attached ``--parse-out=`` form must absorb it.
+    """
+    result = _parse_out(arguments, tmp_path)
     assert result.returncode == 0, result.stderr
-    assert _sentinel_text(tmp_path) == "docs/program.md\n"
-
-
-def test_parse_out_absent_writes_default(tmp_path: Path):
-    result = _parse_out("some optimization goal", tmp_path)
-    assert result.returncode == 0, result.stderr
-    assert _sentinel_text(tmp_path) == "program.md\n"
-
-
-def test_parse_out_leading_dash_payload(tmp_path: Path):
-    """``$ARGUMENTS`` often starts with a flag; the attached ``--parse-out=`` form must absorb it."""
-    result = _parse_out("--team --out out.md", tmp_path)
-    assert result.returncode == 0, result.stderr
-    assert _sentinel_text(tmp_path) == "out.md\n"
+    assert _sentinel_text(tmp_path) == expected
 
 
 @pytest.mark.parametrize("candidate", ["../evil.md", "sub/../../evil.md"])

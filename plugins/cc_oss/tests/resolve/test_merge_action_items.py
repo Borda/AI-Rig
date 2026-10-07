@@ -121,7 +121,8 @@ def test_report_mode_assigns_ids_from_one(tmp_path: Path) -> None:
     assert mai.main(["--items", str(items), "--findings", str(findings)]) == 0
     rows = mfi.read_jsonl(items)
     assert [r["id"] for r in rows] == [1, 2]
-    assert rows[0]["type"] == "[report][req]" and rows[0]["location"] == "report"
+    assert rows[0]["type"] == "[report][req]"
+    assert rows[0]["location"] == "report"
     assert rows[0]["finding_id"].startswith("architecture-quality-")
     assert rows[0]["verify_verdict"] == "CONFIRMED"
 
@@ -139,7 +140,8 @@ def test_exact_match_annotates_github_item_without_verdict(tmp_path: Path) -> No
     assert rows[1]["author"] == "@reviewer + foundry:sw-engineer"
     assert "(also flagged by /review — foundry:sw-engineer)" in rows[1]["summary"]
     assert "[review finding architecture-quality-" in rows[1]["full_comment_text"]
-    assert "verify_verdict" not in rows[1] and rows[1]["source_file"] == "run/foundry--sw-engineer.md"
+    assert "verify_verdict" not in rows[1]
+    assert rows[1]["source_file"] == "run/foundry--sw-engineer.md"
     assert rows[1]["severity"] == 4
 
 
@@ -269,7 +271,8 @@ def test_two_findings_on_one_line_never_share_an_item(tmp_path: Path) -> None:
     rows = {r["id"]: r for r in mfi.read_jsonl(items)}
     assert rows[1]["finding_id"].startswith("architecture-quality-")
     assert rows[2]["finding_id"].startswith("performance-concerns-")
-    assert "verify_verdict" not in rows[2] and "verify_file" not in rows[2]
+    assert "verify_verdict" not in rows[2]
+    assert "verify_file" not in rows[2]
 
 
 def test_github_item_does_not_inherit_codex_eligibility(tmp_path: Path) -> None:

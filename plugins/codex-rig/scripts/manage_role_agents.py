@@ -51,10 +51,11 @@ import subprocess
 import sys
 import tempfile
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from enum import Enum
 from pathlib import Path
-from typing import Callable, NoReturn
+from typing import NoReturn
 
 
 class ManagerAction(str, Enum):
@@ -72,18 +73,26 @@ class ManagerAction(str, Enum):
 
 
 # The two disjoint halves of the grammar — every guard below tests one of these.
+#: Read-only manager actions (doctor, status) that never change the installation.
 _DIAGNOSTIC_ACTIONS = (ManagerAction.DOCTOR, ManagerAction.STATUS)
+#: Manager actions (install, remove) that change installed shims and therefore need approval.
 _MUTATION_ACTIONS = (ManagerAction.INSTALL, ManagerAction.REMOVE)
 
 # Direct manager commands must not mutate the installed plugin cache with import bytecode.
 if __name__ == "__main__":
     sys.dont_write_bytecode = True
 
+#: Oldest Python (major, minor) version on which the manager reports its Python check as passing.
 MINIMUM_PYTHON = (3, 10)
+#: Placeholder install UUID used when building the diagnostic roster, since no real install id applies.
 DIAGNOSTIC_INSTALL_ID = "123e4567-e89b-42d3-a456-426614174000"
+#: sys.platform prefixes on which the manager can run; other hosts get the stable refusal protocol.
 SUPPORTED_PLATFORMS = ("darwin", "linux")
+#: Name of the plugin marketplace the plugin is installed from.
 MARKETPLACE = "borda-ai-rig"
+#: Name of this plugin as registered with Codex and used in its cache path.
 PLUGIN_NAME = "codex-rig"
+#: Largest executable, in bytes (512 MiB), that will be read when digesting the Python or Codex binary.
 MAX_BINARY_BYTES = 512 * 1024 * 1024
 
 # Unsupported hosts must reach the stable refusal protocol without importing
@@ -254,12 +263,11 @@ def _active_package_check(
                     shutil.copytree(source, sandbox_home / relative, symlinks=True)
             environment = os.environ.copy()
             environment["CODEX_HOME"] = str(sandbox_home)
-            completed = subprocess.run(
+            completed = subprocess.run(  # noqa: S603 - argv list, no shell
                 [str(codex_binary), "plugin", "list", "--marketplace", MARKETPLACE, "--json"],
                 check=False,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 env=environment,
                 timeout=15,
             )
@@ -521,7 +529,10 @@ def _state_bytes(
     """Build the exact current state or removed tombstone for one transaction."""
     home = plan.observation.codex_home_identity
     plugin = plan.observation.plugin_root_identity
-    assert home is not None and plugin is not None
+    if home is None:
+        raise RuntimeError("home must not be None")
+    if plugin is None:
+        raise RuntimeError("plugin must not be None")
     roles = [
         {
             "role_id": role.role_id,
@@ -568,7 +579,10 @@ def _journal(
 ) -> Journal:
     """Build the immutable PREPARING journal before staging any payload."""
     home = plan.observation.codex_home_identity
-    assert home is not None and plan.approval is not None
+    if home is None:
+        raise RuntimeError("home must not be None")
+    if plan.approval is None:
+        raise RuntimeError("plan.approval must not be None")
     operations = []
     for operation in plan.candidate.operations:
         before_artifact = (
@@ -832,7 +846,8 @@ def plan_recovery(*, action: ManagerAction | str, codex_home: Path, plugin_root:
         raise ValueError(f"recovery evidence is not safely actionable: {observation.recovery}")
     transaction_id, journal, inventory = _recovery_transaction(home)
     lock = observation.coordination_lock_observation
-    assert lock is not None
+    if lock is None:
+        raise RuntimeError("lock must not be None")
     value = {
         "schema": 1,
         "action": action,
@@ -916,7 +931,10 @@ def apply_recovery(plan: RecoveryPlan, approved_digest: str) -> Journal | None:
         raise ValueError("recovery approval digest mismatch")
     home_fd = os.open(plan.codex_home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     lock = plan.observation.coordination_lock_observation
-    assert lock is not None and lock.intent is not None
+    if lock is None:
+        raise RuntimeError("lock must not be None")
+    if lock.intent is None:
+        raise RuntimeError("lock.intent must not be None")
     expected_lock = (lock.device, lock.inode) if lock.kind == "regular" else None
     lock_fd = acquire_coordination_lock(home_fd, intent=lock.intent, expected_identity=expected_lock)
     descriptors: list[int] = []
@@ -998,7 +1016,8 @@ def _revalidate_under_lock(plan: MutationPlan, lock_fd: int) -> FilesystemObserv
     )
     if rebuilt != plan.candidate:
         raise ValueError("candidate changed under lock")
-    assert plan.approval is not None
+    if plan.approval is None:
+        raise RuntimeError("plan.approval must not be None")
     approval = build_convergence_approval(
         rebuilt,
         plan.roster,
@@ -1086,7 +1105,10 @@ def apply_mutation(
         raise ValueError("approval digest mismatch")
     home_fd = os.open(plan.codex_home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     lock = plan.observation.coordination_lock_observation
-    assert lock is not None and lock.intent is not None
+    if lock is None:
+        raise RuntimeError("lock must not be None")
+    if lock.intent is None:
+        raise RuntimeError("lock.intent must not be None")
     expected_lock = (lock.device, lock.inode) if lock.kind == "regular" else None
     lock_fd = acquire_coordination_lock(home_fd, intent=lock.intent, expected_identity=expected_lock)
     descriptors: list[int] = []

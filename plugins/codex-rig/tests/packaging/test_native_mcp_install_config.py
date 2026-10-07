@@ -1,13 +1,12 @@
 """Check copied question providers against the native plugin working-directory contract."""
 
-from pathlib import Path
 import json
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
 
 _PLUGINS = Path(__file__).resolve().parents[3]
 

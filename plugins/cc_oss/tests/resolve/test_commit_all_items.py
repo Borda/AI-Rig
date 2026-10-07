@@ -10,9 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import commit_all_items as cai
+import pytest
 
 
 class _FakeCompleted:
@@ -112,18 +111,21 @@ def test_commit_message_contains_pr_and_counts(fake_git: list[list[str]]) -> Non
     assert "0 rejected" in msg
 
 
-def test_codex_flag_adds_trailer(fake_git: list[list[str]]) -> None:
-    """Include the Codex co-author trailer when requested."""
-    cai.main(["42", "3", "1", "0", "--codex"])
+@pytest.mark.parametrize(
+    ("extra_args", "has_trailer"),
+    [
+        pytest.param(["--codex"], True, id="codex-flag-adds-trailer"),
+        pytest.param([], False, id="no-codex-flag-omits-trailer"),
+    ],
+)
+def test_codex_trailer_present_only_with_codex_flag(
+    fake_git: list[list[str]], extra_args: list[str], has_trailer: bool
+) -> None:
+    """The Codex co-author trailer is included when ``--codex`` is passed and absent otherwise."""
+    cai.main(["42", "3", "1", "0", *extra_args])
     msg = _commit_calls(fake_git)[0][3]
-    assert "Co-authored-by: Codex <codex@openai.com>" in msg
-
-
-def test_no_codex_flag_omits_trailer(fake_git: list[list[str]]) -> None:
-    """Without ``--codex``, Codex trailer absent from message."""
-    cai.main(["42", "3", "1", "0"])
-    msg = _commit_calls(fake_git)[0][3]
-    assert "Co-authored-by: Codex" not in msg
+    assert ("Co-authored-by: Codex <codex@openai.com>" in msg) is has_trailer
+    assert ("Co-authored-by: Codex" in msg) is has_trailer
 
 
 def test_summaries_file_content_in_message(fake_git: list[list[str]], tmp_path: Path) -> None:

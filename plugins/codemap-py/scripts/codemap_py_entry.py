@@ -20,19 +20,24 @@ Examples:
 
 from __future__ import annotations
 
-import sys
 import os
+import sys
 from pathlib import Path
 
 # Interpreter bound is duplicated (not imported) so the gate runs *before* any
 # codemap import, honouring  "validated before importing codemap_py".
+#: Required CPython major version.
 _MAJOR = 3
+#: Lowest supported CPython 3 minor version (3.11).
 _MIN_MINOR = 11
+#: First CPython 3 minor version that is not supported (3.15).
 _MAX_MINOR_EXCLUSIVE = 15
+#: Message template printed to stderr when the running interpreter is outside the supported range.
 _INTERPRETER_DIAGNOSTIC = (
     "codemap-py: unsupported interpreter {impl} {major}.{minor}; "
     "requires CPython >=3.11,<3.15 (set CODEMAP_PYTHON to an eligible interpreter)"
 )
+#: Exit code returned after printing the unsupported-interpreter diagnostic.
 _INTERPRETER_EXIT = 127
 
 
@@ -79,7 +84,7 @@ def main() -> int:
         if len(sys.argv) != 3 or sys.argv[2] not in hooks:
             sys.stderr.write("codemap-py: --run-hook requires a shipped hook basename\n")
             return 2
-        os.execv(sys.executable, [sys.executable, str(root / "hooks" / sys.argv[2])])
+        os.execv(sys.executable, [sys.executable, str(root / "hooks" / sys.argv[2])])  # noqa: S606 - fixed interpreter, hook name from plugin-owned argv
     src = root / "src"
     if src.is_dir():
         entry = str(src)

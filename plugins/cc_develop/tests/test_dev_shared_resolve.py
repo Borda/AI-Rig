@@ -15,28 +15,26 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import dev_shared_resolve
+import pytest
 
 
 class TestDevelopOnly:
     """Resolution always targets develop's own shared dir."""
 
-    def test_cache_hit_returns_newest_version(self, tmp_path: Path) -> None:
-        """Newest cached develop version's ``_shared`` is returned."""
-        base = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "develop"
-        (base / "0.1.0" / "skills" / "_shared").mkdir(parents=True)
-        newer = base / "0.6.2" / "skills" / "_shared"
-        newer.mkdir(parents=True)
-        assert dev_shared_resolve.resolve_shared_path(home=tmp_path) == str(newer)
-
     @pytest.mark.parametrize(
-        "older_version,newer_version",
-        [pytest.param("0.9.0", "0.10.0", id="0.9.0"), pytest.param("0.99.0", "1.0.0", id="0.99.0")],
+        ("older_version", "newer_version"),
+        [
+            pytest.param("0.1.0", "0.6.2", id="0.1.0"),
+            pytest.param("0.9.0", "0.10.0", id="0.9.0"),
+            pytest.param("0.99.0", "1.0.0", id="0.99.0"),
+        ],
     )
     def test_cache_hit_uses_semver_ordering(self, tmp_path: Path, older_version: str, newer_version: str) -> None:
-        """Newest cached develop version is selected semantically, not lexicographically."""
+        """Newest cached develop version's ``_shared`` is selected semantically, not lexicographically.
+
+        A plain newer version wins, and so does one that sorts lower as text (0.10.0 over 0.9.0, 1.0.0 over 0.99.0).
+        """
         base = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "develop"
         (base / older_version / "skills" / "_shared").mkdir(parents=True)
         newer = base / newer_version / "skills" / "_shared"
@@ -60,7 +58,10 @@ class TestDevelopOnly:
     def test_main_prints_single_line(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Emit one output line when no option is provided."""
+        """Emit exactly one output line, the plugin's own path, when no option is provided.
+
+        The output contract is a single path — a second line would be a sibling leak.
+        """
         monkeypatch.setattr(dev_shared_resolve.Path, "home", classmethod(lambda _cls: tmp_path))
         rc = dev_shared_resolve.main([])
         captured = capsys.readouterr()
@@ -76,13 +77,3 @@ class TestNoSiblingReachIn:
         """Reject the retired Foundry option."""
         with pytest.raises(SystemExit):
             dev_shared_resolve.main(["--foundry"])
-
-    def test_main_prints_exactly_one_line(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Output contract is a single path — a second line would be a sibling leak."""
-        monkeypatch.setattr(dev_shared_resolve.Path, "home", classmethod(lambda _cls: tmp_path))
-        rc = dev_shared_resolve.main([])
-        lines = [line for line in capsys.readouterr().out.splitlines() if line]
-        assert rc == 0
-        assert len(lines) == 1

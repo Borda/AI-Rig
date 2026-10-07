@@ -9,7 +9,6 @@ from types import ModuleType
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 TRIAGE_STATUSES = (
     "already-applied",
@@ -39,7 +38,8 @@ def _load_validator() -> ModuleType:
     """Load the hyphenated artifact-validator module for focused contract tests."""
     path = PLUGIN_ROOT / "shared" / "validate-artifacts.py"
     spec = importlib.util.spec_from_file_location("codex_rig_validate_final_outcomes", path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -268,7 +268,7 @@ def test_v3_rejects_stale_review_status(tmp_path: Path, field: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "status,label",
+    ("status", "label"),
     [
         pytest.param("implemented", "Implemented", id="implemented"),
         pytest.param("resolved", "Verified without code changes", id="resolved"),
@@ -336,33 +336,56 @@ def test_markdown_row_omission_fails_even_when_aggregate_counts_match(tmp_path: 
         VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
 
 
-def test_markdown_disposition_must_match_machine_item(tmp_path: Path) -> None:
-    """Reject a user-facing disposition that differs from the validated ledger."""
+@pytest.mark.parametrize(
+    ("old", "new", "error"),
+    [
+        pytest.param(
+            "| valid | implemented |",
+            "| valid | unresolved |",
+            "code-remediate-final-table-markdown-resolution_status-mismatch",
+            id="disposition-differs-from-machine-item",
+        ),
+        pytest.param(
+            "Please add the same boundary guard here.",
+            "online duplicate",
+            "code-remediate-final-table-expanded-source-detail-missing",
+            id="grouped-source-detail-incomplete",
+        ),
+        pytest.param(
+            "[O1] Added the missing guard.",
+            "[O1]",
+            "code-remediate-final-table-symbol-detail-missing:O1",
+            id="compact-outcome-detail-absent",
+        ),
+        pytest.param(
+            "| Resolved how | Evidence |",
+            "| Resolved how | Closure evidence or unresolved rationale |",
+            "code-remediate-final-table-markdown-columns-missing:evidence",
+            id="required-column-renamed",
+        ),
+        pytest.param(
+            "[E1] tests/test_guard.py passed",
+            "[E1] `tests/test_guard.py` skipped",
+            "code-remediate-final-table-symbol-detail-missing:E1",
+            id="detail-wording-altered-beyond-code-markup",
+        ),
+    ],
+)
+def test_durable_table_rejects_tampered_markdown(tmp_path: Path, old: str, new: str, error: str) -> None:
+    """Reject a durable action-items table that no longer matches its validated machine ledger.
+
+    One fragment of the rendered table is edited after a valid ledger is written. A user-facing disposition must
+    match the machine item, a compact grouped row needs every source detail in the expanded ledger, a compact
+    outcome needs its complete text below the table, a required column renamed away from its contract name is
+    reported as missing, and a detail line whose wording differs from the ledger is rejected even when the code
+    markup alone would be accepted.
+    """
     metadata = _metadata()
     _write_action_items(metadata, tmp_path)
     path = tmp_path / "action-items.md"
-    path.write_text(
-        path.read_text(encoding="utf-8").replace("| valid | implemented |", "| valid | unresolved |"),
-        encoding="utf-8",
-    )
+    path.write_text(path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8")
 
-    with pytest.raises(SystemExit, match="code-remediate-final-table-markdown-resolution_status-mismatch"):
-        VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
-
-
-def test_grouped_item_requires_every_source_detail_in_expanded_ledger(tmp_path: Path) -> None:
-    """Reject a compact grouped row when its expanded source detail is incomplete."""
-    metadata = _metadata()
-    table = metadata["final_resolution_table"]
-    assert isinstance(table, dict)
-    _write_action_items(metadata, tmp_path)
-    path = tmp_path / "action-items.md"
-    path.write_text(
-        path.read_text(encoding="utf-8").replace("Please add the same boundary guard here.", "online duplicate"),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(SystemExit, match="code-remediate-final-table-expanded-source-detail-missing"):
+    with pytest.raises(SystemExit, match=error):
         VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
 
 
@@ -382,17 +405,47 @@ def test_durable_source_cells_use_only_compact_references(tmp_path: Path) -> Non
     VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
 
 
-def test_report_source_requires_a_resolvable_pointer(tmp_path: Path) -> None:
-    """Reject report IDs that cannot locate the originating finding."""
+@pytest.mark.parametrize(
+    ("item", "source", "field", "value", "error"),
+    [
+        pytest.param(
+            0, 0, "source_id", "R1", "code-remediate-final-table-report-source-id-invalid", id="report-id-unresolvable"
+        ),
+        pytest.param(
+            1,
+            1,
+            "source_id",
+            "https://github.com/example/repo/pull/1#discussion_r27",
+            "code-remediate-final-table-online-source-id-invalid",
+            id="online-id-is-a-url",
+        ),
+        pytest.param(
+            0,
+            0,
+            "kind",
+            "pr-thread",
+            "code-remediate-final-table-source-kind-invalid",
+            id="source-kind-not-report-or-online",
+        ),
+    ],
+)
+def test_source_provenance_rejects_invalid_pointer_or_kind(
+    tmp_path: Path, item: int, source: int, field: str, value: str, error: str
+) -> None:
+    """Reject provenance a reader could not follow, keeping the vocabulary to report and online.
+
+    A report ID must locate the originating finding rather than name a bare item, an online review ID must be a
+    stable identifier rather than a link, and the source category must be either report or online.
+    """
     metadata = _metadata()
     table = metadata["final_resolution_table"]
     assert isinstance(table, dict)
     items = table["items"]
     assert isinstance(items, list)
-    items[0]["sources"][0]["source_id"] = "R1"
+    items[item]["sources"][source][field] = value
     _write_action_items(metadata, tmp_path)
 
-    with pytest.raises(SystemExit, match="code-remediate-final-table-report-source-id-invalid"):
+    with pytest.raises(SystemExit, match=error):
         VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
 
 
@@ -409,154 +462,78 @@ def test_report_source_accepts_a_json_item_pointer(tmp_path: Path) -> None:
     VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
 
 
-def test_online_source_rejects_a_url(tmp_path: Path) -> None:
-    """Reject links when a stable online review ID is the source pointer."""
-    metadata = _metadata()
-    table = metadata["final_resolution_table"]
-    assert isinstance(table, dict)
-    items = table["items"]
-    assert isinstance(items, list)
-    items[1]["sources"][1]["source_id"] = "https://github.com/example/repo/pull/1#discussion_r27"
-    _write_action_items(metadata, tmp_path)
+#: Resolution scope selection heading, counters, and table header shared by every scope-selection fixture.
+_SCOPE_PREAMBLE = """## Resolution Scope Selection
 
-    with pytest.raises(SystemExit, match="code-remediate-final-table-online-source-id-invalid"):
-        VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
+selectable: 1
+selected: 1
+deferred: 0
+
+| Index | Severity | Item id or source location | Source | Summary | Expected closure evidence |
+| --- | --- | --- | --- | --- | --- |
+"""
 
 
-def test_durable_table_rejects_missing_symbol_detail(tmp_path: Path) -> None:
-    """Reject a compact outcome whose complete text is absent below the table."""
-    metadata = _metadata()
-    _write_action_items(metadata, tmp_path)
-    path = tmp_path / "action-items.md"
-    path.write_text(path.read_text(encoding="utf-8").replace("[O1] Added the missing guard.", "[O1]"), encoding="utf-8")
-
-    with pytest.raises(SystemExit, match="code-remediate-final-table-symbol-detail-missing:O1"):
-        VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
+def _scope_selection_metadata() -> dict[str, object]:
+    """Return an explicit-input confirmed selection of the first row."""
+    return {
+        "resolution_scope": {
+            "selection_source": "explicit-input",
+            "prompt_presented": False,
+            "selection_confirmed_by_user": True,
+            "selected_indexes": [1],
+            "deferred_indexes": [],
+            "selected_severity_groups": [],
+        }
+    }
 
 
 def test_scope_selection_accepts_compact_grouped_source_references(tmp_path: Path) -> None:
     """Accept report and online IDs without source bodies or URLs in scope selection."""
     (tmp_path / "resolution-scope.md").write_text(
-        """## Resolution Scope Selection
-
-selectable: 1
-selected: 1
-deferred: 0
-
-| Index | Severity | Item id or source location | Source | Summary | Expected closure evidence |
-| --- | --- | --- | --- | --- | --- |
-| 1 | high | R2 | report [.reports/codex/investigate/run/root-cause.md:57] online [thread-991/comment-27] | [S1] | [C1] |
-
-[S1] Add guard at the request boundary.
-[C1] Focused guard test passes.
-""",
+        _SCOPE_PREAMBLE
+        + "| 1 | high | R2 | report [.reports/codex/investigate/run/root-cause.md:57] online [thread-991/comment-27] "
+        "| [S1] | [C1] |\n\n[S1] Add guard at the request boundary.\n[C1] Focused guard test passes.\n",
         encoding="utf-8",
     )
-    metadata = {
-        "resolution_scope": {
-            "selection_source": "explicit-input",
-            "prompt_presented": False,
-            "selection_confirmed_by_user": True,
-            "selected_indexes": [1],
-            "deferred_indexes": [],
-            "selected_severity_groups": [],
-        }
-    }
 
-    VALIDATOR._validate_code_remediate_scope_selection(metadata, tmp_path)
+    VALIDATOR._validate_code_remediate_scope_selection(_scope_selection_metadata(), tmp_path)
 
 
-def test_scope_selection_rejects_terminal_visible_html_separator(tmp_path: Path) -> None:
-    """Reject grouped source pointers that would print a literal HTML tag."""
-    (tmp_path / "resolution-scope.md").write_text(
-        """## Resolution Scope Selection
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        pytest.param(
+            "| 1 | high | R2 | report [.reports/codex/investigate/run/root-cause.md:57]<br>online "
+            "[thread-991/comment-27] | [S1] | [C1] |\n\n[S1] Add guard at the request boundary.\n"
+            "[C1] Focused guard test passes.\n",
+            "code-remediate-scope-source-not-compact",
+            id="terminal-visible-html-separator",
+        ),
+        pytest.param(
+            "| 1 | high | R1 | report [.reports/codex/investigate/run/root-cause.md:42] @ metadata.review_decision "
+            "— full body — findings-input.txt | Add guard | Focused test passes |\n",
+            "code-remediate-scope-source-not-compact",
+            id="expanded-source-content",
+        ),
+        pytest.param(
+            "| 1 | high | R1 | report [.reports/codex/investigate/run/root-cause.md:42] "
+            "| Add the missing request-boundary guard | Focused test passes |\n",
+            "code-remediate-scope-detail-reference-invalid",
+            id="long-text-inside-table",
+        ),
+    ],
+)
+def test_scope_selection_rejects_noisy_or_unreferenced_rows(tmp_path: Path, body: str, error: str) -> None:
+    """Reject a scope-selection table that would print noise or hide detail before a prompt is shown.
 
-selectable: 1
-selected: 1
-deferred: 0
+    Grouped source pointers must not print a literal HTML tag, the noisy source-body format must not appear, and
+    summary and closure detail must be symbols defined below the table rather than long text inside it.
+    """
+    (tmp_path / "resolution-scope.md").write_text(_SCOPE_PREAMBLE + body, encoding="utf-8")
 
-| Index | Severity | Item id or source location | Source | Summary | Expected closure evidence |
-| --- | --- | --- | --- | --- | --- |
-| 1 | high | R2 | report [.reports/codex/investigate/run/root-cause.md:57]<br>online [thread-991/comment-27] | [S1] | [C1] |
-
-[S1] Add guard at the request boundary.
-[C1] Focused guard test passes.
-""",
-        encoding="utf-8",
-    )
-    metadata = {
-        "resolution_scope": {
-            "selection_source": "explicit-input",
-            "prompt_presented": False,
-            "selection_confirmed_by_user": True,
-            "selected_indexes": [1],
-            "deferred_indexes": [],
-            "selected_severity_groups": [],
-        }
-    }
-
-    with pytest.raises(SystemExit, match="code-remediate-scope-source-not-compact"):
-        VALIDATOR._validate_code_remediate_scope_selection(metadata, tmp_path)
-
-
-def test_scope_selection_rejects_expanded_source_content(tmp_path: Path) -> None:
-    """Reject the noisy source-body format before a remediation prompt is shown."""
-    (tmp_path / "resolution-scope.md").write_text(
-        """## Resolution Scope Selection
-
-selectable: 1
-selected: 1
-deferred: 0
-
-| Index | Severity | Item id or source location | Source | Summary | Expected closure evidence |
-| --- | --- | --- | --- | --- | --- |
-| 1 | high | R1 | report [.reports/codex/investigate/run/root-cause.md:42] @ metadata.review_decision — full body — findings-input.txt | Add guard | Focused test passes |
-""",
-        encoding="utf-8",
-    )
-    metadata = {
-        "resolution_scope": {
-            "selection_source": "explicit-input",
-            "prompt_presented": False,
-            "selection_confirmed_by_user": True,
-            "selected_indexes": [1],
-            "deferred_indexes": [],
-            "selected_severity_groups": [],
-        }
-    }
-
-    with pytest.raises(SystemExit, match="code-remediate-scope-source-not-compact"):
-        VALIDATOR._validate_code_remediate_scope_selection(metadata, tmp_path)
-
-
-def test_scope_selection_rejects_long_text_inside_table(tmp_path: Path) -> None:
-    """Require summary and closure detail symbols in the initial selection table."""
-    (tmp_path / "resolution-scope.md").write_text(
-        """## Resolution Scope Selection
-
-selectable: 1
-selected: 1
-deferred: 0
-
-| Index | Severity | Item id or source location | Source | Summary | Expected closure evidence |
-| --- | --- | --- | --- | --- | --- |
-| 1 | high | R1 | report [.reports/codex/investigate/run/root-cause.md:42] | Add the missing request-boundary guard | Focused test passes |
-""",
-        encoding="utf-8",
-    )
-    metadata = {
-        "resolution_scope": {
-            "selection_source": "explicit-input",
-            "prompt_presented": False,
-            "selection_confirmed_by_user": True,
-            "selected_indexes": [1],
-            "deferred_indexes": [],
-            "selected_severity_groups": [],
-        }
-    }
-
-    with pytest.raises(SystemExit, match="code-remediate-scope-detail-reference-invalid"):
-        VALIDATOR._validate_code_remediate_scope_selection(metadata, tmp_path)
+    with pytest.raises(SystemExit, match=error):
+        VALIDATOR._validate_code_remediate_scope_selection(_scope_selection_metadata(), tmp_path)
 
 
 def test_final_handoff_cells_are_value_bound_to_resolution_items() -> None:
@@ -622,20 +599,6 @@ def test_caller_contract_bypasses_workflow_owned_table_layout(validator: object)
     validator({"metadata": {}}, {"branch": "caller-contract"})
 
 
-def test_source_category_is_report_or_online(tmp_path: Path) -> None:
-    """Keep the user-facing provenance vocabulary limited to report and online."""
-    metadata = _metadata()
-    table = metadata["final_resolution_table"]
-    assert isinstance(table, dict)
-    items = table["items"]
-    assert isinstance(items, list)
-    items[0]["sources"][0]["kind"] = "pr-thread"
-    _write_action_items(metadata, tmp_path)
-
-    with pytest.raises(SystemExit, match="code-remediate-final-table-source-kind-invalid"):
-        VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
-
-
 def test_source_record_counts_fail_closed(tmp_path: Path) -> None:
     """Reject aggregate source counts that could conceal an omitted grouped comment."""
     metadata = _metadata()
@@ -675,24 +638,6 @@ def test_durable_table_accepts_workflow_columns_beyond_the_required_set(tmp_path
     VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
 
 
-def test_durable_table_rejects_a_renamed_required_column(tmp_path: Path) -> None:
-    """Reject a required column renamed away from its contract name, naming what is missing."""
-    metadata = _metadata()
-    _write_action_items(metadata, tmp_path)
-    path = tmp_path / "action-items.md"
-    path.write_text(
-        path.read_text(encoding="utf-8").replace(
-            "| Resolved how | Evidence |",
-            "| Resolved how | Closure evidence or unresolved rationale |",
-            1,
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(SystemExit, match="code-remediate-final-table-markdown-columns-missing:evidence"):
-        VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
-
-
 def test_symbol_detail_accepts_code_spans_around_ledger_text(tmp_path: Path) -> None:
     """Accept a detail line that marks paths and commands as code without altering the ledger text."""
     metadata = _metadata()
@@ -708,21 +653,3 @@ def test_symbol_detail_accepts_code_spans_around_ledger_text(tmp_path: Path) -> 
     )
 
     VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
-
-
-def test_symbol_detail_still_rejects_altered_ledger_text(tmp_path: Path) -> None:
-    """Reject a detail line whose wording differs from the ledger, not merely its code markup."""
-    metadata = _metadata()
-    _write_action_items(metadata, tmp_path)
-    path = tmp_path / "action-items.md"
-    path.write_text(
-        path.read_text(encoding="utf-8").replace(
-            "[E1] tests/test_guard.py passed",
-            "[E1] `tests/test_guard.py` skipped",
-            1,
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(SystemExit, match="code-remediate-final-table-symbol-detail-missing:E1"):
-        VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)

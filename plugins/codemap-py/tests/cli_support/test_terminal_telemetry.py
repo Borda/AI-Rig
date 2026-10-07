@@ -9,7 +9,6 @@ import subprocess
 import sys
 
 import pytest
-
 from codemap_py import rwgate
 
 

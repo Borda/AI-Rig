@@ -12,8 +12,7 @@ import time
 from pathlib import Path
 
 import pytest
-
-from purge_plugin_cache import main  # noqa: E402
+from purge_plugin_cache import main
 
 _MARKET = "borda-ai-rig"
 _HOUR_MS = 3_600_000

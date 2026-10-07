@@ -30,6 +30,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+#: Skills that may fetch and cache a GitHub issue; any other skill name is rejected.
 _KNOWN_SKILLS = ("debug", "feature", "fix")
 
 
@@ -62,7 +63,9 @@ def _fetch(bin_dir: Path, args: str, repo_name: str) -> tuple[str, int]:
     if repo_name:
         cmd += ["--repo", repo_name]
     try:
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False)
+        proc = subprocess.run(  # noqa: S603 - argv list, no shell; sibling script path
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False
+        )
     except OSError:
         return "", 127
     return proc.stdout.rstrip("\n"), proc.returncode

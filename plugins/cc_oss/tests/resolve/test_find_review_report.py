@@ -9,9 +9,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import pytest
-
 import find_review_report as frr
+import pytest
 
 
 class _FakeCompleted:
@@ -65,34 +64,36 @@ def _fake_head_sha(monkeypatch: pytest.MonkeyPatch, sha: str, returncode: int = 
 # ---------------------------------------------------------------------------
 
 
-def test_newest_report_for_pr_picks_most_recent(tmp_path: Path) -> None:
-    """With two runs for the same PR, the highest run number wins."""
-    _write_report(tmp_path, "run-001", "42")
-    newest = _write_report(tmp_path, "run-002", "42")
-    assert frr.newest_report_for_pr("42", tmp_path) == newest
+@pytest.mark.parametrize(
+    ("older", "newer"),
+    [
+        pytest.param("run-001", "run-002", id="highest-run-number-wins"),
+        pytest.param("run-999", "run-1000", id="runs-ordered-numerically-not-lexically"),
+    ],
+)
+def test_newest_report_for_pr_picks_most_recent(tmp_path: Path, older: str, newer: str) -> None:
+    """With two runs for the same PR, the highest run number wins.
 
-
-def test_newest_report_for_pr_ignores_other_prs(tmp_path: Path) -> None:
-    """A report for a different PR is not a match."""
-    _write_report(tmp_path, "run-001", "7")
-    assert frr.newest_report_for_pr("42", tmp_path) is None
-
-
-def test_newest_report_for_pr_requires_exact_number(tmp_path: Path) -> None:
-    """PR directory ``pr-420`` must not satisfy a lookup for PR 42."""
-    _write_report(tmp_path, "run-001", "420")
-    assert frr.newest_report_for_pr("42", tmp_path) is None
-
-
-def test_newest_report_for_pr_orders_runs_numerically(tmp_path: Path) -> None:
-    """``run-1000`` outranks ``run-999`` — a lexical sort would pick the wrong one.
-
-    Regression guard: string-sorting run directory names ("run-1000" < "run-999") would make the
-    reject gate read a stale run once a PR passes 999 review runs.
+    ``run-1000`` outranks ``run-999`` — a lexical sort would pick the wrong one. Regression guard: string-sorting run
+    directory names ("run-1000" < "run-999") would make the reject gate read a stale run once a PR passes 999 review
+    runs.
     """
-    _write_report(tmp_path, "run-999", "42")
-    newest = _write_report(tmp_path, "run-1000", "42")
+    _write_report(tmp_path, older, "42")
+    newest = _write_report(tmp_path, newer, "42")
     assert frr.newest_report_for_pr("42", tmp_path) == newest
+
+
+@pytest.mark.parametrize(
+    "other_pr",
+    [
+        pytest.param("7", id="different-pr-is-not-a-match"),
+        pytest.param("420", id="pr-420-does-not-satisfy-lookup-for-42"),
+    ],
+)
+def test_newest_report_for_pr_ignores_other_prs(tmp_path: Path, other_pr: str) -> None:
+    """A report for a different PR is not a match, and PR directory ``pr-420`` must not satisfy a lookup for PR 42."""
+    _write_report(tmp_path, "run-001", other_pr)
+    assert frr.newest_report_for_pr("42", tmp_path) is None
 
 
 def test_newest_report_for_pr_falls_back_to_legacy_flat_layout(tmp_path: Path) -> None:
@@ -119,41 +120,43 @@ def test_gate_line_returns_empty_without_field(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("gate", "outcome"),
+    ("gate", "outcome", "expected"),
     [
-        pytest.param("PASS", "⚠ REQUEST_CHANGES", id="pass-gate-warning-symbol"),
-        pytest.param("PASS", "✓ APPROVE", id="pass-gate-check-symbol"),
-        pytest.param("REJECT_SCOPE @a1b2c3d", "✗ N/A — rejected at gate", id="reject-gate-cross-symbol"),
+        pytest.param("PASS", "⚠ REQUEST_CHANGES", "Gate: PASS", id="pass-gate-warning-symbol"),
+        pytest.param("PASS", "✓ APPROVE", "Gate: PASS", id="pass-gate-check-symbol"),
+        pytest.param(
+            "REJECT_SCOPE @a1b2c3d",
+            "✗ N/A — rejected at gate",
+            "Gate: REJECT_SCOPE @a1b2c3d",
+            id="reject-gate-cross-symbol",
+        ),
         pytest.param(
             "PASS",
             "✓ APPROVE — minor changes suggested; 0 critical, 0 high, 2 medium, 11 low",
+            "Gate: PASS",
             id="pass-gate-trailing-detail",
         ),
-        pytest.param("PASS", "⚠ Needs work; 2 medium", id="pass-gate-mixed-case-space"),
-        pytest.param("BLOCK", "request-changes", id="block-gate-lowercase-hyphen"),
+        pytest.param("PASS", "⚠ Needs work; 2 medium", "Gate: PASS", id="pass-gate-mixed-case-space"),
+        pytest.param("BLOCK", "request-changes", "Gate: BLOCK", id="block-gate-lowercase-hyphen"),
+        pytest.param("PASS", "[review outcome]", "", id="placeholder-outcome-incomplete"),
+        pytest.param("PASS", "APPROVED", "", id="glued-suffix-outcome-incomplete"),
+        pytest.param("PASS", "✓ LGTM", "", id="free-form-verdict-incomplete"),
+        pytest.param("PASS", "NEEDS_WORK_LATER", "", id="token-with-glued-suffix-incomplete"),
+        pytest.param("PASS", "pending approval", "", id="token-buried-mid-sentence-incomplete"),
     ],
 )
-def test_gate_line_accepts_verdict_symbol_prefixed_outcome(tmp_path: Path, gate: str, outcome: str) -> None:
-    """A verdict symbol, spelling variant, or trailing detail on ``Outcome`` does not make the report look incomplete.
+def test_gate_line_requires_verdict_led_outcome(tmp_path: Path, gate: str, outcome: str, expected: str) -> None:
+    """A report counts as complete only when ``Outcome`` is led by a canonical verdict token.
 
-    Regression guard: ``oss:review`` writes ``Outcome: ⚠ REQUEST_CHANGES`` per the shared verdict-symbol
-    convention, and a consolidator may vary case/word separator or append severity counts after the token;
-    a parser that only matches the bare word would wrongly block a complete, real report as
-    ``incomplete-review-report``.
+    A verdict symbol, spelling variant, or trailing detail on ``Outcome`` does not make the report look incomplete:
+    ``oss:review`` writes ``Outcome: ⚠ REQUEST_CHANGES`` per the shared verdict-symbol convention, and a consolidator
+    may vary case/word separator or append severity counts after the token; a parser that only matches the bare word
+    would wrongly block a complete, real report as ``incomplete-review-report``. Tolerating case, separators, and
+    trailing detail must not also admit an unfilled template placeholder, a glued suffix, a free-form verdict, or a
+    token buried mid-sentence — each means no decision was published and the gate line stays empty.
     """
     report = _write_report(tmp_path, "run-001", "42", gate=gate, outcome=outcome)
-    assert frr.gate_line(report) == f"Gate: {gate}"
-
-
-@pytest.mark.parametrize("outcome", ["[review outcome]", "APPROVED", "✓ LGTM", "NEEDS_WORK_LATER", "pending approval"])
-def test_gate_line_rejects_non_verdict_outcome(tmp_path: Path, outcome: str) -> None:
-    """An ``Outcome`` not led by a canonical verdict token keeps the report incomplete.
-
-    Tolerating case, separators, and trailing detail must not also admit an unfilled template placeholder, a glued
-    suffix, a free-form verdict, or a token buried mid-sentence — each means no decision was published.
-    """
-    report = _write_report(tmp_path, "run-001", "42", gate="PASS", outcome=outcome)
-    assert frr.gate_line(report) == ""
+    assert frr.gate_line(report) == expected
 
 
 @pytest.mark.parametrize(
@@ -238,56 +241,50 @@ def test_main_allows_non_reject_gates(gate: str, tmp_path: Path, monkeypatch: py
     assert frr.main(["--pr", "42"]) == 0
 
 
-def test_main_blocks_when_head_unchanged(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+@pytest.mark.parametrize(
+    ("gate", "current_sha", "gh_returncode", "expected_rc", "expected_output"),
+    [
+        pytest.param(
+            "REJECT_SCOPE @a1b2c3d", "a1b2c3d", 0, 1, "⛔ BLOCKED", id="rejection-standing-at-current-head-blocks"
+        ),
+        pytest.param(
+            "REJECT_SCOPE @a1b2c3d",
+            "a1b2c3d4e5f6789012345678901234567890abcd",
+            0,
+            1,
+            "⛔ BLOCKED",
+            id="short-recorded-sha-prefixing-full-current-sha-is-unchanged",
+        ),
+        pytest.param(
+            "REJECT_GOAL @a1b2c3d", "9999999", 0, 0, "head moved a1b2c3d→9999999", id="head-moved-warns-and-continues"
+        ),
+        pytest.param("REJECT_SPAM @a1b2c3d", "", 1, 1, "unverifiable", id="unreachable-gh-fails-closed"),
+    ],
+)
+def test_main_compares_rejection_head_with_current_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    gate: str,
+    current_sha: str,
+    gh_returncode: int,
+    expected_rc: int,
+    expected_output: str,
 ) -> None:
-    """A rejection still standing at the current head blocks the run."""
-    monkeypatch.chdir(tmp_path)
-    _write_report(tmp_path, "run-001", "42", gate="REJECT_SCOPE @a1b2c3d")
-    _fake_head_sha(monkeypatch, "a1b2c3d")
-    assert frr.main(["--pr", "42"]) == 1
-    assert "⛔ BLOCKED" in capsys.readouterr().out
+    """A rejection still standing at the current head blocks the run; one recorded against an older head only warns.
 
-
-def test_main_blocks_when_short_recorded_sha_matches_full_current_sha(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
-) -> None:
-    """An abbreviated recorded SHA that prefixes the full current SHA is treated as unchanged, not moved.
-
-    ``_SHA_RE`` accepts 7-40 char SHAs, so a ``Gate:`` line commonly records a short SHA while
-    ``current_head_sha`` always returns the full one from ``gh pr view --json headRefOid``. A
-    string-equality comparison (``recorded != current``) would always see these as different, failing
-    the reject gate open on the exact case that matters most: the head genuinely has not moved.
-    Regression guard for the fix to ``main()``'s SHA comparison — the correct check is a prefix match.
+    An abbreviated recorded SHA that prefixes the full current SHA is treated as unchanged, not moved. ``_SHA_RE``
+    accepts 7-40 char SHAs, so a ``Gate:`` line commonly records a short SHA while ``current_head_sha`` always returns
+    the full one from ``gh pr view --json headRefOid``. A string-equality comparison (``recorded != current``) would
+    always see these as different, failing the reject gate open on the exact case that matters most: the head genuinely
+    has not moved. Regression guard for the fix to ``main()``'s SHA comparison — the correct check is a prefix match. An
+    unreachable ``gh`` fails closed — the rejection stands.
     """
     monkeypatch.chdir(tmp_path)
-    _write_report(tmp_path, "run-001", "42", gate="REJECT_SCOPE @a1b2c3d")
-    _fake_head_sha(monkeypatch, "a1b2c3d4e5f6789012345678901234567890abcd")
-    assert frr.main(["--pr", "42"]) == 1
-    assert "⛔ BLOCKED" in capsys.readouterr().out
-
-
-def test_main_warns_when_head_moved(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
-) -> None:
-    """A rejection recorded against an older head lets the run continue with a warning."""
-    monkeypatch.chdir(tmp_path)
-    _write_report(tmp_path, "run-001", "42", gate="REJECT_GOAL @a1b2c3d")
-    _fake_head_sha(monkeypatch, "9999999")
-    assert frr.main(["--pr", "42"]) == 0
-    out = capsys.readouterr().out
-    assert "head moved a1b2c3d→9999999" in out
-
-
-def test_main_blocks_when_head_unverifiable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
-) -> None:
-    """An unreachable ``gh`` fails closed — the rejection stands."""
-    monkeypatch.chdir(tmp_path)
-    _write_report(tmp_path, "run-001", "42", gate="REJECT_SPAM @a1b2c3d")
-    _fake_head_sha(monkeypatch, "", returncode=1)
-    assert frr.main(["--pr", "42"]) == 1
-    assert "unverifiable" in capsys.readouterr().out
+    _write_report(tmp_path, "run-001", "42", gate=gate)
+    _fake_head_sha(monkeypatch, current_sha, returncode=gh_returncode)
+    assert frr.main(["--pr", "42"]) == expected_rc
+    assert expected_output in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -295,44 +292,44 @@ def test_main_blocks_when_head_unverifiable(
 # ---------------------------------------------------------------------------
 
 
-def test_path_out_publishes_resolved_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The resolved report path is written verbatim for the caller to reuse."""
+@pytest.mark.parametrize(
+    ("gate", "expected_rc"),
+    [
+        pytest.param("PASS", 0, id="passing-report-path-published"),
+        pytest.param("REJECT_SCOPE @a1b2c3d", 1, id="blocking-rejection-still-publishes-path"),
+    ],
+)
+def test_path_out_publishes_resolved_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, gate: str, expected_rc: int
+) -> None:
+    """The resolved report path is written verbatim for the caller to reuse.
+
+    A blocking rejection still publishes the path — the caller needs it to show the user.
+    """
     monkeypatch.chdir(tmp_path)
-    report = _write_report(tmp_path, "run-001", "42", gate="PASS")
+    report = _write_report(tmp_path, "run-001", "42", gate=gate)
+    _fake_head_sha(monkeypatch, "a1b2c3d")
     sentinel = tmp_path / "sentinel"
-    assert frr.main(["--pr", "42", "--path-out", str(sentinel)]) == 0
+    assert frr.main(["--pr", "42", "--path-out", str(sentinel)]) == expected_rc
     assert sentinel.read_text(encoding="utf-8").strip() == report.as_posix()
+    capsys.readouterr()
 
 
-def test_path_out_empty_when_no_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A PR with no report yields an empty sentinel, never a stale path."""
+@pytest.mark.parametrize(
+    "pr",
+    [
+        pytest.param("", id="empty-pr-number"),
+        pytest.param("n/a", id="not-applicable-pr-number"),
+        pytest.param("42", id="pr-without-report"),
+    ],
+)
+def test_path_out_empty_without_pr_number_or_report(pr: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The no-PR early return, or a PR with no report, still clears the sentinel — never a stale path."""
     monkeypatch.chdir(tmp_path)
-    sentinel = tmp_path / "sentinel"
-    sentinel.write_text("/stale/path\n", encoding="utf-8")
-    assert frr.main(["--pr", "42", "--path-out", str(sentinel)]) == 0
-    assert sentinel.read_text(encoding="utf-8") == ""
-
-
-@pytest.mark.parametrize("pr", ["", "n/a"])
-def test_path_out_empty_without_pr_number(pr: str, tmp_path: Path) -> None:
-    """The no-PR early return still clears the sentinel."""
     sentinel = tmp_path / "sentinel"
     sentinel.write_text("/stale/path\n", encoding="utf-8")
     assert frr.main(["--pr", pr, "--path-out", str(sentinel)]) == 0
     assert sentinel.read_text(encoding="utf-8") == ""
-
-
-def test_path_out_written_before_reject_block(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
-) -> None:
-    """A blocking rejection still publishes the path — the caller needs it to show the user."""
-    monkeypatch.chdir(tmp_path)
-    report = _write_report(tmp_path, "run-001", "42", gate="REJECT_SCOPE @a1b2c3d")
-    _fake_head_sha(monkeypatch, "a1b2c3d")
-    sentinel = tmp_path / "sentinel"
-    assert frr.main(["--pr", "42", "--path-out", str(sentinel)]) == 1
-    assert sentinel.read_text(encoding="utf-8").strip() == report.as_posix()
-    capsys.readouterr()
 
 
 def test_path_out_unwritable_blocks_stale_consumption(

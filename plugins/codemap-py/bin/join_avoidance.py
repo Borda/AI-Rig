@@ -37,6 +37,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import re
 import sys
@@ -45,13 +46,18 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+#: Minutes an answer may precede a re-deriving tool call and still count as an overlap; the CLI default.
 DEFAULT_WINDOW_MIN = 10
-# 50 MB per shard, matching MAX_INDEX_SIZE in scan-stats.py / smoke_test_index.py (CWE-400: DoS guard).
-# Per-file cap only — the aggregate across every globbed shard stays uncapped.
+#: 50 MB per shard, matching MAX_INDEX_SIZE in scan-stats.py / smoke_test_index.py (CWE-400: DoS guard).
+#: Per-file cap only — the aggregate across every globbed shard stays uncapped.
 MAX_LOG_SIZE = 50_000_000
+#: Character-class body for identifier characters, spliced into regexes that match a name only as a whole token.
 _IDENT = "A-Za-z0-9_"
+#: Runtime labels accepted in shard filename prefixes; any other label is treated as unattributed.
 _RUNTIMES = ("claude", "codex", "direct")
+#: In-memory record key holding the runtime derived from the shard filename; on-disk values are discarded.
 _RUNTIME_KEY = "_join_avoidance_runtime"
+#: Report label for records whose runtime cannot be established.
 _UNATTRIBUTED_RUNTIME = "unattributed"
 
 
@@ -67,6 +73,7 @@ class OverlapKind(str, Enum):
     UNKNOWN = "unknown"
 
 
+#: Native search tools whose calls may walk a directory tree, so they are examined as structural-search overlaps.
 _RECURSIVE_TOOLS = frozenset({"Grep", "Glob"})
 #: Shell-search shapes that may walk a tree; command spelling cannot establish operand scope.
 #: ``grep``/``egrep``/``fgrep`` need an explicit
@@ -273,7 +280,7 @@ def _module_from_cli_result(record: dict) -> str:
             "undocumented",
         }
         # Only a leading command is unambiguous without reproducing the engine parser.
-        for command, token in zip(argv[:1], argv[1:2]):
+        for command, token in itertools.pairwise(argv):
             if (
                 isinstance(command, str)
                 and command in module_commands
@@ -677,7 +684,8 @@ def _runtime_metrics(
         elif event.kind == OverlapKind.UNKNOWN:
             metric["unknown_count"] = int(metric["unknown_count"]) + 1
         modules = metric.setdefault("modules", {})
-        assert isinstance(modules, dict)
+        if not isinstance(modules, dict):
+            raise TypeError(f"modules must be dict, got {type(modules).__name__}")
         modules[event.module] = modules.get(event.module, 0) + 1
     for metric in metrics.values():
         total = int(metric["total_tool_events"])

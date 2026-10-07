@@ -4,19 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
-from _bench_common.codemap_discovery import resolve_index_path  # noqa: E402
-
+from _bench_common.codemap_discovery import resolve_index_path
 
 # ---------------------------------------------------------------------------
 # System prompts
 # ---------------------------------------------------------------------------
 
-# Shared neutral wrapper used by BOTH arms. Everything here is identical across arms —
-# repo framing, cwd note, the single efficiency instruction, and the output-format
-# requirements per task type — so the token metric is not confounded by prompt asymmetry
-# (only one arm being told to stop early). The arm-specific `{tools_section}` differs solely
-# in tool availability and syntax; it carries no answering strategy.
+#: Shared neutral wrapper used by BOTH arms. Everything here is identical across arms —
+#: repo framing, cwd note, the single efficiency instruction, and the output-format
+#: requirements per task type — so the token metric is not confounded by prompt asymmetry
+#: (only one arm being told to stop early). The arm-specific `{tools_section}` differs solely
+#: in tool availability and syntax; it carries no answering strategy.
 _SHARED_SYSTEM_TEMPLATE = """You are a developer investigating the {repo_name} codebase.
 Your current working directory IS the repository root ({repo_path}) — use relative paths (e.g. `find . -name "*.py"`) or absolute paths starting with {repo_path}.
 
@@ -34,14 +32,14 @@ For symbol-review tasks (undocumented / uncovered symbols): put the symbols unde
 
 Be concise and precise. State the exact values you found (counts, line numbers, module names)."""
 
-# Plain arm — tool availability only; scan-query prohibition preserved verbatim.
+#: Plain arm — tool availability only; scan-query prohibition preserved verbatim.
 _PLAIN_TOOLS = """Answer the question using Grep, Bash, Glob, and Read. Do NOT use the Skill tool.
 Do NOT use scan-query or any codemap binary — not via bare command, not via python/python3 path.
 Rely on standard filesystem and grep operations only."""
 
-# Codemap arm — tool availability plus scan-query invocation syntax and subcommand
-# reference. This is tool documentation only; it prescribes no answering strategy
-# (no "call scan-query first", "stop after one call", "trust as authoritative", etc.).
+#: Codemap arm — tool availability plus scan-query invocation syntax and subcommand
+#: reference. This is tool documentation only; it prescribes no answering strategy
+#: (no "call scan-query first", "stop after one call", "trust as authoritative", etc.).
 _CODEMAP_TOOLS = """You have the scan-query structural index tool available, in addition to Grep, Bash, Glob, and Read.
 
 scan-query is a Python script on your PATH. Invoke it via Bash:
@@ -63,6 +61,7 @@ Subcommands:
   diff-impact [--base REF]               — structural blast radius of the current git change set
   batch [FILE|-]                         — run many queries in one process (reads a JSON array of {{cmd, args}})"""
 
+#: Sentence appended to the codemap tools section for the strict arm, requiring at least one Codemap call.
 _C_STRICT_USE = "\n\nYou must use Codemap at least once for structural investigation; other tools remain allowed."
 
 

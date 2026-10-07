@@ -28,7 +28,7 @@ _VENUES = "--venue-choices"
 _CHOICES = "CVPR,NeurIPS,ICML,workshop"
 
 
-@pytest.fixture()
+@pytest.fixture
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Isolated CWD (the contract path is CWD-relative) plus a private sentinel dir."""
     sentinels = tmp_path / "sentinels"
@@ -99,16 +99,23 @@ def test_payload_starting_with_dash(env: Path) -> None:
     assert _venue(env) == "CVPR\n"
 
 
-@pytest.mark.parametrize("venue", ["CVPR", "NeurIPS", "ICML", "workshop"])
-def test_valid_venues(env: Path, venue: str) -> None:
-    assert main(["extract-keep-flag.py", "fortify", f"run --venue {venue}", _VENUES, _CHOICES]) == 0
-    assert _venue(env) == f"{venue}\n"
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        pytest.param("run --venue CVPR", "CVPR\n", id="cvpr"),
+        pytest.param("run --venue NeurIPS", "NeurIPS\n", id="neurips"),
+        pytest.param("run --venue ICML", "ICML\n", id="icml"),
+        pytest.param("run --venue workshop", "workshop\n", id="workshop"),
+        pytest.param("run", "\n", id="absent-venue-writes-empty"),
+    ],
+)
+def test_venue_sentinel_value(env: Path, arguments: str, expected: str) -> None:
+    """Each valid venue is persisted to the venue sentinel; an absent venue writes an empty line.
 
-
-def test_absent_venue_writes_empty(env: Path) -> None:
-    """Empty venue is legal — it is what makes the F6 skip rule fire; there is no default venue."""
-    assert main(["extract-keep-flag.py", "fortify", "run", _VENUES, _CHOICES]) == 0
-    assert _venue(env) == "\n"
+    Empty venue is legal — it is what makes the F6 skip rule fire; there is no default venue.
+    """
+    assert main(["extract-keep-flag.py", "fortify", arguments, _VENUES, _CHOICES]) == 0
+    assert _venue(env) == expected
 
 
 def test_invalid_venue_exits_two(env: Path, capsys: pytest.CaptureFixture[str]) -> None:

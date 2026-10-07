@@ -38,7 +38,9 @@ LOG_SUBDIR = Path(".cache", "codemap", "logs")
 #: (``codemap_py.runtime_log.LOG_DIR_ENV``) — a shard that ignored it would land
 #: outside the directory ``debrief-coding`` reads.
 LOG_DIR_ENV = "CODEMAP_LOG_DIR"
+#: Host runtime names a hook may record; any other value falls back to :data:`DEFAULT_RUNTIME`.
 RUNTIME_ALLOWLIST = frozenset({"claude", "codex"})
+#: Runtime name used when the host does not identify itself or reports an unrecognised one.
 DEFAULT_RUNTIME = "claude"
 
 

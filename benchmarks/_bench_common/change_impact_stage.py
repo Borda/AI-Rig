@@ -9,9 +9,9 @@ remain explicitly diagnostic because they have no trusted transport, isolation o
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
-import contextlib
 import os
 import shlex
 import shutil
@@ -24,7 +24,10 @@ from pathlib import Path
 from typing import Any
 
 from _bench_codex.runtime import SUPPORTED_CODEX_MODELS
+
 from . import change_impact_contracts as contracts
+from .agentic_reporting import cell_passes, cell_quality, summarize_agentic, summary_lines
+from .edit_patch_contracts import semantic_index_sha256
 from .paid_lifecycle import (
     PaidStageCallbacks,
     paid_approval_matches,
@@ -32,16 +35,24 @@ from .paid_lifecycle import (
     run_paid_stage,
     write_checksums,
 )
-from .agentic_reporting import cell_passes, cell_quality, summarize_agentic, summary_lines
-from .edit_patch_contracts import semantic_index_sha256
 from .presentation import benchmark_console, print_arm_row
 
-
+#: Absolute path of the benchmarks directory, from which the suite, fixture and plugin paths derive.
 _BENCHMARKS = Path(__file__).resolve().parents[1]
+#: Committed task suite of change-impact prompts; its hash is bound into the paid-run scope.
 _TASKS = _BENCHMARKS / "suites/tasks-change-impact.json"
+#: Read-only fixture repository the oracle is built from and each cell's fresh source copy is taken from.
 _FIXTURE = _BENCHMARKS / "fixtures/change-impact/v1/repo"
+#: Treatment arms each change-impact task is run under.
 _ARMS = ("A_plain", "B_auto", "C_strict")
+#: Codemap plugin directory, hashed into the scope and used to run its scan-index on each cell's copy.
 _PLUGIN = _BENCHMARKS.parent / "plugins/codemap-py"
+#: Path components that drop a plugin file, or the whole directory tree below one, from the implementation fingerprint.
+_FINGERPRINT_EXCLUDED_PARTS = frozenset(
+    {"tests", "__pycache__", ".pytest_cache", ".cache", ".reports", ".plans", ".git", ".venv", ".ruff_cache"}
+)
+#: Plugin file suffixes fingerprinted outside a ``bin`` directory, inside which every file counts.
+_FINGERPRINT_PLUGIN_SUFFIXES = frozenset({".py", ".md", ".json", ".toml", ".sh"})
 
 
 def resolve_scope(provider: str, *, model: str | None = None, timeout: int = 600) -> dict[str, Any]:
@@ -59,7 +70,7 @@ def resolve_scope(provider: str, *, model: str | None = None, timeout: int = 600
     provider_cli = shutil.which(provider)
     cli_version = None
     if provider_cli is not None:
-        version = subprocess.run([provider_cli, "--version"], capture_output=True, text=True, timeout=30, check=False)
+        version = subprocess.run([provider_cli, "--version"], capture_output=True, text=True, timeout=30, check=False)  # noqa: S603 - argv list, no shell
         if version.returncode == 0:
             cli_version = version.stdout.strip()
     with _fixture_workspace() as (source_root, index_path):
@@ -99,31 +110,32 @@ def _implementation_hashes() -> dict[str, str]:
     for directory in (_BENCHMARKS / "_bench_common", _BENCHMARKS / "_bench_codex"):
         paths.extend(directory.rglob("*.py"))
     for plugin in (_PLUGIN, _BENCHMARKS.parent / "plugins/codex-rig"):
-        paths.extend(
-            path
-            for path in plugin.rglob("*")
-            if path.is_file()
-            and not any(
-                part
-                in {
-                    "tests",
-                    "__pycache__",
-                    ".pytest_cache",
-                    ".cache",
-                    ".reports",
-                    ".plans",
-                    ".git",
-                    ".venv",
-                    ".ruff_cache",
-                }
-                for part in path.relative_to(plugin).parts
-            )
-            and (path.suffix in {".py", ".md", ".json", ".toml", ".sh"} or "bin" in path.relative_to(plugin).parts)
-        )
+        paths.extend(_fingerprinted_plugin_files(plugin))
     return {
         path.relative_to(_BENCHMARKS.parent).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted(set(paths))
     }
+
+
+def _fingerprinted_plugin_files(plugin: Path) -> Iterator[Path]:
+    """Yield the plugin files whose bytes belong to the implementation fingerprint.
+
+    A file counts when no component of its path inside the plugin is excluded and it either sits in a ``bin`` path or
+    carries a fingerprinted suffix. Excluded directories are pruned while walking instead of being listed and filtered
+    afterwards, so private trees such as ``.git`` or ``__pycache__`` are never traversed; the yielded files are exactly
+    those a full recursive listing filtered by the same rules would keep. Symlinked directories are not followed.
+    """
+    for directory, subdirectories, filenames in os.walk(plugin):
+        subdirectories[:] = [name for name in subdirectories if name not in _FINGERPRINT_EXCLUDED_PARTS]
+        in_bin = "bin" in Path(directory).relative_to(plugin).parts
+        for name in filenames:
+            path = Path(directory, name)
+            if (
+                name not in _FINGERPRINT_EXCLUDED_PARTS
+                and (in_bin or name == "bin" or path.suffix in _FINGERPRINT_PLUGIN_SUFFIXES)
+                and path.is_file()
+            ):
+                yield path
 
 
 @contextlib.contextmanager
@@ -145,7 +157,7 @@ def _fixture_workspace() -> Iterator[tuple[Path, Path]]:
             if not key.startswith(("CODEMAP_", "PYTHON", "GIT_")) and key != "VIRTUAL_ENV"
         }
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv list, no shell
             [sys.executable, str(_PLUGIN / "bin/scan-index"), "--root", str(source_root)],
             cwd=source_root,
             env=environment,

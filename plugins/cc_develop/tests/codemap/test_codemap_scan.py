@@ -12,10 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import codemap_scan as cs
-
+import pytest
 
 # ---------- Pure helpers ----------
 
@@ -37,42 +35,55 @@ def test_derive_module_from_path(inp: str, expected: str) -> None:
     assert cs.derive_module_from_path(inp) == expected
 
 
-def test_derive_modules_from_find_drops_empty() -> None:
-    files = ["./src/a.py", "", "./src/pkg/b.py"]
-    assert cs.derive_modules_from_find(files) == ["a", "pkg.b"]
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [
+        pytest.param(["./src/a.py", "", "./src/pkg/b.py"], ["a", "pkg.b"], id="drops-empty-entries"),
+        pytest.param([], [], id="empty-input"),
+    ],
+)
+def test_derive_modules_from_find(files: list[str], expected: list[str]) -> None:
+    """Modules derived from ``find`` output skip empty entries, and no input yields no modules."""
+    assert cs.derive_modules_from_find(files) == expected
 
 
-def test_derive_modules_from_find_empty_input() -> None:
-    assert cs.derive_modules_from_find([]) == []
+@pytest.mark.parametrize(
+    ("files", "limit", "expected"),
+    [
+        # a mixed diff must query the changed package as well as its child modules
+        pytest.param(
+            ["src/pkg/a.py", "src/pkg/__init__.py", "README.md", "src/other/b.py"],
+            10,
+            ["pkg.a", "pkg", "other.b"],
+            id="preserves-package-initializers",
+        ),
+        # initializer-only changes use the provider's package name, never src/pkg
+        pytest.param(["src/pkg/__init__.py"], 10, ["pkg"], id="src-package-only"),
+        # primary diff module derivation dedupes in order and applies the same limit as fallback
+        pytest.param(
+            ["src/pkg/a.py", "src/pkg/a.py", "src/pkg/b.py", "src/pkg/c.py"],
+            2,
+            ["pkg.a", "pkg.b"],
+            id="dedupes-and-limits-primary-modules",
+        ),
+        pytest.param(["docs.md", "config.yaml", "src/a.py"], 10, ["a"], id="filters-non-py"),
+        # repeated package paths produce one package query
+        pytest.param(
+            ["lib/__init__.py", "other/__init__.py", "lib/__init__.py"],
+            10,
+            ["lib", "other"],
+            id="package-modules-deduplicated",
+        ),
+        pytest.param([], 10, [], id="empty"),
+    ],
+)
+def test_derive_modules_from_diff(files: list[str], limit: int, expected: list[str]) -> None:
+    """Modules derived from a diff keep package initializers, dedupe in order, honor the limit and skip non-Python
+    files.
 
-
-def test_derive_modules_from_diff_preserves_package_initializers() -> None:
-    """A mixed diff must query the changed package as well as its child modules."""
-    files = ["src/pkg/a.py", "src/pkg/__init__.py", "README.md", "src/other/b.py"]
-    assert cs.derive_modules_from_diff(files, limit=10) == ["pkg.a", "pkg", "other.b"]
-
-
-def test_derive_modules_from_diff_src_package_only() -> None:
-    """Initializer-only changes use the provider's package name, never src/pkg."""
-    assert cs.derive_modules_from_diff(["src/pkg/__init__.py"], limit=10) == ["pkg"]
-
-
-def test_derive_modules_from_diff_dedupes_and_limits_primary_modules() -> None:
-    """Primary diff module derivation dedupes in order and applies the same limit as fallback."""
-    files = ["src/pkg/a.py", "src/pkg/a.py", "src/pkg/b.py", "src/pkg/c.py"]
-    assert cs.derive_modules_from_diff(files, limit=2) == ["pkg.a", "pkg.b"]
-
-
-def test_derive_modules_from_diff_filters_non_py() -> None:
-    files = ["docs.md", "config.yaml", "src/a.py"]
-    assert cs.derive_modules_from_diff(files, limit=10) == ["a"]
-
-
-def test_derive_modules_from_diff_package_modules_deduplicated() -> None:
-    """Repeated package paths produce one package query."""
-    files = ["lib/__init__.py", "other/__init__.py", "lib/__init__.py"]
-    out = cs.derive_modules_from_diff(files, limit=10)
-    assert out == ["lib", "other"]
+    An initializer-only change reports the package name, and an empty diff yields no modules.
+    """
+    assert cs.derive_modules_from_diff(files, limit=limit) == expected
 
 
 def test_derive_modules_from_diff_package_modules_respect_limit() -> None:
@@ -81,10 +92,6 @@ def test_derive_modules_from_diff_package_modules_respect_limit() -> None:
     out = cs.derive_modules_from_diff(files, limit=3)
     assert len(out) == 3
     assert out == sorted(out)
-
-
-def test_derive_modules_from_diff_empty() -> None:
-    assert cs.derive_modules_from_diff([], limit=10) == []
 
 
 @pytest.mark.parametrize(
@@ -226,41 +233,44 @@ def test_main_find_missing_target_returns_1(
     assert "--target required" in capsys.readouterr().err
 
 
-def test_main_diff_mode_invokes_per_module(in_tmp_cwd: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("diff_files", "argv", "expected_modules"),
+    [
+        pytest.param(
+            ["src/pkg/a.py", "src/pkg/b.py"], ["--source=diff", "--limit", "10"], ["pkg.a", "pkg.b"], id="per-module"
+        ),
+        # only __init__.py files → primary derivation drops them → flat-layout fallback kicks in
+        pytest.param(["lib/__init__.py", "other/__init__.py"], ["--source=diff"], ["lib", "other"], id="flat-layout"),
+    ],
+)
+def test_main_diff_mode_invokes_per_module(
+    in_tmp_cwd: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    diff_files: list[str],
+    argv: list[str],
+    expected_modules: list[str],
+) -> None:
+    """Diff mode queries reverse dependencies once per changed module, never the coupled query.
+
+    Source-layout files resolve to their dotted modules; a diff of only package initializers falls back to the flat
+    layout and queries each package.
+    """
     project = in_tmp_cwd
     (project / ".cache" / "codemap").mkdir(parents=True)
     (project / ".cache" / "codemap" / f"{project.name}.json").write_text("{}")
 
     _stub_scan_query_present(monkeypatch, present=True)
-    _stub_git(monkeypatch, diff_files=["src/pkg/a.py", "src/pkg/b.py"])
+    _stub_git(monkeypatch, diff_files=diff_files)
 
     calls: list[list[str]] = []
     monkeypatch.setattr(cs.subprocess, "run", lambda cmd, **_kw: calls.append(cmd) or type("CP", (), {})())
 
-    rc = cs.main(["--source=diff", "--limit", "10"])
-    assert rc == 0
-    modules = {c[3] for c in calls if c[:3] == ["codemap-py", "query", "rdeps"]}
-    assert modules == {"pkg.a", "pkg.b"}
-    # diff mode does NOT call coupled.
-    assert not any(c[:3] == ["codemap-py", "query", "coupled"] for c in calls)
-
-
-def test_main_diff_flat_layout_fallback(in_tmp_cwd: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    project = in_tmp_cwd
-    (project / ".cache" / "codemap").mkdir(parents=True)
-    (project / ".cache" / "codemap" / f"{project.name}.json").write_text("{}")
-
-    _stub_scan_query_present(monkeypatch, present=True)
-    # Only __init__.py files → primary derivation drops them → flat-layout fallback kicks in.
-    _stub_git(monkeypatch, diff_files=["lib/__init__.py", "other/__init__.py"])
-
-    calls: list[list[str]] = []
-    monkeypatch.setattr(cs.subprocess, "run", lambda cmd, **_kw: calls.append(cmd) or type("CP", (), {})())
-
-    rc = cs.main(["--source=diff"])
+    rc = cs.main(argv)
     assert rc == 0
     modules = sorted({c[3] for c in calls if c[:3] == ["codemap-py", "query", "rdeps"]})
-    assert modules == ["lib", "other"]
+    assert modules == expected_modules
+    # diff mode does NOT call coupled.
+    assert not any(c[:3] == ["codemap-py", "query", "coupled"] for c in calls)
 
 
 def test_main_diff_empty_silent_exit_0(in_tmp_cwd: Path, monkeypatch: pytest.MonkeyPatch) -> None:

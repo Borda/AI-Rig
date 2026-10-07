@@ -37,7 +37,9 @@ import shutil
 import sys
 from pathlib import Path
 
+#: Marketplace directory name under the Claude plugin cache in which installed plugin versions are searched.
 _MARKETPLACE = "borda-ai-rig"
+#: Path, relative to a plugin root, of the shared-docs directory this resolver locates.
 _SHARED_SUBDIR = "skills/_shared"
 
 

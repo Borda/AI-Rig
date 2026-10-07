@@ -24,9 +24,8 @@ Behavioural areas covered:
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Callable
 
 import pytest
 from _hook_env import _hook_tmp_base
@@ -206,23 +205,23 @@ class TestBatchNudge:
 
         assert [p.returncode for p in posts] == [0, 0, 0, 2]
 
-    def test_compound_bash_not_batchable(self, session_id: str, run_hook: Callable, tmp_path: Path) -> None:
-        """A compound command (`&&`/`;`/`|`) is skipped entirely — may write, never counted."""
-        posts = _run_streak(
-            run_hook,
-            session_id,
-            tmp_path,
-            NUDGE_THRESHOLD,
-            tool_name="Bash",
-            tool_input={"command": "git status && rm -rf x"},
-        )
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git status && rm -rf x", id="compound-command"),
+            pytest.param("rm x", id="writing-command"),
+        ],
+    )
+    def test_non_batchable_bash_never_accumulates(
+        self, session_id: str, run_hook: Callable, tmp_path: Path, command: str
+    ) -> None:
+        """A Bash command that is not provably read-only never accumulates a streak.
 
-        assert all(p.returncode == 0 for p in posts)
-
-    def test_writing_bash_not_batchable(self, session_id: str, run_hook: Callable, tmp_path: Path) -> None:
-        """A mutating command (not in the read-only prefix set) never accumulates a streak."""
+        Scenario: a compound command (`&&`/`;`/`|`) is skipped entirely — it may write, so it is never counted; a
+        mutating command (not in the read-only prefix set) never accumulates a streak.
+        """
         posts = _run_streak(
-            run_hook, session_id, tmp_path, NUDGE_THRESHOLD, tool_name="Bash", tool_input={"command": "rm x"}
+            run_hook, session_id, tmp_path, NUDGE_THRESHOLD, tool_name="Bash", tool_input={"command": command}
         )
 
         assert all(p.returncode == 0 for p in posts)

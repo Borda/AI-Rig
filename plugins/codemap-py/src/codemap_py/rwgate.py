@@ -73,37 +73,44 @@ import os
 import sys
 import threading
 import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import IO, Any, Callable, Iterator, Optional
+from typing import IO, Any
 from uuid import uuid4
 
 from codemap_py.index_paths import coordination_root
 
 __all__ = [
-    "read_lease",
-    "read_index",
-    "write_index",
-    "writer_active",
-    "atomic_publish",
-    "publish_stream",
-    "IndexBusy",
     "CoordinationUnavailable",
+    "IndexBusy",
     "IndexUnreadable",
     "VersionSkewRefused",
+    "atomic_publish",
+    "publish_stream",
+    "read_index",
+    "read_lease",
     "set_instrument",
+    "write_index",
+    "writer_active",
 ]
 
 # ── tunables (internal 0.25.0 choices; never exposed as CLI/env config) ────────
+#: Default seconds a reader or writer waits to acquire the index gate before giving up.
 DEFAULT_TIMEOUT = 30.0  # seconds; callers/tests may pass a shorter bound
 _POLL = 0.01  # seconds between contention retries
 _RELEASE_TIMEOUT = 10.0  # bounded mutex reacquire for orderly intent release
 _PROBE_TIMEOUT = 0.5  # bounded mutex acquisition for the advisory writer_active probe
 
+#: Name of the coordination directory (defined here but not referenced elsewhere in this module).
 _COORD_NAME = ".index-rw"
+#: Name of the subdirectory holding one token file per active reader.
 _READERS_NAME = "readers"
+#: Name of the lock file that serves as the registry mutex.
 _REGISTRY_NAME = "registry.lock"
+#: Name of the file recording the active writer's intent.
 _WRITER_NAME = "writer.json"
 
+#: os.O_BINARY where available (Windows), otherwise 0, so os.open calls never translate line endings.
 _O_BINARY = getattr(os, "O_BINARY", 0)
 
 
@@ -212,11 +219,13 @@ def _sleep_until(deadline: float) -> bool:
 
 
 # ── instrumentation (event-order oracles) ──────────────────────────────────
-_INSTRUMENT: Optional[Callable[[str, dict], None]] = None
+#: Optional callback receiving (event name, fields) for gate events, used by tests to check ordering.
+_INSTRUMENT: Callable[[str, dict], None] | None = None
+#: Per-process monotonic counter stamped on each instrumentation event.
 _SEQ = itertools.count()
 
 
-def set_instrument(callback: Optional[Callable[[str, dict], None]]) -> None:
+def set_instrument(callback: Callable[[str, dict], None] | None) -> None:
     """Install (or clear with ``None``) an in-process event callback.
 
     The callback receives ``(event_name, fields)``. Cross-process tests instead
@@ -246,7 +255,7 @@ def _emit(event: str, **fields: Any) -> None:
     if cb is not None:
         try:
             cb(event, dict(fields))
-        except Exception:  # noqa: BLE001 - instrumentation must never break the gate
+        except Exception:  # noqa: S110 - best-effort diagnostics; failure ignored
             pass
     log_path = os.environ.get("CODEMAP_RWGATE_EVENTLOG")
     if log_path:
@@ -302,7 +311,7 @@ class _Registry:
     def __init__(self, coord: Path, pid: int) -> None:
         self.coord = coord
         self.pid = pid
-        self._reg_fd: Optional[int] = None
+        self._reg_fd: int | None = None
         self._reg_lock = threading.Lock()
         self._owned: dict[str, int] = {}
         self._owned_lock = threading.Lock()
@@ -338,7 +347,7 @@ class _Registry:
         with self._owned_lock:
             self._owned[str(path)] = fd
 
-    def pop_owned(self, path: Path) -> Optional[int]:
+    def pop_owned(self, path: Path) -> int | None:
         with self._owned_lock:
             return self._owned.pop(str(path), None)
 
@@ -360,7 +369,9 @@ class _Registry:
         self._owned.clear()
 
 
+#: Per-process cache of gate registries, keyed by coordination directory.
 _REGISTRIES: dict[str, _Registry] = {}
+#: Lock guarding access to the registry cache across threads.
 _REGISTRIES_LOCK = threading.Lock()
 
 
@@ -435,7 +446,7 @@ def _init_registry_file(coord: Path) -> None:
         os.close(fd)
 
 
-def _create_owned(reg: _Registry, path: Path, payload: bytes) -> Optional[int]:
+def _create_owned(reg: _Registry, path: Path, payload: bytes) -> int | None:
     """Create, lock, and register a token/intent file owned by this process.
 
     Returns:
@@ -469,11 +480,12 @@ def _payload(reg: _Registry, kind: str) -> bytes:
 
 # ── liveness probes (run under the registry mutex) ──────────────────────────
 # Foreign-token probe outcomes (single-sourced open policy).
+#: Probe outcome meaning the foreign token file is absent, so it was drained or already reclaimed.
 _PROBE_GONE = "gone"  # file absent → token drained or already reclaimed
 _PROBE_PENDING = "pending"  # Windows pending-delete / sharing violation → retry next poll
 
 
-def _open_foreign_token(path: Path) -> tuple[Optional[int], str]:
+def _open_foreign_token(path: Path) -> tuple[int | None, str]:
     """Open a FOREIGN token/intent file for a non-blocking liveness probe.
 
     Foreign-file opens are the only places that observe another process mid
@@ -634,7 +646,7 @@ def read_lease(path: os.PathLike[str] | str, *, timeout: float = DEFAULT_TIMEOUT
 
 
 @contextlib.contextmanager
-def read_index(path: os.PathLike[str] | str, *, timeout: float = DEFAULT_TIMEOUT) -> Iterator[Optional[dict]]:
+def read_index(path: os.PathLike[str] | str, *, timeout: float = DEFAULT_TIMEOUT) -> Iterator[dict | None]:
     """Acquire a shared-reader lease and yield the parsed index (or ``None``).
 
     A convenience wrapper over :func:`read_lease` for callers with no loader of
@@ -670,7 +682,7 @@ def read_index(path: os.PathLike[str] | str, *, timeout: float = DEFAULT_TIMEOUT
         yield data
 
 
-def _load_index(index_path: Path) -> Optional[dict]:
+def _load_index(index_path: Path) -> dict | None:
     """Read and parse the index JSON, or ``None`` when the file is absent.
 
     Raises:
@@ -731,7 +743,7 @@ def write_index(
     build_fn: Callable[[Path], Any],
     *,
     timeout: float = DEFAULT_TIMEOUT,
-    writer_version: Optional[int] = None,
+    writer_version: int | None = None,
 ) -> Any:
     """Run *build_fn* under an exclusive, writer-preferred lease.
 
@@ -870,7 +882,7 @@ def _clean_orphan_temps(index_path: Path) -> None:
             _safe_unlink(parent / name)
 
 
-def _refuse_incompatible_generation(index_path: Path, writer_version: Optional[int]) -> None:
+def _refuse_incompatible_generation(index_path: Path, writer_version: int | None) -> None:
     """Refuse to overwrite an index whose schema generation is newer than the writer's.
 
     Runs inside the exclusive phase, immediately before ``build_fn`` — the writer
@@ -913,7 +925,9 @@ def _refuse_incompatible_generation(index_path: Path, writer_version: Optional[i
 
 
 # ── atomic publish helper (for build_fn) ────────────────────────────────────
+#: Maximum attempts for an atomic replace that fails with transient Windows sharing errors.
 _WINDOWS_REPLACE_RETRIES = 8
+#: Base delay in seconds between replace attempts; doubled after each failed attempt.
 _WINDOWS_REPLACE_DELAY_SECONDS = 0.025
 
 

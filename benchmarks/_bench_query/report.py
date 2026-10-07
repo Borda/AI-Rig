@@ -14,7 +14,6 @@ import pandas as pd
 from _bench_query.models import ScenarioResult, SuiteStats
 from _bench_query.scoring import _PRIMARY_SUITES, _tally, compute_self_consistency, compute_verdict
 
-
 # ---- REPORT ----
 
 
@@ -53,7 +52,7 @@ def render_report(
     git_sha = "unknown"
     try:
         r = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
+            ["git", "rev-parse", "--short", "HEAD"],  # noqa: S607 - git/tool resolved via PATH on purpose
             capture_output=True,
             text=True,
             timeout=5,

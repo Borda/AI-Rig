@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 RUNNER = Path(__file__).resolve().parents[2] / "shared/run_gates.py"
 
 
@@ -17,12 +16,12 @@ def test_failed_gate_cannot_be_reclassified_as_skipped(tmp_path: Path, prior_exi
     command = [sys.executable, str(RUNNER), "--out", str(tmp_path)]
     for gate in ("lint", "format", "types", "review"):
         command.extend([f"--skip-{gate}", "Outside this execution probe."])
-    failed = subprocess.run(command + ["--tests", f"exit {prior_exit}"], capture_output=True, text=True, check=False)
+    failed = subprocess.run([*command, "--tests", f"exit {prior_exit}"], capture_output=True, text=True, check=False)
     assert failed.returncode in (1, 124)
     before = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
 
     skipped = subprocess.run(
-        command + ["--skip-tests", "Launcher failed; direct check passed."], capture_output=True, text=True, check=False
+        [*command, "--skip-tests", "Launcher failed; direct check passed."], capture_output=True, text=True, check=False
     )
 
     assert skipped.returncode == 2
@@ -41,7 +40,7 @@ def gates_command(tmp_path: Path) -> list[str]:
 
 def _run_tests_gate(command: list[str], tests_arg: str) -> subprocess.CompletedProcess[str]:
     """Invoke the gates command with a given --tests probe argument."""
-    return subprocess.run(command + ["--tests", tests_arg], capture_output=True, text=True, check=False)
+    return subprocess.run([*command, "--tests", tests_arg], capture_output=True, text=True, check=False)
 
 
 def test_first_failed_run_reports_gate_failure(gates_command: list[str]) -> None:

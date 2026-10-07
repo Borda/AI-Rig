@@ -1,7 +1,7 @@
 """Guard resolve dispatch routing, item caps, and question-count contracts."""
 
-import os
 import json
+import os
 import shutil
 import subprocess
 import sys

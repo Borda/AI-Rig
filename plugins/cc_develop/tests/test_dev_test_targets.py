@@ -47,19 +47,30 @@ def no_codemap(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @_skip_no_git
 class TestPlanTargeted:
-    def test_heuristics_select_named_and_importing_tests(self, repo: Path, no_codemap: None) -> None:
+    @pytest.mark.parametrize(
+        ("changed", "expected_sources"),
+        [
+            # the unrelated test that imports a sibling module stays out — selecting it would drift back toward the
+            # full suite the loops are meant to avoid
+            pytest.param(
+                ["src/pkg/mod.py"],
+                {"tests/test_mod.py": "heuristic", "tests/test_uses.py": "heuristic"},
+                id="source-change-selects-named-and-importing-tests",
+            ),
+            pytest.param(
+                ["tests/test_other.py"], {"tests/test_other.py": "changed"}, id="changed-test-file-selects-itself"
+            ),
+        ],
+    )
+    def test_heuristics_select_tests(
+        self, repo: Path, no_codemap: None, changed: list[str], expected_sources: dict[str, str]
+    ) -> None:
         """Without codemap, a source change selects its name-matched test and every test importing it.
 
-        The unrelated test that imports a sibling module stays out — selecting it would drift back toward the full suite
-        the loops are meant to avoid.
+        An edited test file is always run, labelled as changed rather than inferred.
         """
-        plan = dtt.plan_targeted(repo, ["src/pkg/mod.py"])
-        assert plan.sources == {"tests/test_mod.py": "heuristic", "tests/test_uses.py": "heuristic"}
-
-    def test_changed_test_file_selects_itself(self, repo: Path, no_codemap: None) -> None:
-        """An edited test file is always run, labelled as changed rather than inferred."""
-        plan = dtt.plan_targeted(repo, ["tests/test_other.py"])
-        assert plan.sources == {"tests/test_other.py": "changed"}
+        plan = dtt.plan_targeted(repo, changed)
+        assert plan.sources == expected_sources
 
     def test_trusted_codemap_answer_stands_alone(self, repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A complete, fresh codemap answer is used as is, without heuristic additions."""

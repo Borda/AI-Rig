@@ -36,7 +36,8 @@ _RESEARCH_RESOLVER = _REPO_ROOT / "plugins" / "cc_research" / "bin" / "codemap_r
 def _load(path: Path, name: str) -> ModuleType:
     """Load *path* as a uniquely named module so sibling plugins cannot shadow each other."""
     spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -134,20 +135,26 @@ def test_project_name_is_the_raw_basename(tmp_path, monkeypatch, name):
 # --------------------------------------------------------------------------------------
 
 
-def test_stale_verdict_survives_the_nonzero_exit_code(tmp_path):
-    """Check-index-currency exits 1 *because* the index is stale — that is not a failure."""
+@pytest.mark.parametrize(
+    ("status", "reason", "exit_code"),
+    [
+        # check-index-currency exits 1 *because* the index is stale — that is not a failure.
+        pytest.param("stale", "HEAD changed", 1, id="stale-verdict-with-exit-1"),
+        # exit 2 carries a no_index verdict; it must reach the caller, not be coerced to current.
+        pytest.param("no_index", "gone", 2, id="no-index-verdict-with-exit-2"),
+    ],
+)
+def test_verdict_survives_the_nonzero_exit_code(tmp_path, status, reason, exit_code):
+    """The currency verdict is read from stdout, so the probe's non-zero exit code never turns it into a failure.
+
+    A stale index exits 1 and a missing one exits 2; both verdicts must reach the caller with their reason intact.
+    """
     fake = tmp_path / "fake_cic.py"
-    fake.write_text("import json, sys\nprint(json.dumps({'status': 'stale', 'reason': 'HEAD changed'}))\nsys.exit(1)\n")
+    fake.write_text(
+        f"import json, sys\nprint(json.dumps({{'status': '{status}', 'reason': '{reason}'}}))\nsys.exit({exit_code})\n"
+    )
 
-    assert resolver._currency(str(fake), tmp_path / "index.json") == ("stale", "HEAD changed")
-
-
-def test_no_index_verdict_survives_exit_code_two(tmp_path):
-    """Exit 2 carries a no_index verdict; it must reach the caller, not be coerced to current."""
-    fake = tmp_path / "fake_cic.py"
-    fake.write_text("import json, sys\nprint(json.dumps({'status': 'no_index', 'reason': 'gone'}))\nsys.exit(2)\n")
-
-    assert resolver._currency(str(fake), tmp_path / "index.json") == ("no_index", "gone")
+    assert resolver._currency(str(fake), tmp_path / "index.json") == (status, reason)
 
 
 def test_currency_probe_makes_one_bounded_call(monkeypatch, tmp_path):

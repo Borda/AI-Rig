@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 WRITE_RESULT = PLUGIN_ROOT / "shared" / "write-result.py"
 REVIEW_VALIDATOR = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
@@ -24,7 +23,8 @@ CONFIDENCE_GAP = "Core PR source verification did not complete; no source review
 def _load_validator() -> object:
     """Load the standalone code-review validator from its shipped location."""
     specification = importlib.util.spec_from_file_location("code_review_validator", REVIEW_VALIDATOR)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     validator = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(validator)
     return validator
@@ -33,7 +33,8 @@ def _load_validator() -> object:
 def _load_module(path: Path, name: str) -> object:
     """Load one shipped helper without changing the process import path."""
     specification = importlib.util.spec_from_file_location(name, path)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module

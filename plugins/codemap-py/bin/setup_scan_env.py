@@ -40,15 +40,20 @@ import tempfile
 from pathlib import Path
 from types import ModuleType
 
+#: Exit code for a successful run.
 _EXIT_OK = 0
+#: Exit code when the ``scan-index`` binary is missing or not executable.
 _EXIT_NO_SCAN_BIN = 1
+#: Exit code when the scan arguments could not be parsed into a project identity.
 _EXIT_PARSE_FAILED = 2
+#: Exit code for a malformed command line.
 _EXIT_BAD_ARGS = 3
 
+#: Script name used as the prefix of this script's error messages.
 _PROG = "setup_scan_env.py"
 
-# Field order of the sourceable state file — pinned by tests and by the SKILL.md
-# blocks that `source` it.
+#: Field order of the sourceable state file — pinned by tests and by the SKILL.md
+#: blocks that `source` it.
 _STATE_FIELDS = ("PROJ_SLUG", "SCAN_BIN", "SCAN_ARGS_RAW", "PROJ_NAME")
 
 
@@ -75,7 +80,7 @@ def _parse_cli(argv: list[str]) -> str:
     index = 0
     while index < len(argv):
         token = argv[index]
-        if token == "--arguments":
+        if token == "--arguments":  # noqa: S105 - CLI flag name, not a credential
             if index + 1 >= len(argv):
                 raise _BadArgs(f"{_PROG}: --arguments needs a value")
             arguments = argv[index + 1]
@@ -146,7 +151,7 @@ def _repo_root() -> str:
     """
     try:
         completed = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             capture_output=True,
             text=True,
             check=False,
@@ -362,7 +367,7 @@ def _derive_identity(arguments: str, plugin_root: Path) -> tuple[str, str, str] 
     """
     try:
         scan_args_raw, root = _derive_scan_args(plugin_root, arguments)
-    except Exception:  # noqa: BLE001 — any parser failure maps to the single exit-2 contract
+    except Exception:
         return None
     repo_root = _repo_root()
     proj_slug = f"{_sanitize_slug(_short_hostname())}-{_sanitize_slug(Path(repo_root).name)}"

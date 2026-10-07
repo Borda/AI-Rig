@@ -28,10 +28,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Final
 
+#: Glob, relative to the home directory, locating installed oss plugin manifests in the Claude plugin cache.
 _VERSION_GLOB: Final = ".claude/plugins/cache/borda-ai-rig/oss/*/.claude-plugin/plugin.json"
+#: Repository-relative plugin manifest path used when no installed plugin manifest is found.
 _VERSION_FALLBACK: Final = "plugins/cc_oss/.claude-plugin/plugin.json"
+#: Agent list shown in the vitality run header for ``--quick`` runs.
 _QUICK_AGENTS: Final = "  - oss:analyse (orchestrator, --quick: core scoring only)"
+#: Agent list shown in the vitality run header for full runs.
 _FULL_AGENTS: Final = "  - oss:analyse (orchestrator)\n  - foundry:challenger (adversarial review)"
+#: Extra agent line appended to the full-run agent list when the Codex review agent is available.
 _CODEX_AGENT: Final = "  - bridge:review (independent repo review + adversarial review)"
 
 
@@ -59,7 +64,7 @@ _DRY_RUN = False
 
 def _set_dry_run(enabled: bool) -> None:
     """Enable or disable dry-run mode for this process."""
-    global _DRY_RUN  # noqa: PLW0603 — one process-wide switch, set once from argv
+    global _DRY_RUN
     _DRY_RUN = enabled
 
 
@@ -98,7 +103,7 @@ def _run(cmd: list[str], timeout: int, fallback: str) -> str:
         Stripped stdout on success, otherwise ``fallback``.
     """
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603 - argv list, no shell
     except (OSError, subprocess.SubprocessError):
         return fallback
     out = proc.stdout.strip()

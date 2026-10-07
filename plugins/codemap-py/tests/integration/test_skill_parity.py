@@ -327,17 +327,27 @@ def test_not_for_references_match_across_runtimes(skill_name: str) -> None:
     assert codex_refs <= _CANONICAL_SKILLS, f"{skill_name}: codex NOT-for references unknown skill(s)"
 
 
-def test_not_for_checker_rejects_contradictory_reference() -> None:
-    """The NOT-for comparator rejects two rosters deferring to a different skill for the same claim."""
-    claude_text = "NOT for: renaming symbols (use `/codemap-py:rename-refs`)."
-    codex_text = "NOT for: renaming symbols (use `$codemap-py:query-code`)."
-    assert _not_for_skill_refs(claude_text) != _not_for_skill_refs(codex_text)
+@pytest.mark.parametrize(
+    ("claude_text", "codex_text"),
+    [
+        pytest.param(
+            "NOT for: renaming symbols (use `/codemap-py:rename-refs`).",
+            "NOT for: renaming symbols (use `$codemap-py:query-code`).",
+            id="contradictory-skill-reference",
+        ),
+        pytest.param(
+            "NOT for: index rebuild (use `/codemap-py:scan-codebase`).",
+            "NOT for: index rebuild — no equivalent skill; edit `~/.claude/plugins/cache/foo` directly.",
+            id="unsupported-cache-path-masquerading-as-skill-ref",
+        ),
+    ],
+)
+def test_not_for_checker_rejects_mismatched_rosters(claude_text: str, codex_text: str) -> None:
+    """The NOT-for comparator detects two rosters that defer to different skills for the same claim.
 
-
-def test_not_for_checker_rejects_unsupported_cache_path_masquerading_as_skill_ref() -> None:
-    """A contradictory limit — one roster naming a skill the other omits — is detected as a real mismatch."""
-    claude_text = "NOT for: index rebuild (use `/codemap-py:scan-codebase`)."
-    codex_text = "NOT for: index rebuild — no equivalent skill; edit `~/.claude/plugins/cache/foo` directly."
+    One roster deferring to a different skill, or naming a skill the other omits (here a cache path standing in for a
+    skill reference), is a real mismatch the comparator must report.
+    """
     assert _not_for_skill_refs(claude_text) != _not_for_skill_refs(codex_text)
 
 
@@ -347,7 +357,7 @@ def test_not_for_checker_rejects_unsupported_cache_path_masquerading_as_skill_re
 
 
 @pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
 )
 def test_query_code_routes_centrality_and_transitive_blast_to_supported_commands(runtime_dir: Path) -> None:
     """Keep centrality and transitive caller requests off coupling and invented flags."""
@@ -358,7 +368,7 @@ def test_query_code_routes_centrality_and_transitive_blast_to_supported_commands
 
 
 @pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
 )
 def test_query_code_execution_contract_bounds_concurrency_and_retries(runtime_dir: Path) -> None:
     """Require stable-index concurrency, dependency waits, and recurrence stops in both rosters."""
@@ -370,11 +380,11 @@ def test_query_code_execution_contract_bounds_concurrency_and_retries(runtime_di
 
 @pytest.mark.parametrize(
     "contract_path",
-    (
+    [
         pytest.param(_CLAUDE_SKILLS_DIR / "query-code" / "SKILL.md", id="claude"),
         pytest.param(_CODEX_SKILLS_DIR / "query-code" / "SKILL.md", id="codex"),
         pytest.param(_CAPABILITY_CONTRACT, id="shared-contract"),
-    ),
+    ],
 )
 def test_query_code_skips_fully_localized_edits_but_preserves_explicit_structural_routing(
     contract_path: Path,
@@ -387,11 +397,11 @@ def test_query_code_skips_fully_localized_edits_but_preserves_explicit_structura
 
 @pytest.mark.parametrize(
     "contract_path",
-    (
+    [
         pytest.param(_CLAUDE_SKILLS_DIR / "query-code" / "SKILL.md", id="claude"),
         pytest.param(_CODEX_SKILLS_DIR / "query-code" / "SKILL.md", id="codex"),
         pytest.param(_CAPABILITY_CONTRACT, id="shared-contract"),
-    ),
+    ],
 )
 def test_query_code_treats_lifecycle_boundaries_as_nonlocal_source_scope(contract_path: Path) -> None:
     """Prevent a complete symbol lookup from being mistaken for runtime-behavior evidence."""
@@ -401,7 +411,7 @@ def test_query_code_treats_lifecycle_boundaries_as_nonlocal_source_scope(contrac
 
 
 @pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
 )
 def test_query_code_routes_ambiguous_caller_requests_to_direct_production_callers(runtime_dir: Path) -> None:
     """Prevent `fn-blast` for direct caller requests phrased as a blast radius or every caller."""
@@ -412,11 +422,11 @@ def test_query_code_routes_ambiguous_caller_requests_to_direct_production_caller
 
 @pytest.mark.parametrize(
     "contract_path",
-    (
+    [
         pytest.param(_CLAUDE_SKILLS_DIR / "query-code" / "SKILL.md", id="claude"),
         pytest.param(_CODEX_SKILLS_DIR / "query-code" / "SKILL.md", id="codex"),
         pytest.param(_CAPABILITY_CONTRACT, id="shared-contract"),
-    ),
+    ],
 )
 def test_query_code_resolves_result_paths_from_the_callers_repository(contract_path: Path) -> None:
     """Prevent complete query results from being re-read relative to an installed Skill directory."""
@@ -460,7 +470,7 @@ def test_claude_query_code_limits_bash_to_the_query_cli() -> None:
 
 
 @pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
 )
 def test_custom_root_scan_followup_selects_the_emitted_index(runtime_dir: Path) -> None:
     """Custom-root guidance preserves query path resolution while selecting its index."""
@@ -488,11 +498,11 @@ def test_claude_query_frontmatter_rejects_unrestricted_bash() -> None:
 
 @pytest.mark.parametrize(
     "contract_path",
-    (
+    [
         pytest.param(_CLAUDE_SKILLS_DIR / "query-code" / "SKILL.md", id="claude"),
         pytest.param(_CODEX_SKILLS_DIR / "query-code" / "SKILL.md", id="codex"),
         pytest.param(_CAPABILITY_CONTRACT, id="shared-contract"),
-    ),
+    ],
 )
 def test_query_code_routes_direct_test_importers_to_module_rdeps(contract_path: Path) -> None:
     """Keep direct test-module importer requests on ``rdeps`` in every truth-claim surface."""
@@ -501,21 +511,38 @@ def test_query_code_routes_direct_test_importers_to_module_rdeps(contract_path: 
     assert "`rdeps <module>`" in skill_text
     assert "filter/report test" in skill_text
     assert "`test-impact <target>`" in skill_text
-    assert "direct" in skill_text and "test" in skill_text and "import" in skill_text and "transitive" in skill_text
+    assert "direct" in skill_text
+    assert "test" in skill_text
+    assert "import" in skill_text
+    assert "transitive" in skill_text
 
 
 @pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
 )
-def test_query_code_allows_two_queries_when_one_answer_requires_callers_and_test_importers(runtime_dir: Path) -> None:
-    """Keep a one-query optimization from dropping an independently required result set."""
-    skill_text = " ".join((runtime_dir / "query-code" / "SKILL.md").read_text(encoding="utf-8").lower().split())
+@pytest.mark.parametrize(
+    "snippets",
+    [
+        pytest.param(_CALLER_AND_TEST_IMPORT_ROUTING_SNIPPETS, id="callers-and-test-importers-take-two-queries"),
+        pytest.param(_SYMBOL_TO_CALL_GRAPH_CHAINING_SNIPPETS, id="symbol-results-compose-into-call-graph-queries"),
+        pytest.param(_OVERRIDE_CANDIDATE_SNIPPETS, id="override-candidates-are-name-matches"),
+    ],
+)
+def test_query_code_routing_guidance_is_present(runtime_dir: Path, snippets: tuple[str, ...]) -> None:
+    """Each query-code routing rule is stated in both rosters, in whitespace-normalised prose.
 
-    assert all(snippet in skill_text for snippet in _CALLER_AND_TEST_IMPORT_ROUTING_SNIPPETS)
+    Two queries are allowed when one answer requires callers and test importers, so a one-query optimization cannot drop
+    an independently required result set; symbol results are composed into function-call queries, so a bare method
+    suffix does not waste a call-graph query before the canonical target is retried; and override candidates require
+    complete same-name discovery plus explicit inheritance verification.
+    """
+    flat = _flat(_skill_text(runtime_dir, "query-code"))
+
+    assert all(snippet in flat for snippet in snippets)
 
 
 @pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
 )
 def test_query_code_preserves_symbol_target_grammar_for_feature_scaffolding(runtime_dir: Path) -> None:
     """Feature scaffolding queries the named method, not a nearby class or module inventory."""
@@ -524,26 +551,6 @@ def test_query_code_preserves_symbol_target_grammar_for_feature_scaffolding(runt
 
     assert all(snippet in skill_text for snippet in _SYMBOL_TARGET_GRAMMAR_SNIPPETS)
     assert "not nearby" in skill_text or "not a nearby" in skill_text
-
-
-@pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
-)
-def test_query_code_composes_symbol_results_for_function_call_queries(runtime_dir: Path) -> None:
-    """Prevent a bare method suffix from wasting a call-graph query before the canonical target is retried."""
-    skill_text = " ".join((runtime_dir / "query-code" / "SKILL.md").read_text(encoding="utf-8").lower().split())
-
-    assert all(snippet in skill_text for snippet in _SYMBOL_TO_CALL_GRAPH_CHAINING_SNIPPETS)
-
-
-@pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
-)
-def test_query_code_qualifies_override_candidates_as_name_matches(runtime_dir: Path) -> None:
-    """Require complete same-name candidate discovery plus explicit inheritance verification."""
-    skill_text = " ".join((runtime_dir / "query-code" / "SKILL.md").read_text(encoding="utf-8").lower().split())
-
-    assert all(snippet in skill_text for snippet in _OVERRIDE_CANDIDATE_SNIPPETS)
 
 
 # --------------------------------------------------------------------------------------
@@ -596,7 +603,7 @@ def _flat(text: str) -> str:
 
 
 @pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
 )
 @pytest.mark.parametrize("skill_name", _GATED_DISPATCH_SKILLS)
 def test_both_rosters_drive_the_gated_codemap_py_dispatcher(runtime_dir: Path, skill_name: str) -> None:
@@ -636,7 +643,7 @@ def test_every_codex_skill_carries_a_runtime_note(skill_name: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
 )
 def test_rename_refs_qname_grammar_matches_find_symbol_source(runtime_dir: Path) -> None:
     """Match a symbol-local ``qualified_name``; a ``module::symbol`` form returns zero matches."""
@@ -647,7 +654,7 @@ def test_rename_refs_qname_grammar_matches_find_symbol_source(runtime_dir: Path)
 
 
 @pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
 )
 def test_query_code_discloses_the_result_cap_beside_the_stop_querying_rule(runtime_dir: Path) -> None:
     """Score graph coverage only — the 20-item cap must be disclosed next to it."""
@@ -701,7 +708,7 @@ def test_scan_codebase_reports_the_scanners_real_exit_code() -> None:
 
 
 @pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
 )
 def test_scan_codebase_uses_one_unknown_flag_string(runtime_dir: Path) -> None:
     """Prose, shell, and the sibling roster must print the same rejection wording, not three synonyms."""
@@ -712,28 +719,27 @@ def test_scan_codebase_uses_one_unknown_flag_string(runtime_dir: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
 )
-def test_query_code_routing_table_admits_it_is_partial(runtime_dir: Path) -> None:
-    """The table is a shortlist — both rosters must route an unlisted need to ``--help``, never to a guessed name."""
-    flat = _flat(_skill_text(runtime_dir, "query-code"))
-
-    assert "routing shortlist, not the parser's full surface" in flat
-    assert "--help" in flat
-
-
 @pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
+    "required_phrases",
+    [
+        pytest.param(
+            ("routing shortlist, not the parser's full surface", "--help"), id="routing-table-admits-it-is-partial"
+        ),
+        pytest.param(("test-impact split", "one-off structural fact"), id="test-impact-subcommand-versus-skill-split"),
+    ],
 )
-def test_query_code_states_the_test_impact_subcommand_versus_skill_split(runtime_dir: Path) -> None:
-    """One-off structural fact → the subcommand here; full workflow → the ``test-impact`` skill.
+def test_query_code_states_its_routing_limits(runtime_dir: Path, required_phrases: tuple[str, ...]) -> None:
+    """The query-code skill states where its routing guidance stops, in both rosters.
 
-    Both are supported.
+    The table is a shortlist, so both rosters must route an unlisted need to ``--help``, never to a guessed name. A one-
+    off structural fact goes to the ``test-impact`` subcommand here and a full workflow to the ``test-impact`` skill;
+    both are supported.
     """
     flat = _flat(_skill_text(runtime_dir, "query-code"))
 
-    assert "test-impact split" in flat
-    assert "one-off structural fact" in flat
+    assert all(phrase in flat for phrase in required_phrases)
 
 
 def test_contract_records_the_test_impact_routing_split() -> None:
@@ -742,7 +748,7 @@ def test_contract_records_the_test_impact_routing_split() -> None:
 
 
 @pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
 )
 def test_rename_refs_needs_no_jq(runtime_dir: Path) -> None:
     """Keep rename-reference workflows independent of an optional JSON utility."""
@@ -752,7 +758,7 @@ def test_rename_refs_needs_no_jq(runtime_dir: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
 )
 def test_rename_refs_reads_completeness_forward_first(runtime_dir: Path) -> None:
     """Prefer the current completeness field over its legacy alias."""
@@ -763,7 +769,7 @@ def test_rename_refs_reads_completeness_forward_first(runtime_dir: Path) -> None
 
 
 @pytest.mark.parametrize(
-    "runtime_dir", (pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex"))
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
 )
 @pytest.mark.parametrize("skill_name", _OUTPUT_WRITING_SKILLS)
 def test_report_paths_are_branch_scoped_and_never_overwritten(runtime_dir: Path, skill_name: str) -> None:
@@ -776,11 +782,11 @@ def test_report_paths_are_branch_scoped_and_never_overwritten(runtime_dir: Path,
 
 @pytest.mark.parametrize(
     "contract_path",
-    (
+    [
         pytest.param(_CLAUDE_SKILLS_DIR / "integration" / "SKILL.md", id="claude"),
         pytest.param(_CODEX_SKILLS_DIR / "integration" / "SKILL.md", id="codex"),
         pytest.param(_INTEGRATION_CONTRACT, id="integration-contract"),
-    ),
+    ],
 )
 def test_integration_demo_promises_current_structural_smoke_evidence(contract_path: Path) -> None:
     """Keep the demo promise aligned with the implemented audit plus one structural smoke query."""
@@ -792,11 +798,11 @@ def test_integration_demo_promises_current_structural_smoke_evidence(contract_pa
 
 @pytest.mark.parametrize(
     "contract_path",
-    (
+    [
         pytest.param(_CLAUDE_SKILLS_DIR / "integration" / "SKILL.md", id="claude"),
         pytest.param(_CODEX_SKILLS_DIR / "integration" / "SKILL.md", id="codex"),
         pytest.param(_INTEGRATION_CONTRACT, id="integration-contract"),
-    ),
+    ],
 )
 def test_integration_surfaces_separate_active_guidance_and_metadata_evidence(contract_path: Path) -> None:
     """Keep setup guidance honest about active consumers, reusable artifacts, and session limits."""
@@ -804,8 +810,11 @@ def test_integration_surfaces_separate_active_guidance_and_metadata_evidence(con
 
     assert "active consumer" in flat
     assert "metadata-only" in flat
-    assert "one" in flat and "artifact" in flat and "reuse" in flat
-    assert "installed" in flat and "session" in flat
+    assert "one" in flat
+    assert "artifact" in flat
+    assert "reuse" in flat
+    assert "installed" in flat
+    assert "session" in flat
 
 
 @pytest.mark.parametrize("helper", ["anonymize.py", "join_avoidance.py"])

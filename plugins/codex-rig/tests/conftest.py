@@ -32,6 +32,8 @@ def text_newline_default(request: pytest.FixtureRequest, monkeypatch: pytest.Mon
             path, data, encoding=encoding, errors=errors, newline=request.param if newline is None else newline
         )
 
+    # Every test using one newline default patches an equivalent writer; the tag lets cached fixture trees be shared.
+    write_with_default.template_identity = ("text_newline_default", request.param)  # type: ignore[attr-defined]
     monkeypatch.setattr(Path, "write_text", write_with_default)
 
 

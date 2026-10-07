@@ -12,14 +12,14 @@ from types import ModuleType
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _module(path: Path) -> ModuleType:
     """Load existing installed helpers and test-only artifact construction."""
     spec = importlib.util.spec_from_file_location(path.stem.replace("-", "_"), path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

@@ -18,6 +18,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+def _write_files(root: Path, files: dict[str, str]) -> None:
+    """Write each relative-path source in ``files`` under ``root``, creating parent directories."""
+    for relative_path, text in files.items():
+        path = root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+
 class TestTaskContractValidation:
     """Validate executable query contracts declared by the active task suite."""
 
@@ -95,7 +103,7 @@ class TestTaskContractValidation:
         """Malformed execution metadata fails before any benchmark coordinate runs."""
         assert script_gen_bench._expected_query_contract_errors([task]) == [expected_error]
 
-    @pytest.mark.parametrize("task_id", ("DI-01", "DI-02", "DI-03", "DI-04", "DI-05", "DI-06"))
+    @pytest.mark.parametrize("task_id", ["DI-01", "DI-02", "DI-03", "DI-04", "DI-05", "DI-06"])
     def test_every_diff_impact_task_requires_both_direct_query_components(
         self, script_gen_bench: Any, task_id: str
     ) -> None:
@@ -210,27 +218,21 @@ class TestResolveIndexPath:
         result = script_gen_bench.resolve_index_path(explicit, tmp_path)
         assert result == Path(explicit)
 
-    def test_finds_index_in_cache_codemap(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Discovers index JSON at <repo>/.cache/codemap/<name>.json.
+    @pytest.mark.parametrize(
+        "cache_layout",
+        [
+            pytest.param("codemap", id="cache-codemap"),
+            pytest.param("scan", id="cache-scan-legacy"),
+        ],
+    )
+    def test_finds_index_in_cache_layout(self, script_gen_bench: Any, tmp_path: Path, cache_layout: str) -> None:
+        """Discovers index JSON at <repo>/.cache/<layout>/<name>.json.
 
-        Scenario: default layout; index built into .cache/codemap/.
+        Scenario: default layout builds the index into .cache/codemap/; an older layout uses .cache/scan/ and is
+        found when .cache/codemap/<name>.json is absent.
         """
         repo_name = tmp_path.name
-        cache_dir = tmp_path / ".cache" / "codemap"
-        cache_dir.mkdir(parents=True)
-        index_file = cache_dir / f"{repo_name}.json"
-        index_file.write_text("{}")
-
-        result = script_gen_bench.resolve_index_path(None, tmp_path)
-        assert result == index_file
-
-    def test_finds_index_in_cache_scan(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Falls back to .cache/scan/ when .cache/codemap/<name>.json absent.
-
-        Scenario: older layout uses .cache/scan/ instead of .cache/codemap/.
-        """
-        repo_name = tmp_path.name
-        cache_dir = tmp_path / ".cache" / "scan"
+        cache_dir = tmp_path / ".cache" / cache_layout
         cache_dir.mkdir(parents=True)
         index_file = cache_dir / f"{repo_name}.json"
         index_file.write_text("{}")
@@ -310,12 +312,22 @@ class TestRunScanQuery:
 
         assert result == payload
 
-    def test_returns_none_on_nonzero_exit(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Return None when subprocess exits non-zero.
+    @pytest.mark.parametrize(
+        ("returncode", "stdout"),
+        [
+            pytest.param(1, "", id="nonzero-exit"),
+            pytest.param(0, "not json output", id="json-decode-error"),
+        ],
+    )
+    def test_returns_none_on_unusable_process_result(
+        self, script_gen_bench: Any, tmp_path: Path, returncode: int, stdout: str
+    ) -> None:
+        """Return None when subprocess exits non-zero or prints output that is not valid JSON.
 
-        Scenario: scan-query fails (e.g., index not found); caller gets None.
+        Scenario: scan-query fails (e.g., index not found) or prints a human-readable error so the JSON parse fails;
+        the caller gets None.
         """
-        proc = self._make_proc(1, "")
+        proc = self._make_proc(returncode, stdout)
         sq = tmp_path / "scan-query"
         index = tmp_path / "index.json"
 
@@ -324,42 +336,25 @@ class TestRunScanQuery:
 
         assert result is None
 
-    def test_returns_none_on_json_decode_error(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Return None when subprocess output is not valid JSON.
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            pytest.param(subprocess.TimeoutExpired(cmd="sq", timeout=30), id="timeout"),
+            pytest.param(OSError("no such file"), id="os-error"),
+        ],
+    )
+    def test_returns_none_when_subprocess_cannot_complete(
+        self, script_gen_bench: Any, tmp_path: Path, failure: BaseException
+    ) -> None:
+        """Return None when the subprocess times out or the binary cannot be executed.
 
-        Scenario: scan-query prints human-readable error; JSON parse fails.
-        """
-        proc = self._make_proc(0, "not json output")
-        sq = tmp_path / "scan-query"
-        index = tmp_path / "index.json"
-
-        with patch("subprocess.run", return_value=proc):
-            result = script_gen_bench.run_scan_query(sq, ["symbol", "X"], index, tmp_path)
-
-        assert result is None
-
-    def test_returns_none_on_timeout(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Return None when subprocess times out.
-
-        Scenario: scan-query hangs; TimeoutExpired is caught and swallowed.
+        Scenario: scan-query hangs (TimeoutExpired) or its path does not exist or permissions are denied (OSError);
+        both are caught and swallowed.
         """
         sq = tmp_path / "scan-query"
         index = tmp_path / "index.json"
 
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="sq", timeout=30)):
-            result = script_gen_bench.run_scan_query(sq, ["symbol", "X"], index, tmp_path)
-
-        assert result is None
-
-    def test_returns_none_on_os_error(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Return None when the binary cannot be executed (OSError).
-
-        Scenario: scan-query path does not exist or permissions denied.
-        """
-        sq = tmp_path / "scan-query"
-        index = tmp_path / "index.json"
-
-        with patch("subprocess.run", side_effect=OSError("no such file")):
+        with patch("subprocess.run", side_effect=failure):
             result = script_gen_bench.run_scan_query(sq, ["symbol", "X"], index, tmp_path)
 
         assert result is None
@@ -407,22 +402,6 @@ class TestValidateSymbol:
         assert live_gt["start_line"] == 10
         assert live_gt["end_line"] == 20
 
-    def test_fails_when_start_line_differs(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Return (False, live_gt, reason) when start_line does not match ground truth.
-
-        Scenario: index rebuilt after refactor shifted function up one line.
-        """
-        task = self._task("pkg.mod", "MyClass.method", 10, 20)
-        payload = self._sq_response(
-            [{"module": "pkg.mod", "qualified_name": "MyClass.method", "start_line": 99, "end_line": 20}]
-        )
-
-        with patch.object(script_gen_bench, "run_scan_query", return_value=payload):
-            ok, live_gt, reason = script_gen_bench._validate_symbol(task, MagicMock(), tmp_path / "idx.json", tmp_path)
-
-        assert ok is False
-        assert "start_line" in reason
-
     def test_fails_when_symbol_not_found(self, script_gen_bench: Any, tmp_path: Path) -> None:
         """Return (False, None, reason) when symbol absent from scan-query results.
 
@@ -446,7 +425,7 @@ class TestValidateSymbol:
         task = self._task("pkg.mod", "MyClass.method", 1, 5)
 
         with patch.object(script_gen_bench, "run_scan_query", return_value=None):
-            ok, live_gt, reason = script_gen_bench._validate_symbol(task, MagicMock(), tmp_path / "idx.json", tmp_path)
+            ok, live_gt, _reason = script_gen_bench._validate_symbol(task, MagicMock(), tmp_path / "idx.json", tmp_path)
 
         assert ok is False
         assert live_gt is None
@@ -464,13 +443,15 @@ class TestValidateSymbol:
         )
 
         with patch.object(script_gen_bench, "run_scan_query", return_value=payload):
-            ok, live_gt, reason = script_gen_bench._validate_symbol(task, MagicMock(), tmp_path / "idx.json", tmp_path)
+            _ok, live_gt, _reason = script_gen_bench._validate_symbol(
+                task, MagicMock(), tmp_path / "idx.json", tmp_path
+            )
 
         # Symbol IS found via widened match; line numbers match so ok=True
         assert live_gt is not None  # widened match succeeded
 
     @pytest.mark.parametrize(
-        "gt_field,live_value,expected_problem",
+        ("gt_field", "live_value", "expected_problem"),
         [
             pytest.param("start_line", 99, "start_line", id="start_line"),
             pytest.param("end_line", 99, "end_line", id="end_line"),
@@ -575,44 +556,40 @@ class TestValidateFn:
         self._write_callers(tmp_path, callers, "target")
 
         with patch.object(script_gen_bench, "run_scan_query", return_value=payload):
-            ok, live_gt, reason = script_gen_bench._validate_fn(task, MagicMock(), tmp_path / "idx.json", tmp_path)
+            ok, _live_gt, reason = script_gen_bench._validate_fn(task, MagicMock(), tmp_path / "idx.json", tmp_path)
 
         assert ok is True
         assert reason == ""
 
-    def test_fails_on_extra_caller(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Return failure when the AST oracle finds a caller not in ground truth.
+    @pytest.mark.parametrize(
+        ("gt_callers", "oracle_callers", "expected_fragment"),
+        [
+            pytest.param(["mod.a::fn_a"], ["mod.a::fn_a", "mod.b::fn_b"], "extra", id="extra-caller"),
+            pytest.param(["mod.a::fn_a", "mod.b::fn_b"], ["mod.a::fn_a"], "missing", id="missing-caller"),
+        ],
+    )
+    def test_fails_when_oracle_callers_diverge_from_ground_truth(
+        self,
+        script_gen_bench: Any,
+        tmp_path: Path,
+        gt_callers: list[str],
+        oracle_callers: list[str],
+        expected_fragment: str,
+    ) -> None:
+        """Return failure when the AST oracle finds a caller not in ground truth or lacks a stored caller.
 
-        Scenario: new function added that calls target; GT is stale relative to the oracle.
+        Scenario: a new function calls target so GT is stale (extra caller), or a caller was refactored away so the
+        oracle no longer sees it in source (missing caller).
         """
-        gt_callers = ["mod.a::fn_a"]
-        task = self._task("mod::target", gt_callers, 1, 1)
-        oracle_callers = ["mod.a::fn_a", "mod.b::fn_b"]  # extra caller present in source
-        payload = self._sq_response(oracle_callers, 2)
+        task = self._task("mod::target", gt_callers, len(gt_callers), len(gt_callers))
+        payload = self._sq_response(oracle_callers, len(oracle_callers))
         self._write_callers(tmp_path, oracle_callers, "target")
 
         with patch.object(script_gen_bench, "run_scan_query", return_value=payload):
             ok, _, reason = script_gen_bench._validate_fn(task, MagicMock(), tmp_path / "idx.json", tmp_path)
 
         assert ok is False
-        assert "extra" in reason
-
-    def test_fails_on_missing_caller(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Return failure when a ground-truth caller is absent from the AST oracle.
-
-        Scenario: caller refactored away; the oracle no longer sees it in source.
-        """
-        gt_callers = ["mod.a::fn_a", "mod.b::fn_b"]
-        task = self._task("mod::target", gt_callers, 2, 2)
-        oracle_callers = ["mod.a::fn_a"]  # missing mod.b::fn_b in source
-        payload = self._sq_response(oracle_callers, 1)
-        self._write_callers(tmp_path, oracle_callers, "target")
-
-        with patch.object(script_gen_bench, "run_scan_query", return_value=payload):
-            ok, _, reason = script_gen_bench._validate_fn(task, MagicMock(), tmp_path / "idx.json", tmp_path)
-
-        assert ok is False
-        assert "missing" in reason
+        assert expected_fragment in reason
 
     def test_fails_on_count_mismatch(self, script_gen_bench: Any, tmp_path: Path) -> None:
         """Return failure when unique_caller_count differs from ground truth.
@@ -637,7 +614,7 @@ class TestValidateFn:
         task = self._task("mod::fn", [], 0, 0)
 
         with patch.object(script_gen_bench, "run_scan_query", return_value=None):
-            ok, live_gt, reason = script_gen_bench._validate_fn(task, MagicMock(), tmp_path / "idx.json", tmp_path)
+            ok, live_gt, _reason = script_gen_bench._validate_fn(task, MagicMock(), tmp_path / "idx.json", tmp_path)
 
         assert ok is False
         assert live_gt is None
@@ -676,7 +653,7 @@ class TestValidateFn:
         self._write_callers(tmp_path, ["mod.a::fn_a"], "target")
 
         with patch.object(script_gen_bench, "run_scan_query", return_value=payload):
-            ok, live_gt, _ = script_gen_bench._validate_fn(task, MagicMock(), tmp_path / "idx.json", tmp_path)
+            _ok, live_gt, _ = script_gen_bench._validate_fn(task, MagicMock(), tmp_path / "idx.json", tmp_path)
 
         assert live_gt["unique_caller_count"] == 1  # AST oracle (authoritative)
         assert live_gt["scan_caller_count"] == 1  # scan output deduplicated
@@ -691,7 +668,7 @@ class TestExtractRvValue:
     """Correct value extracted per (cmd, match_type) combination."""
 
     @pytest.mark.parametrize(
-        "cmd,data,expected",
+        ("cmd", "data", "expected"),
         [
             pytest.param("rdeps", {"imported_by": ["a", "b", "c"]}, 3, id="rdeps-imported_by-a-b-c"),
             pytest.param("rdeps", {"imported_by": []}, 0, id="rdeps-imported_by"),
@@ -712,7 +689,7 @@ class TestExtractRvValue:
         assert result == expected
 
     @pytest.mark.parametrize(
-        "cmd,data,count_hint,expected",
+        ("cmd", "data", "count_hint", "expected"),
         [
             pytest.param(
                 "undocumented",
@@ -779,23 +756,6 @@ class TestValidateRv:
             "expected_queries": expected_queries,
         }
 
-    def test_passes_when_integer_count_matches(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Return (True, live_gt, '') when integer sub-question count matches GT.
-
-        Scenario: fn-rdeps count matches stored expected count.
-        """
-        task = self._task([{"id": "sq1", "match": "integer_extract", "ground_truth": {"count": 3}}])
-        payload = {"count": 3, "called_by": []}
-
-        with (
-            patch.object(script_gen_bench, "_rv_ast_value", return_value=(3, True, None)),
-            patch.object(script_gen_bench, "run_scan_query", return_value=payload),
-        ):
-            ok, live_gt, reason = script_gen_bench._validate_rv(task, MagicMock(), tmp_path / "idx.json", tmp_path)
-
-        assert ok is True
-        assert reason == ""
-
     def test_preserves_index_path_after_enumerating_review_subquestions(
         self, script_gen_bench: Any, tmp_path: Path
     ) -> None:
@@ -850,7 +810,7 @@ class TestValidateRv:
             patch.object(script_gen_bench, "_rv_ast_value", return_value=(["A", "B"], True, None)),
             patch.object(script_gen_bench, "run_scan_query", return_value=payload),
         ):
-            ok, _, reason = script_gen_bench._validate_rv(task, MagicMock(), tmp_path / "idx.json", tmp_path)
+            ok, _, _reason = script_gen_bench._validate_rv(task, MagicMock(), tmp_path / "idx.json", tmp_path)
 
         assert ok is True
 
@@ -1171,7 +1131,7 @@ class TestValidateOss:
         payload = {"coupled": [{"name": "my.module", "dep_count": 10, "internal_dep_count": 5}]}
 
         with patch.object(script_gen_bench, "run_scan_query", return_value=payload):
-            ok, _, reason = script_gen_bench._validate_oss(task, MagicMock(), tmp_path / "idx.json", tmp_path)
+            ok, _, _reason = script_gen_bench._validate_oss(task, MagicMock(), tmp_path / "idx.json", tmp_path)
 
         assert ok is True
 
@@ -1198,7 +1158,7 @@ class TestValidateOss:
         payload = {"coupled": []}
 
         with patch.object(script_gen_bench, "run_scan_query", return_value=payload):
-            ok, live_gt, reason = script_gen_bench._validate_oss(task, MagicMock(), tmp_path / "idx.json", tmp_path)
+            ok, _live_gt, reason = script_gen_bench._validate_oss(task, MagicMock(), tmp_path / "idx.json", tmp_path)
 
         assert ok is False
         assert "empty" in reason
@@ -1306,7 +1266,7 @@ class TestValidateOss:
             "ground_truth": {"check": "undocumented", "undocumented_count": 0, "undocumented_symbols": []},
         }
 
-        ok, live_gt, reason = script_gen_bench._validate_oss(task, MagicMock(), tmp_path / "idx.json", tmp_path)
+        ok, live_gt, _reason = script_gen_bench._validate_oss(task, MagicMock(), tmp_path / "idx.json", tmp_path)
 
         assert ok is False
         assert live_gt is None
@@ -1325,7 +1285,7 @@ class TestValidateOss:
         assert live_gt is None
 
     @pytest.mark.parametrize(
-        "task,payload,reason_fragment",
+        ("task", "payload", "reason_fragment"),
         [
             pytest.param(
                 _task_undocumented(None, 0, []), {"undocumented": []}, "total", id="_task_undocumented-none-0"
@@ -1566,7 +1526,7 @@ class TestValidatorsDict:
     """Map each documented task type to its validator."""
 
     @pytest.mark.parametrize(
-        "task_type,expected_fn_name",
+        ("task_type", "expected_fn_name"),
         [
             pytest.param("SYMBOL_EXTRACTION", "_validate_symbol", id="symbol_extraction"),
             pytest.param("FN_CALL_GRAPH", "_validate_fn", id="fn_call_graph"),
@@ -1611,49 +1571,42 @@ class TestCallFinderAst:
         script_gen_bench._CallFinder(simple_name, rel_module, callers).visit(tree)
         return callers
 
-    def test_finds_direct_call(self, script_gen_bench: Any) -> None:
-        """Records module::function when function directly calls the target.
+    @pytest.mark.parametrize(
+        ("source", "expected_caller"),
+        [
+            pytest.param("def caller():\n    target()\n", "mod::caller", id="direct-call"),
+            pytest.param("def caller():\n    obj.target()\n", "mod::caller", id="attribute-call"),
+            pytest.param(
+                "class MyClass:\n    def my_method(self):\n        target()\n",
+                "mod::MyClass.my_method",
+                id="nested-class-method",
+            ),
+        ],
+    )
+    def test_records_enclosing_scope_of_matching_call(
+        self, script_gen_bench: Any, source: str, expected_caller: str
+    ) -> None:
+        """Records module::scope when a function or method calls the target by name or attribute.
 
-        Scenario: simple function calling target by name.
+        Scenario: a simple function calling the target by name, a method call via attribute access (obj.target()), and
+        a call inside a class method whose scope stack includes class and method (Module::Class.method).
         """
-        source = "def caller():\n    target()\n"
         callers = self._parse_and_visit(script_gen_bench, source, "target", "mod")
-        assert "mod::caller" in callers
+        assert expected_caller in callers
 
-    def test_finds_attribute_call(self, script_gen_bench: Any) -> None:
-        """Records caller when target is called as attribute (obj.target()).
+    @pytest.mark.parametrize(
+        "source",
+        [
+            pytest.param("target()\n", id="module-level-call"),
+            pytest.param("def caller():\n    other_fn()\n", id="different-name"),
+        ],
+    )
+    def test_does_not_record_unmatched_calls(self, script_gen_bench: Any, source: str) -> None:
+        """Records nothing for a call outside any scope or for a function with a different name.
 
-        Scenario: method call via attribute access; dot-call form.
+        Scenario: a call at module level is ignored per the _scope_stack guard (``if matched and self._scope_stack``);
+        a false-positive guard ensures only the exact simple name matches.
         """
-        source = "def caller():\n    obj.target()\n"
-        callers = self._parse_and_visit(script_gen_bench, source, "target", "mod")
-        assert "mod::caller" in callers
-
-    def test_does_not_record_module_level_call(self, script_gen_bench: Any) -> None:
-        """Does not record call at module level (no enclosing scope stack).
-
-        Scenario: call outside any function/class is ignored per _scope_stack
-        guard (``if matched and self._scope_stack``).
-        """
-        source = "target()\n"
-        callers = self._parse_and_visit(script_gen_bench, source, "target", "mod")
-        assert callers == set()
-
-    def test_nested_class_method(self, script_gen_bench: Any) -> None:
-        """Records nested class method as Module::Class.method scope string.
-
-        Scenario: call inside a method; scope stack includes class and method.
-        """
-        source = "class MyClass:\n    def my_method(self):\n        target()\n"
-        callers = self._parse_and_visit(script_gen_bench, source, "target", "mod")
-        assert "mod::MyClass.my_method" in callers
-
-    def test_does_not_match_different_name(self, script_gen_bench: Any) -> None:
-        """Does not record callers of functions with different names.
-
-        Scenario: false-positive guard; only exact simple name matches.
-        """
-        source = "def caller():\n    other_fn()\n"
         callers = self._parse_and_visit(script_gen_bench, source, "target", "mod")
         assert callers == set()
 
@@ -1696,7 +1649,7 @@ class TestCallFinderAst:
         """
         (tmp_path / "broken.py").write_text("def bad syntax !!!\n")
         (tmp_path / "good.py").write_text("def ok():\n    target()\n")
-        callers, err = script_gen_bench._callers_via_ast("any::target", tmp_path)
+        callers, _err = script_gen_bench._callers_via_ast("any::target", tmp_path)
         # good.py must still be processed
         assert "good::ok" in callers
 
@@ -1725,15 +1678,6 @@ class TestQualifiedCallerOracle:
         assert qualified == {"m::Foo.caller"}
         assert "m::Baz.other" in loose
 
-    def test_direct_class_instantiation_credited(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """A `Foo().bar()` reference resolves to the target class and is credited.
-
-        Scenario: a free function instantiates the class and calls the method directly.
-        """
-        (tmp_path / "m.py").write_text("def use():\n    Foo().bar()\n")
-        qualified, _loose, _ = script_gen_bench._walk_caller_sets("m::Foo.bar", tmp_path)
-        assert qualified == {"m::use"}
-
     def test_module_function_attribute_call_uses_target_module(self, script_gen_bench: Any, tmp_path: Path) -> None:
         """A cross-module `foo.func()` is credited only when `foo` is the TARGET module, not the caller.
 
@@ -1748,134 +1692,146 @@ class TestQualifiedCallerOracle:
         qualified, _loose, _ = script_gen_bench._walk_caller_sets("pkg.foo::func", tmp_path)
         assert qualified == {"pkg.bar::use_target"}
 
-    def test_bare_call_imported_from_external_module_is_not_credited(
-        self, script_gen_bench: Any, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("files", "expected_qualified", "expected_loose"),
+        [
+            pytest.param(
+                {
+                    "caller.py": "from external.helpers import is_overridden\n\n\ndef use_external():\n    is_overridden()\n"
+                },
+                set(),
+                {"caller::use_external"},
+                id="external-import-not-credited",
+            ),
+            pytest.param(
+                {
+                    "caller.py": (
+                        "from pkg.model_helpers import other as is_overridden\n\ndef use_other():\n    is_overridden()\n"
+                    )
+                },
+                set(),
+                {"caller::use_other"},
+                id="alias-of-different-target-symbol",
+            ),
+            pytest.param(
+                {
+                    "caller.py": (
+                        "def use_external():\n"
+                        "    from external.helpers import is_overridden\n"
+                        "    is_overridden()\n\n"
+                        "def use_local():\n"
+                        "    is_overridden()\n"
+                    )
+                },
+                {"caller::use_local"},
+                {"caller::use_external", "caller::use_local"},
+                id="function-local-external-import-keeps-sibling-local-call",
+            ),
+            pytest.param(
+                {
+                    "pkg/model_helpers.py": "def is_overridden():\n    pass\n",
+                    "pkg/exports.py": "from pkg.model_helpers import is_overridden\n",
+                    "target_user.py": (
+                        "from pkg.exports import is_overridden\n\n\ndef use_target_reexport():\n    is_overridden()\n"
+                    ),
+                    "external_user.py": (
+                        "from external.helpers import is_overridden\n\n\ndef use_external():\n    is_overridden()\n"
+                    ),
+                },
+                {"target_user::use_target_reexport"},
+                {"external_user::use_external", "target_user::use_target_reexport"},
+                id="one-hop-reexport-credited-external-excluded",
+            ),
+        ],
+    )
+    def test_import_bindings_split_qualified_callers_from_loose_candidates(
+        self,
+        script_gen_bench: Any,
+        tmp_path: Path,
+        files: dict[str, str],
+        expected_qualified: set[str],
+        expected_loose: set[str],
     ) -> None:
-        """Excludes a bare call whose import binding targets a different module.
+        """Credits only callers whose import binding resolves to the target while the loose set over-approximates.
 
-        Scenario: a project calls an external ``is_overridden`` after importing
-        it directly.  Matching its spelling alone would corrupt the canonical
-        caller set for the in-repository function with the same name.
+        Scenario: a project calls an external ``is_overridden`` after importing it directly, or an alias whose module
+        matches but original symbol does not, and matching spelling alone would corrupt the canonical caller set for
+        the in-repository function with the same name. An external import binding applies only inside its lexical
+        function. A package that re-exports its target function once is followed by the source resolver while the
+        external-import exclusion is preserved.
         """
-        (tmp_path / "caller.py").write_text(
-            "from external.helpers import is_overridden\n\n\ndef use_external():\n    is_overridden()\n"
-        )
+        _write_files(tmp_path, files)
 
         qualified, loose, err = script_gen_bench._walk_caller_sets("pkg.model_helpers::is_overridden", tmp_path)
 
         assert err is None
-        assert qualified == set()
-        assert loose == {"caller::use_external"}
+        assert qualified == expected_qualified
+        assert loose == expected_loose
 
-    def test_bare_call_imported_from_target_module_is_credited(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Credits a bare call when its import binding is the target module.
-
-        Scenario: a direct ``from pkg.model_helpers import is_overridden``
-        import is an unambiguous reference to the target despite not using a
-        module-qualified receiver.
-        """
-        (tmp_path / "caller.py").write_text(
-            "from pkg.model_helpers import is_overridden\n\n\ndef use_target():\n    is_overridden()\n"
-        )
-
-        qualified, _loose, err = script_gen_bench._walk_caller_sets("pkg.model_helpers::is_overridden", tmp_path)
-
-        assert err is None
-        assert qualified == {"caller::use_target"}
-
-    def test_bare_call_imported_through_one_hop_target_reexport_is_credited(
-        self, script_gen_bench: Any, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("target", "files", "expected_qualified"),
+        [
+            pytest.param(
+                "m::Foo.bar",
+                {"m.py": "def use():\n    Foo().bar()\n"},
+                {"m::use"},
+                id="direct-class-instantiation",
+            ),
+            pytest.param(
+                "pkg.model_helpers::is_overridden",
+                {
+                    "caller.py": "from pkg.model_helpers import is_overridden\n\n\ndef use_target():\n    is_overridden()\n"
+                },
+                {"caller::use_target"},
+                id="bare-call-imported-from-target-module",
+            ),
+            pytest.param(
+                "pkg.model_helpers::is_overridden",
+                {"caller.py": "def use_local():\n    is_overridden()\n"},
+                {"caller::use_local"},
+                id="unbound-bare-call-keeps-local-fallback",
+            ),
+            pytest.param(
+                "pkg.target::move_data_to_device",
+                {
+                    "pkg/target.py": "def move_data_to_device():\n    pass\n",
+                    "pkg/middle.py": "from pkg.target import move_data_to_device\n",
+                    "pkg/facade.py": "from pkg.middle import move_data_to_device\n",
+                    "consumer.py": (
+                        "from pkg.facade import move_data_to_device\n\n\n"
+                        "class DataHooks:\n"
+                        "    def transfer_batch_to_device(self):\n"
+                        "        return move_data_to_device()\n"
+                    ),
+                },
+                {"consumer::DataHooks.transfer_batch_to_device"},
+                id="two-hop-reexport-credited",
+            ),
+        ],
+    )
+    def test_caller_forms_resolving_to_the_target_are_credited(
+        self,
+        script_gen_bench: Any,
+        tmp_path: Path,
+        target: str,
+        files: dict[str, str],
+        expected_qualified: set[str],
     ) -> None:
-        """Credits a target re-export but excludes the same name from an external module.
+        """Credits direct instantiation, import bindings to the target module, and local fallbacks.
 
-        Scenario: a package re-exports its target function once, then consumers
-        import that facade.  The source resolver must follow the in-repository
-        re-export while preserving the external-import exclusion.
+        Scenario: a free function instantiates the class and calls the method directly; a direct
+        ``from pkg.model_helpers import is_overridden`` import is an unambiguous reference to the target without a
+        module-qualified receiver; local same-module bare calls are unresolved statically but remain valid caller
+        candidates, so import awareness must not erase them; and a caller reached through two package re-export hops
+        is credited, preventing the AST oracle from silently omitting real production callers when a public facade
+        re-exports a symbol through an intermediate package.
         """
-        package = tmp_path / "pkg"
-        package.mkdir()
-        (package / "model_helpers.py").write_text("def is_overridden():\n    pass\n")
-        (package / "exports.py").write_text("from pkg.model_helpers import is_overridden\n")
-        (tmp_path / "target_user.py").write_text(
-            "from pkg.exports import is_overridden\n\n\ndef use_target_reexport():\n    is_overridden()\n"
-        )
-        (tmp_path / "external_user.py").write_text(
-            "from external.helpers import is_overridden\n\n\ndef use_external():\n    is_overridden()\n"
-        )
+        _write_files(tmp_path, files)
 
-        qualified, loose, err = script_gen_bench._walk_caller_sets("pkg.model_helpers::is_overridden", tmp_path)
+        qualified, _loose, err = script_gen_bench._walk_caller_sets(target, tmp_path)
 
         assert err is None
-        assert qualified == {"target_user::use_target_reexport"}
-        assert loose == {"external_user::use_external", "target_user::use_target_reexport"}
-
-    def test_bare_call_imported_through_two_hop_target_reexport_is_credited(
-        self, script_gen_bench: Any, tmp_path: Path
-    ) -> None:
-        """Credits a caller reached through two package re-export hops.
-
-        Prevents the AST oracle from silently omitting real production callers when a public facade re-exports a symbol
-        through an intermediate package, as ``lightning.pytorch.utilities`` does for ``move_data_to_device``.
-        """
-        package = tmp_path / "pkg"
-        package.mkdir()
-        (package / "target.py").write_text("def move_data_to_device():\n    pass\n")
-        (package / "middle.py").write_text("from pkg.target import move_data_to_device\n")
-        (package / "facade.py").write_text("from pkg.middle import move_data_to_device\n")
-        (tmp_path / "consumer.py").write_text(
-            "from pkg.facade import move_data_to_device\n\n\n"
-            "class DataHooks:\n"
-            "    def transfer_batch_to_device(self):\n"
-            "        return move_data_to_device()\n"
-        )
-
-        qualified, _loose, err = script_gen_bench._walk_caller_sets("pkg.target::move_data_to_device", tmp_path)
-
-        assert err is None
-        assert qualified == {"consumer::DataHooks.transfer_batch_to_device"}
-
-    def test_unbound_bare_call_preserves_local_fallback(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Preserves the conservative fallback for a bare call with no import binding.
-
-        Scenario: local same-module calls are unresolved statically but remain
-        valid caller candidates; import awareness must not erase them.
-        """
-        (tmp_path / "caller.py").write_text("def use_local():\n    is_overridden()\n")
-
-        qualified, _loose, err = script_gen_bench._walk_caller_sets("pkg.model_helpers::is_overridden", tmp_path)
-
-        assert err is None
-        assert qualified == {"caller::use_local"}
-
-    def test_function_local_external_import_does_not_suppress_sibling_local_call(
-        self, script_gen_bench: Any, tmp_path: Path
-    ) -> None:
-        """Applies an external import binding only inside its lexical function."""
-        (tmp_path / "caller.py").write_text(
-            "def use_external():\n"
-            "    from external.helpers import is_overridden\n"
-            "    is_overridden()\n\n"
-            "def use_local():\n"
-            "    is_overridden()\n"
-        )
-
-        qualified, loose, err = script_gen_bench._walk_caller_sets("pkg.model_helpers::is_overridden", tmp_path)
-
-        assert err is None
-        assert qualified == {"caller::use_local"}
-        assert loose == {"caller::use_external", "caller::use_local"}
-
-    def test_alias_of_different_target_symbol_is_not_credited(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Rejects an alias whose module matches but original symbol does not."""
-        (tmp_path / "caller.py").write_text(
-            "from pkg.model_helpers import other as is_overridden\n\ndef use_other():\n    is_overridden()\n"
-        )
-
-        qualified, loose, err = script_gen_bench._walk_caller_sets("pkg.model_helpers::is_overridden", tmp_path)
-
-        assert err is None
-        assert qualified == set()
-        assert loose == {"caller::use_other"}
+        assert qualified == expected_qualified
 
     def test_emitted_module_paths_carry_no_src_prefix(self, script_gen_bench: Any, tmp_path: Path) -> None:
         """A caller under a `src/` layout is emitted in the repo namespace, not with a `src.` prefix.
@@ -1941,57 +1897,75 @@ class TestValidateReviewAssistanceAst:
             "sub_questions": [{"id": "sq", "match": match, "ground_truth": ground_truth}],
         }
 
-    def test_undocumented_uses_ast_over_conflicting_scan_payload(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Uses the AST symbol set even when the scan diagnostic disagrees."""
-        (tmp_path / "m.py").write_text("def public():\n    pass\n")
-        task = self._task("undocumented", [], "symbol_name_set", {"symbols": ["public"]})
+    @pytest.mark.parametrize(
+        ("files", "cmd", "args", "match", "ground_truth", "scan_payload"),
+        [
+            pytest.param(
+                {"m.py": "def public():\n    pass\n"},
+                "undocumented",
+                [],
+                "symbol_name_set",
+                {"symbols": ["public"]},
+                {"total": 0, "undocumented": []},
+                id="undocumented-symbol-set",
+            ),
+            pytest.param(
+                {"m.py": "def orphan():\n    pass\n"},
+                "uncovered",
+                [],
+                "symbol_name_set",
+                {"symbols": ["orphan"]},
+                {"total": 0, "uncovered": []},
+                id="uncovered-symbol-set",
+            ),
+            pytest.param(
+                {"hub.py": "value = 1\n", "consumer.py": "import hub\n"},
+                "rdeps",
+                ["hub"],
+                "integer_extract",
+                {"count": 1},
+                {"imported_by": []},
+                id="rdeps-importer-count",
+            ),
+            pytest.param(
+                {"m.py": "def target():\n    pass\n\n\ndef caller():\n    target()\n"},
+                "fn-rdeps",
+                ["m::target"],
+                "integer_extract",
+                {"count": 1},
+                {"count": 0, "called_by": []},
+                id="fn-rdeps-caller-count",
+            ),
+        ],
+    )
+    def test_supported_commands_use_ast_over_conflicting_scan_payload(
+        self,
+        script_gen_bench: Any,
+        tmp_path: Path,
+        files: dict[str, str],
+        cmd: str,
+        args: list[str],
+        match: str,
+        ground_truth: dict[str, Any],
+        scan_payload: dict[str, Any],
+    ) -> None:
+        """Uses the AST oracle result even when the scan diagnostic disagrees.
 
-        with patch.object(script_gen_bench, "run_scan_query", return_value={"total": 0, "undocumented": []}):
+        Scenario: the AST symbol set is used for undocumented and uncovered symbols even when scan-query omits them;
+        direct module importers and qualified callers are counted from the AST rather than from scan output.
+        """
+        _write_files(tmp_path, files)
+        task = self._task(cmd, args, match, ground_truth)
+
+        with patch.object(script_gen_bench, "run_scan_query", return_value=scan_payload):
             ok, live_gt, reason = script_gen_bench._validate_rv(task, MagicMock(), tmp_path / "idx.json", tmp_path)
 
         assert ok is True
         assert reason == ""
-        assert live_gt == {"sq": {"symbols": ["public"]}}
-
-    def test_uncovered_uses_ast_over_conflicting_scan_payload(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Uses the AST uncovered set even when scan-query omits the symbol."""
-        (tmp_path / "m.py").write_text("def orphan():\n    pass\n")
-        task = self._task("uncovered", [], "symbol_name_set", {"symbols": ["orphan"]})
-
-        with patch.object(script_gen_bench, "run_scan_query", return_value={"total": 0, "uncovered": []}):
-            ok, live_gt, reason = script_gen_bench._validate_rv(task, MagicMock(), tmp_path / "idx.json", tmp_path)
-
-        assert ok is True
-        assert reason == ""
-        assert live_gt == {"sq": {"symbols": ["orphan"]}}
-
-    def test_rdeps_uses_ast_over_conflicting_scan_payload(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Counts direct module importers from the AST rather than scan output."""
-        (tmp_path / "hub.py").write_text("value = 1\n")
-        (tmp_path / "consumer.py").write_text("import hub\n")
-        task = self._task("rdeps", ["hub"], "integer_extract", {"count": 1})
-
-        with patch.object(script_gen_bench, "run_scan_query", return_value={"imported_by": []}):
-            ok, live_gt, reason = script_gen_bench._validate_rv(task, MagicMock(), tmp_path / "idx.json", tmp_path)
-
-        assert ok is True
-        assert reason == ""
-        assert live_gt == {"sq": {"count": 1}}
-
-    def test_fn_rdeps_uses_ast_over_conflicting_scan_payload(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Counts qualified callers from the AST rather than scan output."""
-        (tmp_path / "m.py").write_text("def target():\n    pass\n\n\ndef caller():\n    target()\n")
-        task = self._task("fn-rdeps", ["m::target"], "integer_extract", {"count": 1})
-
-        with patch.object(script_gen_bench, "run_scan_query", return_value={"count": 0, "called_by": []}):
-            ok, live_gt, reason = script_gen_bench._validate_rv(task, MagicMock(), tmp_path / "idx.json", tmp_path)
-
-        assert ok is True
-        assert reason == ""
-        assert live_gt == {"sq": {"count": 1}}
+        assert live_gt == {"sq": ground_truth}
 
     @pytest.mark.parametrize(
-        "cmd,source,expected_symbols",
+        ("cmd", "source", "expected_symbols"),
         [
             pytest.param(
                 "undocumented", "def alpha():\n    pass\n\n\ndef beta():\n    pass\n", ["alpha"], id="undocumented"
@@ -2034,40 +2008,6 @@ class TestValidateReviewAssistanceAst:
         assert symbols_reason == ""
         assert symbols_gt == {"sq": {"symbols": expected_symbols}}
 
-    @pytest.mark.parametrize(
-        "task,expected",
-        [
-            pytest.param(
-                {
-                    "type": "review_assistance",
-                    "expected_queries": [{"cmd": "rdeps", "args": ["m"]}],
-                },
-                True,
-                id="type-review_assistance-expected_queries-cmd-rdeps-args-m",
-            ),
-            pytest.param(
-                {
-                    "type": "review_assistance",
-                    "expected_queries": [{"cmd": "unsupported", "args": []}],
-                },
-                False,
-                id="type-review_assistance-expected_queries-cmd-unsupported-args",
-            ),
-            pytest.param(
-                {
-                    "type": "debug_from_trace",
-                },
-                True,
-                id="type-debug_from_trace",
-            ),
-        ],
-    )
-    def test_refresh_is_oracle_backed_only_for_supported_review_commands(
-        self, script_gen_bench: Any, task: dict[str, Any], expected: bool
-    ) -> None:
-        """Allows plain refresh only when every review answer has an AST oracle."""
-        assert script_gen_bench._update_is_oracle_backed(task) is expected
-
 
 class TestValidateWorkflowTaskFamilies:
     """Debug, feature, and real-issue tasks have offline canonical validators."""
@@ -2093,7 +2033,7 @@ class TestValidateWorkflowTaskFamilies:
         assert live_gt == task["ground_truth"]
 
     @pytest.mark.parametrize(
-        "ground_truth,reason_fragment",
+        ("ground_truth", "reason_fragment"),
         [
             pytest.param(
                 {"file": "../outside.py", "function": "locate", "start_line": 2},
@@ -2247,7 +2187,7 @@ class TestIsPublicQualname:
     """Public qualified name = no dotted component starts with underscore."""
 
     @pytest.mark.parametrize(
-        "name,expected",
+        ("name", "expected"),
         [
             pytest.param("Trainer.fit", True, id="trainer.fit"),
             pytest.param("func", True, id="func"),
@@ -2278,38 +2218,12 @@ class TestUndocumentedViaAst:
         syms, _ = script_gen_bench._undocumented_via_ast(tmp_path)
         assert "pub" not in syms
 
-    def test_private_symbol_excluded(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Private (leading-underscore) symbols are excluded even without a docstring."""
-        (tmp_path / "m.py").write_text("def _helper():\n    pass\n")
-        syms, _ = script_gen_bench._undocumented_via_ast(tmp_path)
-        assert syms == set()
-
-    def test_nested_method_qualified_name(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Methods are reported as Class.method module-relative qualified names."""
-        (tmp_path / "m.py").write_text("class Cls:\n    def meth(self):\n        pass\n")
-        syms, _ = script_gen_bench._undocumented_via_ast(tmp_path)
-        assert "Cls.meth" in syms
-
-    def test_test_modules_skipped(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Files named test_*.py are skipped (scan-query skips test modules)."""
-        (tmp_path / "test_x.py").write_text("def pub():\n    pass\n")
-        syms, _ = script_gen_bench._undocumented_via_ast(tmp_path)
-        assert syms == set()
-
     def test_module_filter_unresolvable_returns_error(self, script_gen_bench: Any, tmp_path: Path) -> None:
         """A module name that maps to no file yields an error reason, empty set."""
         syms, err = script_gen_bench._undocumented_via_ast(tmp_path, module="pkg.missing")
         assert syms == set()
-        assert err is not None and "not resolvable" in err
-
-    def test_module_filter_resolves_src_layout(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """A dotted module resolves against <repo>/src/<parts>.py."""
-        f = tmp_path / "src" / "pkg" / "mod.py"
-        f.parent.mkdir(parents=True)
-        f.write_text("def pub():\n    pass\n")
-        syms, err = script_gen_bench._undocumented_via_ast(tmp_path, module="pkg.mod")
-        assert err is None
-        assert syms == {"pub"}
+        assert err is not None
+        assert "not resolvable" in err
 
 
 class TestUncoveredViaAst:
@@ -2322,36 +2236,48 @@ class TestUncoveredViaAst:
         assert err is None
         assert syms == {"orphan"}
 
-    def test_test_called_symbol_is_covered(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """A public symbol a test file calls is NOT reported as uncovered."""
-        (tmp_path / "m.py").write_text("def used():\n    pass\n")
-        (tmp_path / "tests").mkdir()
-        (tmp_path / "tests" / "test_m.py").write_text("def test_it():\n    used()\n")
-        syms, _ = script_gen_bench._uncovered_via_ast(tmp_path)
-        assert "used" not in syms
-
-    @pytest.mark.parametrize("test_expression", ["mentioned", "fixture.mentioned"])
-    def test_every_test_name_and_attribute_reference_counts_as_coverage(
-        self, script_gen_bench: Any, tmp_path: Path, test_expression: str
+    @pytest.mark.parametrize(
+        ("symbol", "source", "test_source"),
+        [
+            pytest.param(
+                "used",
+                "def used():\n    pass\n",
+                "def test_it():\n    used()\n",
+                id="symbol-called-by-test",
+            ),
+            pytest.param(
+                "mentioned",
+                "def mentioned():\n    pass\n",
+                "def test_it():\n    mentioned\n",
+                id="bare-name-reference",
+            ),
+            pytest.param(
+                "mentioned",
+                "def mentioned():\n    pass\n",
+                "def test_it():\n    fixture.mentioned\n",
+                id="attribute-reference",
+            ),
+            pytest.param(
+                "mocked",
+                "def mocked():\n    pass\n",
+                "from unittest.mock import patch\n\n\n@patch('m.mocked')\ndef test_it():\n    pass\n",
+                id="patch-string-target",
+            ),
+        ],
+    )
+    def test_symbol_referenced_by_tests_is_not_uncovered(
+        self, script_gen_bench: Any, tmp_path: Path, symbol: str, source: str, test_source: str
     ) -> None:
-        """The broad oracle records references even when they are not call targets."""
-        (tmp_path / "m.py").write_text("def mentioned():\n    pass\n")
+        """A public symbol that a test calls, mentions by name or attribute, or patches by string is covered.
+
+        Scenario: the broad oracle records references even when they are not call targets, and a symbol referenced
+        only through a patch() string target counts as covered.
+        """
+        (tmp_path / "m.py").write_text(source)
         (tmp_path / "tests").mkdir()
-        (tmp_path / "tests" / "test_m.py").write_text(f"def test_it():\n    {test_expression}\n")
-
+        (tmp_path / "tests" / "test_m.py").write_text(test_source)
         syms, _ = script_gen_bench._uncovered_via_ast(tmp_path)
-
-        assert "mentioned" not in syms
-
-    def test_mock_patched_symbol_is_covered(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """A symbol referenced only through a patch() string target counts as covered."""
-        (tmp_path / "m.py").write_text("def mocked():\n    pass\n")
-        (tmp_path / "tests").mkdir()
-        (tmp_path / "tests" / "test_m.py").write_text(
-            "from unittest.mock import patch\n\n\n@patch('m.mocked')\ndef test_it():\n    pass\n"
-        )
-        syms, _ = script_gen_bench._uncovered_via_ast(tmp_path)
-        assert "mocked" not in syms
+        assert symbol not in syms
 
     def test_every_patch_string_argument_tail_counts_as_coverage(self, script_gen_bench: Any, tmp_path: Path) -> None:
         """The declared oracle records every string argument to a recognized patch call."""
@@ -2365,58 +2291,148 @@ class TestUncoveredViaAst:
 
         assert syms == set()
 
-    def test_private_symbol_excluded(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Private (leading-underscore) symbols are never reported (scan-query public-only rule)."""
-        (tmp_path / "m.py").write_text("def _helper():\n    pass\n")
-        syms, _ = script_gen_bench._uncovered_via_ast(tmp_path)
+
+class TestAstSymbolOracleSharedRules:
+    """The undocumented and uncovered AST oracles share their public-symbol selection rules."""
+
+    @pytest.mark.parametrize(
+        ("oracle_name", "files"),
+        [
+            pytest.param("_undocumented_via_ast", {"m.py": "def _helper():\n    pass\n"}, id="undocumented-private"),
+            pytest.param("_uncovered_via_ast", {"m.py": "def _helper():\n    pass\n"}, id="uncovered-private"),
+            pytest.param(
+                "_undocumented_via_ast", {"test_x.py": "def pub():\n    pass\n"}, id="undocumented-test-module-skipped"
+            ),
+        ],
+    )
+    def test_non_reportable_symbols_are_excluded(
+        self, script_gen_bench: Any, tmp_path: Path, oracle_name: str, files: dict[str, str]
+    ) -> None:
+        """Private symbols and test modules are never reported by the oracles.
+
+        Scenario: private (leading-underscore) symbols are excluded even without a docstring or test reference,
+        mirroring the scan-query public-only rule; files named test_*.py are skipped because scan-query skips test
+        modules.
+        """
+        _write_files(tmp_path, files)
+        syms, _ = getattr(script_gen_bench, oracle_name)(tmp_path)
         assert syms == set()
 
-    def test_nested_method_qualified_name(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """Uncovered methods are reported as module-relative Class.method qualified names."""
-        (tmp_path / "m.py").write_text("class Cls:\n    def orphan(self):\n        pass\n")
-        syms, _ = script_gen_bench._uncovered_via_ast(tmp_path)
-        assert "Cls.orphan" in syms
+    @pytest.mark.parametrize(
+        ("oracle_name", "source", "expected_name"),
+        [
+            pytest.param(
+                "_undocumented_via_ast",
+                "class Cls:\n    def meth(self):\n        pass\n",
+                "Cls.meth",
+                id="undocumented",
+            ),
+            pytest.param(
+                "_uncovered_via_ast",
+                "class Cls:\n    def orphan(self):\n        pass\n",
+                "Cls.orphan",
+                id="uncovered",
+            ),
+        ],
+    )
+    def test_nested_method_qualified_name(
+        self, script_gen_bench: Any, tmp_path: Path, oracle_name: str, source: str, expected_name: str
+    ) -> None:
+        """Methods are reported as module-relative Class.method qualified names by both oracles."""
+        (tmp_path / "m.py").write_text(source)
+        syms, _ = getattr(script_gen_bench, oracle_name)(tmp_path)
+        assert expected_name in syms
 
-    def test_module_filter_scopes_scan(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """A module filter restricts the source scan to that module."""
+    @pytest.mark.parametrize(
+        ("oracle_name", "source", "expected_symbols"),
+        [
+            pytest.param("_undocumented_via_ast", "def pub():\n    pass\n", {"pub"}, id="undocumented"),
+            pytest.param("_uncovered_via_ast", "def solo():\n    pass\n", {"solo"}, id="uncovered"),
+        ],
+    )
+    def test_module_filter_resolves_src_layout(
+        self, script_gen_bench: Any, tmp_path: Path, oracle_name: str, source: str, expected_symbols: set[str]
+    ) -> None:
+        """A dotted module filter resolves against <repo>/src/<parts>.py and scopes the scan to that module."""
         f = tmp_path / "src" / "pkg" / "mod.py"
         f.parent.mkdir(parents=True)
-        f.write_text("def solo():\n    pass\n")
-        syms, err = script_gen_bench._uncovered_via_ast(tmp_path, module="pkg.mod")
+        f.write_text(source)
+        syms, err = getattr(script_gen_bench, oracle_name)(tmp_path, module="pkg.mod")
         assert err is None
-        assert syms == {"solo"}
+        assert syms == expected_symbols
 
 
 class TestXrefsBrokenViaAst:
     """Independent AST oracle for unresolved Sphinx/MkDocs cross-references (mirrors scan-index/scan-query)."""
 
-    def test_bare_meth_role_broken_without_matching_top_level_function(
-        self, script_gen_bench: Any, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("source", "expected_broken"),
+        [
+            pytest.param(
+                "class Cls:\n    def method(self):\n        'See :meth:`missing`.'\n        pass\n",
+                [("mod::missing", "meth")],
+                id="bare-meth-role-without-top-level-function",
+            ),
+            pytest.param(
+                "X = 1\n\n\ndef f():\n    'See :func:`mod.X`.'\n    pass\n",
+                [("mod::X", "func")],
+                id="module-level-assignment-target",
+            ),
+        ],
+    )
+    def test_unresolved_symbol_roles_are_broken(
+        self, script_gen_bench: Any, tmp_path: Path, source: str, expected_broken: list[tuple[str, str]]
     ) -> None:
-        """A bare ``:meth:`name`` `` role with no matching top-level function is broken."""
-        source = "class Cls:\n    def method(self):\n        'See :meth:`missing`.'\n        pass\n"
+        """A bare ``:meth:`name`` `` role with no matching top-level function is broken.
+
+        A module-level assignment is outside the narrow symbol map, so a reference to it stays broken. Regression guard
+        for the symbol-map-breadth risk: a broader map (module/class-level assignments included) would resolve this
+        and silently under-report broken targets, verified empirically to flip a known-broken scan-query reference to
+        resolvable.
+        """
         (tmp_path / "mod.py").write_text(source)
         broken, err = script_gen_bench._xrefs_broken_via_ast(tmp_path)
         assert err is None
-        assert [(b["target"], b["role"]) for b in broken] == [("mod::missing", "meth")]
+        assert [(b["target"], b["role"]) for b in broken] == expected_broken
 
-    def test_bare_meth_role_resolves_to_matching_top_level_function(
-        self, script_gen_bench: Any, tmp_path: Path
+    @pytest.mark.parametrize(
+        "files",
+        [
+            pytest.param(
+                {
+                    "mod.py": (
+                        "class Cls:\n"
+                        "    def method(self):\n"
+                        "        'See :meth:`helper`.'\n"
+                        "        pass\n\n\n"
+                        "def helper():\n"
+                        "    pass\n"
+                    )
+                },
+                id="bare-meth-role-resolves-to-top-level-function",
+            ),
+            pytest.param({"mod.py": "def f():\n    'See :attr:`mod.missing`.'\n    pass\n"}, id="attr-role-unchecked"),
+            pytest.param({"mod.py": "def f():\n    'See :data:`mod.missing`.'\n    pass\n"}, id="data-role-unchecked"),
+            pytest.param({"mod.py": "def f():\n    'See :mod:`mod.missing`.'\n    pass\n"}, id="mod-role-unchecked"),
+            pytest.param(
+                {"mod.py": "def present():\n    pass\n", "index.rst": "See :func:`mod.present`.\n"},
+                id="rst-dotted-ref-to-existing-symbol",
+            ),
+            pytest.param({"README.md": "See [`mod.missing`][].\n"}, id="mkdocs-ref-outside-docs-dir-not-scanned"),
+        ],
+    )
+    def test_resolved_or_unchecked_references_are_not_broken(
+        self, script_gen_bench: Any, tmp_path: Path, files: dict[str, str]
     ) -> None:
-        """A bare ``:meth:`name`` `` role matching a real top-level function is NOT broken.
+        """References that resolve to a real symbol or fall outside the checked scope are not reported broken.
 
-        Regression guard for the same name as :meth:`test_bare_meth_role_broken_without_matching_top_level_function`
-        — proves brokenness depends on the symbol map, not on the role text alone.
+        Scenario: a bare ``:meth:`name`` `` role matching a real top-level function proves brokenness depends on the
+        symbol map, not on the role text alone. ``attr``/``data``/``mod`` roles are extracted but never checked
+        (mirrors ``query.py`` ``_SYMBOL_ROLES``, which deliberately omits them). A dotted ``.rst`` role resolving to a
+        real symbol is not broken. The identical mkdocstrings autoref in a repo-root README.md is not scanned
+        (scan-index restricts ``.md`` to ``docs/``).
         """
-        source = (
-            "class Cls:\n"
-            "    def method(self):\n"
-            "        'See :meth:`helper`.'\n"
-            "        pass\n\n\n"
-            "def helper():\n"
-            "    pass\n"
-        )
-        (tmp_path / "mod.py").write_text(source)
+        _write_files(tmp_path, files)
         broken, err = script_gen_bench._xrefs_broken_via_ast(tmp_path)
         assert err is None
         assert broken == []
@@ -2434,31 +2450,6 @@ class TestXrefsBrokenViaAst:
         assert err is None
         assert [(b["target"], b["file"]) for b in broken] == [("b::missing", "a.py")]
 
-    def test_module_level_assignment_target_stays_broken(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """A module-level assignment is outside the narrow symbol map, so a reference to it stays broken.
-
-        Regression guard for the symbol-map-breadth risk: a broader map (module/class-level
-        assignments included) would resolve this and silently under-report broken targets —
-        verified empirically to flip a known-broken scan-query reference to resolvable.
-        """
-        source = "X = 1\n\n\ndef f():\n    'See :func:`mod.X`.'\n    pass\n"
-        (tmp_path / "mod.py").write_text(source)
-        broken, err = script_gen_bench._xrefs_broken_via_ast(tmp_path)
-        assert err is None
-        assert [(b["target"], b["role"]) for b in broken] == [("mod::X", "func")]
-
-    @pytest.mark.parametrize("role", ["attr", "data", "mod"])
-    def test_role_excluded_from_symbol_role_filter(self, script_gen_bench: Any, tmp_path: Path, role: str) -> None:
-        """``attr``/``data``/``mod`` roles are extracted but never checked for brokenness.
-
-        Mirrors ``query.py`` ``_SYMBOL_ROLES``, which deliberately omits these three roles.
-        """
-        source = f"def f():\n    'See :{role}:`mod.missing`.'\n    pass\n"
-        (tmp_path / "mod.py").write_text(source)
-        broken, err = script_gen_bench._xrefs_broken_via_ast(tmp_path)
-        assert err is None
-        assert broken == []
-
     def test_line_is_docstring_opening_line_for_multiline_docstring(
         self, script_gen_bench: Any, tmp_path: Path
     ) -> None:
@@ -2472,14 +2463,6 @@ class TestXrefsBrokenViaAst:
         broken, err = script_gen_bench._xrefs_broken_via_ast(tmp_path)
         assert err is None
         assert broken[0]["line"] == 2
-
-    def test_rst_dotted_ref_to_existing_symbol_not_broken(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """A dotted ``.rst`` role resolving to a real symbol is not reported broken."""
-        (tmp_path / "mod.py").write_text("def present():\n    pass\n")
-        (tmp_path / "index.rst").write_text("See :func:`mod.present`.\n")
-        broken, err = script_gen_bench._xrefs_broken_via_ast(tmp_path)
-        assert err is None
-        assert broken == []
 
     def test_rst_dotted_ref_to_missing_symbol_is_broken(self, script_gen_bench: Any, tmp_path: Path) -> None:
         """A dotted ``.rst`` role with no matching symbol is reported broken, with a real line number."""
@@ -2510,13 +2493,6 @@ class TestXrefsBrokenViaAst:
         broken, err = script_gen_bench._xrefs_broken_via_ast(tmp_path)
         assert err is None
         assert [(b["target"], b["source"]) for b in broken] == [("mod::missing", "mkdocs")]
-
-    def test_mkdocs_ref_outside_docs_dir_not_scanned(self, script_gen_bench: Any, tmp_path: Path) -> None:
-        """The identical autoref in a repo-root README.md is NOT scanned (scan-index restricts .md to docs/)."""
-        (tmp_path / "README.md").write_text("See [`mod.missing`][].\n")
-        broken, err = script_gen_bench._xrefs_broken_via_ast(tmp_path)
-        assert err is None
-        assert broken == []
 
     def test_unresolvable_module_argument_returns_error(self, script_gen_bench: Any, tmp_path: Path) -> None:
         """An unresolvable module argument is a hard failure, not a silent zero-broken pass."""
@@ -2567,7 +2543,7 @@ class TestUpdateGating:
     """Circular (scan-derived) refresh is gated behind ``--update-from-tool``."""
 
     @pytest.mark.parametrize(
-        "task,expected",
+        ("task", "expected"),
         [
             pytest.param({"type": "fn_call_graph"}, True, id="type-fn_call_graph"),
             pytest.param({"type": "develop_blast_radius"}, True, id="type-develop_blast_radius"),
@@ -2598,10 +2574,25 @@ class TestUpdateGating:
             ),
             pytest.param({"type": "review_assistance"}, False, id="type-review_assistance"),
             pytest.param({"type": "symbol_extraction"}, False, id="type-symbol_extraction"),
+            pytest.param(
+                {"type": "review_assistance", "expected_queries": [{"cmd": "rdeps", "args": ["m"]}]},
+                True,
+                id="review-assistance-supported-command",
+            ),
+            pytest.param(
+                {"type": "review_assistance", "expected_queries": [{"cmd": "unsupported", "args": []}]},
+                False,
+                id="review-assistance-unsupported-command",
+            ),
+            pytest.param({"type": "debug_from_trace"}, True, id="type-debug_from_trace"),
         ],
     )
     def test_oracle_backed_classification(self, script_gen_bench: Any, task: dict, expected: bool) -> None:
-        """Only AST-oracle-backed types are safe to refresh under a plain ``--update``."""
+        """Only AST-oracle-backed types are safe to refresh under a plain ``--update``.
+
+        A review task is oracle-backed only when every review answer has an AST oracle, so a supported command allows a
+        plain refresh while an unsupported command does not.
+        """
         assert script_gen_bench._update_is_oracle_backed(task) is expected
 
     def test_oracle_backed_type_refreshes_by_default(self, script_gen_bench: Any) -> None:

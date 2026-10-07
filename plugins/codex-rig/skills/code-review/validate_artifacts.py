@@ -54,86 +54,90 @@ import sys
 from pathlib import Path
 from typing import Any, NamedTuple
 
-
-# Keep the installed skill helper importable when pytest loads this validator by file path.
+#: Keep the installed skill helper importable when pytest loads this validator by file path.
 SKILL_DIRECTORY = Path(__file__).resolve().parent
+#: Root of the Codex Rig plugin, from which the shared directory is located.
 PLUGIN_ROOT = SKILL_DIRECTORY.parents[1]
 if str(SKILL_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SKILL_DIRECTORY))
+#: Plugin shared directory placed on the import path for shared helper modules.
 SHARED_DIRECTORY = PLUGIN_ROOT / "shared"
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
-from run_gates import (  # noqa: E402
-    validate_local_gate_source,
-    _local_snapshot_bytes,
-    inspect_collected_test,
-    _aggregate_worker_proofs,
-)
-from parallel_execution import (  # noqa: E402
-    _SECRET_PATTERNS as _SECRET_PATTERNS,
-    validate_inspection_contexts as validate_inspection_contexts,
-    validate_read_only_runtime as validate_read_only_runtime,
-)
-from review_routing import ROUTING_SIGNALS, derive_mechanical_risk  # noqa: E402
-from local_reviewer_wave import (  # noqa: E402
-    ReviewRouteError as ReviewRouteError,
-)
-from review_context import (  # noqa: E402
-    context_pages as context_pages,
-    dispatch_message as dispatch_message,
-    render_read_call as render_read_call,
-    render_read_output as render_read_output,
+from local_reviewer_wave import ReviewRouteError as ReviewRouteError  # noqa: E402
+from parallel_execution import _SECRET_PATTERNS as _SECRET_PATTERNS  # noqa: E402
+from parallel_execution import validate_inspection_contexts as validate_inspection_contexts  # noqa: E402
+from parallel_execution import validate_read_only_runtime as validate_read_only_runtime  # noqa: E402
+from review_context import context_pages as context_pages  # noqa: E402
+from review_context import dispatch_message as dispatch_message  # noqa: E402
+from review_context import render_read_call as render_read_call  # noqa: E402
+from review_context import render_read_output as render_read_output  # noqa: E402
+from review_execution_validation import FINDING_SEVERITIES as FINDING_SEVERITIES  # noqa: E402
+from review_execution_validation import LEGACY_ALL_PAGE_READER_SHA256 as LEGACY_ALL_PAGE_READER_SHA256  # noqa: E402
+from review_execution_validation import (  # noqa: E402
+    LEGACY_PROTOCOL_V6_READER_SHA256 as LEGACY_PROTOCOL_V6_READER_SHA256,
 )
 from review_execution_validation import (  # noqa: E402
-    validate_local_reviewer_evidence as validate_local_reviewer_evidence,
-    FINDING_SEVERITIES as FINDING_SEVERITIES,
-    TRANSIENT_RETRY_ERRORS as TRANSIENT_RETRY_ERRORS,
-    _text_reviewer_assessment as _text_reviewer_assessment,
-    _retained_reviewer_rating as _retained_reviewer_rating,
-    _validate_local_reviewer_wave as _validate_local_reviewer_wave,
-    _receipt_binds_child as _receipt_binds_child,
-    _closure_shape_repair as _closure_shape_repair,
-    _assessment_format_repair as _assessment_format_repair,
-    _finding_id_namespace_repair as _finding_id_namespace_repair,
-    _original_dispatch_message as _original_dispatch_message,
-    _recovery_arguments as _recovery_arguments,
-    _validate_spawn_attempts as _validate_spawn_attempts,
-    _batch_reviewer_findings as _batch_reviewer_findings,
-    REQUIRED_ROLES as REQUIRED_ROLES,
-    LEGACY_PROTOCOL_V6_READER_SHA256 as LEGACY_PROTOCOL_V6_READER_SHA256,
     LEGACY_SINGLE_CALL_READER_SHA256 as LEGACY_SINGLE_CALL_READER_SHA256,
-    LEGACY_ALL_PAGE_READER_SHA256 as LEGACY_ALL_PAGE_READER_SHA256,
-    LEGACY_WORKDIR_READER_SHA256S as LEGACY_WORKDIR_READER_SHA256S,
-    _load_role_card as _load_role_card,
-    _load_json as _load_json,
-    _resolve_path as _resolve_path,
-    _sha256 as _sha256,
-    _read_jsonl as _read_jsonl,
-    _find_rollout as _find_rollout,
-    _event_payloads as _event_payloads,
-    _paged_native_manifest as _paged_native_manifest,
-    _native_dispatch_message as _native_dispatch_message,
-    _native_read_frame as _native_read_frame,
-    _reader_command_matches as _reader_command_matches,
+)
+from review_execution_validation import LEGACY_WORKDIR_READER_SHA256S as LEGACY_WORKDIR_READER_SHA256S  # noqa: E402
+from review_execution_validation import REQUIRED_ROLES as REQUIRED_ROLES  # noqa: E402
+from review_execution_validation import TRANSIENT_RETRY_ERRORS as TRANSIENT_RETRY_ERRORS  # noqa: E402
+from review_execution_validation import _assessment_format_repair as _assessment_format_repair  # noqa: E402
+from review_execution_validation import _batch_reviewer_findings as _batch_reviewer_findings  # noqa: E402
+from review_execution_validation import _binary_source_diagnostic as _binary_source_diagnostic  # noqa: E402
+from review_execution_validation import _child_controls as _child_controls  # noqa: E402
+from review_execution_validation import _closure_shape_repair as _closure_shape_repair  # noqa: E402
+from review_execution_validation import _event_payloads as _event_payloads  # noqa: E402
+from review_execution_validation import _find_rollout as _find_rollout  # noqa: E402
+from review_execution_validation import _finding_id_namespace_repair as _finding_id_namespace_repair  # noqa: E402
+from review_execution_validation import _inspection_child_called_tool as _inspection_child_called_tool  # noqa: E402
+from review_execution_validation import _joined_terminal_result as _joined_terminal_result  # noqa: E402
+from review_execution_validation import _joined_terminal_timestamp as _joined_terminal_timestamp  # noqa: E402
+from review_execution_validation import (  # noqa: E402
     _literal_duplicated_plan_command as _literal_duplicated_plan_command,
-    _native_recipe_plan as _native_recipe_plan,
-    _manifest_passes as _manifest_passes,
-    _validate_inspection_plan as _validate_inspection_plan,
-    _child_controls as _child_controls,
-    _inspection_child_called_tool as _inspection_child_called_tool,
-    _missing_reader_error_path as _missing_reader_error_path,
-    _binary_source_diagnostic as _binary_source_diagnostic,
-    _validate_context_read as _validate_context_read,
-    _joined_terminal_timestamp as _joined_terminal_timestamp,
-    _joined_terminal_result as _joined_terminal_result,
-    _parent_timestamp as _parent_timestamp,
-    _related_capacity_release as _related_capacity_release,
-    _validate_native_schedule as _validate_native_schedule,
-    _native_independent_wave as _native_independent_wave,
+)
+from review_execution_validation import _load_json as _load_json  # noqa: E402
+from review_execution_validation import _load_role_card as _load_role_card  # noqa: E402
+from review_execution_validation import _manifest_passes as _manifest_passes  # noqa: E402
+from review_execution_validation import _missing_reader_error_path as _missing_reader_error_path  # noqa: E402
+from review_execution_validation import _native_dispatch_message as _native_dispatch_message  # noqa: E402
+from review_execution_validation import _native_independent_wave as _native_independent_wave  # noqa: E402
+from review_execution_validation import _native_read_frame as _native_read_frame  # noqa: E402
+from review_execution_validation import _native_recipe_plan as _native_recipe_plan  # noqa: E402
+from review_execution_validation import _original_dispatch_message as _original_dispatch_message  # noqa: E402
+from review_execution_validation import _paged_native_manifest as _paged_native_manifest  # noqa: E402
+from review_execution_validation import _parent_timestamp as _parent_timestamp  # noqa: E402
+from review_execution_validation import _read_jsonl as _read_jsonl  # noqa: E402
+from review_execution_validation import _reader_command_matches as _reader_command_matches  # noqa: E402
+from review_execution_validation import _receipt_binds_child as _receipt_binds_child  # noqa: E402
+from review_execution_validation import _recovery_arguments as _recovery_arguments  # noqa: E402
+from review_execution_validation import _related_capacity_release as _related_capacity_release  # noqa: E402
+from review_execution_validation import _resolve_path as _resolve_path  # noqa: E402
+from review_execution_validation import _retained_reviewer_rating as _retained_reviewer_rating  # noqa: E402
+from review_execution_validation import _sha256 as _sha256  # noqa: E402
+from review_execution_validation import _text_reviewer_assessment as _text_reviewer_assessment  # noqa: E402
+from review_execution_validation import _validate_context_read as _validate_context_read  # noqa: E402
+from review_execution_validation import _validate_inspection_plan as _validate_inspection_plan  # noqa: E402
+from review_execution_validation import (  # noqa: E402
     _validate_instruction_bounded_review as _validate_instruction_bounded_review,
 )
+from review_execution_validation import _validate_local_reviewer_wave as _validate_local_reviewer_wave  # noqa: E402
+from review_execution_validation import _validate_native_schedule as _validate_native_schedule  # noqa: E402
+from review_execution_validation import _validate_spawn_attempts as _validate_spawn_attempts  # noqa: E402
+from review_execution_validation import (  # noqa: E402
+    validate_local_reviewer_evidence as validate_local_reviewer_evidence,
+)
+from review_routing import ROUTING_SIGNALS, derive_mechanical_risk  # noqa: E402
+from run_gates import (  # noqa: E402
+    _aggregate_worker_proofs,
+    _local_snapshot_bytes,
+    inspect_collected_test,
+    validate_local_gate_source,
+)
 
+#: Section headings a completed review report must contain.
 REQUIRED_SECTIONS = (
     "Decision Summary",
     "Scope",
@@ -146,7 +150,9 @@ REQUIRED_SECTIONS = (
     "Confidence Gaps",
     "Confidence Calibration",
 )
+#: Recommendation values a review verdict may use.
 VALID_RECOMMENDATIONS = {"accept-as-is", "minor-changes", "needs-more-work", "reject", "not-aligned"}
+#: Reason codes that justify closing a PR at the close gate.
 CLOSE_CODES = {
     "FALSE_GOAL",
     "BREAKING_CONDUCT",
@@ -157,8 +163,11 @@ CLOSE_CODES = {
     "SPAM",
     "ARCHITECTURE_VIOLATION",
 }
+#: Heading of the report section that holds the findings and merge-blocks action table.
 ACTION_TABLE_SECTION = "Review Findings and Merge Blocks"
+#: Column headers of the action table; PR reports insert an Author column after the first.
 ACTION_TABLE_HEADERS = ("Finding / area", "Required change", "Evidence", "Status")
+#: Every role identifier that a specialist manifest may name.
 ALL_MANIFEST_ROLES = {
     "sw-engineer",
     "qa-specialist",
@@ -174,14 +183,19 @@ ALL_MANIFEST_ROLES = {
     "scientist",
     "web-explorer",
 }
+#: Risk tiers that require an independent review pass.
 INDEPENDENT_PASS_TIERS = {"BROAD", "HIGH_RISK"}
+#: Execution modes a specialist pass may record.
 VALID_MODES = {"spawned", "substituted", "app-server", "inspection"}
+#: Roles that need a recorded explicit user selection of the Sol model when routed.
 SOL_ROLES = {"solution-architect", "security-auditor"}
+#: Three lines of the note written when PR review is unavailable, stating that nothing was assessed or decided.
 UNAVAILABLE_NOTE_LINES = (
     "PR Review Availability: unavailable",
     "Source findings: not assessed",
     "Merge decision: not made",
 )
+#: Top-level result keys allowed in an unavailable-review result.
 UNAVAILABLE_RESULT_KEYS = {
     "schema_version",
     "status",
@@ -192,6 +206,7 @@ UNAVAILABLE_RESULT_KEYS = {
     "artifact_path",
     "metadata",
 }
+#: Metadata keys allowed in an unavailable-review result.
 UNAVAILABLE_METADATA_KEYS = {
     "scope",
     "risk_tier",
@@ -202,12 +217,17 @@ UNAVAILABLE_METADATA_KEYS = {
     "confidence_recovery",
     "final_handoff",
 }
+#: Artifact names that must not exist when review is unavailable, as source review never ran.
 UNAVAILABLE_FORBIDDEN_ARTIFACTS = {"local-checkout.json", "specialist-manifest.json"}
+#: The only confidence gap text an unavailable-review result may report.
 UNAVAILABLE_CONFIDENCE_GAP = (
     "Core PR source verification did not complete; no source review or merge decision was made."
 )
+#: Confidence gap text a closed-PR result must report for the skipped source review.
 CLOSED_CONFIDENCE_GAP = "Detailed source review was intentionally skipped after the close gate."
+#: Top-level result keys allowed in a closed-PR result, the same set as for unavailable reviews.
 CLOSED_RESULT_KEYS = UNAVAILABLE_RESULT_KEYS
+#: Metadata keys allowed in a closed-PR result, which carries a close decision.
 CLOSED_METADATA_KEYS = {
     "scope",
     "risk_tier",
@@ -218,6 +238,7 @@ CLOSED_METADATA_KEYS = {
     "confidence_recovery",
     "final_handoff",
 }
+#: PR artifact files that must be present for a closed-PR review.
 CLOSED_REQUIRED_PR_ARTIFACTS = {
     "pr.json",
     "pr-routing.json",
@@ -231,9 +252,13 @@ CLOSED_REQUIRED_PR_ARTIFACTS = {
     "online-review-summary.json",
     "diff.patch",
 }
+#: Artifacts that must not exist for a closed-PR review because detailed source review is skipped.
 CLOSED_FORBIDDEN_ARTIFACTS = {"codemap-context.json", "review-routing.json", "specialist-manifest.json", "specialists"}
+#: Confidence gap text required when PR review-thread resolution status could not be retrieved.
 PR_THREAD_CONFIDENCE_GAP = "PR review-thread resolution status was unavailable; online review triage may be incomplete."
+#: Highest confidence score a review that fell back to public PR data may report.
 PR_PUBLIC_FALLBACK_MAX_CONFIDENCE = 0.89
+#: Recovery advice shown for each unavailable-review action class: network, retry, auth, install, identity, report.
 UNAVAILABLE_RECOVERY_ACTIONS = {
     "network": (
         "Check effective runtime access; if required access is missing or unknown and requests are allowed, "
@@ -246,11 +271,15 @@ UNAVAILABLE_RECOVERY_ACTIONS = {
     "identity": "Confirm the canonical PR URL and repository identity, then retry.",
     "report": "Stop and report this Codex Rig collector failure with sanitized artifacts.",
 }
+#: Sentence appended to recovery advice when a local checkout had already started.
 CHECKOUT_STATE_RECOVERY_SUFFIX = " Inspect the local checkout state before retrying."
+#: Pattern for failure class, label, and reason identifiers: lowercase letters, digits, and hyphens.
 SAFE_DIAGNOSTIC_IDENTIFIER = re.compile(r"[a-z][a-z0-9-]*\Z")
+#: Pattern for the only gh pr checkout command, naming a GitHub PR URL, that a diagnostic may recommend.
 SAFE_GH_CHECKOUT_COMMAND = re.compile(
     r"gh pr checkout https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]*\Z"
 )
+#: Plain-language summary for each collector failure label, stating that the review has not started.
 UNAVAILABLE_HUMAN_SUMMARIES = {
     "gh-pr-view": "I could not retrieve the PR metadata, so the review has not started.",
     "local-pr-checkout": "I could not check out the latest PR commit, so the review has not started.",
@@ -278,8 +307,11 @@ UNAVAILABLE_HUMAN_SUMMARIES = {
     "public-pr-head-fetch": "I could not refresh the PR source before verification, so the review has not started.",
     "historical-pr-head-fetch": "I could not refresh the PR source before verification, so the review has not started.",
 }
+#: Summary used when a collector failure label has no specific entry in the human summaries.
 UNAVAILABLE_GENERIC_SUMMARY = "Source collection stopped before I could verify which PR revision to review."
+#: Ordered gate check ids that an unavailable-review result must list.
 UNAVAILABLE_GATE_IDS = ("lint", "format", "types", "tests", "review")
+#: Reason classifications a PR fetch failure diagnostic may report.
 PR_HEAD_FETCH_FAILURE_REASONS = {
     "ref-update-rejected",
     "remote-ref-not-found",
@@ -288,12 +320,14 @@ PR_HEAD_FETCH_FAILURE_REASONS = {
     "repository-unavailable",
     "unknown",
 }
+#: Collector failure labels that come from fetching the target branch or PR head.
 FETCH_FAILURE_LABELS = {
     "target-branch-fetch",
     "pr-head-fetch",
     "public-pr-head-fetch",
     "historical-pr-head-fetch",
 }
+#: Recovery advice for each classified fetch failure reason.
 PR_HEAD_FETCH_RECOVERY_ACTIONS = {
     "ref-update-rejected": "Resolve the local Git reference rejection, then start a fresh collector run.",
     "remote-ref-not-found": "Refresh the PR metadata and confirm a current PR head exists, then start a fresh collector run.",
@@ -302,6 +336,7 @@ PR_HEAD_FETCH_RECOVERY_ACTIONS = {
     "repository-unavailable": "Confirm the canonical repository identity and availability after a state change, then start a fresh collector run.",
     "unknown": "Inspect the classified collector failure before choosing a permitted recovery.",
 }
+#: Recovery advice for each dirty-worktree or unresolved-index failure label.
 WORKTREE_FAILURE_RECOVERY_ACTIONS = {
     "dirty-tracked-worktree-overlap-before-pr-checkout": (
         "Preserve or move the local changes that overlap checkout paths, then start a fresh collector run."
@@ -350,6 +385,7 @@ def _validate_sol_selections(payload: dict[str, Any], roles: set[str], *, label:
     return selections
 
 
+#: Maps each conditionally routed specialist role to the routing signal that triggers it.
 CONDITIONAL_SIGNALS = {
     "solution-architect": "axis_solution_architect",
     "security-auditor": "axis_security_auditor",
@@ -2181,10 +2217,14 @@ def _validate_manifest_entries(
             or reader_path.name != "review_context.py"
             or _sha256(reader_path) != manifest.get("context_reader_sha256")
             or manifest["context_reader_sha256"] not in {*LEGACY_WORKDIR_READER_SHA256S, _sha256(current_reader)}
-            or manifest["dispatch_protocol"] == "paged-context-v8"
-            and manifest["context_reader_sha256"] != _sha256(current_reader)
-            or manifest["dispatch_protocol"] in {"paged-context-v7", "paged-context-v8"}
-            and manifest["context_reader_sha256"] == LEGACY_PROTOCOL_V6_READER_SHA256
+            or (
+                manifest["dispatch_protocol"] == "paged-context-v8"
+                and manifest["context_reader_sha256"] != _sha256(current_reader)
+            )
+            or (
+                manifest["dispatch_protocol"] in {"paged-context-v7", "paged-context-v8"}
+                and manifest["context_reader_sha256"] == LEGACY_PROTOCOL_V6_READER_SHA256
+            )
         ):
             raise SystemExit("manifest-context-reader-identity-invalid")
     if _paged_native_manifest(manifest):

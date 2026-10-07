@@ -7,21 +7,25 @@ import dataclasses
 import importlib.util
 import inspect
 import json
-from pathlib import Path, PurePosixPath, PureWindowsPath
 import shlex
 import sys
+from collections.abc import Callable
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 
 BENCHMARKS = Path(__file__).resolve().parent.parent
 FIXTURE_SCOPE_SHA = "f" * 64
 FIXTURE_APPROVAL_TOKEN = FIXTURE_SCOPE_SHA[:16]
 sys.path.insert(0, str(BENCHMARKS))
 
-from _bench_common.edit_patch_contracts import EditExecution, build_edit_task_contract, build_fix_single_contract  # noqa: E402
+from _bench_common.edit_patch_contracts import (  # noqa: E402
+    EditExecution,
+    build_edit_task_contract,
+    build_fix_single_contract,
+)
 from _bench_common.provider_parity_contracts import load_task_suite  # noqa: E402
 
 
@@ -35,7 +39,8 @@ def _stage_fix() -> Any:
     """
     structural_path = BENCHMARKS / "run-codex-structural.py"
     spec = importlib.util.spec_from_file_location("codex_structural_for_stage_fix", structural_path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     structural = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = structural
     spec.loader.exec_module(structural)
@@ -323,21 +328,22 @@ def test_full_study_dry_run_emits_paid_command_without_task_selector(
     assert "--tasks" not in output
 
 
-def test_patch_stage_preflights_each_distinct_task_baseline(
-    stage_fix: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _run_two_baseline_patch_dry_run(
+    stage_fix: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, preflight: Callable[..., None]
 ) -> None:
-    """Patch tasks must not reuse the first task's historical baseline.
+    """Run a no-model Patch dry run over two tasks that span distinct historical baselines.
 
-    Regression: executable preflight used only ``tasks[0]``. The real patch
-    suite deliberately spans several pre-fix commits, so that shortcut can
-    validate the wrong checkout and index for every later task.
+    Args:
+        stage_fix: The Fix stage module under test.
+        tmp_path: Directory the fixture repository paths are rooted under.
+        monkeypatch: Fixture patching the stage's loaders, scope resolver, and workspace preflight.
+        preflight: Replacement for the executable agent workspace preflight.
     """
     contracts = [
         SimpleNamespace(task_id="PT-01", baseline_commit="baseline-one", provider_binding=lambda: {}),
         SimpleNamespace(task_id="PT-02", baseline_commit="baseline-two", provider_binding=lambda: {}),
     ]
     adapter = SimpleNamespace(close=lambda: None)
-    observed: list[str] = []
     monkeypatch.setattr(
         stage_fix,
         "load_patch_tasks",
@@ -368,14 +374,7 @@ def test_patch_stage_preflights_each_distinct_task_baseline(
     monkeypatch.setattr(
         stage_fix, "_structural", lambda: SimpleNamespace(CodexRunner=lambda *_args, **_kwargs: adapter)
     )
-    monkeypatch.setattr(
-        stage_fix,
-        "preflight_executable_agent_workspace",
-        lambda _adapter, **kwargs: observed.append(
-            f"{kwargs['baseline_commit']}:{kwargs['historical_runtime_coordinate']['raw_index_sha256']}"
-            f":{kwargs['patch_contract'].task_id}"
-        ),
-    )
+    monkeypatch.setattr(stage_fix, "preflight_executable_agent_workspace", preflight)
 
     stage_fix.run_fix_stage(
         study="patch",
@@ -390,6 +389,28 @@ def test_patch_stage_preflights_each_distinct_task_baseline(
         index_path=tmp_path / "repo/.cache/codemap/repo.json",
         marketplace_root=BENCHMARKS.parent,
         codemap_bin=BENCHMARKS.parent / "plugins/codemap-py/bin/codemap-py",
+    )
+
+
+def test_patch_stage_preflights_each_distinct_task_baseline(
+    stage_fix: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Patch tasks must not reuse the first task's historical baseline.
+
+    Regression: executable preflight used only ``tasks[0]``. The real patch
+    suite deliberately spans several pre-fix commits, so that shortcut can
+    validate the wrong checkout and index for every later task.
+    """
+    observed: list[str] = []
+
+    _run_two_baseline_patch_dry_run(
+        stage_fix,
+        tmp_path,
+        monkeypatch,
+        lambda _adapter, **kwargs: observed.append(
+            f"{kwargs['baseline_commit']}:{kwargs['historical_runtime_coordinate']['raw_index_sha256']}"
+            f":{kwargs['patch_contract'].task_id}"
+        ),
     )
 
     assert observed == [f"baseline-one:{'a' * 64}:PT-01", f"baseline-two:{'b' * 64}:PT-02"]
@@ -403,59 +424,7 @@ def test_patch_preflight_reports_each_historical_baseline(
     Regression: Patch preflight ran five baseline/test fixtures before printing
     its paid scope, making a correct no-model validation look stalled.
     """
-    contracts = [
-        SimpleNamespace(task_id="PT-01", baseline_commit="baseline-one", provider_binding=lambda: {}),
-        SimpleNamespace(task_id="PT-02", baseline_commit="baseline-two", provider_binding=lambda: {}),
-    ]
-    adapter = SimpleNamespace(close=lambda: None)
-    monkeypatch.setattr(
-        stage_fix,
-        "load_patch_tasks",
-        lambda _path, _selected: [{"task": {}, "contract": contract} for contract in contracts],
-    )
-    monkeypatch.setattr(
-        stage_fix,
-        "load_task_suite",
-        lambda _path: [{"id": contract.task_id} for contract in contracts],
-    )
-    monkeypatch.setattr(
-        stage_fix,
-        "_patch_stage_source_binding",
-        lambda *_args: {
-            "source": "locked",
-            "patch_coordinates": {
-                "PT-01": {"baseline_commit": "baseline-one", "raw_index_sha256": "a" * 64, "scan_version": "13"},
-                "PT-02": {"baseline_commit": "baseline-two", "raw_index_sha256": "b" * 64, "scan_version": "13"},
-            },
-        },
-    )
-    monkeypatch.setattr(
-        stage_fix,
-        "_resolve_scope",
-        lambda *_args: {
-            "scope_sha256": FIXTURE_SCOPE_SHA,
-            "patch_test_runtime": stage_fix.patch_test_runtime_identity(),
-        },
-    )
-    monkeypatch.setattr(
-        stage_fix, "_structural", lambda: SimpleNamespace(CodexRunner=lambda *_args, **_kwargs: adapter)
-    )
-    monkeypatch.setattr(stage_fix, "preflight_executable_agent_workspace", lambda *_args, **_kwargs: None)
-
-    stage_fix.run_fix_stage(
-        study="patch",
-        repo_path=tmp_path / "repo",
-        selected=None,
-        dry_run=True,
-        resolve_scope=False,
-        auth_source=None,
-        run_dir=None,
-        paid_approval=None,
-        model="gpt-6.1-sol",
-        index_path=tmp_path / "repo/.cache/codemap/repo.json",
-        marketplace_root=BENCHMARKS.parent,
-        codemap_bin=BENCHMARKS.parent / "plugins/codemap-py/bin/codemap-py",
-    )
+    _run_two_baseline_patch_dry_run(stage_fix, tmp_path, monkeypatch, lambda *_args, **_kwargs: None)
 
     output = capsys.readouterr().out
     assert "PREFLIGHT 1/2 PT-01 validating frozen baseline and tests..." in output
@@ -803,10 +772,10 @@ def test_rescore_fix_stage_reuses_captured_agent_worktree_diff(
 
 @pytest.mark.parametrize(
     ("study", "loader", "scope"),
-    (
+    [
         pytest.param("fix-single", "load_fix_single_tasks", "resolve_fix_single_scope", id="fix-single"),
         pytest.param("fix-multi", "load_fix_multi_tasks", "resolve_fix_multi_scope", id="fix-multi"),
-    ),
+    ],
 )
 def test_executable_paid_stages_route_every_arm_row_through_shared_renderer(
     stage_fix: Any,
@@ -875,7 +844,7 @@ def test_executable_paid_stages_route_every_arm_row_through_shared_renderer(
     assert f" - metadata={tmp_path / study / 'run-metadata.json'}" in output
 
 
-@pytest.mark.parametrize("captured_diff", (None, "", "not a diff", pytest.param({"not": "a diff"}, id="mapping")))
+@pytest.mark.parametrize("captured_diff", [None, "", "not a diff", pytest.param({"not": "a diff"}, id="mapping")])
 def test_rescore_fix_stage_rejects_missing_or_invalid_captured_diff(
     stage_fix: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, captured_diff: object
 ) -> None:
@@ -892,13 +861,13 @@ def test_rescore_fix_stage_rejects_missing_or_invalid_captured_diff(
     )
     monkeypatch.setattr(stage_fix, "validate_fix_single_binding", lambda *_args: None)
 
-    with pytest.raises(ValueError, match="captured.*diff"):
+    with pytest.raises(ValueError, match=r"captured.*diff"):
         stage_fix.rescore_fix_stage(source_dir, tmp_path / "rescored", tmp_path, study="fix-single")
 
 
 @pytest.mark.parametrize(
     "observed_arguments",
-    (
+    [
         pytest.param(["symbol", "EarlyStopping._run_early_stopping_check"], id="wrong-query-command"),
         pytest.param(
             ["fn-rdeps", "lightning.pytorch.callbacks.early_stopping::EarlyStopping._run_early_stopping_check"],
@@ -912,7 +881,7 @@ def test_rescore_fix_stage_rejects_missing_or_invalid_captured_diff(
             ],
             id="partial-required-flags",
         ),
-    ),
+    ],
 )
 def test_strict_executable_patch_rejects_noncanonical_query_use_from_pooling(
     stage_fix: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, observed_arguments: list[str]
@@ -920,36 +889,8 @@ def test_strict_executable_patch_rejects_noncanonical_query_use_from_pooling(
     """C compact-call compliance does not let a wrong task-fit argv enter pooling."""
     task = next(task for task in stage_fix.load_task_suite(stage_fix.FIX_MULTI_TASKS_PATH) if task["id"] == "FM-01")
     contract = stage_fix.build_fix_multi_contract(task)
-    parsed = SimpleNamespace(
-        success=True,
-        output_text="summary",
-        input_tokens=10,
-        cached_input_tokens=2,
-        output_tokens=3,
-        reasoning_output_tokens=1,
-        tool_result_tokens=None,
-        command_calls=1,
-        tool_elapsed_s=None,
-        codemap_calls=1,
-        codemap_observed_calls=1,
-        codemap_successful_calls=1,
-        codemap_direct_compact_successful_calls=0,
-        codemap_skill_compact_successful_calls=1,
-        codemap_errors=0,
-        skill_delivery_observed=True,
-        successful_query_arguments=[observed_arguments],
-        raw_events=[],
-    )
-    execution = {
-        "baseline_failed": True,
-        "patch_applied": True,
-        "changed_paths": list(contract.expected_paths),
-        "targeted_test_passed": True,
-        "recount_recoverable": False,
-        "recount_oracle_passed": None,
-        "cleanup_verified": True,
-        "error": "",
-    }
+    parsed = _fm_strict_query_parsed(observed_arguments)
+    execution = _fm_execution(contract)
     monkeypatch.setattr(stage_fix.runtime, "parse_codex_jsonl", lambda *_args, **_kwargs: parsed)
     monkeypatch.setattr(
         stage_fix, "execute_fix_multi_patch", lambda *_args, **_kwargs: SimpleNamespace(as_dict=lambda: execution)
@@ -974,7 +915,7 @@ def test_strict_executable_patch_rejects_noncanonical_query_use_from_pooling(
 
 @pytest.mark.parametrize(
     ("arm", "expected_compliance", "expected_pooling"),
-    (pytest.param("B_auto", True, True, id="b_auto"), pytest.param("C_strict", False, False, id="c_strict")),
+    [pytest.param("B_auto", True, True, id="b_auto"), pytest.param("C_strict", False, False, id="c_strict")],
 )
 def test_fix_single_preserves_optional_and_forced_query_controls(
     stage_fix: Any,
@@ -987,36 +928,8 @@ def test_fix_single_preserves_optional_and_forced_query_controls(
     """B permits zero use while C remains an ineligible forced-query negative control."""
     task = next(iter(stage_fix.load_task_suite(stage_fix.FIX_SINGLE_TASKS_PATH)))
     contract = build_fix_single_contract(task)
-    parsed = SimpleNamespace(
-        success=True,
-        output_text="summary",
-        input_tokens=10,
-        cached_input_tokens=2,
-        output_tokens=3,
-        reasoning_output_tokens=1,
-        tool_result_tokens=None,
-        command_calls=0,
-        tool_elapsed_s=None,
-        codemap_calls=0,
-        codemap_observed_calls=0,
-        codemap_successful_calls=0,
-        codemap_direct_compact_successful_calls=0,
-        codemap_skill_compact_successful_calls=0,
-        codemap_errors=0,
-        skill_delivery_observed=False,
-        successful_query_arguments=[],
-        raw_events=[],
-    )
-    execution = {
-        "baseline_failed": True,
-        "patch_applied": True,
-        "changed_paths": list(contract.expected_paths),
-        "targeted_test_passed": True,
-        "recount_recoverable": False,
-        "recount_oracle_passed": None,
-        "cleanup_verified": True,
-        "error": "",
-    }
+    parsed = _fm_parsed()
+    execution = _fm_execution(contract)
     monkeypatch.setattr(stage_fix.runtime, "parse_codex_jsonl", lambda *_args, **_kwargs: parsed)
     monkeypatch.setattr(
         stage_fix, "execute_fix_single_patch", lambda *_args, **_kwargs: SimpleNamespace(as_dict=lambda: execution)
@@ -1054,7 +967,7 @@ def test_fix_single_preserves_optional_and_forced_query_controls(
 
 @pytest.mark.parametrize(
     ("task_id", "expected_arguments"),
-    (
+    [
         pytest.param(
             "FM-01",
             [
@@ -1076,7 +989,7 @@ def test_fix_single_preserves_optional_and_forced_query_controls(
         pytest.param(
             "FM-03", ["find-symbol", r"Strategy\.setup_environment$", "--exclude-tests", "--limit", "0"], id="fm-03"
         ),
-    ),
+    ],
 )
 def test_fix_multi_strict_prompt_and_conformance_use_task_specific_argv(
     stage_fix: Any,
@@ -1088,36 +1001,8 @@ def test_fix_multi_strict_prompt_and_conformance_use_task_specific_argv(
     """Each Fix-Multi strict task requires and credits only its compact query argv."""
     task = next(task for task in stage_fix.load_task_suite(stage_fix.FIX_MULTI_TASKS_PATH) if task["id"] == task_id)
     contract = stage_fix.build_fix_multi_contract(task)
-    parsed = SimpleNamespace(
-        success=True,
-        output_text="summary",
-        input_tokens=10,
-        cached_input_tokens=2,
-        output_tokens=3,
-        reasoning_output_tokens=1,
-        tool_result_tokens=None,
-        command_calls=1,
-        tool_elapsed_s=None,
-        codemap_calls=1,
-        codemap_observed_calls=1,
-        codemap_successful_calls=1,
-        codemap_direct_compact_successful_calls=0,
-        codemap_skill_compact_successful_calls=1,
-        codemap_errors=0,
-        skill_delivery_observed=True,
-        successful_query_arguments=[expected_arguments],
-        raw_events=[],
-    )
-    execution = {
-        "baseline_failed": True,
-        "patch_applied": True,
-        "changed_paths": list(contract.expected_paths),
-        "targeted_test_passed": True,
-        "recount_recoverable": False,
-        "recount_oracle_passed": None,
-        "cleanup_verified": True,
-        "error": "",
-    }
+    parsed = _fm_strict_query_parsed(expected_arguments)
+    execution = _fm_execution(contract)
     monkeypatch.setattr(stage_fix.runtime, "parse_codex_jsonl", lambda *_args, **_kwargs: parsed)
     monkeypatch.setattr(
         stage_fix, "execute_fix_multi_patch", lambda *_args, **_kwargs: SimpleNamespace(as_dict=lambda: execution)
@@ -1138,7 +1023,7 @@ def test_fix_multi_strict_prompt_and_conformance_use_task_specific_argv(
     assert row["pooling_eligible"] is True
 
 
-@pytest.mark.parametrize("arm", ("A_plain", "B_auto", "C_strict"))
+@pytest.mark.parametrize("arm", ["A_plain", "B_auto", "C_strict"])
 def test_executable_prompt_discloses_unavailable_git_and_project_test_boundaries(stage_fix: Any, arm: str) -> None:
     """All arms avoid wasting turns on intentionally inaccessible workspace facilities."""
     task = next(task for task in stage_fix.load_task_suite(stage_fix.FIX_MULTI_TASKS_PATH) if task["id"] == "FM-01")
@@ -1155,36 +1040,8 @@ def test_fix_multi_changed_path_boundary_uses_unordered_set_semantics(
     """Equivalent changed-path sets remain eligible when Git returns another order."""
     task = next(task for task in stage_fix.load_task_suite(stage_fix.FIX_MULTI_TASKS_PATH) if task["id"] == "FM-03")
     contract = stage_fix.build_fix_multi_contract(task)
-    parsed = SimpleNamespace(
-        success=True,
-        output_text="summary",
-        input_tokens=10,
-        cached_input_tokens=2,
-        output_tokens=3,
-        reasoning_output_tokens=1,
-        tool_result_tokens=None,
-        command_calls=0,
-        tool_elapsed_s=None,
-        codemap_calls=0,
-        codemap_observed_calls=0,
-        codemap_successful_calls=0,
-        codemap_direct_compact_successful_calls=0,
-        codemap_skill_compact_successful_calls=0,
-        codemap_errors=0,
-        skill_delivery_observed=False,
-        successful_query_arguments=[],
-        raw_events=[],
-    )
-    execution = {
-        "baseline_failed": True,
-        "patch_applied": True,
-        "changed_paths": list(reversed(contract.expected_paths)),
-        "targeted_test_passed": True,
-        "recount_recoverable": False,
-        "recount_oracle_passed": None,
-        "cleanup_verified": True,
-        "error": "",
-    }
+    parsed = _fm_parsed()
+    execution = _fm_execution(contract, changed_paths=list(reversed(contract.expected_paths)))
     monkeypatch.setattr(stage_fix.runtime, "parse_codex_jsonl", lambda *_args, **_kwargs: parsed)
     monkeypatch.setattr(
         stage_fix, "execute_fix_multi_patch", lambda *_args, **_kwargs: SimpleNamespace(as_dict=lambda: execution)
@@ -1235,32 +1092,55 @@ def test_fix_stage_execution_is_controlled_only_by_dry_run(stage_fix: Any) -> No
     assert "paid" not in parameters
 
 
-def _fm_parsed() -> SimpleNamespace:
+def _fm_parsed(**overrides: Any) -> SimpleNamespace:
     """Build successful transport evidence with no observed tools and unknown tool-result usage.
+
+    Args:
+        **overrides: Transport fields that replace the no-tool defaults.
 
     >>> result = _fm_parsed()
     >>> result.success, result.command_calls, result.tool_result_tokens
     (True, 0, None)
+    >>> _fm_parsed(command_calls=1).command_calls
+    1
     """
-    return SimpleNamespace(
-        success=True,
-        output_text="summary",
-        input_tokens=10,
-        cached_input_tokens=2,
-        output_tokens=3,
-        reasoning_output_tokens=1,
-        tool_result_tokens=None,
-        command_calls=0,
-        tool_elapsed_s=None,
-        codemap_calls=0,
-        codemap_observed_calls=0,
-        codemap_successful_calls=0,
-        codemap_direct_compact_successful_calls=0,
-        codemap_skill_compact_successful_calls=0,
-        codemap_errors=0,
-        skill_delivery_observed=False,
-        successful_query_arguments=[],
-        raw_events=[],
+    fields = {
+        "success": True,
+        "output_text": "summary",
+        "input_tokens": 10,
+        "cached_input_tokens": 2,
+        "output_tokens": 3,
+        "reasoning_output_tokens": 1,
+        "tool_result_tokens": None,
+        "command_calls": 0,
+        "tool_elapsed_s": None,
+        "codemap_calls": 0,
+        "codemap_observed_calls": 0,
+        "codemap_successful_calls": 0,
+        "codemap_direct_compact_successful_calls": 0,
+        "codemap_skill_compact_successful_calls": 0,
+        "codemap_errors": 0,
+        "skill_delivery_observed": False,
+        "successful_query_arguments": [],
+        "raw_events": [],
+    }
+    return SimpleNamespace(**{**fields, **overrides})
+
+
+def _fm_strict_query_parsed(query_arguments: list[str]) -> SimpleNamespace:
+    """Build transport evidence for one successful compact Skill query with the supplied argv.
+
+    >>> _fm_strict_query_parsed(["rdeps", "pkg.core"]).successful_query_arguments
+    [['rdeps', 'pkg.core']]
+    """
+    return _fm_parsed(
+        command_calls=1,
+        codemap_calls=1,
+        codemap_observed_calls=1,
+        codemap_successful_calls=1,
+        codemap_skill_compact_successful_calls=1,
+        skill_delivery_observed=True,
+        successful_query_arguments=[query_arguments],
     )
 
 

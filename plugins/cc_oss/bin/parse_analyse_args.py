@@ -40,11 +40,15 @@ from enum import Enum
 from pathlib import Path
 from typing import Final
 
+#: Matches a bare ``owner/repo`` slug.
 _REPO_SLUG_RE: Final = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+#: Matches an argument that starts with an ``http://`` or ``https://`` scheme.
 _URL_SCHEME_RE: Final = re.compile(r"^https?://")
+#: Matches the ``https://github.com/`` URL prefix, stripped to leave ``owner/repo``.
 _GITHUB_PREFIX_RE: Final = re.compile(r"https?://github\.com/")
-# Greedy leading ``.*`` mirrors ``sed 's|.*github\.com[:/]||'`` — the last host occurrence wins.
+#: Greedy leading ``.*`` mirrors ``sed 's|.*github\.com[:/]||'`` — the last host occurrence wins.
 _REMOTE_HOST_RE: Final = re.compile(r"^.*github\.com[:/]")
+#: Leading keyword that switches the analyse arguments into vitality mode.
 _VITALITY_KEYWORD: Final = "vitality"
 
 
@@ -103,7 +107,7 @@ _DRY_RUN = False
 
 def _set_dry_run(enabled: bool) -> None:
     """Enable or disable dry-run mode for this process."""
-    global _DRY_RUN  # noqa: PLW0603 — one process-wide switch, set once from argv
+    global _DRY_RUN
     _DRY_RUN = enabled
 
 
@@ -142,7 +146,7 @@ def _run(cmd: list[str], timeout: int) -> str:
         Stripped stdout when the command succeeds, otherwise an empty string.
     """
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603 - argv list, no shell
     except (OSError, subprocess.SubprocessError):
         return ""
     return proc.stdout.strip() if proc.returncode == 0 else ""

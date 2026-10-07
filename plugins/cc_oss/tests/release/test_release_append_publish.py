@@ -15,10 +15,10 @@ from urllib.parse import quote
 import pytest
 import release_append_marker as marker_api
 
-
 _SCRIPT = Path(__file__).resolve().parents[2] / "bin/release_append_publish.py"
 _SPEC = importlib.util.spec_from_file_location("release_append_publish", _SCRIPT)
-assert _SPEC and _SPEC.loader
+assert _SPEC
+assert _SPEC.loader
 publisher = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(publisher)
 _MAIN_MARKER = marker_api.state_relative("main", "marker")
@@ -99,22 +99,43 @@ def _write_state(root: Path, relative: str, content: str, encoding: str = "utf-8
     path.write_text(content, encoding=encoding, newline="\n")
 
 
-def _init_git(tmp_path: Path) -> str:
-    """Create a main-branch repository with a local test commit identity."""
-    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "test@example.invalid"], cwd=tmp_path, check=True, capture_output=True
-    )
-    (tmp_path / "source.txt").write_text("release source\n", encoding="utf-8", newline="\n")
-    subprocess.run(["git", "add", "source.txt"], cwd=tmp_path, check=True, capture_output=True)
+#: The one-commit repository ``_init_git`` copies, as ``{"root": Path, "head": str}``; written once per module.
+_GIT_TEMPLATE: dict[str, object] = {}
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _git_template(tmp_path_factory: pytest.TempPathFactory) -> None:
+    """Build the initial main-branch repository once per module for every ``_init_git`` call to copy.
+
+    Creating it costs six git launches (init, two identity settings, add, commit, rev-parse), and nearly every test
+    here starts from it; process creation is slow on Windows, so building it per test dominated setup there. Nothing
+    ever writes to the template after this fixture: each test receives a private byte copy, so its commits, tags and
+    branch switches stay in its own ``tmp_path``.
+    """
+    root = tmp_path_factory.mktemp("git-template")
+    subprocess.run(["git", "init", "-q", "-b", "main", str(root)], check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True, capture_output=True)
+    (root / "source.txt").write_text("release source\n", encoding="utf-8", newline="\n")
+    subprocess.run(["git", "add", "source.txt"], cwd=root, check=True, capture_output=True)
     subprocess.run(
         ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "source"],
-        cwd=tmp_path,
+        cwd=root,
         check=True,
         capture_output=True,
     )
-    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
+    _GIT_TEMPLATE["root"] = root
+    _GIT_TEMPLATE["head"] = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+
+
+def _init_git(tmp_path: Path) -> str:
+    """Create a main-branch repository with a local test commit identity and return its HEAD.
+
+    The repository is a private copy of the module's template, so it already holds one commit on ``main`` and the
+    repository-local identity later commits rely on.
+    """
+    shutil.copytree(_GIT_TEMPLATE["root"], tmp_path, dirs_exist_ok=True)
+    return str(_GIT_TEMPLATE["head"])
 
 
 def _stage_marker(stage: Path) -> str:
@@ -137,7 +158,6 @@ def _start(tmp_path: Path) -> Path:
 def _plain_candidate(tmp_path: Path) -> tuple[Path, str, str, tuple[str, str]]:
     """Stage a plain range ending before HEAD with both dated output destinations."""
     old_marker = _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "commit", "--allow-empty", "-qm", "represented"], cwd=tmp_path, check=True)
     marker_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
     subprocess.run(["git", "commit", "--allow-empty", "-qm", "later"], cwd=tmp_path, check=True)
@@ -452,7 +472,7 @@ def test_recovery_accepts_marker_already_published(tmp_path: Path, monkeypatch: 
 
 
 @pytest.fixture
-def _advanced_marker_after_interrupted_publish(
+def advanced_marker_after_interrupted_publish(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[str, str, str, str, Path, Path]:
     """Stage a candidate whose marker was written to live state after an interrupted publish.
@@ -486,10 +506,10 @@ def _advanced_marker_after_interrupted_publish(
 
 
 def test_recovery_succeeds_when_marker_advanced_and_source_unchanged(
-    tmp_path: Path, _advanced_marker_after_interrupted_publish: tuple[str, str, str, str, Path, Path]
+    tmp_path: Path, advanced_marker_after_interrupted_publish: tuple[str, str, str, str, Path, Path]
 ) -> None:
     """An externally advanced marker still recovers cleanly when the source has not drifted."""
-    _, frozen_head, draft_candidate, marker_candidate, journal, draft = _advanced_marker_after_interrupted_publish
+    _, frozen_head, draft_candidate, marker_candidate, journal, draft = advanced_marker_after_interrupted_publish
     assert subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip() == frozen_head
     publisher.recover(tmp_path, "main")
     assert draft.read_text(encoding="utf-8") == draft_candidate
@@ -498,13 +518,13 @@ def test_recovery_succeeds_when_marker_advanced_and_source_unchanged(
 
 
 def test_recovery_rejects_branch_switch_after_marker_advanced(
-    tmp_path: Path, _advanced_marker_after_interrupted_publish: tuple[str, str, str, str, Path, Path]
+    tmp_path: Path, advanced_marker_after_interrupted_publish: tuple[str, str, str, str, Path, Path]
 ) -> None:
     """A branch switch after the marker was externally advanced still blocks recovery."""
-    _, frozen_head, _, marker_candidate, journal, draft = _advanced_marker_after_interrupted_publish
+    _, frozen_head, _, marker_candidate, journal, draft = advanced_marker_after_interrupted_publish
     subprocess.run(["git", "switch", "-q", "-c", "other"], cwd=tmp_path, check=True, capture_output=True)
     assert subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip() == frozen_head
-    with pytest.raises(ValueError, match="branch changed|baseline tags changed"):
+    with pytest.raises(ValueError, match=r"branch changed|baseline tags changed"):
         publisher.recover(tmp_path, "main")
     assert draft.read_text(encoding="utf-8") == "original\n"
     assert journal.exists()
@@ -512,13 +532,13 @@ def test_recovery_rejects_branch_switch_after_marker_advanced(
 
 
 def test_recovery_rejects_ancestor_tag_after_marker_advanced(
-    tmp_path: Path, _advanced_marker_after_interrupted_publish: tuple[str, str, str, str, Path, Path]
+    tmp_path: Path, advanced_marker_after_interrupted_publish: tuple[str, str, str, str, Path, Path]
 ) -> None:
     """A tag cut on the old ancestor after the marker was externally advanced still blocks recovery."""
-    ancestor, frozen_head, _, _, journal, draft = _advanced_marker_after_interrupted_publish
+    ancestor, frozen_head, _, _, journal, draft = advanced_marker_after_interrupted_publish
     subprocess.run(["git", "tag", "v2", ancestor], cwd=tmp_path, check=True, capture_output=True)
     assert subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip() == frozen_head
-    with pytest.raises(ValueError, match="branch changed|baseline tags changed"):
+    with pytest.raises(ValueError, match=r"branch changed|baseline tags changed"):
         publisher.recover(tmp_path, "main")
     assert draft.read_text(encoding="utf-8") == "original\n"
     assert not journal.exists()
@@ -598,7 +618,7 @@ def test_recovery_rejects_journal_missing_changed_artifact(tmp_path: Path, monke
     journal = json.loads(journal_file.read_text(encoding="utf-8"))
     journal["entries"] = [entry for entry in journal["entries"] if entry["path"] != "DRAFT.md"]
     journal_file.write_text(json.dumps(journal), encoding="utf-8", newline="\n")
-    with pytest.raises(ValueError, match="journal.*candidate"):
+    with pytest.raises(ValueError, match=r"journal.*candidate"):
         publisher.recover(tmp_path, "main")
     assert (tmp_path / "DRAFT.md").read_text(encoding="utf-8") == "## Summary\nOriginal\n"
     assert (tmp_path / _MAIN_MARKER).read_text(encoding="utf-8") == "old\n"
@@ -691,7 +711,6 @@ def test_new_commit_before_staging_blocks_begin(tmp_path: Path) -> None:
 def test_same_head_branch_switch_blocks_append(tmp_path: Path, phase: str) -> None:
     """A checkout with the gathered commit must not publish under another branch's marker."""
     frozen_head = _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
     (tmp_path / ".temp").mkdir()
     (tmp_path / "DRAFT.md").write_text("original\n", encoding="utf-8", newline="\n")
     (tmp_path / "CHANGELOG.md").write_text("changelog\n", encoding="utf-8", newline="\n")
@@ -702,11 +721,16 @@ def test_same_head_branch_switch_blocks_append(tmp_path: Path, phase: str) -> No
         _stage_marker(stage)
     subprocess.run(["git", "switch", "-q", "-c", "other"], cwd=tmp_path, check=True, capture_output=True)
     assert subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip() == frozen_head
-    with pytest.raises(ValueError, match="branch changed after release gather"):
+
+    def _run_expected_failure() -> None:
+        """Run the statements expected to fail as one callable."""
         if phase == "before-stage":
             publisher.begin(tmp_path, "main", "CHANGELOG.md", frozen_head, range_start="HEAD")
         else:
             publisher.publish(tmp_path, "main", stage)
+
+    with pytest.raises(ValueError, match="branch changed after release gather"):
+        _run_expected_failure()
     assert (tmp_path / "DRAFT.md").read_text(encoding="utf-8") == "original\n"
     assert (tmp_path / _MAIN_MARKER).read_text(encoding="utf-8") == "old\n"
 
@@ -716,7 +740,6 @@ def test_same_head_branch_switch_blocks_append(tmp_path: Path, phase: str) -> No
 def test_new_release_tag_blocks_append_with_unchanged_head(tmp_path: Path, phase: str) -> None:
     """A tag cut after Gather invalidates the release baseline before publication."""
     baseline = _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "tag", "v1"], cwd=tmp_path, check=True, capture_output=True)
     (tmp_path / "source.txt").write_text("previous append\n", encoding="utf-8", newline="\n")
     subprocess.run(["git", "add", "source.txt"], cwd=tmp_path, check=True, capture_output=True)
@@ -869,7 +892,6 @@ def test_notes_marker_refresh_uses_frozen_range_endpoint_in_candidate() -> None:
 def test_plain_notes_marker_tracks_completed_explicit_range_endpoint(tmp_path: Path) -> None:
     """An explicit notes range ending before HEAD must leave later commits for append."""
     base = _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "tag", "v1", base], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "commit", "--allow-empty", "-qm", "represented"], cwd=tmp_path, check=True)
     represented = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
@@ -960,7 +982,6 @@ def test_plain_notes_marker_tracks_completed_explicit_range_endpoint(tmp_path: P
 def test_plain_notes_rejects_head_change_after_gather(tmp_path: Path) -> None:
     """A symbolic HEAD range cannot certify a commit landed after notes were drafted."""
     base = _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "tag", "v1", base], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "commit", "--allow-empty", "-qm", "represented"], cwd=tmp_path, check=True)
     frozen = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
@@ -998,16 +1019,29 @@ def test_plain_notes_rejects_head_change_after_gather(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="Release gather uses Bash")
-def test_plain_notes_rejects_range_disjoint_from_saved_marker(tmp_path: Path) -> None:
-    """A plain explicit range may not skip commits after a usable saved marker."""
+@pytest.mark.parametrize(
+    ("marker_commit", "range_template"),
+    [
+        pytest.param(0, "{1}..HEAD", id="range-disjoint-from-saved-marker"),
+        pytest.param(1, "v1..{0}", id="range-ending-before-saved-marker"),
+    ],
+)
+def test_plain_notes_rejects_range_outside_saved_marker(
+    tmp_path: Path, marker_commit: int, range_template: str
+) -> None:
+    """A plain explicit range may neither skip commits after the saved marker nor end before it.
+
+    Three commits follow the ``v1`` tag. With the saved marker on the first, a range starting at the second would skip
+    the commit in between; with the marker on the second, a historical range ending at the first would rewind the marker
+    and replay already represented commits. Gather must refuse both and leave the saved marker untouched.
+    """
     base = _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "tag", "v1", base], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "--allow-empty", "-qm", "already drafted"], cwd=tmp_path, check=True)
-    old_marker = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
-    subprocess.run(["git", "commit", "--allow-empty", "-qm", "gap"], cwd=tmp_path, check=True)
-    skipped_start = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
-    subprocess.run(["git", "commit", "--allow-empty", "-qm", "selected"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-qm", "first"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-qm", "second"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-qm", "third"], cwd=tmp_path, check=True)
+    commits = subprocess.check_output(["git", "rev-list", "--reverse", "v1..HEAD"], cwd=tmp_path, text=True).split()
+    old_marker = commits[marker_commit]
     _write_state(tmp_path, _MAIN_MARKER, old_marker + "\n")
     setup = tmp_path / "release-setup-test"
     setup.mkdir()
@@ -1030,7 +1064,7 @@ def test_plain_notes_rejects_range_disjoint_from_saved_marker(tmp_path: Path) ->
     )
 
     completed = subprocess.run(
-        [shutil.which("bash"), "-c", f'RANGE="{skipped_start}..HEAD"\n{prefix}'],
+        [shutil.which("bash"), "-c", f'RANGE="{range_template.format(*commits)}"\n{prefix}'],
         cwd=tmp_path,
         env=environment,
         capture_output=True,
@@ -1038,51 +1072,7 @@ def test_plain_notes_rejects_range_disjoint_from_saved_marker(tmp_path: Path) ->
         check=False,
     )
 
-    assert completed.returncode != 0
-    assert (tmp_path / _MAIN_MARKER).read_text(encoding="utf-8") == old_marker + "\n"
-
-
-@pytest.mark.skipif(shutil.which("bash") is None, reason="Release gather uses Bash")
-def test_plain_notes_rejects_range_ending_before_saved_marker(tmp_path: Path) -> None:
-    """A historical range must not rewind the marker and replay represented commits."""
-    base = _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(["git", "tag", "v1", base], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "--allow-empty", "-qm", "range endpoint"], cwd=tmp_path, check=True)
-    stale_end = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
-    subprocess.run(["git", "commit", "--allow-empty", "-qm", "already drafted"], cwd=tmp_path, check=True)
-    old_marker = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
-    subprocess.run(["git", "commit", "--allow-empty", "-qm", "later"], cwd=tmp_path, check=True)
-    _write_state(tmp_path, _MAIN_MARKER, old_marker + "\n")
-    setup = tmp_path / "release-setup-test"
-    setup.mkdir()
-    (setup / "LAST_TAG").write_text("v1\n", encoding="utf-8", newline="\n")
-    (setup / "BRANCH").write_text("main\n", encoding="utf-8", newline="\n")
-    (setup / "BRANCH_REF").write_text("main\n", encoding="utf-8", newline="\n")
-    (setup / "BRANCH_KEY").write_text(marker_api.branch_state_key("main") + "\n", encoding="utf-8", newline="\n")
-    (tmp_path / "release-do-append-test").write_text("false\n", encoding="utf-8", newline="\n")
-    (tmp_path / "release-mode-test").write_text("notes\n", encoding="utf-8", newline="\n")
-    skill = (_SCRIPT.parents[1] / "skills/release/SKILL.md").read_text(encoding="utf-8")
-    gather_block = next(
-        block
-        for block in re.findall(r"```bash\n(.*?)```", skill, re.DOTALL)
-        if "append range does not start at saved marker" in block
-    )
-    prefix = gather_block.split("# persist (Check 41)", 1)[0]
-    environment = os.environ.copy()
-    environment.update(
-        {"TMPDIR": str(tmp_path), "CLAUDE_CODE_SESSION_ID": "test", "CLAUDE_PLUGIN_ROOT": str(_SCRIPT.parents[1])}
-    )
-
-    completed = subprocess.run(
-        [shutil.which("bash"), "-c", f'RANGE="v1..{stale_end}"\n{prefix}'],
-        cwd=tmp_path,
-        env=environment,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
+    assert len(commits) == 3
     assert completed.returncode != 0
     assert (tmp_path / _MAIN_MARKER).read_text(encoding="utf-8") == old_marker + "\n"
 
@@ -1090,7 +1080,6 @@ def test_plain_notes_rejects_range_ending_before_saved_marker(tmp_path: Path) ->
 def test_begin_rejects_completed_endpoint_before_saved_marker(tmp_path: Path) -> None:
     """Direct candidate staging must not permit a marker rewind."""
     _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "commit", "--allow-empty", "-qm", "historical endpoint"], cwd=tmp_path, check=True)
     stale_end = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
     subprocess.run(["git", "commit", "--allow-empty", "-qm", "already drafted"], cwd=tmp_path, check=True)
@@ -1110,7 +1099,6 @@ def test_begin_rejects_completed_endpoint_before_saved_marker(tmp_path: Path) ->
 def test_plain_notes_stages_before_artifact_edits(tmp_path: Path) -> None:
     """A plain draft and marker must share a recoverable candidate before edits."""
     head = _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
     (tmp_path / "DRAFT.md").write_bytes(b"ORIGINAL\n")
     (tmp_path / "CHANGELOG.md").write_bytes(b"# Changelog\n")
     summary = ".temp/output-release-summary-main-2026-09-26.md"
@@ -1169,7 +1157,6 @@ def test_plain_notes_stages_before_artifact_edits(tmp_path: Path) -> None:
 def test_interrupted_completion_receipt_cannot_advance_marker_after_change(tmp_path: Path, interruption: str) -> None:
     """A receipt stranded between truth review and write expires on draft or source change."""
     base = _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "commit", "--allow-empty", "-qm", "represented"], cwd=tmp_path, check=True)
     represented = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
     draft = tmp_path / "DRAFT.md"
@@ -1231,10 +1218,9 @@ def test_interrupted_completion_receipt_cannot_advance_marker_after_change(tmp_p
 
 
 @pytest.fixture
-def _range_start_cli(tmp_path: Path) -> tuple[Path, list[str], str, str, str, Path]:
+def range_start_cli(tmp_path: Path) -> tuple[Path, list[str], str, str, str, Path]:
     """Build a two-commit repo plus the shared direct `begin` CLI invocation for range-start checks."""
     base = _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "commit", "--allow-empty", "-qm", "undrafted"], cwd=tmp_path, check=True)
     late = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
     subprocess.run(["git", "commit", "--allow-empty", "-qm", "drafted"], cwd=tmp_path, check=True)
@@ -1265,10 +1251,10 @@ def _range_start_cli(tmp_path: Path) -> tuple[Path, list[str], str, str, str, Pa
 
 
 def test_begin_rejects_missing_invalid_or_skipped_range_start(
-    tmp_path: Path, _range_start_cli: tuple[Path, list[str], str, str, str, Path]
+    tmp_path: Path, range_start_cli: tuple[Path, list[str], str, str, str, Path]
 ) -> None:
     """A direct begin call cannot certify an endpoint without a valid, completed range start."""
-    _, command, base, late, head, _ = _range_start_cli
+    _, command, base, late, head, _ = range_start_cli
     missing = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True)
     invalid = subprocess.run([*command, "--range-start", "f" * 40], cwd=tmp_path, capture_output=True, text=True)
     skipped = subprocess.run([*command, "--range-start", late], cwd=tmp_path, capture_output=True, text=True)
@@ -1293,19 +1279,19 @@ def _begin_with_range_start(tmp_path: Path, command: list[str], range_start: str
 
 
 def test_begin_with_valid_range_start_stages_completed_candidate(
-    tmp_path: Path, _range_start_cli: tuple[Path, list[str], str, str, str, Path]
+    tmp_path: Path, range_start_cli: tuple[Path, list[str], str, str, str, Path]
 ) -> None:
     """A begin call with a valid --range-start records it as the candidate's range start."""
-    _, command, base, _, _, _ = _range_start_cli
+    _, command, base, _, _, _ = range_start_cli
     _, _, candidate = _begin_with_range_start(tmp_path, command, base)
     assert candidate["range_start_sha"] == base
 
 
 def test_seal_rejects_tampered_range_start_but_accepts_original(
-    tmp_path: Path, _range_start_cli: tuple[Path, list[str], str, str, str, Path]
+    tmp_path: Path, range_start_cli: tuple[Path, list[str], str, str, str, Path]
 ) -> None:
     """Seal rejects a candidate whose range_start_sha was tampered after staging, then accepts the original."""
-    script, command, base, _, head, _ = _range_start_cli
+    script, command, base, _, head, _ = range_start_cli
     stage, candidate_path, candidate = _begin_with_range_start(tmp_path, command, base)
     marker = marker_api.state_relative("main", "marker")
     _write_state(stage, marker, head + "\n")
@@ -1330,10 +1316,10 @@ def test_seal_rejects_tampered_range_start_but_accepts_original(
 
 
 def test_publish_rejects_range_start_tampered_after_seal(
-    tmp_path: Path, _range_start_cli: tuple[Path, list[str], str, str, str, Path]
+    tmp_path: Path, range_start_cli: tuple[Path, list[str], str, str, str, Path]
 ) -> None:
     """Publish rejects a sealed candidate whose range_start_sha was tampered after sealing."""
-    script, command, base, _, head, _ = _range_start_cli
+    script, command, base, _, head, _ = range_start_cli
     stage, candidate_path, candidate = _begin_with_range_start(tmp_path, command, base)
     marker = marker_api.state_relative("main", "marker")
     _write_state(stage, marker, head + "\n")
@@ -1357,10 +1343,10 @@ def test_publish_rejects_range_start_tampered_after_seal(
 
 
 def test_begin_with_tag_baseline_uses_tag_as_baseline_sha(
-    tmp_path: Path, _range_start_cli: tuple[Path, list[str], str, str, str, Path]
+    tmp_path: Path, range_start_cli: tuple[Path, list[str], str, str, str, Path]
 ) -> None:
     """A begin call anchored on --last-tag records the tagged commit as the release baseline."""
-    _, command, _, late, _, tags = _range_start_cli
+    _, command, _, late, _, tags = range_start_cli
     subprocess.run(["git", "tag", "v2", late], cwd=tmp_path, check=True)
     tags.write_bytes(publisher._tag_state(tmp_path))
     tagged = subprocess.run(
@@ -1374,7 +1360,6 @@ def test_begin_with_tag_baseline_uses_tag_as_baseline_sha(
 def test_direct_begin_cannot_skip_a_saved_marker(tmp_path: Path) -> None:
     """An omitted saved-marker argument cannot hide pending commits from a direct caller."""
     base = _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "commit", "--allow-empty", "-qm", "pending"], cwd=tmp_path, check=True)
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
     marker = marker_api.state_relative("main", "marker")
@@ -1412,12 +1397,11 @@ def test_direct_begin_cannot_skip_a_saved_marker(tmp_path: Path) -> None:
 def test_direct_begin_cannot_publish_behind_a_saved_marker(tmp_path: Path) -> None:
     """An omitted continuity argument cannot downgrade a valid live marker."""
     base = _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "commit", "--allow-empty", "-qm", "represented"], cwd=tmp_path, check=True)
     saved = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
     _write_state(tmp_path, marker_api.state_relative("main", "marker"), saved + "\n")
 
-    with pytest.raises(ValueError, match="saved marker|endpoint"):
+    with pytest.raises(ValueError, match=r"saved marker|endpoint"):
         publisher.begin(tmp_path, "main", "CHANGELOG.md", marker_sha=base, range_start=base)
     assert (tmp_path / marker_api.state_relative("main", "marker")).read_bytes() == (saved + "\n").encode()
 
@@ -1425,7 +1409,6 @@ def test_direct_begin_cannot_publish_behind_a_saved_marker(tmp_path: Path) -> No
 def test_tag_supersession_requires_selected_tag_baseline(tmp_path: Path) -> None:
     """A tag replacing an older marker cannot leave later commits out of notes."""
     saved = _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "commit", "--allow-empty", "-qm", "tagged"], cwd=tmp_path, check=True)
     tagged = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
     subprocess.run(["git", "tag", "v2", tagged], cwd=tmp_path, check=True)
@@ -1435,7 +1418,7 @@ def test_tag_supersession_requires_selected_tag_baseline(tmp_path: Path) -> None
     endpoint = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
     _write_state(tmp_path, marker_api.state_relative("main", "marker"), saved + "\n")
 
-    with pytest.raises(ValueError, match="tag|baseline|start"):
+    with pytest.raises(ValueError, match=r"tag|baseline|start"):
         publisher.begin(tmp_path, "main", "CHANGELOG.md", marker_sha=endpoint, range_start=omitted, last_tag="v2")
     stage = publisher.begin(tmp_path, "main", "CHANGELOG.md", marker_sha=endpoint, range_start=tagged, last_tag="v2")
     assert json.loads((stage / "candidate.json").read_text(encoding="utf-8"))["range_start_sha"] == tagged
@@ -1445,7 +1428,6 @@ def test_tag_supersession_requires_selected_tag_baseline(tmp_path: Path) -> None
 def test_skill_stages_tag_supersession_from_selected_tag(tmp_path: Path) -> None:
     """The ordinary release shell path may resume at a tag that superseded its marker."""
     saved = _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "commit", "--allow-empty", "-qm", "tagged"], cwd=tmp_path, check=True)
     tagged = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
     subprocess.run(["git", "tag", "v2", tagged], cwd=tmp_path, check=True)
@@ -1840,7 +1822,7 @@ def test_missing_marker_fallback_publishes_only_frozen_candidate(
         assert (tmp_path / "CHANGELOG.md").read_bytes() == b"candidate changelog\n"
         assert (tmp_path / _MAIN_MARKER).read_text(encoding="utf-8") == frozen_head + "\n"
     else:
-        with pytest.raises(ValueError, match="changed after (release )?gather"):
+        with pytest.raises(ValueError, match=r"changed after (release )?gather"):
             publisher.publish(tmp_path, "main", stage)
         if drift == "during-promotion":
             assert not publisher.journal_path(tmp_path, "main").exists()
@@ -2032,7 +2014,7 @@ def test_source_change_during_promotion_blocks_marker(
             subprocess.run(command, cwd=root, check=True, capture_output=True)
 
     monkeypatch.setattr(publisher, "_replace_candidate", change_source_after_draft)
-    with pytest.raises(ValueError, match="branch changed|baseline tags changed"):
+    with pytest.raises(ValueError, match=r"branch changed|baseline tags changed"):
         publisher.publish(tmp_path, "main", stage)
     assert (tmp_path / "DRAFT.md").read_text(encoding="utf-8") == "## Summary\nOriginal\n"
     assert (tmp_path / _MAIN_MARKER).read_text(encoding="utf-8") == "old\n"
@@ -2314,7 +2296,6 @@ def test_legacy_release_state_blocks_append_without_changing_old_bytes(
 def test_plain_notes_setup_guards_legacy_state_before_artifact_work(tmp_path: Path, legacy: bool) -> None:
     """Plain notes must refuse old branch state before treating its marker as absent."""
     _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
     (tmp_path / "release-mode-notes").write_text("notes\n", encoding="utf-8", newline="\n")
     old_marker = tmp_path / ".temp/release-last-processed-main"
     if legacy:
@@ -2354,7 +2335,6 @@ def test_plain_notes_setup_guards_legacy_state_before_artifact_work(tmp_path: Pa
 def test_plain_notes_setup_refuses_pending_publication(tmp_path: Path) -> None:
     """Plain notes must stop before editing artifacts when append publication is pending."""
     _init_git(tmp_path)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
     (tmp_path / "release-mode-notes").write_text("notes\n", encoding="utf-8", newline="\n")
     (tmp_path / "DRAFT.md").write_bytes(b"ORIGINAL\n")
     marker = tmp_path / _MAIN_MARKER

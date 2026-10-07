@@ -31,6 +31,7 @@ import sys
 from dataclasses import dataclass
 from typing import Final
 
+#: Maximum number of upstream commit subjects reported when the base branch has moved ahead.
 _MAX_SUBJECTS: Final = 10
 
 
@@ -87,7 +88,7 @@ def _git(args: list[str], timeout: int) -> tuple[int, str]:
         ``(returncode, stdout)``; the code is 1 and stdout empty when git cannot be run at all.
     """
     try:
-        proc = subprocess.run(["git", *args], capture_output=True, text=True, timeout=timeout, check=False)
+        proc = subprocess.run(["git", *args], capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603, S607 - argv list, no shell; git resolved via PATH on purpose
     except (OSError, subprocess.SubprocessError):
         return 1, ""
     return proc.returncode, proc.stdout.strip()

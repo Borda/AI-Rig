@@ -32,10 +32,14 @@ from pathlib import Path
 from types import TracebackType
 
 from codemap_py.index_paths import canonical_root
-from codemap_py.runtime_log import invocation_id, log_dir_for, plugin_version as runtime_plugin_version, resolve_runtime
+from codemap_py.runtime_log import invocation_id, log_dir_for, resolve_runtime
+from codemap_py.runtime_log import plugin_version as runtime_plugin_version
 
+#: Size in bytes (10 MiB) above which a telemetry log file is rotated before the next record is written.
 LOG_MAX_BYTES = 10 * 1024 * 1024
+#: Matches characters outside letters, digits, underscore and hyphen, replaced in session-based log file names.
 _SAFE = re.compile(r"[^A-Za-z0-9_-]")
+#: Pattern an explicit CODEMAP_TELEMETRY_SESSION value must match to be used as the session id.
 _SAFE_SESSION = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
@@ -56,14 +60,14 @@ def session_id(root: Path | None = None) -> str:
     """Return the seeded session id for the target project, or ``""`` if none."""
     try:
         resolved = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             text=True,
             stderr=subprocess.DEVNULL,
             timeout=2,
             cwd=root,
         ).strip()
         proj = Path(resolved).name
-    except Exception:  # noqa: BLE001 — git absent / not a repo → fall back to cwd
+    except Exception:
         proj = (root or Path.cwd()).name
     sid_file = Path(os.environ.get("TMPDIR") or tempfile.gettempdir()) / f"codemap-{proj}-session"
     try:
@@ -173,7 +177,7 @@ def log_cli(
             record["source"] = source
         with log_file.open("a") as fh:
             fh.write(json.dumps(record, separators=(",", ":")) + "\n")
-    except Exception:  # noqa: BLE001 — telemetry must never break the CLI
+    except Exception:  # noqa: S110 - best-effort diagnostics; failure ignored
         pass
 
 

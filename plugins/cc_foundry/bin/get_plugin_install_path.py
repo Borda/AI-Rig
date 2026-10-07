@@ -31,6 +31,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+#: Allowed shape of a marketplace or plugin name: letters, digits, underscore and hyphen only.
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 

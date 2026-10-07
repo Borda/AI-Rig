@@ -9,7 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 import scan_efficiency_signals as ses
 
 
@@ -30,36 +29,40 @@ class TestFrontmatter:
 class TestUnboundedSpawns:
     """Covers the Agent()-in-loop detector."""
 
-    def test_agent_in_for_loop_flagged(self, tmp_path: Path) -> None:
-        """An Agent( call a few lines below a `for` is flagged."""
-        text = "for f in $FILES; do\n  echo x\n  Agent(subagent_type='x')\ndone\n"
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("for f in $FILES; do\n  echo x\n  Agent(subagent_type='x')\ndone\n", id="agent-in-for-loop"),
+            pytest.param("while read -r f; do\n  Agent(subagent_type='x')\ndone\n", id="agent-in-while-loop"),
+        ],
+    )
+    def test_agent_in_loop_flagged(self, tmp_path: Path, text: str) -> None:
+        """An Agent( call a few lines below a `for` or `while` is flagged; both loop kinds count the same."""
         finding = ses.unbounded_spawns(tmp_path / "s.md", text)
         assert finding is not None
         assert "UNBOUNDED_SPAWN" in finding
 
-    def test_agent_in_while_loop_flagged(self, tmp_path: Path) -> None:
-        """A `while` loop counts the same as `for`."""
-        text = "while read -r f; do\n  Agent(subagent_type='x')\ndone\n"
-        assert ses.unbounded_spawns(tmp_path / "s.md", text) is not None
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param(
+                "BATCH_SIZE=5\nfor f in $FILES; do\n  Agent(subagent_type='x')\ndone\n", id="batch-size-guard-exempts"
+            ),
+            pytest.param(
+                "files=$(ls | head -n 5)\nfor f in $files; do\n  Agent(x)\ndone\n", id="head-limit-counts-as-guard"
+            ),
+            pytest.param("echo hi\nAgent(subagent_type='x')\n", id="agent-outside-loop"),
+            pytest.param(
+                "for f in x; do\n" + "  echo y\n" * 10 + "  Agent(x)\ndone\n", id="loop-beyond-lookbehind-window"
+            ),
+        ],
+    )
+    def test_spawn_not_flagged(self, tmp_path: Path, text: str) -> None:
+        """No finding when a batch guard exempts the file, no loop sits above the call, or the loop is out of range.
 
-    def test_batch_guard_exempts(self, tmp_path: Path) -> None:
-        """A BATCH_SIZE guard anywhere in the file exempts the file."""
-        text = "BATCH_SIZE=5\nfor f in $FILES; do\n  Agent(subagent_type='x')\ndone\n"
-        assert ses.unbounded_spawns(tmp_path / "s.md", text) is None
-
-    def test_head_limit_exempts(self, tmp_path: Path) -> None:
-        """A `head -n 5` cap counts as a batch guard."""
-        text = "files=$(ls | head -n 5)\nfor f in $files; do\n  Agent(x)\ndone\n"
-        assert ses.unbounded_spawns(tmp_path / "s.md", text) is None
-
-    def test_agent_outside_loop_not_flagged(self, tmp_path: Path) -> None:
-        """An Agent( call with no loop above it is not a finding."""
-        text = "echo hi\nAgent(subagent_type='x')\n"
-        assert ses.unbounded_spawns(tmp_path / "s.md", text) is None
-
-    def test_loop_far_above_not_flagged(self, tmp_path: Path) -> None:
-        """A loop more than the lookbehind window away does not count."""
-        text = "for f in x; do\n" + "  echo y\n" * 10 + "  Agent(x)\ndone\n"
+        Scenario: a BATCH_SIZE guard anywhere in the file exempts it; a `head -n 5` cap counts as a guard; an Agent(
+        call with no loop above it is not a finding; a loop more than the lookbehind window away does not count.
+        """
         assert ses.unbounded_spawns(tmp_path / "s.md", text) is None
 
 
@@ -70,32 +73,34 @@ class TestMissingModel:
         """Frontmatter with a model line yields no finding."""
         assert ses.missing_model(tmp_path / "a.md", "---\nname: x\nmodel: opus\n---\n") is None
 
-    def test_absent_model_flagged(self, tmp_path: Path) -> None:
-        """Frontmatter without a model line is flagged."""
-        finding = ses.missing_model(tmp_path / "a.md", "---\nname: x\n---\n")
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("---\nname: x\n---\n", id="absent-model"),
+            pytest.param("---\nname: x\n---\nThe agent uses\nmodel: opus\n", id="model-in-body-does-not-count"),
+        ],
+    )
+    def test_undeclared_model_flagged(self, tmp_path: Path, text: str) -> None:
+        """Frontmatter without a model line is flagged, and a `model:` line in prose below it is not a declaration."""
+        finding = ses.missing_model(tmp_path / "a.md", text)
         assert finding is not None
         assert finding.startswith("NO_MODEL:")
-
-    def test_model_in_body_does_not_count(self, tmp_path: Path) -> None:
-        """A `model:` line in prose below the frontmatter is not a declaration."""
-        text = "---\nname: x\n---\nThe agent uses\nmodel: opus\n"
-        assert ses.missing_model(tmp_path / "a.md", text) is not None
 
 
 class TestDeclaresModel:
     """Covers which files are required to declare a tier."""
 
-    def test_skill_md_included(self) -> None:
-        """A skills/<name>/SKILL.md is in scope."""
-        assert ses._declares_model(Path("plugins/x/skills/audit/SKILL.md")) is True
-
-    def test_agent_file_included(self) -> None:
-        """Anything under an agents/ directory is in scope."""
-        assert ses._declares_model(Path("plugins/x/agents/curator.md")) is True
-
-    def test_mode_file_excluded(self) -> None:
-        """A modes/ file carries no frontmatter tier and is out of scope."""
-        assert ses._declares_model(Path("plugins/x/skills/audit/modes/fix.md")) is False
+    @pytest.mark.parametrize(
+        ("path", "expected"),
+        [
+            pytest.param("plugins/x/skills/audit/SKILL.md", True, id="skill-md-included"),
+            pytest.param("plugins/x/agents/curator.md", True, id="agent-file-included"),
+            pytest.param("plugins/x/skills/audit/modes/fix.md", False, id="mode-file-excluded"),
+        ],
+    )
+    def test_tier_declaration_scope(self, path: str, expected: bool) -> None:
+        """A SKILL.md and anything under agents/ must declare a tier; a modes/ file carries none and is out of scope."""
+        assert ses._declares_model(Path(path)) is expected
 
 
 class TestScan:

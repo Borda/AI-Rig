@@ -14,10 +14,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import docker_sandbox_run as ds
-
+import pytest
 
 # ---------- Pure builders ----------
 
@@ -87,7 +85,7 @@ def test_builders_render_supplied_limits(builder: Any) -> None:
 
 
 @pytest.mark.parametrize(
-    "env,expected",
+    ("env", "expected"),
     [
         pytest.param({}, ds.SandboxLimits(), id="unset-uses-defaults"),
         pytest.param({"SANDBOX_CPUS": ""}, ds.SandboxLimits(), id="empty-uses-defaults"),
@@ -124,7 +122,7 @@ def test_find_destructive_tokens_allows_benign_commands(arg: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "arg,expected",
+    ("arg", "expected"),
     [
         pytest.param("rm -rf /workspace/.experiments/state", ["rm"], id="rm"),
         pytest.param("dd of=/workspace/.experiments/x", ["dd"], id="dd"),
@@ -260,33 +258,17 @@ def test_golden_verify_invocation_constructs_expected_docker_argv(captured_run: 
     ]
 
 
-def test_network_host_guard_rejects_before_docker(
-    captured_run: list[list[str]], capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Reject host networking before starting a container."""
-    rc = ds.main(["--mode", "explore", "x.py"], env={"SANDBOX_NETWORK": "host"}, cwd="/proj")
-    assert rc == 2
-    assert "SANDBOX_NETWORK" in capsys.readouterr().err
-    assert captured_run == []
+@pytest.mark.parametrize(
+    "argv",
+    [pytest.param(["script.py"], id="missing-mode"), pytest.param(["--mode", "explore"], id="missing-script-arg")],
+)
+def test_main_missing_argument_returns_2(argv: list[str], capsys: pytest.CaptureFixture[str]) -> None:
+    """A missing ``--mode`` or a missing script/command argument prints usage and returns 2.
 
-
-@pytest.mark.parametrize("network", ["none", "bridge", "internal"])
-def test_network_host_guard_still_allows_isolated_modes(captured_run: list[list[str]], network: str) -> None:
-    """The allowlisted isolated network modes still reach Docker argv unchanged."""
-    rc = ds.main(["--mode", "explore", "x.py"], env={"SANDBOX_NETWORK": network}, cwd="/proj")
-    assert rc == 0
-    cmd = captured_run[0]
-    assert cmd[cmd.index("--network") + 1] == network
-
-
-def test_main_missing_mode_returns_2(capsys: pytest.CaptureFixture[str]) -> None:
-    rc = ds.main(["script.py"])
-    assert rc == 2
-    assert "usage:" in capsys.readouterr().err
-
-
-def test_main_missing_arg_returns_2(capsys: pytest.CaptureFixture[str]) -> None:
-    rc = ds.main(["--mode", "explore"])
+    A bare script path without ``--mode``, and ``--mode explore`` without the script to run, are both incomplete
+    invocations: the wrapper refuses before starting any container.
+    """
+    rc = ds.main(argv)
     assert rc == 2
     assert "usage:" in capsys.readouterr().err
 
@@ -337,22 +319,22 @@ def test_main_sandbox_network_rejected(
     assert captured_run == []
 
 
-@pytest.mark.parametrize("network", ["none", "bridge", "internal"])
-def test_main_sandbox_network_allowlist(captured_run: list[list[str]], network: str) -> None:
-    """Only isolated network modes in the allowlist reach docker argv."""
+@pytest.mark.parametrize(
+    ("network", "expected"),
+    [
+        pytest.param("none", "none", id="none"),
+        pytest.param("bridge", "bridge", id="bridge"),
+        pytest.param("internal", "internal", id="internal"),
+        pytest.param("", "none", id="empty-falls-back-to-none"),
+    ],
+)
+def test_main_sandbox_network_allowlist(captured_run: list[list[str]], network: str, expected: str) -> None:
+    """Only isolated network modes in the allowlist reach docker argv; an empty value falls back to ``none``."""
     rc = ds.main(["--mode", "explore", "x.py"], env={"SANDBOX_NETWORK": network}, cwd="/proj")
     assert rc == 0
     cmd = captured_run[0]
     idx = cmd.index("--network")
-    assert cmd[idx + 1] == network
-
-
-def test_main_sandbox_network_empty_falls_back_to_none(captured_run: list[list[str]]) -> None:
-    rc = ds.main(["--mode", "explore", "x.py"], env={"SANDBOX_NETWORK": ""}, cwd="/proj")
-    assert rc == 0
-    cmd = captured_run[0]
-    idx = cmd.index("--network")
-    assert cmd[idx + 1] == "none"
+    assert cmd[idx + 1] == expected
 
 
 def test_main_forwards_docker_return_code(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -376,7 +358,7 @@ def test_main_docker_not_in_path(monkeypatch: pytest.MonkeyPatch, capsys: pytest
 
 
 @pytest.mark.parametrize(
-    "env,expected",
+    ("env", "expected"),
     [
         pytest.param({}, 600.0, id="default-backstop"),
         pytest.param({"SANDBOX_TIMEOUT_SEC": "45"}, 45.0, id="env-override"),

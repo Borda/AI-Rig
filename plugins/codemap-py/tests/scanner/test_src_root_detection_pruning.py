@@ -67,18 +67,6 @@ def test_excluded_dir_name_cannot_win_detection(decoy_project: Path) -> None:
     assert _detect_src_root_from_init(decoy_project) == decoy_project / "src"
 
 
-def test_dot_directory_cannot_win_detection(tmp_path: Path) -> None:
-    """A dot-directory is never part of the import space, so it cannot be the source root.
-
-    Dot-directories hold vendored checkouts and caches. The detector prunes them the way
-    :func:`codemap_py.scanner.is_excluded` already did for every other walk.
-    """
-    _write_pkg(tmp_path / "src")
-    _write_pkg(tmp_path / ".sandbox" / "vendored" / "src")
-
-    assert _detect_src_root_from_init(tmp_path) == tmp_path / "src"
-
-
 def test_codemapignore_is_honoured(tmp_path: Path) -> None:
     """``.codemapignore`` entries exclude candidates, same as the pyproject key."""
     _write_pkg(tmp_path / "src")
@@ -105,7 +93,7 @@ def test_detection_is_independent_of_hash_seed(decoy_project: Path) -> None:
         ]
     )
     results = {
-        subprocess.run(  # noqa: S603 - fixed argv, no shell
+        subprocess.run(
             [sys.executable, "-c", program],
             capture_output=True,
             text=True,
@@ -119,18 +107,6 @@ def test_detection_is_independent_of_hash_seed(decoy_project: Path) -> None:
     }
 
     assert results == {str(decoy_project / "src")}
-
-
-def test_multiple_candidates_resolve_deterministically(tmp_path: Path) -> None:
-    """With several non-``src`` candidates the deepest wins, ties broken on the path.
-
-    ``max`` over a set keyed on depth alone left same-depth candidates to hash order.
-    """
-    _write_pkg(tmp_path / "alpha")
-    _write_pkg(tmp_path / "beta")
-    _write_pkg(tmp_path / "gamma" / "deeper")
-
-    assert _detect_src_root_from_init(tmp_path) == tmp_path / "gamma" / "deeper"
 
 
 def test_detection_skips_excluded_tree_entirely(decoy_project: Path, monkeypatch) -> None:
@@ -174,35 +150,27 @@ def test_detect_src_root_prefers_explicit_config_over_walk(tmp_path: Path) -> No
     assert detect_src_root(tmp_path) == tmp_path / "lib"
 
 
-def test_shallowest_src_wins_regardless_of_alphabet(tmp_path: Path) -> None:
-    """With several ``src`` directories the top-level one wins, not the alphabetically first.
+@pytest.mark.parametrize(
+    ("package_dirs", "expected_root"),
+    [
+        # Dot-directories hold vendored checkouts and caches; they are never part of the import space.
+        pytest.param(["src", ".sandbox/vendored/src"], "src", id="dot-directory-cannot-win"),
+        # With several non-``src`` candidates the deepest wins; same-depth ties break on the path.
+        pytest.param(["alpha", "beta", "gamma/deeper"], "gamma/deeper", id="deepest-non-src-candidate-wins"),
+        # The top-level ``src`` wins, not the alphabetically first: a vendored ``a/src`` must lose, ``zz/src`` too.
+        pytest.param(["src", "a/src", "zz/src"], "src", id="shallowest-src-wins-regardless-of-alphabet"),
+        pytest.param(["b/src", "a/src"], "a/src", id="same-depth-src-candidates-break-ties-on-path"),
+        pytest.param(["alpha", "beta"], "beta", id="same-depth-non-src-candidates-break-ties-on-path"),
+    ],
+)
+def test_candidate_selection_is_deterministic(tmp_path: Path, package_dirs: list[str], expected_root: str) -> None:
+    """The detected source root is a pure function of the tree, never of hash or filesystem order.
 
-    Selecting the sorted-first candidate is deterministic but arbitrary: it made a vendored
-    ``a/src`` beat the real top-level ``src`` while ``zz/src`` lost to it. Both orderings
-    are asserted so a regression cannot hide behind a lucky fixture name.
+    A ``src`` directory beats any other candidate and the shallowest ``src`` wins over a vendored one; otherwise the
+    deepest candidate wins. Equal-depth candidates are ordered by path — ``max`` keyed on depth alone had left them to
+    set iteration order, which is exactly the ordering the tie-break exists to pin.
     """
-    _write_pkg(tmp_path / "src")
-    _write_pkg(tmp_path / "a" / "src")
-    _write_pkg(tmp_path / "zz" / "src")
+    for package_dir in package_dirs:
+        _write_pkg(tmp_path / package_dir)
 
-    assert _detect_src_root_from_init(tmp_path) == tmp_path / "src"
-
-
-def test_same_depth_src_candidates_break_ties_on_path(tmp_path: Path) -> None:
-    """Equally shallow ``src`` candidates resolve to the same one on every run."""
-    _write_pkg(tmp_path / "b" / "src")
-    _write_pkg(tmp_path / "a" / "src")
-
-    assert _detect_src_root_from_init(tmp_path) == tmp_path / "a" / "src"
-
-
-def test_same_depth_non_src_candidates_break_ties_on_path(tmp_path: Path) -> None:
-    """The depth fallback is total: equal-depth candidates are ordered by path, not by hash.
-
-    ``max`` keyed on depth alone left same-depth candidates to set iteration order, which is the ordering the tie-break
-    exists to pin.
-    """
-    _write_pkg(tmp_path / "alpha")
-    _write_pkg(tmp_path / "beta")
-
-    assert _detect_src_root_from_init(tmp_path) == tmp_path / "beta"
+    assert _detect_src_root_from_init(tmp_path) == tmp_path / expected_root

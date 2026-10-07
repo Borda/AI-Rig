@@ -10,7 +10,6 @@ from typing import Any
 
 from benchmarks._bench_common import agentic_contracts
 
-
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -23,7 +22,8 @@ def _load_rescorer() -> Any:
     """
     module_name = "rescore_claude_agentic_test"
     spec = importlib.util.spec_from_file_location(module_name, BENCHMARKS_DIR / "rescore-claude-agentic.py")
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)

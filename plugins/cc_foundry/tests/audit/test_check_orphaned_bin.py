@@ -8,9 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from check_orphaned_bin import OrphanFinding, find_orphans, is_referenced, iter_bin_scripts, main
-
 
 # ---------------------------------------------------------------------------
 # iter_bin_scripts
@@ -77,16 +75,6 @@ class TestIterBinScripts:
 
 
 class TestIsReferenced:
-    def test_found_in_skill_md(self, tmp_path: Path) -> None:
-        (tmp_path / "skills").mkdir()
-        (tmp_path / "skills" / "SKILL.md").write_text("run bin/foo.py here")
-        assert is_referenced("foo.py", tmp_path) is True
-
-    def test_not_found(self, tmp_path: Path) -> None:
-        (tmp_path / "skills").mkdir()
-        (tmp_path / "skills" / "SKILL.md").write_text("nothing relevant")
-        assert is_referenced("foo.py", tmp_path) is False
-
     def test_found_nested_subdir(self, tmp_path: Path) -> None:
         (tmp_path / "skills" / "modes").mkdir(parents=True)
         (tmp_path / "skills" / "modes" / "efficiency.md").write_text("calls check_orphaned_bin.py")
@@ -95,12 +83,6 @@ class TestIsReferenced:
     def test_non_md_files_ignored(self, tmp_path: Path) -> None:
         (tmp_path / "notes.txt").write_text("references foo.py")
         assert is_referenced("foo.py", tmp_path) is False
-
-    def test_substring_match(self, tmp_path: Path) -> None:
-        """Full caller pattern ${CLAUDE_PLUGIN_ROOT}/bin/foo.py contains basename."""
-        (tmp_path / "skills").mkdir()
-        (tmp_path / "skills" / "SKILL.md").write_text('python3 "${CLAUDE_PLUGIN_ROOT}/bin/foo.py"')
-        assert is_referenced("foo.py", tmp_path) is True
 
     @pytest.mark.parametrize(
         ("reference_text", "expected"),
@@ -111,10 +93,19 @@ class TestIsReferenced:
             pytest.param("python bin/foo.py.bak", False, id="python-bin-foo.py.bak"),
             pytest.param("python bin/myfoo.py", False, id="python-bin-myfoo.py"),
             pytest.param("python bin/foo.py.disabled", False, id="python-bin-foo.py.disabled"),
+            pytest.param("run bin/foo.py here", True, id="prose-run-bin-foo.py"),
+            pytest.param(
+                'python3 "${CLAUDE_PLUGIN_ROOT}/bin/foo.py"', True, id="python3-claude_plugin_root-bin-foo.py"
+            ),
+            pytest.param("nothing relevant", False, id="no-reference"),
         ],
     )
     def test_basename_boundary_cases(self, reference_text: str, expected: bool, tmp_path: Path) -> None:
-        """References match the script basename, not broader substrings."""
+        """References match the script basename, not broader substrings.
+
+        The full caller pattern ``${CLAUDE_PLUGIN_ROOT}/bin/foo.py`` contains the basename and counts, as does a prose
+        mention; text naming no script, or a longer name that merely contains it, does not.
+        """
         (tmp_path / "skills").mkdir()
         (tmp_path / "skills" / "SKILL.md").write_text(reference_text)
         assert is_referenced("foo.py", tmp_path) is expected
@@ -211,14 +202,6 @@ class TestMain:
         out = capsys.readouterr().out
         assert "WARN 32d" in out
         assert "orphan.py" in out
-
-    def test_exit_1_output_includes_hint(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        monkeypatch.chdir(tmp_path)
-        _make_plugin(tmp_path, "myplugin", ["orphan.py"])
-        main(["--plugins-dir", str(tmp_path)])
-        out = capsys.readouterr().out
         assert "hint" in out
 
     def test_exit_2_bad_dir(self, capsys: pytest.CaptureFixture[str]) -> None:

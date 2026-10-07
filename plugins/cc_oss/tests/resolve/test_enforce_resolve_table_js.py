@@ -110,7 +110,8 @@ class TestSelectionGate:
         """
         _items(tmp_path, *_PENDING)
         reason = _run(tmp_path, [_BULK], _transcript(tmp_path, "Resolved CHANGELOG.md. Committed 8db6a761."))
-        assert reason is not None and "1, 2" in reason
+        assert reason is not None
+        assert "1, 2" in reason
 
     def test_picker_after_full_table_is_allowed(self, tmp_path: Path) -> None:
         """Every pending id shown as a table row lets the picker open."""
@@ -121,7 +122,8 @@ class TestSelectionGate:
         """A table missing one pending row still leaves the user partly blind, so it is denied."""
         _items(tmp_path, *_PENDING, {"id": 4, "type": "[report]"})
         reason = _run(tmp_path, [_BULK], _transcript(tmp_path, _TABLE))
-        assert reason is not None and "4" in reason
+        assert reason is not None
+        assert "4" in reason
 
     def test_table_only_in_thinking_is_denied_with_zero_visible_chars(self, tmp_path: Path) -> None:
         """A table the model wrote only in thinking is denied, and the reason reports 0 visible reply chars.
@@ -137,7 +139,9 @@ class TestSelectionGate:
         ]
         transcript.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8", newline="\n")
         reason = _run(tmp_path, [_BULK], transcript)
-        assert reason is not None and "0 chars" in reason and "Thinking" in reason
+        assert reason is not None
+        assert "0 chars" in reason
+        assert "Thinking" in reason
 
     def test_table_flushed_to_transcript_after_the_hook_starts_is_allowed(self, tmp_path: Path) -> None:
         """A table that reaches the transcript shortly after the hook starts still opens the picker.

@@ -2,33 +2,24 @@
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Sequence
-
-
-from _bench_common.claude_transport import MODELS
 
 # Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
-from _bench_common.agentic_contracts import (
+from _bench_common.agentic_contracts import (  # noqa: F401
     AGENTIC_ARMS,
     DEFAULT_REPETITIONS,
-    AgenticOracle,  # noqa: F401
-    AnswerScore,  # noqa: F401
+    AgenticOracle,
+    AnswerScore,
     materialize_agentic_prompt,
-)
-from _bench_common.provider_parity_contracts import (
-    PARITY_TIMEOUT_SECONDS,
-    materialize_task_prompt,
 )
 
 # Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
 # Every name it defines is re-exported here, including ones this file no longer calls itself: callers and tests
 # reach these through the runner module, so pruning an apparently unused re-export breaks patch.object targets.
-from _bench_common.claude_stages import (
-    PARITY_MANIFEST_PATH,
-    _manifest_sha256,
-)
+from _bench_common.claude_stages import PARITY_MANIFEST_PATH, _manifest_sha256
+from _bench_common.claude_transport import MODELS
+from _bench_common.provider_parity_contracts import PARITY_TIMEOUT_SECONDS, materialize_task_prompt
 
 from _bench_claude.agentic.models import BenchmarkRun
 

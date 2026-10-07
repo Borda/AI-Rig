@@ -96,8 +96,8 @@ def commit_for(item_id: int, cwd: Path, base_sha: str = "") -> str:
     """
     rev_range = [f"{base_sha}..HEAD"] if base_sha else []
     try:
-        out = subprocess.run(
-            ["git", "log", "-1", "--format=%h", "--fixed-strings", f"--grep=[resolve No.{item_id}]", *rev_range],
+        out = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", "log", "-1", "--format=%h", "--fixed-strings", f"--grep=[resolve No.{item_id}]", *rev_range],  # noqa: S607 - git resolved via PATH on purpose
             cwd=cwd,
             capture_output=True,
             text=True,

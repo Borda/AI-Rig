@@ -11,9 +11,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-import remove_hook_from_registry as rhfr  # noqa: E402
-
+import remove_hook_from_registry as rhfr
 
 _SAMPLE_REGISTRY: dict = {
     "permissions": {"allow": ["Bash(jq:*)"]},
@@ -172,8 +170,20 @@ class TestRun:
 class TestMain:
     """Main: CLI surface — flag parsing + exit codes."""
 
-    def test_happy_path_end_to_end(self, tmp_path: Path) -> None:
-        """Full main() round-trip via argv."""
+    @pytest.mark.parametrize(
+        "match_args",
+        [
+            pytest.param([], id="path-pattern-only"),
+            # An explicit ``--path-pattern`` wins over ``--match`` — the documented escape hatch.
+            pytest.param(["--match", "basename"], id="path-pattern-overrides-match"),
+        ],
+    )
+    def test_happy_path_end_to_end(self, tmp_path: Path, match_args: list[str]) -> None:
+        """Full main() round-trip via argv removes the named hook and keeps the others.
+
+        Scenario: a hook is removed by ``--path-pattern`` alone, and when ``--match`` is also given the explicit
+        pattern still decides.
+        """
         target = tmp_path / "settings.json"
         _write_registry(target, _SAMPLE_REGISTRY)
 
@@ -183,6 +193,7 @@ class TestMain:
                 str(target),
                 "--hook-name",
                 "rtk-rewrite",
+                *match_args,
                 "--path-pattern",
                 r"\.claude/hooks/rtk-rewrite\.js",
             ],
@@ -228,26 +239,3 @@ class TestMain:
         rewritten = json.loads(target.read_text(encoding="utf-8"))
         commands = [cmd["command"] for cmd in rewritten["hooks"]["PreToolUse"][0]["hooks"]]
         assert commands == [".claude/hooks/axb.js"]
-
-    def test_path_pattern_overrides_match_when_both_given(self, tmp_path: Path) -> None:
-        """An explicit ``--path-pattern`` wins over ``--match`` — the documented escape hatch."""
-        target = tmp_path / "settings.json"
-        _write_registry(target, _SAMPLE_REGISTRY)
-
-        rc = rhfr.main(
-            [
-                "--json-file",
-                str(target),
-                "--hook-name",
-                "rtk-rewrite",
-                "--match",
-                "basename",
-                "--path-pattern",
-                r"\.claude/hooks/rtk-rewrite\.js",
-            ],
-        )
-
-        assert rc == 0
-        rewritten = json.loads(target.read_text(encoding="utf-8"))
-        pre_cmds = [cmd["command"] for cmd in rewritten["hooks"]["PreToolUse"][0]["hooks"]]
-        assert pre_cmds == [".claude/hooks/commit-guard.js"]

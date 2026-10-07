@@ -9,14 +9,14 @@ from types import ModuleType
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_helper() -> ModuleType:
     """Load the target helper by file path, as skills invoke it."""
     spec = importlib.util.spec_from_file_location("codex_rig_test_targets", PLUGIN_ROOT / "shared" / "test_targets.py")
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

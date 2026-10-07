@@ -33,15 +33,21 @@ import sys
 from pathlib import Path
 from typing import Final
 
+#: Label that prefixes the gate text in the one-line report summary.
 _GATE_PREFIX: Final = "Gate:"
+#: Extracts the abbreviated or full commit SHA recorded after ``@`` in a report field.
 _SHA_RE: Final = re.compile(r"@([0-9a-f]{7,40})")
+#: Matches review run directory names of the form ``run-<N>``.
 _RUN_RE: Final = re.compile(r"^run-(\d+)$")
+#: Accepts only digit-only PR numbers, guarding the path glob against injection.
 _PR_NUMBER_RE: Final = re.compile(r"^[0-9]+$")
+#: Glob for review reports stored in the older flat ``.reports/review/`` layout.
 _LEGACY_REPORT_GLOB: Final = ".reports/review/*/review-report.md"
+#: Matches the leading status symbol (check, warning or cross) on a report's Outcome field.
 _VERDICT_SYMBOL_RE: Final = re.compile(r"^[✓⚠✗]\s*")
-# Verdict token must lead the field. Tolerated: any case, `_`/space/`-` between words, and trailing
-# detail or punctuation ("APPROVE — 0 critical", "needs work;"). Still rejected: a glued suffix
-# ("APPROVED"), a free-form verdict ("LGTM"), or an unfilled placeholder ("[review outcome]").
+#: Verdict token must lead the field. Tolerated: any case, `_`/space/`-` between words, and trailing
+#: detail or punctuation ("APPROVE — 0 critical", "needs work;"). Still rejected: a glued suffix
+#: ("APPROVED"), a free-form verdict ("LGTM"), or an unfilled placeholder ("[review outcome]").
 _OUTCOME_VERDICT_RE: Final = re.compile(r"^(?:APPROVE|NEEDS[ _-]WORK|REQUEST[ _-]CHANGES)(?![\w-])", re.IGNORECASE)
 
 
@@ -187,7 +193,7 @@ def current_head_sha(pr_number: str, timeout: int) -> str:
     """
     cmd = ["gh", "pr", "view", pr_number, "--json", "headRefOid", "--jq", ".headRefOid"]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603 - argv list, no shell
     except (OSError, subprocess.SubprocessError):
         return ""
     return proc.stdout.strip() if proc.returncode == 0 else ""

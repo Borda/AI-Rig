@@ -33,17 +33,24 @@ from pathlib import Path
 
 from codemap_py.index_paths import Diagnostic, canonical_root
 
+#: Runtime identities accepted when naming a log directory.
 RUNTIME_ALLOWLIST = ("claude", "codex", "direct")
+#: Runtime identity used when none or an unknown one is supplied.
 DEFAULT_RUNTIME = "direct"
+#: Diagnostic code reported when a supplied runtime identity is not in the allowlist.
 INVALID_RUNTIME = "invalid_runtime_identity"
+#: Default log directory, relative to the anchor root, when no override is configured.
 LOG_SUBDIR = Path(".cache", "codemap", "logs")
 #: The one environment variable every logging layer honours as a log-root override.
 #: Named here so ``telemetry`` and ``query`` read the same key through the same
 #: resolver instead of each repeating the literal beside its own default.
 LOG_DIR_ENV = "CODEMAP_LOG_DIR"
 
+#: Matches characters outside letters, digits, underscore and hyphen, replaced when building log file names.
 _SAFE = re.compile(r"[^A-Za-z0-9_-]")
+#: Cached (pid, id) pair giving this process one stable invocation id, regenerated after a pid change.
 _INVOCATION: tuple[int, str] | None = None
+#: Cached plugin version read from the manifest on first use; "?" when it cannot be read.
 _PLUGIN_VERSION: str | None = None
 
 
@@ -87,7 +94,7 @@ def invocation_id() -> str:
         >>> invocation_id() == invocation_id()
         True
     """
-    global _INVOCATION  # noqa: PLW0603 - per-process cache, reset only across forks
+    global _INVOCATION
     pid = os.getpid()
     if _INVOCATION is None or _INVOCATION[0] != pid:
         _INVOCATION = (pid, f"{pid}-{time.time_ns()}")
@@ -96,7 +103,7 @@ def invocation_id() -> str:
 
 def plugin_version() -> str:
     """Return the installed plugin version, or ``"?"`` when it cannot be read."""
-    global _PLUGIN_VERSION  # noqa: PLW0603 - read-once telemetry metadata cache
+    global _PLUGIN_VERSION
     if _PLUGIN_VERSION is None:
         try:
             manifest = Path(__file__).resolve().parents[2] / ".claude-plugin" / "plugin.json"
@@ -244,6 +251,6 @@ def write_log(
         payload["v"] = plugin_version()
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, separators=(",", ":")) + "\n")
-    except Exception:  # noqa: BLE001 - logging failure must never block index work
+    except Exception:  # noqa: S110 - best-effort diagnostics; failure ignored
         pass
     return diag

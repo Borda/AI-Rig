@@ -49,18 +49,17 @@ from fnmatch import fnmatch
 from pathlib import Path
 from shutil import which
 
-
-# CLEAN_ARGS is a numeric PR identifier — accept digits only to guard against
-# argv injection into the gh diff path glob. Mirrors Step 1 PR-number validation.
+#: CLEAN_ARGS is a numeric PR identifier — accept digits only to guard against
+#: argv injection into the gh diff path glob. Mirrors Step 1 PR-number validation.
 _PR_NUMBER_RE = re.compile(r"^[0-9]+$")
 
 _MAX_DIFF_FILE_SIZE = 10 * 1024 * 1024  # 10 MB guard against runaway reads — matches sibling scripts
 # (assemble_vitality_scores.py, extract_vitality_vars.py)
 
-# Secret-pattern grep — same as the original SKILL.md inline regex; case-insensitive, matches
-# `key=value`/`key: value` (8+ char value), plus shape-only patterns (AWS access key, PEM header,
-# JWT) that carry no key= prefix. Applied only to the .py-filtered diff slice (see collect_signals'
-# py_diff) — a secret in .env/YAML/.pem is out of this scan's scope; see _grep_secrets docstring.
+#: Secret-pattern grep — same as the original SKILL.md inline regex; case-insensitive, matches
+#: `key=value`/`key: value` (8+ char value), plus shape-only patterns (AWS access key, PEM header,
+#: JWT) that carry no key= prefix. Applied only to the .py-filtered diff slice (see collect_signals'
+#: py_diff) — a secret in .env/YAML/.pem is out of this scan's scope; see _grep_secrets docstring.
 _SECRET_RE = re.compile(
     r"(?:(?:password|secret|api_key|token|private_key|auth_token)\s*[=:]\s*['\"]?[A-Za-z0-9+/._\-]{8,}['\"]?"
     r"|AKIA[0-9A-Z]{16}"
@@ -69,7 +68,7 @@ _SECRET_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Identifier extractor — picks up Python symbol names from removed diff lines.
+#: Identifier extractor — picks up Python symbol names from removed diff lines.
 _IDENT_RE = re.compile(r"\b[A-Za-z_]\w*\b")
 
 

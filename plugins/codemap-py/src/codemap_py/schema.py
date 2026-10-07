@@ -12,11 +12,13 @@ from enum import Enum
 from typing import TypedDict
 
 # Increment when persisted index data changes query semantics incompatibly.
+#: Schema version stamped into newly written indexes, incremented on incompatible semantic changes.
 SCAN_VERSION: int = 13
 
 # Per-feature minimum index versions.
 # v4 and v5 were design epochs shipped together in one release (SCAN_VERSION 4–10).
 # Each feature checks its own constant via _require_feature() in scan-query.
+#: Minimum index version that carries call edges, needed by the fn-* commands.
 CALL_GRAPH_MIN_VER: int = 3  # v3 — call edges (`calls` per symbol); powers fn-deps/fn-rdeps/fn-central/fn-blast
 MOCK_PATCHES_MIN_VER: int = 4  # v4.1 — mock_patches, mock_rdep_count, fn_rdep_test_count
 UNCOVERED_MIN_VER: int = 4  # v4.2 — fn_rdep_test_count per symbol
@@ -53,15 +55,17 @@ SYMBOL_ALIASES_MIN_VER: int = 12  # v5.6 — alias-aware reverse-call graph
 # partial-serve on such a file produces silently wrong answers. ``scan_root`` and the
 # many optional feature keys are intentionally NOT required: older indexes omit them
 # and per-feature version gates handle their absence.
+#: Top-level keys every index must contain to be accepted by the reader.
 REQUIRED_INDEX_KEYS: frozenset[str] = frozenset({"scan_version", "modules"})
 
 # Oldest index structure scan-query can read. Indexes below this predate the loadable
 # contract entirely; the reader refuses them and asks for a rebuild rather than
 # guessing at a shape it no longer understands.
+#: Oldest index scan_version the reader will load; older indexes must be rebuilt.
 MIN_LOADABLE_VERSION: int = 3
 
 
-def validate_index(index: object) -> str | None:
+def validate_index(index: object) -> str | None:  # noqa: PLR0911
     """Return an error slug when *index* is not a loadable codemap index, else None.
 
     Pure structural gate run by the reader immediately after ``json.load`` — before
@@ -162,6 +166,7 @@ class Resolution(str, Enum):
 
 
 # Resolutions that represent calls within the project (exclude builtins, star, unresolved).
+#: Call resolutions that stay within the project, excluding builtin, star and unresolved calls.
 VALID_CALL_RESOLUTIONS: frozenset[str] = frozenset({Resolution.IMPORT, Resolution.LOCAL, Resolution.SELF})
 
 

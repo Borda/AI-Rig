@@ -13,7 +13,6 @@ from typing import Any
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REVIEW_SKILL = PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md"
 CODE_REVIEW_RESULT_TEMPLATE = PLUGIN_ROOT / "skills" / "code-review" / "result-template.json"
@@ -57,7 +56,8 @@ class TestPrArtifactPathContract:
 def _load_validator() -> ModuleType:
     """Load the shipped standalone validator from its installed-package path."""
     specification = importlib.util.spec_from_file_location("code_review_routing_validator", REVIEW_VALIDATOR)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -68,7 +68,8 @@ def _load_parallel_execution_tests() -> ModuleType:
     specification = importlib.util.spec_from_file_location(
         "codex_rig_parallel_execution_tests", PARALLEL_EXECUTION_TESTS
     )
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -455,34 +456,20 @@ def test_manifest_rejects_reused_specialist_output_paths(tmp_path: Path) -> None
         )
 
 
-def test_manifest_rejects_weak_substitute_output(tmp_path: Path) -> None:
-    """Require a substitute to identify its role and contain substantive evidence."""
-    validator = _load_validator()
-    manifest, passes = _substituted_manifest(tmp_path, "qa-specialist")
-    Path(str(passes[0]["output_path"])).write_text("generic note\n", encoding="utf-8")
-
-    with pytest.raises(SystemExit, match="manifest-substitute-output-not-role-bound:qa-specialist"):
-        validator._validate_manifest_entries(
-            tmp_path,
-            manifest,
-            passes,
-            {"qa-specialist"},
-            tmp_path,
-            "parent-thread",
-            tmp_path,
-        )
-
-
 @pytest.mark.parametrize(
     "output",
     [
+        pytest.param("generic note\n", id="weak-generic-note"),
         pytest.param("# QA Specialist\n\nBounded review.\n", id="display-name-alias"),
         pytest.param("role_id: challenger\n\nBounded review for qa-specialist.\n", id="wrong-role-id"),
         pytest.param("Generic note about qa-specialist, not a role binding.\n", id="incidental-mention"),
     ],
 )
 def test_manifest_rejects_substitute_without_exact_role_id(tmp_path: Path, output: str) -> None:
-    """Bind parent-only evidence to its manifest role, not a name or incidental mention."""
+    """Bind parent-only evidence to its manifest role, not a name, incidental mention, or weak generic note.
+
+    A substitute must identify its role and contain substantive evidence.
+    """
     validator = _load_validator()
     manifest, passes = _substituted_manifest(tmp_path, "qa-specialist")
     Path(str(passes[0]["output_path"])).write_text(output, encoding="utf-8")
@@ -688,9 +675,19 @@ def _verified_review_worktree_source(
     return routing, target, checkout
 
 
-def test_verified_pr_source_accepts_isolated_review_worktree(tmp_path: Path) -> None:
-    """Accept exact PR source when the detached worktree and gate receipts agree."""
-    routing, target, checkout = _verified_review_worktree_source(tmp_path)
+@pytest.mark.parametrize(
+    "collection_name",
+    [
+        pytest.param("2026-01-01T00-00-00-000000Z", id="create-run-timestamp-name"),
+        pytest.param("manual-review", id="arbitrary-collector-output-name"),
+    ],
+)
+def test_verified_pr_source_accepts_isolated_review_worktree(tmp_path: Path, collection_name: str) -> None:
+    """Accept exact PR source when the detached worktree and gate receipts agree.
+
+    Direct collector output paths stay valid outside create-run naming conventions.
+    """
+    routing, target, checkout = _verified_review_worktree_source(tmp_path, collection_name=collection_name)
 
     _load_validator()._validate_verified_pr_source(tmp_path, routing, target, checkout)
 
@@ -739,13 +736,6 @@ def test_verified_pr_source_accepts_original_worktree_after_run_promotion(tmp_pa
     _load_validator()._validate_verified_pr_source(promoted, routing, target, checkout)
 
 
-def test_verified_pr_source_accepts_arbitrary_collector_output_name(tmp_path: Path) -> None:
-    """Keep direct collector output paths valid outside create-run naming conventions."""
-    routing, target, checkout = _verified_review_worktree_source(tmp_path, collection_name="manual-review")
-
-    _load_validator()._validate_verified_pr_source(tmp_path, routing, target, checkout)
-
-
 def test_verified_pr_source_accepts_temporary_review_worktree(tmp_path: Path) -> None:
     """Keep a deterministic temporary fallback bound to the original collection run."""
     routing, target, checkout = _verified_review_worktree_source(tmp_path)
@@ -770,7 +760,7 @@ def test_verified_pr_source_accepts_temporary_review_worktree(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(
-    "artifact,field",
+    ("artifact", "field"),
     [
         pytest.param("local-checkout.json", "worktree", id="different-checkout-worktree"),
         pytest.param("local-checkout.json", "collection_run_dir", id="different-original-run"),
@@ -795,12 +785,12 @@ def test_verified_pr_source_rejects_mismatched_review_worktree(tmp_path: Path, a
             payload[field] = other_worktree
         (tmp_path / artifact).write_text(json.dumps(payload), encoding="utf-8")
 
-    with pytest.raises(SystemExit, match="pr-source-(review-worktree-invalid|review-gates-worktree-mismatch)"):
+    with pytest.raises(SystemExit, match=r"pr-source-(review-worktree-invalid|review-gates-worktree-mismatch)"):
         _load_validator()._validate_verified_pr_source(tmp_path, routing, target, checkout)
 
 
 @pytest.mark.parametrize(
-    "field,value",
+    ("field", "value"),
     [
         pytest.param("head", "c" * 40, id="wrong-post-gate-head"),
         pytest.param("status", " M widget.py", id="dirty-post-gate-source"),
@@ -942,7 +932,8 @@ def test_promoted_assessed_review_accepts_bound_detached_worktree(tmp_path: Path
     """Validate a completed PR review against its pre-promotion detached checkout."""
     fixture_path = Path(__file__).with_name("test_review_completion_gate.py")
     specification = importlib.util.spec_from_file_location("code_review_completion_fixture", fixture_path)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     completion = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(completion)
     assessed = completion._assessed_pr.__wrapped__(tmp_path)

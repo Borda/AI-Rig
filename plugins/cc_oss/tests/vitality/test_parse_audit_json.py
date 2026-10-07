@@ -7,9 +7,7 @@ import json
 from unittest.mock import patch
 
 import pytest
-
 from parse_audit_json import main, summarize
-
 
 # ---------------------------------------------------------------------------
 # summarize() — pure function
@@ -19,30 +17,24 @@ from parse_audit_json import main, summarize
 class TestSummarize:
     """Summarize: output format and edge cases."""
 
-    def test_empty_dependencies(self) -> None:
-        """Zero deps and zero vulns produces '0 deps, 0 vulns'."""
-        assert summarize({"dependencies": []}) == "0 deps, 0 vulns"
+    @pytest.mark.parametrize(
+        ("payload", "expected"),
+        [
+            pytest.param({"dependencies": []}, "0 deps, 0 vulns", id="empty-dependencies"),
+            pytest.param(
+                {"dependencies": [{"vulns": []}, {"vulns": [{}, {}]}]}, "2 deps, 2 vulns", id="vulns-summed-across-deps"
+            ),
+            pytest.param({}, "0 deps, 0 vulns", id="missing-dependencies-key"),
+            pytest.param({"dependencies": [{}]}, "1 deps, 0 vulns", id="missing-vulns-key-in-dep"),
+        ],
+    )
+    def test_summary_for_payload_shape(self, payload: dict, expected: str) -> None:
+        """Zero deps give '0 deps, 0 vulns'; vuln counts are summed across deps; absent keys count as empty.
 
-    def test_single_dep_no_vulns(self) -> None:
-        """One clean dep produces '1 deps, 0 vulns'."""
-        assert summarize({"dependencies": [{"vulns": []}]}) == "1 deps, 0 vulns"
-
-    def test_multiple_vulns_across_deps(self) -> None:
-        """Vuln counts are summed across all deps."""
-        payload = {"dependencies": [{"vulns": []}, {"vulns": [{}, {}]}]}
-        assert summarize(payload) == "2 deps, 2 vulns"
-
-    def test_single_dep_single_vuln(self) -> None:
-        """One dep with one vuln."""
-        assert summarize({"dependencies": [{"vulns": [{}]}]}) == "1 deps, 1 vulns"
-
-    def test_missing_dependencies_key(self) -> None:
-        """Missing top-level key treated as empty list (graceful fallback)."""
-        assert summarize({}) == "0 deps, 0 vulns"
-
-    def test_missing_vulns_key_in_dep(self) -> None:
-        """Dep entry without 'vulns' key is treated as zero vulns."""
-        assert summarize({"dependencies": [{}]}) == "1 deps, 0 vulns"
+        A missing top-level ``dependencies`` key is treated as an empty list (graceful fallback), and a dep entry
+        without a ``vulns`` key is treated as zero vulns.
+        """
+        assert summarize(payload) == expected
 
     @pytest.mark.parametrize(
         ("payload", "expected"),

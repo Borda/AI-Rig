@@ -27,10 +27,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# CWD-relative, exactly as the shell original: the contract belongs to the project the
-# skill is running in, which is the caller's working directory, not this script's location.
+#: CWD-relative, exactly as the shell original: the contract belongs to the project the
+#: skill is running in, which is the caller's working directory, not this script's location.
 _CONTRACT = Path(".temp/state/skill-contract.md")
 
+#: Argument synopsis printed for -h or --help: the five-argument form and the seven-argument form with label and items.
 _USAGE = (
     "usage: write_skill_contract.py <skill> <phase> <run-dir> <preserve> <next>\n"
     "       write_skill_contract.py <skill> <phase> <run-dir> <preserve> <next> <label> <items>"

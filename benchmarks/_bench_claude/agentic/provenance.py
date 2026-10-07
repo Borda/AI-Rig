@@ -8,27 +8,18 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
+from _bench_common.agentic_contracts import AgenticOracle, AnswerScore  # noqa: F401
 
 # Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
-from _bench_common.agentic_contracts import (
-    AgenticOracle,  # noqa: F401
-    AnswerScore,  # noqa: F401
-)
-from _bench_common.mutation_isolation import (
-    verify_index_relocation,
-)
-
 # Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
 # Every name it defines is re-exported here, including ones this file no longer calls itself: callers and tests
 # reach these through the runner module, so pruning an apparently unused re-export breaks patch.object targets.
-from _bench_common.claude_stages import (
-    PARITY_MANIFEST_PATH,
-)
+from _bench_common.claude_stages import PARITY_MANIFEST_PATH
+from _bench_common.mutation_isolation import verify_index_relocation
 
-from _bench_claude.agentic.models import ToolCounts
 from _bench_claude.agentic.ground_truth import GroundTruth
+from _bench_claude.agentic.models import ToolCounts
 from _bench_claude.agentic.scoring import score_fix, score_read_crop
-
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -42,8 +33,8 @@ def _sha256_file(path: Path) -> str:
 
 def _repository_fingerprint(repo_path: Path) -> str:
     """Return the checked-out commit SHA, with a deterministic non-git test fallback."""
-    completed = subprocess.run(
-        ["git", "-C", str(repo_path), "rev-parse", "HEAD"],
+    completed = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "-C", str(repo_path), "rev-parse", "HEAD"],  # noqa: S607 - git/tool resolved via PATH on purpose
         capture_output=True,
         check=False,
         text=True,
@@ -73,16 +64,16 @@ def _validate_parity_runtime(
     target = manifest["target_source"]
     if _repository_fingerprint(repo_path) != target["commit"]:
         raise ValueError(f"canonical run requires target commit {target['commit']}")
-    tree = subprocess.run(
-        ["git", "-C", str(repo_path), "rev-parse", "HEAD^{tree}"],
+    tree = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "-C", str(repo_path), "rev-parse", "HEAD^{tree}"],  # noqa: S607 - git/tool resolved via PATH on purpose
         capture_output=True,
         check=False,
         text=True,
     )
     if tree.returncode != 0 or tree.stdout.strip() != target["tree"]:
         raise ValueError(f"canonical run requires target tree {target['tree']}")
-    status = subprocess.run(
-        ["git", "-C", str(repo_path), "status", "--porcelain"],
+    status = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "-C", str(repo_path), "status", "--porcelain"],  # noqa: S607 - git/tool resolved via PATH on purpose
         capture_output=True,
         check=False,
         text=True,

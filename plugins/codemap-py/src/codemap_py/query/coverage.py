@@ -1,11 +1,13 @@
 """Decide how complete an answer is and render the coverage block attached to it."""
 
 from __future__ import annotations
+
 import json
 import re
 import sys
 import time
 from pathlib import Path
+
 from codemap_py import query_state as state
 
 # Transitional seam: exclusion rules live in codemap_py.scanner, but this
@@ -14,6 +16,7 @@ from codemap_py import query_state as state
 # bin/-relative sys.path insert, the same route bin/scan-index used to take.
 # Every other import below is a direct package-internal import.
 # parents[3] not [2]: this file sits one level deeper than the pre-split query.py
+#: Plugin bin/ directory, added to sys.path so the _exclusions shim can be imported.
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
@@ -33,10 +36,10 @@ from .index_io import (  # noqa: E402
     check_staleness,
 )
 
-
 # Blind spots disclosed in every import-graph result's ``not_covered`` field.
 # Relative imports and known ``from package import submodule`` edges are resolved
 # during scanning; dynamic import forms remain outside the static import graph.
+#: Dynamic import forms listed in the not_covered field of every import-graph result.
 _IMPORT_GRAPH_NOT_COVERED = [
     "importlib.import_module",
     "__import__",
@@ -46,6 +49,7 @@ _IMPORT_GRAPH_NOT_COVERED = [
 
 # Blind spots disclosed in every static call-graph result's ``not_covered``
 # field. Relative import aliases are resolved during scope construction.
+#: Dispatch styles listed in the not_covered field of every static call-graph result.
 _CALL_GRAPH_NOT_COVERED = [
     "dynamic-dispatch",
     "hook-callbacks",
@@ -171,9 +175,11 @@ def _coverage(index: dict) -> dict:
 # imports) and `symbols` (that module's symbols). `symbol <name>` is NOT local — it
 # matches by name across the whole graph, so a degraded module could hide another
 # definition; it falls through to whole-graph.
+#: Commands whose answer comes from one module's own entry, so only that module's parse status matters.
 _LOCAL_DIRECTION_CMDS = frozenset({"deps", "symbols"})
 
 
+#: Commands that aggregate inbound edges across the graph, where any degraded file could hide an edge.
 _GLOBAL_IN_DIRECTION_CMDS = frozenset({"rdeps", "fn-rdeps", "mock-rdeps", "test-impact"})
 
 
@@ -368,6 +374,7 @@ def _coverage_note(
 _SESSION_MARKER_TTL_MS = 30 * 60 * 1000  # 30 min — matches the hook writer's guard
 
 
+#: Maximum number of alias limitation records shown in a compact coverage block.
 _COMPACT_ALIAS_LIMITATION_LIMIT = 8
 
 

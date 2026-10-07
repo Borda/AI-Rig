@@ -5,14 +5,13 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = PLUGIN_ROOT / "shared" / "adversarial_loop.py"
@@ -21,7 +20,8 @@ LEDGER_PATH = PLUGIN_ROOT / "shared" / "adversarial_loop.py"
 def _load_module() -> ModuleType:
     """Load the standalone convergence-ledger helper without installation."""
     specification = importlib.util.spec_from_file_location("codex_rig_adversarial_loop", LEDGER_PATH)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -366,7 +366,7 @@ def test_unavailable_second_review_is_terminal_but_not_a_shape_error() -> None:
 
 
 @pytest.mark.parametrize(
-    "mutate, expected_error",
+    ("mutate", "expected_error"),
     [
         pytest.param(
             lambda ledger: ledger.update({"schema_version": True}),
@@ -512,8 +512,10 @@ def test_cli_progress_reprints_history_and_splits_old_new_weights(tmp_path: Path
     header = "| Iteration | Critical | High | Medium | Low | Nits | Weighted score |"
     first_row = "| 1 | 0 + 2 | 0 + 1 | 0 + 1 | 0 + 1 | 0 + 1 | 0 + 43 |"
     assert baseline.returncode == updated.returncode == 1
-    assert header in baseline.stderr and header in updated.stderr
-    assert first_row in baseline.stderr and first_row in updated.stderr
+    assert header in baseline.stderr
+    assert header in updated.stderr
+    assert first_row in baseline.stderr
+    assert first_row in updated.stderr
     assert "| 2 | 0 + 0 | 1 + 3 | 0 + 0 | 0 + 0 | 0 + 0 | 6 + 18 |" in updated.stderr
     assert json.loads(baseline.stdout) == _load_module().summarize_ledger(_ledger(_round(1, first)))
     assert json.loads(updated.stdout) == _load_module().summarize_ledger(ledger)
@@ -650,7 +652,7 @@ def test_append_round_trips_rounds_without_rewriting_earlier_lines(tmp_path: Pat
 
 
 @pytest.mark.parametrize(
-    "staged, expected_error",
+    ("staged", "expected_error"),
     [
         pytest.param(_round(3, [_finding("finding-a")]), "round-index-must-be-contiguous-integer", id="skipped-index"),
         pytest.param(_round(1, []), "round-index-must-be-contiguous-integer", id="repeated-index"),
@@ -763,7 +765,7 @@ def test_five_improving_rounds_append_to_clean_without_rewriting_history(tmp_pat
 
 
 @pytest.mark.parametrize(
-    "tier, reason",
+    ("tier", "reason"),
     [
         pytest.param("medium", "plateau", id="late-plateau"),
         pytest.param("high", "nonconverging", id="late-increase"),

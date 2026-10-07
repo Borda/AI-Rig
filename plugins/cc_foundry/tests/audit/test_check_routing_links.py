@@ -9,10 +9,10 @@ import pytest
 # conftest.py registers bin/ scripts as importable modules
 from check_routing_links import (
     CheckResults,
-    Severity,
     R1Finding,
     R2Finding,
     R3Finding,
+    Severity,
     _resolve_computed_abs,
     _resolve_computed_rel,
     extract_bin_refs,
@@ -62,48 +62,71 @@ def _make_cache(tmp: Path, plugin: str = "foundry", version: str = "0.17.0") -> 
 
 
 # ---------------------------------------------------------------------------
-# _resolve_computed_rel
+# _resolve_computed_rel / _resolve_computed_abs
 # ---------------------------------------------------------------------------
 
 
-class TestResolveComputedRel:
-    def test_audit_tpl_modes(self, tmp_path: Path) -> None:
-        plugins_dir = tmp_path / "plugins"
-        result = _resolve_computed_rel("AUDIT_TPL", "modes/upgrade.md", plugins_dir)
-        assert result == (plugins_dir / "cc_foundry" / "skills" / "audit" / "modes" / "upgrade.md").as_posix()
+class TestResolveComputed:
+    """The relative and absolute computed-path resolvers share one contract over their variable roots."""
 
-    def test_unknown_var_returns_none(self, tmp_path: Path) -> None:
-        result = _resolve_computed_rel("MYSTERY_VAR", "foo.md", tmp_path)
-        assert result is None
-
-    def test_fs_shared_file(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("resolver", "var", "relative", "parts"),
+        [
+            pytest.param(
+                _resolve_computed_rel,
+                "AUDIT_TPL",
+                "modes/upgrade.md",
+                ("cc_foundry", "skills", "audit", "modes", "upgrade.md"),
+                id="relative-audit-templates",
+            ),
+            pytest.param(
+                _resolve_computed_abs,
+                "_FS",
+                "task-hygiene.md",
+                ("cc_foundry", "skills", "_shared", "task-hygiene.md"),
+                id="absolute-shared-file",
+            ),
+        ],
+    )
+    def test_known_var_resolves_under_its_root(
+        self, tmp_path: Path, resolver, var: str, relative: str, parts: tuple[str, ...]
+    ) -> None:
+        """A known variable plus a relative path resolves to the exact file under its plugin root."""
         plugins_dir = tmp_path / "plugins"
-        result = _resolve_computed_rel("_FS", "../modes/x.md", plugins_dir)
-        # _FS root is skills/_shared; parent is skills/; so result = skills/modes/x.md
+        assert resolver(var, relative, plugins_dir) == plugins_dir.joinpath(*parts).as_posix()
+
+    @pytest.mark.parametrize(
+        ("resolver", "var", "relative", "fragment"),
+        [
+            # The _FS root is skills/_shared; its parent is skills/, so the result is skills/modes/x.md.
+            pytest.param(_resolve_computed_rel, "_FS", "../modes/x.md", "modes/x.md", id="relative-parent-escape"),
+            pytest.param(
+                _resolve_computed_abs,
+                "_FOUNDRY_SHARED",
+                "bin-authoring-guide.md",
+                "bin-authoring-guide.md",
+                id="foundry-shared",
+            ),
+        ],
+    )
+    def test_known_var_resolves_to_path_naming_the_file(
+        self, tmp_path: Path, resolver, var: str, relative: str, fragment: str
+    ) -> None:
+        """A known variable resolves to some path that names the requested file."""
+        result = resolver(var, relative, tmp_path / "plugins")
         assert result is not None
-        assert "modes/x.md" in result
+        assert fragment in result
 
-
-# ---------------------------------------------------------------------------
-# _resolve_computed_abs
-# ---------------------------------------------------------------------------
-
-
-class TestResolveComputedAbs:
-    def test_fs_task_hygiene(self, tmp_path: Path) -> None:
-        plugins_dir = tmp_path / "plugins"
-        result = _resolve_computed_abs("_FS", "task-hygiene.md", plugins_dir)
-        assert result == (plugins_dir / "cc_foundry" / "skills" / "_shared" / "task-hygiene.md").as_posix()
-
-    def test_unknown_var_returns_none(self, tmp_path: Path) -> None:
-        result = _resolve_computed_abs("NO_SUCH_VAR", "foo.md", tmp_path)
-        assert result is None
-
-    def test_foundry_shared(self, tmp_path: Path) -> None:
-        plugins_dir = tmp_path / "plugins"
-        result = _resolve_computed_abs("_FOUNDRY_SHARED", "bin-authoring-guide.md", plugins_dir)
-        assert result is not None
-        assert "bin-authoring-guide.md" in result
+    @pytest.mark.parametrize(
+        ("resolver", "var"),
+        [
+            pytest.param(_resolve_computed_rel, "MYSTERY_VAR", id="relative"),
+            pytest.param(_resolve_computed_abs, "NO_SUCH_VAR", id="absolute"),
+        ],
+    )
+    def test_unknown_var_returns_none(self, tmp_path: Path, resolver, var: str) -> None:
+        """A variable with no known plugin root cannot be resolved."""
+        assert resolver(var, "foo.md", tmp_path) is None
 
 
 # ---------------------------------------------------------------------------
@@ -157,37 +180,68 @@ class TestExtractPathRefs:
 
 
 class TestExtractBinRefs:
-    def test_claude_plugin_root_pattern(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("text", "bin_plugin", "script", "explicit_plugin"),
+        [
+            pytest.param(
+                'python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_orphaned_bin.py" --plugins-dir plugins\n',
+                "foundry",
+                "check_orphaned_bin.py",
+                True,
+                id="fallback-form-own-plugin",
+            ),
+            pytest.param(
+                '"${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/codemap_scan.py"\n',
+                "develop",
+                "codemap_scan.py",
+                True,
+                id="fallback-form-cross-plugin",
+            ),
+            # ${CLAUDE_PLUGIN_ROOT}/bin/<script> with no :-fallback resolves to the owning plugin.
+            pytest.param(
+                'python "${CLAUDE_PLUGIN_ROOT}/bin/health_sentinel.py" start foo\n',
+                "foundry",
+                "health_sentinel.py",
+                False,
+                id="no-fallback-infers-owning-plugin",
+            ),
+        ],
+    )
+    def test_single_reference_names_plugin_and_script(
+        self, tmp_path: Path, text: str, bin_plugin: str, script: str, explicit_plugin: bool
+    ) -> None:
+        """One bin/ reference yields the plugin it targets, the script, and whether the plugin was spelled out.
+
+        Covers the ``:-plugins/cc_<name>`` fallback form for the owning and for another plugin, and the bare
+        ``${CLAUDE_PLUGIN_ROOT}`` form, whose plugin is inferred rather than explicit.
+        """
         skill_md = tmp_path / "SKILL.md"
-        skill_md.write_text(
-            'python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_orphaned_bin.py" --plugins-dir plugins\n'
-        )
+        skill_md.write_text(text)
         result = extract_bin_refs(skill_md, "foundry")
         assert len(result) == 1
-        source_file, bin_plugin, script_name, explicit_plugin = result[0]
-        assert bin_plugin == "foundry"
-        assert script_name == "check_orphaned_bin.py"
-        assert explicit_plugin is True
+        assert result[0][1:] == (bin_plugin, script, explicit_plugin)
 
-    def test_multiple_scripts(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            pytest.param(
+                '"${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/foo.py"\n'
+                '"${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/bar.sh"\n',
+                {"foo.py", "bar.sh"},
+                id="fallback-form-only",
+            ),
+            pytest.param(
+                'python "${CLAUDE_PLUGIN_ROOT}/bin/a.py"\n"${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/b.sh"\n',
+                {"a.py", "b.sh"},
+                id="bare-and-fallback-forms-mixed",
+            ),
+        ],
+    )
+    def test_every_script_reference_is_captured(self, tmp_path: Path, text: str, expected: set[str]) -> None:
+        """Each bin/ script reference is captured, whichever of the two forms it uses."""
         skill_md = tmp_path / "SKILL.md"
-        skill_md.write_text(
-            '"${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/foo.py"\n"${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/bar.sh"\n'
-        )
-        result = extract_bin_refs(skill_md, "foundry")
-        scripts = {r[2] for r in result}
-        assert "foo.py" in scripts
-        assert "bar.sh" in scripts
-
-    def test_cross_plugin_ref(self, tmp_path: Path) -> None:
-        skill_md = tmp_path / "SKILL.md"
-        skill_md.write_text('"${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/codemap_scan.py"\n')
-        result = extract_bin_refs(skill_md, "foundry")
-        assert len(result) == 1
-        _, bin_plugin, script, explicit_plugin = result[0]
-        assert bin_plugin == "develop"
-        assert script == "codemap_scan.py"
-        assert explicit_plugin is True
+        skill_md.write_text(text)
+        assert {r[2] for r in extract_bin_refs(skill_md, "foundry")} == expected
 
     def test_deduplication(self, tmp_path: Path) -> None:
         skill_md = tmp_path / "SKILL.md"
@@ -196,32 +250,6 @@ class TestExtractBinRefs:
         )
         result = extract_bin_refs(skill_md, "foundry")
         assert len(result) == 1
-
-    def test_no_fallback_form_infers_plugin(self, tmp_path: Path) -> None:
-        """${CLAUDE_PLUGIN_ROOT}/bin/<script> (no :-fallback) resolves to the owning plugin."""
-        skill_md = tmp_path / "SKILL.md"
-        skill_md.write_text('python "${CLAUDE_PLUGIN_ROOT}/bin/health_sentinel.py" start foo\n')
-        result = extract_bin_refs(skill_md, "foundry")
-        assert len(result) == 1
-        _, bin_plugin, script, explicit_plugin = result[0]
-        assert bin_plugin == "foundry"
-        assert script == "health_sentinel.py"
-        assert explicit_plugin is False
-
-    def test_mixed_forms_both_detected(self, tmp_path: Path) -> None:
-        """Files using both the :- fallback and bare ${CLAUDE_PLUGIN_ROOT} form are each captured."""
-        skill_md = tmp_path / "SKILL.md"
-        skill_md.write_text(
-            'python "${CLAUDE_PLUGIN_ROOT}/bin/a.py"\n"${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/b.sh"\n'
-        )
-        result = extract_bin_refs(skill_md, "foundry")
-        scripts = {r[2] for r in result}
-        assert scripts == {"a.py", "b.sh"}
-
-
-# ---------------------------------------------------------------------------
-# get_installed_versions + find_in_installed
-# ---------------------------------------------------------------------------
 
 
 class TestInstalledCache:
@@ -246,7 +274,7 @@ class TestInstalledCache:
         target = ver_dir / "skills" / "audit" / "modes" / "upgrade.md"
         target.write_text("content")
         local_path = "plugins/cc_foundry/skills/audit/modes/upgrade.md"
-        found, checked = find_in_installed(local_path, "foundry", tmp_path)
+        found, _checked = find_in_installed(local_path, "foundry", tmp_path)
         assert found is True
 
     def test_find_in_installed_not_found(self, tmp_path: Path) -> None:
@@ -271,25 +299,26 @@ class TestInstalledCache:
 
 
 class TestIsBasenameGrepVisible:
-    def test_visible_in_skill_md(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("content", "basename", "expected"),
+        [
+            pytest.param(
+                "loads: upgrade.md via $AUDIT_TPL/../modes/upgrade.md\n", "upgrade.md", True, id="literal-in-skill"
+            ),
+            # The basename is embedded in a variable-built path, yet the literal string is still present.
+            pytest.param(
+                "$AUDIT_TPL/../modes/adversarial.md only via variable\n", "adversarial.md", True, id="embedded-in-path"
+            ),
+            pytest.param("completely unrelated content\n", "mystery.md", False, id="absent"),
+        ],
+    )
+    def test_basename_visible_only_when_literally_present(
+        self, tmp_path: Path, content: str, basename: str, expected: bool
+    ) -> None:
+        """A basename is grep-visible when its literal text appears in a SKILL.md, even inside a built path."""
         (tmp_path / "skills" / "audit").mkdir(parents=True)
-        skill = tmp_path / "skills" / "audit" / "SKILL.md"
-        skill.write_text("loads: upgrade.md via $AUDIT_TPL/../modes/upgrade.md\n")
-        assert is_basename_grep_visible("upgrade.md", tmp_path) is True
-
-    def test_not_visible_anywhere(self, tmp_path: Path) -> None:
-        (tmp_path / "skills" / "audit").mkdir(parents=True)
-        skill = tmp_path / "skills" / "audit" / "SKILL.md"
-        skill.write_text("$AUDIT_TPL/../modes/adversarial.md only via variable\n")
-        # adversarial.md does NOT appear as a literal string — it appears embedded in path
-        # but the basename "adversarial.md" IS present in the string above
-        assert is_basename_grep_visible("adversarial.md", tmp_path) is True
-
-    def test_truly_invisible(self, tmp_path: Path) -> None:
-        (tmp_path / "skills" / "audit").mkdir(parents=True)
-        skill = tmp_path / "skills" / "audit" / "SKILL.md"
-        skill.write_text("completely unrelated content\n")
-        assert is_basename_grep_visible("mystery.md", tmp_path) is False
+        (tmp_path / "skills" / "audit" / "SKILL.md").write_text(content)
+        assert is_basename_grep_visible(basename, tmp_path) is expected
 
 
 # ---------------------------------------------------------------------------

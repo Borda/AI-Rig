@@ -12,19 +12,18 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from test_code_remediate_final_outcome_validation import _metadata, _status_counts, _write_action_items
 from test_code_remediate_work_bucket_validation import _parallel_metadata, _write_workplan
 from test_review_remediation_handoff import (
     test_native_assembly_finalization_and_separate_intake_preserve_proof as build_native_review_evidence,
 )
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
     "remediation_admission_validator", PLUGIN_ROOT / "shared/validate-artifacts.py"
 )
-assert SPEC is not None and SPEC.loader is not None
+assert SPEC is not None
+assert SPEC.loader is not None
 VALIDATOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VALIDATOR)
 
@@ -34,7 +33,8 @@ def completed_report(tmp_path: Path) -> tuple[dict, Path, Path]:
     """Retain exact producer bytes and a lossless consumer inventory of its obligations."""
     fixture_path = PLUGIN_ROOT / "tests/review/test_review_completion_gate.py"
     spec = importlib.util.spec_from_file_location("intake_producer_fixture", fixture_path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     fixture = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fixture)
     producer = fixture._assessed_pr.__wrapped__(tmp_path)
@@ -114,7 +114,8 @@ def test_completed_intake_admits_validated_immutable_producer(
         spec = importlib.util.spec_from_file_location(
             "intake_relative_handoff", PLUGIN_ROOT / "shared/final_handoff.py"
         )
-        assert spec is not None and spec.loader is not None
+        assert spec is not None
+        assert spec.loader is not None
         renderer = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(renderer)
         proof = renderer.render_files(handoff_path, producer / "final.md", producer / "final-handoff.validation.json")
@@ -625,13 +626,15 @@ def test_user_fix_selection_finalizer_and_partial_consumer(
         selection_bytes
     ).hexdigest()
     spec = importlib.util.spec_from_file_location("user_finding_finalizer", PLUGIN_ROOT / "shared/final_handoff.py")
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     finalizer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(finalizer)
     rendered_scope = finalizer.render_selection(inventory)
     (directory / "resolution-scope.md").write_text(rendered_scope, encoding="utf-8", newline="\n")
     assert "user ×1" in rendered_scope
-    assert "report ×" not in rendered_scope and "online ×" not in rendered_scope
+    assert "report ×" not in rendered_scope
+    assert "online ×" not in rendered_scope
     _write_action_items(metadata, directory)
     VALIDATOR._validate_code_remediate_scope_selection(metadata, directory)
     VALIDATOR._validate_code_remediate_final_resolution_table(metadata, directory)
@@ -717,7 +720,8 @@ def test_user_fix_selection_finalizer_and_partial_consumer(
     finalizer.render_files(handoff_path, directory / "final.md", directory / "final-handoff.validation.json")
     final = (directory / "final.md").read_text(encoding="utf-8")
     assert "Supplied boundary fix implemented" in final
-    assert "implemented" in final and "Missing requested review" in final
+    assert "implemented" in final
+    assert "Missing requested review" in final
     assert (
         json.loads(handoff_path.read_text(encoding="utf-8"))["source_records"][0]["id"] == "user:user-request#finding-1"
     )
@@ -754,7 +758,7 @@ def test_user_source_requires_retained_complete_body(admission: tuple[dict, Path
     _, directory = admission
     (directory / "user-findings.md").write_text("Actual supplied finding.", encoding="utf-8")
     source = {"kind": "user", "source_id": "user-request#finding-1", "body": body, "evidence": "user-findings.md"}
-    with pytest.raises(SystemExit, match="code-remediate-user-source-(evidence-invalid|body-mismatch)"):
+    with pytest.raises(SystemExit, match=r"code-remediate-user-source-(evidence-invalid|body-mismatch)"):
         VALIDATOR._validate_code_remediate_user_source(source, directory)
 
 
@@ -952,7 +956,8 @@ def test_local_partial_outcome_passes_complete_cli_and_rejects_false_clean(
     )
     handoff_path.write_text(json.dumps(handoff), encoding="utf-8", newline="\n")
     spec = importlib.util.spec_from_file_location("complete_partial_finalizer", PLUGIN_ROOT / "shared/final_handoff.py")
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     finalizer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(finalizer)
     finalizer.render_files(handoff_path, directory / "final.md", directory / "final-handoff.validation.json")

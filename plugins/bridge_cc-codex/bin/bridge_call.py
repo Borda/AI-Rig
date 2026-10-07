@@ -22,7 +22,6 @@ import hashlib
 import json
 import math
 import os
-from pathlib import Path
 import re
 import shutil
 import signal
@@ -32,33 +31,61 @@ import sys
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field as dataclass_field, replace
-from typing import Any, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, replace
+from dataclasses import field as dataclass_field
+from pathlib import Path
+from typing import Any
 
-
+#: Model passed to the child CLI when the caller names none; None leaves the choice to the child's own default.
 DEFAULT_MODEL: str | None = None
+#: Reasoning effort requested from the child when the caller gives none; must be one of EFFORTS.
 DEFAULT_EFFORT = "medium"
+#: Per-verb default wall-clock budget in seconds; its keys are also the set of valid bridge verbs.
 DEFAULT_TIMEOUTS = {"implement": 600.0, "advise": 120.0, "review": 300.0}
+#: Envelope fields returned to the caller, in order; every child answer must supply all of them.
 CORE_FIELDS = ("status", "verdict", "findings", "files_touched", "remaining", "blockers")
+#: Exact key set a child envelope must carry: the core fields plus the free-form details list.
 PEER_FIELDS = (*CORE_FIELDS, "details")
+#: Statuses a child itself may report in its envelope.
 CORE_STATUSES = {"complete", "partial", "blocked"}
+#: Statuses allowed in a finished result: the child-reported ones plus the bridge-assigned timeout and refused.
 FINAL_STATUSES = CORE_STATUSES | {"timeout", "refused"}
+#: Reasoning-effort levels ordered lowest to highest; a requested level is clamped against this order.
 EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max")
+#: Environment variable carrying the bridge nesting depth to child processes, used by the recursion guard.
 DEPTH_ENVIRONMENT_VARIABLE = "CC_CODEX_BRIDGE_DEPTH"
+#: Factor applied to the caller's timeout to get the hard cutoff at which the child process group is killed.
 CHILD_TIMEOUT_MULTIPLIER = 1.2
+#: Seconds a signalled child tree may take to exit on its own before the supervisor force-kills its process group.
+CLEANUP_GRACE_SECONDS = 2.0
+#: Seconds between liveness checks of the signalled child tree while the cleanup grace runs.
+CLEANUP_POLL_SECONDS = 0.01
+#: Longest verdict string, in characters, accepted from a child and kept in a returned envelope.
 MAX_VERDICT_CHARS = 500
+#: Most entries allowed in each of the findings, files_touched, remaining and blockers lists.
 MAX_SUMMARY_ITEMS = 8
+#: Longest single entry, in characters, in the findings, files_touched, remaining and blockers lists.
 MAX_SUMMARY_ITEM_CHARS = 500
+#: Most entries allowed in the child envelope's details list.
 MAX_DETAILS_ITEMS = 32
+#: Longest single entry, in characters, in the child envelope's details list.
 MAX_DETAILS_ITEM_CHARS = 2_000
 # This leaves substantial headroom below the smallest audited process argument
 # limit after the Bridge prompt, schema, environment, and executable arguments.
+#: Largest task text, in UTF-8 bytes, a request may carry before it is rejected as over the transport budget.
 MAX_TASK_UTF8_BYTES = 16 * 1024
+#: Largest assembled prompt, in UTF-8 bytes, that may be passed on the child command line.
 MAX_PROMPT_UTF8_BYTES = 20 * 1024
+#: Windows CreateProcess command-line limit, in UTF-16 code units, that a child command must stay within.
 MAX_WINDOWS_COMMAND_UTF16_UNITS = 32_767
+#: Stricter command-line limit, in UTF-16 code units, applied when the child runs through a Windows .cmd or .bat shim.
 MAX_WINDOWS_BATCH_COMMAND_UTF16_UNITS = 8_000
+#: Largest single line of child stdout, in bytes, that is buffered while parsing its JSON event stream.
 MAX_CHILD_RECORD_BYTES = 256 * 1024
+#: Largest child transcript file, in bytes, written to disk; longer payloads are truncated to this size.
 MAX_CHILD_TRANSCRIPT_BYTES = 256 * 1024
+#: Capture limit for child output in bytes: the transcript cap minus the stdout/stderr framing text added around it.
 MAX_CHILD_OUTPUT_BYTES = MAX_CHILD_TRANSCRIPT_BYTES - len(b"stdout:\n\n\nstderr:\n\n")
 
 # Environment passed to a bridge child, as an allowlist. Inheriting the parent
@@ -67,13 +94,16 @@ MAX_CHILD_OUTPUT_BYTES = MAX_CHILD_TRANSCRIPT_BYTES - len(b"stdout:\n\n\nstderr:
 # else. Anything absent from these three sets is dropped.
 #
 # Base process needs, portable across hosts.
+#: Basic process variables, portable across hosts, copied into the child environment when present.
 CHILD_ENV_BASE_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR", "USER", "SHELL")
 # Windows requires these or a child Python aborts during interpreter start-up
 # with `_Py_HashRandomization_Init: failed to get random numbers`. SystemRoot in
 # both spellings because the OS is case-insensitive and callers differ.
+#: Variables additionally copied on Windows, without which a child Python fails to start.
 CHILD_ENV_WINDOWS_KEYS = ("SystemRoot", "SYSTEMROOT", "COMSPEC", "PATHEXT", "TEMP", "TMP", "USERPROFILE")
 # Provider auth and config discovery for the two supported children. Without
 # these the child cannot authenticate and every call fails closed.
+#: Provider credential, endpoint and config-directory variables copied so the Codex or Claude child can authenticate.
 CHILD_ENV_PROVIDER_KEYS = (
     "CODEX_HOME",
     "OPENAI_API_KEY",
@@ -92,7 +122,9 @@ CHILD_ENV_PROVIDER_KEYS = (
 # Without this, such a host cannot use the bridge at all without editing plugin
 # source, and the failure surfaces as an opaque provider error inside the child.
 # Only the parent process can set this, so it widens nothing a caller controls.
+#: Name of the operator-set variable listing extra comma-separated variable names to pass through to the child.
 CHILD_ENV_EXTRA_VARIABLE = "BRIDGE_CHILD_ENV_EXTRA"
+#: Pattern a name from the operator's extra-variable list must match to be passed to the child.
 _ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -153,10 +185,8 @@ class BridgePaths:
                 except FileNotFoundError:
                     metadata = None
                 if metadata is not None and (
-                    _is_link_or_reparse_point(metadata)
-                    and not path.is_dir()
-                    or stat.S_ISREG(metadata.st_mode)
-                    and metadata.st_nlink != 1
+                    (_is_link_or_reparse_point(metadata) and not path.is_dir())
+                    or (stat.S_ISREG(metadata.st_mode) and metadata.st_nlink != 1)
                 ):
                     raise ValueError("linked artifact file")
         except (OSError, RuntimeError, ValueError) as error:
@@ -940,7 +970,8 @@ def _start_output_readers(
 ) -> None:
     """Start pipe readers, recording each started thread for caller-owned exception cleanup."""
     for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
-        assert stream is not None
+        if stream is None:
+            raise RuntimeError("stream must not be None")
         reader = threading.Thread(target=_read_child_stream, args=(name, stream, output), daemon=True)
         reader.start()
         readers.append(reader)
@@ -1024,14 +1055,40 @@ def _terminate_process_group(process: subprocess.Popen[str]) -> None:
 
 
 def _wait_for_cleanup_grace(process: subprocess.Popen[str]) -> None:
-    """Allow cooperative child-tree exit for a bounded interval before force termination."""
-    deadline = time.monotonic() + 2.0
+    """Allow cooperative child-tree exit for a bounded interval before force termination.
+
+    Returns as soon as no process remains in the child's group, so a tree that exits promptly does not pay the whole
+    grace. The leader's own exit is not enough: descendants can outlive it while holding inherited pipes.
+    """
+    deadline = time.monotonic() + CLEANUP_GRACE_SECONDS
     while time.monotonic() < deadline:
         try:
-            process.wait(timeout=min(0.1, deadline - time.monotonic()))
+            # Also reaps the leader: an unreaped zombie still counts as a live group member.
+            process.wait(timeout=min(CLEANUP_POLL_SECONDS, deadline - time.monotonic()))
         except (OSError, subprocess.TimeoutExpired):
             pass
-        time.sleep(0.01)
+        if _process_group_gone(process.pid):
+            return
+        time.sleep(CLEANUP_POLL_SECONDS)
+
+
+def _process_group_gone(process_group_id: int) -> bool:
+    """Report whether no process remains in a POSIX process group.
+
+    Any signalling failure other than "no such group" (for example a member this user may not signal) and a missing
+    ``os.killpg`` both count as the group still being alive, so the caller keeps waiting rather than cutting short.
+    """
+    kill_process_group = getattr(os, "killpg", None)
+    if kill_process_group is None:
+        return False
+    try:
+        # Signal 0 delivers nothing; it only reports whether the group still has a member.
+        kill_process_group(process_group_id, 0)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        pass
+    return False
 
 
 def _terminate_windows_process_tree(pid: int) -> bool:
@@ -1043,8 +1100,8 @@ def _terminate_windows_process_tree(pid: int) -> bool:
     other failure to reach the utility.
     """
     try:
-        result = subprocess.run(
-            ["taskkill", "/PID", str(pid), "/T", "/F"],
+        result = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["taskkill", "/PID", str(pid), "/T", "/F"],  # noqa: S607 - taskkill resolved via PATH on purpose
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -1268,7 +1325,7 @@ def _next_bridge_depth() -> int:
 def _write_transcript(paths: BridgePaths, stdout: str, stderr: str) -> str:
     """Write one bounded child transcript and return its workspace-relative path."""
     path = paths._member(paths.root / f"raw-{time.time_ns()}-{uuid.uuid4().hex[:8]}.txt")
-    payload = f"stdout:\n{stdout}\n\nstderr:\n{stderr}\n".encode("utf-8")
+    payload = f"stdout:\n{stdout}\n\nstderr:\n{stderr}\n".encode()
     with path.open("xb") as stream:
         stream.write(payload[:MAX_CHILD_TRANSCRIPT_BYTES])
     return paths.relative(path)
@@ -1283,7 +1340,7 @@ def _workspace_state(workspace: Path) -> list[str]:
     """
     try:
         result = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain"],  # noqa: S607 - git resolved via PATH on purpose
             cwd=workspace,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -1549,6 +1606,7 @@ def job_status(workspace: Path, job_id: str) -> dict[str, Any]:
     }
 
 
+#: Seconds a job may stay queued before its observed status is downgraded to stalled.
 QUEUED_STALL_SECONDS = 120.0
 
 
@@ -1579,8 +1637,8 @@ def _process_exists(pid: int) -> bool:
     """Probe process liveness without Windows ``os.kill`` termination semantics."""
     if os.name == "nt":
         try:
-            probe = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            probe = subprocess.run(  # noqa: S603 - argv list, no shell
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],  # noqa: S607 - tasklist resolved via PATH on purpose
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
@@ -1729,7 +1787,9 @@ def _request_json(request: Request) -> dict[str, Any]:
     }
 
 
+#: Number of tries for the atomic file replace when a concurrent reader makes it raise PermissionError on Windows.
 _REPLACE_ATTEMPTS = 40
+#: Seconds to sleep between atomic file replace attempts.
 _REPLACE_RETRY_SECONDS = 0.025
 
 

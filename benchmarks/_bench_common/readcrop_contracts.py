@@ -7,20 +7,22 @@ by the provider.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 import ast
 import hashlib
 import json
 import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
 from .provider_parity_contracts import canonical_task_hash, prompt_hash
 
-
+#: Matches a lowercase 64-character hexadecimal SHA-256 digest.
 _SHA256_RE = re.compile(r"[0-9a-f]{64}$")
+#: Keys a read-crop answer must carry, and nothing more.
 _ANSWER_FIELDS = ("signature", "parameters", "behavior")
+#: Version label hashed into the read-crop scorer identity; change it when scoring semantics change.
 _SCORER_VERSION = "provider-neutral-readcrop-score-v2"
 
 

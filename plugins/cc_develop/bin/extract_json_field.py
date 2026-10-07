@@ -38,6 +38,7 @@ import json
 import sys
 from typing import Any
 
+#: Field names that request the entire recovered JSON object instead of one field of it.
 _WHOLE_OBJECT_ALIASES = frozenset({".", "_object", ""})
 
 

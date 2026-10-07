@@ -23,7 +23,7 @@ parse_modes = _mod.parse_modes
 main = _mod.main
 
 
-@pytest.fixture()
+@pytest.fixture
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Run inside an isolated CWD — the script writes CWD-relative state, as the shell twin did."""
     sentinels = tmp_path / "sentinels"
@@ -90,17 +90,29 @@ def test_missing_contract_is_not_an_error(project: Path) -> None:
     assert main(["--", "titanic"]) == 0
 
 
-def test_leading_dash_arguments_do_not_break_parsing(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """``$ARGUMENTS`` may start with a flag; the ``--`` separator must absorb it."""
-    assert main(["--", "--eda-only"]) == 0
-    assert "Competition: --eda-only" in capsys.readouterr().out
-    assert _sentinel(project, "eda-only") == "true\n"
+@pytest.mark.parametrize(
+    ("arguments", "expected_out", "sentinel", "expected_sentinel"),
+    [
+        pytest.param("--eda-only", "Competition: --eda-only", "eda-only", "true\n", id="leading-dash-arguments"),
+        pytest.param("", "Competition: \n", "competition-name", "\n", id="empty-arguments"),
+    ],
+)
+def test_edge_case_arguments_do_not_break_parsing(
+    project: Path,
+    capsys: pytest.CaptureFixture[str],
+    arguments: str,
+    expected_out: str,
+    sentinel: str,
+    expected_sentinel: str,
+) -> None:
+    """Unusual ``$ARGUMENTS`` strings parse without error.
 
-
-def test_empty_arguments(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["--", ""]) == 0
-    assert "Competition: \n" in capsys.readouterr().out
-    assert _sentinel(project, "competition-name") == "\n"
+    ``$ARGUMENTS`` may start with a flag; the ``--`` separator must absorb it. An empty string yields an empty
+    competition name.
+    """
+    assert main(["--", arguments]) == 0
+    assert expected_out in capsys.readouterr().out
+    assert _sentinel(project, sentinel) == expected_sentinel
 
 
 def test_keep_flag_tolerates_multiple_spaces(project: Path) -> None:

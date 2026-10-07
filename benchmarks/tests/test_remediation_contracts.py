@@ -13,7 +13,6 @@ import pytest
 
 from benchmarks._bench_common import provider_parity_contracts as core
 
-
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 SUITE_PATH = BENCHMARKS_DIR / "suites" / "tasks-bench.json"
 CODEX_RUNNER_PATH = BENCHMARKS_DIR / "run-codex-structural.py"
@@ -213,22 +212,24 @@ def test_required_review_components_cannot_be_bypassed_by_one_perfect_subanswer(
     assert quality.extraction_failed is expected_extraction_failure
 
 
-def test_cq01_required_names_cannot_be_bypassed_by_a_correct_count(script_run_bench: Any) -> None:
-    """CQ-01 needs its independent AST count and every requested unique qualified name."""
-    task = next(task for task in core.load_task_suite(SUITE_PATH) if task["id"] == "CQ-01")
+@pytest.mark.parametrize(
+    ("task_id", "output"),
+    [
+        pytest.param("CQ-01", "Independent AST: 7 unique names.", id="cq01-unique-qualified-names"),
+        pytest.param("CQ-02", "11 uncovered symbols.", id="cq02-unique-public-names"),
+    ],
+)
+def test_cq_required_names_cannot_be_bypassed_by_a_correct_count(
+    script_run_bench: Any, task_id: str, output: str
+) -> None:
+    """CQ-01 and CQ-02 need their independent AST count and every requested unique name.
 
-    quality = script_run_bench._evaluate_oss(task, "Independent AST: 7 unique names.")
+    CQ-01 requires every requested unique qualified name and CQ-02 every requested unique public name, so a correct
+    count alone is half credit and an extraction failure.
+    """
+    task = next(task for task in core.load_task_suite(SUITE_PATH) if task["id"] == task_id)
 
-    assert quality.correct is False
-    assert quality.recall == pytest.approx(0.5)
-    assert quality.extraction_failed is True
-
-
-def test_cq02_required_names_cannot_be_bypassed_by_a_correct_count(script_run_bench: Any) -> None:
-    """CQ-02 needs its independent AST count and every requested unique public name."""
-    task = next(task for task in core.load_task_suite(SUITE_PATH) if task["id"] == "CQ-02")
-
-    quality = script_run_bench._evaluate_oss(task, "11 uncovered symbols.")
+    quality = script_run_bench._evaluate_oss(task, output)
 
     assert quality.correct is False
     assert quality.recall == pytest.approx(0.5)
@@ -412,7 +413,7 @@ def test_fresh_input_tokens_exposes_native_gross_cached_and_fresh_views(
 
 
 @pytest.mark.parametrize(
-    "input_tokens,cached_input_tokens",
+    ("input_tokens", "cached_input_tokens"),
     [pytest.param(-1, 0, id="negative-gross"), pytest.param(0, -1, id="negative-cache")],
 )
 def test_fresh_input_tokens_rejects_negative_native_usage(input_tokens: int, cached_input_tokens: int) -> None:
@@ -459,7 +460,7 @@ def test_canonical_result_rows_sorts_a_derived_view_without_reordering_raw_execu
 )
 def test_canonical_result_rows_rejects_ambiguous_or_unknown_coordinates(rows: list[dict[str, Any]]) -> None:
     """A sidecar must not present duplicate or unknown evidence as a complete canonical run."""
-    with pytest.raises(ValueError, match="duplicate|unknown"):
+    with pytest.raises(ValueError, match=r"duplicate|unknown"):
         core.canonical_result_rows(rows, task_order=("RV-02",), arm_order=("A_plain",))
 
 

@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
 USES_LINE = re.compile(r"^\s*-?\s*uses:\s*(?P<target>\S+?)(?:\s+#\s*(?P<comment>.+))?\s*$")
@@ -49,6 +48,5 @@ def test_external_workflow_actions_use_immutable_commit_pins(
     """Prevent mutable tags, branches, and expressions from re-entering CI workflows."""
     location = f"{path.relative_to(ROOT)}:{line_number}"
     assert PINNED_ACTION.fullmatch(target), f"mutable or malformed action at {location}: {target}"
-    assert comment is not None and VERSION_COMMENT.fullmatch(comment), (
-        f"missing human-readable version comment at {location}: {comment!r}"
-    )
+    assert comment is not None, f"missing human-readable version comment at {location}: {comment!r}"
+    assert VERSION_COMMENT.fullmatch(comment), f"missing human-readable version comment at {location}: {comment!r}"

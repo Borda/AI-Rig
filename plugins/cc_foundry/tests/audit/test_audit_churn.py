@@ -10,7 +10,8 @@ import pytest
 
 _MOD_PATH = Path(__file__).resolve().parent.parent.parent / "bin" / "audit_churn.py"
 _spec = importlib.util.spec_from_file_location("audit_churn", _MOD_PATH)
-assert _spec and _spec.loader
+assert _spec
+assert _spec.loader
 ch = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ch)
 
@@ -48,7 +49,8 @@ def test_parse_churn_path_prefix_filters() -> None:
 def test_recurring_theme_names_dominant_type() -> None:
     """The dominant type and its share are surfaced in the hint."""
     hint = ch.recurring_theme(Counter({"fix": 5, "feat": 1}))
-    assert "fix dominates" in hint and "5/6" in hint
+    assert "fix dominates" in hint
+    assert "5/6" in hint
 
 
 def test_recurring_theme_empty_history() -> None:

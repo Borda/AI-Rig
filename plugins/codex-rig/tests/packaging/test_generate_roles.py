@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-import hashlib
 import doctest
+import hashlib
 import importlib.util
 import json
 import shutil
 import sys
-import tempfile  # noqa: F401 - used by executable doctest examples
+import tempfile  # noqa: F401
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import patch
 
 import pytest
-
 from _platform import FILE_SYMLINKS_AVAILABLE, POSIX_DESCRIPTOR_PRIMITIVES_AVAILABLE, POSIX_FILE_MODES_AVAILABLE
 
 try:
@@ -140,7 +139,7 @@ def test_roster_identity_hash_rejects_drift(mutation: str) -> None:
         invalid = (rows[1], rows[0], *rows[2:])
     else:
         invalid = (*rows[:-1], (*rows[-1][:-1], "A" * 64))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"role identity (hash|roster)"):
         module.roster_identity_hash(invalid)
 
 
@@ -384,7 +383,7 @@ def test_generation_rejects_role_bytes_not_bound_by_manifest(tmp_path: Path) -> 
     role_path = plugin_root / "roles" / "challenger" / "ROLE.md"
     role_path.write_bytes(role_path.read_bytes() + b"\nmodified\n")
 
-    with pytest.raises(ValueError, match="package file mismatch: roles/challenger/ROLE.md"):
+    with pytest.raises(ValueError, match=r"package file mismatch: roles/challenger/ROLE.md"):
         _generate(module, plugin_root, python_binary, codex_binary)
 
 

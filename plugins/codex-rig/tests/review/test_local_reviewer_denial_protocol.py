@@ -11,9 +11,8 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
-import pytest
-
 import local_reviewer_denial_probe as denial_probe
+import pytest
 from _platform import DIRECTORY_SYMLINKS_AVAILABLE
 from local_reviewer_denial_probe import (
     APPROVAL_METHOD,
@@ -341,10 +340,10 @@ def test_unexpected_command_or_network_identity_fails_closed(
 
 @pytest.mark.parametrize(
     "mutated_command",
-    (
+    [
         "echo 'python collect_pr.py Borda/AI-Rig#17 --out {output}'",
         "python collect_pr.py Borda/AI-Rig#17 --out {output} && python broader_operation.py",
-    ),
+    ],
 )
 def test_command_identity_rejects_marker_injection(tmp_path: Path, mutated_command: str) -> None:
     """Reject commands that contain the old markers but are not the exact collector command."""
@@ -356,7 +355,7 @@ def test_command_identity_rejects_marker_injection(tmp_path: Path, mutated_comma
         validate_transcript(transcript, _expected(tmp_path, output_path))
 
 
-@pytest.mark.parametrize("missing_from", ("approval", "completion"))
+@pytest.mark.parametrize("missing_from", ["approval", "completion"])
 def test_expected_network_context_is_required_on_request_and_completion(tmp_path: Path, missing_from: str) -> None:
     """Reject a destination-bound proof when either lifecycle record omits its context."""
     output_path = tmp_path / "collector-output"
@@ -388,7 +387,7 @@ def test_declined_completion_must_repeat_exact_command_identity(tmp_path: Path, 
     completed = transcript[2]["params"]["item"]
     completed[field] = "python broader_operation.py" if field == "command" else str(tmp_path / "other")
 
-    with pytest.raises(ProtocolViolation, match="command-identity|cwd-correlation"):
+    with pytest.raises(ProtocolViolation, match=r"command-identity|cwd-correlation"):
         validate_transcript(transcript, _expected(tmp_path, output_path))
 
 
@@ -401,53 +400,39 @@ def test_preexisting_or_created_output_path_fails_closed(tmp_path: Path) -> None
         validate_transcript(_success_transcript(tmp_path, output_path), _expected(tmp_path, output_path))
 
 
-def test_broader_command_item_start_fails_before_any_fallback_can_complete(tmp_path: Path) -> None:
-    """Reject a second command item in the denied turn even without output data."""
+@pytest.mark.parametrize(
+    ("position", "started_at_ms", "item_id", "command"),
+    [
+        pytest.param(2, 2, "fallback-1", "python broader_fallback.py", id="broader-command-start"),
+        pytest.param(
+            0, 1, "item-1", "python collect_pr.py Borda/AI-Rig#17 --out {output}", id="exact-expected-command-start"
+        ),
+    ],
+)
+def test_any_command_item_start_invalidates_denial_proof(
+    tmp_path: Path, position: int, started_at_ms: int, item_id: str, command: str
+) -> None:
+    """Reject any command item start in the denied turn, whether a broader fallback or the exact collector.
+
+    A broader command item is rejected even without output data, and a matching collector start is rejected because
+    decline must prevent all execution.
+    """
     output_path = tmp_path / "collector-output"
     transcript = _success_transcript(tmp_path, output_path)
     transcript.insert(
-        2,
+        position,
         {
             "jsonrpc": "2.0",
             "method": STARTED_METHOD,
             "params": {
                 "threadId": "thread-1",
                 "turnId": "turn-1",
-                "startedAtMs": 2,
+                "startedAtMs": started_at_ms,
                 "item": {
-                    "id": "fallback-1",
+                    "id": item_id,
                     "type": "commandExecution",
                     "status": "inProgress",
-                    "command": "python broader_fallback.py",
-                    "commandActions": [],
-                    "cwd": str(tmp_path),
-                },
-            },
-        },
-    )
-
-    with pytest.raises(ProtocolViolation, match="command-execution-start-observed"):
-        validate_transcript(transcript, _expected(tmp_path, output_path))
-
-
-def test_exact_expected_command_start_invalidates_denial_proof(tmp_path: Path) -> None:
-    """Reject a matching collector start because decline must prevent all execution."""
-    output_path = tmp_path / "collector-output"
-    transcript = _success_transcript(tmp_path, output_path)
-    transcript.insert(
-        0,
-        {
-            "jsonrpc": "2.0",
-            "method": STARTED_METHOD,
-            "params": {
-                "threadId": "thread-1",
-                "turnId": "turn-1",
-                "startedAtMs": 1,
-                "item": {
-                    "id": "item-1",
-                    "type": "commandExecution",
-                    "status": "inProgress",
-                    "command": f"python collect_pr.py Borda/AI-Rig#17 --out {output_path}",
+                    "command": command.format(output=output_path),
                     "commandActions": [],
                     "cwd": str(tmp_path),
                 },
@@ -895,7 +880,7 @@ def _successful_live_messages(config: LiveProbeConfig) -> list[dict[str, object]
 
 @pytest.mark.parametrize(
     ("late_event", "match"),
-    (
+    [
         pytest.param(
             {
                 "jsonrpc": "2.0",
@@ -919,7 +904,7 @@ def _successful_live_messages(config: LiveProbeConfig) -> list[dict[str, object]
             "command-output-observed",
             id="command-output",
         ),
-    ),
+    ],
 )
 def test_live_probe_revalidates_queued_events_after_recovery_terminal(
     tmp_path: Path,
@@ -1056,7 +1041,7 @@ def test_live_probe_uses_exact_installed_skill_and_writes_only_sanitized_evidenc
     assert captured["args"] == ([str(codex_bin), "app-server", "--stdio"],)
     environment = captured["kwargs"]["env"]
     assert environment["CODEX_HOME"] == str(codex_home)
-    assert environment["OPAQUE_ACCOUNT_TOKEN"] == "must-not-appear-in-evidence"
+    assert environment["OPAQUE_ACCOUNT_TOKEN"] == "must-not-appear-in-evidence"  # noqa: S105 - env-var name and fake value
     assert outbound[1] == {"jsonrpc": "2.0", "method": "initialized"}
     assert outbound[3]["params"]["input"] == [
         {"type": "skill", "name": "code-review", "path": str(plugin_root / "skills" / "code-review" / "SKILL.md")},
@@ -1500,10 +1485,10 @@ def test_live_probe_records_cleanup_failure_as_failure_after_attempt(
 
 @pytest.mark.parametrize(
     "oversized_payload",
-    (
+    [
         pytest.param("raw-oversized-secret" + "x" * denial_probe.MAX_JSON_RPC_CHARS, id="character-limit"),
         pytest.param("raw-oversized-secret" + "💥" * (denial_probe.MAX_JSON_RPC_BYTES // 4), id="utf8-byte-limit"),
-    ),
+    ],
 )
 def test_live_probe_rejects_oversized_json_rpc_without_persisting_payload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, oversized_payload: str
@@ -1665,10 +1650,10 @@ def test_text_control_uses_only_fixed_no_tool_text_and_publishes_safe_summary(
 
 @pytest.mark.parametrize(
     ("method", "expected"),
-    (
+    [
         pytest.param(APPROVAL_METHOD, "control-unexpected-command-approval", id="approval_method"),
         pytest.param(FILE_APPROVAL_METHOD, "control-unexpected-file-change-approval", id="file_approval_method"),
-    ),
+    ],
 )
 def test_text_control_rejects_any_tool_or_approval_event(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str, expected: str
@@ -1692,11 +1677,11 @@ def test_text_control_rejects_any_tool_or_approval_event(
 
 @pytest.mark.parametrize(
     ("method", "item_type", "expected"),
-    (
+    [
         pytest.param(STARTED_METHOD, "commandExecution", "control-command-execution-observed", id="started_method"),
         pytest.param(COMPLETED_METHOD, "fileChange", "control-file-change-observed", id="completed_method"),
         pytest.param(OUTPUT_DELTA_METHOD, None, "control-output-observed", id="output_delta_method"),
-    ),
+    ],
 )
 def test_text_control_rejects_command_file_and_output_events(
     tmp_path: Path,
@@ -1899,12 +1884,12 @@ def test_matrix_rejects_cross_scenario_symlink_alias(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    (
+    [
         pytest.param("model", "different-model", id="model"),
         pytest.param("codex_bin", Path("/different/codex"), id="codex_bin"),
         pytest.param("plugin_version", "different-version", id="plugin_version"),
         pytest.param("package_sha256", "0" * 64, id="package_sha256"),
-    ),
+    ],
 )
 def test_matrix_requires_identical_runtime_identity(tmp_path: Path, field: str, value: object) -> None:
     """Keep A/B/C causal by requiring one model, binary, and candidate package."""
@@ -1917,7 +1902,7 @@ def test_matrix_requires_identical_runtime_identity(tmp_path: Path, field: str, 
         run_live_scenarios((first, second, third), run_one=lambda config: config.evidence_dir)
 
 
-@pytest.mark.parametrize("timeout", (float("inf"), float("nan")))
+@pytest.mark.parametrize("timeout", [float("inf"), float("nan")])
 def test_live_config_rejects_nonfinite_timeout(tmp_path: Path, timeout: float) -> None:
     """Reject a matrix timeout that could defeat the finite live-run contract."""
     config = replace(_live_probe_config(tmp_path), timeout_seconds=timeout)

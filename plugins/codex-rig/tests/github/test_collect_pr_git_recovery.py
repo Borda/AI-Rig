@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import importlib.util
 import hashlib
+import importlib.util
 import json
+import shutil
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 COLLECTOR = PLUGIN_ROOT / "shared" / "collect_pr.py"
@@ -76,15 +77,31 @@ def _git(repository: Path, *arguments: str, expected: int = 0) -> str:
 def _load_collector() -> ModuleType:
     """Load the standalone collector without installing the plugin."""
     specification = importlib.util.spec_from_file_location("collector_git_recovery", COLLECTOR)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
 
 
-def _setup_repositories(tmp_path: Path) -> tuple[Path, Path, str, str, str]:
-    """Create a local PR source, a stale branch, and a checked-out PR head."""
-    source = tmp_path / "source"
+@dataclass(frozen=True)
+class RepositoryTemplate:
+    """Committed PR source and worktree pair built once per session, never mutated after the build.
+
+    Building the pair costs about twenty Git processes, which dominates these tests on Windows. Each test copies the
+    pair into its own directory instead, so a test can mutate its copy freely while every test still starts from byte-
+    identical repositories and the same commit identities.
+    """
+
+    root: Path
+    base: str
+    old: str
+    head: str
+
+
+def _build_repository_template(root: Path) -> RepositoryTemplate:
+    """Create a local PR source, a stale branch, and a checked-out PR head under one template root."""
+    source = root / "source"
     source.mkdir()
     _git(source, "init", "-b", "main")
     _git(source, "config", "core.autocrlf", "false")
@@ -108,7 +125,7 @@ def _setup_repositories(tmp_path: Path) -> tuple[Path, Path, str, str, str]:
     head = _git(source, "rev-parse", "HEAD")
     _git(source, "update-ref", "refs/pull/17/head", head)
 
-    worktree = tmp_path / "worktree"
+    worktree = root / "worktree"
     worktree.mkdir()
     _git(worktree, "init", "-b", "main")
     _git(worktree, "config", "core.autocrlf", "false")
@@ -119,7 +136,26 @@ def _setup_repositories(tmp_path: Path) -> tuple[Path, Path, str, str, str]:
     _git(worktree, "checkout", "topic")
     _git(worktree, "config", "remote.origin.url", "https://github.com/example/project.git")
     _git(worktree, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
-    return source, worktree, base, old, head
+    return RepositoryTemplate(root=root, base=base, old=old, head=head)
+
+
+@pytest.fixture(scope="session")
+def repository_template(tmp_path_factory: pytest.TempPathFactory) -> RepositoryTemplate:
+    """Build the shared PR repositories once per test process; tests receive private copies."""
+    return _build_repository_template(tmp_path_factory.mktemp("collector-git-template"))
+
+
+def _setup_repositories(tmp_path: Path, template: RepositoryTemplate) -> tuple[Path, Path, str, str, str]:
+    """Copy the PR source and its checked-out worktree into this test's private directory.
+
+    The copies keep file bytes, Git objects, refs, and local configuration; only filesystem stat data differs, which Git
+    revalidates by content on its next index refresh.
+    """
+    source = tmp_path / "source"
+    worktree = tmp_path / "worktree"
+    shutil.copytree(template.root / "source", source, symlinks=True)
+    shutil.copytree(template.root / "worktree", worktree, symlinks=True)
+    return source, worktree, template.base, template.old, template.head
 
 
 def _payload(base: str, head: str, *, cross_repository: bool = True, state: str = "OPEN") -> dict[str, Any]:
@@ -224,10 +260,12 @@ def _collect(
     return code, calls
 
 
-def test_review_isolates_exact_pr_head_from_dirty_main_checkout(tmp_path: Path) -> None:
+def test_review_isolates_exact_pr_head_from_dirty_main_checkout(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Inspect the fetched PR commit in a detached worktree without moving local work."""
     module = _load_collector()
-    source, main, base, _old, head = _setup_repositories(tmp_path)
+    source, main, base, _old, head = _setup_repositories(tmp_path, repository_template)
     _git(main, "checkout", "-b", "ongoing", base)
     (main / "module.py").write_text("value = 'local work'\n", encoding="utf-8")
     main_status = _git(main, "status", "--short")
@@ -253,10 +291,12 @@ def test_review_isolates_exact_pr_head_from_dirty_main_checkout(tmp_path: Path) 
     )
 
 
-def test_review_reuses_only_clean_exact_registered_worktree(tmp_path: Path) -> None:
+def test_review_reuses_only_clean_exact_registered_worktree(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Allow a repeated collection without replacing or deleting the verified worktree."""
     module = _load_collector()
-    source, main, base, _old, head = _setup_repositories(tmp_path)
+    source, main, base, _old, head = _setup_repositories(tmp_path, repository_template)
     output = tmp_path / "collected"
     first_code, _ = _collect(module, source, main, output, base, head)
     assert first_code == 0
@@ -271,10 +311,12 @@ def test_review_reuses_only_clean_exact_registered_worktree(tmp_path: Path) -> N
     assert receipt["command"] == "not-run: existing exact clean review worktree"
 
 
-def test_review_preserves_dirty_registered_worktree_on_retry(tmp_path: Path) -> None:
+def test_review_preserves_dirty_registered_worktree_on_retry(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Do not reset or replace local review notes during another collection attempt."""
     module = _load_collector()
-    source, main, base, _old, head = _setup_repositories(tmp_path)
+    source, main, base, _old, head = _setup_repositories(tmp_path, repository_template)
     output = tmp_path / "collected"
     first_code, _ = _collect(module, source, main, output, base, head)
     assert first_code == 0
@@ -290,10 +332,10 @@ def test_review_preserves_dirty_registered_worktree_on_retry(tmp_path: Path) -> 
     assert not (output / "local-checkout.json").exists()
 
 
-def test_review_receipt_survives_report_promotion(tmp_path: Path) -> None:
+def test_review_receipt_survives_report_promotion(tmp_path: Path, repository_template: RepositoryTemplate) -> None:
     """Keep the isolated source address valid after the report directory moves."""
     module = _load_collector()
-    source, main, base, _old, head = _setup_repositories(tmp_path)
+    source, main, base, _old, head = _setup_repositories(tmp_path, repository_template)
     output = tmp_path / "timestamped"
     code, _ = _collect(module, source, main, output, base, head)
     assert code == 0
@@ -309,10 +351,12 @@ def test_review_receipt_survives_report_promotion(tmp_path: Path) -> None:
     assert (promoted / "diff.patch").is_file()
 
 
-def test_review_worktree_can_live_beside_ignored_report_inside_source(tmp_path: Path) -> None:
+def test_review_worktree_can_live_beside_ignored_report_inside_source(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Keep report-adjacent review source invisible to the main repository status."""
     module = _load_collector()
-    source, main, base, _old, head = _setup_repositories(tmp_path)
+    source, main, base, _old, head = _setup_repositories(tmp_path, repository_template)
     _git(main, "config", "core.excludesFile", str(tmp_path / "global-ignore"))
     (tmp_path / "global-ignore").write_text(".reports/\n", encoding="utf-8")
     output = main / ".reports" / "code-review" / "run-001"
@@ -325,10 +369,12 @@ def test_review_worktree_can_live_beside_ignored_report_inside_source(tmp_path: 
     assert _git(main, "status", "--short") == ""
 
 
-def test_review_uses_temporary_worktree_when_report_path_is_visible_to_main_git(tmp_path: Path) -> None:
+def test_review_uses_temporary_worktree_when_report_path_is_visible_to_main_git(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Move isolated review source out of the main tree when reports are not ignored."""
     module = _load_collector()
-    source, main, base, _old, head = _setup_repositories(tmp_path)
+    source, main, base, _old, head = _setup_repositories(tmp_path, repository_template)
     output = main / "reports" / "run-001"
 
     code, calls = _collect(module, source, main, output, base, head)
@@ -344,10 +390,12 @@ def test_review_uses_temporary_worktree_when_report_path_is_visible_to_main_git(
     assert not (main / "reports" / "run-001-review-worktree").exists()
 
 
-def test_review_preserves_occupied_temporary_fallback_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_review_preserves_occupied_temporary_fallback_path(
+    tmp_path: Path, repository_template: RepositoryTemplate, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Never replace an unregistered path at the deterministic temporary address."""
     module = _load_collector()
-    source, main, base, _old, head = _setup_repositories(tmp_path)
+    source, main, base, _old, head = _setup_repositories(tmp_path, repository_template)
     external = tmp_path / "external"
     external.mkdir()
     monkeypatch.setattr(module.tempfile, "gettempdir", lambda: str(external))
@@ -365,10 +413,12 @@ def test_review_preserves_occupied_temporary_fallback_path(tmp_path: Path, monke
     assert not any(call[:3] == ["git", "worktree", "add"] for call in calls)
 
 
-def test_review_preserves_occupied_or_dirty_worktree_path(tmp_path: Path) -> None:
+def test_review_preserves_occupied_or_dirty_worktree_path(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Fail closed without replacing files at a report-adjacent path."""
     module = _load_collector()
-    source, main, base, _old, head = _setup_repositories(tmp_path)
+    source, main, base, _old, head = _setup_repositories(tmp_path, repository_template)
     review = tmp_path / "collected-review-worktree"
     review.mkdir()
     (review / "keep.txt").write_text("user data\n", encoding="utf-8")
@@ -382,10 +432,10 @@ def test_review_preserves_occupied_or_dirty_worktree_path(tmp_path: Path) -> Non
 
 
 @pytest.mark.skipif(not _directory_symlinks_available(), reason="directory symlinks unavailable")
-def test_review_rejects_symlink_worktree_path(tmp_path: Path) -> None:
+def test_review_rejects_symlink_worktree_path(tmp_path: Path, repository_template: RepositoryTemplate) -> None:
     """Do not follow a user-owned symlink when selecting the detached worktree path."""
     module = _load_collector()
-    source, main, base, _old, head = _setup_repositories(tmp_path)
+    source, main, base, _old, head = _setup_repositories(tmp_path, repository_template)
     destination = tmp_path / "destination"
     destination.mkdir()
     review = tmp_path / "collected-review-worktree"
@@ -408,11 +458,11 @@ def test_review_rejects_symlink_worktree_path(tmp_path: Path) -> None:
     ],
 )
 def test_collect_pr_uses_destination_free_head_fetch_without_rewriting_stale_cache(
-    tmp_path: Path, cross_repository: bool, state: str
+    tmp_path: Path, repository_template: RepositoryTemplate, cross_repository: bool, state: str
 ) -> None:
     """Verify every Git route can inspect an exact PR head without updating a stale cache ref."""
     module = _load_collector()
-    source, worktree, base, old, head = _setup_repositories(tmp_path)
+    source, worktree, base, old, head = _setup_repositories(tmp_path, repository_template)
     stale_ref = (
         "refs/remotes/origin/topic" if not cross_repository and state == "OPEN" else "refs/remotes/origin/pull/17/head"
     )
@@ -437,10 +487,12 @@ def test_collect_pr_uses_destination_free_head_fetch_without_rewriting_stale_cac
     assert fetched["local_head"] == head
 
 
-def test_collect_pr_uses_destination_free_target_fetch_without_rewriting_stale_cache(tmp_path: Path) -> None:
+def test_collect_pr_uses_destination_free_target_fetch_without_rewriting_stale_cache(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Verify an old target cache cannot block a current exact PR checkout."""
     module = _load_collector()
-    source, worktree, base, old, head = _setup_repositories(tmp_path)
+    source, worktree, base, old, head = _setup_repositories(tmp_path, repository_template)
     _git(worktree, "update-ref", "refs/remotes/origin/main", old)
 
     code, calls = _collect(module, source, worktree, tmp_path / "collected", base, head)
@@ -453,10 +505,12 @@ def test_collect_pr_uses_destination_free_target_fetch_without_rewriting_stale_c
 
 
 @pytest.mark.parametrize("state", ["unstaged", "staged", "unmerged"])
-def test_collect_pr_isolates_pr_file_changes_or_unmerged_index_at_matching_head(tmp_path: Path, state: str) -> None:
+def test_collect_pr_isolates_pr_file_changes_or_unmerged_index_at_matching_head(
+    tmp_path: Path, repository_template: RepositoryTemplate, state: str
+) -> None:
     """Preserve conflicted or changed main files while reviewing an isolated exact commit."""
     module = _load_collector()
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     if state in {"unstaged", "staged"}:
         (worktree / "module.py").write_text("value = 'local-unreviewed'\n", encoding="utf-8")
         if state == "staged":
@@ -478,10 +532,12 @@ def test_collect_pr_isolates_pr_file_changes_or_unmerged_index_at_matching_head(
     assert _git(isolated, "status", "--short") == ""
 
 
-def test_collect_pr_isolates_staged_pr_change_hidden_by_restored_worktree(tmp_path: Path) -> None:
+def test_collect_pr_isolates_staged_pr_change_hidden_by_restored_worktree(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Keep a staged local change while reviewing clean PR source elsewhere."""
     module = _load_collector()
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     staged_contents = "value = 'local-staged'\n"
     (worktree / "module.py").write_text(staged_contents, encoding="utf-8")
     _git(worktree, "add", "module.py")
@@ -498,10 +554,12 @@ def test_collect_pr_isolates_staged_pr_change_hidden_by_restored_worktree(tmp_pa
     assert _git(isolated, "status", "--short") == ""
 
 
-def test_collect_pr_preserves_unrelated_edits_at_matching_head(tmp_path: Path) -> None:
+def test_collect_pr_preserves_unrelated_edits_at_matching_head(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Allow a local edit outside the PR diff without changing or misreporting it."""
     module = _load_collector()
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     (worktree / "notes.txt").write_text("keep local edit\n", encoding="utf-8")
 
     code, _calls = _collect(module, source, worktree, tmp_path / "collected", base, head)
@@ -510,10 +568,12 @@ def test_collect_pr_preserves_unrelated_edits_at_matching_head(tmp_path: Path) -
     assert (worktree / "notes.txt").read_text(encoding="utf-8") == "keep local edit\n"
 
 
-def test_collect_pr_preserves_unrelated_untracked_files_at_matching_head(tmp_path: Path) -> None:
+def test_collect_pr_preserves_unrelated_untracked_files_at_matching_head(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Allow an untracked file that is outside the PR diff without expanding review scope."""
     module = _load_collector()
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     (worktree / "scratch.txt").write_text("keep local scratch\n", encoding="utf-8")
 
     code, _calls = _collect(module, source, worktree, tmp_path / "collected", base, head)
@@ -526,10 +586,12 @@ def test_collect_pr_preserves_unrelated_untracked_files_at_matching_head(tmp_pat
 
 
 @pytest.mark.parametrize("path", ["notes.txt", "removed/nested.py"])
-def test_collect_pr_isolates_untracked_recreation_of_a_deleted_pr_path(tmp_path: Path, path: str) -> None:
+def test_collect_pr_isolates_untracked_recreation_of_a_deleted_pr_path(
+    tmp_path: Path, repository_template: RepositoryTemplate, path: str
+) -> None:
     """Preserve a recreated local path while reviewing the exact deletion in isolation."""
     module = _load_collector()
-    source, worktree, base, _old, _head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, _head = _setup_repositories(tmp_path, repository_template)
     _git(source, "rm", path)
     _git(source, "commit", "-m", f"delete {path}")
     head = _git(source, "rev-parse", "HEAD")
@@ -552,10 +614,12 @@ def test_collect_pr_isolates_untracked_recreation_of_a_deleted_pr_path(tmp_path:
     assert recreated.read_text(encoding="utf-8") == "local unreviewed recreation\n"
 
 
-def test_collect_pr_detaches_at_verified_head_without_changing_local_refs_or_config(tmp_path: Path) -> None:
+def test_collect_pr_detaches_at_verified_head_without_changing_local_refs_or_config(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Use the collector's native checkout argv while preserving local branches, refs, and remote configuration."""
     module = _load_collector()
-    source, worktree, base, old, head = _setup_repositories(tmp_path)
+    source, worktree, base, old, head = _setup_repositories(tmp_path, repository_template)
     _git(worktree, "checkout", "-b", "local-diverged", old)
     _git(worktree, "update-ref", "refs/remotes/origin/topic", old)
     remote_url = _git(worktree, "config", "--get", "remote.origin.url")
@@ -579,10 +643,12 @@ def test_collect_pr_detaches_at_verified_head_without_changing_local_refs_or_con
     assert _git(worktree, "config", "--get", "remote.origin.url") == remote_url
 
 
-def test_collect_pr_remediation_keeps_github_attached_branch(tmp_path: Path) -> None:
+def test_collect_pr_remediation_keeps_github_attached_branch(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Require the GitHub checkout route and its branch tracking for remediation."""
     module = _load_collector()
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     _git(worktree, "checkout", "-b", "local-diverged", base)
 
     code, calls = _collect(
@@ -607,10 +673,12 @@ def test_collect_pr_remediation_keeps_github_attached_branch(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize("checkout_mode", ["review", "remediate"])
-def test_collect_pr_preserves_ignored_nested_worktree(tmp_path: Path, checkout_mode: str) -> None:
+def test_collect_pr_preserves_ignored_nested_worktree(
+    tmp_path: Path, repository_template: RepositoryTemplate, checkout_mode: str
+) -> None:
     """Allow an unrelated prior review worktree reported by Git with a directory suffix."""
     module = _load_collector()
-    source, worktree, base, old, head = _setup_repositories(tmp_path)
+    source, worktree, base, old, head = _setup_repositories(tmp_path, repository_template)
     _git(worktree, "checkout", "-b", "local-diverged", base)
     nested = worktree / "cache" / "review"
     _git(worktree, "worktree", "add", "--detach", str(nested), old)
@@ -645,10 +713,12 @@ def test_collect_pr_preserves_ignored_nested_worktree(tmp_path: Path, checkout_m
 
 @pytest.mark.parametrize("pr_path", ["cache", "cache/review", "cache/review/new.py"])
 @pytest.mark.parametrize("checkout_mode", ["review", "remediate"])
-def test_collect_pr_blocks_checkout_over_nested_worktree(tmp_path: Path, pr_path: str, checkout_mode: str) -> None:
+def test_collect_pr_blocks_checkout_over_nested_worktree(
+    tmp_path: Path, repository_template: RepositoryTemplate, pr_path: str, checkout_mode: str
+) -> None:
     """Retain directory overlap protection for Git's collapsed nested worktree entry."""
     module = _load_collector()
-    source, worktree, base, old, _head = _setup_repositories(tmp_path)
+    source, worktree, base, old, _head = _setup_repositories(tmp_path, repository_template)
     incoming = source / pr_path
     incoming.parent.mkdir(parents=True, exist_ok=True)
     incoming.write_bytes(b"PR BYTES\n")
@@ -712,11 +782,11 @@ def test_collect_pr_blocks_checkout_over_nested_worktree(tmp_path: Path, pr_path
     ],
 )
 def test_collect_pr_remediation_blocks_ignored_checkout_collision(
-    tmp_path: Path, local_path: str, pr_path: str
+    tmp_path: Path, repository_template: RepositoryTemplate, local_path: str, pr_path: str
 ) -> None:
     """Block checkout before Git can overwrite ignored user files or their parent directory."""
     module = _load_collector()
-    source, worktree, base, _old, _head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, _head = _setup_repositories(tmp_path, repository_template)
     incoming = source / pr_path
     incoming.parent.mkdir(parents=True, exist_ok=True)
     incoming.write_bytes(b"PR BYTES\n")
@@ -781,10 +851,12 @@ def test_collect_pr_remediation_blocks_ignored_checkout_collision(
         ),
     ],
 )
-def test_collect_pr_remediation_preserves_unrelated_ignored_file(tmp_path: Path, local_path: str, pr_path: str) -> None:
+def test_collect_pr_remediation_preserves_unrelated_ignored_file(
+    tmp_path: Path, repository_template: RepositoryTemplate, local_path: str, pr_path: str
+) -> None:
     """Allow checkout while retaining ignored user bytes outside the changed paths."""
     module = _load_collector()
-    source, worktree, base, _old, _head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, _head = _setup_repositories(tmp_path, repository_template)
     incoming = source / pr_path
     incoming.parent.mkdir(parents=True, exist_ok=True)
     incoming.write_bytes(b"PR BYTES\n")
@@ -838,10 +910,12 @@ def test_collect_pr_remediation_preserves_unrelated_ignored_file(tmp_path: Path,
         ),
     ],
 )
-def test_collect_pr_remediation_preserves_distinct_ignored_link_name(tmp_path: Path, kind: str) -> None:
+def test_collect_pr_remediation_preserves_distinct_ignored_link_name(
+    tmp_path: Path, repository_template: RepositoryTemplate, kind: str
+) -> None:
     """Allow replacing a tracked path while preserving a distinct ignored link entry."""
     module = _load_collector()
-    source, worktree, base, _old, _head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, _head = _setup_repositories(tmp_path, repository_template)
     (source / "notes.txt").write_bytes(b"PR BYTES\n")
     _git(source, "commit", "-am", "replace tracked link target")
     head = _git(source, "rev-parse", "HEAD")
@@ -883,10 +957,12 @@ def test_collect_pr_remediation_preserves_distinct_ignored_link_name(tmp_path: P
     assert receipt["checkout_mode"] == "remediate"
 
 
-def test_collect_pr_remediation_records_fork_tracking_destination(tmp_path: Path) -> None:
+def test_collect_pr_remediation_records_fork_tracking_destination(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Keep a fork PR's branch receipt bound to its contributor repository URL."""
     module = _load_collector()
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     _git(worktree, "checkout", "-b", "local-diverged", base)
 
     code, _calls = _collect(
@@ -905,10 +981,12 @@ def test_collect_pr_remediation_records_fork_tracking_destination(tmp_path: Path
     assert _git(worktree, "config", "--get", "branch.topic.merge") == "refs/heads/topic"
 
 
-def test_collect_pr_remediation_recovers_same_repo_existing_branch_after_gh_failure(tmp_path: Path) -> None:
+def test_collect_pr_remediation_recovers_same_repo_existing_branch_after_gh_failure(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Attach the verified existing PR branch after GitHub's checkout fails."""
     module = _load_collector()
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     _git(worktree, "checkout", "-b", "local-diverged", base)
 
     code, calls = _collect(
@@ -931,10 +1009,12 @@ def test_collect_pr_remediation_recovers_same_repo_existing_branch_after_gh_fail
     assert checkout["command"] == "git checkout --no-guess topic"
 
 
-def test_collect_pr_remediation_creates_missing_same_repo_branch_from_verified_remote_ref(tmp_path: Path) -> None:
+def test_collect_pr_remediation_creates_missing_same_repo_branch_from_verified_remote_ref(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Create an absent branch only from the exact fetched selected-remote PR ref."""
     module = _load_collector()
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     _git(worktree, "checkout", "-b", "local-diverged", base)
     _git(worktree, "branch", "-D", "topic")
 
@@ -956,10 +1036,12 @@ def test_collect_pr_remediation_creates_missing_same_repo_branch_from_verified_r
     assert _git(worktree, "rev-parse", "HEAD") == head
 
 
-def test_collect_pr_remediation_rejects_stale_same_repo_branch_without_advancing_it(tmp_path: Path) -> None:
+def test_collect_pr_remediation_rejects_stale_same_repo_branch_without_advancing_it(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Stop before changing a stale local PR branch after a failed GitHub checkout."""
     module = _load_collector()
-    source, worktree, base, old, head = _setup_repositories(tmp_path)
+    source, worktree, base, old, head = _setup_repositories(tmp_path, repository_template)
     _git(worktree, "checkout", "-b", "local-diverged", base)
     _git(worktree, "update-ref", "refs/heads/topic", old)
 
@@ -982,10 +1064,12 @@ def test_collect_pr_remediation_rejects_stale_same_repo_branch_without_advancing
     )
 
 
-def test_collect_pr_remediation_updates_only_ancestor_tracking_ref_for_missing_branch(tmp_path: Path) -> None:
+def test_collect_pr_remediation_updates_only_ancestor_tracking_ref_for_missing_branch(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Allow the explicit remote-tracking update when its prior commit is a PR-head ancestor."""
     module = _load_collector()
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     _git(worktree, "checkout", "-b", "local-diverged", base)
     _git(worktree, "branch", "-D", "topic")
     _git(worktree, "update-ref", "refs/remotes/origin/topic", base)
@@ -1006,10 +1090,12 @@ def test_collect_pr_remediation_updates_only_ancestor_tracking_ref_for_missing_b
     assert _git(worktree, "rev-parse", "refs/heads/topic") == head
 
 
-def test_collect_pr_remediation_uses_recorded_head_after_source_moves(tmp_path: Path) -> None:
+def test_collect_pr_remediation_uses_recorded_head_after_source_moves(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Prevent a source rewrite after the verified fetch from changing the recovered branch ref."""
     module = _load_collector()
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     _git(worktree, "checkout", "-b", "local-diverged", base)
     _git(worktree, "branch", "-D", "topic")
     _git(worktree, "update-ref", "refs/remotes/origin/topic", base)
@@ -1033,10 +1119,12 @@ def test_collect_pr_remediation_uses_recorded_head_after_source_moves(tmp_path: 
     assert not any(arguments[-1] == "refs/heads/topic:refs/remotes/origin/topic" for arguments in calls)
 
 
-def test_collect_pr_remediation_rejects_divergent_tracking_ref_without_creating_branch(tmp_path: Path) -> None:
+def test_collect_pr_remediation_rejects_divergent_tracking_ref_without_creating_branch(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Preserve a divergent cached tracking ref instead of allowing Git to non-fast-forward it."""
     module = _load_collector()
-    source, worktree, base, old, head = _setup_repositories(tmp_path)
+    source, worktree, base, old, head = _setup_repositories(tmp_path, repository_template)
     _git(worktree, "checkout", "-b", "local-diverged", base)
     _git(worktree, "branch", "-D", "topic")
     _git(worktree, "update-ref", "refs/remotes/origin/topic", old)
@@ -1061,10 +1149,12 @@ def test_collect_pr_remediation_rejects_divergent_tracking_ref_without_creating_
     )
 
 
-def test_collect_pr_remediation_requires_adversarial_recovery_for_fork_after_gh_failure(tmp_path: Path) -> None:
+def test_collect_pr_remediation_requires_adversarial_recovery_for_fork_after_gh_failure(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Leave a fork checkout unchanged when GitHub cannot establish its publication branch."""
     module = _load_collector()
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     _git(worktree, "checkout", "-b", "local-diverged", base)
 
     code, calls = _collect(
@@ -1085,10 +1175,12 @@ def test_collect_pr_remediation_requires_adversarial_recovery_for_fork_after_gh_
     )
 
 
-def test_collect_pr_remediation_rechecks_dirty_partial_gh_failure_before_git_recovery(tmp_path: Path) -> None:
+def test_collect_pr_remediation_rechecks_dirty_partial_gh_failure_before_git_recovery(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Protect PR files changed by a failed GitHub checkout before native recovery runs."""
     module = _load_collector()
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     _git(worktree, "checkout", "-b", "local-diverged", base)
 
     code, calls = _collect(
@@ -1112,10 +1204,10 @@ def test_collect_pr_remediation_rechecks_dirty_partial_gh_failure_before_git_rec
     )
 
 
-def test_collect_pr_rechecks_pr_source_after_checkout(tmp_path: Path) -> None:
+def test_collect_pr_rechecks_pr_source_after_checkout(tmp_path: Path, repository_template: RepositoryTemplate) -> None:
     """Reject an isolated PR file changed between creation and source verification."""
     module = _load_collector()
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     _git(worktree, "checkout", "-b", "base-checkout", base)
 
     code, _calls = _collect(
@@ -1149,10 +1241,12 @@ def test_collect_pr_clears_prior_target_before_an_invalid_retry(tmp_path: Path) 
     assert (output / "pr-error.txt").read_text(encoding="utf-8") == "unsafe-pr-target\n"
 
 
-def test_git_failure_reason_classifies_actual_non_fast_forward_fetch_stderr(tmp_path: Path) -> None:
+def test_git_failure_reason_classifies_actual_non_fast_forward_fetch_stderr(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Classify the indented rejection line emitted by a real failed destination fetch."""
     module = _load_collector()
-    source, worktree, _base, old, _head = _setup_repositories(tmp_path)
+    source, worktree, _base, old, _head = _setup_repositories(tmp_path, repository_template)
     _git(worktree, "update-ref", "refs/remotes/origin/pull/17/head", old)
 
     result = subprocess.run(

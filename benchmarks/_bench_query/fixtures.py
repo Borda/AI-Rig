@@ -9,9 +9,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _bench_query.models import ScenarioResult, THRESHOLDS
+from _bench_query.models import THRESHOLDS, ScenarioResult
 from _bench_query.output import log
-
 
 # ---- DETERMINISTIC CORRECTNESS SUITES (D/B/R/K/U) ----
 #
@@ -124,7 +123,7 @@ def _fixture_git(root: Path, *args: str) -> None:
         "-c",
         "gc.auto=0",
     ]
-    result = subprocess.run(["git", *settings, *args], cwd=str(root), capture_output=True, text=True, timeout=30)
+    result = subprocess.run(["git", *settings, *args], cwd=str(root), capture_output=True, text=True, timeout=30)  # noqa: S603, S607 - argv list, no shell; tool resolved via PATH on purpose
     if result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
 
@@ -143,7 +142,7 @@ def _fixture_scan(scan_index_bin: Path, root: Path, *extra: str) -> Path:
     Raises:
         RuntimeError: when scan-index exits non-zero or produces no index file.
     """
-    result = subprocess.run(
+    result = subprocess.run(  # noqa: S603 - argv list, no shell
         [sys.executable, str(scan_index_bin.resolve()), "--root", str(root), *extra],
         capture_output=True,
         text=True,
@@ -173,7 +172,7 @@ def _fixture_query_raw(
         The completed process; the caller reads ``returncode`` / ``stdout`` / ``stderr``.
     """
     cmd = [sys.executable, str(scan_query_bin.resolve()), "--index", str(index_path.resolve()), *args]
-    return subprocess.run(cmd, capture_output=True, text=True, cwd=str(root), timeout=30)
+    return subprocess.run(cmd, capture_output=True, text=True, cwd=str(root), timeout=30)  # noqa: S603 - argv list, no shell
 
 
 def _fixture_query(scan_query_bin: Path, root: Path, index_path: Path, args: list[str]) -> dict:
@@ -336,7 +335,7 @@ def _run_batch(scan_query_bin: Path, root: Path, index_path: Path, items: list[d
         RuntimeError: when scan-query exits non-zero or emits invalid JSON.
     """
     cmd = [sys.executable, str(scan_query_bin.resolve()), "--index", str(index_path.resolve()), "batch", "-"]
-    proc = subprocess.run(
+    proc = subprocess.run(  # noqa: S603 - argv list, no shell
         cmd,
         input=json.dumps(items),
         capture_output=True,
@@ -414,6 +413,7 @@ def run_correctness_batch(scan_query_bin: Path, scan_index_bin: Path | None) -> 
     return [_correctness_scenario("B_batch", "batch", cl)]
 
 
+#: pyproject.toml written into the monorepo fixture, declaring its two source roots for Codemap.
 _MONOREPO_PYPROJECT = '[tool.codemap]\nsrc_roots = ["libs/core/src", "services/api/src"]\n'
 
 
@@ -501,8 +501,8 @@ def run_correctness_src_roots(scan_query_bin: Path, scan_index_bin: Path | None)
     return [_correctness_scenario("R_src_roots", "src_roots", cl)]
 
 
-# Each entry corrupts a healthy index in place, keyed by the self-check ``reason`` slug the CLI
-# must surface. Kept as data (not inline branches) so a new corruption variant is one tuple.
+#: Each entry corrupts a healthy index in place, keyed by the self-check ``reason`` slug the CLI
+#: must surface. Kept as data (not inline branches) so a new corruption variant is one tuple.
 _SELF_CHECK_CORRUPTIONS: tuple[tuple[str, str], ...] = (
     ("missing_keys", "drop the modules key"),
     ("bad_version", "scan_version not an int"),

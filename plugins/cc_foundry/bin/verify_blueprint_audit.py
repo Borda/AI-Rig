@@ -118,16 +118,23 @@ REQUIRED_FIELDS = (
     "record_hash",
 )
 
+#: Values a record's action_type may take; any other value makes the record schema-invalid.
 ACTION_TYPES = frozenset({"tool.bash", "session.start", "session.end"})
+#: Values a record's record_phase may take: written before the action runs or after it completes.
 RECORD_PHASES = frozenset({"pre_execution", "post_execution"})
+#: Lane names a before-row and each of its two verdicts may carry in action_detail.
 LANES = frozenset({"blueprint", "shape", "none"})
+#: Decision values a before-row and each of its verdicts may record in action_detail.
 DECISIONS = frozenset({"allow", "passthrough", "none"})
 #: `plugin` and `unknown` are the only authorities a hook may write; `human` is reserved and never emitted.
 TRUST_LEVELS = frozenset({"plugin", "unknown"})
 #: `timeout`, `denied` and `escalated` stay reserved: no host signal supports them, so a record with one is not ours.
 BEFORE_OUTCOMES = frozenset({"pending"})
+#: Outcomes a record written after execution may carry.
 AFTER_OUTCOMES = frozenset({"success", "failure"})
+#: Host hook event names an after-row's action_detail may carry as the event that closed the action.
 CLOSE_EVENTS = frozenset({"PostToolUse", "PostToolUseFailure"})
+#: Status values an after-row's action_detail may report for the finished action.
 CLOSE_STATUSES = frozenset({"ok", "error"})
 
 

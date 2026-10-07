@@ -53,8 +53,14 @@ def _git(args: list[str], cwd: Path | None, timeout: int) -> tuple[int, str]:
         ``(returncode, stdout)``; the code is 1 and stdout empty when git cannot be run at all.
     """
     try:
-        proc = subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False, encoding="utf-8"
+        proc = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", *args],  # noqa: S607 - git resolved via PATH on purpose
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            encoding="utf-8",
         )
     except (OSError, subprocess.SubprocessError):
         return 1, ""

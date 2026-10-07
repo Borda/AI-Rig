@@ -234,4 +234,5 @@ class TestStateChecks:
         conflicts = _read("modes/conflict-resolution.md")
         step6 = conflicts[conflicts.index("## Step 6") : conflicts.index("## Step 7")]
         assert step6.count("```bash") == 1
-        assert "resolve-base-ref-${CSID}" in step6 and "resolve-head-ref-${CSID}" in step6
+        assert "resolve-base-ref-${CSID}" in step6
+        assert "resolve-head-ref-${CSID}" in step6

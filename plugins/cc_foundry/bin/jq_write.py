@@ -25,13 +25,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-
+#: The only ``--`` options accepted in the jq argument list, to block option injection.
 _ALLOWED_FLAGS = {"--arg", "--argjson", "--indent"}
-# Hostile jq filters can exhaust CPU/memory (CWE-400); cap wall-clock at 30s.
+#: Hostile jq filters can exhaust CPU/memory (CWE-400); cap wall-clock at 30s.
 _JQ_TIMEOUT_SECONDS = 30
-# Hard virtual-memory ceiling for the jq subprocess (bytes). 256 MB is far
-# beyond any realistic foundry config file (typical settings.json is < 64 KB)
-# while still stopping a runaway filter that builds large in-memory data.
+#: Hard virtual-memory ceiling for the jq subprocess (bytes). 256 MB is far
+#: beyond any realistic foundry config file (typical settings.json is < 64 KB)
+#: while still stopping a runaway filter that builds large in-memory data.
 _JQ_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024
 
 
@@ -80,7 +80,7 @@ def _parse_jq_args(extras: list[str]) -> list[str] | None:
     i = 0
     while i < len(extras):
         token = extras[i]
-        if token == "--arg":
+        if token == "--arg":  # noqa: S105 - jq CLI flag name, not a credential
             # Need exactly two more tokens: name + value.
             if i + 2 >= len(extras):
                 return None
@@ -151,8 +151,8 @@ def run_jq_write(target: Path, jq_filter: str, extras: list[str]) -> int:
         spawn_kwargs["preexec_fn"] = _jq_preexec
     try:
         with tmp.open("w", encoding="utf-8") as fh:
-            completed = subprocess.run(
-                ["jq", *extras, jq_filter, str(target)],
+            completed = subprocess.run(  # noqa: S603 - argv list, no shell
+                ["jq", *extras, jq_filter, str(target)],  # noqa: S607 - jq resolved via PATH on purpose
                 stdout=fh,
                 stderr=subprocess.PIPE,
                 check=False,

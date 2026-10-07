@@ -149,15 +149,20 @@ class TestFindRunIdProgramFilter:
         _make_run(tmp_path, "r2", "completed", program_file="b.md")
         assert find_run_id(tmp_path, match_program="c.md") is None
 
-    def test_program_filter_requires_completed_status(self, tmp_path: Path) -> None:
-        """Matching program_file with non-terminal status is skipped."""
-        _make_run(tmp_path, "r1", "running", program_file="target.md")
-        assert find_run_id(tmp_path, match_program="target.md") is None
+    @pytest.mark.parametrize(
+        ("status", "expected"),
+        [
+            pytest.param("running", None, id="non-terminal-status-skipped"),
+            pytest.param("goal-achieved", "r1", id="goal-achieved-matches"),
+        ],
+    )
+    def test_program_filter_honours_terminal_status(self, tmp_path: Path, status: str, expected: str | None) -> None:
+        """A run matching the program is returned only with a terminal status.
 
-    def test_program_filter_matches_goal_achieved(self, tmp_path: Path) -> None:
-        """Accept completed goals when filtering by program."""
-        _make_run(tmp_path, "r1", "goal-achieved", program_file="target.md")
-        assert find_run_id(tmp_path, match_program="target.md") == "r1"
+        A matching program_file with a non-terminal status is skipped; a completed goal (``goal-achieved``) is accepted.
+        """
+        _make_run(tmp_path, "r1", status, program_file="target.md")
+        assert find_run_id(tmp_path, match_program="target.md") == expected
 
 
 class TestMain:

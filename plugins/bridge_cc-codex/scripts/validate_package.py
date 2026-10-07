@@ -38,8 +38,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
+#: Default package directory to validate, derived from this script's location.
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+#: Exact set of top-level keys the Claude plugin manifest must contain, no more and no fewer.
 CLAUDE_KEYS = {
     "author",
     "description",
@@ -51,6 +52,7 @@ CLAUDE_KEYS = {
     "skills",
     "version",
 }
+#: Exact set of top-level keys the Codex plugin manifest must contain, no more and no fewer.
 CODEX_KEYS = {
     "author",
     "description",
@@ -64,6 +66,7 @@ CODEX_KEYS = {
     "skills",
     "version",
 }
+#: Exact set of keys the Codex manifest's interface section must contain.
 INTERFACE_KEYS = {
     "brandColor",
     "capabilities",
@@ -77,6 +80,7 @@ INTERFACE_KEYS = {
     "shortDescription",
     "websiteURL",
 }
+#: Package-relative files that must exist for the package to be considered complete.
 REQUIRED_FILES = {
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
@@ -108,7 +112,9 @@ REQUIRED_FILES = {
     "claude-skills/implement/SKILL.md",
     "codex-skills/implement/SKILL.md",
 }
+#: Matches a plugin-root variable reference to a bin/ file inside skill text; group 1 captures the file name.
 PLUGIN_PATH_PATTERN = re.compile(r"\$\{(?:CLAUDE_)?PLUGIN_ROOT\}/bin/([A-Za-z0-9_.-]+)")
+#: Byte pattern for absolute POSIX or Windows user-home paths, which must not appear anywhere in the package.
 PRIVATE_ABSOLUTE_PATTERN = re.compile(rb"/(?:Users|home)/[^/\s]+|[A-Za-z]:[\\/]Users[\\/]+[^\\/\s]+")
 
 

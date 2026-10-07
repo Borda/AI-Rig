@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCHEMAS_ROOT = PLUGIN_ROOT / "schemas"
 
@@ -278,7 +277,7 @@ def test_claude_skills_retain_the_runtime_safety_contract(name: str) -> None:
 
 @pytest.mark.parametrize(
     "relative_path",
-    (
+    [
         "rules/escalation-policy.md",
         "rules/self-healing.md",
         "rules/envelope.md",
@@ -288,7 +287,7 @@ def test_claude_skills_retain_the_runtime_safety_contract(name: str) -> None:
         "schemas/harness-envelope.schema.json",
         "schemas/mcp-tools.schema.json",
         "schemas/setup-result.schema.json",
-    ),
+    ],
 )
 def test_contract_artifacts_exist(relative_path: str) -> None:
     """Prevent runtime dispatch without every declared source-of-truth contract."""
@@ -298,7 +297,7 @@ def test_contract_artifacts_exist(relative_path: str) -> None:
 class TestModelCoreSchema:
     """Contract checks for the model-authored core envelope schema."""
 
-    @pytest.fixture()
+    @pytest.fixture
     def schema(self) -> dict[str, object]:
         """Load the core envelope schema shared by every test in this class."""
         return _read_json(CORE_SCHEMA_PATH)
@@ -341,14 +340,10 @@ class TestModelCoreSchema:
             },
         )
 
-    def test_rejects_a_status_value_outside_the_model_authored_enum(self, schema: dict[str, object]) -> None:
-        """A status value only the harness may assign ("timeout") is rejected at the model layer.
-
-        Guards against a model claiming a harness-observed lifecycle outcome it cannot itself have witnessed.
-        """
-        with pytest.raises(AssertionError):
-            _assert_value_matches_contract(
-                schema,
+    @pytest.mark.parametrize(
+        "result",
+        [
+            pytest.param(
                 {
                     "status": "timeout",
                     "verdict": "wrong layer",
@@ -358,16 +353,9 @@ class TestModelCoreSchema:
                     "blockers": [],
                     "details": [],
                 },
-            )
-
-    def test_rejects_a_result_carrying_a_harness_only_field(self, schema: dict[str, object]) -> None:
-        """A result that adds a harness-only field ("cost") is rejected by additionalProperties.
-
-        Guards against a model result impersonating harness-attached telemetry it never computed.
-        """
-        with pytest.raises(AssertionError):
-            _assert_value_matches_contract(
-                schema,
+                id="status-outside-model-authored-enum",
+            ),
+            pytest.param(
                 {
                     "status": "complete",
                     "verdict": "wrong layer",
@@ -378,13 +366,27 @@ class TestModelCoreSchema:
                     "details": [],
                     "cost": 1.0,
                 },
-            )
+                id="harness-only-field-cost",
+            ),
+        ],
+    )
+    def test_rejects_a_result_claiming_harness_authority(
+        self, schema: dict[str, object], result: dict[str, object]
+    ) -> None:
+        """A result claiming a harness-only status or field is rejected at the model layer.
+
+        A status value only the harness may assign ("timeout") fails the enum, and a result adding a harness-only field
+        ("cost") fails additionalProperties. Guards against a model claiming a harness-observed lifecycle outcome or
+        impersonating harness-attached telemetry it never computed.
+        """
+        with pytest.raises(AssertionError):
+            _assert_value_matches_contract(schema, result)
 
 
 class TestHarnessSchema:
     """Contract checks for the harness-observed envelope schema."""
 
-    @pytest.fixture()
+    @pytest.fixture
     def schema(self) -> dict[str, object]:
         """Load the harness envelope schema shared by every test in this class."""
         return _read_json(HARNESS_SCHEMA_PATH)

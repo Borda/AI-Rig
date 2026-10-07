@@ -37,31 +37,37 @@ import sys
 from pathlib import Path
 from shutil import which
 
+#: Matches lines that declare a package version (``__version__`` or ``version =``).
 _VERSION_RE: re.Pattern[str] = re.compile(r"__version__|^version\s*=", re.MULTILINE)
+#: Matches leftover release-blocking markers such as ``TODO ... release``, FIXME, HACK and XXX.
 _SIGNALS_RE: re.Pattern[str] = re.compile(r"TODO.*release|FIXME|HACK|XXX")
+#: Matches changed file paths that count as documentation (README, Markdown files, ``docs/``).
 _DOCS_RE: re.Pattern[str] = re.compile(r"readme|\.md$|docs/", re.IGNORECASE)
-# Allowlist for LAST_TAG / discovered tag: either a SemVer-style version tag
-# (optional leading ``v``, two or three numeric components, optional pre-release
-# suffix) or a short SHA (7–40 hex chars).  Replaces the original deny-list
-# (``startswith('-')``) which let arbitrary git ref expressions through (A03:2021).
+#: Allowlist for LAST_TAG / discovered tag: either a SemVer-style version tag
+#: (optional leading ``v``, two or three numeric components, optional pre-release
+#: suffix) or a short SHA (7–40 hex chars).  Replaces the original deny-list
+#: (``startswith('-')``) which let arbitrary git ref expressions through (A03:2021).
 _TAG_OR_SHA_RE: re.Pattern[str] = re.compile(r"^(?:v?[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:-[a-zA-Z0-9.]+)?|[0-9a-f]{7,40})$")
+#: ``git describe`` flags that skip pre-release tags (rc, dev, alpha, beta) when finding the last release tag.
 _EXCLUDE_TAG_FLAGS: tuple[str, ...] = (
     "--exclude=*rc*",
     "--exclude=*dev*",
     "--exclude=*alpha*",
     "--exclude=*beta*",
 )
+#: Maximum number of version-declaration lines reported by the version scan.
 _MAX_VERSION_LINES = 15
+#: Maximum number of release-blocking marker lines reported by the signal scan.
 _MAX_SIGNAL_LINES = 10
 _MAX_SCAN_FILE_SIZE = 10 * 1024 * 1024  # 10 MB guard against runaway reads — matches sibling scripts
 _MAX_SCAN_FILES = 20_000  # hard cap on rglob() traversal — matches sibling scripts' file-count discipline
-# Machine-readable line the caller greps for to detect the missing-tool gap and
-# offer an install-and-rerun path — this script stays non-interactive, so the
-# banner is the only signal available to the skill-level AskUserQuestion gate
-# (see templates/audit-checks.md "Check 6 interpretation").
+#: Machine-readable line the caller greps for to detect the missing-tool gap and
+#: offer an install-and-rerun path — this script stays non-interactive, so the
+#: banner is the only signal available to the skill-level AskUserQuestion gate
+#: (see templates/audit-checks.md "Check 6 interpretation").
 PIP_AUDIT_MISSING_SIGNAL = "pip-audit-status: not-installed"
-# Module-level, grep-able like PIP_AUDIT_MISSING_SIGNAL — this is a release-readiness audit, so a
-# scan that silently stops early must announce it rather than reporting a false "nothing found".
+#: Module-level, grep-able like PIP_AUDIT_MISSING_SIGNAL — this is a release-readiness audit, so a
+#: scan that silently stops early must announce it rather than reporting a false "nothing found".
 SCAN_TRUNCATED_SIGNAL = "scan-truncated: file-count-cap-reached"
 
 
@@ -102,9 +108,7 @@ def _run(cmd: list[str], *, timeout: int = 10, text: bool = True) -> str:
     Examples:
         No doctest — subprocess-dependent; covered by pytest.
     """
-    result = subprocess.run(  # noqa: S603
-        cmd, capture_output=True, text=text, check=False, timeout=timeout
-    )
+    result = subprocess.run(cmd, capture_output=True, text=text, check=False, timeout=timeout)  # noqa: S603
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
@@ -260,9 +264,7 @@ def _check_gh_auth(gh: str | None) -> int:
     if gh is None:
         print("gh not authenticated — run 'gh auth login' first")
         return 2
-    auth_proc = subprocess.run(  # noqa: S603
-        [gh, "auth", "status"], capture_output=True, text=True, check=False, timeout=10
-    )
+    auth_proc = subprocess.run([gh, "auth", "status"], capture_output=True, text=True, check=False, timeout=10)  # noqa: S603
     combined = auth_proc.stdout + auth_proc.stderr
     if combined:
         print(combined, end="")

@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import fetch_gh_data_group1 as fgd
+import pytest
 
 
 class _FakeCompleted:
@@ -22,32 +21,22 @@ class _FakeCompleted:
         self.stdout = stdout
 
 
-def test_missing_repo_exits_1(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-    """No ``--repo`` → exit 1 with '--repo required' on stderr."""
-    rc = fgd.main(["--output-dir", str(tmp_path)])
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        pytest.param(["--output-dir", "out"], "--repo required", id="missing-repo"),
+        pytest.param(["--repo", "owner/repo"], "--output-dir required", id="missing-output-dir"),
+        pytest.param(["--unknown"], "unknown arg", id="unrecognized-flag"),
+        pytest.param([], "--repo required", id="no-args"),
+    ],
+)
+def test_invalid_args_exit_1_with_stderr_message(
+    capsys: pytest.CaptureFixture[str], argv: list[str], message: str
+) -> None:
+    """A missing ``--repo``, a missing ``--output-dir``, an unknown flag or no args → exit 1 naming the problem."""
+    rc = fgd.main(argv)
     assert rc == 1
-    assert "--repo required" in capsys.readouterr().err
-
-
-def test_missing_output_dir_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
-    """Require an output directory when a repository is provided."""
-    rc = fgd.main(["--repo", "owner/repo"])
-    assert rc == 1
-    assert "--output-dir required" in capsys.readouterr().err
-
-
-def test_unknown_arg_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
-    """Unrecognized flag → exit 1 with 'unknown arg' on stderr."""
-    rc = fgd.main(["--unknown"])
-    assert rc == 1
-    assert "unknown arg" in capsys.readouterr().err
-
-
-def test_no_args_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
-    """No args → exit 1 (--repo required)."""
-    rc = fgd.main([])
-    assert rc == 1
-    assert "--repo required" in capsys.readouterr().err
+    assert message in capsys.readouterr().err
 
 
 def test_build_datasets_returns_21_entries() -> None:

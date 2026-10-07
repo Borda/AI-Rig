@@ -39,7 +39,7 @@ import re
 import sys
 from pathlib import Path
 
-# Variables that persist across bash calls (env vars, skill runner context, common loop vars)
+#: Variables that persist across bash calls (env vars, skill runner context, common loop vars)
 _SKIP_VARS: frozenset[str] = frozenset(
     {
         "HOME",
@@ -96,19 +96,23 @@ _SKIP_VARS: frozenset[str] = frozenset(
 )
 
 _MIN_BLOCKS = 2  # need ≥2 blocks for a cross-block reference to be possible
+#: Matches the opening fence of a ``bash`` code block.
 _BASH_OPEN = re.compile(r"^```bash\s*$")
+#: Matches a bare closing code fence.
 _FENCE_CLOSE = re.compile(r"^```\s*$")
+#: Matches a shell variable assignment at line start, optionally prefixed by ``export`` or ``local``.
 _ASSIGN = re.compile(r"^[ \t]*(?:export[ \t]+|local[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)=")
+#: Matches a ``$VAR`` or ``${VAR}`` reference with a name of at least two characters.
 _REF = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]+)\}?")
-# Single-char-permitting reference regex — used only for template-placeholder detection (e.g. ${I}).
+#: Single-char-permitting reference regex — used only for template-placeholder detection (e.g. ${I}).
 _REF_ANY = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
-# State-reload commands that re-derive prior shell state within a fresh block.
-# The `.`/`source` path may be quoted (`. "$FILE"`) or bare (`. $FILE`, `. ./f`).
+#: State-reload commands that re-derive prior shell state within a fresh block.
+#: The `.`/`source` path may be quoted (`. "$FILE"`) or bare (`. $FILE`, `. ./f`).
 _RELOAD = re.compile(r"""^[ \t]*(?:eval[ \t]+"?\$\(|source[ \t]+|\.[ \t]+["'./~$])""")
-# Angle-bracket identifier placeholders (e.g. <TARGET_MODULE>, <file>) mark a block
-# as a usage-example/doc snippet, not verbatim-executed shell. Matches only
-# <identifier> with no interior spaces — never shell redirection (`< file`),
-# process substitution (`<(`), or heredocs (`<<`).
+#: Angle-bracket identifier placeholders (e.g. <TARGET_MODULE>, <file>) mark a block
+#: as a usage-example/doc snippet, not verbatim-executed shell. Matches only
+#: <identifier> with no interior spaces — never shell redirection (`< file`),
+#: process substitution (`<(`), or heredocs (`<<`).
 _ANGLE_PLACEHOLDER = re.compile(r"<[A-Za-z_][A-Za-z0-9_]*>")
 
 

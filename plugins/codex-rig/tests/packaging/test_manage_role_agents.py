@@ -9,12 +9,11 @@ import shutil
 import stat
 import subprocess
 import sys
-import tempfile  # noqa: F401 - used by executable doctest examples
+import tempfile  # noqa: F401
 from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 from _platform import (
     DIRECTORY_SYMLINKS_AVAILABLE,
     FILE_SYMLINKS_AVAILABLE,
@@ -164,8 +163,7 @@ def test_direct_diagnostic_does_not_write_installed_plugin_bytecode(tmp_path: Pa
         [sys.executable, str(plugin_root / "scripts" / "manage_role_agents.py"), action],
         check=False,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         env=environment,
         timeout=30,
     )
@@ -359,7 +357,7 @@ def test_repeated_install_over_converged_roster_is_a_noop(tmp_path: Path) -> Non
     Starting from a converged install, a repeated plan_mutation(INSTALL) with no install_id carries no approval,
     apply_mutation is a no-op, and the on-disk snapshot stays byte-for-byte unchanged.
     """
-    module, home, agents, codex = _install_roster(tmp_path)
+    module, home, _agents, codex = _install_roster(tmp_path)
     installed = _snapshot(home)
 
     repeated = module.plan_mutation(
@@ -516,7 +514,7 @@ def test_under_lock_drift_preserves_concurrent_foreign_target(tmp_path: Path) ->
     foreign.write_bytes(b"foreign\n")
     foreign.chmod(0o600)
 
-    with pytest.raises(ValueError, match="under-lock filesystem observation changed|candidate changed"):
+    with pytest.raises(ValueError, match=r"under-lock filesystem observation changed|candidate changed"):
         module.apply_mutation(plan, plan.approval.digest)
 
     assert foreign.read_bytes() == b"foreign\n"

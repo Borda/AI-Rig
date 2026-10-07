@@ -57,11 +57,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from build_blueprint_manifest import normalize, sha256_text  # noqa: E402
+from build_blueprint_manifest import normalize, sha256_text
 
+#: Directory holding the installed borda-ai-rig plugin versions that are scanned for hooks and skills.
 PLUGIN_CACHE = Path.home() / ".claude" / "plugins" / "cache" / "borda-ai-rig"
+#: Root of the Claude Code session transcripts (``*/*.jsonl``) mined for skill invocations.
 TRANSCRIPT_ROOT = Path.home() / ".claude" / "projects"
+#: Matches a ``<command-name>/plugin:skill`` marker in a transcript line, capturing plugin and skill names.
 SKILL_CALL = re.compile(r"<command-name>/([a-z-]+):([a-z-]+)")
+#: Label reported for a skill invocation that no hook coverage rule matched.
 NO_MATCH = "none"
 
 
@@ -239,7 +243,7 @@ class Classifier:
         if self._shape_hook is None:
             return False
         payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv list, no shell; resolved node and fixed hook path
             [self._resolve_node(), str(self._shape_hook)],
             input=payload,
             capture_output=True,

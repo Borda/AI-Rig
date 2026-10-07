@@ -1,20 +1,25 @@
 """Extract the patch targets a test module installs via ``mock.patch``."""
 
 from __future__ import annotations
+
 import ast
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
+
 from .calls import resolve_call_chain
 from .imports import _process_ast_import, _process_ast_import_from
 
-
 # Forms a mock patch can take in a test file.
+#: Form label for a mock patch applied as a decorator.
 _MOCK_FORM_DECORATOR = "decorator"
 
 
+#: Form label for a mock patch made through a direct call.
 _MOCK_FORM_CALL = "call"
 
 
+#: Form label for a mock patch made through the pytest-mock mocker fixture.
 _MOCK_FORM_MOCKER = "mocker"
 
 
@@ -149,64 +154,7 @@ def extract_mock_patches(tree: ast.Module, filepath: Path) -> list[dict]:
         >>> result[0]["form"]
         'decorator'
     """
-    # Build a name_map for resolving patch.object module references.
-    name_map: dict[str, str] = {}
-    module_map: dict[str, str] = {}
-    star_imports: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            _process_ast_import(node, name_map, module_map)
-        elif isinstance(node, ast.ImportFrom):
-            _process_ast_import_from(node, "", name_map, star_imports)
-
-    results: list[dict] = []
-    seen: set[tuple[str, int, str]] = set()  # (target, line, form) for de-dup
-    file_str = str(filepath)
-
-    def _emit(target_key: str, line: int, form: str) -> None:
-        sig = (target_key, line, form)
-        if sig in seen:
-            return
-        seen.add(sig)
-        results.append({"target": target_key, "file": file_str, "line": line, "form": form})
-
-    def _handle_string_patch(call: ast.Call, form: str) -> None:
-        raw = _patch_string_arg(call)
-        if raw is None:
-            return
-        target_key = _normalize_patch_target(raw)
-        if target_key is None:
-            print(
-                f"[codemap] ⚠ mock patch with unresolvable target '{raw}' at {file_str}:{call.lineno} — skipped",
-                file=sys.stderr,
-            )
-            return
-        _emit(target_key, call.lineno, form)
-
-    def _handle_patch_object(call: ast.Call, form: str) -> None:
-        target_key = _resolve_patch_object(call, name_map)
-        if target_key is None:
-            print(
-                f"[codemap] ⚠ patch.object with unresolvable module at {file_str}:{call.lineno} — skipped",
-                file=sys.stderr,
-            )
-            return
-        _emit(target_key, call.lineno, form)
-
-    def _handle_call_node(call: ast.Call, in_decorator: bool) -> None:
-        form_label = _MOCK_FORM_DECORATOR if in_decorator else None
-        if _is_patch_object_call(call):
-            _handle_patch_object(call, form_label or _MOCK_FORM_CALL)
-            return
-        call_form = _is_patch_call(call)
-        if call_form is None:
-            return
-        # Decorator wins over call-form label; mocker.patch keeps mocker form.
-        if in_decorator and call_form == _MOCK_FORM_CALL:
-            effective = _MOCK_FORM_DECORATOR
-        else:
-            effective = call_form
-        _handle_string_patch(call, effective)
+    collector = _PatchCollector(name_map=_patch_object_name_map(tree), file_str=str(filepath))
 
     # Walk decorators of every function/async-function/class definition.
     decorator_call_ids: set[int] = set()
@@ -216,11 +164,90 @@ def extract_mock_patches(tree: ast.Module, filepath: Path) -> list[dict]:
                 # Decorator can be a Name (no args) or a Call.
                 if isinstance(deco, ast.Call):
                     decorator_call_ids.add(id(deco))
-                    _handle_call_node(deco, in_decorator=True)
+                    collector.handle_call(deco, in_decorator=True)
 
     # Walk all remaining ast.Call nodes for in-body forms.
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and id(node) not in decorator_call_ids:
-            _handle_call_node(node, in_decorator=False)
+            collector.handle_call(node, in_decorator=False)
 
-    return results
+    return collector.results
+
+
+def _patch_object_name_map(tree: ast.Module) -> dict[str, str]:
+    """Build the import name map used to resolve ``patch.object`` module references."""
+    name_map: dict[str, str] = {}
+    module_map: dict[str, str] = {}
+    star_imports: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            _process_ast_import(node, name_map, module_map)
+        elif isinstance(node, ast.ImportFrom):
+            _process_ast_import_from(node, "", name_map, star_imports)
+    return name_map
+
+
+@dataclass
+class _PatchCollector:
+    """Accumulate de-duplicated patch sites for one test module, in source order.
+
+    Attributes:
+        name_map: import name map resolving ``patch.object`` module arguments.
+        file_str: test module path recorded in every entry and warning.
+        results: collected ``{"target", "file", "line", "form"}`` entries.
+        seen: ``(target, line, form)`` signatures already emitted.
+    """
+
+    name_map: dict[str, str]
+    file_str: str
+    results: list[dict] = field(default_factory=list)
+    seen: set[tuple[str, int, str]] = field(default_factory=set)
+
+    def emit(self, target_key: str, line: int, form: str) -> None:
+        """Record one patch site unless the same target, line, and form was already recorded."""
+        sig = (target_key, line, form)
+        if sig in self.seen:
+            return
+        self.seen.add(sig)
+        self.results.append({"target": target_key, "file": self.file_str, "line": line, "form": form})
+
+    def handle_string_patch(self, call: ast.Call, form: str) -> None:
+        """Record a ``patch("pkg.mod.name")`` call, warning when its target cannot be resolved."""
+        raw = _patch_string_arg(call)
+        if raw is None:
+            return
+        target_key = _normalize_patch_target(raw)
+        if target_key is None:
+            print(
+                f"[codemap] ⚠ mock patch with unresolvable target '{raw}' at {self.file_str}:{call.lineno} — skipped",
+                file=sys.stderr,
+            )
+            return
+        self.emit(target_key, call.lineno, form)
+
+    def handle_patch_object(self, call: ast.Call, form: str) -> None:
+        """Record a ``patch.object(module, "name")`` call, warning when its module cannot be resolved."""
+        target_key = _resolve_patch_object(call, self.name_map)
+        if target_key is None:
+            print(
+                f"[codemap] ⚠ patch.object with unresolvable module at {self.file_str}:{call.lineno} — skipped",
+                file=sys.stderr,
+            )
+            return
+        self.emit(target_key, call.lineno, form)
+
+    def handle_call(self, call: ast.Call, in_decorator: bool) -> None:
+        """Classify one call as a patch form and record it under the form label it earns."""
+        form_label = _MOCK_FORM_DECORATOR if in_decorator else None
+        if _is_patch_object_call(call):
+            self.handle_patch_object(call, form_label or _MOCK_FORM_CALL)
+            return
+        call_form = _is_patch_call(call)
+        if call_form is None:
+            return
+        # Decorator wins over call-form label; mocker.patch keeps mocker form.
+        if in_decorator and call_form == _MOCK_FORM_CALL:
+            effective = _MOCK_FORM_DECORATOR
+        else:
+            effective = call_form
+        self.handle_string_patch(call, effective)

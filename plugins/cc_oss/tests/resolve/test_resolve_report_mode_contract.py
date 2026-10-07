@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 _RESOLVE = Path(__file__).resolve().parents[2] / "skills" / "resolve"
 _BASH = shutil.which("bash")
 
@@ -353,8 +352,12 @@ def test_report_mode_persists_items_and_reaches_shared_selection_before_dispatch
     pr_route, branch_route = route.split("No PR# in header", maxsplit=1)
     assert "action-items.jsonl" in report
     assert "resolve-impl-dir-${CSID}" in report
-    assert "Step 3d" in pr_route and "skip Step 3e" in pr_route and "Step 4" in pr_route
-    assert "Step 3d" in branch_route and "skip Step 3e" in branch_route and "Step 8" in branch_route
+    assert "Step 3d" in pr_route
+    assert "skip Step 3e" in pr_route
+    assert "Step 4" in pr_route
+    assert "Step 3d" in branch_route
+    assert "skip Step 3e" in branch_route
+    assert "Step 8" in branch_route
     assert "skip Step 3d" not in route
     assert "skip to Step 8" not in route
     selection = skill[skill.index("## Step 3d") : skill.index("## Step 3e")]
@@ -371,7 +374,8 @@ def test_merged_report_items_fold_into_pr_jsonl_before_selection() -> None:
     dispatch = (_RESOLVE / "modes" / "action-item-dispatch.md").read_text(encoding="utf-8")
     assert "action-items.jsonl" in merge
     assert "merge_action_items.py" in merge
-    assert "--candidates" in merge and "report-links.jsonl" in merge
+    assert "--candidates" in merge
+    assert "report-links.jsonl" in merge
     assert "no renumbering" in merge
     assert "never inherits `verify_verdict`" in merge
     assert "One finding per item" in merge
@@ -552,9 +556,12 @@ def test_handoff_wiring_reaches_each_consumer() -> None:
     consolidator = (_RESOLVE.parent / "review" / "templates" / "consolidator-prompt.md").read_text(encoding="utf-8")
     assert dispatch.index("--recheck-verdicts") < dispatch.index("Build each item line")
     step11 = skill[skill.index("## Step 11") :]
-    assert "append_resolution.py" in step11 and '--base-sha "$BASE_SHA"' in step11
-    assert '[ -z "$_PRIOR_RES" ] || echo' in review and "Prior resolution ledger:" in review
-    assert "Prior resolution ledger" in consolidator and "mint_finding_ids.py" in consolidator
+    assert "append_resolution.py" in step11
+    assert '--base-sha "$BASE_SHA"' in step11
+    assert '[ -z "$_PRIOR_RES" ] || echo' in review
+    assert "Prior resolution ledger:" in review
+    assert "Prior resolution ledger" in consolidator
+    assert "mint_finding_ids.py" in consolidator
 
 
 @pytest.mark.skipif(_BASH is None, reason="Resolve route uses Bash")

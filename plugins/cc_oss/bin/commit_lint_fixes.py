@@ -20,8 +20,10 @@ import tempfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from shutil import which
 
+#: Matches each run of characters outside ``[a-z0-9]``, which slugification replaces with a hyphen.
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
+#: Fixed commit message, including the co-author trailer, for the lint auto-fix commit.
 _COMMIT_MESSAGE = "lint: auto-fix violations after resolve cycle\n\n---\nCo-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>"
 
 
@@ -57,10 +59,10 @@ def _sentinel_path(git: str) -> Path:
     Examples:
         No doctest — requires live git; covered by pytest with monkeypatch.
     """
-    root = subprocess.run(
+    root = subprocess.run(  # noqa: S603
         [git, "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False
     ).stdout.strip()
-    branch = subprocess.run(
+    branch = subprocess.run(  # noqa: S603
         [git, "branch", "--show-current"], capture_output=True, text=True, check=False
     ).stdout.strip()
     # Prefer a per-user temp dir over a world-readable default, but only when the value is
@@ -131,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     if not changed:
         print("[lint] no changed files to commit")
         return 0
-    subprocess.run([git, "add", "--"] + changed, check=True, timeout=3)  # noqa: S603
+    subprocess.run([git, "add", "--", *changed], check=True, timeout=3)  # noqa: S603
     sentinel = _sentinel_path(git)
     sentinel.touch()
     atexit.register(lambda: sentinel.unlink(missing_ok=True))

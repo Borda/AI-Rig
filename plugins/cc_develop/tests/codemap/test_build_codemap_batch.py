@@ -11,10 +11,8 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 import build_codemap_batch as bcb
-
+import pytest
 
 # ---------- Pure request builder ----------
 

@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
+#: Matches a plain ``MAJOR.MINOR.PATCH`` version with no leading zeros, capturing the three numbers.
 _SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)\Z")
 
 
@@ -76,7 +76,12 @@ def find_desyncs(scan_dir: Path) -> list[str]:
 
 def find_removed_host_manifests(scan_dir: Path) -> list[str]:
     """Find tracked host manifests deleted from plugins that still ship files."""
-    root_result = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False)
+    root_result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - git resolved via PATH on purpose
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     if root_result.returncode != 0:
         return ["cannot locate the Git checkout for tracked host manifests"]
     root = Path(root_result.stdout.strip()).resolve()
@@ -84,8 +89,8 @@ def find_removed_host_manifests(scan_dir: Path) -> list[str]:
         relative_scan = scan_dir.resolve().relative_to(root)
     except ValueError:
         return []  # A caller may scan an unrelated, untracked directory for host sync only.
-    tracked = subprocess.run(
-        ["git", "ls-tree", "-r", "--name-only", "HEAD", "--", relative_scan.as_posix()],
+    tracked = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "ls-tree", "-r", "--name-only", "HEAD", "--", relative_scan.as_posix()],  # noqa: S607 - git via PATH
         cwd=root,
         capture_output=True,
         text=True,
@@ -208,7 +213,7 @@ def _version_fields(value: Any, path: tuple[str | int, ...] = ()) -> dict[tuple[
     return fields
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _deleted_sibling_versions(root: Path, plugin_root: str) -> dict[str, frozenset[int]]:
     """Read static version constants from this plugin's Python files HEAD tracks but the working tree no longer does.
 
@@ -217,8 +222,8 @@ def _deleted_sibling_versions(root: Path, plugin_root: str) -> dict[str, frozens
     baseline for that case without needing Git's content-similarity rename detection, which a fan-out split does not
     trigger.
     """
-    deleted = subprocess.run(
-        ["git", "diff", "HEAD", "--diff-filter=D", "--name-only", "--", f"{plugin_root}/**/*.py"],
+    deleted = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "diff", "HEAD", "--diff-filter=D", "--name-only", "--", f"{plugin_root}/**/*.py"],  # noqa: S607 - git via PATH
         cwd=root,
         capture_output=True,
         text=True,
@@ -228,8 +233,12 @@ def _deleted_sibling_versions(root: Path, plugin_root: str) -> dict[str, frozens
         return {}
     versions: dict[str, set[int]] = {}
     for deleted_path in deleted.stdout.splitlines():
-        prior = subprocess.run(
-            ["git", "show", f"HEAD:{deleted_path}"], cwd=root, capture_output=True, text=True, check=False
+        prior = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", "show", f"HEAD:{deleted_path}"],  # noqa: S607 - git resolved via PATH on purpose
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if prior.returncode != 0:
             continue
@@ -334,16 +343,27 @@ def _python_discontinuities(
     return findings
 
 
+#: Final two path parts that identify a Claude or Codex plugin manifest file.
 _PLUGIN_MANIFEST_TAILS = {(".claude-plugin", "plugin.json"), (".codex-plugin", "plugin.json")}
 
 
 def _git_checkout_root() -> tuple[Path, None] | tuple[None, str]:
     """Locate the checkout root, requiring a readable committed HEAD to compare against."""
-    root_result = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False)
+    root_result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - git resolved via PATH on purpose
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     if root_result.returncode != 0:
         return None, "cannot locate the Git checkout for version continuity"
     root = Path(root_result.stdout.strip()).resolve()
-    head_result = subprocess.run(["git", "cat-file", "-e", "HEAD^{commit}"], cwd=root, capture_output=True, check=False)
+    head_result = subprocess.run(
+        ["git", "cat-file", "-e", "HEAD^{commit}"],  # noqa: S607 - git resolved via PATH on purpose
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
     if head_result.returncode != 0:
         return None, "cannot read committed HEAD for version continuity"
     return root, None
@@ -378,8 +398,8 @@ def _read_current_and_prior(relative: Path, root: Path) -> tuple[str, subprocess
         current_source = (root / relative).read_text(encoding="utf-8")
     except (OSError, ValueError) as exc:
         return [f"{label}: cannot read selected file: {exc}"]
-    tracked = subprocess.run(
-        ["git", "ls-tree", "--name-only", "HEAD", "--", label],
+    tracked = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "ls-tree", "--name-only", "HEAD", "--", label],  # noqa: S607 - git resolved via PATH on purpose
         cwd=root,
         capture_output=True,
         text=True,
@@ -389,7 +409,13 @@ def _read_current_and_prior(relative: Path, root: Path) -> tuple[str, subprocess
         return [f"{label}: cannot inspect committed HEAD"]
     if not tracked.stdout.strip():
         return current_source, None
-    prior = subprocess.run(["git", "show", f"HEAD:{label}"], cwd=root, capture_output=True, text=True, check=False)
+    prior = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "show", f"HEAD:{label}"],  # noqa: S607 - git resolved via PATH on purpose
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     if prior.returncode != 0:
         return [f"{label}: cannot read committed HEAD file"]
     return current_source, prior

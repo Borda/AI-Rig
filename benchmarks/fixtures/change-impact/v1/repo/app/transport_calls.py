@@ -1,7 +1,7 @@
 """Production transport call shapes."""
 
-from impactlib.transport import connect as open_connection
 import impactlib.transport as transport_api
+from impactlib.transport import connect as open_connection
 
 
 def open_session() -> str:

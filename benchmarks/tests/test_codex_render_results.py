@@ -18,15 +18,10 @@ sys.path.insert(0, str(BENCHMARKS_DIR))
 # Patch seams live in the package modules the runner shim re-exports from: patching the shim
 # would leave each package module's own global binding untouched. Inside the package every seam
 # below is reached through its defining module, so this is the single place to patch it.
+from _bench_codex import runtime as codex_runtime  # noqa: E402
 from _bench_codex.structural import cli as codex_cli  # noqa: E402
 from _bench_codex.structural import manifest as codex_manifest  # noqa: E402
-
-from _bench_codex import runtime as codex_runtime  # noqa: E402
-from _bench_common.presentation import (  # noqa: E402
-    BENCHMARK_OUTPUT_WIDTH,
-    LEGEND_CLOSE_RULE,
-    LEGEND_OPEN_RULE,
-)
+from _bench_common.presentation import BENCHMARK_OUTPUT_WIDTH, LEGEND_CLOSE_RULE, LEGEND_OPEN_RULE  # noqa: E402
 
 SCRIPT_PATH = BENCHMARKS_DIR / "run-codex-structural.py"
 #: Select-graphic-rendition escapes, stripped to measure a styled row's visible width.
@@ -132,11 +127,39 @@ def test_render_results_force_color_renders_legend_as_bounded_rich_panel() -> No
     assert completed.stdout.count("End legend") == 1
 
 
-def test_render_results_preserves_noninteractive_stream_byte_for_byte() -> None:
-    """Redirected renderer output remains a plain machine-reviewable stream."""
-    input_text = "INFO keep this byte-for-byte\n(1/3) ✓  FN-02  rep=1  A_plain  quality=1.000\n"
+@pytest.mark.parametrize(
+    ("input_text", "args"),
+    [
+        pytest.param(
+            "INFO keep this byte-for-byte\n(1/3) ✓  FN-02  rep=1  A_plain  quality=1.000\n",
+            (),
+            id="noninteractive-stream",
+        ),
+        pytest.param(
+            (
+                f"{LEGEND_OPEN_RULE}\n"
+                "  treatments: A_plain=no Codemap\n"
+                "  status: ✓ completed, ✗ failed\n"
+                f"{LEGEND_CLOSE_RULE}\n"
+                "(1/3) ✓  FN-02  rep=1  A_plain  quality=1.000\n"
+            ),
+            (),
+            id="noninteractive-legend",
+        ),
+        pytest.param(
+            "INFO preparation\n(1/3) ✓  FN-02  rep=1  unknown  quality=1.000\n",
+            ("--force-color",),
+            id="force-color-unknown-and-non-result-rows",
+        ),
+    ],
+)
+def test_render_results_leaves_unstyled_input_byte_for_byte(input_text: str, args: tuple[str, ...]) -> None:
+    """Redirected renderer output remains a plain machine-reviewable stream.
 
-    completed = _render_result_stream(input_text)
+    A bounded plain legend is not rewritten, and with forced color only recognized A/B/C progress rows receive terminal
+    styling, so unknown arms and non-result rows pass through unchanged.
+    """
+    completed = _render_result_stream(input_text, *args)
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == input_text
@@ -161,33 +184,6 @@ def test_render_results_preserves_long_rows_without_inserted_wraps(
 
     assert _ANSI_CODE.sub("", stream.getvalue()) == row
     assert ("\x1b[" in stream.getvalue()) == (terminal or force_color)
-
-
-def test_render_results_noninteractive_legend_is_byte_stable() -> None:
-    """The noninteractive renderer does not rewrite a bounded plain legend."""
-    input_text = (
-        f"{LEGEND_OPEN_RULE}\n"
-        "  treatments: A_plain=no Codemap\n"
-        "  status: ✓ completed, ✗ failed\n"
-        f"{LEGEND_CLOSE_RULE}\n"
-        "(1/3) ✓  FN-02  rep=1  A_plain  quality=1.000\n"
-    )
-
-    completed = _render_result_stream(input_text)
-
-    assert completed.returncode == 0, completed.stderr
-    assert completed.stdout == input_text
-
-
-def test_render_results_force_color_preserves_unknown_and_non_result_rows() -> None:
-    """Only recognized A/B/C progress rows receive terminal styling."""
-    input_text = "INFO preparation\n(1/3) ✓  FN-02  rep=1  unknown  quality=1.000\n"
-
-    completed = _render_result_stream(input_text, "--force-color")
-
-    assert completed.returncode == 0, completed.stderr
-    assert completed.stdout == input_text
-    assert "\x1b[" not in completed.stdout
 
 
 def test_render_results_hide_plan_omits_only_human_plan_rows() -> None:

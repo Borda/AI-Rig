@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-import re
 from typing import Any
-
 
 #: Label introducing the one command a dry run authorizes for paid execution.
 PAID_COMMAND_LABEL = "PAID_COMMAND:"
@@ -46,14 +45,17 @@ def titled_rule(title: str, *, character: str = "=", width: int = PAID_COMMAND_R
 
 #: Rules opening and closing the legend block, distinguishing it from surrounding stream output.
 LEGEND_OPEN_RULE = titled_rule("LEGEND")
+#: Titled rule that closes the legend block.
 LEGEND_CLOSE_RULE = titled_rule("END LEGEND")
 
+#: Terminal color used to print each treatment arm's result rows.
 ARM_ROW_STYLES = {
     "A_plain": "yellow",
     "B_auto": "cyan",
     "C_strict": "magenta",
 }
 
+#: Matches a PLAN or PROBE row and captures the arm name it mentions, to pick the row's color.
 _PLAN_ROW_ARM = re.compile(r"^(?:PLAN|PROBE)\b.*?\b(A_plain|B_auto|C_strict)\b")
 
 
@@ -191,7 +193,7 @@ def fmt_time(seconds: float) -> str:
         >>> fmt_time(0)
         '0s'
     """
-    minutes, secs = divmod(int(round(seconds)), 60)
+    minutes, secs = divmod(round(seconds), 60)
     return f"{minutes}m{secs}s" if minutes else f"{secs}s"
 
 

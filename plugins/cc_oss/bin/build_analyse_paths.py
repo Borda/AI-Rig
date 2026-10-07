@@ -35,10 +35,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Final
 
+#: Project-relative directory where analyse caches fetched GitHub data as JSON files.
 _CACHE_DIR: Final = ".cache/gh"
+#: Report sub-directory used when ``--subdir`` is not given.
 _DEFAULT_SUBDIR: Final = "thread"
+#: Matches arguments made only of digits, i.e. a bare issue or PR number.
 _NUMERIC_RE: Final = re.compile(r"^[0-9]+$")
-# Mirrors ``tr -cd '[:alnum:]-'`` — everything outside the class is dropped, not replaced.
+#: Mirrors ``tr -cd '[:alnum:]-'`` — everything outside the class is dropped, not replaced.
 _NON_SLUG_RE: Final = re.compile(r"[^A-Za-z0-9-]")
 
 
@@ -76,7 +79,7 @@ _DRY_RUN = False
 
 def _set_dry_run(enabled: bool) -> None:
     """Enable or disable dry-run mode for this process."""
-    global _DRY_RUN  # noqa: PLW0603 — one process-wide switch, set once from argv
+    global _DRY_RUN
     _DRY_RUN = enabled
 
 
@@ -114,7 +117,7 @@ def _gh_slug(timeout: int) -> str:
     """
     cmd = ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603 - argv list, no shell
     except (OSError, subprocess.SubprocessError):
         return ""
     return proc.stdout.strip() if proc.returncode == 0 else ""

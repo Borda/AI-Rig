@@ -16,7 +16,6 @@ from types import ModuleType
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 HEAD_ARTIFACTS = json.loads(Path(__file__).with_name("head_observable_artifacts.json").read_text(encoding="utf-8"))
 
@@ -29,7 +28,8 @@ def _text(relative: str) -> str:
 def _load(name: str, relative: str) -> ModuleType:
     """Load one shipped helper by file path."""
     spec = importlib.util.spec_from_file_location(name, PLUGIN_ROOT / relative)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -96,7 +96,8 @@ def test_default_validator_output_is_unchanged_without_all_errors(tmp_path: Path
 
     assert completed.returncode == 1
     assert completed.stdout == ""
-    assert completed.stderr.strip() and not completed.stderr.strip().startswith("{")
+    assert completed.stderr.strip()
+    assert not completed.stderr.strip().startswith("{")
 
 
 def test_review_validator_all_errors_marks_dependent_checks_not_run(tmp_path: Path) -> None:

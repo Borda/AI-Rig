@@ -40,9 +40,13 @@ BUDGETS: dict[str, int] = {"agents": 4000, "skills": 8000, "rules": 2500}
 #: Budget labels as they appear in the inventory findings.
 BUDGET_LABELS: dict[str, str] = {"agents": "~4 k", "skills": "~8 k", "rules": "~2.5 k"}
 
+#: Total always-loaded config size, in bytes (50 KiB), above which a warning is printed.
 OVERHEAD_WARN_BYTES = 51200
+#: Total always-loaded config size, in bytes (100 KiB), above which the check fails.
 OVERHEAD_FAIL_BYTES = 102400
+#: Size of a single rules file, in bytes (5 KiB), above which a warning is printed.
 RULES_WARN_BYTES = 5120
+#: Size of a single rules file, in bytes (10 KiB), above which the check fails.
 RULES_FAIL_BYTES = 10240
 
 

@@ -35,8 +35,11 @@ from pathlib import Path
 #: Lines before an `Agent(` call that are inspected for an enclosing loop.
 LOOP_LOOKBEHIND = 5
 
+#: Matches a line that opens a ``for`` or ``while`` loop.
 _LOOP = re.compile(r"^\s*(for|while)\b")
+#: Matches text that caps how many agents a loop spawns, such as ``BATCH_SIZE`` or ``head -n``.
 _BATCH_GUARD = re.compile(r"BATCH_SIZE|EFFECTIVE_BATCH|head -n? ?\d+")
+#: Matches a ``model:`` line in agent frontmatter.
 _MODEL_FIELD = re.compile(r"^model:", re.MULTILINE)
 
 #: Section label → regex counted across files, for the two count-only sections.
@@ -49,6 +52,7 @@ BOILERPLATE: dict[str, str] = {
     "health-monitoring constants": r"HARD_CUTOFF=",
 }
 
+#: Section label to regex for code patterns that are candidates for extraction into a bin script.
 EXTRACTION: dict[str, str] = {
     "mode-dispatch pattern": r"find.*plugins/cache.*-path.*modes/",
     "_shared resolution pattern": r"=\$\(find.*plugins/cache.*_shared|=\$\(ls -td.*plugins/cache",

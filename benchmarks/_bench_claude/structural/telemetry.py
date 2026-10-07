@@ -7,10 +7,8 @@ import os
 import re
 import shlex
 from pathlib import Path
-from typing import Optional
 
-
-from _bench_common.codemap_discovery import codemap_bin_on_path  # noqa: E402
+from _bench_common.codemap_discovery import codemap_bin_on_path
 
 
 def _subprocess_env(index_path: Path) -> dict[str, str]:
@@ -30,10 +28,10 @@ def _subprocess_env(index_path: Path) -> dict[str, str]:
     return env
 
 
-# Markers that betray plain-arm access to the codemap index or binary. Matched against
-# the FULL untruncated tool input (Bash command / Read path) in _handle, not the truncated tool_log:
-# the prebuilt index at .cache/{codemap,scan}/*.json holds every structural answer, so a raw Read/cat
-# of it lets the control arm self-serve answers without ever calling scan-query.
+#: Markers that betray plain-arm access to the codemap index or binary. Matched against
+#: the FULL untruncated tool input (Bash command / Read path) in _handle, not the truncated tool_log:
+#: the prebuilt index at .cache/{codemap,scan}/*.json holds every structural answer, so a raw Read/cat
+#: of it lets the control arm self-serve answers without ever calling scan-query.
 _CONTAMINATION_MARKERS: tuple[str, ...] = ("scan-query", "codemap-py/bin", ".cache/codemap", ".cache/scan")
 
 
@@ -60,9 +58,9 @@ def _is_contaminating_access(text: str) -> bool:
     return any(marker in text.replace("\\", "/") for marker in _CONTAMINATION_MARKERS)
 
 
-# Subcommands recognised by scan-query (mirrors the _CODEMAP_TOOLS help block).
-# ``central``, ``path``, and ``fn-blast`` back the graph series; ``diff-impact`` backs the
-# diff-impact series; ``batch`` is the JSON-array multi-query form (measured, not forced).
+#: Subcommands recognised by scan-query (mirrors the _CODEMAP_TOOLS help block).
+#: ``central``, ``path``, and ``fn-blast`` back the graph series; ``diff-impact`` backs the
+#: diff-impact series; ``batch`` is the JSON-array multi-query form (measured, not forced).
 _SCAN_QUERY_SUBCOMMANDS: frozenset[str] = frozenset(
     {
         "symbol",
@@ -86,10 +84,11 @@ _SCAN_QUERY_SUBCOMMANDS: frozenset[str] = frozenset(
 # When the codemap arm uses batch, each inner item's ``cmd`` must still be attributed to its own
 # subcommand counter (so batched `fn-rdeps` counts as an `fn-rdeps` use, not vanishing into `batch`).
 # The array may be passed as an inline heredoc/echo pipe or a file argument.
+#: Name of the ``scan-query`` subcommand that runs several queries from one JSON array.
 _BATCH_SUBCOMMAND = "batch"
 
 
-def _parse_scan_query_subcommand(command: str) -> Optional[str]:
+def _parse_scan_query_subcommand(command: str) -> str | None:
     """Extract the scan-query subcommand from a Bash command line.
 
     The first non-flag token following ``scan-query`` (after skipping the
@@ -143,9 +142,9 @@ def _parse_scan_query_subcommand(command: str) -> Optional[str]:
     return None
 
 
-# Match a JSON array embedded anywhere in a Bash command line (heredoc body, echo/printf pipe, or an
-# inline single-quoted argument). Non-greedy across the whole command; the outermost `[ ... ]` pair is
-# taken and re-validated as JSON before any item is trusted, so a stray bracket in prose is rejected.
+#: Match a JSON array embedded anywhere in a Bash command line (heredoc body, echo/printf pipe, or an
+#: inline single-quoted argument). Non-greedy across the whole command; the outermost `[ ... ]` pair is
+#: taken and re-validated as JSON before any item is trusted, so a stray bracket in prose is rejected.
 _BATCH_ARRAY_RE = re.compile(r"\[\s*\{.*\}\s*\]", re.DOTALL)
 
 
@@ -240,9 +239,13 @@ def _embedded_json_objects(raw: str) -> list[dict]:
 # Legacy per-task turn cap. Canonical provider-parity arms rely exclusively on the shared
 # wall-clock budget because Codex has no equivalent public turn-cap control. The old structural
 # experiment keeps its existing task-sensitive cap unchanged for historical comparability.
+#: Legacy ``--max-turns`` cap for every task type that does not enumerate callers.
 _TURN_FLOOR_DEFAULT = 40
+#: Minimum legacy ``--max-turns`` cap for caller-enumeration tasks.
 _TURN_FLOOR_CALLER = 80
+#: Turns granted per ground-truth unique caller when that exceeds the caller-task floor.
 _TURN_PER_CALLER = 4
+#: Task types whose turn cap scales with the number of callers to enumerate.
 _CALLER_TASK_TYPES: frozenset[str] = frozenset({"develop_blast_radius", "fn_call_graph"})
 
 

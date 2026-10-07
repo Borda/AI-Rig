@@ -45,20 +45,20 @@ import sys
 import tempfile
 from pathlib import Path
 
-# ``--deprecate=<value>`` where value is one of:
-#   - single-quoted: '...'  (no embedded single quotes)
-#   - double-quoted: "..."  (no embedded double quotes)
-#   - unquoted: any run of non-whitespace characters
-# Anchored on left so we never confuse ``--no-deprecate`` or other suffixes.
+#: ``--deprecate=<value>`` where value is one of:
+#:   - single-quoted: '...'  (no embedded single quotes)
+#:   - double-quoted: "..."  (no embedded double quotes)
+#:   - unquoted: any run of non-whitespace characters
+#: Anchored on left so we never confuse ``--no-deprecate`` or other suffixes.
 _DEPRECATE_VALUE_RE = re.compile(
     r"(?:^|\s)--deprecate=(?:'([^']*)'|\"([^\"]*)\"|(\S+))",
 )
-# Bare ``--deprecate`` flag — must NOT be followed by '=' (otherwise the value form matches)
-# and must NOT be preceded by '--no-' (otherwise ``--no-deprecate`` matches).
+#: Bare ``--deprecate`` flag — must NOT be followed by '=' (otherwise the value form matches)
+#: and must NOT be preceded by '--no-' (otherwise ``--no-deprecate`` matches).
 _DEPRECATE_BARE_RE = re.compile(
     r"(?:^|\s)--deprecate(?:\s|$)",
 )
-# ``--no-deprecate`` flag — explicit negation; overrides any ``--deprecate`` occurrence.
+#: ``--no-deprecate`` flag — explicit negation; overrides any ``--deprecate`` occurrence.
 _NO_DEPRECATE_RE = re.compile(
     r"(?:^|\s)--no-deprecate(?:\s|$)",
 )

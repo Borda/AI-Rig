@@ -22,15 +22,13 @@ import math
 import os
 import subprocess
 import sys
-from types import SimpleNamespace
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from _launcher_capability import _raw_codemap_launchers_are_runnable
 
 # Patch seams live in the package modules the runner shim re-exports from: patching the shim
 # would leave each package module's own global binding untouched.
@@ -38,6 +36,7 @@ from _bench_query import cold as query_cold
 from _bench_query import report as query_report
 from _bench_query import suites as query_suites
 from _bench_query import tasks as query_tasks
+from _launcher_capability import _raw_codemap_launchers_are_runnable
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 PYTORCH_LIGHTNING_REPO = Path(os.environ.get("PL_REPO_PATH", str(REPO_ROOT / ".sandbox" / "pytorch-lightning")))
@@ -389,7 +388,7 @@ class TestPathToModule:
     """Validate path_to_module conversion logic."""
 
     @pytest.mark.parametrize(
-        "path,repo_root,expected",
+        ("path", "repo_root", "expected"),
         [
             # Standard layout
             pytest.param("/repo/pkg/mod.py", "/repo", "pkg.mod", id="repo-pkg-mod.py"),
@@ -429,7 +428,7 @@ class TestModuleToGrepPattern:
     """Validate module_to_grep_pattern output contract."""
 
     @pytest.mark.parametrize(
-        "module,expected",
+        ("module", "expected"),
         [
             pytest.param("foo.bar", r"from foo.bar import\|import foo.bar", id="foo.bar"),
             pytest.param("pkg", r"from pkg import\|import pkg", id="pkg"),
@@ -454,7 +453,7 @@ class TestModuleToPackage:
     """Validate module_to_package parent extraction."""
 
     @pytest.mark.parametrize(
-        "module,expected",
+        ("module", "expected"),
         [
             pytest.param("foo.bar.baz", "foo.bar", id="foo.bar.baz"),
             pytest.param("foo.bar", "foo", id="foo.bar"),
@@ -480,7 +479,15 @@ class TestComputePrecisionRecall:
     """Validate compute_precision_recall contract from the docs."""
 
     @pytest.mark.parametrize(
-        "codemap_set,grep_set,expected_precision,expected_recall,expected_tp,expected_fp,expected_fn",
+        (
+            "codemap_set",
+            "grep_set",
+            "expected_precision",
+            "expected_recall",
+            "expected_tp",
+            "expected_fp",
+            "expected_fn",
+        ),
         [
             # Perfect agreement
             pytest.param({"a", "b", "c"}, {"a", "b", "c"}, 1.0, 1.0, 3, 0, 0, id="a-b-c"),
@@ -564,31 +571,20 @@ class TestComputePrecisionRecall:
 class TestComputeVerdict:
     """Validate compute_verdict against documented thresholds."""
 
-    def test_all_pass_returns_pass(self, script_run_cli: Any) -> None:
-        """All scenarios passed → verdict is PASS."""
-        results = [_make_scenario(script_run_cli, True) for _ in range(3)]
-        assert script_run_cli.compute_verdict(results) == "PASS"
-
-    def test_all_fail_returns_fail(self, script_run_cli: Any) -> None:
-        """All scenarios failed → verdict is FAIL."""
-        results = [_make_scenario(script_run_cli, False) for _ in range(4)]
-        assert script_run_cli.compute_verdict(results) == "FAIL"
-
-    def test_empty_results_returns_fail(self, script_run_cli: Any) -> None:
-        """Empty results list → FAIL per documented behaviour."""
-        assert script_run_cli.compute_verdict([]) == "FAIL"
-
     @pytest.mark.parametrize(
-        "n_pass,n_total,expected",
+        ("n_pass", "n_total", "expected"),
         [
+            pytest.param(0, 0, "FAIL", id="empty-results"),  # documented behaviour: no scenarios → FAIL
+            pytest.param(3, 3, "PASS", id="all-pass"),  # every scenario passed
             pytest.param(3, 4, "PARTIAL", id="3"),  # 75% >= 50% but not 100%
             pytest.param(1, 2, "PARTIAL", id="1-2"),  # exactly 50%
             pytest.param(1, 3, "FAIL", id="1-3"),  # 33% < 50%
             pytest.param(0, 3, "FAIL", id="0"),  # 0%
+            pytest.param(0, 4, "FAIL", id="all-fail"),  # every scenario failed
         ],
     )
-    def test_partial_and_fail_boundary(self, script_run_cli: Any, n_pass: int, n_total: int, expected: str) -> None:
-        """Verdict boundary at 50% pass rate per documented thresholds.
+    def test_verdict_by_pass_ratio(self, script_run_cli: Any, n_pass: int, n_total: int, expected: str) -> None:
+        """Verdict follows the pass ratio: PASS if all pass, FAIL if none or no scenarios, PARTIAL/FAIL split at 50%.
 
         Args:
             n_pass: Number of passing scenarios.
@@ -614,28 +610,32 @@ class TestValidateCentralJson:
         assert result.ok is True
         assert result.reason == ""
 
-    def test_missing_central_key_returns_not_ok(self, script_run_cli: Any) -> None:
-        """Response missing 'central' key → ok=False with reason."""
-        result = script_run_cli.validate_central_json({"other_key": []})
-        assert result.ok is False
-        assert "central" in result.reason
-
-    def test_empty_central_list_returns_not_ok(self, script_run_cli: Any) -> None:
-        """'central' key present but empty list → ok=False."""
-        result = script_run_cli.validate_central_json({"central": []})
-        assert result.ok is False
-
-    def test_central_not_a_list_returns_not_ok(self, script_run_cli: Any) -> None:
-        """'central' value is not a list → ok=False."""
-        result = script_run_cli.validate_central_json({"central": "not a list"})
-        assert result.ok is False
-
-    def test_item_missing_rdep_count_returns_not_ok(self, script_run_cli: Any) -> None:
-        """Central item without rdep_count → ok=False with reason."""
-        data = {"central": [{"name": "foo", "other": 1}]}
+    @pytest.mark.parametrize(
+        ("data", "reason_fragment"),
+        [
+            pytest.param({"other_key": []}, "central", id="missing-central-key"),
+            pytest.param({"central": [{"name": "foo", "other": 1}]}, "rdep_count", id="item-missing-rdep_count"),
+        ],
+    )
+    def test_missing_required_field_returns_not_ok_with_reason(
+        self, script_run_cli: Any, data: dict, reason_fragment: str
+    ) -> None:
+        """A response missing the 'central' key, or a central item missing rdep_count, → ok=False naming the field."""
         result = script_run_cli.validate_central_json(data)
         assert result.ok is False
-        assert "rdep_count" in result.reason
+        assert reason_fragment in result.reason
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            pytest.param({"central": []}, id="empty-central-list"),
+            pytest.param({"central": "not a list"}, id="central-not-a-list"),
+        ],
+    )
+    def test_empty_or_non_list_central_returns_not_ok(self, script_run_cli: Any, data: dict) -> None:
+        """'central' key present but an empty list, or a value that is not a list → ok=False."""
+        result = script_run_cli.validate_central_json(data)
+        assert result.ok is False
 
     def test_multiple_valid_items_returns_ok(self, script_run_cli: Any) -> None:
         """Multiple items all having rdep_count → ok=True."""
@@ -644,7 +644,7 @@ class TestValidateCentralJson:
         assert result.ok is True
 
     @pytest.mark.parametrize(
-        "data,reason_fragment",
+        ("data", "reason_fragment"),
         [
             pytest.param([], "object", id="punctuation"),
             pytest.param({"central": [42]}, "object", id="central-42"),
@@ -658,92 +658,75 @@ class TestValidateCentralJson:
         assert reason_fragment in result.reason
 
 
-class TestValidateRdepsJson:
-    """Validate validate_rdeps_json contract."""
+class TestValidateRdepsAndDepsJson:
+    """Validate the validate_rdeps_json and validate_deps_json contracts, which share one payload shape."""
 
-    def test_valid_rdeps_response_returns_ok(self, script_run_cli: Any) -> None:
-        """Response with imported_by and module keys → ok=True."""
-        data = {"imported_by": ["a.b", "c.d"], "module": "foo.bar"}
-        result = script_run_cli.validate_rdeps_json(data)
+    @pytest.mark.parametrize(
+        ("validator", "data"),
+        [
+            pytest.param(
+                "validate_rdeps_json", {"imported_by": ["a.b", "c.d"], "module": "foo.bar"}, id="rdeps-response"
+            ),
+            pytest.param("validate_deps_json", {"direct_imports": ["x.y"], "module": "foo.bar"}, id="deps-response"),
+        ],
+    )
+    def test_valid_response_returns_ok(self, script_run_cli: Any, validator: str, data: dict) -> None:
+        """Rdeps response with imported_by and module, or deps response with direct_imports and module → ok=True."""
+        result = getattr(script_run_cli, validator)(data)
         assert result.ok is True
 
     @pytest.mark.parametrize(
-        "data,expected_reason_fragment",
+        ("validator", "data", "expected_reason_fragment"),
         [
-            pytest.param({"module": "foo"}, "imported_by", id="module-foo"),  # missing imported_by
-            pytest.param({"imported_by": []}, "module", id="imported_by"),  # missing module
-            pytest.param({}, "imported_by", id="punctuation"),  # both missing — first check wins
+            pytest.param("validate_rdeps_json", {"module": "foo"}, "imported_by", id="rdeps-missing-imported_by"),
+            pytest.param("validate_rdeps_json", {"imported_by": []}, "module", id="rdeps-missing-module"),
+            pytest.param("validate_rdeps_json", {}, "imported_by", id="rdeps-both-missing-first-check-wins"),
+            pytest.param("validate_deps_json", {"module": "foo"}, "direct_imports", id="deps-missing-direct_imports"),
+            pytest.param("validate_deps_json", {"direct_imports": []}, "module", id="deps-missing-module"),
+            pytest.param("validate_deps_json", {}, "direct_imports", id="deps-both-missing-first-check-wins"),
         ],
     )
-    def test_missing_keys_return_not_ok(self, script_run_cli: Any, data: dict, expected_reason_fragment: str) -> None:
+    def test_missing_keys_return_not_ok(
+        self, script_run_cli: Any, validator: str, data: dict, expected_reason_fragment: str
+    ) -> None:
         """Missing required keys produce ok=False with the key name in reason.
 
         Args:
+            validator: Name of the validator under test.
             data: Incomplete response dict.
             expected_reason_fragment: Substring expected in the reason string.
         """
-        result = script_run_cli.validate_rdeps_json(data)
+        result = getattr(script_run_cli, validator)(data)
         assert result.ok is False
         assert expected_reason_fragment in result.reason
 
     @pytest.mark.parametrize(
-        "data,expected_reason_fragment",
+        ("validator", "data", "expected_reason_fragment"),
         [
-            pytest.param([], "object", id="punctuation"),
-            pytest.param({"imported_by": "a.b", "module": "foo"}, "list", id="imported_by-a.b-module-foo"),
-            pytest.param({"imported_by": [], "module": 42}, "string", id="imported_by-module-42"),
+            pytest.param("validate_rdeps_json", [], "object", id="rdeps-not-an-object"),
+            pytest.param(
+                "validate_rdeps_json", {"imported_by": "a.b", "module": "foo"}, "list", id="rdeps-imported_by-not-list"
+            ),
+            pytest.param(
+                "validate_rdeps_json", {"imported_by": [], "module": 42}, "string", id="rdeps-module-not-string"
+            ),
+            pytest.param("validate_deps_json", [], "object", id="deps-not-an-object"),
+            pytest.param(
+                "validate_deps_json",
+                {"direct_imports": "x.y", "module": "foo"},
+                "list",
+                id="deps-direct_imports-not-list",
+            ),
+            pytest.param(
+                "validate_deps_json", {"direct_imports": [], "module": 42}, "string", id="deps-module-not-string"
+            ),
         ],
     )
     def test_wrong_type_payloads_return_not_ok(
-        self, script_run_cli: Any, data: Any, expected_reason_fragment: str
+        self, script_run_cli: Any, validator: str, data: Any, expected_reason_fragment: str
     ) -> None:
         """Wrong JSON value types produce ok=False with a concrete reason."""
-        result = script_run_cli.validate_rdeps_json(data)
-        assert result.ok is False
-        assert expected_reason_fragment in result.reason
-
-
-class TestValidateDepsJson:
-    """Validate validate_deps_json contract."""
-
-    def test_valid_deps_response_returns_ok(self, script_run_cli: Any) -> None:
-        """Response with direct_imports and module keys → ok=True."""
-        data = {"direct_imports": ["x.y"], "module": "foo.bar"}
-        result = script_run_cli.validate_deps_json(data)
-        assert result.ok is True
-
-    @pytest.mark.parametrize(
-        "data,expected_reason_fragment",
-        [
-            pytest.param({"module": "foo"}, "direct_imports", id="module-foo"),
-            pytest.param({"direct_imports": []}, "module", id="direct_imports"),
-            pytest.param({}, "direct_imports", id="punctuation"),
-        ],
-    )
-    def test_missing_keys_return_not_ok(self, script_run_cli: Any, data: dict, expected_reason_fragment: str) -> None:
-        """Missing required keys produce ok=False with the key name in reason.
-
-        Args:
-            data: Incomplete response dict.
-            expected_reason_fragment: Substring expected in the reason string.
-        """
-        result = script_run_cli.validate_deps_json(data)
-        assert result.ok is False
-        assert expected_reason_fragment in result.reason
-
-    @pytest.mark.parametrize(
-        "data,expected_reason_fragment",
-        [
-            pytest.param([], "object", id="punctuation"),
-            pytest.param({"direct_imports": "x.y", "module": "foo"}, "list", id="direct_imports-x.y-module-foo"),
-            pytest.param({"direct_imports": [], "module": 42}, "string", id="direct_imports-module-42"),
-        ],
-    )
-    def test_wrong_type_payloads_return_not_ok(
-        self, script_run_cli: Any, data: Any, expected_reason_fragment: str
-    ) -> None:
-        """Wrong JSON value types produce ok=False with a concrete reason."""
-        result = script_run_cli.validate_deps_json(data)
+        result = getattr(script_run_cli, validator)(data)
         assert result.ok is False
         assert expected_reason_fragment in result.reason
 
@@ -785,31 +768,25 @@ class TestRunScanQuery:
             )
         assert result == payload
 
-    def test_returns_none_on_nonzero_exit(self, script_run_cli: Any, tmp_path: Path) -> None:
-        """Non-zero returncode from scan-query yields None."""
+    @pytest.mark.parametrize(
+        ("returncode", "stdout", "args"),
+        [
+            pytest.param(1, "", ["rdeps", "missing"], id="nonzero-exit"),
+            pytest.param(0, "not json at all", ["central", "--top", "5"], id="non-json-stdout"),
+        ],
+    )
+    def test_returns_none_on_failed_or_unparsable_run(
+        self, script_run_cli: Any, tmp_path: Path, returncode: int, stdout: str, args: list[str]
+    ) -> None:
+        """A non-zero returncode, or zero-exit non-JSON stdout, yields None with no exception raised."""
         fake_result = MagicMock()
-        fake_result.returncode = 1
-        fake_result.stdout = ""
+        fake_result.returncode = returncode
+        fake_result.stdout = stdout
 
         with patch.object(query_cold, "_run", return_value=fake_result):
             result = script_run_cli.run_scan_query(
                 self._fake_bin(tmp_path),
-                ["rdeps", "missing"],
-                tmp_path / "index.json",
-                tmp_path,
-            )
-        assert result is None
-
-    def test_returns_none_on_json_decode_error(self, script_run_cli: Any, tmp_path: Path) -> None:
-        """Scan-query returns non-JSON stdout → None, no exception raised."""
-        fake_result = MagicMock()
-        fake_result.returncode = 0
-        fake_result.stdout = "not json at all"
-
-        with patch.object(query_cold, "_run", return_value=fake_result):
-            result = script_run_cli.run_scan_query(
-                self._fake_bin(tmp_path),
-                ["central", "--top", "5"],
+                args,
                 tmp_path / "index.json",
                 tmp_path,
             )
@@ -914,7 +891,7 @@ class TestRunScanQuery:
         ]
 
     @pytest.mark.parametrize(
-        "side_effect,expected_error",
+        ("side_effect", "expected_error"),
         [
             pytest.param(
                 subprocess.TimeoutExpired(cmd=[], timeout=30), "timeout", id="subprocess.timeoutexpired-cmd-timeout-30"
@@ -1107,7 +1084,7 @@ class TestThresholdsConfig:
     """Smoke-check that THRESHOLDS dict has expected keys and numeric values."""
 
     @pytest.mark.parametrize(
-        "key,sub_key,lo,hi",
+        ("key", "sub_key", "lo", "hi"),
         [
             pytest.param("C1", "coverage_gap_min", 0.0, 1.0, id="c1"),
             pytest.param("C2", "infeasible_path_fraction_min", 0.0, 1.0, id="c2"),
@@ -1464,13 +1441,18 @@ class TestGrepImportersBoundary:
 class TestModuleToSourceFile:
     """Validate module_to_source_file resolution."""
 
-    def test_resolves_regular_module(self, script_run_cli: Any, sample_pkg: Path) -> None:
-        """A dotted module resolves to its .py file."""
-        assert script_run_cli.module_to_source_file("pkg.target", sample_pkg) == sample_pkg / "pkg" / "target.py"
-
-    def test_resolves_package_init(self, script_run_cli: Any, sample_pkg: Path) -> None:
-        """A package resolves to its __init__.py."""
-        assert script_run_cli.module_to_source_file("pkg", sample_pkg) == sample_pkg / "pkg" / "__init__.py"
+    @pytest.mark.parametrize(
+        ("module", "relpath"),
+        [
+            pytest.param("pkg.target", "pkg/target.py", id="regular-module"),
+            pytest.param("pkg", "pkg/__init__.py", id="package-init"),
+        ],
+    )
+    def test_resolves_module_to_source_file(
+        self, script_run_cli: Any, sample_pkg: Path, module: str, relpath: str
+    ) -> None:
+        """A dotted module resolves to its .py file, and a package resolves to its __init__.py."""
+        assert script_run_cli.module_to_source_file(module, sample_pkg) == sample_pkg / relpath
 
     def test_missing_module_returns_none(self, script_run_cli: Any, sample_pkg: Path) -> None:
         """An unknown module resolves to None."""
@@ -1481,7 +1463,7 @@ class TestResolveRelative:
     """Validate _resolve_relative dotted-base resolution."""
 
     @pytest.mark.parametrize(
-        "base,level,module,expected",
+        ("base", "level", "module", "expected"),
         [
             pytest.param("pkg.rel", 2, "target", "pkg.target", id="up-one-with-module"),
             pytest.param("pkg.rel", 1, None, "pkg.rel", id="current-package-bare"),
@@ -1506,41 +1488,46 @@ class TestFileImportsModule:
     """Validate file_imports_module AST verification across import forms."""
 
     @pytest.mark.parametrize(
-        "relpath",
-        ["pkg/imp_from.py", "pkg/imp_plain.py", "pkg/imp_alias.py", "pkg/rel/rel_from.py", "pkg/rel/rel_bare.py"],
+        ("relpath", "expected"),
+        [
+            pytest.param("pkg/imp_from.py", True, id="from-import-importer"),
+            pytest.param("pkg/imp_plain.py", True, id="plain-import-importer"),
+            pytest.param("pkg/imp_alias.py", True, id="aliased-import-importer"),
+            pytest.param("pkg/rel/rel_from.py", True, id="relative-from-importer"),
+            pytest.param("pkg/rel/rel_bare.py", True, id="relative-bare-importer"),
+            pytest.param("pkg/imp_decoy.py", False, id="decoy-importing-sibling"),
+            pytest.param("pkg/unrelated.py", False, id="unrelated-file"),
+            pytest.param("pkg/bad.py", False, id="unparsable-file"),
+        ],
     )
-    def test_true_importers(self, script_run_cli: Any, sample_pkg: Path, relpath: str) -> None:
-        """Every genuine importer of pkg.target is confirmed by AST.
+    def test_confirms_only_genuine_importers(
+        self, script_run_cli: Any, sample_pkg: Path, relpath: str, expected: bool
+    ) -> None:
+        """Every genuine importer of pkg.target is confirmed by AST; non-importers, decoys, unparsable files are not.
 
         Args:
-            relpath: Path (relative to repo root) of the importing file.
+            relpath: Path (relative to repo root) of the file under test.
+            expected: Whether the file must be confirmed as an importer.
         """
-        assert script_run_cli.file_imports_module(sample_pkg / relpath, "pkg.target", sample_pkg) is True
-
-    @pytest.mark.parametrize("relpath", ["pkg/imp_decoy.py", "pkg/unrelated.py", "pkg/bad.py"])
-    def test_non_importers(self, script_run_cli: Any, sample_pkg: Path, relpath: str) -> None:
-        """Non-importers, decoys, and unparsable files are rejected.
-
-        Args:
-            relpath: Path (relative to repo root) of the file that must not match.
-        """
-        assert script_run_cli.file_imports_module(sample_pkg / relpath, "pkg.target", sample_pkg) is False
+        assert script_run_cli.file_imports_module(sample_pkg / relpath, "pkg.target", sample_pkg) is expected
 
 
 class TestVerifyImporter:
     """Validate verify_importer end-to-end (module name → file → AST check)."""
 
-    def test_verifies_relative_extra(self, script_run_cli: Any, sample_pkg: Path) -> None:
-        """A grep-missed relative importer is verified as a true importer."""
-        assert script_run_cli.verify_importer("pkg.rel.rel_from", "pkg.target", sample_pkg) is True
-
-    def test_rejects_decoy(self, script_run_cli: Any, sample_pkg: Path) -> None:
-        """A decoy that imports a sibling module is not verified."""
-        assert script_run_cli.verify_importer("pkg.imp_decoy", "pkg.target", sample_pkg) is False
-
-    def test_missing_candidate_module_returns_false(self, script_run_cli: Any, sample_pkg: Path) -> None:
-        """A candidate module with no source file is rejected."""
-        assert script_run_cli.verify_importer("pkg.ghost", "pkg.target", sample_pkg) is False
+    @pytest.mark.parametrize(
+        ("candidate", "expected"),
+        [
+            pytest.param("pkg.rel.rel_from", True, id="verifies-relative-extra"),
+            pytest.param("pkg.imp_decoy", False, id="rejects-decoy"),
+            pytest.param("pkg.ghost", False, id="missing-candidate-module"),
+        ],
+    )
+    def test_verifies_only_true_importers(
+        self, script_run_cli: Any, sample_pkg: Path, candidate: str, expected: bool
+    ) -> None:
+        """A grep-missed relative importer is verified; a decoy importing a sibling or a module with no file is not."""
+        assert script_run_cli.verify_importer(candidate, "pkg.target", sample_pkg) is expected
 
 
 # ===========================================================================
@@ -1574,25 +1561,23 @@ class TestMeasureInfeasiblePaths:
             }
         )
 
-    def test_direct_edge_is_feasible(self, script_run_cli: Any, sample_pkg: Path) -> None:
-        """When the source is a direct importer of the target, the path is feasible."""
-        # pkg.imp_from imports pkg.target directly → direct edge → not infeasible.
-        task = self._task(script_run_cli, "pkg.imp_from", "pkg.target")
-        fraction, infeasible, total, detail = script_run_cli._measure_infeasible_paths([task], sample_pkg)
+    @pytest.mark.parametrize(
+        ("source", "infeasible", "direct_edge"),
+        [
+            pytest.param("pkg.imp_from", 0, True, id="direct-edge-is-feasible"),  # imports pkg.target directly
+            pytest.param("pkg.unrelated", 1, False, id="missing-edge-is-infeasible"),  # no import of pkg.target
+        ],
+    )
+    def test_path_feasibility_follows_direct_edge(
+        self, script_run_cli: Any, sample_pkg: Path, source: str, infeasible: int, direct_edge: bool
+    ) -> None:
+        """A path is feasible when the source directly imports the target, and infeasible when it does not."""
+        task = self._task(script_run_cli, source, "pkg.target")
+        fraction, infeasible_count, total, detail = script_run_cli._measure_infeasible_paths([task], sample_pkg)
         assert total == 1
-        assert infeasible == 0
-        assert fraction == 0.0
-        assert detail[0]["direct_edge"] is True
-
-    def test_missing_edge_is_infeasible(self, script_run_cli: Any, sample_pkg: Path) -> None:
-        """When the source does not directly import the target, the path is infeasible."""
-        # pkg.unrelated does not import pkg.target → no direct edge → infeasible.
-        task = self._task(script_run_cli, "pkg.unrelated", "pkg.target")
-        fraction, infeasible, total, detail = script_run_cli._measure_infeasible_paths([task], sample_pkg)
-        assert total == 1
-        assert infeasible == 1
-        assert fraction == 1.0
-        assert detail[0]["direct_edge"] is False
+        assert infeasible_count == infeasible
+        assert fraction == float(infeasible)
+        assert detail[0]["direct_edge"] is direct_edge
 
 
 # ===========================================================================
@@ -1787,7 +1772,8 @@ class TestRunScanQueryResult:
                 self._fake_bin(tmp_path), tmp_path / "i.json", tmp_path, "foo"
             )
         assert importers == set()
-        assert err is not None and "no such module" in err
+        assert err is not None
+        assert "no such module" in err
 
 
 # ===========================================================================
@@ -1934,7 +1920,7 @@ class TestVerdictSplit:
         assert script_run_cli.compute_verdict(results) == "FAIL"
 
     @pytest.mark.parametrize(
-        "passed_flags,expected",
+        ("passed_flags", "expected"),
         [
             pytest.param([True, True, True], "CONSISTENT", id="all-pass"),
             pytest.param([True, False], "PARTIAL", id="half"),
@@ -2087,7 +2073,9 @@ class TestReportReconciliation:
         primary_total = len([r for r in results if r.suite in script_run_cli._PRIMARY_SUITES])
         sc = [r for r in results if r.suite in script_run_cli._SELF_CONSISTENCY_SUITES]
         sc_passed = len([r for r in sc if r.passed])
-        assert "Symbol (S)" in text and "Health (H)" in text and "Xrefs (X)" in text
+        assert "Symbol (S)" in text
+        assert "Health (H)" in text
+        assert "Xrefs (X)" in text
         assert f"/{primary_total} primary scenarios" in text
         assert f"{sc_passed}/{len(sc)}" in text
         assert primary_total + len(sc) == len(results)
@@ -2110,17 +2098,20 @@ class TestReportReconciliation:
 class TestIndexScanVersion:
     """Validate the index scan_version reader that gates the self-consistency track."""
 
-    def test_reads_recorded_scan_version(self, script_run_cli: Any, tmp_path: Path) -> None:
-        """The recorded integer scan_version is returned from the index JSON."""
+    @pytest.mark.parametrize(
+        ("payload", "expected"),
+        [
+            pytest.param({"scan_version": 7, "modules": []}, 7, id="recorded-version"),
+            pytest.param({"modules": []}, 0, id="missing-field-gates-suites-off"),
+        ],
+    )
+    def test_reads_scan_version_from_index(
+        self, script_run_cli: Any, tmp_path: Path, payload: dict, expected: int
+    ) -> None:
+        """The recorded integer scan_version is returned; an index without it yields 0, gating self-consistency off."""
         index = tmp_path / "i.json"
-        index.write_text(json.dumps({"scan_version": 7, "modules": []}), encoding="utf-8")
-        assert script_run_cli._index_scan_version(index) == 7
-
-    def test_missing_field_returns_zero(self, script_run_cli: Any, tmp_path: Path) -> None:
-        """An index without scan_version yields 0, gating the self-consistency suites off."""
-        index = tmp_path / "i.json"
-        index.write_text(json.dumps({"modules": []}), encoding="utf-8")
-        assert script_run_cli._index_scan_version(index) == 0
+        index.write_text(json.dumps(payload), encoding="utf-8")
+        assert script_run_cli._index_scan_version(index) == expected
 
     def test_unreadable_index_returns_zero(self, script_run_cli: Any, tmp_path: Path) -> None:
         """An absent or unparsable index returns 0 rather than raising."""

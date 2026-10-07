@@ -15,7 +15,6 @@ from typing import Any
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 COLLECT_DIFF = PLUGIN_ROOT / "shared" / "collect_diff.py"
 CHALLENGE_VALIDATOR = PLUGIN_ROOT / "skills" / "challenge-resolve" / "validate_evidence.py"
@@ -29,7 +28,8 @@ def _load_module(path: Path, name: str) -> Any:
     """Load one standalone helper without requiring package imports."""
     assert path.is_file(), path
     spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -78,8 +78,7 @@ def test_collect_diff_runs_natively_and_writes_complete_artifacts(tmp_path: Path
     completed = subprocess.run(
         [sys.executable, str(COLLECT_DIFF), "--out", str(output)],
         cwd=repository,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
         check=False,
     )
@@ -230,8 +229,7 @@ def test_run_gates_writes_exact_five_gate_artifacts(tmp_path: Path) -> None:
 
     completed = subprocess.run(
         [sys.executable, str(RUN_GATES), "--out", str(output), *_skipped_gate_args()],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
         check=False,
     )
@@ -278,8 +276,7 @@ def test_run_gates_records_log_paths_relative_to_the_output_directory(tmp_path: 
     completed = subprocess.run(
         [sys.executable, str(RUN_GATES), "--out", "run", *_skipped_gate_args()],
         cwd=workspace,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
         check=False,
     )
@@ -438,8 +435,7 @@ def test_run_gates_times_out_and_terminates_native_process(tmp_path: Path) -> No
     started = time.monotonic()
     completed = subprocess.run(
         [sys.executable, str(RUN_GATES), "--out", str(output), "--timeout-seconds", "1", *arguments],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
         check=False,
         timeout=10,
@@ -456,7 +452,7 @@ def test_run_gates_times_out_and_terminates_native_process(tmp_path: Path) -> No
     assert "timeout: exceeded 1 seconds" in (output / "checks" / "lint.stderr.txt").read_text()
 
 
-@pytest.mark.parametrize("wrapper_name", ("collect-diff.sh", "run-gates.sh"))
+@pytest.mark.parametrize("wrapper_name", ["collect-diff.sh", "run-gates.sh"])
 def test_portable_helpers_do_not_ship_shell_compatibility_wrappers(wrapper_name: str) -> None:
     """Keep the plugin helper surface Python-only across supported platforms."""
     assert not (PLUGIN_ROOT / "shared" / wrapper_name).exists()

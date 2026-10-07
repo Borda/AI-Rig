@@ -13,12 +13,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import pytest
-
 import release_append_marker as ram
 
 
@@ -739,26 +738,31 @@ def test_is_valid_cli_prints_false_when_no_marker(tmp_path: Path, capsys: pytest
     assert capsys.readouterr().out.strip() == "false"
 
 
-def test_is_valid_cli_prints_true_for_valid_unsuperseded_marker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("tag_is_ancestor_rc", "last_tag", "expected"),
+    [
+        pytest.param(1, "v1.0.0", "true", id="unsuperseded-tag-predates-marker"),
+        pytest.param(0, "v2.0.0", "false", id="superseded-by-tag-tag-blind-fix"),
+    ],
+)
+def test_is_valid_cli_reports_marker_validity_against_last_tag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tag_is_ancestor_rc: int,
+    last_tag: str,
+    expected: str,
 ) -> None:
-    """Marker is an ancestor of HEAD and the tag predates it → CLI prints "true"."""
-    _write_marker(tmp_path, "deadbeef\n", encoding="utf-8")
-    _sequenced_run(monkeypatch, 0, 1)  # ancestor-of-HEAD: yes; ancestor-of-tag: no (tag predates marker)
-    rc = ram.main(["is-valid", "--branch", "main", "--last-tag", "v1.0.0", "--marker-dir", str(tmp_path)])
-    assert rc == 0
-    assert capsys.readouterr().out.strip() == "true"
+    """A marker reachable from HEAD is valid only while no release tag landed at or after it.
 
-
-def test_is_valid_cli_prints_false_when_superseded_by_tag(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Marker valid but a release tag landed at/after it → CLI prints "false" (tag-blind fix)."""
+    The marker is an ancestor of HEAD in both cases; the ancestor-of-tag check decides: when the tag predates the marker
+    the CLI prints "true", and when a release tag was cut at or after the marker the CLI prints "false" (tag-blind fix).
+    """
     _write_marker(tmp_path, "deadbeef\n", encoding="utf-8")
-    _sequenced_run(monkeypatch, 0, 0)  # ancestor-of-HEAD: yes; ancestor-of-tag: yes (superseded)
-    rc = ram.main(["is-valid", "--branch", "main", "--last-tag", "v2.0.0", "--marker-dir", str(tmp_path)])
+    _sequenced_run(monkeypatch, 0, tag_is_ancestor_rc)
+    rc = ram.main(["is-valid", "--branch", "main", "--last-tag", last_tag, "--marker-dir", str(tmp_path)])
     assert rc == 0
-    assert capsys.readouterr().out.strip() == "false"
+    assert capsys.readouterr().out.strip() == expected
 
 
 def test_is_valid_cli_prints_false_when_rebased_away(

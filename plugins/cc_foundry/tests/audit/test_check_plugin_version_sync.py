@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pytest
 
-
 _MOD_PATH = Path(__file__).resolve().parent.parent.parent / "bin" / "check_plugin_version_sync.py"
 _spec = importlib.util.spec_from_file_location("check_plugin_version_sync", _MOD_PATH)
-assert _spec and _spec.loader
+assert _spec
+assert _spec.loader
 vs = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(vs)
 
@@ -86,7 +86,8 @@ class TestFindDesyncs:
         _plugin(tmp_path, "dual", "0.31.3", "0.31.2")
         findings = vs.find_desyncs(tmp_path)
         assert len(findings) == 1
-        assert "0.31.3" in findings[0] and "0.31.2" in findings[0]
+        assert "0.31.3" in findings[0]
+        assert "0.31.2" in findings[0]
 
     def test_single_host_plugins_ignored(self, tmp_path: Path) -> None:
         """Plugins shipping only one host manifest are out of scope.
@@ -155,32 +156,56 @@ class TestMain:
 class TestHeadContinuity:
     """Version fields use the same field in committed HEAD as their baseline."""
 
-    def test_skipped_integer_version_fails(self, tmp_path: Path, monkeypatch, capsys) -> None:
-        """A jump from 1 to 3 fails even when the JSON is otherwise valid."""
-        path = _committed_json(tmp_path, "plugins/example/runtime/contract.json", {"schema_version": 1})
-        path.write_text(json.dumps({"schema_version": 3}), encoding="utf-8")
+    @pytest.mark.parametrize(
+        ("relative_path", "baseline", "current", "fragment"),
+        [
+            pytest.param(
+                "plugins/example/runtime/contract.json",
+                {"schema_version": 1},
+                {"schema_version": 3},
+                "schema_version",
+                id="skipped-integer-version",
+            ),
+            pytest.param(
+                "plugins/example/skills/review/result-template.json",
+                {"metadata": {}},
+                {"metadata": {"action_contract_version": 3}},
+                "metadata.action_contract_version",
+                id="new-nested-contract-not-at-one",
+            ),
+            pytest.param(
+                "plugins/example/runtime/contract.json",
+                {"payload": {}},
+                {"payload": {"version": 3}},
+                "payload.version",
+                id="generic-numeric-version-field",
+            ),
+            pytest.param(
+                "plugins/example/runtime/contract.json", {"schema": 1}, {"schema": 3}, "schema", id="schema-field"
+            ),
+            pytest.param(
+                "plugins/example/runtime/contract.json",
+                {"journal_schema": 1},
+                {"journal_schema": 3},
+                "journal_schema",
+                id="journal-schema-field",
+            ),
+        ],
+    )
+    def test_json_version_jump_fails(
+        self, tmp_path: Path, monkeypatch, capsys, relative_path: str, baseline: dict, current: dict, fragment: str
+    ) -> None:
+        """A shipped JSON version field that jumps from its committed HEAD value fails and names the field.
+
+        Covers a skipped integer ``schema_version`` (1 to 3), a new nested contract that begins at 3, a generic integer
+        ``version`` field that cannot bypass the gate, and a schema field using either shipped naming convention.
+        """
+        path = _committed_json(tmp_path, relative_path, baseline)
+        path.write_text(json.dumps(current), encoding="utf-8")
         monkeypatch.chdir(tmp_path)
 
         assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 1
-        assert "schema_version" in capsys.readouterr().out
-
-    def test_new_nested_contract_starts_at_one(self, tmp_path: Path, monkeypatch, capsys) -> None:
-        """A new nested version family cannot begin at 3."""
-        path = _committed_json(tmp_path, "plugins/example/skills/review/result-template.json", {"metadata": {}})
-        path.write_text(json.dumps({"metadata": {"action_contract_version": 3}}), encoding="utf-8")
-        monkeypatch.chdir(tmp_path)
-
-        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 1
-        assert "metadata.action_contract_version" in capsys.readouterr().out
-
-    def test_numeric_version_field_starts_at_one(self, tmp_path: Path, monkeypatch, capsys) -> None:
-        """A generic integer version field cannot bypass the HEAD continuity gate."""
-        path = _committed_json(tmp_path, "plugins/example/runtime/contract.json", {"payload": {}})
-        path.write_text(json.dumps({"payload": {"version": 3}}), encoding="utf-8")
-        monkeypatch.chdir(tmp_path)
-
-        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 1
-        assert "payload.version" in capsys.readouterr().out
+        assert fragment in capsys.readouterr().out
 
     @pytest.mark.parametrize(
         ("current", "expected"),
@@ -213,16 +238,6 @@ class TestHeadContinuity:
         assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == expected
         if expected:
             assert "bootstrap_protocol" in capsys.readouterr().out
-
-    @pytest.mark.parametrize("field", ["schema", "journal_schema"])
-    def test_schema_named_fields_cannot_skip_head(self, tmp_path: Path, monkeypatch, capsys, field: str) -> None:
-        """A schema field using either shipped naming convention cannot jump over version 2."""
-        path = _committed_json(tmp_path, "plugins/example/runtime/contract.json", {field: 1})
-        path.write_text(json.dumps({field: 3}), encoding="utf-8")
-        monkeypatch.chdir(tmp_path)
-
-        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 1
-        assert field in capsys.readouterr().out
 
     def test_removed_dual_host_manifest_fails_without_selected_files(self, tmp_path: Path, monkeypatch, capsys) -> None:
         """A removed tracked host manifest cannot turn a dual-host plugin into a silent single-host one."""
@@ -279,15 +294,6 @@ class TestHeadContinuity:
         monkeypatch.chdir(tmp_path)
 
         assert vs.main(["--scan-dir", "plugins"]) == 1
-
-    def test_python_schema_constant_cannot_skip_head(self, tmp_path: Path, monkeypatch, capsys) -> None:
-        """A shipped Python writer's schema constant cannot jump from 1 to 3."""
-        path = _committed_file(tmp_path, "plugins/example/bin/writer.py", "SCHEMA_VERSION = 1\n")
-        path.write_text("SCHEMA_VERSION = 3\n", encoding="utf-8")
-        monkeypatch.chdir(tmp_path)
-
-        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 1
-        assert "SCHEMA_VERSION" in capsys.readouterr().out
 
     @pytest.mark.parametrize(
         ("name", "baseline", "current"),
@@ -375,30 +381,35 @@ class TestHeadContinuity:
         assert vs.main(["--scan-dir", "plugins", str(new_path.relative_to(tmp_path))]) == 1
         assert "new version family" in capsys.readouterr().out
 
-    def test_removed_python_literal_version_fails(self, tmp_path: Path, monkeypatch, capsys) -> None:
-        """Replacing a static version with a dynamic expression cannot evade the gate."""
+    @pytest.mark.parametrize(
+        ("current_source", "fragment"),
+        [
+            pytest.param("SCHEMA_VERSION = version()\n", "nonliteral version mutation", id="literal-replaced-by-call"),
+            pytest.param(
+                "SCHEMA_VERSION = 1\nSCHEMA_VERSION = version()\n", "SCHEMA_VERSION", id="later-dynamic-assignment"
+            ),
+            pytest.param(
+                "SCHEMA_VERSION = 1\nSCHEMA_VERSION = version()\nSCHEMA_VERSION = 1\n",
+                "SCHEMA_VERSION",
+                id="intermediate-dynamic-assignment",
+            ),
+            pytest.param("SCHEMA_VERSION = 1\nSCHEMA_VERSION += 2\n", "SCHEMA_VERSION", id="augmented-assignment"),
+        ],
+    )
+    def test_nonliteral_version_mutation_fails(
+        self, tmp_path: Path, monkeypatch, capsys, current_source: str, fragment: str
+    ) -> None:
+        """A dynamic or augmented mutation of a committed static version cannot evade the gate.
+
+        Covers replacing the literal with a call, a later dynamic assignment overriding an earlier literal, a later
+        literal concealing an intervening dynamic mutation, and a post-literal augmented assignment.
+        """
         path = _committed_file(tmp_path, "plugins/example/bin/writer.py", "SCHEMA_VERSION = 1\n")
-        path.write_text("SCHEMA_VERSION = version()\n", encoding="utf-8")
+        path.write_text(current_source, encoding="utf-8")
         monkeypatch.chdir(tmp_path)
 
         assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 1
-        assert "nonliteral version mutation" in capsys.readouterr().out
-
-    def test_later_dynamic_assignment_does_not_hide_version_removal(self, tmp_path: Path, monkeypatch) -> None:
-        """A later dynamic assignment overrides an earlier literal in the same module."""
-        path = _committed_file(tmp_path, "plugins/example/bin/writer.py", "SCHEMA_VERSION = 1\n")
-        path.write_text("SCHEMA_VERSION = 1\nSCHEMA_VERSION = version()\n", encoding="utf-8")
-        monkeypatch.chdir(tmp_path)
-
-        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 1
-
-    def test_intermediate_dynamic_version_assignment_fails(self, tmp_path: Path, monkeypatch) -> None:
-        """A later literal cannot conceal an intervening dynamic version mutation."""
-        path = _committed_file(tmp_path, "plugins/example/bin/writer.py", "SCHEMA_VERSION = 1\n")
-        path.write_text("SCHEMA_VERSION = 1\nSCHEMA_VERSION = version()\nSCHEMA_VERSION = 1\n", encoding="utf-8")
-        monkeypatch.chdir(tmp_path)
-
-        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 1
+        assert fragment in capsys.readouterr().out
 
     @pytest.mark.parametrize(
         ("current", "expected"),
@@ -418,11 +429,45 @@ class TestHeadContinuity:
         if expected:
             assert "bootstrap_protocol" in capsys.readouterr().out
 
-    def test_new_inline_reference_to_existing_format_is_allowed(self, tmp_path: Path, monkeypatch) -> None:
-        """A newly added dictionary can refer to a format already at version 2."""
-        baseline = 'def existing():\n    return {"schema": 2}\n'
+    @pytest.mark.parametrize(
+        ("baseline", "current"),
+        [
+            pytest.param(
+                'def existing():\n    return {"schema": 2}\n',
+                'def existing():\n    return {"schema": 2}\ndef payload():\n    return {"schema": 2}\n',
+                id="new-reference-to-existing-format",
+            ),
+            pytest.param(
+                'def old():\n    return {"schema": 2}\n',
+                'def new():\n    return {"schema": 1}\ndef old():\n    return {"schema": 2}\n',
+                id="inserted-reference-preserves-existing-version",
+            ),
+            pytest.param(
+                'def producer_a():\n    return {"schema": 2}\n',
+                'def new_producer():\n    return {"schema": 1}\ndef producer_a():\n    return {"schema": 2}\n',
+                id="new-sibling-producer-preserves-baseline",
+            ),
+            pytest.param(
+                'def payload():\n    first = {"schema": 1}\n    second = {"schema": 2}\n    return first, second\n',
+                "def payload():\n"
+                '    added = {"schema": 1}\n'
+                '    first = {"schema": 1}\n'
+                '    second = {"schema": 2}\n'
+                "    return added, first, second\n",
+                id="inserted-named-dict-in-same-function",
+            ),
+        ],
+    )
+    def test_inserted_producer_preserves_existing_baselines(
+        self, tmp_path: Path, monkeypatch, baseline: str, current: str
+    ) -> None:
+        """Adding a dictionary, function or named assignment does not shift an existing producer's baseline.
+
+        Covers a new dictionary referring to a format already at version 2, an earlier reference to version 1 preceding
+        an unchanged version 2, a newly inserted function, and a new named dictionary inside an existing function.
+        """
         path = _committed_file(tmp_path, "plugins/example/bin/writer.py", baseline)
-        path.write_text(baseline + 'def payload():\n    return {"schema": 2}\n', encoding="utf-8")
+        path.write_text(current, encoding="utf-8")
         monkeypatch.chdir(tmp_path)
 
         assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 0
@@ -439,84 +484,65 @@ class TestHeadContinuity:
         assert "fresh_protocol" in output
         assert "new version family must start at 1" in output
 
-    def test_new_python_dict_reference_cannot_skip_existing_format(self, tmp_path: Path, monkeypatch, capsys) -> None:
-        """A new dictionary scope cannot claim a version beyond the existing format's next step."""
-        baseline = 'def existing():\n    return {"schema": 2}\n'
+    @pytest.mark.parametrize(
+        ("baseline", "current", "fragment"),
+        [
+            pytest.param(
+                'def existing():\n    return {"schema": 2}\n',
+                'def existing():\n    return {"schema": 2}\ndef payload():\n    return {"schema": 9}\n',
+                "schema",
+                id="new-scope-cannot-skip-existing-format",
+            ),
+            pytest.param(
+                'def old():\n    return {"bootstrap_protocol": 1}\n',
+                'def new():\n    return {"bootstrap_protocol": 1}\ndef old():\n    return {"bootstrap_protocol": 3}\n',
+                "bootstrap_protocol",
+                id="inserted-reference-cannot-hide-protocol-jump",
+            ),
+            pytest.param(
+                'def producer_a():\n    return {"schema": 1}\ndef producer_b():\n    return {"schema": 2}\n',
+                'def producer_a():\n    return {"schema": 3}\ndef producer_b():\n    return {"schema": 2}\n',
+                "producer_a",
+                id="sibling-producer-cannot-mask-jump",
+            ),
+            pytest.param(
+                'class A:\n    def payload(self):\n        return {"schema": 1}\n'
+                'class B:\n    def payload(self):\n        return {"schema": 2}\n',
+                'class A:\n    def payload(self):\n        return {"schema": 3}\n'
+                'class B:\n    def payload(self):\n        return {"schema": 2}\n',
+                "class:A.function:payload",
+                id="same-method-name-in-different-classes",
+            ),
+            pytest.param(
+                'def payload(which):\n    if which:\n        return {"schema": 1}\n    return {"schema": 2}\n',
+                'def payload(which):\n    if which:\n        return {"schema": 3}\n    return {"schema": 2}\n',
+                "ambiguous changed inline version producers",
+                id="changed-unnamed-dicts",
+            ),
+            pytest.param(
+                'def payload(which):\n    if which:\n        return {"schema": 1}\n    return {"schema": 2}\n',
+                'def payload(which):\n    if which:\n        return {"schema": 2}\n    return {"schema": 1}\n',
+                "ambiguous changed inline version producers",
+                id="reordered-unnamed-dicts",
+            ),
+        ],
+    )
+    def test_inline_producer_jump_or_ambiguity_fails(
+        self, tmp_path: Path, monkeypatch, capsys, baseline: str, current: str, fragment: str
+    ) -> None:
+        """An inline version producer that jumps, or whose change cannot be attributed, fails closed.
+
+        Covers a new dictionary scope claiming a version beyond the existing format's next step, a new earlier
+        dictionary taking the old occurrence's baseline, one producer borrowing a sibling's higher baseline, same-named
+        methods in different classes keeping separate versions, and duplicate unnamed fields (changed or merely
+        reordered) that lack the identity needed to prove the change safe.
+        """
         path = _committed_file(tmp_path, "plugins/example/bin/writer.py", baseline)
-        path.write_text(baseline + 'def payload():\n    return {"schema": 9}\n', encoding="utf-8")
+        path.write_text(current, encoding="utf-8")
         monkeypatch.chdir(tmp_path)
 
         assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 1
-        assert "schema" in capsys.readouterr().out
-
-    def test_inserted_inline_reference_cannot_hide_protocol_jump(self, tmp_path: Path, monkeypatch, capsys) -> None:
-        """A new earlier dictionary cannot take the old occurrence's baseline."""
-        path = _committed_file(
-            tmp_path, "plugins/example/bin/writer.py", 'def old():\n    return {"bootstrap_protocol": 1}\n'
-        )
-        path.write_text(
-            'def new():\n    return {"bootstrap_protocol": 1}\ndef old():\n    return {"bootstrap_protocol": 3}\n',
-            encoding="utf-8",
-        )
-        monkeypatch.chdir(tmp_path)
-
-        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 1
-        assert "bootstrap_protocol" in capsys.readouterr().out
-
-    def test_inserted_inline_reference_preserves_existing_version(self, tmp_path: Path, monkeypatch) -> None:
-        """An earlier reference to version 1 can precede an unchanged version 2."""
-        path = _committed_file(tmp_path, "plugins/example/bin/writer.py", 'def old():\n    return {"schema": 2}\n')
-        path.write_text(
-            'def new():\n    return {"schema": 1}\ndef old():\n    return {"schema": 2}\n', encoding="utf-8"
-        )
-        monkeypatch.chdir(tmp_path)
-
-        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 0
-
-    def test_sibling_producer_cannot_mask_schema_jump(self, tmp_path: Path, monkeypatch, capsys) -> None:
-        """One producer cannot borrow another producer's higher schema baseline."""
-        path = _committed_file(
-            tmp_path,
-            "plugins/example/bin/writer.py",
-            'def producer_a():\n    return {"schema": 1}\ndef producer_b():\n    return {"schema": 2}\n',
-        )
-        path.write_text(
-            'def producer_a():\n    return {"schema": 3}\ndef producer_b():\n    return {"schema": 2}\n',
-            encoding="utf-8",
-        )
-        monkeypatch.chdir(tmp_path)
-
-        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 1
-        assert "producer_a" in capsys.readouterr().out
-
-    def test_new_sibling_producer_preserves_schema_baseline(self, tmp_path: Path, monkeypatch) -> None:
-        """A newly inserted function does not shift an existing producer's baseline."""
-        path = _committed_file(
-            tmp_path, "plugins/example/bin/writer.py", 'def producer_a():\n    return {"schema": 2}\n'
-        )
-        path.write_text(
-            'def new_producer():\n    return {"schema": 1}\ndef producer_a():\n    return {"schema": 2}\n',
-            encoding="utf-8",
-        )
-        monkeypatch.chdir(tmp_path)
-
-        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 0
-
-    def test_class_method_scope_keeps_its_own_schema_baseline(self, tmp_path: Path, monkeypatch, capsys) -> None:
-        """Methods with the same name in different classes retain separate versions."""
-        path = _committed_file(
-            tmp_path,
-            "plugins/example/bin/writer.py",
-            'class A:\n    def payload(self):\n        return {"schema": 1}\nclass B:\n    def payload(self):\n        return {"schema": 2}\n',
-        )
-        path.write_text(
-            'class A:\n    def payload(self):\n        return {"schema": 3}\nclass B:\n    def payload(self):\n        return {"schema": 2}\n',
-            encoding="utf-8",
-        )
-        monkeypatch.chdir(tmp_path)
-
-        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 1
-        assert "class:A.function:payload" in capsys.readouterr().out
+        assert fragment in capsys.readouterr().out
 
     @pytest.mark.parametrize(
         ("current", "expected"),
@@ -534,49 +560,6 @@ class TestHeadContinuity:
         assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == expected
         if expected:
             assert "first" in capsys.readouterr().out
-
-    def test_inserting_named_dict_in_same_function_is_allowed(self, tmp_path: Path, monkeypatch) -> None:
-        """A new named dictionary does not shift stable assignments in its function."""
-        source = 'def payload():\n    first = {"schema": 1}\n    second = {"schema": 2}\n    return first, second\n'
-        path = _committed_file(tmp_path, "plugins/example/bin/writer.py", source)
-        path.write_text(
-            'def payload():\n    added = {"schema": 1}\n    first = {"schema": 1}\n    second = {"schema": 2}\n    return added, first, second\n',
-            encoding="utf-8",
-        )
-        monkeypatch.chdir(tmp_path)
-
-        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 0
-
-    def test_changed_unnamed_dicts_in_one_function_fail_closed(self, tmp_path: Path, monkeypatch, capsys) -> None:
-        """A duplicate unnamed field lacks enough identity to prove its change safe."""
-        source = 'def payload(which):\n    if which:\n        return {"schema": 1}\n    return {"schema": 2}\n'
-        path = _committed_file(tmp_path, "plugins/example/bin/writer.py", source)
-        path.write_text(source.replace('return {"schema": 1}', 'return {"schema": 3}'), encoding="utf-8")
-        monkeypatch.chdir(tmp_path)
-
-        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 1
-        assert "ambiguous changed inline version producers" in capsys.readouterr().out
-
-    def test_reordered_unnamed_dict_versions_fail_closed(self, tmp_path: Path, monkeypatch) -> None:
-        """Equal multisets still cannot prove which unnamed producer changed."""
-        source = 'def payload(which):\n    if which:\n        return {"schema": 1}\n    return {"schema": 2}\n'
-        path = _committed_file(tmp_path, "plugins/example/bin/writer.py", source)
-        path.write_text(
-            'def payload(which):\n    if which:\n        return {"schema": 2}\n    return {"schema": 1}\n',
-            encoding="utf-8",
-        )
-        monkeypatch.chdir(tmp_path)
-
-        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 1
-
-    def test_augmented_python_version_assignment_fails(self, tmp_path: Path, monkeypatch, capsys) -> None:
-        """A post-literal augmented mutation cannot hide the effective version."""
-        path = _committed_file(tmp_path, "plugins/example/bin/writer.py", "SCHEMA_VERSION = 1\n")
-        path.write_text("SCHEMA_VERSION = 1\nSCHEMA_VERSION += 2\n", encoding="utf-8")
-        monkeypatch.chdir(tmp_path)
-
-        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 1
-        assert "SCHEMA_VERSION" in capsys.readouterr().out
 
     def test_complete_plugin_removal_is_allowed(self, tmp_path: Path, monkeypatch) -> None:
         """Removing an entire plugin does not leave a manifest obligation."""
@@ -606,35 +589,28 @@ class TestHeadContinuity:
         assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == expected
 
     @pytest.mark.parametrize(
-        ("current", "expected"),
+        ("baseline", "current", "expected"),
         [
-            pytest.param("0.4.7", 0, id="unchanged"),
-            pytest.param("0.4.8", 0, id="next-patch"),
-            pytest.param("0.5.0", 0, id="next-minor"),
-            pytest.param("0.4.9", 1, id="skipped-patch"),
-            pytest.param("0.6.0", 1, id="skipped-minor"),
-            pytest.param("0.4.6", 1, id="downgrade"),
+            pytest.param("0.4.7", "0.4.7", 0, id="unchanged"),
+            pytest.param("0.4.7", "0.4.8", 0, id="next-patch"),
+            pytest.param("0.4.7", "0.5.0", 0, id="next-minor"),
+            pytest.param("0.4.7", "0.4.9", 1, id="skipped-patch"),
+            pytest.param("0.4.7", "0.6.0", 1, id="skipped-minor"),
+            pytest.param("0.4.7", "0.4.6", 1, id="downgrade"),
+            pytest.param("0.59.0", "1.0.0", 0, id="next-major"),
+            pytest.param("0.59.0", "1.0.1", 1, id="major-plus-patch"),
+            pytest.param("0.59.0", "2.0.0", 1, id="skipped-major"),
         ],
     )
-    def test_manifest_semver_continuity(self, tmp_path: Path, monkeypatch, current: str, expected: int) -> None:
-        """A single-host manifest accepts only unchanged, one patch, or one minor."""
-        path = _committed_json(tmp_path, "plugins/example/.claude-plugin/plugin.json", {"version": "0.4.7"})
-        path.write_text(json.dumps({"version": current}), encoding="utf-8")
-        monkeypatch.chdir(tmp_path)
+    def test_manifest_semver_continuity(
+        self, tmp_path: Path, monkeypatch, baseline: str, current: str, expected: int
+    ) -> None:
+        """A single-host manifest accepts only unchanged, one patch, one minor, or one major step.
 
-        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == expected
-
-    @pytest.mark.parametrize(
-        ("current", "expected"),
-        [
-            pytest.param("1.0.0", 0, id="next-major"),
-            pytest.param("1.0.1", 1, id="major-plus-patch"),
-            pytest.param("2.0.0", 1, id="skipped-major"),
-        ],
-    )
-    def test_manifest_major_continuity(self, tmp_path: Path, monkeypatch, current: str, expected: int) -> None:
-        """A major bump resets both lower components and cannot skip a major."""
-        path = _committed_json(tmp_path, "plugins/example/.claude-plugin/plugin.json", {"version": "0.59.0"})
+        A major bump resets both lower components and cannot skip a major; a skipped patch or minor and a downgrade
+        fail.
+        """
+        path = _committed_json(tmp_path, "plugins/example/.claude-plugin/plugin.json", {"version": baseline})
         path.write_text(json.dumps({"version": current}), encoding="utf-8")
         monkeypatch.chdir(tmp_path)
 

@@ -12,7 +12,6 @@ from typing import Any
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 COLLECTOR = PLUGIN_ROOT / "shared" / "collect_pr.py"
 BASE_OID = "a" * 40
@@ -28,7 +27,8 @@ def _load_collector() -> ModuleType:
     """Load the standalone collector without requiring package installation."""
     assert COLLECTOR.is_file(), COLLECTOR
     specification = importlib.util.spec_from_file_location("codex_rig_collect_pr", COLLECTOR)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     sys.path.insert(0, str(COLLECTOR.parent))
     try:
@@ -659,7 +659,7 @@ def test_collect_pr_uses_public_metadata_fallback_with_trusted_pr_identity(
 
 
 @pytest.mark.parametrize(
-    ("target", "stderr", "expected_error", "github_remotes"),
+    ("target", "stderr", "expected_error", "github_remotes", "checkout"),
     [
         pytest.param(
             "17",
@@ -669,6 +669,7 @@ def test_collect_pr_uses_public_metadata_fallback_with_trusted_pr_identity(
                 "origin": ["https://github.com/Borda/AI-Rig.git"],
                 "fork": ["https://github.com/contributor/AI-Rig.git"],
             },
+            False,
             id="ambiguous-configured-remotes",
         ),
         pytest.param(
@@ -676,19 +677,33 @@ def test_collect_pr_uses_public_metadata_fallback_with_trusted_pr_identity(
             b"resource not accessible",
             "github-permission:gh-pr-view",
             {"origin": ["https://github.com/Borda/AI-Rig.git"]},
+            False,
             id="permission-denied",
+        ),
+        pytest.param(
+            "17",
+            b"GraphQL: Could not resolve to a PullRequest with the number of 17.",
+            "github-not-found:gh-pr-view",
+            {"origin": ["https://github.com/Borda/AI-Rig.git"]},
+            True,
+            id="graphql-missing-pr",
         ),
     ],
 )
-def test_collect_pr_keeps_ambiguous_or_permission_limited_metadata_fail_closed(
+def test_collect_pr_keeps_ambiguous_denied_or_missing_metadata_out_of_public_fallback(
     target: str,
     stderr: bytes,
     expected_error: str,
     github_remotes: dict[str, list[str]],
+    checkout: bool,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Do not infer public identity or bypass GitHub's authenticated permission decision."""
+    """Never activate the public fallback for an ambiguous, permission-limited, or semantically missing PR.
+
+    Public identity must not be inferred from ambiguous configured remotes, GitHub's authenticated permission decision
+    must not be bypassed, and a missing PR must be reported directly instead of being retried as a network failure.
+    """
     module = _load_collector()
     reader = sys.modules["github_read"]
     output = tmp_path / "pr"
@@ -707,8 +722,9 @@ def test_collect_pr_keeps_ambiguous_or_permission_limited_metadata_fail_closed(
     _configure_collector(monkeypatch, module, _unavailable_gh)
     monkeypatch.setattr(reader, "public_github_get", _public_get)
 
-    assert module.collect_pr(target=target, output=output, checkout=False, timeout_seconds=5) == 2
+    assert module.collect_pr(target=target, output=output, checkout=checkout, timeout_seconds=5) == 2
     assert (output / "pr-error.txt").read_text(encoding="utf-8") == f"{expected_error}\n"
+    assert not (output / "pr.json").exists()
 
 
 @pytest.mark.parametrize("failure_class", ["github-not-found", "github-network"])
@@ -755,38 +771,6 @@ def test_collect_pr_fails_closed_when_public_fallback_cannot_read_pr(
         }
     else:
         assert not diagnostic_path.exists()
-
-
-def test_collect_pr_keeps_graphql_missing_pr_out_of_public_fallback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Report a missing PR directly instead of retrying it as a network failure."""
-    module = _load_collector()
-    reader = sys.modules["github_read"]
-    output = tmp_path / "pr"
-    _runner = FakeRunner()
-
-    def _missing_pr(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
-        """Return GitHub's semantic missing-PR response and delegate other commands."""
-        if argv[:3] == ["gh", "pr", "view"]:
-            return subprocess.CompletedProcess(
-                argv,
-                1,
-                stdout=b"",
-                stderr=b"GraphQL: Could not resolve to a PullRequest with the number of 17.",
-            )
-        return _runner(argv, **kwargs)
-
-    def _public_get(*args: Any, **kwargs: Any) -> bytes:
-        """Fail if a semantic not-found response activates public fallback."""
-        raise AssertionError("a semantic not-found response must not activate public fallback")
-
-    _configure_collector(monkeypatch, module, _missing_pr)
-    monkeypatch.setattr(reader, "public_github_get", _public_get)
-
-    assert module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5) == 2
-    assert (output / "pr-error.txt").read_text(encoding="utf-8") == "github-not-found:gh-pr-view\n"
-    assert not (output / "pr.json").exists()
 
 
 def test_collect_pr_rejects_canonical_url_without_matching_configured_github_remote(
@@ -1038,12 +1022,31 @@ def test_collect_pr_remediation_rejects_inconsistent_cross_repository_routing(
     assert not any(argv[:2] == ["git", "checkout"] for argv, _ in runner.calls)
 
 
-def test_collect_pr_remediation_rejects_option_shaped_head_branch_before_checkout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("runner_options", "expected_error"),
+    [
+        pytest.param(
+            {"gh_checkout_fails": True, "head_ref": "--orphan"},
+            "missing-remediation-head-branch",
+            id="option-shaped-head-branch",
+        ),
+        pytest.param(
+            {"pr_state": "CLOSED", "gh_checkout_fails": False},
+            "remediation-requires-open-pr",
+            id="closed-pr",
+        ),
+    ],
+)
+def test_collect_pr_remediation_rejects_unsafe_pr_before_gh_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runner_options: dict[str, Any], expected_error: str
 ) -> None:
-    """Prevent the direct native checkout from parsing a PR branch name as an option."""
+    """Refuse a remediation checkout that would parse a branch name as an option or target a closed PR.
+
+    The direct native checkout must never see a PR branch name shaped like an option, and remediation checkout is
+    limited to an open pull request with a live publication destination.
+    """
     module = _load_collector()
-    runner = FakeRunner(gh_checkout_fails=True, head_ref="--orphan")
+    runner = FakeRunner(**runner_options)
     _configure_collector(monkeypatch, module, runner)
     output = tmp_path / "pr"
 
@@ -1056,7 +1059,7 @@ def test_collect_pr_remediation_rejects_option_shaped_head_branch_before_checkou
     )
 
     assert result == 2
-    assert (output / "pr-error.txt").read_text(encoding="utf-8") == "missing-remediation-head-branch\n"
+    assert (output / "pr-error.txt").read_text(encoding="utf-8") == f"{expected_error}\n"
     assert not any(argv[:3] == ["gh", "pr", "checkout"] for argv, _ in runner.calls)
 
 
@@ -1078,28 +1081,6 @@ def test_collect_pr_rejects_remediation_mode_without_checkout(tmp_path: Path, mo
     assert result == 2
     assert (output / "pr-error.txt").read_text(encoding="utf-8") == "remediation-requires-checkout\n"
     assert runner.calls == []
-
-
-def test_collect_pr_remediation_rejects_closed_pr_before_gh_checkout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Limit remediation checkout to an open pull request with a live publication destination."""
-    module = _load_collector()
-    runner = FakeRunner(pr_state="CLOSED", gh_checkout_fails=False)
-    _configure_collector(monkeypatch, module, runner)
-    output = tmp_path / "pr"
-
-    result = module.collect_pr(
-        target="17",
-        output=output,
-        checkout=True,
-        checkout_mode="remediate",
-        timeout_seconds=5,
-    )
-
-    assert result == 2
-    assert (output / "pr-error.txt").read_text(encoding="utf-8") == "remediation-requires-open-pr\n"
-    assert not any(argv[:3] == ["gh", "pr", "checkout"] for argv, _ in runner.calls)
 
 
 def test_collect_pr_review_uses_detached_worktree_without_gh_checkout(
@@ -1248,7 +1229,8 @@ def test_checkout_file_inventory_uses_complete_verified_git_comparison(
     specification = importlib.util.spec_from_file_location(
         "review_routing_complete_pr", PLUGIN_ROOT / "skills/code-review/review_routing.py"
     )
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     routing = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(routing)
     tier, evidence, mandatory = routing.derive_mechanical_risk(output)

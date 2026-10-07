@@ -392,7 +392,7 @@ def _git(args: list[str], cwd: Path | None = None) -> str:
     """
     try:
         completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
-            ["git", *args],
+            ["git", *args],  # noqa: S607 - git resolved via PATH on purpose
             cwd=str(cwd) if cwd else None,
             capture_output=True,
             text=True,

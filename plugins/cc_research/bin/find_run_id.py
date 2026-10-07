@@ -34,6 +34,7 @@ import json
 import sys
 from pathlib import Path
 
+#: Run state statuses that count as a finished run when choosing which run id to report.
 _COMPLETED_STATUSES: frozenset[str] = frozenset({"completed", "goal-achieved"})
 
 

@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from _platform import POSIX_FILE_MODES_AVAILABLE
 
 _posix_doctor_only = pytest.mark.skipif(
@@ -112,8 +111,7 @@ def test_hook_reuses_manager_doctor_and_preserves_real_home(tmp_path: Path, isol
     completed = subprocess.run(
         [sys.executable, str(hook_script)],
         input=_hook_input(),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         env=environment,
         check=False,
         timeout=30,
@@ -147,8 +145,7 @@ def test_hook_surfaces_one_bounded_block_reason(tmp_path: Path, isolated_plugin_
     completed = subprocess.run(
         [sys.executable, str(hook_script)],
         input=_hook_input(),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         env=environment,
         check=False,
         timeout=30,
@@ -172,8 +169,7 @@ def test_invalid_hook_input_fails_open_without_traceback(tmp_path: Path) -> None
     completed = subprocess.run(
         [sys.executable, str(HOOK_SCRIPT)],
         input=b"{}",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         env=environment,
         check=False,
         timeout=10,

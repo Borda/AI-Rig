@@ -34,9 +34,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+#: Index age in hours above which the smoke test reports the index as stale; default of ``--max-age-hours``.
 DEFAULT_MAX_AGE_HOURS = 24
-# DoS guard, held at the query engine's ceiling (``query._MAX_INDEX_SIZE_BYTES``):
-# a helper that refuses an index the engine serves reports a healthy project as broken.
+#: DoS guard, held at the query engine's ceiling (``query._MAX_INDEX_SIZE_BYTES``):
+#: a helper that refuses an index the engine serves reports a healthy project as broken.
 MAX_INDEX_SIZE = 512 * 1024 * 1024
 
 
@@ -89,7 +90,7 @@ def _validate_index_path(raw: str) -> Path | None:
     if not candidate.is_file():
         return None
     tempdir = Path(tempfile.gettempdir()).resolve()
-    ownership_gated_roots = {tempdir, Path("/tmp").resolve()}
+    ownership_gated_roots = {tempdir, Path("/tmp").resolve()}  # noqa: S108 - macOS /tmp symlink target
     allowed_roots = [
         Path.cwd().resolve(),
         (Path(os.path.expanduser("~")) / ".claude").resolve(),

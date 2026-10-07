@@ -52,9 +52,12 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+#: Allowed shape of the marketplace name argument: letters, digits, underscore and hyphen only.
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+#: Milliseconds in one hour, for converting between orphan timestamps and hour thresholds.
 _MS_PER_HOUR = 3_600_000
 
+#: Directory of this script, added to ``sys.path`` so sibling bin modules can be imported.
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))

@@ -58,6 +58,7 @@ class TelemetryError(ValueError):
     """Raised when rollout telemetry cannot be validated safely."""
 
 
+#: Names of the token-count fields collected for each wave and included in its telemetry record.
 TOKEN_FIELDS = (
     "input_tokens",
     "output_tokens",
@@ -66,10 +67,15 @@ TOKEN_FIELDS = (
     "cache_write_input_tokens",
     "total_tokens",
 )
+#: Execution modes a telemetry record may report.
 EXECUTION_MODES = frozenset({"parallel", "independent-spawned", "serial", "serial-fallback"})
+#: Final wave statuses that may be recorded in retained evidence.
 RETENTION_STATUSES = frozenset({"passed", "failed", "cancelled", "conflicted"})
+#: Fields that retained evidence may declare as unavailable without invalidating the record.
 RETAINED_UNAVAILABLE_FIELDS = frozenset({"task_duration_ms"})
+#: Pattern for a lowercase 64-character hex digest.
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+#: Exact set of fields permitted in a wave telemetry record.
 _WAVE_FIELDS = frozenset(
     {
         "schema_version",
@@ -84,6 +90,7 @@ _WAVE_FIELDS = frozenset(
         *TOKEN_FIELDS,
     }
 )
+#: Exact set of fields permitted in a retained wave-evidence record.
 _RETAINED_WAVE_EVIDENCE_FIELDS = frozenset(
     {
         "schema_version",
@@ -107,7 +114,9 @@ _RETAINED_WAVE_EVIDENCE_FIELDS = frozenset(
         "diagnostic_expires_at",
     }
 )
+#: File-name suffix of a sanitized diagnostic file kept for a wave.
 _SANITIZED_DIAGNOSTIC_SUFFIX = ".diagnostic.json"
+#: File name of the log that records when diagnostic files expired.
 _DIAGNOSTIC_EXPIRY_AUDIT = "expiry-audit.jsonl"
 
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.7
+
+- End the child cleanup grace as soon as the child's process group has no members instead of always waiting the full 2 seconds; the maximum wait and the force-kill that follows are unchanged.
+
 ## 0.6.6
 
 - Run the Codex setup helper through the packaged portable Python launcher while retaining the separate MCP startup prerequisite.

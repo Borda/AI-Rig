@@ -19,10 +19,8 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
-
-import symlink_with_guard  # noqa: E402
-from symlink_with_guard import cleanup, create_link, main, scan  # noqa: E402
+import symlink_with_guard
+from symlink_with_guard import cleanup, create_link, main, scan
 
 _MARKER = "borda-ai-rig/foundry/"
 _SKILL_MD = Path(__file__).resolve().parent.parent.parent / "skills" / "setup" / "SKILL.md"
@@ -61,17 +59,6 @@ def _env(tmp_path: Path) -> tuple[Path, Path]:
     (home / ".claude" / "skills").mkdir(parents=True)
     (home / ".claude" / "agents").mkdir(parents=True)
     return plugin, home
-
-
-@pytest.fixture(name="marked_env")
-def _marked_env(env: tuple[Path, Path]) -> tuple[Path, Path]:
-    """Alias of :func:`env`, kept for tests that assert on current-version links.
-
-    The distinction the two fixtures used to draw disappeared when ``env`` moved
-    its plugin root into the install cache: that root now carries the
-    ``borda-ai-rig/foundry/`` marker on its own.
-    """
-    return env
 
 
 def _stale_root(plugin: Path, version: str = "0.39.0") -> Path:
@@ -168,109 +155,176 @@ class TestMarkerSeparators:
 class TestCleanup:
     """Cleanup: removes only foundry-managed symlinks whose source vanished."""
 
-    def test_removes_obsolete_foundry_rule_link(self, env: tuple[Path, Path]) -> None:
-        """Stale same-lineage symlink whose source no longer exists is removed."""
+    @pytest.mark.parametrize(
+        ("link_rel", "target", "message"),
+        [
+            # Stale same-lineage symlink whose source no longer exists.
+            pytest.param(
+                "rules/foundry-obsolete.md",
+                lambda plugin, home: str(_stale_root(plugin) / "rules" / "obsolete.md"),
+                "removed obsolete: foundry-obsolete.md",
+                id="obsolete-foundry-rule-link",
+            ),
+            # Pre-namespace link into the current root is removed so Phase 4 can re-link namespaced.
+            pytest.param(
+                "rules/current.md",
+                lambda plugin, home: str(plugin / "rules" / "current.md"),
+                "removed obsolete: current.md",
+                id="legacy-unprefixed-link-migrates",
+            ),
+            # A pre-namespace link from an older install shares the lineage, so it migrates too.
+            pytest.param(
+                "rules/current.md",
+                lambda plugin, home: str(_stale_root(plugin) / "rules" / "current.md"),
+                "removed obsolete: current.md",
+                id="legacy-link-from-older-installed-version-migrates",
+            ),
+            # A link into the current root whose file was renamed away is owned, so it goes.
+            pytest.param(
+                "rules/testing.md",
+                lambda plugin, home: str(plugin / "rules" / "testing.md"),
+                "removed obsolete: testing.md",
+                id="dangling-owned-link-after-source-rename",
+            ),
+            # Foundry-managed skill symlink under a non-current root.
+            pytest.param(
+                "skills/oldskill",
+                lambda plugin, home: "/old/borda-ai-rig/foundry/0.10.0/skills/oldskill",
+                "removed user-level skill link: oldskill",
+                id="stale-skill-link",
+            ),
+            # Deliberately opposite to the current-version AGENT symlink case in ``test_keeps_link``: a current-root
+            # skill link is not a signal to investigate, it is the defect itself — it registers the dir as a
+            # user-level skill that shadows Claude Code's bundled skill of the same name. Do not align these two cases.
+            pytest.param(
+                "skills/curator",
+                lambda plugin, home: str(plugin / "skills" / "curator"),
+                "removed user-level skill link: curator",
+                id="current-version-skill-link",
+            ),
+            # Deny exemptions for global shared-plugin paths.
+            pytest.param(
+                "skills/_shared",
+                lambda plugin, home: str(plugin / "skills" / "_shared"),
+                "removed user-level skill link: _shared",
+                id="shared-support-dir-link",
+            ),
+            # Foundry-managed agent symlink under a non-current root is removed unconditionally.
+            pytest.param(
+                "agents/sw-engineer.md",
+                lambda plugin, home: "/old/borda-ai-rig/foundry/0.10.0/agents/sw-engineer.md",
+                "removed obsolete agent: sw-engineer.md",
+                id="stale-foundry-agent-symlink",
+            ),
+        ],
+    )
+    def test_removes_link(self, env: tuple[Path, Path], link_rel: str, target, message: str) -> None:
+        """A foundry-owned symlink whose source is gone or that must not exist user-level is removed and logged.
+
+        Scenario: stale and dangling rule links in the owned lineage, pre-namespace links that Phase 4 re-links, and
+        foundry-managed skill and agent links are all removed with a log line naming them.
+        """
         plugin, home = env
-        link = home / ".claude" / "rules" / "foundry-obsolete.md"
-        _ln(str(_stale_root(plugin) / "rules" / "obsolete.md"), link)
+        link = home / ".claude" / link_rel
+        _ln(target(plugin, home), link)
 
         log = cleanup(plugin, home, _MARKER)
 
         assert not link.is_symlink()
-        assert "removed obsolete: foundry-obsolete.md" in log
-
-    def test_keeps_current_foundry_rule_link(self, env: tuple[Path, Path]) -> None:
-        """Namespaced symlink already pointing into current plugin root is untouched."""
-        plugin, home = env
-        link = home / ".claude" / "rules" / "foundry-current.md"
-        _ln(str(plugin / "rules" / "current.md"), link)
-
-        log = cleanup(plugin, home, _MARKER)
-
-        assert link.is_symlink()
-        assert log == []
-
-    def test_keeps_non_foundry_rule_link(self, env: tuple[Path, Path]) -> None:
-        """Symlink to a non-foundry path is left alone (user owns it)."""
-        plugin, home = env
-        link = home / ".claude" / "rules" / "foundry-user.md"
-        _ln("/somewhere/else/user.md", link)
-
-        cleanup(plugin, home, _MARKER)
-
-        assert link.is_symlink()
-
-    def test_migrates_legacy_unprefixed_link(self, env: tuple[Path, Path]) -> None:
-        """Pre-namespace link into the current root is removed so Phase 4 can re-link namespaced."""
-        plugin, home = env
-        legacy = home / ".claude" / "rules" / "current.md"
-        _ln(str(plugin / "rules" / "current.md"), legacy)
-
-        log = cleanup(plugin, home, _MARKER)
-
-        assert not legacy.is_symlink()
-        assert "removed obsolete: current.md" in log
-
-    def test_migrates_legacy_link_from_older_installed_version(self, env: tuple[Path, Path]) -> None:
-        """A pre-namespace link from an older install shares the lineage, so it migrates too."""
-        plugin, home = env
-        legacy = home / ".claude" / "rules" / "current.md"
-        _ln(str(_stale_root(plugin) / "rules" / "current.md"), legacy)
-
-        cleanup(plugin, home, _MARKER)
-
-        assert not legacy.is_symlink()
-
-    def test_removes_dangling_owned_link_after_source_rename(self, env: tuple[Path, Path]) -> None:
-        """A link into the current root whose file was renamed away is owned, so it goes."""
-        plugin, home = env
-        dangling = home / ".claude" / "rules" / "testing.md"
-        _ln(str(plugin / "rules" / "testing.md"), dangling)
-
-        log = cleanup(plugin, home, _MARKER)
-
-        assert not dangling.is_symlink()
-        assert "removed obsolete: testing.md" in log
+        assert message in log
 
     @pytest.mark.parametrize(
-        "target_rel",
+        ("link_rel", "target"),
         [
-            ".claude/plugins/cache/other-market/foundry/0.39.0/rules/current.md",
-            ".claude/plugins/cache/borda-ai-rig/develop/0.19.0/rules/quality-gates.md",
-            "src/AI-Rig/plugins/cc_foundry/rules/current.md",
-            "dotfiles/plugins/cc_foundry/rules/current.md",
+            # Namespaced symlink already pointing into current plugin root is untouched.
+            pytest.param(
+                "rules/foundry-current.md",
+                lambda plugin, home: str(plugin / "rules" / "current.md"),
+                id="current-foundry-rule-link",
+            ),
+            # Symlink to a non-foundry path is left alone (user owns it).
+            pytest.param(
+                "rules/foundry-user.md", lambda plugin, home: "/somewhere/else/user.md", id="non-foundry-rule"
+            ),
+            pytest.param("skills/mine", lambda plugin, home: "/somewhere/else/mine", id="non-foundry-skill-link"),
+            pytest.param(
+                "agents/my-agent.md",
+                lambda plugin, home: "/home/user/.claude/agents/my-agent.md",
+                id="non-foundry-agent-symlink",
+            ),
+            # Init never re-creates these, so any link pointing at the current root was placed by something external;
+            # leaving it intact gives the operator a clear signal to investigate without silently destroying state.
+            pytest.param(
+                "agents/sw-engineer.md",
+                lambda plugin, home: str(plugin / "agents" / "sw-engineer.md"),
+                id="current-version-agent-symlink",
+            ),
+            # Another plugin's namespace is never foundry's to prune.
+            pytest.param(
+                "rules/develop-quality-gates.md",
+                lambda plugin, home: str(
+                    home / ".claude/plugins/cache/borda-ai-rig/develop/0.19.0/rules/quality-gates.md"
+                ),
+                id="sibling-plugin-namespaced-link",
+            ),
+            # An unprefixed link failing the ownership proof survives migration untouched.
+            pytest.param(
+                "rules/current.md",
+                lambda plugin, home: str(home / ".claude/plugins/cache/other-market/foundry/0.39.0/rules/current.md"),
+                id="legacy-link-other-marketplace-target",
+            ),
+            pytest.param(
+                "rules/current.md",
+                lambda plugin, home: str(
+                    home / ".claude/plugins/cache/borda-ai-rig/develop/0.19.0/rules/quality-gates.md"
+                ),
+                id="legacy-link-sibling-plugin-target",
+            ),
+            pytest.param(
+                "rules/current.md",
+                lambda plugin, home: str(home / "src/AI-Rig/plugins/cc_foundry/rules/current.md"),
+                id="legacy-link-source-checkout-target",
+            ),
+            pytest.param(
+                "rules/current.md",
+                lambda plugin, home: str(home / "dotfiles/plugins/cc_foundry/rules/current.md"),
+                id="legacy-link-dotfiles-target",
+            ),
         ],
     )
-    def test_keeps_legacy_link_with_foreign_target(self, env: tuple[Path, Path], target_rel: str) -> None:
-        """An unprefixed link failing the ownership proof survives migration untouched."""
+    def test_keeps_link(self, env: tuple[Path, Path], link_rel: str, target) -> None:
+        """A symlink the user or another plugin owns, or that is not provably foundry's, is left alone and unlogged.
+
+        Scenario: a current namespaced rule link, non-foundry rule/skill/agent links, a current-root agent link, a
+        sibling plugin's namespaced link and unprefixed links failing the ownership proof all survive cleanup.
+        """
         plugin, home = env
-        legacy = home / ".claude" / "rules" / "current.md"
-        _ln(str(home / target_rel), legacy)
+        link = home / ".claude" / link_rel
+        _ln(target(plugin, home), link)
 
         log = cleanup(plugin, home, _MARKER)
 
-        assert legacy.is_symlink()
+        assert link.is_symlink()
         assert log == []
 
-    def test_keeps_sibling_plugin_namespaced_link(self, env: tuple[Path, Path]) -> None:
-        """Another plugin's namespace is never foundry's to prune."""
+    @pytest.mark.parametrize(
+        ("real_rel", "make", "kind"),
+        [
+            pytest.param("rules/myown.md", lambda real: real.write_text("hand-written\n"), "is_file", id="rule-file"),
+            pytest.param("skills/geo", lambda real: real.mkdir(), "is_dir", id="skill-dir"),
+            pytest.param("agents/user.md", lambda real: real.write_text("user-authored\n"), "is_file", id="agent-file"),
+        ],
+    )
+    def test_keeps_real_entry(self, env: tuple[Path, Path], real_rel: str, make, kind: str) -> None:
+        """Real (non-symlink) files and dirs under ~/.claude/{rules,skills,agents}/ are never deleted by cleanup."""
         plugin, home = env
-        sibling = home / ".claude" / "rules" / "develop-quality-gates.md"
-        _ln(str(home / ".claude/plugins/cache/borda-ai-rig/develop/0.19.0/rules/quality-gates.md"), sibling)
+        real = home / ".claude" / real_rel
+        make(real)
 
         cleanup(plugin, home, _MARKER)
 
-        assert sibling.is_symlink()
-
-    def test_keeps_real_file(self, env: tuple[Path, Path]) -> None:
-        """Real files are never deleted by cleanup."""
-        plugin, home = env
-        real = home / ".claude" / "rules" / "myown.md"
-        real.write_text("hand-written\n")
-
-        cleanup(plugin, home, _MARKER)
-
-        assert real.is_file()
+        assert getattr(real, kind)()
+        assert not real.is_symlink()
 
     def test_removes_obsolete_team_protocol(self, env: tuple[Path, Path]) -> None:
         """Stale foundry TEAM_PROTOCOL.md symlink is removed when source absent."""
@@ -307,65 +361,6 @@ class TestCleanup:
 
         assert link.is_symlink()  # not obsolete — Phase 4 handles refresh
 
-    def test_removes_stale_skill_link(self, env: tuple[Path, Path]) -> None:
-        """Foundry-managed skill symlink under a non-current root is removed."""
-        plugin, home = env
-        link = home / ".claude" / "skills" / "oldskill"
-        _ln("/old/borda-ai-rig/foundry/0.10.0/skills/oldskill", link)
-
-        log = cleanup(plugin, home, _MARKER)
-
-        assert not link.is_symlink()
-        assert "removed user-level skill link: oldskill" in log
-
-    def test_removes_current_version_skill_link(self, marked_env: tuple[Path, Path]) -> None:
-        """Skill symlink pointing into the CURRENT plugin root is removed too.
-
-        Deliberately opposite to ``test_keeps_current_version_agent_symlink``: a current-root skill link is not a signal
-        to investigate, it is the defect itself — it registers the dir as a user-level skill that shadows Claude Code's
-        bundled skill of the same name. Do not align these two tests.
-        """
-        plugin, home = marked_env
-        link = home / ".claude" / "skills" / "curator"
-        _ln(str(plugin / "skills" / "curator"), link)
-
-        log = cleanup(plugin, home, _MARKER)
-
-        assert not link.is_symlink()
-        assert "removed user-level skill link: curator" in log
-
-    def test_removes_shared_support_dir_link(self, marked_env: tuple[Path, Path]) -> None:
-        """Deny exemptions for global shared-plugin paths."""
-        plugin, home = marked_env
-        link = home / ".claude" / "skills" / "_shared"
-        _ln(str(plugin / "skills" / "_shared"), link)
-
-        log = cleanup(plugin, home, _MARKER)
-
-        assert not link.is_symlink()
-        assert "removed user-level skill link: _shared" in log
-
-    def test_keeps_non_foundry_skill_link(self, env: tuple[Path, Path]) -> None:
-        """Skill symlink pointing outside foundry is left alone (user owns it)."""
-        plugin, home = env
-        link = home / ".claude" / "skills" / "mine"
-        _ln("/somewhere/else/mine", link)
-
-        cleanup(plugin, home, _MARKER)
-
-        assert link.is_symlink()
-
-    def test_keeps_real_skill_dir(self, env: tuple[Path, Path]) -> None:
-        """Real (non-symlink) dirs under ~/.claude/skills/ are never deleted."""
-        plugin, home = env
-        real = home / ".claude" / "skills" / "geo"
-        real.mkdir()
-
-        cleanup(plugin, home, _MARKER)
-
-        assert real.is_dir()
-        assert not real.is_symlink()
-
     def test_empty_when_no_obsolete_entries(self, env: tuple[Path, Path]) -> None:
         """Clean state → no removals, empty log."""
         plugin, home = env
@@ -374,80 +369,34 @@ class TestCleanup:
 
         assert log == []
 
-    def test_removes_stale_foundry_agent_symlink(self, env: tuple[Path, Path]) -> None:
-        """Foundry-managed agent symlink under a non-current root is removed unconditionally."""
-        plugin, home = env
-        link = home / ".claude" / "agents" / "sw-engineer.md"
-        _ln("/old/borda-ai-rig/foundry/0.10.0/agents/sw-engineer.md", link)
-
-        log = cleanup(plugin, home, _MARKER)
-
-        assert not link.is_symlink()
-        assert "removed obsolete agent: sw-engineer.md" in log
-
-    def test_keeps_non_foundry_agent_symlink(self, env: tuple[Path, Path]) -> None:
-        """Agent symlink pointing outside foundry is left alone (user owns it)."""
-        plugin, home = env
-        link = home / ".claude" / "agents" / "my-agent.md"
-        _ln("/home/user/.claude/agents/my-agent.md", link)
-
-        cleanup(plugin, home, _MARKER)
-
-        assert link.is_symlink()
-
-    def test_keeps_current_version_agent_symlink(self, env: tuple[Path, Path]) -> None:
-        """Agent symlink pointing into the current plugin root is left alone.
-
-        Init never re-creates these, so any link pointing at the current root was placed by something external; leaving
-        it intact gives the operator a clear signal to investigate without silently destroying state.
-        """
-        plugin, home = env
-        link = home / ".claude" / "agents" / "sw-engineer.md"
-        _ln(str(plugin / "agents" / "sw-engineer.md"), link)
-
-        cleanup(plugin, home, _MARKER)
-
-        assert link.is_symlink()
-
-    def test_keeps_real_agent_file(self, env: tuple[Path, Path]) -> None:
-        """Real (non-symlink) files under ~/.claude/agents/ are never deleted."""
-        plugin, home = env
-        real = home / ".claude" / "agents" / "user.md"
-        real.write_text("user-authored\n")
-
-        cleanup(plugin, home, _MARKER)
-
-        assert real.is_file()
-        assert not real.is_symlink()
-
 
 class TestScan:
     """Scan: surfaces only conflicts requiring user confirmation."""
 
-    def test_skips_current_foundry_link(self, env: tuple[Path, Path]) -> None:
-        """Current namespaced symlink is not a conflict."""
+    @pytest.mark.parametrize(
+        ("link_rel", "target"),
+        [
+            pytest.param(
+                "rules/foundry-current.md",
+                lambda plugin: str(plugin / "rules" / "current.md"),
+                id="current-foundry-link",
+            ),
+            # Same-lineage stale symlink is auto-replaced in Phase 4.
+            pytest.param(
+                "rules/foundry-current.md",
+                lambda plugin: str(_stale_root(plugin) / "rules" / "current.md"),
+                id="stale-foundry-link",
+            ),
+            # A pre-namespace link is not at any current destination.
+            pytest.param(
+                "rules/current.md", lambda plugin: str(plugin / "rules" / "current.md"), id="legacy-unprefixed-link"
+            ),
+        ],
+    )
+    def test_link_is_not_a_conflict(self, env: tuple[Path, Path], link_rel: str, target) -> None:
+        """A current, stale same-lineage or pre-namespace link raises no conflict for the user to confirm."""
         plugin, home = env
-        _ln(
-            str(plugin / "rules" / "current.md"),
-            home / ".claude" / "rules" / "foundry-current.md",
-        )
-
-        assert scan(plugin, home, _MARKER) == []
-
-    def test_skips_stale_foundry_link(self, env: tuple[Path, Path]) -> None:
-        """Same-lineage stale symlink is auto-replaced in Phase 4 — not a conflict."""
-        plugin, home = env
-        _ln(
-            str(_stale_root(plugin) / "rules" / "current.md"),
-            home / ".claude" / "rules" / "foundry-current.md",
-        )
-
-        assert scan(plugin, home, _MARKER) == []
-
-    def test_ignores_legacy_unprefixed_link(self, env: tuple[Path, Path]) -> None:
-        """A pre-namespace link is not at any current destination, so it raises no conflict."""
-        plugin, home = env
-        _ln(str(plugin / "rules" / "current.md"), home / ".claude" / "rules" / "current.md")
+        _ln(target(plugin), home / ".claude" / link_rel)
 
         assert scan(plugin, home, _MARKER) == []
 
@@ -928,29 +877,26 @@ class TestCreateLink:
 
         assert outside.read_text() == "precious\n"  # untouched — not followed
 
-    def test_main_create_mode_missing_src(
+    @pytest.mark.parametrize(
+        ("given", "missing"),
+        [
+            pytest.param("--dest", "--src", id="missing-src"),
+            pytest.param("--src", "--dest", id="missing-dest"),
+        ],
+    )
+    def test_main_create_mode_missing_path(
         self,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
+        given: str,
+        missing: str,
     ) -> None:
-        """Reject create mode without a source path."""
+        """Reject create mode without a source path or without a destination path, naming the missing flag."""
         home = tmp_path / "home"
         home.mkdir()
-        rc = main(["create", "--dest", str(tmp_path / "x"), "--home", str(home)])
+        rc = main(["create", given, str(tmp_path / "x"), "--home", str(home)])
         assert rc == 2
-        assert "--src" in capsys.readouterr().err
-
-    def test_main_create_mode_missing_dest(
-        self,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """Reject create mode without a destination path."""
-        home = tmp_path / "home"
-        home.mkdir()
-        rc = main(["create", "--src", str(tmp_path / "x"), "--home", str(home)])
-        assert rc == 2
-        assert "--dest" in capsys.readouterr().err
+        assert missing in capsys.readouterr().err
 
 
 def _phase4_block() -> str:

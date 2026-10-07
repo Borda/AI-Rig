@@ -12,10 +12,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import jq_write
 import pytest
-
-
-import jq_write  # noqa: E402
 
 _HAS_JQ = shutil.which("jq") is not None
 _requires_jq = pytest.mark.skipif(not _HAS_JQ, reason="jq not installed on this host")
@@ -175,15 +173,16 @@ class TestRunJqWriteErrorPaths:
 class TestMain:
     """Main: CLI surface — argv parsing + exit codes."""
 
-    def test_no_args_returns_3(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """No target/filter → exit 3 with usage line."""
-        rc = jq_write.main([])
-        assert rc == 3
-        assert "Usage:" in capsys.readouterr().err
-
-    def test_only_target_returns_3(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Target without filter → exit 3."""
-        rc = jq_write.main(["file.json"])
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            pytest.param([], id="no-args"),
+            pytest.param(["file.json"], id="only-target"),
+        ],
+    )
+    def test_missing_target_or_filter_returns_3(self, capsys: pytest.CaptureFixture[str], argv: list[str]) -> None:
+        """No target/filter, or a target without a filter, exits 3 with the usage line."""
+        rc = jq_write.main(argv)
         assert rc == 3
         assert "Usage:" in capsys.readouterr().err
 

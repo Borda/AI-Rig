@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
-import importlib
 import base64
 import hashlib
+import importlib
 import json
 import os
-from pathlib import Path
 import stat
 import subprocess
 import sys
 import tempfile
 import threading
+from pathlib import Path
 from typing import Any
 
 import pytest
-
 
 BIN_ROOT = Path(__file__).resolve().parents[1] / "bin"
 SETUP_PATH = BIN_ROOT / "bridge_setup.py"
@@ -60,7 +59,7 @@ def _completed(
 
 
 @pytest.mark.parametrize(
-    "argv, expected_exit, help_output",
+    ("argv", "expected_exit", "help_output"),
     [
         pytest.param(["--help"], 0, True, id="ordinary-help"),
         pytest.param(["--help", "--approve"], 0, True, id="help-before-empty-approval"),
@@ -261,7 +260,8 @@ def test_actionable_plan_creates_only_safe_key_state_and_check_creates_none(
 
     assert plan["status"] == check["status"] == "partial"
     assert len(key_files) == 1
-    assert key_files[0].is_file() and not key_files[0].is_symlink()
+    assert key_files[0].is_file()
+    assert not key_files[0].is_symlink()
     assert key_files[0].stat().st_size == setup.APPROVAL_KEY_BYTES
     if os.name != "nt":
         assert stat.S_IMODE(key_files[0].stat().st_mode) == 0o600
@@ -272,10 +272,10 @@ def test_actionable_plan_creates_only_safe_key_state_and_check_creates_none(
 
 @pytest.mark.parametrize(
     ("current_host", "target", "direction"),
-    (
+    [
         pytest.param("codex", "claude", "codex_to_claude", id="codex-to-claude"),
         pytest.param("claude", "codex", "claude_to_codex", id="claude-to-codex"),
-    ),
+    ],
 )
 def test_peer_target_resolution_is_explicit_for_both_loaded_hosts(
     tmp_path: Path,
@@ -324,7 +324,7 @@ def test_capability_matrix_contains_only_the_version_gated_native_operations() -
     }
 
 
-@pytest.mark.parametrize("approval", (pytest.param(None, id="missing"), "wrong-digest"))
+@pytest.mark.parametrize("approval", [pytest.param(None, id="missing"), "wrong-digest"])
 def test_apply_rejects_missing_or_wrong_approval_before_any_native_subprocess(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -529,7 +529,7 @@ def test_concurrent_mutation_lock_stops_before_native_configuration(
     assert not any(command[:3] == ["claude", "plugin", "install"] for command, _ in calls)
 
 
-@pytest.mark.parametrize("sensitive_option", ("--token", "--access-token", "--device-code"))
+@pytest.mark.parametrize("sensitive_option", ["--token", "--access-token", "--device-code"])
 def test_cli_rejects_sensitive_values_without_echo_or_subprocess(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -540,7 +540,7 @@ def test_cli_rejects_sensitive_values_without_echo_or_subprocess(
     setup = _setup_module()
     _redirect_user_state(setup, monkeypatch, tmp_path / "user-state")
     calls = _install_native_boundary(setup, monkeypatch)
-    secret = "sensitive-value-must-not-escape"
+    secret = "sensitive-value-must-not-escape"  # noqa: S105 - test sentinel string, not a credential
 
     result = _invoke(setup, capsys, tmp_path, sensitive_option, secret)
     rendered = json.dumps(result, sort_keys=True)
@@ -682,10 +682,10 @@ def test_live_plan_contains_only_the_separately_approved_peer_inference_operatio
 
 @pytest.mark.parametrize(
     ("claude_installed", "claude_authenticated", "classification"),
-    (
+    [
         pytest.param(False, True, "configuration-needed", id="plugin-not-configured"),
         pytest.param(True, False, "authentication-needed", id="host-not-authenticated"),
-    ),
+    ],
 )
 def test_live_approval_stops_before_provider_when_prerequisites_are_unproven(
     tmp_path: Path,
@@ -749,7 +749,7 @@ def test_authentication_launch_never_claims_a_non_static_verification_level(
     assert result["verification_level"] in {"static", "host-authenticated"}
 
 
-@pytest.mark.parametrize("invalid_time", ("future-issued", "excessive-ttl"))
+@pytest.mark.parametrize("invalid_time", ["future-issued", "excessive-ttl"])
 def test_future_or_overlong_approval_time_is_denied_before_probes_or_user_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -915,7 +915,7 @@ def test_expired_approval_is_rejected_before_configuration_or_live_execution(
     assert live_calls == []
 
 
-@pytest.mark.parametrize("configuration_returncode", (0, 1))
+@pytest.mark.parametrize("configuration_returncode", [0, 1])
 def test_configuration_approval_is_one_use_and_replay_stops_before_native_command(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -940,10 +940,10 @@ def test_configuration_approval_is_one_use_and_replay_stops_before_native_comman
 
 @pytest.mark.parametrize(
     ("inventory_after_configuration", "classification"),
-    (
+    [
         pytest.param(False, "fresh-session-required", id="host-inventory-unchanged"),
         pytest.param(True, "configuration-verified", id="host-inventory-updated"),
-    ),
+    ],
 )
 def test_configuration_reinspects_host_inventory_before_reporting_outcome(
     tmp_path: Path,
@@ -1227,7 +1227,8 @@ def test_concurrent_approval_replay_check_cannot_allow_two_native_configurations
     second.join(timeout=10)
 
     configured = [command for command, _ in calls if "bridge@borda-ai-rig" in command]
-    assert not first.is_alive() and not second.is_alive()
+    assert not first.is_alive()
+    assert not second.is_alive()
     assert errors == []
     assert sorted(exit_codes) == [0, 2]
     assert configured == [["claude", "plugin", "install", "bridge@borda-ai-rig", "--scope", "user"]]
@@ -1235,13 +1236,13 @@ def test_concurrent_approval_replay_check_cannot_allow_two_native_configurations
 
 @pytest.mark.parametrize(
     ("reported", "accepted"),
-    (
+    [
         pytest.param("2.1.227\n", True, id="exact-minimum"),
         pytest.param("2.1.228 (Claude Code)\n", True, id="newer-patch"),
         pytest.param("3.0.0\n", True, id="newer-major"),
         pytest.param("2.1.226\n", False, id="older-patch"),
         pytest.param("no numeric release here\n", False, id="unparsable"),
-    ),
+    ],
 )
 def test_version_gate_is_a_minimum_floor_not_an_exact_pin(
     monkeypatch: pytest.MonkeyPatch, reported: str, accepted: bool

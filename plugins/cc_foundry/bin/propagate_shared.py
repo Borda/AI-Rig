@@ -33,7 +33,7 @@ import shutil
 import sys
 from pathlib import Path
 
-# Each entry: the canonical file, and the copies that must equal it byte-for-byte.
+#: Each entry: the canonical file, and the copies that must equal it byte-for-byte.
 MANIFEST: list[dict[str, object]] = [
     {
         "canonical": "plugins/codex-rig/shared/user_questions_mcp.py",

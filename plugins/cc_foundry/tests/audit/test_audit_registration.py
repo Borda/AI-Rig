@@ -22,10 +22,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 import propagate_shared
-
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PLUGINS = ("cc_foundry", "cc_oss", "cc_develop", "cc_research")
@@ -53,6 +51,18 @@ NODE_UNAVAILABLE = shutil.which("node") is None
 def _hooks(plugin: str) -> dict:
     """Return one plugin's parsed hook registrations."""
     return json.loads((REPO_ROOT / "plugins" / plugin / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+
+
+def _run_gate(script: str, encoding: str, cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run one shipped gate script with its stdout forced to ``encoding``, as a legacy console would."""
+    return subprocess.run(
+        [sys.executable, str(BIN_DIR / script), *args],
+        capture_output=True,
+        encoding=encoding,
+        env={**os.environ, "PYTHONIOENCODING": encoding},
+        cwd=str(cwd),
+        check=False,
+    )
 
 
 def _scripts(entry: dict) -> list[str]:
@@ -114,14 +124,7 @@ class TestPropagation:
     @pytest.mark.parametrize("encoding", ["utf-8", "cp1252", "ascii"])
     def test_copies_are_identical_to_the_canonical(self, encoding: str) -> None:
         """Check the whole manifest without crashing on legacy stdout encodings."""
-        proc = subprocess.run(
-            [sys.executable, str(BIN_DIR / "propagate_shared.py")],
-            capture_output=True,
-            encoding=encoding,
-            env={**os.environ, "PYTHONIOENCODING": encoding},
-            cwd=str(REPO_ROOT),
-            check=False,
-        )
+        proc = _run_gate("propagate_shared.py", encoding, REPO_ROOT)
         assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
@@ -153,18 +156,34 @@ class TestDocumentationGates:
                 stale.append(path.relative_to(REPO_ROOT).as_posix())
         assert stale == []
 
-    @pytest.mark.parametrize("encoding", ["utf-8", "cp1252", "ascii"])
-    def test_orphaned_bin_gate_passes(self, encoding: str) -> None:
-        """Require shipped references and encoding-safe success output."""
-        proc = subprocess.run(
-            [sys.executable, str(BIN_DIR / "check_orphaned_bin.py")],
-            capture_output=True,
-            encoding=encoding,
-            env={**os.environ, "PYTHONIOENCODING": encoding},
-            cwd=str(REPO_ROOT),
-            check=False,
-        )
+    def test_orphaned_bin_gate_passes(self) -> None:
+        """Every shipped ``bin/`` script in the real repository is referenced from plugin Markdown.
+
+        This is the repository fact, so it walks the real tree once. The walk reads every Markdown file once per script
+        and is the slow part of the gate; its result does not depend on the console encoding, which is covered
+        separately below.
+        """
+        proc = _run_gate("check_orphaned_bin.py", "utf-8", REPO_ROOT)
         assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    @pytest.mark.parametrize("encoding", ["cp1252", "ascii"])
+    def test_orphaned_bin_success_output_is_encoding_safe(self, encoding: str, tmp_path: Path) -> None:
+        """The gate's success report survives a legacy console encoding.
+
+        A minimal plugin tree with one referenced script drives the same success path the real repository takes: the
+        scan reads Markdown as UTF-8 regardless of console encoding and the success line is fixed text, so only the
+        printing step varies with ``encoding``. The UTF-8 console is exercised by the real-repository case above.
+        """
+        plugin = tmp_path / "plugins" / "demo"
+        (plugin / "bin").mkdir(parents=True)
+        (plugin / "bin" / "tool.py").write_text("print('tool')\n", encoding="utf-8")
+        (plugin / "skills" / "use").mkdir(parents=True)
+        (plugin / "skills" / "use" / "SKILL.md").write_text(
+            'python "${CLAUDE_PLUGIN_ROOT}/bin/tool.py"\n', encoding="utf-8"
+        )
+        proc = _run_gate("check_orphaned_bin.py", encoding, tmp_path, "--plugins-dir", "plugins")
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert proc.stdout.startswith("OK: Check 32d")
 
 
 @pytest.mark.skipif(NODE_UNAVAILABLE, reason="requires node to execute the hook")
@@ -246,7 +265,8 @@ class TestCoexistenceWithTaskLog:
         sentinel_root = Path(sentinel_base).resolve()
         if audit_dir.is_relative_to(sentinel_root):
             relative = audit_dir.relative_to(sentinel_root)
-            assert relative.parts and not relative.parts[0].startswith("claude-state-")
+            assert relative.parts
+            assert not relative.parts[0].startswith("claude-state-")
 
         assert {path: path.read_bytes() for path in env.log_files()} == before
         assert not any("claude-audit" in name for name in env.created_paths())

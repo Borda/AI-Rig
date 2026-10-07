@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from dataclasses import replace
 from pathlib import Path
-import sys
 from types import ModuleType
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,7 +19,8 @@ def _runner() -> ModuleType:
     spec = importlib.util.spec_from_file_location(
         "workflow_prevention_calibration", PLUGIN_ROOT / "runtime/calibration/run.py"
     )
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)

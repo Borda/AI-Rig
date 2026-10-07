@@ -5,10 +5,24 @@ from __future__ import annotations
 import json
 from enum import Enum
 
-import pytest
-
 import _schema
-from _schema import EntityType, SCAN_VERSION, Resolution, SymbolType, VALID_CALL_RESOLUTIONS
+import pytest
+from _schema import SCAN_VERSION, VALID_CALL_RESOLUTIONS, EntityType, Resolution, SymbolType
+
+#: Names of the per-feature min-version constants exported by ``_schema``.
+_PER_FEATURE_MIN_VER_NAMES = (
+    "MOCK_PATCHES_MIN_VER",
+    "UNCOVERED_MIN_VER",
+    "IMPORT_GROUPS_MIN_VER",
+    "DOCSTRING_MIN_VER",
+    "SPHINX_XREFS_MIN_VER",
+    "DEAD_SYMBOL_MIN_VER",
+    "MODULE_ALIASES_MIN_VER",
+    "SUBPROCESS_CALLS_MIN_VER",
+    "FIXTURE_GRAPH_MIN_VER",
+    "COVERAGE_MIN_VER",
+    "SYMBOL_ALIASES_MIN_VER",
+)
 
 
 class TestSchemaStringEnums:
@@ -125,36 +139,12 @@ class TestPerFeatureVersionConstants:
 
     def test_all_are_int(self) -> None:
         """Each per-feature min-version constant must be a plain int."""
-        for name in (
-            "MOCK_PATCHES_MIN_VER",
-            "UNCOVERED_MIN_VER",
-            "IMPORT_GROUPS_MIN_VER",
-            "DOCSTRING_MIN_VER",
-            "SPHINX_XREFS_MIN_VER",
-            "DEAD_SYMBOL_MIN_VER",
-            "MODULE_ALIASES_MIN_VER",
-            "SUBPROCESS_CALLS_MIN_VER",
-            "FIXTURE_GRAPH_MIN_VER",
-            "COVERAGE_MIN_VER",
-            "SYMBOL_ALIASES_MIN_VER",
-        ):
+        for name in _PER_FEATURE_MIN_VER_NAMES:
             assert isinstance(getattr(_schema, name), int), f"{name} must be int"
 
     def test_all_positive(self) -> None:
         """Each per-feature min-version constant must be ≥1."""
-        for name in (
-            "MOCK_PATCHES_MIN_VER",
-            "UNCOVERED_MIN_VER",
-            "IMPORT_GROUPS_MIN_VER",
-            "DOCSTRING_MIN_VER",
-            "SPHINX_XREFS_MIN_VER",
-            "DEAD_SYMBOL_MIN_VER",
-            "MODULE_ALIASES_MIN_VER",
-            "SUBPROCESS_CALLS_MIN_VER",
-            "FIXTURE_GRAPH_MIN_VER",
-            "COVERAGE_MIN_VER",
-            "SYMBOL_ALIASES_MIN_VER",
-        ):
+        for name in _PER_FEATURE_MIN_VER_NAMES:
             assert getattr(_schema, name) > 0, f"{name} must be positive"
 
     def test_sphinx_before_dead_symbol(self) -> None:
@@ -165,12 +155,7 @@ class TestPerFeatureVersionConstants:
 
     def test_v4_constants_equal(self) -> None:
         """v4.1–v4.4 all require the same index version."""
-        from _schema import (
-            DOCSTRING_MIN_VER,
-            IMPORT_GROUPS_MIN_VER,
-            MOCK_PATCHES_MIN_VER,
-            UNCOVERED_MIN_VER,
-        )
+        from _schema import DOCSTRING_MIN_VER, IMPORT_GROUPS_MIN_VER, MOCK_PATCHES_MIN_VER, UNCOVERED_MIN_VER
 
         assert MOCK_PATCHES_MIN_VER == UNCOVERED_MIN_VER == IMPORT_GROUPS_MIN_VER == DOCSTRING_MIN_VER
 

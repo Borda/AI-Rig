@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.33.1
+
+- Overlap independent read-only Git queries in source-snapshot capture, review-worktree verification, and the local-source diff check, so a snapshot waits for its slowest query instead of the sum of all of them. Outcomes are settled in the original check order, so the first reported error and every race-guard comparison are unchanged; a measured local review-batch assembly test drops from 14.2 s to 8.1 s on macOS, with the larger gain expected where process creation is slow.
+- Spawn fewer Git processes on hot paths without changing results or errors: release scope validation, parallel-worktree operation and HEAD/tree probes, and the source-snapshot top-level/HEAD lookup each batch read-only queries into one call and fall back to the original per-question calls on any failure or unexpected output.
+- The test suite now requires pytest 9 or newer for its built-in `subtests` fixture.
+
 ## 0.33.0
 
 - Split review execution validation and preparation tests into focused modules below the repository file-size limit, preserving validation behavior and existing helper imports.

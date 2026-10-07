@@ -39,7 +39,6 @@ from pathlib import Path
 import pytest
 from _hook_env import _hook_tmp_base
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
@@ -401,49 +400,40 @@ class TestAgentLifecycle:
         assert result.returncode == 0, result.stderr
         assert not (state_dir(sid) / "agents" / f"{agent_id}.json").exists()
 
+    @pytest.mark.parametrize(
+        ("pre_kwargs", "start_agent_type"),
+        [
+            # Some SubagentStart payloads carry agent_type but not tool_use_id — the hook falls back to scanning
+            # pending/ for the most recent entry matching agent_type.
+            pytest.param(
+                {"subagent_type": "foundry:qa-specialist"}, "foundry:qa-specialist", id="matches-by-agent-type"
+            ),
+            # Live-observed shape: SubagentStart's ``agent_type`` field carries the assigned *name* for a named Agent()
+            # call, not its subagent_type. Matching only on subagent_type would miss it.
+            pytest.param(
+                {"subagent_type": "foundry:challenger", "name": "post-fix-challenger-2"},
+                "post-fix-challenger-2",
+                id="named-agent-matches-by-name-not-type",
+            ),
+        ],
+    )
     def test_subagent_start_without_tool_use_id_rekeys_matched_pending(
-        self, sid: str, tmp_home: Path, run_hook, state_dir
+        self, sid: str, tmp_home: Path, run_hook, state_dir, pre_kwargs: dict, start_agent_type: str
     ) -> None:
-        """SubagentStart payload omitting tool_use_id still re-keys via the agent_type pending scan.
+        """SubagentStart payload omitting tool_use_id still re-keys the matched pending agent file.
 
-        Some SubagentStart payloads carry agent_type but not tool_use_id — the hook falls back to scanning pending/ for
-        the most recent entry matching agent_type. That fallback must re-key the matched agents/<tool_use_id>.json to
-        agents/<agent_id>.json too, the same as the direct tool_use_id match path.
+        Scenario: the hook falls back to scanning pending/ for the most recent entry matching agent_type, and for a
+        named agent it matches via name rather than subagent_type. Either fallback must re-key
+        agents/<tool_use_id>.json to agents/<agent_id>.json, the same as the direct tool_use_id match path, so no
+        un-re-keyed file leaks.
         """
-        tool_use_id = "tu-typematch"
-        agent_id = "agent-typematch"
-        run_hook("task-log.js", _pre_agent(sid, tool_use_id, subagent_type="foundry:qa-specialist"), home=tmp_home)
+        tool_use_id = "tu-pending"
+        agent_id = "agent-rekeyed"
+        run_hook("task-log.js", _pre_agent(sid, tool_use_id, **pre_kwargs), home=tmp_home)
 
         result = run_hook(
             "task-log.js",
-            _subagent_start(sid, agent_id, agent_type="foundry:qa-specialist"),
-            home=tmp_home,
-        )
-
-        assert result.returncode == 0, result.stderr
-        assert not (state_dir(sid) / "agents" / f"{tool_use_id}.json").exists()
-        assert (state_dir(sid) / "agents" / f"{agent_id}.json").exists()
-
-    def test_subagent_start_named_agent_matches_by_name_not_type(
-        self, sid: str, tmp_home: Path, run_hook, state_dir
-    ) -> None:
-        """A named agent's tool_use_id-less SubagentStart matches pending/ via name, not subagent_type.
-
-        Live-observed shape: SubagentStart's ``agent_type`` field carries the assigned *name* for a
-        named Agent() call, not its subagent_type. Matching only on subagent_type would miss it,
-        leaving agents/<tool_use_id>.json un-re-keyed — the exact leak renameAgentFile exists to close.
-        """
-        tool_use_id = "tu-named"
-        agent_id = "agent-named"
-        run_hook(
-            "task-log.js",
-            _pre_agent(sid, tool_use_id, subagent_type="foundry:challenger", name="post-fix-challenger-2"),
-            home=tmp_home,
-        )
-
-        result = run_hook(
-            "task-log.js",
-            _subagent_start(sid, agent_id, agent_type="post-fix-challenger-2"),
+            _subagent_start(sid, agent_id, agent_type=start_agent_type),
             home=tmp_home,
         )
 
@@ -515,8 +505,12 @@ class TestCodexTracking:
 class TestToolCounting:
     """task-log.js: per-tool counter under state/tools/."""
 
-    def test_pre_tool_use_bash_creates_counter(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
-        """First Bash PreToolUse creates tools/Bash.json with count=1."""
+    def test_first_call_writes_counter_record(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
+        """First Bash PreToolUse creates tools/Bash.json with count=1, stamps ``last`` and opens one ``inflight`` slot.
+
+        ``since`` is a fixed window start and goes stale while calls keep landing inside the window, so the status line
+        needs a separate per-call stamp (``last``) to decide freshness.
+        """
         result = run_hook("task-log.js", _pre_bash(sid, "tu-bash-1"), home=tmp_home)
 
         assert result.returncode == 0, result.stderr
@@ -525,35 +519,17 @@ class TestToolCounting:
         data = json.loads(counter.read_text(encoding="utf-8"))
         assert data["count"] == 1
         assert data["tool"] == "Bash"
-
-    def test_pre_tool_use_bash_increments_counter(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
-        """Second Bash PreToolUse increments count to 2 (within 30s window)."""
-        run_hook("task-log.js", _pre_bash(sid, "tu-bash-a"), home=tmp_home)
-        result = run_hook("task-log.js", _pre_bash(sid, "tu-bash-b"), home=tmp_home)
-
-        assert result.returncode == 0, result.stderr
-        data = json.loads((state_dir(sid) / "tools" / "Bash.json").read_text(encoding="utf-8"))
-        assert data["count"] == 2
-
-    def test_counter_stamps_last_and_inflight(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
-        """PreToolUse records ``last`` (this call's time) and opens one ``inflight`` slot.
-
-        ``since`` is a fixed window start and goes stale while calls keep landing inside the window, so the status line
-        needs a separate per-call stamp to decide freshness.
-        """
-        run_hook("task-log.js", _pre_bash(sid, "tu-bash-l1"), home=tmp_home)
-
-        data = json.loads((state_dir(sid) / "tools" / "Bash.json").read_text(encoding="utf-8"))
         assert data["last"] >= data["since"]
         assert data["inflight"] == 1
 
     def test_second_call_advances_last_but_not_since(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
-        """A second call inside the 30s window keeps ``since`` fixed and moves ``last`` forward."""
+        """A second call inside the 30s window increments ``count``, keeps ``since`` fixed, moves ``last`` forward."""
         run_hook("task-log.js", _pre_bash(sid, "tu-bash-l2a"), home=tmp_home)
         first = json.loads((state_dir(sid) / "tools" / "Bash.json").read_text(encoding="utf-8"))
         run_hook("task-log.js", _pre_bash(sid, "tu-bash-l2b"), home=tmp_home)
 
         second = json.loads((state_dir(sid) / "tools" / "Bash.json").read_text(encoding="utf-8"))
+        assert second["count"] == 2
         assert second["since"] == first["since"]
         assert second["last"] >= first["last"]
         assert second["inflight"] == 2

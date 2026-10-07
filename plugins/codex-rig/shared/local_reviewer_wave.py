@@ -61,34 +61,49 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, Mapping, TextIO
+from typing import Any, TextIO
 
-
+#: Current schema revision of the local reviewer-wave plan.
 SCHEMA_VERSION = 2
+#: Older plan schema revision that is still accepted when reading a plan.
 LEGACY_PLAN_SCHEMA_VERSION = 1
+#: Schema revision of the evidence records written for a reviewer wave.
 EVIDENCE_SCHEMA_VERSION = 1
+#: Largest plan or capacity file, in bytes, that may be read.
 MAX_FILE_BYTES = 256 * 1024
+#: Largest frozen source, diff, or context file, in bytes, that may be handed to a reviewer.
 MAX_CONTEXT_BYTES = 2 * 1024 * 1024
-# The host limits aggregate turn text by Unicode characters, independently of bytes/tokens.
+#: The host limits aggregate turn text by Unicode characters, independently of bytes/tokens.
 MAX_TURN_INPUT_CHARACTERS = 1024 * 1024
+#: Short turn text used when the full context exceeds the character limit and is sent as earlier history.
 HISTORY_REVIEW_PROMPT = (
     "Review the complete frozen context in the preceding user message. Follow its role and output contract."
 )
-# JSON escaping can expand a one-byte control character to six ASCII bytes. The
-# frame bound therefore covers any accepted context plus its small RPC envelope.
+#: JSON escaping can expand a one-byte control character to six ASCII bytes. The
+#: frame bound therefore covers any accepted context plus its small RPC envelope.
 MAX_EVENT_ENVELOPE_BYTES = 16 * 1024
+#: Largest single event frame, in bytes, accepted from the reviewer process before the stream is rejected.
 MAX_EVENT_BYTES = MAX_CONTEXT_BYTES * 6 + MAX_EVENT_ENVELOPE_BYTES
+#: Event count used to size the total byte budget for buffered reviewer events.
 MAX_EVENTS = 512
-# Preserve the former per-buffer ceiling while accepting larger individual contexts.
+#: Preserve the former per-buffer ceiling while accepting larger individual contexts.
 MAX_BUFFERED_EVENT_BYTES = MAX_EVENTS * (MAX_FILE_BYTES * 6 + MAX_EVENT_ENVELOPE_BYTES)
+#: Capacity of the in-memory event queue, derived from the byte budget and the largest event size.
 MAX_BUFFERED_EVENTS = MAX_BUFFERED_EVENT_BYTES // MAX_EVENT_BYTES
+#: Largest reviewer output, in bytes, accepted as evidence or a final message.
 MAX_OUTPUT_BYTES = 128 * 1024
+#: Pattern for a valid reviewer role id: letters, digits, underscores, and hyphens.
 ROLE_IDENTIFIER = re.compile(r"[A-Za-z0-9_-]+\Z")
+#: Pattern for a valid run or plan identifier of up to 128 filename-safe characters.
 RUN_IDENTIFIER = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
+#: Pattern for a well-formed JSON-RPC method name such as `turn/started`, safe to record as a label.
 RPC_METHOD_IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9]*/[A-Za-z][A-Za-z0-9/]{0,95}\Z")
+#: Pattern for a lowercase 64-character hex SHA-256 digest.
 HEX_DIGEST = re.compile(r"[0-9a-f]{64}\Z")
+#: Regular expressions for credential shapes (private keys, cloud and API tokens) that must not appear in evidence.
 SECRET_PATTERNS = (
     re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----"),
     re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
@@ -96,6 +111,7 @@ SECRET_PATTERNS = (
     re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
 )
+#: Capabilities that must be reported as switched off for a reviewer to count as read-only and isolated.
 DISABLED_CAPABILITIES = frozenset(
     {
         "hooks",
@@ -113,7 +129,9 @@ DISABLED_CAPABILITIES = frozenset(
         "live_web",
     }
 )
+#: Item types a reviewer turn may produce; any other type fails the wave.
 ALLOWED_ITEM_TYPES = frozenset({"reasoning", "agentMessage", "commandExecution", "plan"})
+#: Server notifications that only report session lifecycle or status and are ignored when validating a stream.
 HARMLESS_LIFECYCLE_METHODS = frozenset(
     {
         "thread/started",
@@ -125,7 +143,9 @@ HARMLESS_LIFECYCLE_METHODS = frozenset(
         "account/updated",
     }
 )
+#: Warning notifications that are tolerated, mapped to the string field each must carry.
 HARMLESS_TEXT_NOTIFICATION_FIELDS = {"warning": "message", "configWarning": "summary"}
+#: Streaming delta notifications for messages, reasoning, and command output that a reviewer turn may emit.
 ALLOWED_STREAM_METHODS = frozenset(
     {
         "item/agentMessage/delta",
@@ -135,11 +155,14 @@ ALLOWED_STREAM_METHODS = frozenset(
         "item/commandExecution/outputDelta",
     }
 )
+#: Notification methods that carry plan updates and are checked for well-formed step statuses.
 PLAN_NOTIFICATION_METHODS = frozenset({"turn/plan/updated", "item/plan/delta"})
+#: Allowed status values for a step in a plan notification.
 PLAN_STEP_STATUSES = frozenset({"pending", "inProgress", "completed"})
+#: Name of the remote-control status notification, tolerated only when it reports the `disabled` status.
 REMOTE_CONTROL_STATUS_CHANGED = "remoteControl/status/changed"
-# Public notification names from the installed CLI schema are safe diagnostic labels.
-# Unknown method strings may contain untrusted data, so they never enter evidence.
+#: Public notification names from the installed CLI schema are safe diagnostic labels.
+#: Unknown method strings may contain untrusted data, so they never enter evidence.
 SCHEMA_NOTIFICATION_METHODS = frozenset(
     {
         "error",
@@ -1205,8 +1228,8 @@ def _terminate(process: subprocess.Popen[str]) -> None:
     """Stop the owned process group or Windows tree and prove it is gone after a bounded grace period."""
     if sys.platform == "win32":
         try:
-            completed = subprocess.run(
-                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            completed = subprocess.run(  # noqa: S603 - argv list, no shell
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -1279,7 +1302,7 @@ def _server_command(codex: Path, disabled_servers: list[str]) -> list[str]:
 def _codex_version(codex: Path, cwd: Path) -> str:
     """Return the bounded installed CLI version without retaining diagnostics or configuration."""
     try:
-        completed = subprocess.run(
+        completed = subprocess.run(  # noqa: S603 - argv list, no shell
             [str(codex), "--version"],
             cwd=cwd,
             stdin=subprocess.DEVNULL,
@@ -1300,7 +1323,7 @@ def _codex_version(codex: Path, cwd: Path) -> str:
 def _start_server(command: list[str], cwd: Path, deadline: float) -> tuple[subprocess.Popen[str], _JsonRpcStdio]:
     """Start one local reviewer wave with inherited opaque authentication and no stderr capture."""
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if sys.platform == "win32" else 0
-    process = subprocess.Popen(
+    process = subprocess.Popen(  # noqa: S603 - argv list, no shell
         command,
         cwd=cwd,
         stdin=subprocess.PIPE,
@@ -1895,7 +1918,8 @@ def _assemble_review_evidence(
     for role_id, state in active.items():
         node = state.node
         output = state.output_path
-        assert output is not None
+        if output is None:
+            raise RuntimeError("output must not be None")
         output_name = output.relative_to(output_root).as_posix()
         final = _text(state.final, "app-server-final-output")
         evidence_nodes.append(
@@ -1978,7 +2002,8 @@ def _finalize_review_evidence(
 ) -> Exception | None:
     """Write and re-validate the completed evidence, returning the rejection instead of raising."""
     try:
-        assert evidence is not None
+        if evidence is None:
+            raise RuntimeError("evidence must not be None")
         _atomic_json(evidence_path, evidence)
         validate_evidence(plan_path, evidence_path, roles_dir, require_dispatch=True)
     except Exception as error:

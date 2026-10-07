@@ -48,8 +48,9 @@ from _agent_shim_observe import FilesystemObservation, RootIdentity, RootObserva
 from _agent_shim_plan import CandidateError, CandidatePlan, Operation, build_candidate
 from generate_roles import GeneratedRoster
 
-
+#: Pattern for a lowercase 64-character hexadecimal SHA-256 digest string.
 DIGEST = re.compile(r"[0-9a-f]{64}")
+#: Pattern for a four-digit octal file-mode string such as 0600.
 MODE = re.compile(r"0[0-7]{3}")
 
 
@@ -407,7 +408,16 @@ def build_convergence_approval(
     state = observation.state_root_observation
     plugin = observation.plugin_root_identity
     lock = observation.coordination_lock_observation
-    assert home is not None and target is not None and state is not None and plugin is not None and lock is not None
+    if home is None:
+        raise RuntimeError("home must not be None")
+    if target is None:
+        raise RuntimeError("target must not be None")
+    if state is None:
+        raise RuntimeError("state must not be None")
+    if plugin is None:
+        raise RuntimeError("plugin must not be None")
+    if lock is None:
+        raise RuntimeError("lock must not be None")
     expected_target = f"{home.canonical_path}/agents"
     expected_state = f"{home.canonical_path}/codex-rig/shims"
     expected_lock = f"{home.canonical_path}/.codex-rig-shims.lock"
@@ -415,7 +425,8 @@ def build_convergence_approval(
         _fail("lifecycle root path mismatch")
     lock_value = _validate_lock(observation, expected_lock)
     if observation.state == "removed":
-        assert observed_state is not None
+        if observed_state is None:
+            raise RuntimeError("observed_state must not be None")
         root_intent = (
             "unchanged"
             if target.identity is not None

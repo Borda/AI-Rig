@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import importlib.util
 import hashlib
+import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -12,7 +13,6 @@ from types import ModuleType
 from typing import Any
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 
@@ -22,7 +22,8 @@ def bind_handoff(
 ) -> None:
     """Render real release handoff evidence so tests exercise schema-v2 completion end to end."""
     spec = importlib.util.spec_from_file_location("release_finalizer", PLUGIN_ROOT / "shared/final_handoff.py")
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     finalizer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(finalizer)
     lines = (directory / "release-readiness.md").read_text(encoding="utf-8").splitlines()
@@ -101,14 +102,40 @@ def validator() -> ModuleType:
     spec = importlib.util.spec_from_file_location(
         "release_artifact_validator", PLUGIN_ROOT / "shared/validate-artifacts.py"
     )
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
+@pytest.fixture(name="release_source_template", scope="module")
+def _release_source_template(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, str, str]:
+    """Build the one-commit release source repository once per module and return it with its head and tree.
+
+    Git writes the repository bytes itself, so they never depend on the host newline default the release fixture varies.
+    Every case copies this read-only template instead of spawning the same six Git commands again; tests that add
+    commits mutate only their private copy.
+    """
+    repository = tmp_path_factory.mktemp("release-source-template") / "source"
+    repository.mkdir()
+    for arguments in (
+        ["init", "-q"],
+        ["config", "user.name", "Release Test"],
+        ["config", "user.email", "release@example.invalid"],
+        ["commit", "--allow-empty", "-m", "fixture\n\nCo-authored-by: Codex <codex@openai.com>"],
+    ):
+        subprocess.run(["git", *arguments], cwd=repository, check=True, capture_output=True)
+    head, final_tree = subprocess.check_output(
+        ["git", "rev-parse", "HEAD", "HEAD^{tree}"], cwd=repository, text=True
+    ).split()
+    return repository, head, final_tree
+
+
 @pytest.fixture
-def release_run(tmp_path: Path, text_newline_default: None) -> tuple[Path, dict[str, object]]:
+def release_run(
+    tmp_path: Path, text_newline_default: None, release_source_template: tuple[Path, str, str]
+) -> tuple[Path, dict[str, object]]:
     """Create complete release evidence with real gate logs and a structured draft."""
     checks = []
     for gate in ("lint", "format", "types", "tests", "review"):
@@ -170,17 +197,9 @@ def release_run(tmp_path: Path, text_newline_default: None) -> tuple[Path, dict[
         "**Full changelog**: https://example.org/compare/v1.2.0...abc\n",
         encoding="utf-8",
     )
+    template, head, final_tree = release_source_template
     repository = tmp_path / "source"
-    repository.mkdir()
-    for arguments in (
-        ["init", "-q"],
-        ["config", "user.name", "Release Test"],
-        ["config", "user.email", "release@example.invalid"],
-        ["commit", "--allow-empty", "-m", "fixture\n\nCo-authored-by: Codex <codex@openai.com>"],
-    ):
-        subprocess.run(["git", *arguments], cwd=repository, check=True, capture_output=True)
-    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
-    final_tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=repository, text=True).strip()
+    shutil.copytree(template, repository)
     draft = outputs / "DRAFT.md"
     changelog_backup = tmp_path / "changelog-before.md"
     changelog_backup.write_text("# Changelog\n\n## v1.0\n- Existing detail.\n", encoding="utf-8", newline="\n")
@@ -280,16 +299,16 @@ def test_real_gate_source_receipts_validate_end_to_end(validator: ModuleType, re
     """Accept actual runner evidence from a clean pinned source through the release consumer."""
     directory, result = release_run
     repository = directory / "source"
-    repository.mkdir(exist_ok=True)
-    for arguments in (
-        ["init", "-q"],
-        ["config", "user.name", "Release Test"],
-        ["config", "user.email", "release@example.invalid"],
-        ["commit", "--allow-empty", "-m", "fixture\n\nCo-authored-by: Codex <codex@openai.com>"],
-    ):
-        subprocess.run(["git", *arguments], cwd=repository, check=True, capture_output=True)
-    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
-    final_tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=repository, text=True).strip()
+    # The fixture copy is already initialized with this identity; one more commit gives the release a baseline.
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "fixture\n\nCo-authored-by: Codex <codex@openai.com>"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    head, final_tree, baseline = subprocess.check_output(
+        ["git", "rev-parse", "HEAD", "HEAD^{tree}", "HEAD^"], cwd=repository, text=True
+    ).split()
     arguments = [
         sys.executable,
         str(PLUGIN_ROOT / "shared/run_gates.py"),
@@ -306,7 +325,6 @@ def test_real_gate_source_receipts_validate_end_to_end(validator: ModuleType, re
     assert all(check["source"]["after"] == {"head": head, "status": ""} for check in gates["checks"])
     result["metadata"]["release_head"] = head
     receipt = result["metadata"]["release_evidence"]
-    baseline = subprocess.check_output(["git", "rev-parse", "HEAD^"], cwd=repository, text=True).strip()
     receipt.update(
         repository=str(repository),
         baseline=baseline,
@@ -710,7 +728,8 @@ def test_passing_release_rejects_uncredited_second_coauthor(
     """All human and bot coauthor trailers require credit accounting, not silent filtering."""
     directory, result = release_run
     repository = directory / "source"
-    baseline = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
+    # The fixture pins its release head to the copied repository's current HEAD.
+    baseline = result["metadata"]["release_head"]
     subprocess.run(
         [
             "git",
@@ -723,12 +742,14 @@ def test_passing_release_rejects_uncredited_second_coauthor(
         check=True,
         capture_output=True,
     )
-    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
+    head, final_tree = subprocess.check_output(
+        ["git", "rev-parse", "HEAD", "HEAD^{tree}"], cwd=repository, text=True
+    ).split()
     receipt = result["metadata"]["release_evidence"]
     result["metadata"]["release_head"] = head
     receipt.update(
         baseline=baseline,
-        final_tree=subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=repository, text=True).strip(),
+        final_tree=final_tree,
         candidates=[{"sha": head, "disposition": "included", "reason": "release change"}],
         contributors=[
             {
@@ -775,7 +796,8 @@ def test_released_patch_subtraction_rejects_introduced_then_reverted_behavior(
     directory, result = release_run
     repository = directory / "source"
     subprocess.run(["git", "config", "core.autocrlf", autocrlf], cwd=repository, check=True, capture_output=True)
-    root = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
+    # The fixture pins its release head to the copied repository's current HEAD.
+    root = result["metadata"]["release_head"]
     branch = subprocess.check_output(["git", "branch", "--show-current"], cwd=repository, text=True).strip()
     feature = repository / filename
     # Undefined CP1252 byte 0x9D must survive patch comparison without text decoding.
@@ -802,14 +824,16 @@ def test_released_patch_subtraction_rejects_introduced_then_reverted_behavior(
     feature.write_bytes(feature_bytes)
     subprocess.run(["git", "add", "--", filename], cwd=repository, check=True, capture_output=True)
     subprocess.run(["git", "commit", "-m", "backport feature"], cwd=repository, check=True, capture_output=True)
-    candidate = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
+    candidate, final_tree, published_tree = subprocess.check_output(
+        ["git", "rev-parse", "HEAD", "HEAD^{tree}", f"{published_head}^{{tree}}"], cwd=repository, text=True
+    ).split()
     assert candidate != introduced
     assert subprocess.check_output(["git", "show", f"{candidate}:{filename}"], cwd=repository) == feature_bytes
     receipt = result["metadata"]["release_evidence"]
     result["metadata"]["release_head"] = candidate
     receipt.update(
         baseline=root,
-        final_tree=subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=repository, text=True).strip(),
+        final_tree=final_tree,
         released_head=published_head,
         candidates=[
             {
@@ -818,9 +842,7 @@ def test_released_patch_subtraction_rejects_introduced_then_reverted_behavior(
                 "reason": "candidate patch was evaluated against the published line",
                 "released_sha": introduced,
                 "comparison": "stable-patch",
-                "published_tree": subprocess.check_output(
-                    ["git", "rev-parse", f"{published_head}^{{tree}}"], cwd=repository, text=True
-                ).strip(),
+                "published_tree": published_tree,
                 "published_paths": [
                     {
                         "path": filename,
@@ -1066,7 +1088,8 @@ def test_demo_execution_receipt_is_produced_and_verified(
                 "--out",
                 str(directory / "demo-execution"),
                 "--timeout-seconds",
-                "1",
+                # Only the timeout scenario needs the short budget; a loaded runner can take over 1 s to start Python
+                "1" if scenario == "timeout" else "60",
             ],
             capture_output=True,
             text=True,

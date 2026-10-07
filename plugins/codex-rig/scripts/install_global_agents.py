@@ -50,11 +50,15 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-
+#: Fixed opening text of the begin marker that precedes the managed global-instructions block.
 BEGIN_PREFIX = b"<!-- codex-rig:global-agents begin sha256="
+#: Pattern for a complete begin marker line, capturing the SHA-256 digest of the managed block body.
 BEGIN_PATTERN = re.compile(rb"<!-- codex-rig:global-agents begin sha256=([0-9a-f]{64}) -->\n")
+#: Marker line that closes the managed global-instructions block.
 END_MARKER = b"<!-- codex-rig:global-agents end -->\n"
+#: Top heading of the managed global agent instructions file.
 GLOBAL_HEADING = b"# Global Agent Instructions"
+#: Frontmatter descriptions of the retired develop and analyse skills, used to spot stale copies under the Codex home.
 LEGACY_SKILL_DESCRIPTIONS = {
     "develop": "Minimal codex-native develop loop. Use for implementation tasks with linear plan-build-verify flow and measurable quality gates.",
     "analyse": "Minimal codex-native analysis loop. Use for issue/PR/problem analysis before implementation with measurable gates.",

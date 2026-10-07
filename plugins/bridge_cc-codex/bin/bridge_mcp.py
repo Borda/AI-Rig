@@ -17,19 +17,19 @@ No persistent binding, permission, settings, or credential writes occur.
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
-from dataclasses import dataclass
 import hashlib
 import json
 import math
-from pathlib import Path
-from pathlib import PurePath
 import sys
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path, PurePath
 from typing import Any, TextIO
 
 # Keep sibling imports valid when repository-wide doctest collection imports this
 # file without launching it as a script from its installed ``bin`` directory.
+#: This script's own directory, put on sys.path so sibling modules import even when the file is not run directly.
 _BIN_DIRECTORY = str(Path(__file__).resolve().parent)
 if _BIN_DIRECTORY not in sys.path:
     sys.path.insert(0, _BIN_DIRECTORY)
@@ -43,31 +43,39 @@ from bridge_call import (  # noqa: E402
     run_request,
     validate_request_transport_budget,
 )
-from user_questions_mcp import Decision, MAX_DECISIONS, Server as QuestionServer  # noqa: E402
+from user_questions_mcp import MAX_DECISIONS, Decision  # noqa: E402
+from user_questions_mcp import Server as QuestionServer  # noqa: E402
 
-
+#: Seconds the MCP host waits for a tool response; per-verb timeout caps are checked to fit inside it.
 MCP_HOST_DEADLINE_SECONDS = 900.0
+#: Seconds reserved inside the host deadline for building and returning the tool response.
 MCP_RESPONSE_MARGIN_SECONDS = 30.0
 # Worst-case per-attempt supervision overhead beyond the hard cutoff: the 2 s
 # SIGTERM grace in _terminate_process_group plus the 5 s + 2 s bounded drain.
+#: Worst-case seconds per attempt spent stopping the child and draining its output after the hard cutoff.
 TERMINATION_DRAIN_SECONDS = 9.0
+#: Largest timeout in seconds a tool call may request per verb, sized to fit the host deadline with retries.
 MAX_MCP_TIMEOUT_SECONDS_BY_VERB = {
     "implement": 700.0,
     "advise": 350.0,
     "review": 350.0,
 }
+#: Most attempts made per verb; the retry-capable verbs get two, implement gets one.
 _MAX_ATTEMPTS_BY_VERB = {"implement": 1, "advise": 2, "review": 2}
 for _verb, _cap in MAX_MCP_TIMEOUT_SECONDS_BY_VERB.items():
     _attempts = _MAX_ATTEMPTS_BY_VERB[_verb]
     _worst_case = _attempts * (_cap * CHILD_TIMEOUT_MULTIPLIER + TERMINATION_DRAIN_SECONDS)
     if _worst_case + MCP_RESPONSE_MARGIN_SECONDS > MCP_HOST_DEADLINE_SECONDS:
         raise ValueError(f"MCP timeout cap for {_verb} cannot fit inside the host deadline")
+#: Maps each verb-running MCP tool name to the bridge verb it executes.
 TOOL_NAMES = {
     "bridge_implement": "implement",
     "bridge_advise": "advise",
     "bridge_review": "review",
 }
+#: Name of the read-only MCP tool that reports server and workspace status.
 STATUS_TOOL_NAME = "bridge_status"
+#: Name of the MCP tool that binds the host-selected workspace for later calls.
 BIND_TOOL_NAME = "bridge_bind_workspace"
 
 
@@ -87,9 +95,13 @@ def _plugin_version() -> str:
     return version if isinstance(version, str) and version else "unknown"
 
 
+#: Plugin version read from the installed Claude manifest, reported in server info and status.
 BRIDGE_VERSION = _plugin_version()
+#: MCP protocol revision this server advertises during initialize.
 MCP_PROTOCOL_VERSION = "2025-06-18"
+#: Revision of the bridge_status result schema reported in the status payload.
 STATUS_SCHEMA_VERSION = "2.0"
+#: Full ordered list of tool names a healthy server exposes, reported so clients can detect a partial install.
 EXPECTED_TOOL_INVENTORY = (STATUS_TOOL_NAME, BIND_TOOL_NAME, *TOOL_NAMES)
 
 
@@ -124,6 +136,7 @@ def tool_definitions() -> list[dict[str, Any]]:
 # the installed schemas does that work only when it is actually called.
 # A conforming client sends ``notifications/initialized`` without an id; a malformed id-bearing variant is
 # acknowledged here instead of being left hanging.
+#: JSON-RPC methods answerable from server state alone, mapped to the callable that builds each result.
 _SELF_CONTAINED_METHODS: dict[str, Callable[[], dict[str, Any]]] = {
     "notifications/initialized": dict,
     "initialize": lambda: {
@@ -148,8 +161,7 @@ def _invalid_request_error(message: dict[str, Any]) -> dict[str, Any] | None:
     if (
         isinstance(request_id, bool)
         or not isinstance(request_id, (str, int, float, type(None)))
-        or isinstance(request_id, float)
-        and not math.isfinite(request_id)
+        or (isinstance(request_id, float) and not math.isfinite(request_id))
     ):
         return _error(None, -32600, "invalid request: id must be a string, number, or null")
     return None

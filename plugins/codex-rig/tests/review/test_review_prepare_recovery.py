@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import runpy
 import subprocess
 import sys
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
-
-from test_review_prepare import HELPER, SKILL, _assembly_evidence, _finding_id_recovery_evidence, _write_jsonl
+from test_review_prepare import (
+    HELPER,
+    SKILL,
+    _assembly_evidence,
+    _finding_id_recovery_evidence,
+    _restore_tree,
+    _tree_state,
+    _write_jsonl,
+)
 
 
 @pytest.mark.parametrize(
@@ -68,35 +76,61 @@ def test_assessment_format_repair_changes_only_proved_missing_label(damage: str)
         assert validator["_assessment_format_repair"](malformed, snapshot, "challenger") == expected
     else:
         with pytest.raises(
-            SystemExit, match="review-(?:repair-ineligible-assessment|batch-individual-findings-.*):challenger"
+            SystemExit, match=r"review-(?:repair-ineligible-assessment|batch-individual-findings-.*):challenger"
         ):
             validator["_assessment_format_repair"](malformed, snapshot, "challenger")
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("opaque", [False, True])
 @pytest.mark.parametrize("repair_kind", ["closure-evidence-shape", "assessment-format"])
-@pytest.mark.parametrize(
-    "damage",
-    [
-        "none",
-        "instruction",
-        "model",
-        "claim",
-        "rating",
-        "rationale",
-        "confidence",
-        "tool",
-        "original-source",
-        "missing-receipt",
-        "missing-release",
-        "child-created",
-    ],
-)
 def test_closure_correction_refusal_uses_generated_recovery_arguments(
-    tmp_path: Path, opaque: bool, repair_kind: str, damage: str
+    tmp_path: Path, subtests: pytest.Subtests, repair_kind: str
 ) -> None:
-    """Compose a proved no-child refusal with an exact claim-preserving correction allocation."""
+    """Compose a proved no-child refusal with an exact claim-preserving correction allocation.
+
+    Every delivery mode and damage replays a refusal against the same prepared correction, so the batch, its native
+    evidence, and the generated correction are built once per repair kind and each combination runs as an independent
+    subtest from a byte-exact restore of that build.
+    """
+    run, home, children, record, original, arguments = _closure_correction_base(tmp_path, repair_kind)
+    corrected = arguments["message"].split("Return exactly this validated correction:\n", 1)[1]
+    assert "```json" in arguments["message"]
+    prepared_correction = _tree_state(tmp_path)
+    for opaque, damage in itertools.product(
+        [False, True],
+        [
+            "none",
+            "instruction",
+            "model",
+            "claim",
+            "rating",
+            "rationale",
+            "confidence",
+            "tool",
+            "original-source",
+            "missing-receipt",
+            "missing-release",
+            "child-created",
+        ],
+    ):
+        with subtests.test(opaque=opaque, damage=damage):
+            _restore_tree(tmp_path, prepared_correction)
+            _check_closure_correction_refusal(
+                tmp_path,
+                run,
+                home,
+                children,
+                (record, original, dict(arguments), corrected),
+                repair_kind=repair_kind,
+                opaque=opaque,
+                damage=damage,
+            )
+
+
+def _closure_correction_base(
+    tmp_path: Path, repair_kind: str
+) -> tuple[Path, Path, dict[str, Path], dict[str, object], str, dict[str, object]]:
+    """Prepare a batch whose challenger output needs one correction and generate that correction's arguments."""
     # Batch fixtures import this module; defer the reciprocal fixture dependency until collection completes.
     import test_review_batches as batches
 
@@ -131,9 +165,24 @@ def test_closure_correction_refusal_uses_generated_recovery_arguments(
         check=False,
     )
     assert prepared.returncode == 0, prepared.stderr
-    arguments = json.loads(prepared.stdout)["arguments"]
-    corrected = arguments["message"].split("Return exactly this validated correction:\n", 1)[1]
-    assert "```json" in arguments["message"]
+    return run, home, children, record, original, json.loads(prepared.stdout)["arguments"]
+
+
+def _check_closure_correction_refusal(
+    tmp_path: Path,
+    run: Path,
+    home: Path,
+    children: dict[str, Path],
+    correction: tuple[dict[str, object], str, dict[str, object], str],
+    *,
+    repair_kind: str,
+    opaque: bool,
+    damage: str,
+) -> None:
+    """Record one refused and one retried correction launch, apply one damage, and check wave assembly."""
+    import test_review_batches as batches
+
+    record, original, arguments, corrected = correction
     if damage == "claim":
         corrected = corrected.replace("Preserve every original obligation.", "No obligation remains.")
     elif damage == "rating":
@@ -296,7 +345,8 @@ def test_closure_correction_refusal_uses_generated_recovery_arguments(
         assert assembled.returncode == 0, assembled.stderr
         manifest = json.loads((run / "specialist-manifest.json").read_bytes())
         item = next(item for item in manifest["passes"] if item["role"] == "challenger")
-        assert item["selected_attempt"] == 2 and len(item["attempts"]) == 2
+        assert item["selected_attempt"] == 2
+        assert len(item["attempts"]) == 2
         assert json.loads((run / "inspection-summary.json").read_text())["actual_mode"] == "parallel"
         assert (run / item["attempts"][0]["raw_output_path"]).read_text(encoding="utf-8") == original
         assert item["reviewer_findings"][0]["summary"] == record["summary"]
@@ -396,21 +446,47 @@ def test_finding_id_namespace_correction_requires_unique_exact_origin(damage: st
         expected = raw.replace(json.dumps(origin["finding_id"]), json.dumps(record["id"]), 1)
         assert validator["_finding_id_namespace_repair"](raw, snapshot, "challenger", context, origins) == expected
     else:
-        with pytest.raises(SystemExit, match="review-(?:repair-.*|batch-individual-findings-.*):challenger"):
+        with pytest.raises(SystemExit, match=r"review-(?:repair-.*|batch-individual-findings-.*):challenger"):
             validator["_finding_id_namespace_repair"](raw, snapshot, "challenger", context, origins)
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize(
-    "damage", ["none", "claim", "tool", "original-read", "missing-join", "second-repair", "origin-raw", "before-join"]
-)
-def test_finding_id_namespace_public_recovery_preserves_original_provenance(tmp_path: Path, damage: str) -> None:
-    """Require generated tool-free a2 bytes, complete original reads and one native correction attempt."""
+def test_finding_id_namespace_public_recovery_preserves_original_provenance(
+    tmp_path: Path, subtests: pytest.Subtests
+) -> None:
+    """Require generated tool-free a2 bytes, complete original reads and one native correction attempt.
+
+    Every damage starts from the same refused interaction wave, so that wave is built once and each damage runs as an
+    independent subtest from a byte-exact restore of it.
+    """
     import test_review_batches as batches  # Batch and native fixture modules share this established boundary.
 
     run, home, children, original, expected = _finding_id_recovery_evidence(tmp_path)
     initial = batches._batch_command(run, "assemble-wave", home)
-    assert initial.returncode != 0 and "review-batch-individual-findings-record:qa-specialist" in initial.stderr
+    assert initial.returncode != 0
+    assert "review-batch-individual-findings-record:qa-specialist" in initial.stderr
+    refused = _tree_state(tmp_path)
+    for damage in [
+        "none",
+        "claim",
+        "tool",
+        "original-read",
+        "missing-join",
+        "second-repair",
+        "origin-raw",
+        "before-join",
+    ]:
+        with subtests.test(damage=damage):
+            _restore_tree(tmp_path, refused)
+            _check_finding_id_namespace_recovery(tmp_path, run, home, children, original, expected, damage)
+
+
+def _check_finding_id_namespace_recovery(
+    tmp_path: Path, run: Path, home: Path, children: dict[str, Path], original: str, expected: str, damage: str
+) -> None:
+    """Generate the namespace correction, record its replacement with one damage, and check wave assembly."""
+    import test_review_batches as batches
+
     argv = [
         sys.executable,
         str(HELPER),
@@ -542,7 +618,8 @@ def test_finding_id_namespace_public_recovery_preserves_original_provenance(tmp_
         manifest = json.loads((run / "specialist-manifest.json").read_bytes())
         item = next(item for item in manifest["passes"] if item["role"] == "qa-specialist")
         assert item["recovery"] == {"kind": "finding-id-namespace"}
-        assert len(item["attempts"]) == 2 and item["selected_attempt"] == 2
+        assert len(item["attempts"]) == 2
+        assert item["selected_attempt"] == 2
         assert item["reviewer_findings"][0]["id"] == "LOCAL_A"
         assert (run / item["attempts"][0]["raw_output_path"]).read_bytes().decode() == original
         assert children["qa-specialist"].read_bytes() == original_bytes
@@ -550,7 +627,7 @@ def test_finding_id_namespace_public_recovery_preserves_original_provenance(tmp_
 
 
 @pytest.mark.parametrize(
-    "manifest, directory",
+    ("manifest", "directory"),
     [
         pytest.param({"schema_version": 7}, Path("batches") / "interaction-001", id="historical-schema"),
         pytest.param({"schema_version": 8}, Path("ordinary-review"), id="ordinary-profile"),

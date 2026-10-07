@@ -47,7 +47,7 @@ from pathlib import Path  # noqa: F401
 
 from codemap_py import __version__, index_paths, query, runtime_log, rwgate, scanner  # noqa: F401
 
-from .apply_sync import (  # noqa: F401
+from .apply_sync import (
     Journal,
     _apply_one,
     _atomic_write,
@@ -74,7 +74,7 @@ from .apply_sync import (  # noqa: F401
     sync_plan,
     verify_approval,
 )
-from .audit import (  # noqa: F401
+from .audit import (
     _CLAUDE_SELECTORS,
     _CODEX_SELECTORS,
     _MAX_AUDIT_DEGRADED_MODULES,
@@ -106,7 +106,7 @@ from .audit import (  # noqa: F401
     build_audit_report,
     cmd_audit,
 )
-from .cli import (  # noqa: F401
+from .cli import (
     _COMMANDS,
     _add_apply_parser,
     _add_audit_parser,
@@ -120,18 +120,14 @@ from .cli import (  # noqa: F401
     _split_csv,
     run,
 )
-from .demo import (  # noqa: F401
-    _demo_query,
-    cmd_demo,
-    run_demo,
-)
-from .managed_block import (  # noqa: F401
-    BLOCK_SCHEMA_VERSION,
-    PROTOCOL_VERSION,
+from .demo import _demo_query, cmd_demo, run_demo
+from .managed_block import (
     _CODEX_RIG_AGENTS_BEGIN_RE,
     _CODEX_RIG_AGENTS_END,
     _MANAGED_BEGIN_RE,
     _MANAGED_END,
+    BLOCK_SCHEMA_VERSION,
+    PROTOCOL_VERSION,
     _managed_block_body,
     _managed_block_status,
     _managed_protocol,
@@ -139,7 +135,7 @@ from .managed_block import (  # noqa: F401
     _render_managed_block,
     _replace_managed_region,
 )
-from .native import (  # noqa: F401
+from .native import (
     _IDENTITY_READ_CHUNK_BYTES,
     _MAX_PROVIDER_IDENTITY_BYTES,
     _MAX_PROVIDER_IDENTITY_FILES,
@@ -162,7 +158,7 @@ from .native import (  # noqa: F401
     _unsafe_windows_batch_argv,
     codex_rig_global_status,
 )
-from .plan import (  # noqa: F401
+from .plan import (
     _marketplace_source,
     _marketplace_sync_op,
     _plugin_sync_op,
@@ -171,32 +167,32 @@ from .plan import (  # noqa: F401
     build_plan,
     cmd_plan,
 )
-from .types import (  # noqa: F401
+from .types import (
+    _EXIT_OK,
+    _EXIT_RUNTIME,
+    _EXIT_USAGE,
     ALL_TARGETS,
-    ApprovalError,
     CLAUDE_TARGETS,
     CODEX_TARGETS,
     CONSUMER_MANAGED_FILE,
-    ConsumerTarget,
-    IntegrationError,
     MARKETPLACE_NAME,
     MARKETPLACE_REMOTE,
     PROVIDER_DIR,
     PROVIDER_NAME,
+    SCHEMA_VERSION,
+    ApprovalError,
+    ConsumerTarget,
+    IntegrationError,
     RefusalError,
     Runtime,
-    SCHEMA_VERSION,
     Source,
-    _EXIT_OK,
-    _EXIT_RUNTIME,
-    _EXIT_USAGE,
     _cli_for,
     _find_target,
     _runtimes_of,
     _targets_for_runtime,
     resolve_targets,
 )
-from .util import (  # noqa: F401
+from .util import (
     _GIT_TIMEOUT_S,
     _MAX_JSON_BYTES,
     _SHA256_RE,
@@ -213,23 +209,16 @@ from .util import (  # noqa: F401
 
 __all__ = [
     "ALL_TARGETS",
-    "ApprovalError",
     "BLOCK_SCHEMA_VERSION",
     "CLAUDE_TARGETS",
     "CODEX_TARGETS",
     "CONSUMER_MANAGED_FILE",
-    "ConsumerTarget",
-    "IntegrationError",
-    "Journal",
     "MARKETPLACE_NAME",
     "MARKETPLACE_REMOTE",
     "PROTOCOL_VERSION",
     "PROVIDER_DIR",
     "PROVIDER_NAME",
-    "RefusalError",
-    "Runtime",
     "SCHEMA_VERSION",
-    "Source",
     "_CLAUDE_SELECTORS",
     "_CODEX_RIG_AGENTS_BEGIN_RE",
     "_CODEX_RIG_AGENTS_END",
@@ -255,6 +244,13 @@ __all__ = [
     "_PROVIDER_IDENTITY_EXCLUDED_PARTS",
     "_SHA256_RE",
     "_WINDOWS_BATCH_METACHARACTERS",
+    "ApprovalError",
+    "ConsumerTarget",
+    "IntegrationError",
+    "Journal",
+    "RefusalError",
+    "Runtime",
+    "Source",
     "_add_apply_parser",
     "_add_audit_parser",
     "_add_demo_parser",

@@ -52,6 +52,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Final
 
+#: Fewest samples required before a significance test is run; smaller samples are reported as insufficient data.
 MIN_SAMPLES_FOR_TEST: Final[int] = 6
 
 

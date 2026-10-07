@@ -151,7 +151,7 @@ def git_toplevel() -> Path | None:
         Absolute path to the git top-level, or ``None`` when not in a repo / git unavailable.
     """
     try:
-        r = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=5)
+        r = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=5)  # noqa: S607 - git/tool resolved via PATH on purpose
     except (subprocess.TimeoutExpired, OSError):
         return None
     return Path(r.stdout.strip()) if r.returncode == 0 else None

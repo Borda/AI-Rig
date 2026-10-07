@@ -40,23 +40,25 @@ the public validator entrypoint.
 
 from __future__ import annotations
 
-import ast
 import argparse
-from collections import Counter
+import ast
 import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from run_gates import terminate_process
 
-
+#: Pattern for a full git commit hash, either 40 hex characters (SHA-1) or 64 (SHA-256).
 _SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+#: Allowed dispositions for a commit's release-note evidence row.
 _DISPOSITIONS = {"included", "already-released", "internal-only", "reverted", "superseded", "merge-only"}
+#: Allowed stated bases for excluding an item from the release notes.
 _EXCLUSION_BASES = {"legal-restriction", "privacy-request", "verified-duplicate"}
 
 
@@ -70,25 +72,53 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _git(repository: Path, *args: str) -> str:
-    """Read Git paths and metadata as UTF-8 and reject a nonzero result."""
-    completed = subprocess.run(
-        ["git", "-c", "i18n.logOutputEncoding=utf-8", *args],
+def _git_completed(repository: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run one Git command with UTF-8 decoded output and leave the exit status to the caller."""
+    return subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "-c", "i18n.logOutputEncoding=utf-8", *args],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
         cwd=repository,
         capture_output=True,
         text=True,
         encoding="utf-8",
         check=False,
     )
+
+
+def _git(repository: Path, *args: str) -> str:
+    """Read Git paths and metadata as UTF-8 and reject a nonzero result."""
+    completed = _git_completed(repository, *args)
     if completed.returncode:
         _fail("git:" + args[0])
     return completed.stdout.strip()
 
 
+def _prefetch_rev_parse(repository: Path, head: object) -> dict[str, str]:
+    """Answer the three pinned-head probes with one Git process instead of three.
+
+    ``git rev-parse`` prints one line per argument in argument order, so each probe's line is the answer a separate call
+    would give. Any refusal by Git, or an unexpected line count, yields no answers at all: ``_rev_parse`` then asks Git
+    one probe at a time, so a missing or unrelated revision still fails at the same step with the same reason instead of
+    being attributed to whichever probe the batch happened to reject.
+    """
+    if not isinstance(head, str) or not _SHA.fullmatch(head):
+        return {}
+    probes = ("--is-inside-work-tree", "HEAD", f"{head}^{{tree}}")
+    completed = _git_completed(repository, "rev-parse", *probes)
+    lines = completed.stdout.strip().splitlines()
+    if completed.returncode or len(lines) != len(probes):
+        return {}
+    return dict(zip(probes, lines, strict=True))
+
+
+def _rev_parse(repository: Path, probe: str, answers: dict[str, str]) -> str:
+    """Return one ``git rev-parse`` answer from the prefetched batch, asking Git only when it holds none."""
+    return answers[probe] if probe in answers else _git(repository, "rev-parse", probe)
+
+
 def _is_ancestor(repository: Path, ancestor: str, descendant: str) -> bool:
     """Return whether one verified Git object is reachable from another."""
-    completed = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+    completed = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
         cwd=repository,
         capture_output=True,
         text=True,
@@ -103,15 +133,15 @@ def _is_ancestor(repository: Path, ancestor: str, descendant: str) -> bool:
 
 def _patch_id(repository: Path, sha: str) -> str:
     """Return a stable patch ID without decoding or rewriting the patch's file bytes."""
-    patch = subprocess.run(
-        ["git", "show", "--format=", "--no-ext-diff", sha],
+    patch = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "show", "--format=", "--no-ext-diff", sha],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
         cwd=repository,
         capture_output=True,
         check=False,
     )
     if patch.returncode:
         _fail("git:show")
-    stable = subprocess.run(["git", "patch-id", "--stable"], input=patch.stdout, capture_output=True, check=False)
+    stable = subprocess.run(["git", "patch-id", "--stable"], input=patch.stdout, capture_output=True, check=False)  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
     if stable.returncode or not stable.stdout.strip():
         _fail("patch-id")
     return stable.stdout.split()[0].decode("ascii")
@@ -119,7 +149,7 @@ def _patch_id(repository: Path, sha: str) -> str:
 
 def _blob_sha256(repository: Path, sha: str, path: str) -> str | None:
     """Return one tree blob digest, or ``None`` when the path is absent from that tree."""
-    completed = subprocess.run(["git", "show", f"{sha}:{path}"], cwd=repository, capture_output=True, check=False)
+    completed = subprocess.run(["git", "show", f"{sha}:{path}"], cwd=repository, capture_output=True, check=False)  # noqa: S603, S607 - argv list, no shell; tool resolved via PATH on purpose
     if completed.returncode == 0:
         return hashlib.sha256(completed.stdout).hexdigest()
     if completed.returncode == 128:
@@ -194,13 +224,16 @@ def _validate_scope(receipt: dict[str, Any], metadata: dict[str, Any]) -> tuple[
     if not isinstance(raw_repository, str) or not Path(raw_repository).is_absolute():
         _fail("repository")
     repository = Path(raw_repository)
-    if not repository.is_dir() or _git(repository, "rev-parse", "--is-inside-work-tree") != "true":
+    if not repository.is_dir():
         _fail("repository")
     head = metadata.get("release_head")
-    if not isinstance(head, str) or not _SHA.fullmatch(head) or _git(repository, "rev-parse", "HEAD") != head:
+    answers = _prefetch_rev_parse(repository, head)
+    if _rev_parse(repository, "--is-inside-work-tree", answers) != "true":
+        _fail("repository")
+    if not isinstance(head, str) or not _SHA.fullmatch(head) or _rev_parse(repository, "HEAD", answers) != head:
         _fail("head")
     final_tree = receipt.get("final_tree")
-    if not isinstance(final_tree, str) or _git(repository, "rev-parse", f"{head}^{{tree}}") != final_tree:
+    if not isinstance(final_tree, str) or _rev_parse(repository, f"{head}^{{tree}}", answers) != final_tree:
         _fail("final-tree")
     baseline = receipt.get("baseline")
     if baseline is not None and (not isinstance(baseline, str) or not _SHA.fullmatch(baseline)):
@@ -255,14 +288,18 @@ def _validate_scope(receipt: dict[str, Any], metadata: dict[str, Any]) -> tuple[
                     not isinstance(path_row, dict)
                     or not isinstance(path_row.get("path"), str)
                     or path_row["path"] in paths
-                    or path_row.get("sha256") is not None
-                    and (
-                        not isinstance(path_row["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", path_row["sha256"])
+                    or (
+                        path_row.get("sha256") is not None
+                        and (
+                            not isinstance(path_row["sha256"], str)
+                            or not re.fullmatch(r"[0-9a-f]{64}", path_row["sha256"])
+                        )
                     )
-                    or path_row.get("mode") is not None
-                    and (not isinstance(path_row["mode"], str) or not re.fullmatch(r"[0-7]{6}", path_row["mode"]))
-                    or path_row.get("object_type") is not None
-                    and path_row["object_type"] not in {"blob", "commit"}
+                    or (
+                        path_row.get("mode") is not None
+                        and (not isinstance(path_row["mode"], str) or not re.fullmatch(r"[0-7]{6}", path_row["mode"]))
+                    )
+                    or (path_row.get("object_type") is not None and path_row["object_type"] not in {"blob", "commit"})
                 ):
                     _fail("released-path-row")
                 paths[path_row["path"]] = path_row.get("sha256")
@@ -716,7 +753,7 @@ def record_demo(
     output = out / "output.txt"
     command = [str(interpreter), str(script)]
     with output.open("xb") as stream:
-        process = subprocess.Popen(
+        process = subprocess.Popen(  # noqa: S603 - argv list, no shell
             command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, start_new_session=os.name != "nt"
         )
         try:

@@ -11,9 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from _platform import FILE_SYMLINKS_AVAILABLE
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = PLUGIN_ROOT / "scripts" / "install_global_agents.py"
@@ -192,12 +190,12 @@ def test_global_agents_installer_adopts_exact_legacy_copy(tmp_path: Path) -> Non
 
 @pytest.mark.parametrize(
     "damage",
-    (
+    [
         "modified-body",
         "orphan-begin",
         "orphan-end",
         "duplicate",
-    ),
+    ],
 )
 def test_global_agents_installer_refuses_untrusted_managed_state(tmp_path: Path, damage: str) -> None:
     """Fail without writes when managed ownership evidence is ambiguous or changed."""
@@ -341,7 +339,7 @@ def test_remove_requires_no_source_argument(tmp_path: Path) -> None:
     assert "--source is required unless --remove" in missing_source.stderr
 
 
-@pytest.mark.parametrize("managed_state", ("absent", "current", "stale"))
+@pytest.mark.parametrize("managed_state", ["absent", "current", "stale"])
 def test_installer_refuses_overlapping_global_policy_without_writes(tmp_path: Path, managed_state: str) -> None:
     """Reject legacy collisions before mutation, including otherwise idempotent updates."""
     namespace = runpy.run_path(str(INSTALLER))
@@ -376,7 +374,7 @@ def _run_mode(source: Path, codex_home: Path, *options: str) -> subprocess.Compl
     )
 
 
-@pytest.mark.parametrize("heading_ending", (pytest.param(b"\n", id="lf"), pytest.param(b"\r\n", id="crlf")))
+@pytest.mark.parametrize("heading_ending", [pytest.param(b"\n", id="lf"), pytest.param(b"\r\n", id="crlf")])
 def test_prefix_migration_preserves_suffix_and_full_backup(tmp_path: Path, heading_ending: bytes) -> None:
     """Remove the exact reviewed LF or CRLF prefix and retain custom suffix bytes."""
     namespace = runpy.run_path(str(INSTALLER))
@@ -400,7 +398,7 @@ def test_prefix_migration_preserves_suffix_and_full_backup(tmp_path: Path, headi
     assert backups[0].read_bytes() == original
 
 
-@pytest.mark.parametrize("damage", ("digest", "body", "ambiguous-prefix"))
+@pytest.mark.parametrize("damage", ["digest", "body", "ambiguous-prefix"])
 def test_prefix_migration_refuses_unreviewed_bytes(tmp_path: Path, damage: str) -> None:
     """Fail without writes when migration consent or managed integrity is stale."""
     namespace = runpy.run_path(str(INSTALLER))
@@ -429,7 +427,7 @@ def test_prefix_migration_refuses_unreviewed_bytes(tmp_path: Path, damage: str) 
 
 
 @pytest.mark.parametrize(
-    "state", ("absent", "current", "stale", "duplicate", "modified", "orphan-marker", "legacy-skill")
+    "state", ["absent", "current", "stale", "duplicate", "modified", "orphan-marker", "legacy-skill"]
 )
 def test_check_is_read_only_and_rejects_degraded_state(tmp_path: Path, state: str) -> None:
     """Diagnose bounded instruction drift without making backups or modifying files."""
@@ -503,7 +501,8 @@ def test_check_matches_install_refusal_for_single_unmarked_global_policy(tmp_pat
     installed = _run_mode(source, home)
 
     assert checked.returncode == installed.returncode == 4
-    assert "global-agents-overlap" in checked.stderr and "global-agents-overlap" in installed.stderr
+    assert "global-agents-overlap" in checked.stderr
+    assert "global-agents-overlap" in installed.stderr
     assert target.read_bytes() == original
     assert not (home / "backups").exists()
 
@@ -520,9 +519,11 @@ def test_check_preserves_exact_unmarked_template_adoption(tmp_path: Path) -> Non
 
     checked = _run_mode(source, home, "--check")
     assert checked.returncode == 0, checked.stderr
-    assert target.read_bytes() == original and not (home / "backups").exists()
+    assert target.read_bytes() == original
+    assert not (home / "backups").exists()
     installed = _run_mode(source, home)
-    assert installed.returncode == 0 and "adopted" in installed.stdout
+    assert installed.returncode == 0
+    assert "adopted" in installed.stdout
     assert target.read_bytes().count(b"Current managed policy.") == 1
 
 

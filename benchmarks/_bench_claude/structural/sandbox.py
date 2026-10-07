@@ -10,20 +10,15 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-
-from _bench_common.mutation_isolation import (
-    IsolatedMutationCell,
-    MutationCleanupError,
-)
+from _bench_common.mutation_isolation import IsolatedMutationCell, MutationCleanupError
 
 from _bench_claude.structural.config import (
+    _PYTEST_RESULT_EXIT_CODES,
     PYTEST_EXIT_ALL_PASSED,
     SandboxError,
-    _PYTEST_RESULT_EXIT_CODES,
     _describe_pytest_exit,
     _pin_pytest_interpreter,
 )
-
 
 # ---------------------------------------------------------------------------
 # Diff-impact staging
@@ -75,8 +70,8 @@ class DiffImpactStager:
         rels = self._rel_paths()
         if not rels:
             return
-        proc = subprocess.run(
-            ["git", "-C", str(self.repo_path), "status", "--porcelain", "--", *rels],
+        proc = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", "-C", str(self.repo_path), "status", "--porcelain", "--", *rels],  # noqa: S607 - git/tool resolved via PATH on purpose
             capture_output=True,
             text=True,
             timeout=30,
@@ -123,8 +118,8 @@ class DiffImpactStager:
         if not rels:
             return
         try:
-            restored = subprocess.run(
-                ["git", "-C", str(self.repo_path), "checkout", "--", *rels],
+            restored = subprocess.run(  # noqa: S603 - argv list, no shell
+                ["git", "-C", str(self.repo_path), "checkout", "--", *rels],  # noqa: S607 - git/tool resolved via PATH on purpose
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -140,7 +135,7 @@ class DiffImpactStager:
         self.revert_error = None
         self._touched = []
 
-    def __enter__(self) -> "DiffImpactStager":
+    def __enter__(self) -> DiffImpactStager:
         self._assert_clean()
         try:
             self._apply()
@@ -170,9 +165,9 @@ class DiffImpactStager:
 # Patch sandbox (Tier E)
 # ---------------------------------------------------------------------------
 
-# Match the start of a unified diff: a `--- ` / `+++ ` header pair followed by an
-# `@@` hunk header. Anchored at line start (MULTILINE) so prose preceding the diff
-# is skipped; the diff is assumed to run to EOF (agents emit one diff block last).
+#: Match the start of a unified diff: a `--- ` / `+++ ` header pair followed by an
+#: `@@` hunk header. Anchored at line start (MULTILINE) so prose preceding the diff
+#: is skipped; the diff is assumed to run to EOF (agents emit one diff block last).
 _DIFF_RE = re.compile(r"^(?:--- .+\n\+\+\+ .+\n@@.+)", re.MULTILINE)
 
 
@@ -268,8 +263,8 @@ class PatchSandbox:
         cell = IsolatedMutationCell(self._allocate_worktree, self._cleanup)
 
         def evaluate(worktree: Path) -> bool:
-            create = subprocess.run(
-                ["git", "-C", str(self.repo_path), "worktree", "add", "--detach", str(worktree), commit],
+            create = subprocess.run(  # noqa: S603 - argv list, no shell
+                ["git", "-C", str(self.repo_path), "worktree", "add", "--detach", str(worktree), commit],  # noqa: S607 - git/tool resolved via PATH on purpose
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -279,7 +274,7 @@ class PatchSandbox:
             self._worktree_active = True
 
             # Verify the test fails at the pre-fix commit before applying the patch.
-            baseline = subprocess.run(
+            baseline = subprocess.run(  # noqa: S603 - argv list, no shell
                 [*self._test_argv(), "--timeout=60", "-q"],
                 cwd=str(worktree),
                 capture_output=True,
@@ -305,16 +300,16 @@ class PatchSandbox:
             # half-patched tree. The tree is reset between attempts for the same reason.
             patch_file = worktree / ".patch-bench.diff"
             patch_file.write_text(diff_text)
-            applied = subprocess.run(
-                ["git", "-C", str(worktree), "apply", "--whitespace=nowarn", str(patch_file)],
+            applied = subprocess.run(  # noqa: S603 - argv list, no shell
+                ["git", "-C", str(worktree), "apply", "--whitespace=nowarn", str(patch_file)],  # noqa: S607 - git/tool resolved via PATH on purpose
                 capture_output=True,
                 text=True,
                 timeout=60,
             )
             if applied.returncode != 0:
                 self._reset_worktree(worktree)
-                fallback = subprocess.run(
-                    ["patch", "-p1", "-i", str(patch_file)],
+                fallback = subprocess.run(  # noqa: S603 - argv list, no shell
+                    ["patch", "-p1", "-i", str(patch_file)],  # noqa: S607 - git/tool resolved via PATH on purpose
                     cwd=str(worktree),
                     capture_output=True,
                     text=True,
@@ -328,7 +323,7 @@ class PatchSandbox:
             # or read as source by the scored run.
             self._clean_patch_artifacts(worktree)
 
-            test = subprocess.run(
+            test = subprocess.run(  # noqa: S603 - argv list, no shell
                 [*self._test_argv(), "--timeout=60", "-q"],
                 cwd=str(worktree),
                 capture_output=True,
@@ -360,8 +355,8 @@ class PatchSandbox:
 
     def _reset_worktree(self, worktree: Path) -> None:
         """Discard any partially applied hunks before the fallback apply attempt."""
-        reset = subprocess.run(
-            ["git", "-C", str(worktree), "checkout", "--", "."],
+        reset = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", "-C", str(worktree), "checkout", "--", "."],  # noqa: S607 - git/tool resolved via PATH on purpose
             capture_output=True,
             text=True,
             timeout=60,
@@ -386,16 +381,16 @@ class PatchSandbox:
     def _cleanup(self, worktree: Path) -> None:
         """Restore and remove one private worktree or raise with cleanup evidence."""
         if self._worktree_active:
-            reset = subprocess.run(
-                ["git", "-C", str(worktree), "reset", "--hard", "HEAD"],
+            reset = subprocess.run(  # noqa: S603 - argv list, no shell
+                ["git", "-C", str(worktree), "reset", "--hard", "HEAD"],  # noqa: S607 - git/tool resolved via PATH on purpose
                 capture_output=True,
                 text=True,
                 timeout=60,
             )
             if reset.returncode != 0:
                 raise SandboxError(f"task {self.task['id']}: worktree reset failed: {reset.stderr.strip()}")
-            remove = subprocess.run(
-                ["git", "-C", str(self.repo_path), "worktree", "remove", str(worktree)],
+            remove = subprocess.run(  # noqa: S603 - argv list, no shell
+                ["git", "-C", str(self.repo_path), "worktree", "remove", str(worktree)],  # noqa: S607 - git/tool resolved via PATH on purpose
                 capture_output=True,
                 text=True,
                 timeout=60,

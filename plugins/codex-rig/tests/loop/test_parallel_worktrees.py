@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import importlib.util
 import json
+import operator
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 LIFECYCLE_PATH = PLUGIN_ROOT / "shared" / "parallel_worktrees.py"
@@ -40,7 +42,8 @@ SYMLINKS_SUPPORTED = _supports_symlinks()
 def _load_lifecycle() -> ModuleType:
     """Load the installed-package-safe lifecycle module by file path."""
     specification = importlib.util.spec_from_file_location("codex_rig_parallel_worktrees", LIFECYCLE_PATH)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -49,7 +52,8 @@ def _load_lifecycle() -> ModuleType:
 def _load_validator() -> ModuleType:
     """Load the artifact validator for producer-to-consumer lifecycle checks."""
     specification = importlib.util.spec_from_file_location("codex_rig_validate_artifacts", VALIDATOR_PATH)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -62,8 +66,7 @@ def _git(repository: Path, *arguments: str, check: bool = True) -> subprocess.Co
         check=check,
         text=True,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
 
 
@@ -85,8 +88,7 @@ def _child_handover(workspace: Path, node: dict[str, object]) -> dict[str, objec
         ["git", "-C", str(worktree), "diff", "--binary", "--full-index", "HEAD", "--", *owned_paths],
         check=True,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     ).stdout
     return {
         "node_id": node["node_id"],
@@ -97,30 +99,63 @@ def _child_handover(workspace: Path, node: dict[str, object]) -> dict[str, objec
     }
 
 
-def _fixture_repository(workspace: Path) -> Path:
+class RepositoryTemplates:
+    """Generated fixture repositories committed once per session and copied into each test.
+
+    Initializing and committing a repository costs several Git processes, which dominates fixture setup on Windows. Each
+    distinct file set is committed once; every test receives a private copy, so a committed template is never mutated
+    and every test still starts from the same committed bytes.
+    """
+
+    def __init__(self, root: Path) -> None:
+        """Keep committed templates under one session-owned directory."""
+        self._root = root
+        self._committed: dict[tuple[str, tuple[tuple[str, str], ...]], tuple[Path, str, str]] = {}
+
+    def copy(self, destination: Path, files: dict[str, str], message: str) -> tuple[str, str]:
+        """Copy the repository committing ``files`` to ``destination`` and return its head and tree."""
+        key = (message, tuple(files.items()))
+        if key not in self._committed:
+            self._committed[key] = self._commit(self._root / f"repository-{len(self._committed)}", files, message)
+        template, head, tree = self._committed[key]
+        shutil.copytree(template, destination, symlinks=True)
+        return head, tree
+
+    @staticmethod
+    def _commit(repository: Path, files: dict[str, str], message: str) -> tuple[Path, str, str]:
+        """Commit LF-only fixture files in a new repository and return its path, head, and tree."""
+        repository.mkdir()
+        _git(repository, "init", "-q")
+        _git(repository, "config", "user.name", "Codex Test")
+        _git(repository, "config", "user.email", "codex-test@example.invalid")
+        for name, content in files.items():
+            (repository / name).write_text(content, encoding="utf-8", newline="\n")
+        _git(repository, "add", *files)
+        _git(repository, "commit", "-q", "-m", message)
+        head = _git(repository, "rev-parse", "HEAD").stdout.strip()
+        return repository, head, _git(repository, "rev-parse", "HEAD^{tree}").stdout.strip()
+
+
+@pytest.fixture(scope="session")
+def repository_templates(tmp_path_factory: pytest.TempPathFactory) -> RepositoryTemplates:
+    """Share committed fixture repositories across this test process; tests receive private copies."""
+    return RepositoryTemplates(tmp_path_factory.mktemp("parallel-worktree-templates"))
+
+
+def _fixture_repository(workspace: Path, repository_templates: RepositoryTemplates) -> Path:
     """Create a committed generated repository with two tracked write buckets."""
     repository = workspace / ".reports" / "codex" / "develop" / "fixture" / "repository"
-    repository.mkdir(parents=True)
-    _git(repository, "init", "-q")
-    _git(repository, "config", "user.name", "Codex Test")
-    _git(repository, "config", "user.email", "codex-test@example.invalid")
-    (repository / ".gitignore").write_text(".reports/\n", encoding="utf-8", newline="\n")
-    (repository / "bucket-a.txt").write_text("baseline-a\n", encoding="utf-8", newline="\n")
-    (repository / "bucket-b.txt").write_text("baseline-b\n", encoding="utf-8", newline="\n")
-    _git(repository, "add", ".gitignore", "bucket-a.txt", "bucket-b.txt")
-    _git(
+    repository_templates.copy(
         repository,
-        "commit",
-        "-q",
-        "-m",
+        {".gitignore": ".reports/\n", "bucket-a.txt": "baseline-a\n", "bucket-b.txt": "baseline-b\n"},
         "fixture baseline\n\nCo-authored-by: Codex <codex@openai.com>",
     )
     return repository
 
 
-def _approved_plan(workspace: Path) -> tuple[Path, Path, Path]:
+def _approved_plan(workspace: Path, repository_templates: RepositoryTemplates) -> tuple[Path, Path, Path]:
     """Write one exact approved two-node generated-fixture plan."""
-    repository = _fixture_repository(workspace)
+    repository = _fixture_repository(workspace, repository_templates)
     plan_path = workspace / "fixture-plan.json"
     approval_path = workspace / "approval.json"
     plan = {
@@ -194,24 +229,18 @@ def _approved_plan(workspace: Path) -> tuple[Path, Path, Path]:
 
 
 def _approved_code_remediate_plan(
-    workspace: Path, *, pin_lf: bool = False, baseline_a: str = "baseline-a\n"
+    workspace: Path,
+    repository_templates: RepositoryTemplates,
+    *,
+    pin_lf: bool = False,
+    baseline_a: str = "baseline-a\n",
 ) -> tuple[Path, Path, Path]:
     """Write one lifecycle plan, optionally pinning tracked text to LF."""
     repository = workspace / "authoritative-repository"
-    repository.mkdir()
-    _git(repository, "init", "-q")
-    _git(repository, "config", "user.name", "Codex Test")
-    _git(repository, "config", "user.email", "codex-test@example.invalid")
     text_attributes = "*.txt text eol=lf\n" if pin_lf else "*.txt text\n"
-    (repository / ".gitattributes").write_text(text_attributes, encoding="utf-8", newline="\n")
-    (repository / "bucket-a.txt").write_text(baseline_a, encoding="utf-8", newline="\n")
-    (repository / "bucket-b.txt").write_text("baseline-b\n", encoding="utf-8", newline="\n")
-    _git(repository, "add", ".gitattributes", "bucket-a.txt", "bucket-b.txt")
-    _git(
+    baseline_head, baseline_tree = repository_templates.copy(
         repository,
-        "commit",
-        "-q",
-        "-m",
+        {".gitattributes": text_attributes, "bucket-a.txt": baseline_a, "bucket-b.txt": "baseline-b\n"},
         "production fixture baseline\n\nCo-authored-by: Codex <codex@openai.com>",
     )
     evidence = repository / ".reports" / "codex" / "code-remediate" / "fixture"
@@ -229,8 +258,8 @@ def _approved_code_remediate_plan(
         "write_parallel_promoted": False,
         "source_repository": "authoritative-repository",
         "worktree_root": ".codex-rig-worktrees/fixture",
-        "baseline_head": _git(repository, "rev-parse", "HEAD").stdout.strip(),
-        "baseline_tree": _git(repository, "rev-parse", "HEAD^{tree}").stdout.strip(),
+        "baseline_head": baseline_head,
+        "baseline_tree": baseline_tree,
         "rollback_policy": "approved-paths-if-preapply-baseline-matches",
         "cleanup_policy": "non-force-after-durable-source-application",
         "state_path": "production-lifecycle.json",
@@ -301,19 +330,25 @@ def _use_source_local_worktree_root(plan_path: Path, approval_path: Path, reposi
     return root
 
 
-def _overlapping_code_remediate_plan(workspace: Path, baseline: str) -> tuple[Path, Path, Path]:
+def _overlapping_code_remediate_plan(
+    workspace: Path, repository_templates: RepositoryTemplates, baseline: str
+) -> tuple[Path, Path, Path]:
     """Approve two isolated remediation buckets that both own one tracked file."""
-    plan_path, approval_path, repository = _approved_code_remediate_plan(workspace, baseline_a=baseline)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(
+        workspace, repository_templates, baseline_a=baseline
+    )
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     plan["work_buckets"][1]["owned_paths"] = ["bucket-a.txt"]
     _rewrite_code_remediate_plan(plan_path, approval_path, plan)
     return plan_path, approval_path, repository
 
 
-def _prepare(workspace: Path) -> tuple[ModuleType, Path, dict[str, object], Path]:
+def _prepare(
+    workspace: Path, repository_templates: RepositoryTemplates
+) -> tuple[ModuleType, Path, dict[str, object], Path]:
     """Prepare one valid pilot and return its module, state, payload, and repository."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_plan(workspace)
+    plan_path, approval_path, repository = _approved_plan(workspace, repository_templates)
     state_path = workspace / ".reports" / "codex" / "develop" / "fixture" / "lifecycle.json"
     state = lifecycle.prepare_write_pilot(
         plan_path=plan_path,
@@ -325,11 +360,13 @@ def _prepare(workspace: Path) -> tuple[ModuleType, Path, dict[str, object], Path
 
 
 def _prepare_integrated_code_remediate(
-    workspace: Path, *, simulate_crlf_default: bool = False
+    workspace: Path, repository_templates: RepositoryTemplates, *, simulate_crlf_default: bool = False
 ) -> tuple[ModuleType, Path, dict[str, object], Path]:
     """Prepare and integrate a fixture, optionally simulating a CRLF checkout default."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(workspace, pin_lf=simulate_crlf_default)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(
+        workspace, repository_templates, pin_lf=simulate_crlf_default
+    )
     if simulate_crlf_default:
         _git(repository, "config", "core.autocrlf", "false")
         _git(repository, "config", "core.eol", "crlf")
@@ -360,11 +397,15 @@ def _prepare_integrated_code_remediate(
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_code_remediate_nonconflicting_overlap_integrates_once(tmp_path: Path) -> None:
+def test_code_remediate_nonconflicting_overlap_integrates_once(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Combine distant edits to an approved shared file without duplicate path evidence."""
     lifecycle = _load_lifecycle()
     baseline_lines = [f"line-{index}\n" for index in range(30)]
-    plan_path, approval_path, repository = _overlapping_code_remediate_plan(tmp_path, "".join(baseline_lines))
+    plan_path, approval_path, repository = _overlapping_code_remediate_plan(
+        tmp_path, repository_templates, "".join(baseline_lines)
+    )
     state_path = plan_path.parent / "production-lifecycle.json"
     state = lifecycle.prepare_code_remediate_pilot(
         plan_path=plan_path, approval_path=approval_path, workspace_root=tmp_path, state_path=state_path
@@ -401,10 +442,14 @@ def test_code_remediate_nonconflicting_overlap_integrates_once(tmp_path: Path) -
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_code_remediate_conflicting_overlap_requires_recorded_parent_reconciliation(tmp_path: Path) -> None:
+def test_code_remediate_conflicting_overlap_requires_recorded_parent_reconciliation(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Block source apply until the parent records a verified shared-file resolution."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _overlapping_code_remediate_plan(tmp_path, "baseline-a\n")
+    plan_path, approval_path, repository = _overlapping_code_remediate_plan(
+        tmp_path, repository_templates, "baseline-a\n"
+    )
     # Windows hosts install Git with core.autocrlf=true, so every worktree checkout of a `text`
     # attribute file holds CRLF while the source fixture keeps the LF bytes the test wrote. Forcing
     # that default on every host keeps the reconciliation cleanup path below honest: a file "restored"
@@ -429,13 +474,13 @@ def test_code_remediate_conflicting_overlap_requires_recorded_parent_reconciliat
         for node in state["nodes"]
     }
 
-    with pytest.raises(lifecycle.PilotError, match="^patch-integration-needs-reconciliation:WRITE-B$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^patch-integration-needs-reconciliation:WRITE-B$"):
         lifecycle.integrate_write_pilot(state_path=state_path)
     failed = json.loads(state_path.read_text(encoding="utf-8"))
     assert failed["integration_status"] == "needs-reconciliation"
     assert failed["integration_failed_node"] == "WRITE-B"
     assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "baseline-a\n"
-    with pytest.raises(lifecycle.PilotError, match="^source-apply-before-integration-forbidden$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^source-apply-before-integration-forbidden$"):
         lifecycle.apply_code_remediate_source(state_path=state_path)
 
     integration = tmp_path / str(failed["integration_worktree"])
@@ -453,16 +498,14 @@ def test_code_remediate_conflicting_overlap_requires_recorded_parent_reconciliat
     }
     (integration / "bucket-b.txt").write_text("unapproved\n", encoding="utf-8", newline="\n")
     record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8", newline="\n")
-    with pytest.raises(lifecycle.PilotError, match="^integration-reconciliation-path-mismatch$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^integration-reconciliation-path-mismatch$"):
         lifecycle.reconcile_code_remediate_integration(state_path=state_path, record_path=record_path)
-    # Restore through Git, never by rewriting baseline bytes: the checkout honours the repository's
-    # end-of-line conversion, so only Git can put the file back in the exact state cleanup requires.
     # Restore through Git, never by rewriting baseline bytes: the checkout honours the repository's
     # end-of-line conversion, so only Git can put the file back in the exact state cleanup requires.
     _git(integration, "restore", "--", "bucket-b.txt")
     record["postimage_sha256"]["bucket-a.txt"] = "0" * 64
     record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8", newline="\n")
-    with pytest.raises(lifecycle.PilotError, match="^integration-reconciliation-postimage-mismatch$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^integration-reconciliation-postimage-mismatch$"):
         lifecycle.reconcile_code_remediate_integration(state_path=state_path, record_path=record_path)
     record["postimage_sha256"]["bucket-a.txt"] = _sha256(resolved)
     record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -473,7 +516,7 @@ def test_code_remediate_conflicting_overlap_requires_recorded_parent_reconciliat
     assert reconciled["integration_status"] == "structurally-verified"
     assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "baseline-a\n"
     record_path.write_text(record_path.read_text(encoding="utf-8") + "\n", encoding="utf-8", newline="\n")
-    with pytest.raises(lifecycle.PilotError, match="^integration-reconciliation-evidence-drift$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^integration-reconciliation-evidence-drift$"):
         lifecycle.apply_code_remediate_source(state_path=state_path)
     record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8", newline="\n")
     application = lifecycle.apply_code_remediate_source(state_path=state_path)
@@ -485,10 +528,12 @@ def test_code_remediate_conflicting_overlap_requires_recorded_parent_reconciliat
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_code_remediate_prepare_accepts_clean_digest_bound_production_plan(tmp_path: Path) -> None:
+def test_code_remediate_prepare_accepts_clean_digest_bound_production_plan(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Prepare detached remediation worktrees from one clean, approval-bound source baseline."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     state_path = repository / ".reports" / "codex" / "code-remediate" / "fixture" / "production-lifecycle.json"
 
     state = lifecycle.prepare_code_remediate_pilot(
@@ -523,10 +568,12 @@ def test_code_remediate_prepare_accepts_clean_digest_bound_production_plan(tmp_p
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_code_remediate_source_local_worktrees_preserve_unrelated_source_changes(tmp_path: Path) -> None:
+def test_code_remediate_source_local_worktrees_preserve_unrelated_source_changes(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Apply approved edits without changing unrelated source bytes or staged index entries."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     worktree_root = _use_source_local_worktree_root(plan_path, approval_path, repository)
     tracked = repository / ".gitattributes"
     tracked.write_text("*.txt text\n# staged unrelated note\n", encoding="utf-8", newline="\n")
@@ -587,10 +634,12 @@ def test_code_remediate_source_local_worktrees_preserve_unrelated_source_changes
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_code_remediate_accepts_digest_bound_parallel_workflow_default(tmp_path: Path) -> None:
+def test_code_remediate_accepts_digest_bound_parallel_workflow_default(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Record workflow authority without claiming a per-plan approval prompt."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     approval = json.loads(approval_path.read_text(encoding="utf-8"))
     approval.update({"source": "workflow-default", "prompt_presented": False})
     approval_path.write_text(json.dumps(approval, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -608,15 +657,17 @@ def test_code_remediate_accepts_digest_bound_parallel_workflow_default(tmp_path:
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_code_remediate_rejects_workflow_default_as_prompted_approval(tmp_path: Path) -> None:
+def test_code_remediate_rejects_workflow_default_as_prompted_approval(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Keep workflow authority distinct from an exact per-plan user prompt."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, _ = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, _ = _approved_code_remediate_plan(tmp_path, repository_templates)
     approval = json.loads(approval_path.read_text(encoding="utf-8"))
     approval["source"] = "workflow-default"
     approval_path.write_text(json.dumps(approval, indent=2) + "\n", encoding="utf-8", newline="\n")
 
-    with pytest.raises(lifecycle.PilotError, match="^write-approval-invalid$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^write-approval-invalid$"):
         lifecycle.prepare_code_remediate_pilot(
             plan_path=plan_path,
             approval_path=approval_path,
@@ -628,10 +679,12 @@ def test_code_remediate_rejects_workflow_default_as_prompted_approval(tmp_path: 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 @pytest.mark.parametrize("mutation", ["missing", "digest-mismatch"])
-def test_code_remediate_prepare_binds_each_source_local_context_pack(tmp_path: Path, mutation: str) -> None:
+def test_code_remediate_prepare_binds_each_source_local_context_pack(
+    tmp_path: Path, repository_templates: RepositoryTemplates, mutation: str
+) -> None:
     """Reject dispatch when an approved bucket lacks its exact source-local context bytes."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     bucket = plan["work_buckets"][0]
     context_path = plan_path.parent / str(bucket["context_pack_path"])
@@ -656,10 +709,12 @@ def test_code_remediate_prepare_binds_each_source_local_context_pack(tmp_path: P
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_code_remediate_transition_rejects_context_pack_drift(tmp_path: Path) -> None:
+def test_code_remediate_transition_rejects_context_pack_drift(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Rehash frozen context bytes before a child handover can advance the lifecycle."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     state_path = repository / ".reports" / "codex" / "code-remediate" / "fixture" / "production-lifecycle.json"
     state = lifecycle.prepare_code_remediate_pilot(
         plan_path=plan_path,
@@ -673,7 +728,7 @@ def test_code_remediate_transition_rejects_context_pack_drift(tmp_path: Path) ->
     worktree = tmp_path / str(node["worktree_path"])
     (worktree / str(node["owned_paths"][0])).write_text("child-a\n", encoding="utf-8", newline="\n")
 
-    with pytest.raises(lifecycle.PilotError, match="^context-pack-digest-mismatch:WRITE-A$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^context-pack-digest-mismatch:WRITE-A$"):
         lifecycle.create_completed_child_handover(
             state_path=state_path,
             node_id="WRITE-A",
@@ -687,10 +742,12 @@ def test_code_remediate_transition_rejects_context_pack_drift(tmp_path: Path) ->
     "state_case",
     ["different-plan-path", "preexisting-state", "preexisting-state-temporary", "preexisting-output"],
 )
-def test_code_remediate_prepare_requires_one_plan_bound_new_state_path(tmp_path: Path, state_case: str) -> None:
+def test_code_remediate_prepare_requires_one_plan_bound_new_state_path(
+    tmp_path: Path, repository_templates: RepositoryTemplates, state_case: str
+) -> None:
     """Reject caller-selected state or pre-existing lifecycle output before creating worktrees."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     state_path = repository / ".reports" / "codex" / "code-remediate" / "fixture" / "production-lifecycle.json"
     if state_case == "different-plan-path":
         state_path = state_path.with_name("other-lifecycle.json")
@@ -719,10 +776,10 @@ def test_code_remediate_prepare_requires_one_plan_bound_new_state_path(tmp_path:
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 def test_code_remediate_rollback_rechecks_preimages_after_restore(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, repository_templates: RepositoryTemplates, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Retain evidence and block cleanup when an external restore leaves an approved path changed."""
-    lifecycle, state_path, state, repository = _prepare_integrated_code_remediate(tmp_path)
+    lifecycle, state_path, state, repository = _prepare_integrated_code_remediate(tmp_path, repository_templates)
     real_git = lifecycle._git
 
     def _fail_apply_and_skip_restore(target: Path, *arguments: str) -> str:
@@ -735,7 +792,7 @@ def test_code_remediate_rollback_rechecks_preimages_after_restore(
         return real_git(target, *arguments)
 
     monkeypatch.setattr(lifecycle, "_git", _fail_apply_and_skip_restore)
-    with pytest.raises(lifecycle.PilotError, match="^rollback-ambiguous$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^rollback-ambiguous$"):
         lifecycle.apply_code_remediate_source(state_path=state_path)
 
     persisted = json.loads(state_path.read_text(encoding="utf-8"))
@@ -743,16 +800,18 @@ def test_code_remediate_rollback_rechecks_preimages_after_restore(
     assert persisted["source_application"]["status"] == "rollback-ambiguous"
     assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "child-a\n"
     assert all((tmp_path / str(node["worktree_path"])).exists() for node in state["nodes"])
-    with pytest.raises(lifecycle.PilotError, match="^cleanup-before-source-application-forbidden$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^cleanup-before-source-application-forbidden$"):
         lifecycle.cleanup_code_remediate_pilot(state_path=state_path)
 
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_code_remediate_uses_fixed_parent_gate_reference_not_bucket_shell_commands(tmp_path: Path) -> None:
+def test_code_remediate_uses_fixed_parent_gate_reference_not_bucket_shell_commands(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Keep structural integration distinct from the parent-owned shared quality-gate execution."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     assert plan["verification_gate"] == "code-remediate-shared-quality-gates"
     assert all("verification_commands" not in bucket for bucket in plan["work_buckets"])
@@ -769,13 +828,15 @@ def test_code_remediate_uses_fixed_parent_gate_reference_not_bucket_shell_comman
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_code_remediate_prepare_rejects_plan_changed_after_approval(tmp_path: Path) -> None:
+def test_code_remediate_prepare_rejects_plan_changed_after_approval(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Prevent approval of one remediation bucket contract authorizing another."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, _ = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, _ = _approved_code_remediate_plan(tmp_path, repository_templates)
     plan_path.write_text(plan_path.read_text(encoding="utf-8") + "\n", encoding="utf-8", newline="\n")
 
-    with pytest.raises(lifecycle.PilotError, match="^plan-approval-digest-mismatch$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^plan-approval-digest-mismatch$"):
         lifecycle.prepare_code_remediate_pilot(
             plan_path=plan_path,
             approval_path=approval_path,
@@ -793,10 +854,12 @@ def test_code_remediate_prepare_rejects_plan_changed_after_approval(tmp_path: Pa
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 @pytest.mark.parametrize("source_state", ["owned-worktree", "owned-index", "owned-rename", "merging"])
-def test_code_remediate_prepare_rejects_unsafe_source_before_dispatch(tmp_path: Path, source_state: str) -> None:
+def test_code_remediate_prepare_rejects_unsafe_source_before_dispatch(
+    tmp_path: Path, repository_templates: RepositoryTemplates, source_state: str
+) -> None:
     """Block dispatch for approved-path drift or an unresolved Git operation."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     if source_state == "owned-worktree":
         (repository / "bucket-a.txt").write_text("dirty\n", encoding="utf-8", newline="\n")
         expected = "source-repository-dirty"
@@ -833,10 +896,12 @@ def test_code_remediate_prepare_rejects_unsafe_source_before_dispatch(tmp_path: 
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_code_remediate_prepare_rejects_unrelated_unmerged_index(tmp_path: Path) -> None:
+def test_code_remediate_prepare_rejects_unrelated_unmerged_index(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Block dispatch when Git has unresolved index stages without an operation marker."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     blob = _git(repository, "rev-parse", "HEAD:bucket-a.txt").stdout.strip()
     entries = f"100644 {blob} 1\tunrelated.txt\n100644 {blob} 2\tunrelated.txt\n"
     # Binary stdin preserves Git's LF record delimiters on Windows.
@@ -844,12 +909,11 @@ def test_code_remediate_prepare_rejects_unrelated_unmerged_index(tmp_path: Path)
         ["git", "-C", str(repository), "update-index", "--index-info"],
         input=entries.encode("ascii"),
         check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
     assert _git(repository, "ls-files", "--unmerged").stdout == entries
 
-    with pytest.raises(lifecycle.PilotError, match="^source-repository-unmerged$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^source-repository-unmerged$"):
         lifecycle.prepare_code_remediate_pilot(
             plan_path=plan_path,
             approval_path=approval_path,
@@ -871,10 +935,12 @@ def test_code_remediate_prepare_rejects_unrelated_unmerged_index(tmp_path: Path)
         pytest.param("preexisting", "worktree-root-exists", id="preexisting"),
     ],
 )
-def test_code_remediate_prepare_rejects_unsafe_source_local_root(tmp_path: Path, root_case: str, expected: str) -> None:
+def test_code_remediate_prepare_rejects_unsafe_source_local_root(
+    tmp_path: Path, repository_templates: RepositoryTemplates, root_case: str, expected: str
+) -> None:
     """Reject source-local roots that can expose outputs or overwrite existing evidence."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     root = repository / ".reports" / "codex" / "code-remediate-worktrees" / "fixture"
     if root_case != "not-ignored":
         root = _use_source_local_worktree_root(plan_path, approval_path, repository)
@@ -915,16 +981,18 @@ def test_code_remediate_prepare_rejects_unsafe_source_local_root(tmp_path: Path,
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 @pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="directory symlink capability unavailable")
-def test_code_remediate_prepare_rejects_symlinked_source_local_worktree_root(tmp_path: Path) -> None:
+def test_code_remediate_prepare_rejects_symlinked_source_local_worktree_root(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Reject a source-local worktree parent redirected outside the source checkout."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     _use_source_local_worktree_root(plan_path, approval_path, repository)
     outside = tmp_path / "outside-worktrees"
     outside.mkdir()
     (repository / ".reports" / "codex" / "code-remediate-worktrees").symlink_to(outside, target_is_directory=True)
 
-    with pytest.raises(lifecycle.PilotError, match="^managed-path-symlink-forbidden$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^managed-path-symlink-forbidden$"):
         lifecycle.prepare_code_remediate_pilot(
             plan_path=plan_path,
             approval_path=approval_path,
@@ -937,17 +1005,19 @@ def test_code_remediate_prepare_rejects_symlinked_source_local_worktree_root(tmp
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_code_remediate_prepare_rejects_casefolded_source_local_root_alias(tmp_path: Path) -> None:
+def test_code_remediate_prepare_rejects_casefolded_source_local_root_alias(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Reject a case-altered source prefix that can name a sibling on case-sensitive hosts."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     _use_source_local_worktree_root(plan_path, approval_path, repository)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     root = f"{repository.name.upper()}/.reports/codex/code-remediate-worktrees/fixture"
     plan["worktree_root"] = root
     _rewrite_code_remediate_plan(plan_path, approval_path, plan)
 
-    with pytest.raises(lifecycle.PilotError, match="^worktree-root-not-managed-sibling$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^worktree-root-not-managed-sibling$"):
         lifecycle.prepare_code_remediate_pilot(
             plan_path=plan_path,
             approval_path=approval_path,
@@ -961,15 +1031,17 @@ def test_code_remediate_prepare_rejects_casefolded_source_local_root_alias(tmp_p
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 @pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="directory symlink capability unavailable")
-def test_code_remediate_prepare_rejects_symlinked_sibling_worktree_root(tmp_path: Path) -> None:
+def test_code_remediate_prepare_rejects_symlinked_sibling_worktree_root(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Prevent a plan-bound sibling worktree root escaping through a symlinked parent."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     outside = tmp_path / "outside-worktrees"
     outside.mkdir()
     (tmp_path / ".codex-rig-worktrees").symlink_to(outside, target_is_directory=True)
 
-    with pytest.raises(lifecycle.PilotError, match="^managed-path-symlink-forbidden$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^managed-path-symlink-forbidden$"):
         lifecycle.prepare_code_remediate_pilot(
             plan_path=plan_path,
             approval_path=approval_path,
@@ -983,10 +1055,12 @@ def test_code_remediate_prepare_rejects_symlinked_sibling_worktree_root(tmp_path
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 @pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="directory symlink capability unavailable")
-def test_code_remediate_transition_rejects_symlinked_evidence_root(tmp_path: Path) -> None:
+def test_code_remediate_transition_rejects_symlinked_evidence_root(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Reject lifecycle authority redirected after preparation through source-local evidence symlinks."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     state_path = repository / ".reports" / "codex" / "code-remediate" / "fixture" / "production-lifecycle.json"
     state = lifecycle.prepare_code_remediate_pilot(
         plan_path=plan_path,
@@ -999,7 +1073,7 @@ def test_code_remediate_transition_rejects_symlinked_evidence_root(tmp_path: Pat
     evidence.rename(outside)
     evidence.symlink_to(outside, target_is_directory=True)
 
-    with pytest.raises(lifecycle.PilotError, match="^managed-path-symlink-forbidden$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^managed-path-symlink-forbidden$"):
         lifecycle.create_completed_child_handover(
             state_path=state_path,
             node_id=str(state["nodes"][0]["node_id"]),
@@ -1010,12 +1084,14 @@ def test_code_remediate_transition_rejects_symlinked_evidence_root(tmp_path: Pat
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 @pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="directory symlink capability unavailable")
-def test_code_remediate_prepare_rejects_symlinked_source_parent(tmp_path: Path) -> None:
+def test_code_remediate_prepare_rejects_symlinked_source_parent(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Prevent an authoritative repository path escaping through a symlinked parent."""
     lifecycle = _load_lifecycle()
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    _, _, repository = _approved_code_remediate_plan(workspace)
+    _, _, repository = _approved_code_remediate_plan(workspace, repository_templates)
     outside_repository = tmp_path / "outside-source-repository"
     repository.rename(outside_repository)
     (workspace / "source-parent").symlink_to(tmp_path, target_is_directory=True)
@@ -1026,7 +1102,7 @@ def test_code_remediate_prepare_rejects_symlinked_source_parent(tmp_path: Path) 
     plan["source_repository"] = "source-parent/outside-source-repository"
     _rewrite_code_remediate_plan(plan_path, approval_path, plan)
 
-    with pytest.raises(lifecycle.PilotError, match="^managed-path-symlink-forbidden$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^managed-path-symlink-forbidden$"):
         lifecycle.prepare_code_remediate_pilot(
             plan_path=plan_path,
             approval_path=approval_path,
@@ -1039,9 +1115,11 @@ def test_code_remediate_prepare_rejects_symlinked_source_parent(tmp_path: Path) 
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_code_remediate_source_application_records_rollback_before_nonforce_cleanup(tmp_path: Path) -> None:
+def test_code_remediate_source_application_records_rollback_before_nonforce_cleanup(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Apply only integrated bucket patches and retain rollback bytes before cleanup removes worktrees."""
-    lifecycle, state_path, state, repository = _prepare_integrated_code_remediate(tmp_path)
+    lifecycle, state_path, state, repository = _prepare_integrated_code_remediate(tmp_path, repository_templates)
 
     application = lifecycle.apply_code_remediate_source(state_path=state_path)
 
@@ -1062,10 +1140,12 @@ def test_code_remediate_source_application_records_rollback_before_nonforce_clea
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 def test_code_remediate_source_application_records_actual_crlf_postimage(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, repository_templates: RepositoryTemplates, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Record native source bytes after clean-filter-equivalent CRLF application."""
-    lifecycle, state_path, _, repository = _prepare_integrated_code_remediate(tmp_path, simulate_crlf_default=True)
+    lifecycle, state_path, _, repository = _prepare_integrated_code_remediate(
+        tmp_path, repository_templates, simulate_crlf_default=True
+    )
     _git(repository, "config", "core.autocrlf", "true")
     real_git = lifecycle._git
 
@@ -1094,10 +1174,12 @@ def test_code_remediate_source_application_records_actual_crlf_postimage(
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_code_remediate_cli_join_rejects_handover_outside_evidence_root(tmp_path: Path) -> None:
+def test_code_remediate_cli_join_rejects_handover_outside_evidence_root(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Reject an otherwise valid external handover before it can satisfy a parent join."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     state_path = repository / ".reports" / "codex" / "code-remediate" / "fixture" / "production-lifecycle.json"
     state = lifecycle.prepare_code_remediate_pilot(
         plan_path=plan_path,
@@ -1122,7 +1204,12 @@ def test_code_remediate_cli_join_rejects_handover_outside_evidence_root(tmp_path
 
     assert (
         lifecycle.main(
-            ["join", "--state", str(state_path), *sum((["--handover", str(path)] for path in handover_paths), [])]
+            [
+                "join",
+                "--state",
+                str(state_path),
+                *functools.reduce(operator.iadd, (["--handover", str(path)] for path in handover_paths), []),
+            ]
         )
         == 2
     )
@@ -1134,10 +1221,12 @@ def test_code_remediate_cli_join_rejects_handover_outside_evidence_root(tmp_path
 @pytest.mark.integration
 @pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="directory symlink capability unavailable")
 @pytest.mark.parametrize("path_kind", ["contained", "symlinked-component"])
-def test_code_remediate_cli_handover_output_rejects_intermediate_symlink(tmp_path: Path, path_kind: str) -> None:
+def test_code_remediate_cli_handover_output_rejects_intermediate_symlink(
+    tmp_path: Path, repository_templates: RepositoryTemplates, path_kind: str
+) -> None:
     """Allow a contained output but reject a symlinked parent even before its terminal exists."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     state_path = repository / ".reports" / "codex" / "code-remediate" / "fixture" / "production-lifecycle.json"
     state = lifecycle.prepare_code_remediate_pilot(
         plan_path=plan_path,
@@ -1178,10 +1267,10 @@ def test_code_remediate_cli_handover_output_rejects_intermediate_symlink(tmp_pat
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 def test_code_remediate_apply_rejects_tampered_integration_before_source_apply(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, repository_templates: RepositoryTemplates, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Revalidate integrated bytes before any authoritative source apply command can run."""
-    lifecycle, state_path, state, repository = _prepare_integrated_code_remediate(tmp_path)
+    lifecycle, state_path, state, repository = _prepare_integrated_code_remediate(tmp_path, repository_templates)
     state = json.loads(state_path.read_text(encoding="utf-8"))
     integration = tmp_path / str(state["integration_worktree"])
     (integration / "bucket-a.txt").write_text("tampered integration\n", encoding="utf-8", newline="\n")
@@ -1194,7 +1283,7 @@ def test_code_remediate_apply_rejects_tampered_integration_before_source_apply(
         return real_git(target, *arguments)
 
     monkeypatch.setattr(lifecycle, "_git", _reject_source_apply)
-    with pytest.raises(lifecycle.PilotError, match="^integration-worktree-drift$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^integration-worktree-drift$"):
         lifecycle.apply_code_remediate_source(state_path=state_path)
 
     assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "baseline-a\n"
@@ -1204,11 +1293,11 @@ def test_code_remediate_apply_rejects_tampered_integration_before_source_apply(
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 def test_code_remediate_cli_drives_the_supported_parent_lifecycle(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, repository_templates: RepositoryTemplates, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Keep the skill-callable CLI equivalent to the validated function lifecycle."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
     state_path = repository / ".reports" / "codex" / "code-remediate" / "fixture" / "production-lifecycle.json"
 
     assert (
@@ -1289,10 +1378,10 @@ def test_code_remediate_cli_drives_the_supported_parent_lifecycle(
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 def test_code_remediate_source_apply_failure_restores_only_known_states(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, repository_templates: RepositoryTemplates, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Restore approved paths after apply failure without touching unrelated source changes."""
-    lifecycle, state_path, _, repository = _prepare_integrated_code_remediate(tmp_path)
+    lifecycle, state_path, _, repository = _prepare_integrated_code_remediate(tmp_path, repository_templates)
     tracked = repository / ".gitattributes"
     tracked.write_text("*.txt text\n# staged note\n", encoding="utf-8", newline="\n")
     _git(repository, "add", ".gitattributes")
@@ -1310,7 +1399,7 @@ def test_code_remediate_source_apply_failure_restores_only_known_states(
         return real_git(target, *arguments)
 
     monkeypatch.setattr(lifecycle, "_git", _fail_after_source_apply)
-    with pytest.raises(lifecycle.PilotError, match="^simulated-source-apply-failure$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^simulated-source-apply-failure$"):
         lifecycle.apply_code_remediate_source(state_path=state_path)
 
     persisted = json.loads(state_path.read_text(encoding="utf-8"))
@@ -1339,10 +1428,10 @@ def test_code_remediate_source_apply_failure_restores_only_known_states(
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 def test_code_remediate_source_preflight_preserves_new_staged_owned_edit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, repository_templates: RepositoryTemplates, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Reject late owned-path index drift before rollback can erase user-staged content."""
-    lifecycle, state_path, _, repository = _prepare_integrated_code_remediate(tmp_path)
+    lifecycle, state_path, _, repository = _prepare_integrated_code_remediate(tmp_path, repository_templates)
     owned = repository / "bucket-a.txt"
     baseline = owned.read_bytes()
     staged = b"user staged edit\n"
@@ -1369,7 +1458,7 @@ def test_code_remediate_source_preflight_preserves_new_staged_owned_edit(
     monkeypatch.setattr(lifecycle, "_persist", _inject_staged_edit)
     monkeypatch.setattr(lifecycle, "_git", _record_restore)
 
-    with pytest.raises(lifecycle.PilotError, match="^source-repository-dirty$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^source-repository-dirty$"):
         lifecycle.apply_code_remediate_source(state_path=state_path)
 
     assert len(staged_entry) == 1
@@ -1387,10 +1476,10 @@ def test_code_remediate_source_preflight_preserves_new_staged_owned_edit(
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 def test_code_remediate_source_preflight_check_failure_records_terminal_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, repository_templates: RepositoryTemplates, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Keep unchanged source and terminal evidence when Git rejects patch preflight."""
-    lifecycle, state_path, _, repository = _prepare_integrated_code_remediate(tmp_path)
+    lifecycle, state_path, _, repository = _prepare_integrated_code_remediate(tmp_path, repository_templates)
     baseline = {path: (repository / path).read_bytes() for path in ("bucket-a.txt", "bucket-b.txt")}
     index = _git(repository, "ls-files", "--stage", "--", "bucket-a.txt", "bucket-b.txt").stdout
     real_git = lifecycle._git
@@ -1405,7 +1494,7 @@ def test_code_remediate_source_preflight_check_failure_records_terminal_state(
         return real_git(target, *arguments)
 
     monkeypatch.setattr(lifecycle, "_git", _reject_apply_preflight)
-    with pytest.raises(lifecycle.PilotError, match="^simulated-source-preflight-check-failure$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^simulated-source-preflight-check-failure$"):
         lifecycle.apply_code_remediate_source(state_path=state_path)
 
     persisted = json.loads(state_path.read_text(encoding="utf-8"))
@@ -1419,10 +1508,10 @@ def test_code_remediate_source_preflight_check_failure_records_terminal_state(
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 def test_code_remediate_source_apply_rolls_back_filtered_newline_postimage(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, repository_templates: RepositoryTemplates, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Restore a known clean-filtered postimage whose source bytes use CRLF."""
-    lifecycle, state_path, _, repository = _prepare_integrated_code_remediate(tmp_path)
+    lifecycle, state_path, _, repository = _prepare_integrated_code_remediate(tmp_path, repository_templates)
     _git(repository, "config", "core.autocrlf", "true")
     real_git = lifecycle._git
 
@@ -1437,7 +1526,7 @@ def test_code_remediate_source_apply_rolls_back_filtered_newline_postimage(
         return real_git(target, *arguments)
 
     monkeypatch.setattr(lifecycle, "_git", _fail_after_crlf_source_apply)
-    with pytest.raises(lifecycle.PilotError, match="^simulated-source-apply-failure$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^simulated-source-apply-failure$"):
         lifecycle.apply_code_remediate_source(state_path=state_path)
 
     persisted = json.loads(state_path.read_text(encoding="utf-8"))
@@ -1450,10 +1539,10 @@ def test_code_remediate_source_apply_rolls_back_filtered_newline_postimage(
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 def test_code_remediate_ambiguous_source_failure_retains_evidence(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, repository_templates: RepositoryTemplates, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Retain diagnostics without restoration when a concurrent write creates an unknown state."""
-    lifecycle, state_path, state, repository = _prepare_integrated_code_remediate(tmp_path)
+    lifecycle, state_path, state, repository = _prepare_integrated_code_remediate(tmp_path, repository_templates)
     real_git = lifecycle._git
 
     def _create_ambiguous_state(target: Path, *arguments: str) -> str:
@@ -1465,7 +1554,7 @@ def test_code_remediate_ambiguous_source_failure_retains_evidence(
         return real_git(target, *arguments)
 
     monkeypatch.setattr(lifecycle, "_git", _create_ambiguous_state)
-    with pytest.raises(lifecycle.PilotError, match="^rollback-ambiguous$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^rollback-ambiguous$"):
         lifecycle.apply_code_remediate_source(state_path=state_path)
 
     persisted = json.loads(state_path.read_text(encoding="utf-8"))
@@ -1474,7 +1563,7 @@ def test_code_remediate_ambiguous_source_failure_retains_evidence(
     assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "concurrent-writer\n"
     assert (repository / "bucket-b.txt").read_text(encoding="utf-8") == "child-b\n"
     assert all((tmp_path / str(node["worktree_path"])).exists() for node in state["nodes"])
-    with pytest.raises(lifecycle.PilotError, match="^cleanup-before-source-application-forbidden$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^cleanup-before-source-application-forbidden$"):
         lifecycle.cleanup_code_remediate_pilot(state_path=state_path)
 
 
@@ -1507,13 +1596,13 @@ def _write_other_children(workspace: Path, state: dict[str, object], excluded_no
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_prepare_rejects_plan_changed_after_approval(tmp_path: Path) -> None:
+def test_prepare_rejects_plan_changed_after_approval(tmp_path: Path, repository_templates: RepositoryTemplates) -> None:
     """Prevent a stale approval from authorizing changed nodes or scope."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, _ = _approved_plan(tmp_path)
+    plan_path, approval_path, _ = _approved_plan(tmp_path, repository_templates)
     plan_path.write_text(plan_path.read_text(encoding="utf-8") + "\n", encoding="utf-8", newline="\n")
 
-    with pytest.raises(lifecycle.PilotError, match="^plan-approval-digest-mismatch$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^plan-approval-digest-mismatch$"):
         lifecycle.prepare_write_pilot(
             plan_path=plan_path,
             approval_path=approval_path,
@@ -1539,10 +1628,12 @@ def test_prepare_rejects_plan_changed_after_approval(tmp_path: Path) -> None:
         pytest.param("bucket-a.txt/child", "owned-path-overlap", id="bucket-a.txt-child"),
     ],
 )
-def test_prepare_rejects_nonportable_or_aliased_owned_paths(tmp_path: Path, owned_path: str, error: str) -> None:
+def test_prepare_rejects_nonportable_or_aliased_owned_paths(
+    tmp_path: Path, repository_templates: RepositoryTemplates, owned_path: str, error: str
+) -> None:
     """Block traversal, Windows aliases, and nonportable bucket ownership."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, _ = _approved_plan(tmp_path)
+    plan_path, approval_path, _ = _approved_plan(tmp_path, repository_templates)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     plan["stages"][0]["nodes"][1]["owned_paths"] = [owned_path]
     plan_path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -1561,10 +1652,10 @@ def test_prepare_rejects_nonportable_or_aliased_owned_paths(tmp_path: Path, owne
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_prepare_rejects_overlapping_resource_locks(tmp_path: Path) -> None:
+def test_prepare_rejects_overlapping_resource_locks(tmp_path: Path, repository_templates: RepositoryTemplates) -> None:
     """Stop two otherwise disjoint packages from sharing one exclusive resource."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, _ = _approved_plan(tmp_path)
+    plan_path, approval_path, _ = _approved_plan(tmp_path, repository_templates)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     for node in plan["stages"][0]["nodes"]:
         node["resource_locks"] = ["git-index"]
@@ -1573,7 +1664,7 @@ def test_prepare_rejects_overlapping_resource_locks(tmp_path: Path) -> None:
     approval["plan_sha256"] = _sha256(plan_path)
     approval_path.write_text(json.dumps(approval, indent=2) + "\n", encoding="utf-8", newline="\n")
 
-    with pytest.raises(lifecycle.PilotError, match="^resource-lock-overlap:FIXTURE-WRITE-B$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^resource-lock-overlap:FIXTURE-WRITE-B$"):
         lifecycle.prepare_write_pilot(
             plan_path=plan_path,
             approval_path=approval_path,
@@ -1585,14 +1676,16 @@ def test_prepare_rejects_overlapping_resource_locks(tmp_path: Path) -> None:
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 @pytest.mark.parametrize("dirty_kind", ["tracked", "untracked"])
-def test_prepare_rejects_dirty_fixture_repository(tmp_path: Path, dirty_kind: str) -> None:
+def test_prepare_rejects_dirty_fixture_repository(
+    tmp_path: Path, repository_templates: RepositoryTemplates, dirty_kind: str
+) -> None:
     """Prevent dispatch from a baseline with hidden tracked or untracked drift."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_plan(tmp_path, repository_templates)
     target = repository / ("bucket-a.txt" if dirty_kind == "tracked" else "untracked.txt")
     target.write_text("dirty\n", encoding="utf-8", newline="\n")
 
-    with pytest.raises(lifecycle.PilotError, match="^fixture-repository-dirty$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^fixture-repository-dirty$"):
         lifecycle.prepare_write_pilot(
             plan_path=plan_path,
             approval_path=approval_path,
@@ -1603,9 +1696,11 @@ def test_prepare_rejects_dirty_fixture_repository(tmp_path: Path, dirty_kind: st
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_prepare_creates_detached_worktrees_at_exact_frozen_head(tmp_path: Path) -> None:
+def test_prepare_creates_detached_worktrees_at_exact_frozen_head(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Create isolated children without mutating the generated source checkout."""
-    _, _, state, repository = _prepare(tmp_path)
+    _, _, state, repository = _prepare(tmp_path, repository_templates)
     baseline = str(state["baseline_head"])
 
     for node in state["nodes"]:
@@ -1617,10 +1712,12 @@ def test_prepare_creates_detached_worktrees_at_exact_frozen_head(tmp_path: Path)
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_prepare_canonicalizes_multi_path_package_order(tmp_path: Path) -> None:
+def test_prepare_canonicalizes_multi_path_package_order(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Freeze multi-path ownership in the same lexical order used by parent verification."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_plan(tmp_path, repository_templates)
     (repository / "bucket-c.txt").write_text("baseline-c\n", encoding="utf-8", newline="\n")
     _git(repository, "add", "bucket-c.txt")
     _git(repository, "commit", "-q", "-m", "add third fixture bucket")
@@ -1645,10 +1742,10 @@ def test_prepare_canonicalizes_multi_path_package_order(tmp_path: Path) -> None:
 @pytest.mark.integration
 @pytest.mark.parametrize("state_path_kind", ["path", "string"])
 def test_create_completed_child_handover_accepts_canonical_state_path_forms(
-    tmp_path: Path, state_path_kind: str
+    tmp_path: Path, repository_templates: RepositoryTemplates, state_path_kind: str
 ) -> None:
     """Return the canonical report for supported lifecycle-state path forms."""
-    lifecycle, state_path, state, _ = _prepare(tmp_path)
+    lifecycle, state_path, state, _ = _prepare(tmp_path, repository_templates)
     node = state["nodes"][1]
     worktree = tmp_path / str(node["worktree_path"])
     (worktree / "bucket-b.txt").write_text("child-b\n", encoding="utf-8", newline="\n")
@@ -1668,11 +1765,13 @@ def test_create_completed_child_handover_accepts_canonical_state_path_forms(
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_create_completed_child_handover_rejects_invalid_state_path_type(tmp_path: Path) -> None:
+def test_create_completed_child_handover_rejects_invalid_state_path_type(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Return the stable pilot error for an unsupported state-path object."""
-    lifecycle, _, _, _ = _prepare(tmp_path)
+    lifecycle, _, _, _ = _prepare(tmp_path, repository_templates)
 
-    with pytest.raises(lifecycle.PilotError, match="^lifecycle-state-path-invalid$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^lifecycle-state-path-invalid$"):
         lifecycle.create_completed_child_handover(
             state_path=object(),
             node_id="FIXTURE-WRITE-B",
@@ -1683,14 +1782,14 @@ def test_create_completed_child_handover_rejects_invalid_state_path_type(tmp_pat
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 def test_create_completed_child_handover_rejects_relative_state_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, repository_templates: RepositoryTemplates, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Fail closed when a child resolves the parent state relative to its worktree."""
-    lifecycle, state_path, state, _ = _prepare(tmp_path)
+    lifecycle, state_path, state, _ = _prepare(tmp_path, repository_templates)
     worktree = tmp_path / str(state["nodes"][1]["worktree_path"])
     monkeypatch.chdir(worktree)
 
-    with pytest.raises(lifecycle.PilotError, match="^lifecycle-state-invalid$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^lifecycle-state-invalid$"):
         lifecycle.create_completed_child_handover(
             state_path=state_path.relative_to(tmp_path),
             node_id="FIXTURE-WRITE-B",
@@ -1700,9 +1799,11 @@ def test_create_completed_child_handover_rejects_relative_state_path(
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_parent_authoritative_handovers_gate_patch_collection_and_integration(tmp_path: Path) -> None:
+def test_parent_authoritative_handovers_gate_patch_collection_and_integration(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Require both child reports and verify them against worktrees before integration."""
-    lifecycle, state_path, state, repository = _prepare(tmp_path)
+    lifecycle, state_path, state, repository = _prepare(tmp_path, repository_templates)
     for node, content in zip(state["nodes"], ("child-a\n", "child-b\n"), strict=True):
         worktree = tmp_path / str(node["worktree_path"])
         (worktree / str(node["owned_paths"][0])).write_text(content, encoding="utf-8", newline="\n")
@@ -1737,10 +1838,12 @@ def test_parent_authoritative_handovers_gate_patch_collection_and_integration(tm
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_prior_attempt_fingerprint_blocks_retained_worktree_mutation(tmp_path: Path) -> None:
+def test_prior_attempt_fingerprint_blocks_retained_worktree_mutation(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Freeze retained diagnostics and reject their mutation before current patch collection."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_plan(tmp_path)
+    plan_path, approval_path, repository = _approved_plan(tmp_path, repository_templates)
     prior_root = tmp_path / ".reports" / "codex" / "develop" / "prior" / "worktrees"
     prior_root.mkdir(parents=True)
     for node_id in ("FIXTURE-WRITE-A", "FIXTURE-WRITE-B"):
@@ -1770,7 +1873,7 @@ def test_prior_attempt_fingerprint_blocks_retained_worktree_mutation(tmp_path: P
     (current / "bucket-a.txt").write_text("child-a\n", encoding="utf-8", newline="\n")
     _write_other_children(tmp_path, state, "FIXTURE-WRITE-A")
 
-    with pytest.raises(lifecycle.PilotError, match="^prior-attempt-fingerprint-mismatch$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^prior-attempt-fingerprint-mismatch$"):
         _join(lifecycle, state_path, state, tmp_path)
 
     assert not (state_path.parent / "patch-a.diff").exists()
@@ -1778,9 +1881,11 @@ def test_prior_attempt_fingerprint_blocks_retained_worktree_mutation(tmp_path: P
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_state_authority_tamper_fails_before_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_state_authority_tamper_fails_before_git(
+    tmp_path: Path, repository_templates: RepositoryTemplates, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Rederive managed roots before executing Git from mutable lifecycle state."""
-    lifecycle, state_path, state, _ = _prepare(tmp_path)
+    lifecycle, state_path, _state, _ = _prepare(tmp_path, repository_templates)
     persisted = json.loads(state_path.read_text(encoding="utf-8"))
     persisted["repository"] = ".reports/codex/develop/redirected"
     state_path.write_text(json.dumps(persisted, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -1790,7 +1895,7 @@ def test_state_authority_tamper_fails_before_git(tmp_path: Path, monkeypatch: py
         raise AssertionError("Git ran before state authority validation")
 
     monkeypatch.setattr(lifecycle.subprocess, "run", _unexpected_git)
-    with pytest.raises(lifecycle.PilotError, match="^lifecycle-state-root-drift$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^lifecycle-state-root-drift$"):
         lifecycle.collect_write_patch(
             state_path=state_path,
             node_id="FIXTURE-WRITE-A",
@@ -1799,16 +1904,18 @@ def test_state_authority_tamper_fails_before_git(tmp_path: Path, monkeypatch: py
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_collect_rejects_child_commit_and_retains_worktree(tmp_path: Path) -> None:
+def test_collect_rejects_child_commit_and_retains_worktree(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Reject a clean-looking child that hid its mutation in a commit."""
-    lifecycle, state_path, state, _ = _prepare(tmp_path)
+    lifecycle, state_path, state, _ = _prepare(tmp_path, repository_templates)
     worktree = tmp_path / str(state["nodes"][0]["worktree_path"])
     (worktree / "bucket-a.txt").write_text("child-a\n", encoding="utf-8", newline="\n")
     _git(worktree, "add", "bucket-a.txt")
     _git(worktree, "commit", "-q", "-m", "forbidden child commit")
     _write_other_children(tmp_path, state, "FIXTURE-WRITE-A")
 
-    with pytest.raises(lifecycle.PilotError, match="^child-commit-forbidden:FIXTURE-WRITE-A$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^child-commit-forbidden:FIXTURE-WRITE-A$"):
         _join(lifecycle, state_path, state, tmp_path)
 
     assert worktree.exists()
@@ -1817,9 +1924,11 @@ def test_collect_rejects_child_commit_and_retains_worktree(tmp_path: Path) -> No
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 @pytest.mark.parametrize("mutation", ["outside-owned", "untracked"])
-def test_collect_rejects_undeclared_or_untracked_changes(tmp_path: Path, mutation: str) -> None:
+def test_collect_rejects_undeclared_or_untracked_changes(
+    tmp_path: Path, repository_templates: RepositoryTemplates, mutation: str
+) -> None:
     """Prevent a child patch from smuggling undeclared or untracked files."""
-    lifecycle, state_path, state, _ = _prepare(tmp_path)
+    lifecycle, state_path, state, _ = _prepare(tmp_path, repository_templates)
     worktree = tmp_path / str(state["nodes"][0]["worktree_path"])
     target = worktree / ("bucket-b.txt" if mutation == "outside-owned" else "new.txt")
     target.write_text("forbidden\n", encoding="utf-8", newline="\n")
@@ -1832,15 +1941,15 @@ def test_collect_rejects_undeclared_or_untracked_changes(tmp_path: Path, mutatio
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_collect_rejects_staged_owned_change(tmp_path: Path) -> None:
+def test_collect_rejects_staged_owned_change(tmp_path: Path, repository_templates: RepositoryTemplates) -> None:
     """Prevent a valid owned edit from bypassing the patch-only index boundary."""
-    lifecycle, state_path, state, _ = _prepare(tmp_path)
+    lifecycle, state_path, state, _ = _prepare(tmp_path, repository_templates)
     worktree = tmp_path / str(state["nodes"][0]["worktree_path"])
     (worktree / "bucket-a.txt").write_text("staged\n", encoding="utf-8", newline="\n")
     _git(worktree, "add", "bucket-a.txt")
     _write_other_children(tmp_path, state, "FIXTURE-WRITE-A")
 
-    with pytest.raises(lifecycle.PilotError, match="^child-index-change-forbidden:FIXTURE-WRITE-A$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^child-index-change-forbidden:FIXTURE-WRITE-A$"):
         _join(lifecycle, state_path, state, tmp_path)
 
     assert not (state_path.parent / "patch-a.diff").exists()
@@ -1848,25 +1957,25 @@ def test_collect_rejects_staged_owned_change(tmp_path: Path) -> None:
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_collect_rejects_deletion_patch_shape(tmp_path: Path) -> None:
+def test_collect_rejects_deletion_patch_shape(tmp_path: Path, repository_templates: RepositoryTemplates) -> None:
     """Reject deletion even when it stays in the owned bucket."""
-    lifecycle, state_path, state, _ = _prepare(tmp_path)
+    lifecycle, state_path, state, _ = _prepare(tmp_path, repository_templates)
     worktree = tmp_path / str(state["nodes"][0]["worktree_path"])
     target = worktree / "bucket-a.txt"
     target.unlink()
     _write_other_children(tmp_path, state, "FIXTURE-WRITE-A")
 
-    with pytest.raises(lifecycle.PilotError, match="^child-patch-shape-forbidden:FIXTURE-WRITE-A$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^child-patch-shape-forbidden:FIXTURE-WRITE-A$"):
         _join(lifecycle, state_path, state, tmp_path)
 
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 def test_raw_content_updates_rejects_mode_only_metadata_without_filemode_capability(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, repository_templates: RepositoryTemplates, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Reject a Git-reported mode-only patch without relying on chmod tracking."""
-    lifecycle, _, state, _ = _prepare(tmp_path)
+    lifecycle, _, state, _ = _prepare(tmp_path, repository_templates)
     node = state["nodes"][0]
     worktree = tmp_path / str(node["worktree_path"])
     real_git_bytes = lifecycle._git_bytes
@@ -1879,7 +1988,7 @@ def test_raw_content_updates_rejects_mode_only_metadata_without_filemode_capabil
 
     monkeypatch.setattr(lifecycle, "_git_bytes", _mode_only_raw)
 
-    with pytest.raises(lifecycle.PilotError, match="^child-patch-shape-forbidden:FIXTURE-WRITE-A$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^child-patch-shape-forbidden:FIXTURE-WRITE-A$"):
         lifecycle._raw_content_updates(worktree, node)
 
 
@@ -1887,7 +1996,7 @@ def test_raw_content_updates_rejects_mode_only_metadata_without_filemode_capabil
 @pytest.mark.integration
 @pytest.mark.parametrize(
     ("mutation", "error"),
-    (
+    [
         pytest.param("missing", "child-handovers-incomplete", id="missing"),
         pytest.param("duplicate", "child-handover-invalid", id="duplicate"),
         pytest.param("extra-field", "child-handover-invalid", id="extra-field"),
@@ -1896,11 +2005,13 @@ def test_raw_content_updates_rejects_mode_only_metadata_without_filemode_capabil
         pytest.param("empty-summary", "child-handover-summary-invalid:FIXTURE-WRITE-A", id="empty-summary"),
         pytest.param("wrong-path", "child-handover-paths-mismatch:FIXTURE-WRITE-A", id="wrong-path"),
         pytest.param("wrong-hash", "child-handover-patch-mismatch:FIXTURE-WRITE-A", id="wrong-hash"),
-    ),
+    ],
 )
-def test_join_rejects_incomplete_or_mismatched_child_handover(tmp_path: Path, mutation: str, error: str) -> None:
+def test_join_rejects_incomplete_or_mismatched_child_handover(
+    tmp_path: Path, repository_templates: RepositoryTemplates, mutation: str, error: str
+) -> None:
     """Reject partial, unsuccessful, empty, or Git-inconsistent child reports."""
-    lifecycle, state_path, state, _ = _prepare(tmp_path)
+    lifecycle, state_path, state, _ = _prepare(tmp_path, repository_templates)
     for node in state["nodes"]:
         worktree = tmp_path / str(node["worktree_path"])
         (worktree / str(node["owned_paths"][0])).write_text("child\n", encoding="utf-8", newline="\n")
@@ -1936,9 +2047,11 @@ def test_join_rejects_incomplete_or_mismatched_child_handover(tmp_path: Path, mu
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_collect_rejects_worktree_drift_after_parent_join(tmp_path: Path) -> None:
+def test_collect_rejects_worktree_drift_after_parent_join(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Recheck the reported patch hash immediately before parent collection."""
-    lifecycle, state_path, state, _ = _prepare(tmp_path)
+    lifecycle, state_path, state, _ = _prepare(tmp_path, repository_templates)
     for node in state["nodes"]:
         worktree = tmp_path / str(node["worktree_path"])
         (worktree / str(node["owned_paths"][0])).write_text("joined\n", encoding="utf-8", newline="\n")
@@ -1946,7 +2059,7 @@ def test_collect_rejects_worktree_drift_after_parent_join(tmp_path: Path) -> Non
     worktree = tmp_path / str(state["nodes"][0]["worktree_path"])
     (worktree / "bucket-a.txt").write_text("drifted-after-join\n", encoding="utf-8", newline="\n")
 
-    with pytest.raises(lifecycle.PilotError, match="^child-handover-drift:FIXTURE-WRITE-A$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^child-handover-drift:FIXTURE-WRITE-A$"):
         lifecycle.collect_write_patch(state_path=state_path, node_id="FIXTURE-WRITE-A")
 
     assert not (state_path.parent / "patch-a.diff").exists()
@@ -1954,9 +2067,9 @@ def test_collect_rejects_worktree_drift_after_parent_join(tmp_path: Path) -> Non
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_collect_rejects_fabricated_operation_api(tmp_path: Path) -> None:
+def test_collect_rejects_fabricated_operation_api(tmp_path: Path, repository_templates: RepositoryTemplates) -> None:
     """Keep caller-created operation dictionaries outside the collector API."""
-    lifecycle, state_path, state, _ = _prepare(tmp_path)
+    lifecycle, state_path, state, _ = _prepare(tmp_path, repository_templates)
     worktree = tmp_path / str(state["nodes"][0]["worktree_path"])
     (worktree / "bucket-a.txt").write_text("child-a\n", encoding="utf-8", newline="\n")
     with pytest.raises(TypeError, match="unexpected keyword argument 'operation'"):
@@ -1969,11 +2082,13 @@ def test_collect_rejects_fabricated_operation_api(tmp_path: Path) -> None:
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_integrate_requires_every_completed_joined_patch(tmp_path: Path) -> None:
+def test_integrate_requires_every_completed_joined_patch(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Prevent integration before both child reports and patches are verified."""
-    lifecycle, state_path, state, repository = _prepare(tmp_path)
+    lifecycle, state_path, _state, repository = _prepare(tmp_path, repository_templates)
 
-    with pytest.raises(lifecycle.PilotError, match="^pilot-children-not-joined$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^pilot-children-not-joined$"):
         lifecycle.integrate_write_pilot(state_path=state_path)
 
     assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "baseline-a\n"
@@ -1981,9 +2096,11 @@ def test_integrate_requires_every_completed_joined_patch(tmp_path: Path) -> None
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_integrate_applies_parent_derived_patches_in_lexical_order(tmp_path: Path) -> None:
+def test_integrate_applies_parent_derived_patches_in_lexical_order(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Apply both hash-bound patches to an isolated integration worktree in stable order."""
-    lifecycle, state_path, state, repository = _prepare(tmp_path)
+    lifecycle, state_path, state, repository = _prepare(tmp_path, repository_templates)
     for node, content in zip(state["nodes"], ("child-a\n", "child-b\n"), strict=True):
         worktree = tmp_path / str(node["worktree_path"])
         owned_path = str(node["owned_paths"][0])
@@ -2005,9 +2122,11 @@ def test_integrate_applies_parent_derived_patches_in_lexical_order(tmp_path: Pat
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_plan_drift_after_join_blocks_integration_and_retains_worktrees(tmp_path: Path) -> None:
+def test_plan_drift_after_join_blocks_integration_and_retains_worktrees(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Rehash immutable authority after joins before applying any child patch."""
-    lifecycle, state_path, state, _ = _prepare(tmp_path)
+    lifecycle, state_path, state, _ = _prepare(tmp_path, repository_templates)
     for node in state["nodes"]:
         worktree = tmp_path / str(node["worktree_path"])
         owned_path = str(node["owned_paths"][0])
@@ -2018,7 +2137,7 @@ def test_plan_drift_after_join_blocks_integration_and_retains_worktrees(tmp_path
     plan_path = tmp_path / str(state["plan_path"])
     plan_path.write_text(plan_path.read_text(encoding="utf-8") + "\n", encoding="utf-8", newline="\n")
 
-    with pytest.raises(lifecycle.PilotError, match="^plan-approval-digest-mismatch$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^plan-approval-digest-mismatch$"):
         lifecycle.integrate_write_pilot(state_path=state_path)
 
     assert all((tmp_path / str(node["worktree_path"])).exists() for node in state["nodes"])
@@ -2027,9 +2146,11 @@ def test_plan_drift_after_join_blocks_integration_and_retains_worktrees(tmp_path
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 @pytest.mark.parametrize("drift", ["approval", "source"])
-def test_authority_or_source_drift_blocks_transition(tmp_path: Path, drift: str) -> None:
+def test_authority_or_source_drift_blocks_transition(
+    tmp_path: Path, repository_templates: RepositoryTemplates, drift: str
+) -> None:
     """Reject approval-byte or generated-source drift before another Git transition."""
-    lifecycle, state_path, state, repository = _prepare(tmp_path)
+    lifecycle, state_path, state, repository = _prepare(tmp_path, repository_templates)
     for node in state["nodes"]:
         worktree = tmp_path / str(node["worktree_path"])
         (worktree / str(node["owned_paths"][0])).write_text("child\n", encoding="utf-8", newline="\n")
@@ -2050,9 +2171,9 @@ def test_authority_or_source_drift_blocks_transition(tmp_path: Path, drift: str)
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_patch_digest_tamper_blocks_integration(tmp_path: Path) -> None:
+def test_patch_digest_tamper_blocks_integration(tmp_path: Path, repository_templates: RepositoryTemplates) -> None:
     """Reject changed patch bytes before creating an integration worktree."""
-    lifecycle, state_path, state, _ = _prepare(tmp_path)
+    lifecycle, state_path, state, _ = _prepare(tmp_path, repository_templates)
     for node in state["nodes"]:
         worktree = tmp_path / str(node["worktree_path"])
         (worktree / str(node["owned_paths"][0])).write_text("child\n", encoding="utf-8", newline="\n")
@@ -2062,7 +2183,7 @@ def test_patch_digest_tamper_blocks_integration(tmp_path: Path) -> None:
     patch = state_path.parent / "patch-a.diff"
     patch.write_bytes(patch.read_bytes() + b"\n")
 
-    with pytest.raises(lifecycle.PilotError, match="^patch-digest-mismatch:FIXTURE-WRITE-A$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^patch-digest-mismatch:FIXTURE-WRITE-A$"):
         lifecycle.integrate_write_pilot(state_path=state_path)
 
     assert not (tmp_path / str(state["worktree_root"]) / "integration").exists()
@@ -2070,9 +2191,11 @@ def test_patch_digest_tamper_blocks_integration(tmp_path: Path) -> None:
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_conflicting_patch_retains_failed_integration(tmp_path: Path) -> None:
+def test_conflicting_patch_retains_failed_integration(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Retain the integration worktree when a hash-bound later patch conflicts."""
-    lifecycle, state_path, state, repository = _prepare(tmp_path)
+    lifecycle, state_path, state, repository = _prepare(tmp_path, repository_templates)
     for node in state["nodes"]:
         worktree = tmp_path / str(node["worktree_path"])
         (worktree / str(node["owned_paths"][0])).write_text("child\n", encoding="utf-8", newline="\n")
@@ -2086,7 +2209,7 @@ def test_conflicting_patch_retains_failed_integration(tmp_path: Path) -> None:
     persisted["nodes"][1]["patch_sha256"] = _sha256(patch_b)
     state_path.write_text(json.dumps(persisted, indent=2) + "\n", encoding="utf-8", newline="\n")
 
-    with pytest.raises(lifecycle.PilotError, match="^patch-integration-failed:FIXTURE-WRITE-B$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^patch-integration-failed:FIXTURE-WRITE-B$"):
         lifecycle.integrate_write_pilot(state_path=state_path)
 
     retained = json.loads(state_path.read_text(encoding="utf-8"))
@@ -2098,9 +2221,11 @@ def test_conflicting_patch_retains_failed_integration(tmp_path: Path) -> None:
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_cleanup_removes_only_persisted_successful_worktrees(tmp_path: Path) -> None:
+def test_cleanup_removes_only_persisted_successful_worktrees(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Remove generated worktrees only after integration evidence is durable."""
-    lifecycle, state_path, state, _ = _prepare(tmp_path)
+    lifecycle, state_path, state, _ = _prepare(tmp_path, repository_templates)
     for node, content in zip(state["nodes"], ("child-a\n", "child-b\n"), strict=True):
         worktree = tmp_path / str(node["worktree_path"])
         (worktree / str(node["owned_paths"][0])).write_text(content, encoding="utf-8", newline="\n")
@@ -2122,9 +2247,11 @@ def test_cleanup_removes_only_persisted_successful_worktrees(tmp_path: Path) -> 
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-def test_cleanup_failure_is_retained_and_blocks_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cleanup_failure_is_retained_and_blocks_success(
+    tmp_path: Path, repository_templates: RepositoryTemplates, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Record non-force cleanup failure and retain every remaining diagnostic path."""
-    lifecycle, state_path, state, _ = _prepare(tmp_path)
+    lifecycle, state_path, state, _ = _prepare(tmp_path, repository_templates)
     for node in state["nodes"]:
         worktree = tmp_path / str(node["worktree_path"])
         (worktree / str(node["owned_paths"][0])).write_text("child\n", encoding="utf-8", newline="\n")
@@ -2141,7 +2268,7 @@ def test_cleanup_failure_is_retained_and_blocks_success(tmp_path: Path, monkeypa
         return real_git(repository, *arguments)
 
     monkeypatch.setattr(lifecycle, "_git", _fail_remove)
-    with pytest.raises(lifecycle.PilotError, match="^cleanup-failed:FIXTURE-WRITE-A$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^cleanup-failed:FIXTURE-WRITE-A$"):
         lifecycle.cleanup_write_pilot(state_path=state_path)
 
     persisted = json.loads(state_path.read_text(encoding="utf-8"))
@@ -2152,17 +2279,19 @@ def test_cleanup_failure_is_retained_and_blocks_success(tmp_path: Path, monkeypa
 @pytest.mark.installed_plugin
 @pytest.mark.integration
 @pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="directory symlink capability unavailable")
-def test_prepare_rejects_symlinked_generated_root_when_supported(tmp_path: Path) -> None:
+def test_prepare_rejects_symlinked_generated_root_when_supported(
+    tmp_path: Path, repository_templates: RepositoryTemplates
+) -> None:
     """Prevent a managed worktree path from escaping through a symlink component."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, _ = _approved_plan(tmp_path)
+    plan_path, approval_path, _ = _approved_plan(tmp_path, repository_templates)
     generated = tmp_path / ".reports" / "codex" / "develop" / "fixture"
     outside = tmp_path / "outside"
     outside.mkdir()
     alias = generated / "worktrees"
     alias.symlink_to(outside, target_is_directory=True)
 
-    with pytest.raises(lifecycle.PilotError, match="^managed-path-symlink-forbidden$"):
+    with pytest.raises(lifecycle.PilotError, match=r"^managed-path-symlink-forbidden$"):
         lifecycle.prepare_write_pilot(
             plan_path=plan_path,
             approval_path=approval_path,
@@ -2199,3 +2328,134 @@ def test_git_runner_sanitizes_git_environment_without_shell(monkeypatch: pytest.
     assert environment["COMSPEC"] == "cmd.exe"
     assert observed[0]["shell"] is False
     assert os.environ is not environment
+
+
+def _record_lifecycle_git(
+    lifecycle: ModuleType, monkeypatch: pytest.MonkeyPatch, *, refuse_batches: bool = False
+) -> list[tuple[str, ...]]:
+    """Record every lifecycle Git invocation, optionally failing any batched ``--git-path`` query."""
+    real_git = lifecycle._git
+    calls: list[tuple[str, ...]] = []
+
+    def _record(target: Path, *arguments: str) -> str:
+        """Run the real Git helper after noting its arguments."""
+        calls.append(arguments)
+        if refuse_batches and arguments.count("--git-path") > 1:
+            raise lifecycle.PilotError("git-command-failed:rev-parse")
+        return real_git(target, *arguments)
+
+    monkeypatch.setattr(lifecycle, "_git", _record)
+    return calls
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("creator", "name", "expected"),
+    [
+        pytest.param("touch", "MERGE_HEAD", "merging", id="merge"),
+        pytest.param("touch", "CHERRY_PICK_HEAD", "cherry-picking", id="cherry-pick"),
+        pytest.param("touch", "REVERT_HEAD", "reverting", id="revert"),
+        pytest.param("mkdir", "rebase-merge", "rebasing", id="rebase-merge"),
+        pytest.param("mkdir", "rebase-apply", "rebasing", id="rebase-apply"),
+        pytest.param("touch", "UNRELATED_MARKER", None, id="idle"),
+    ],
+)
+def test_pending_git_operation_is_read_with_one_git_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, creator: str, name: str, expected: str | None
+) -> None:
+    """Report each pending operation by its own label from a single marker-path query.
+
+    A repository gains exactly one operation marker; the batched answer must map every line back to the marker it was
+    asked for, so swapping two answers would report the wrong operation or none.
+    """
+    lifecycle = _load_lifecycle()
+    _git(tmp_path, "init", "-q")
+    getattr(tmp_path / ".git" / name, creator)()
+    calls = _record_lifecycle_git(lifecycle, monkeypatch)
+
+    assert lifecycle._git_operation(tmp_path) == expected
+    assert calls == [
+        (
+            "rev-parse",
+            "--git-path",
+            "MERGE_HEAD",
+            "--git-path",
+            "CHERRY_PICK_HEAD",
+            "--git-path",
+            "REVERT_HEAD",
+            "--git-dir",
+        )
+    ]
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+def test_pending_git_operation_uses_the_linked_worktree_git_directory(
+    tmp_path: Path, repository_templates: RepositoryTemplates, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Find a marker in a linked worktree's private Git directory and not in the main checkout.
+
+    A linked worktree keeps MERGE_HEAD beside its own HEAD under the shared Git directory, where Git answers with an
+    absolute path; the main checkout must stay idle while the linked one reports the merge.
+    """
+    lifecycle = _load_lifecycle()
+    repository = _fixture_repository(tmp_path, repository_templates)
+    linked = tmp_path / "linked"
+    _git(repository, "worktree", "add", "--detach", str(linked))
+    Path(_git(linked, "rev-parse", "--git-path", "MERGE_HEAD").stdout.strip()).touch()
+    calls = _record_lifecycle_git(lifecycle, monkeypatch)
+
+    assert (lifecycle._git_operation(linked), lifecycle._git_operation(repository)) == ("merging", None)
+    assert len(calls) == 2
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+def test_pending_git_operation_falls_back_to_one_query_per_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fall back to the unbatched queries, with the same answer, when the batched query is refused.
+
+    A refused or ambiguous batched answer must never change the result: each marker and the Git directory are asked on
+    their own, in reporting order, stopping at the first marker that exists.
+    """
+    lifecycle = _load_lifecycle()
+    _git(tmp_path, "init", "-q")
+    (tmp_path / ".git" / "CHERRY_PICK_HEAD").touch()
+    calls = _record_lifecycle_git(lifecycle, monkeypatch, refuse_batches=True)
+
+    assert lifecycle._git_operation(tmp_path) == "cherry-picking"
+    assert calls[1:] == [
+        ("rev-parse", "--git-path", "MERGE_HEAD"),
+        ("rev-parse", "--git-path", "CHERRY_PICK_HEAD"),
+    ]
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+def test_head_and_tree_are_read_with_one_git_process(
+    tmp_path: Path, repository_templates: RepositoryTemplates, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Return the commit and tree identifiers a pair of single queries would, from one process."""
+    lifecycle = _load_lifecycle()
+    repository = _fixture_repository(tmp_path, repository_templates)
+    expected = (
+        _git(repository, "rev-parse", "HEAD").stdout.strip(),
+        _git(repository, "rev-parse", "HEAD^{tree}").stdout.strip(),
+    )
+    calls = _record_lifecycle_git(lifecycle, monkeypatch)
+
+    assert lifecycle._git_head_and_tree(repository) == expected
+    assert calls == [("rev-parse", "HEAD", "HEAD^{tree}")]
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+def test_head_and_tree_of_an_unborn_branch_keep_the_single_query_error(tmp_path: Path) -> None:
+    """Raise the same git-command-failed code a lone ``rev-parse HEAD`` raises when no commit exists."""
+    lifecycle = _load_lifecycle()
+    _git(tmp_path, "init", "-q")
+
+    with pytest.raises(lifecycle.PilotError, match=r"^git-command-failed:rev-parse$"):
+        lifecycle._git_head_and_tree(tmp_path)

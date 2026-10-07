@@ -46,9 +46,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-
+#: Schema revision stamped into a standard result.json; current-format review results use revision 3 instead.
 RESULT_SCHEMA_VERSION = 2
+#: Required schema revision of the final-handoff binding embedded in a result.
 FINAL_HANDOFF_SCHEMA_VERSION = 1
+#: Exact set of keys the final-handoff binding must contain.
 FINAL_HANDOFF_METADATA_FIELDS = {
     "schema_version",
     "handoff_path",
@@ -58,6 +60,7 @@ FINAL_HANDOFF_METADATA_FIELDS = {
     "validation_path",
     "branch",
 }
+#: Allowed values for the branch field of a final-handoff binding.
 FINAL_HANDOFF_BRANCHES = {"standard", "assessed", "unavailable", "closed", "caller-contract"}
 
 
@@ -68,7 +71,7 @@ class ResultStatus(str, Enum):
     result JSON as plain strings.
     """
 
-    PASS = "pass"
+    PASS = "pass"  # noqa: S105 - verdict enum value, not a credential
     FAIL = "fail"
     TIMEOUT = "timeout"
 

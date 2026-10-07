@@ -1,6 +1,7 @@
 """Verbs over the subprocess and pytest-fixture graphs."""
 
 from __future__ import annotations
+
 import json
 import sys
 from pathlib import Path
@@ -11,13 +12,12 @@ from pathlib import Path
 # bin/-relative sys.path insert, the same route bin/scan-index used to take.
 # Every other import below is a direct package-internal import.
 # parents[3] not [2]: this file sits one level deeper than the pre-split query.py
+#: Plugin bin/ directory, added to sys.path so the _exclusions shim can be imported.
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
-from codemap_py.schema import (  # noqa: E402
-    FIXTURE_GRAPH_MIN_VER,
-    SUBPROCESS_CALLS_MIN_VER,
-)
+from codemap_py.schema import FIXTURE_GRAPH_MIN_VER, SUBPROCESS_CALLS_MIN_VER  # noqa: E402
+
 from .coverage import _cmd_coverage  # noqa: E402
 from .errors import _die_module_not_indexed, _exit_error  # noqa: E402
 from .index_io import _require_feature, _require_subprocess_rdep_count, build_module_map  # noqa: E402
@@ -179,6 +179,7 @@ def cmd_fixture_rdeps(index: dict, fixture_name: str) -> None:
     )
 
 
+#: Recursion depth at which fixture dependency graph traversal stops.
 _FIXTURE_GRAPH_MAX_DEPTH = 10
 
 

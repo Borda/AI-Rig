@@ -47,6 +47,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from _agent_shim_journal import Journal, JournalDataError, parse_journal, validate_successor
 from _agent_shim_lifecycle import (
     STATE_BYTES,
     LifecycleDataError,
@@ -57,18 +58,25 @@ from _agent_shim_lifecycle import (
     parse_marker,
     parse_state,
 )
-from _agent_shim_journal import Journal, JournalDataError, parse_journal, validate_successor
 from generate_roles import ROLE_IDS
 
-
+#: Maximum size, in bytes (256 KiB), of a shim target file read during observation.
 SHIM_BYTES = 262_144
+#: Maximum size, in bytes (4 MiB), of a journal file read during observation.
 JOURNAL_BYTES = 4_194_304
+#: Maximum UTF-8 length, in bytes, of a path or directory-entry name accepted from the filesystem.
 PATH_BYTES = 4_096
+#: Maximum number of entries tolerated when listing an ordinary bounded directory; more is reported as unsafe.
 MAX_DIRECTORY_ENTRIES = 256
+#: Maximum number of entries scanned in the target root before the scan is reported as an overflow.
 MAX_TARGET_DIRECTORY_ENTRIES = 4096
+#: Byte prefix of the marker comment that identifies a file written by the agent shim.
 MARKER_PREFIX = b"# codex-rig-shim "
+#: Filename prefix that places a target file in the codex-rig namespace.
 TARGET_NAMESPACE_PREFIX = "codex-rig-"
+#: Filename suffix that places a target file in the codex-rig namespace.
 TARGET_NAMESPACE_SUFFIX = ".toml"
+#: Pattern for a well-formed target filename; namespaced names that fail it are reported as malformed.
 STRICT_TARGET_NAME = re.compile(r"codex-rig-[a-z][a-z0-9-]{0,63}\.toml")
 
 
@@ -566,7 +574,8 @@ def _matches_identity(persisted: object, observed: RootIdentity) -> bool:
 def _roster_hash(state: dict[str, object]) -> str:
     """Recompute a structurally validated historical roster digest."""
     roles = state["roles"]
-    assert isinstance(roles, list)
+    if not isinstance(roles, list):
+        raise TypeError(f"roles must be list, got {type(roles).__name__}")
     value = [{key: role[key] for key in ("role_id", "target_name", "card_path", "role_hash")} for role in roles]
     payload = json.dumps(value, ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(payload).hexdigest()
@@ -809,7 +818,10 @@ def _durable_recovery_entries_exact(
 
     expected_root: dict[str, tuple[str, str, tuple[int, ...]]] = {}
     if journal.before_state.exists:
-        assert journal.before_state.sha256 is not None and journal.before_state.mode is not None
+        if journal.before_state.sha256 is None:
+            raise RuntimeError("journal.before_state.sha256 must not be None")
+        if journal.before_state.mode is None:
+            raise RuntimeError("journal.before_state.mode must not be None")
         expected_root["state.before.json"] = (journal.before_state.sha256, journal.before_state.mode, (1,))
     crash_window = journal.journal_state in {"MUTATING", "RECOVERY_REQUIRED"}
     state_was_published = journal.journal_state in {"STATE_COMMITTED", "COMMITTED"}
@@ -817,7 +829,10 @@ def _durable_recovery_entries_exact(
         (1, 2) if crash_window else (2,) if state_was_published or "state.publish.json" in entries else (1,)
     )
     if journal.after_state.exists:
-        assert journal.after_state.sha256 is not None and journal.after_state.mode is not None
+        if journal.after_state.sha256 is None:
+            raise RuntimeError("journal.after_state.sha256 must not be None")
+        if journal.after_state.mode is None:
+            raise RuntimeError("journal.after_state.mode must not be None")
         expected_root["state.after.json"] = (
             journal.after_state.sha256,
             journal.after_state.mode,
@@ -864,14 +879,20 @@ def _durable_recovery_entries_exact(
     for operation in journal.operations:
         rolled_back = operation.rollback_progress == "TARGET_RESTORED"
         if operation.before_image is not None:
-            assert operation.before_hash is not None and operation.before_mode is not None
+            if operation.before_hash is None:
+                raise RuntimeError("operation.before_hash must not be None")
+            if operation.before_mode is None:
+                raise RuntimeError("operation.before_mode must not be None")
             expected_children["before"][operation.before_image.removeprefix("before/")] = (
                 operation.before_hash,
                 operation.before_mode,
                 (1,),
             )
         if operation.after_image is not None:
-            assert operation.after_hash is not None and operation.after_mode is not None
+            if operation.after_hash is None:
+                raise RuntimeError("operation.after_hash must not be None")
+            if operation.after_mode is None:
+                raise RuntimeError("operation.after_mode must not be None")
             published = operation.progress in {"PUBLISHED", "VERIFIED"} and not rolled_back
             expected_children["after"][operation.after_image.removeprefix("after/")] = (
                 operation.after_hash,
@@ -880,7 +901,10 @@ def _durable_recovery_entries_exact(
             )
         detached = operation.progress in {"DETACHED", "PUBLISHED", "VERIFIED"} and not rolled_back
         if operation.quarantine_name is not None and (detached or crash_window):
-            assert operation.before_hash is not None and operation.before_mode is not None
+            if operation.before_hash is None:
+                raise RuntimeError("operation.before_hash must not be None")
+            if operation.before_mode is None:
+                raise RuntimeError("operation.before_mode must not be None")
             expected_children["quarantine"][operation.quarantine_name.removeprefix("quarantine/")] = (
                 operation.before_hash,
                 operation.before_mode,
@@ -1163,8 +1187,10 @@ def observe_filesystem(*, codex_home: Path | str, plugin_root: Path | str) -> Fi
                 lock=lock_observation,
             )
         try:
-            assert target_observation is not None
-            assert state_observation is not None
+            if target_observation is None:
+                raise RuntimeError("target_observation must not be None")
+            if state_observation is None:
+                raise RuntimeError("state_observation must not be None")
             target_identity = target_observation.identity
             state_identity = state_observation.identity
             state_kind, state, state_payload = _read_state(state_fd)
@@ -1175,7 +1201,8 @@ def observe_filesystem(*, codex_home: Path | str, plugin_root: Path | str) -> Fi
             target_kind = classify_targets(state if state_kind == "parsed" else None, targets)
             recovery_kind = classify_recovery(_recovery_observations(state_fd))
             if state_kind == "parsed":
-                assert state is not None
+                if state is None:
+                    raise RuntimeError("state must not be None")
                 identities_match = (
                     _matches_identity(state["codex_home_identity"], home_identity)
                     and state_identity is not None

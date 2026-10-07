@@ -323,7 +323,8 @@ def test_full_scan_byte_identical_old_vs_new(tmp_path: Path, old_scan_index: Pat
     assert old_rc == new_result.returncode == 0
     assert old_stdout == new_result.stdout == ""
     assert old_stderr == new_result.stderr
-    assert old_index is not None and new_index is not None
+    assert old_index is not None
+    assert new_index is not None
     _assert_v13_index_delta(old_index, new_index)
 
 
@@ -385,7 +386,8 @@ def test_incremental_scan_matches_old_vs_new(tmp_path: Path, old_scan_index: Pat
     new_inc, new_index = _run_scan(_NEW_SCAN_INDEX, root, new_dir, "--incremental")
 
     assert old_inc.returncode == new_inc.returncode == 0
-    assert old_index is not None and new_index is not None
+    assert old_index is not None
+    assert new_index is not None
     _assert_v13_index_delta(old_index, new_index)
 
 
@@ -404,7 +406,8 @@ def test_exclusions_prune_vendored_copy_identically(tmp_path: Path, old_scan_ind
 
     assert old_result.returncode == new_result.returncode == 0
     assert old_result.stderr == new_result.stderr  # excludes the "vendored-lib" summary line
-    assert old_index is not None and new_index is not None
+    assert old_index is not None
+    assert new_index is not None
     assert not any("vendored" in path for path in old_index["file_shas"])
     assert not any("vendored" in path for path in new_index["file_shas"])
     assert old_index["excluded_roots"] == new_index["excluded_roots"]
@@ -429,7 +432,8 @@ def test_degraded_module_and_stats_output_identical(tmp_path: Path, old_scan_ind
     assert old_stderr == new_result.stderr
     assert "modules indexed" in old_stderr
     assert "broken.py" in old_stderr
-    assert old_index is not None and new_index is not None
+    assert old_index is not None
+    assert new_index is not None
     old_status = {m["name"]: m.get("status") for m in old_index["modules"]}
     new_status = {m["name"]: m.get("status") for m in new_index["modules"]}
     assert old_status == new_status
@@ -458,7 +462,8 @@ def test_permission_error_exit_code_parity(tmp_path: Path, old_scan_index: Path)
     finally:
         index_dir.chmod(stat.S_IRWXU)  # restore for tmp_path cleanup
 
-    assert old_index is None and new_index is None
+    assert old_index is None
+    assert new_index is None
     assert old_result.returncode == new_result.returncode == 1
     assert old_result.stdout == new_result.stdout == ""
     assert "[codemap] ERROR: [Errno 13] Permission denied:" in _normalize_pid_tmp(old_result.stderr)

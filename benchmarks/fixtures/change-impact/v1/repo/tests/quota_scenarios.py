@@ -1,6 +1,7 @@
 """Quota scenarios representing test-side callsites."""
 
-from impactlib.quota import apply, apply as quota_apply
+from impactlib.quota import apply
+from impactlib.quota import apply as quota_apply
 
 
 def check_batch_preview() -> int:

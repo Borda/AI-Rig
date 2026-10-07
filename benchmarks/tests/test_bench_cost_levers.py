@@ -115,7 +115,8 @@ class TestProvenanceFingerprints:
         ):
             subprocess.run(argv, cwd=repo, check=True, capture_output=True)
         sha = script_run_bench._repo_sha(repo)
-        assert len(sha) == 40 and sha != "unknown"
+        assert len(sha) == 40
+        assert sha != "unknown"
 
     def test_index_sha_missing_file_is_unknown(self, script_run_bench: Any) -> None:
         """A missing index file degrades to 'unknown' rather than raising."""
@@ -246,7 +247,9 @@ class TestRunnerResume:
         run = runner.run(task, "plain")
         assert run.resumed is True
         assert run.quality.correct is True
-        assert run.repo_sha == "repo-sha-fixture" and run.index_sha == "i0" and run.task_hash == task_hash
+        assert run.repo_sha == "repo-sha-fixture"
+        assert run.index_sha == "i0"
+        assert run.task_hash == task_hash
 
     def test_resume_miss_executes_and_stamps_provenance(self, script_run_bench: Any, tmp_path: Path) -> None:
         """A cache miss runs _execute, then stamps provenance + self_consistency on the result."""
@@ -264,7 +267,8 @@ class TestRunnerResume:
         run = runner.run(task, "plain")
         assert run.resumed is False
         assert run.self_consistency is True
-        assert run.repo_sha == "repo-sha-fixture" and run.index_sha == "i0"
+        assert run.repo_sha == "repo-sha-fixture"
+        assert run.index_sha == "i0"
         assert run.task_hash == script_run_bench._task_hash(task)
 
     def test_no_cache_never_resumes(self, script_run_bench: Any, tmp_path: Path) -> None:
@@ -366,25 +370,36 @@ class TestRiGating:
         """Provide the task collection used by this selection or coverage scenario."""
         return [_task("RI-01", "real_issue"), _task("SE-01")]
 
-    def test_ri_dropped_by_default(self, script_run_bench: Any, tasks: list[dict]) -> None:
-        """No profile, no explicit selection → RI dropped (2M-token outlier)."""
-        got = [t["id"] for t in script_run_bench._gate_ri(tasks, None, explicit=False)]
+    @pytest.mark.parametrize(
+        "profile",
+        [
+            pytest.param(None, id="no-profile"),
+            pytest.param("dev", id="dev-profile"),
+        ],
+    )
+    def test_ri_dropped_without_release_or_explicit_selection(
+        self, script_run_bench: Any, tasks: list[dict], profile: str | None
+    ) -> None:
+        """RI is dropped (2M-token outlier) unless the release profile or an explicit selection opts it in.
+
+        Scenario: no profile and no explicit selection drops RI; the dev profile does NOT opt RI in, only release does.
+        """
+        got = [t["id"] for t in script_run_bench._gate_ri(tasks, profile, explicit=False)]
         assert got == ["SE-01"]
 
-    def test_ri_kept_under_release(self, script_run_bench: Any, tasks: list[dict]) -> None:
-        """The release profile opts RI back in."""
-        got = {t["id"] for t in script_run_bench._gate_ri(tasks, "release", explicit=False)}
+    @pytest.mark.parametrize(
+        ("profile", "explicit"),
+        [
+            pytest.param("release", False, id="release-profile"),
+            pytest.param(None, True, id="explicit-selection"),
+        ],
+    )
+    def test_ri_kept_under_release_or_explicit_selection(
+        self, script_run_bench: Any, tasks: list[dict], profile: str | None, explicit: bool
+    ) -> None:
+        """The release profile or an explicit ``--tasks``/``--task-type`` selection opts RI back in."""
+        got = {t["id"] for t in script_run_bench._gate_ri(tasks, profile, explicit=explicit)}
         assert got == {"RI-01", "SE-01"}
-
-    def test_ri_kept_when_explicit(self, script_run_bench: Any, tasks: list[dict]) -> None:
-        """An explicit ``--tasks``/``--task-type`` selection opts RI back in."""
-        got = {t["id"] for t in script_run_bench._gate_ri(tasks, None, explicit=True)}
-        assert got == {"RI-01", "SE-01"}
-
-    def test_ri_dropped_under_dev(self, script_run_bench: Any, tasks: list[dict]) -> None:
-        """The dev profile does NOT opt RI in — only release does."""
-        got = [t["id"] for t in script_run_bench._gate_ri(tasks, "dev", explicit=False)]
-        assert got == ["SE-01"]
 
 
 class TestSelectTasksIntegration:
@@ -406,43 +421,32 @@ class TestSelectTasksIntegration:
         base.update(overrides)
         return script_run_bench.TaskSelection(**base)
 
-    def test_run_all_default_drops_ri(self, script_run_bench: Any, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("overrides", "expected_ids"),
+        [
+            pytest.param({}, {"SE-01", "SE-02"}, id="run-all-drops-ri"),
+            pytest.param({"profile": "release"}, {"SE-01", "SE-02", "RI-01"}, id="release-profile-keeps-ri"),
+            pytest.param({"profile": "dev"}, {"SE-01"}, id="dev-profile-selects-tagged-subset"),
+            pytest.param({"run_all": False, "ids": {"RI-01"}}, {"RI-01"}, id="explicit-ids-keep-ri"),
+        ],
+    )
+    def test_selector_and_profile_compose_task_selection(
+        self, script_run_bench: Any, tmp_path: Path, overrides: dict[str, Any], expected_ids: set[str]
+    ) -> None:
         """Verify command-line option behavior.
 
-        ``--all`` with no profile drops RI (gated) but keeps the rest.
+        ``--all`` with no profile drops RI (gated) but keeps the rest; ``--profile release`` keeps RI in the full
+        matrix; ``--profile dev`` narrows to the dev-tagged subset; explicit ``--tasks`` selection opts RI back in even
+        without release.
         """
-        sel = self._selection(script_run_bench)
+        sel = self._selection(script_run_bench, **overrides)
         got = {t["id"] for t in script_run_bench._select_tasks(sel, tmp_path, "repo-sha-fixture", "i0")}
-        assert got == {"SE-01", "SE-02"}
-
-    def test_release_profile_keeps_ri(self, script_run_bench: Any, tmp_path: Path) -> None:
-        """Verify command-line option behavior.
-
-        ``--profile release`` keeps RI in the full matrix.
-        """
-        sel = self._selection(script_run_bench, profile="release")
-        got = {t["id"] for t in script_run_bench._select_tasks(sel, tmp_path, "repo-sha-fixture", "i0")}
-        assert got == {"SE-01", "SE-02", "RI-01"}
-
-    def test_dev_profile_selects_tagged_subset(self, script_run_bench: Any, tmp_path: Path) -> None:
-        """Verify command-line option behavior.
-
-        ``--profile dev`` narrows to the dev-tagged subset.
-        """
-        sel = self._selection(script_run_bench, profile="dev")
-        got = {t["id"] for t in script_run_bench._select_tasks(sel, tmp_path, "repo-sha-fixture", "i0")}
-        assert got == {"SE-01"}
+        assert got == expected_ids
 
     def test_no_selector_returns_none(self, script_run_bench: Any, tmp_path: Path) -> None:
         """No selector (no ``--tasks``/``--type``/``--all``/subset) returns None so main() can error."""
         sel = self._selection(script_run_bench, run_all=False)
         assert script_run_bench._select_tasks(sel, tmp_path, "repo-sha-fixture", "i0") is None
-
-    def test_explicit_ids_keep_ri(self, script_run_bench: Any, tmp_path: Path) -> None:
-        """Explicit ``--tasks`` selection opts RI back in even without release."""
-        sel = self._selection(script_run_bench, run_all=False, ids={"RI-01"})
-        got = {t["id"] for t in script_run_bench._select_tasks(sel, tmp_path, "repo-sha-fixture", "i0")}
-        assert got == {"RI-01"}
 
 
 # ===========================================================================
@@ -458,15 +462,19 @@ class TestTieredSelection:
         """Provide the task collection used by this selection or coverage scenario."""
         return [_task("SE-01", profiles=["dev"]), _task("SE-02", profiles=["dev"]), _task("FN-01", "fn_call_graph")]
 
-    def test_haiku_tier_is_full(self, script_run_bench: Any, tasks: list[dict], tmp_path: Path) -> None:
-        """The haiku tier runs every candidate task."""
-        got = {t["id"] for t in script_run_bench._tiered_tasks(tasks, "haiku", tmp_path, "repo-sha-fixture", "i0")}
-        assert got == {"SE-01", "SE-02", "FN-01"}
-
-    def test_sonnet_tier_is_dev_subset(self, script_run_bench: Any, tasks: list[dict], tmp_path: Path) -> None:
-        """The sonnet tier runs only the dev-tagged subset."""
-        got = {t["id"] for t in script_run_bench._tiered_tasks(tasks, "sonnet", tmp_path, "repo-sha-fixture", "i0")}
-        assert got == {"SE-01", "SE-02"}
+    @pytest.mark.parametrize(
+        ("model", "expected_ids"),
+        [
+            pytest.param("haiku", {"SE-01", "SE-02", "FN-01"}, id="haiku-runs-every-candidate"),
+            pytest.param("sonnet", {"SE-01", "SE-02"}, id="sonnet-runs-dev-subset"),
+        ],
+    )
+    def test_model_tier_selects_its_task_subset(
+        self, script_run_bench: Any, tasks: list[dict], tmp_path: Path, model: str, expected_ids: set[str]
+    ) -> None:
+        """The haiku tier runs every candidate task; the sonnet tier runs only the dev-tagged subset."""
+        got = {t["id"] for t in script_run_bench._tiered_tasks(tasks, model, tmp_path, "repo-sha-fixture", "i0")}
+        assert got == expected_ids
 
     def test_opus_tier_selects_disagreements(self, script_run_bench: Any, tasks: list[dict], tmp_path: Path) -> None:
         """The opus tier runs only tasks where haiku and sonnet verdicts disagree."""

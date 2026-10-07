@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 import release_append_marker as ram
 
-
 _RELEASE = Path(__file__).resolve().parents[2] / "skills/release"
 _skip_shell_unavailable = pytest.mark.skipif(shutil.which("bash") is None, reason="Release setup uses Bash.")
 
@@ -123,10 +122,76 @@ def test_python_baseline_probe_ignores_docstring_only_name(tmp_path: Path, relat
     assert defined.returncode == 0, defined.stderr
 
 
+_CLASSIFY = "modes/classify-truth-check.md"
+_GATHER = "templates/gather-prompt.md"
+_LATIN1_SOURCE = b"# coding: latin-1\nlabel = 'caf\xe9'\ndef Current():\n    pass\n"
+
+
 @_skip_shell_unavailable
-@pytest.mark.parametrize("relative_path", ["modes/classify-truth-check.md", "templates/gather-prompt.md"])
-def test_python_probe_treats_latin1_source_as_inconclusive(tmp_path: Path, relative_path: str) -> None:
-    """A valid PEP-263 module must not turn decoding into an undocumented probe failure."""
+@pytest.mark.parametrize(
+    ("relative_path", "source", "symbol", "expected"),
+    [
+        pytest.param(_CLASSIFY, _LATIN1_SOURCE, "Legacy", 2, id="latin1-source-inconclusive-classify"),
+        pytest.param(_GATHER, _LATIN1_SOURCE, "Legacy", 2, id="latin1-source-inconclusive-gather"),
+        pytest.param(_CLASSIFY, b"Legacy = implementation\n", "Legacy", 0, id="assignment-reexport-is-declared"),
+        pytest.param(_CLASSIFY, b"parser.add_argument('--legacy')\n", "--legacy", 0, id="parser-flag-is-declared"),
+        pytest.param(_CLASSIFY, b"import package.impl as Legacy\n", "Legacy", 0, id="aliased-import-is-declared"),
+        pytest.param(
+            _CLASSIFY, b"globals()['Legacy'] = implementation\n", "Legacy", 2, id="dynamic-global-inconclusive"
+        ),
+        pytest.param(
+            _CLASSIFY,
+            b"if enabled:\n    def Legacy():\n        pass\n",
+            "Legacy",
+            2,
+            id="conditional-definition-classify",
+        ),
+        pytest.param(
+            _GATHER,
+            b"if enabled:\n    def Legacy():\n        pass\n",
+            "Legacy",
+            2,
+            id="conditional-definition-gather",
+        ),
+        pytest.param(
+            _CLASSIFY,
+            b"name = 'Leg' + 'acy'\nglobals()[name] = implementation\n",
+            "Legacy",
+            2,
+            id="computed-global-classify",
+        ),
+        pytest.param(
+            _GATHER,
+            b"name = 'Leg' + 'acy'\nglobals()[name] = implementation\n",
+            "Legacy",
+            2,
+            id="computed-global-gather",
+        ),
+        pytest.param(
+            _CLASSIFY,
+            b"@click.option('--legacy')\ndef command():\n    pass\n",
+            "--legacy",
+            2,
+            id="click-decorator-classify",
+        ),
+        pytest.param(
+            _GATHER,
+            b"@click.option('--legacy')\ndef command():\n    pass\n",
+            "--legacy",
+            2,
+            id="click-decorator-gather",
+        ),
+    ],
+)
+def test_python_probe_exit_code_for_source_binding(
+    tmp_path: Path, relative_path: str, source: bytes, symbol: str, expected: int
+) -> None:
+    """The baseline probe certifies only bindings it can read: 0 for a declared name, 2 when inconclusive.
+
+    Assignment re-exports, parser flags and aliased imports count as declarations (exit 0). A valid PEP-263 module, a
+    dynamic or computed public binding, a conditional definition and a click decorator must not be read as evidence of
+    absence: the probe fails closed (exit 2) instead of failing on decoding or certifying the name as absent.
+    """
     instructions = (_RELEASE / relative_path).read_text(encoding="utf-8")
     probe = next(
         block
@@ -134,23 +199,23 @@ def test_python_probe_treats_latin1_source_as_inconclusive(tmp_path: Path, relat
         if 'python - "$REF" "$SYMBOL"' in block
     )
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
-    (tmp_path / "api.py").write_bytes(b"# coding: latin-1\nlabel = 'caf\xe9'\ndef Current():\n    pass\n")
+    (tmp_path / "api.py").write_bytes(source)
     subprocess.run(["git", "add", "api.py"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(
-        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "latin1"],
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "baseline"],
         cwd=tmp_path,
         check=True,
         capture_output=True,
     )
     completed = subprocess.run(
-        [shutil.which("bash"), "-c", "REF=HEAD; SYMBOL=Legacy; PUBLIC_PATH=api.py; " + probe],
+        [shutil.which("bash"), "-c", f"REF=HEAD; SYMBOL='{symbol}'; PUBLIC_PATH=api.py; " + probe],
         cwd=tmp_path,
         capture_output=True,
         text=True,
         check=False,
         timeout=10,
     )
-    assert completed.returncode == 2, completed.stderr
+    assert completed.returncode == expected, completed.stderr
 
 
 @_skip_shell_unavailable
@@ -208,113 +273,6 @@ def test_waiver_ledger_uses_current_session_in_fresh_shell(tmp_path: Path, setup
     )
     assert completed.returncode == 0, completed.stderr
     assert (tmp_path / "release-waived-fresh-session").is_file()
-
-
-@_skip_shell_unavailable
-@pytest.mark.parametrize("source", ["Legacy = implementation\n", "parser.add_argument('--legacy')\n"])
-def test_python_probe_recognizes_public_bindings(tmp_path: Path, source: str) -> None:
-    """Assignment reexports and parser flags count as Python surface declarations."""
-    instructions = (_RELEASE / "modes/classify-truth-check.md").read_text(encoding="utf-8")
-    probe = next(
-        block
-        for block in re.findall(r"```bash\n(.*?)```", instructions, re.DOTALL)
-        if 'python - "$REF" "$SYMBOL"' in block
-    )
-    symbol = "Legacy" if source.startswith("Legacy") else "--legacy"
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
-    (tmp_path / "api.py").write_text(source, encoding="utf-8", newline="\n")
-    subprocess.run(["git", "add", "api.py"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "baseline"],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-    )
-    completed = subprocess.run(
-        [shutil.which("bash"), "-c", f"REF=HEAD; SYMBOL='{symbol}'; PUBLIC_PATH=api.py; " + probe],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=10,
-    )
-    assert completed.returncode == 0, completed.stderr
-
-
-@_skip_shell_unavailable
-@pytest.mark.parametrize(
-    ("source", "expected"),
-    [
-        pytest.param("import package.impl as Legacy\n", 0, id="aliased-import"),
-        pytest.param("globals()['Legacy'] = implementation\n", 2, id="dynamic-global-inconclusive"),
-    ],
-)
-def test_python_probe_handles_alias_and_dynamic_binding(tmp_path: Path, source: str, expected: int) -> None:
-    """A dynamic public binding cannot be interpreted as evidence of absence."""
-    instructions = (_RELEASE / "modes/classify-truth-check.md").read_text(encoding="utf-8")
-    probe = next(
-        block
-        for block in re.findall(r"```bash\n(.*?)```", instructions, re.DOTALL)
-        if 'python - "$REF" "$SYMBOL"' in block
-    )
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
-    (tmp_path / "api.py").write_text(source, encoding="utf-8", newline="\n")
-    subprocess.run(["git", "add", "api.py"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "baseline"],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-    )
-    completed = subprocess.run(
-        [shutil.which("bash"), "-c", "REF=HEAD; SYMBOL=Legacy; PUBLIC_PATH=api.py; " + probe],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=10,
-    )
-    assert completed.returncode == expected, completed.stderr
-
-
-@_skip_shell_unavailable
-@pytest.mark.parametrize(
-    ("source", "symbol"),
-    [
-        pytest.param("if enabled:\n    def Legacy():\n        pass\n", "Legacy", id="conditional-definition"),
-        pytest.param("name = 'Leg' + 'acy'\nglobals()[name] = implementation\n", "Legacy", id="computed-global"),
-        pytest.param("@click.option('--legacy')\ndef command():\n    pass\n", "--legacy", id="click-decorator"),
-    ],
-)
-@pytest.mark.parametrize("relative_path", ["modes/classify-truth-check.md", "templates/gather-prompt.md"])
-def test_python_probe_fails_closed_for_unsupported_binding(
-    tmp_path: Path, source: str, symbol: str, relative_path: str
-) -> None:
-    """Partial syntax coverage must not certify a public name as absent."""
-    instructions = (_RELEASE / relative_path).read_text(encoding="utf-8")
-    probe = next(
-        block
-        for block in re.findall(r"```bash\n(.*?)```", instructions, re.DOTALL)
-        if 'python - "$REF" "$SYMBOL"' in block
-    )
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
-    (tmp_path / "api.py").write_text(source, encoding="utf-8", newline="\n")
-    subprocess.run(["git", "add", "api.py"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "baseline"],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-    )
-    completed = subprocess.run(
-        [shutil.which("bash"), "-c", f"REF=HEAD; SYMBOL='{symbol}'; PUBLIC_PATH=api.py; " + probe],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=10,
-    )
-    assert completed.returncode == 2, completed.stderr
 
 
 @_skip_shell_unavailable

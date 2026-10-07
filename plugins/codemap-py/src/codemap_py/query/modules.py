@@ -1,6 +1,7 @@
 """Module-level verbs: dependencies, centrality, coupling, paths and packages."""
 
 from __future__ import annotations
+
 import json
 import sys
 from collections import deque
@@ -13,13 +14,12 @@ from pathlib import Path
 # bin/-relative sys.path insert, the same route bin/scan-index used to take.
 # Every other import below is a direct package-internal import.
 # parents[3] not [2]: this file sits one level deeper than the pre-split query.py
+#: Plugin bin/ directory, added to sys.path so the _exclusions shim can be imported.
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
-from codemap_py.schema import (  # noqa: E402
-    IMPORT_GROUPS_MIN_VER,
-    EntityType,
-)
+from codemap_py.schema import IMPORT_GROUPS_MIN_VER, EntityType  # noqa: E402
+
 from .coverage import _IMPORT_GRAPH_NOT_COVERED, _cmd_coverage  # noqa: E402
 from .errors import _die_module_not_indexed  # noqa: E402
 from .index_io import _require_feature, build_module_map  # noqa: E402
@@ -348,7 +348,7 @@ def cmd_path(index: dict, frm: str, to: str) -> None:
         for neighbour in modules.get(node, {}).get("direct_imports", []):
             if neighbour not in visited and neighbour in modules:
                 visited.add(neighbour)
-                queue.append(path + [neighbour])
+                queue.append([*path, neighbour])
 
     _print(
         json.dumps(

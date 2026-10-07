@@ -45,30 +45,40 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-from local_reviewer_wave import ReviewRouteError, validate_evidence as validate_local_reviewer_evidence
+from local_reviewer_wave import ReviewRouteError
+from local_reviewer_wave import validate_evidence as validate_local_reviewer_evidence
 from parallel_execution import _SECRET_PATTERNS, validate_inspection_contexts
 from review_context import context_pages, dispatch_message, render_read_call, render_read_output
 
+#: Severity values a reviewer finding record may use.
 FINDING_SEVERITIES = ("critical", "high", "medium", "low")
 
+#: Attempt error types treated as transient, so a failed attempt may be retried.
 TRANSIENT_RETRY_ERRORS = {"rate_limited", "timeout", "transport_error"}
 
 
+#: Directory containing the code-review skill; its review_context.py is hashed for manifest checks.
 SKILL_DIRECTORY = Path(__file__).resolve().parent
+#: Root of the Codex Rig plugin, used to find the role cards directory.
 PLUGIN_ROOT = SKILL_DIRECTORY.parents[1]
 
+#: Roles that, when routed, must have an independent review pass recorded.
 REQUIRED_ROLES = {"qa-specialist", "challenger"}
 
 
+#: SHA-256 of the review_context.py reader shipped with protocol 6, accepted in older manifests.
 LEGACY_PROTOCOL_V6_READER_SHA256 = "bf0025b22283b98a95e6a77a08b600e090f417e10bb0c90f3371bf0d19198132"
 
 
+#: SHA-256 of the earlier single-call context reader, accepted in older manifests.
 LEGACY_SINGLE_CALL_READER_SHA256 = "47024ba02c7dec6927356dca33ec44e9710de325fcc1fbb8ec56f66ad0a9c772"
 
 
+#: SHA-256 of the earlier all-page context reader, accepted in older manifests.
 LEGACY_ALL_PAGE_READER_SHA256 = "c185dc007a261a2d9c0e449e5a888a7a771cd99336ebe8c7085432bc2b0d43c8"
 
 
+#: Digests of every earlier reader that manifests with a work-directory context may still record.
 LEGACY_WORKDIR_READER_SHA256S = frozenset(
     {LEGACY_PROTOCOL_V6_READER_SHA256, LEGACY_SINGLE_CALL_READER_SHA256, LEGACY_ALL_PAGE_READER_SHA256}
 )
@@ -299,7 +309,7 @@ def _literal_duplicated_plan_command(
     if (
         not (PurePosixPath(literal).is_absolute() or PureWindowsPath(literal).is_absolute())
         or re.fullmatch(r"[A-Za-z0-9_./:\\-]+", literal) is None
-        or argv != canonical[:3] + [literal, "--plan"] + canonical[3:]
+        or argv != [*canonical[:3], literal, "--plan", *canonical[3:]]
     ):
         return None
     serialized = subprocess.list2cmdline(argv) if windows else shlex.join(argv)
@@ -489,8 +499,11 @@ def _binary_source_diagnostic(diagnostic: object, executable: str) -> bool:
 
     The exact text depends on the interpreter version and the binary format: newer versions print a traceback frame
     naming the executable followed by the offending source line, older ones print a bare message, and an ELF, Mach-O
-    or PE file fails differently on each. Only a complete receipt that names this executable is accepted, so
-    unrelated output or a SyntaxError from some other file never proves a duplicated interpreter token.
+    or PE file fails differently on each. Python 3.10 checks UTF-8 validity only up to the first NUL byte of the first
+    two lines, so the same version prints a Non-UTF-8 message for one binary and a framed ``invalid syntax`` for
+    another; each (version, binary format) pair a CI matrix runs therefore needs a row in the receipt tests. Only a
+    complete receipt that names this executable is accepted, so unrelated output or a SyntaxError from some other
+    file never proves a duplicated interpreter token.
 
     Examples:
         >>> _binary_source_diagnostic("SyntaxError: source code cannot contain null bytes\\n", "/usr/bin/python3")
@@ -503,7 +516,9 @@ def _binary_source_diagnostic(diagnostic: object, executable: str) -> bool:
     if not isinstance(diagnostic, str):
         return False
     path = re.escape(executable)
-    frame = r'  File "' + path + r'", line \d+\r?\n(?:[^\r\n]*\r?\n){0,3}'
+    frame_head = r'  File "' + path + r'", line '
+    frame = frame_head + r"\d+\r?\n(?:[^\r\n]*\r?\n){0,3}"
+    frame_line_one = frame_head + r"1\r?\n"
     # The null-byte message names no file, so only the frame binds it to this executable.
     null_bytes = frame + r"SyntaxError: source code (?:string )?cannot contain null bytes"
     # The Non-UTF-8 message carries the path itself, so the frame is optional (older interpreters omit it).
@@ -513,7 +528,10 @@ def _binary_source_diagnostic(diagnostic: object, executable: str) -> bool:
         + r" on line \d+, but no encoding declared; see "
         r"https://(?:peps\.python\.org|python\.org/dev/peps)/pep-0263/ for details"
     )
-    return re.fullmatch(rf"(?:{null_bytes}|{non_utf8})\r?\n?", diagnostic) is not None
+    # Python 3.10 reaches the tokenizer on an ELF binary whose first two lines are valid UTF-8 before the first NUL; the
+    # frame, line 1, ELF magic echo and caret keep the generic message bound to this executable.
+    invalid_syntax = frame_line_one + r"    \x7fELF[^\r\n]*\r?\n *\^\r?\nSyntaxError: invalid syntax"
+    return re.fullmatch(rf"(?:{null_bytes}|{non_utf8}|{invalid_syntax})\r?\n?", diagnostic) is not None
 
 
 def _validate_context_read(
@@ -855,10 +873,12 @@ def _validate_context_read(
             if (
                 not _reader_command_matches(command.get("command"), expected_command)
                 or command.get("exit_code") != exit_code
-                or exit_code == 0
-                and command.get("stdout") != expected_output
-                or exit_code in {1, 2}
-                and (command.get("stdout"), command.get("stderr")) not in {(expected_output, ""), ("", expected_output)}
+                or (exit_code == 0 and command.get("stdout") != expected_output)
+                or (
+                    exit_code in {1, 2}
+                    and (command.get("stdout"), command.get("stderr"))
+                    not in {(expected_output, ""), ("", expected_output)}
+                )
             ):
                 raise SystemExit(f"review-inspection-context-command-mismatch:{role}:{page}")
     remaining = [
@@ -1631,10 +1651,11 @@ def _validate_instruction_bounded_review(
                 plan_path = _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"])
                 recovery = item.get("recovery")
                 if recovery is not None and (
-                    recovery["kind"] == "incomplete-dispatch"
-                    and attempt["attempt"] == 1
-                    or recovery["kind"] in {"closure-evidence-shape", "assessment-format", "finding-id-namespace"}
-                    and attempt["attempt"] == 2
+                    (recovery["kind"] == "incomplete-dispatch" and attempt["attempt"] == 1)
+                    or (
+                        recovery["kind"] in {"closure-evidence-shape", "assessment-format", "finding-id-namespace"}
+                        and attempt["attempt"] == 2
+                    )
                 ):
                     if recovery["kind"] in {
                         "closure-evidence-shape",
@@ -2481,7 +2502,7 @@ def _validate_spawn_attempts(
             )
             if recovery is not None and attempt["attempt"] == 2:
                 sent_context = _recovery_arguments(out_dir, manifest, item, parent_rows, codex_home)["message"]
-            elif original_dispatch_failure or recovery == {"kind": "incomplete-dispatch"} and attempt["attempt"] == 1:
+            elif original_dispatch_failure or (recovery == {"kind": "incomplete-dispatch"} and attempt["attempt"] == 1):
                 sent_context = _original_dispatch_message(
                     manifest,
                     _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"]),

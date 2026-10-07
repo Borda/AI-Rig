@@ -12,12 +12,17 @@ import re
 import sys
 from pathlib import Path
 
-
+#: Benchmarks directory that is scanned for machine-specific paths.
 BENCHMARKS = Path(__file__).resolve().parent
+#: Policy seed file, scanned in addition to the benchmark sources although it lives under policy.
 POLICY_SEED = BENCHMARKS / "policy" / "provider-parity-methodology.json"
+#: File extensions checked for forbidden paths.
 SOURCE_SUFFIXES = frozenset({".json", ".md", ".py", ".sh"})
+#: Directory names skipped during the scan.
 EXCLUDED_DIRS = frozenset({"manifests", "results", "tests"})
+#: Escaped forward slash used to assemble the path pattern below.
 _SLASH = re.escape(chr(47))
+#: Matches a user home directory path or a root temp directory path that would break on another machine.
 FORBIDDEN_PATH = re.compile(
     rf"{_SLASH}(?:Users|home){_SLASH}[A-Za-z0-9_-]+{_SLASH}|"
     rf"{_SLASH}(?:private{_SLASH})?tmp{_SLASH}"
@@ -35,10 +40,10 @@ def _python_strings(path: Path) -> list[tuple[int, str]]:
     ]
 
 
-# A line carrying this marker documents a deliberate, reviewed root-temp path — the
-# canonical parity target, whose value is locked in suites/patch-index-locks.json and so
-# cannot follow $TMPDIR. The point of the marker is that the exemption is visible and
-# justified in the source, unlike an assembled literal the gate simply could not see.
+#: A line carrying this marker documents a deliberate, reviewed root-temp path — the
+#: canonical parity target, whose value is locked in suites/patch-index-locks.json and so
+#: cannot follow $TMPDIR. The point of the marker is that the exemption is visible and
+#: justified in the source, unlike an assembled literal the gate simply could not see.
 EXEMPTION_MARKER = "portable-paths: canonical-target"
 
 

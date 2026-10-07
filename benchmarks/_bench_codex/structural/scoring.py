@@ -6,19 +6,16 @@ import hashlib
 import importlib.util
 import inspect
 import re
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import sys
+from _bench_common.provider_parity_contracts import EvaluationResult
 
 from _bench_codex import runtime
-from _bench_common.provider_parity_contracts import (
-    EvaluationResult,
-)
-
 from _bench_codex.structural.config import BENCHMARKS_DIR
 from _bench_codex.structural.models import CodexRun
 
@@ -119,6 +116,7 @@ def _mean_locked_query_fitness(matches: list[LockedQueryFitness]) -> LockedQuery
     )
 
 
+#: Valid values of a task's expected-query policy: any one query may match, or all must.
 _EXPECTED_QUERY_POLICIES = frozenset({"any_match", "all_required"})
 
 
@@ -172,7 +170,9 @@ def _token_set_similarity(expected: tuple[str, ...], actual: tuple[str, ...]) ->
     return len(expected_tokens & actual_tokens) / len(expected_tokens | actual_tokens)
 
 
+#: Query flags that take no value and are compared as part of a locked query.
 _LOCKED_QUERY_BOOLEAN_OPTIONS = frozenset({"--broken", "--exclude-tests", "--with-imports"})
+#: Query options that take one value and are compared as part of a locked query.
 _LOCKED_QUERY_VALUE_OPTIONS = frozenset({"--limit", "--top"})
 
 

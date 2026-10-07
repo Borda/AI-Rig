@@ -28,14 +28,17 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+#: Directory searched for candidate tests when --test-dir is not given.
 DEFAULT_TEST_DIR = "tests"
 
+#: Matches pytest output showing a test passed when run alone, meaning it is not itself the polluter.
 ISOLATION_PASS_RE = re.compile(r"^(PASSED|1 passed)", re.MULTILINE)
+#: Matches FAILED or ERROR in pytest output, marking a run in which the victim test did not pass.
 FAILURE_RE = re.compile(r"FAILED|ERROR")
-# Shell metacharacters that must not appear inside test node IDs.  Even though
-# every subprocess call uses argv-list form (no shell), pytest itself may forward
-# the value into shell-like contexts (e.g. ``--ignore=`` patterns, plugin hooks),
-# so we reject hostile collection-only output up-front (A03:2021).
+#: Shell metacharacters that must not appear inside test node IDs.  Even though
+#: every subprocess call uses argv-list form (no shell), pytest itself may forward
+#: the value into shell-like contexts (e.g. ``--ignore=`` patterns, plugin hooks),
+#: so we reject hostile collection-only output up-front (A03:2021).
 _UNSAFE_NODE_ID_CHARS = frozenset(";&|$`()\n\r\t<>\\\"' \x00")
 
 
@@ -151,7 +154,7 @@ def _resolve_pytest_cmd() -> list[str] | None:
 
 def _run_pytest(pytest_cmd: Sequence[str], args: Sequence[str]) -> str:
     """Run pytest with ``args`` and return combined stdout+stderr text."""
-    result = subprocess.run(
+    result = subprocess.run(  # noqa: S603 - argv list, no shell
         [*pytest_cmd, *args],
         capture_output=True,
         text=True,
@@ -191,7 +194,7 @@ def collect_candidates(
         List of candidate node IDs (one per line of pytest collect output
         containing ``::``).
     """
-    result = subprocess.run(
+    result = subprocess.run(  # noqa: S603 - argv list, no shell
         [*pytest_cmd, test_dir, "--collect-only", "-q"],
         capture_output=True,
         text=True,

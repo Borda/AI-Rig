@@ -5,53 +5,43 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
 
-import sys
-
-from _bench_codex import runtime
-from _bench_common.mutation_isolation import (
-    load_index_relocation,
-    patch_test_runtime_identity,
-)
+from _bench_common.mutation_isolation import load_index_relocation, patch_test_runtime_identity
 from _bench_common.paid_lifecycle import paid_approval_matches, write_checksums
 
+from _bench_codex import runtime
 from _bench_codex.structural import manifest as manifest_module
-from _bench_codex.structural import tasks as tasks_module
+from _bench_codex.structural import rescore, scoring
 from _bench_codex.structural import runner as runner_module
-from _bench_codex.structural import rescore
-from _bench_codex.structural import scoring
+from _bench_codex.structural import tasks as tasks_module
+from _bench_codex.structural.arms import _manifest_arm_order, _print_result_block
 from _bench_codex.structural.config import (
+    _PROVENANCE_KEY,
     ARMS,
     BENCHMARKS_DIR,
     PARITY_CODEX_MODEL,
     PARITY_CODEX_REASONING_EFFORT,
     PARITY_MANIFEST_PATH,
     REPO_ROOT,
-    _PROVENANCE_KEY,
 )
-from _bench_codex.structural.arms import _manifest_arm_order, _print_result_block
+from _bench_codex.structural.diff_impact import (
+    DiffImpactStageAdmission,
+    _capture_diff_impact_stage,
+    _validate_codex_stratum,
+)
 from _bench_codex.structural.manifest import (
     _resolve_structural_task_selection,
     _targeted_scope_sha256,
     _task_selection_contract,
     _validate_targeted_scope_request,
 )
-
-from _bench_codex.structural.diff_impact import (
-    DiffImpactStageAdmission,
-    _capture_diff_impact_stage,
-    _validate_codex_stratum,
-)
-from _bench_codex.structural.scoring import (
-    _diff_impact_stager,
-    _infrastructure_failure_signature,
-    _pooling_ineligibility_reasons,
-)
 from _bench_codex.structural.provisioning import _validate_invocation_launcher
+from _bench_codex.structural.rescore import rescore_results
 from _bench_codex.structural.runner import (
     _append_run,
     _canonical_telemetry_path,
@@ -59,7 +49,11 @@ from _bench_codex.structural.runner import (
     _utc_now,
     _write_canonical_telemetry,
 )
-from _bench_codex.structural.rescore import rescore_results
+from _bench_codex.structural.scoring import (
+    _diff_impact_stager,
+    _infrastructure_failure_signature,
+    _pooling_ineligibility_reasons,
+)
 
 
 @dataclass(frozen=True)
@@ -319,8 +313,10 @@ def main(
         _render_arm_probes(runner, arm=arm, tasks=tasks)
     print(f"CONTROL\tcell_wall_clock_seconds={runner.timeout:g}")
     if not dry_run:
-        assert output_path is not None
-        assert metadata_path is not None
+        if output_path is None:
+            raise RuntimeError("output_path must not be None")
+        if metadata_path is None:
+            raise RuntimeError("metadata_path must not be None")
         print(runtime.presentation.format_artifact_block(telemetry=output_path, metadata=metadata_path))
     task_arms = {
         (task["id"], repetition): (
@@ -349,8 +345,10 @@ def main(
                 for selected in task_arms[(task["id"], repetition)]:
                     runtime.print_plan_row(runtime.format_plan_row(task["id"], repetition, selected))
         return
-    assert output_path is not None
-    assert metadata_path is not None
+    if output_path is None:
+        raise RuntimeError("output_path must not be None")
+    if metadata_path is None:
+        raise RuntimeError("metadata_path must not be None")
     snapshot_builder = getattr(runner, "create_input_snapshot", None)
     preflight = getattr(runner, "preflight_expected_queries", None)
     try:
@@ -852,7 +850,8 @@ def _run_unified_execution(
                 "paid approval does not match the current aggregate scope. No model call was made. "
                 "Run the same command with --dry-run and copy its PAID_COMMAND exactly."
             )
-        assert run_dir is not None
+        if run_dir is None:
+            raise RuntimeError("run_dir must not be None")
         if run_dir.exists():
             raise FileExistsError(
                 f"run directory already exists: {run_dir}. Use the fresh --run-dir printed by --dry-run."
@@ -944,7 +943,8 @@ def _run_unified_execution(
             )
         return
 
-    assert run_dir is not None
+    if run_dir is None:
+        raise RuntimeError("run_dir must not be None")
     metadata_path = run_dir / "run-metadata.json"
     metadata: dict[str, Any] = {
         "schema_version": "codex-unified-run-v1",
@@ -1001,7 +1001,7 @@ def _run_unified_execution(
     print(f"done: {run_dir}")
 
 
-def cli(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag with a default (0 required)
+def cli(
     render_results: bool = False,
     rescore_results: str | None = None,
     resolve_tasks: str | Sequence[str] | None = None,

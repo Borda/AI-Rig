@@ -10,9 +10,8 @@ import json
 import os
 from pathlib import Path
 
-import pytest
-
 import codemap_cache  # type: ignore[import-not-found]
+import pytest
 
 # Pinned so two identical _write_index calls produce an identical file stamp; the
 # real clock would make every rewrite look like a new index and every reuse test flaky.
@@ -216,34 +215,31 @@ class TestRead:
         assert out["reuse"] is False
         assert out["reason"] == "cold_miss"
 
-    def test_index_rebuilt_invalidates(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        cache = self._seed(tmp_path, capsys)
-        newer = _write_index(tmp_path, git_sha="abc123", scanned_at="2026-07-11T00:00:00+00:00")
-        codemap_cache.main(["read", "--module", "pkg.mod", "--index", str(newer), "--cache-dir", str(cache)])
-        out = json.loads(capsys.readouterr().out)
-        assert out["reuse"] is False
-        assert out["reason"] == "index_rebuilt"
+    @pytest.mark.parametrize(
+        ("index_kwargs", "reason"),
+        [
+            pytest.param(
+                {"git_sha": "abc123", "scanned_at": "2026-07-11T00:00:00+00:00"}, "index_rebuilt", id="index-rebuilt"
+            ),
+            pytest.param({"git_sha": "def456"}, "git_sha_mismatch", id="git-sha-moved"),
+            pytest.param({"mtime_ns": _FIXED_MTIME_NS + 5_000_000_000}, "index_stamp_mismatch", id="in-place-rewrite"),
+        ],
+    )
+    def test_changed_index_invalidates(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], index_kwargs: dict[str, object], reason: str
+    ) -> None:
+        """A seeded artifact is not reused once the index was rebuilt, moved to another git sha, or rewritten in place.
 
-    def test_git_sha_mismatch(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        cache = self._seed(tmp_path, capsys)
-        moved = _write_index(tmp_path, git_sha="def456")
-        codemap_cache.main(["read", "--module", "pkg.mod", "--index", str(moved), "--cache-dir", str(cache)])
-        out = json.loads(capsys.readouterr().out)
-        assert out["reuse"] is False
-        assert out["reason"] == "git_sha_mismatch"
-
-    def test_in_place_rewrite_invalidates(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Index rewritten with identical metadata but a new mtime → no reuse.
-
-        ``git_sha`` and ``scanned_at`` are the index's own declared fields, so an incremental scan or a restored backup
-        that leaves them untouched was indistinguishable from no change at all, and stale answers were served as fresh.
+        An in-place rewrite keeps identical metadata but gets a new mtime: ``git_sha`` and ``scanned_at`` are the
+        index's own declared fields, so an incremental scan or a restored backup that leaves them untouched was
+        indistinguishable from no change at all, and stale answers were served as fresh.
         """
         cache = self._seed(tmp_path, capsys)
-        rewritten = _write_index(tmp_path, mtime_ns=_FIXED_MTIME_NS + 5_000_000_000)
-        codemap_cache.main(["read", "--module", "pkg.mod", "--index", str(rewritten), "--cache-dir", str(cache)])
+        changed = _write_index(tmp_path, **index_kwargs)
+        codemap_cache.main(["read", "--module", "pkg.mod", "--index", str(changed), "--cache-dir", str(cache)])
         out = json.loads(capsys.readouterr().out)
         assert out["reuse"] is False
-        assert out["reason"] == "index_stamp_mismatch"
+        assert out["reason"] == reason
 
     def test_artifact_without_stamp_fails_closed(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """A pre-stamp artifact is re-queried, never trusted (fail-closed)."""

@@ -9,10 +9,8 @@ import sys
 from pathlib import Path
 
 import pytest
-
-from test_finding_presentation import _load_finalizer, _selection
 from test_find_review_report import FINDER_PATH, _load_finder
-
+from test_finding_presentation import _load_finalizer, _selection
 
 FINDER = _load_finder()
 

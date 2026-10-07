@@ -50,13 +50,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-# (input, output, cache_write_5m, cache_read) USD per million tokens — public list rates.
+#: (input, output, cache_write_5m, cache_read) USD per million tokens — public list rates.
 PRICES: dict[str, tuple[float, float, float, float]] = {
     "opus": (15.0, 75.0, 18.75, 1.50),
     "sonnet": (3.0, 15.0, 3.75, 0.30),
     "haiku": (1.0, 5.0, 1.25, 0.10),
 }
 
+#: Matches a ``<command-name>`` marker in a transcript line, capturing the slash command name.
 COMMAND_RE = re.compile(r"<command-name>([^<]+)</command-name>")
 
 

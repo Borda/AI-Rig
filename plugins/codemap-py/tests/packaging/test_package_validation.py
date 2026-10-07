@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 
-
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPTS = _PLUGIN_ROOT / "scripts"
 if str(_SCRIPTS) not in sys.path:
@@ -211,13 +210,6 @@ def test_secret_material_flagged(valid_package: Path) -> None:
 
 
 @pytest.mark.packaging
-def test_missing_required_document_flagged(valid_package: Path) -> None:
-    """Dropping a required document (and its manifest entry) is flagged as missing."""
-    _drop_member(valid_package, "CHANGELOG.md")
-    assert any("missing required member: CHANGELOG.md" == item for item in _validate_findings(valid_package))
-
-
-@pytest.mark.packaging
 def test_forbidden_default_path_flagged(valid_package: Path) -> None:
     """A leaked default ``hooks/hooks.json`` is flagged forbidden."""
     _add_member(valid_package, "hooks/hooks.json", b"{}\n")
@@ -236,25 +228,6 @@ def test_symlink_flagged(valid_package: Path) -> None:
 
 
 @pytest.mark.packaging
-def test_missing_referenced_hook_helper_flagged(valid_package: Path) -> None:
-    """A hook helper named by the wiring but absent from the package is flagged."""
-    _drop_member(valid_package, "hooks/seed-session.py")
-    assert any(
-        "referenced hook helper missing: hooks/seed-session.py" == item for item in _validate_findings(valid_package)
-    )
-
-
-@pytest.mark.packaging
-def test_missing_hooks_pointer_file_flagged(valid_package: Path) -> None:
-    """A Claude ``hooks`` pointer whose target file is absent is flagged."""
-    _drop_member(valid_package, "hooks/claude-hooks.json")
-    assert any(
-        "claude hooks pointer file missing: hooks/claude-hooks.json" == item
-        for item in _validate_findings(valid_package)
-    )
-
-
-@pytest.mark.packaging
 def test_undeclared_extra_roster_dir_flagged(valid_package: Path) -> None:
     """An on-disk skill dir absent from the manifest roster is flagged as a mismatch."""
     _add_member(valid_package, "claude-skills/rogue/SKILL.md", b"---\nname: rogue\n---\n")
@@ -262,49 +235,74 @@ def test_undeclared_extra_roster_dir_flagged(valid_package: Path) -> None:
 
 
 @pytest.mark.packaging
-def test_rostered_skill_missing_skillmd_flagged(valid_package: Path) -> None:
-    """A rostered skill whose SKILL.md is absent is flagged."""
-    _drop_member(valid_package, "claude-skills/scan-codebase/SKILL.md")
-    assert any(
-        "rostered skill missing SKILL.md: claude-skills/scan-codebase/SKILL.md" == item
-        for item in _validate_findings(valid_package)
-    )
+@pytest.mark.parametrize(
+    ("member", "expected_finding"),
+    [
+        # Dropping a required document (and its manifest entry) is flagged as missing.
+        pytest.param("CHANGELOG.md", "missing required member: CHANGELOG.md", id="required-document"),
+        # A hook helper named by the wiring but absent from the package is flagged.
+        pytest.param(
+            "hooks/seed-session.py",
+            "referenced hook helper missing: hooks/seed-session.py",
+            id="referenced-hook-helper",
+        ),
+        # A Claude ``hooks`` pointer whose target file is absent is flagged.
+        pytest.param(
+            "hooks/claude-hooks.json",
+            "claude hooks pointer file missing: hooks/claude-hooks.json",
+            id="hooks-pointer-file",
+        ),
+        # A rostered skill whose SKILL.md is absent is flagged.
+        pytest.param(
+            "claude-skills/scan-codebase/SKILL.md",
+            "rostered skill missing SKILL.md: claude-skills/scan-codebase/SKILL.md",
+            id="rostered-skill-skillmd",
+        ),
+        # A rostered Codex skill whose ``SKILL.md`` is absent violates the six-skill-parity contract.
+        pytest.param(
+            "codex-skills/scan-codebase/SKILL.md",
+            "rostered codex skill missing SKILL.md: codex-skills/scan-codebase/SKILL.md",
+            id="rostered-codex-skill-skillmd",
+        ),
+    ],
+)
+def test_dropped_member_flagged(valid_package: Path, member: str, expected_finding: str) -> None:
+    """Dropping a required or referenced member (and its manifest entry) is flagged with its closure finding.
+
+    Covers the required documents, the hook helper and Claude hooks pointer file named by the wiring, and the
+    ``SKILL.md`` of a rostered Claude or Codex skill.
+    """
+    _drop_member(valid_package, member)
+    assert any(expected_finding == item for item in _validate_findings(valid_package))
 
 
 @pytest.mark.packaging
-def test_codex_manifest_missing_skills_key_flagged(valid_package: Path) -> None:
-    """A Codex manifest that omits the ``skills`` pointer violates the six-skill-parity contract."""
+@pytest.mark.parametrize(
+    ("payload", "expected_fragment"),
+    [
+        pytest.param(
+            b'{"name": "codemap-py", "version": "0.25.0"}\n',
+            "codex manifest must declare skills: ./codex-skills/",
+            id="missing-skills-key",
+        ),
+        pytest.param(
+            b'{"name": "codemap-py", "version": "0.25.0", "skills": "./codex-skills/"}\n',
+            "codex manifest must declare hooks: ./hooks/codex-hooks.json",
+            id="missing-hooks-key",
+        ),
+    ],
+)
+def test_codex_manifest_missing_key_flagged(valid_package: Path, payload: bytes, expected_fragment: str) -> None:
+    """A Codex manifest without its ``skills`` or ``hooks`` pointer is not integration-complete.
+
+    A manifest omitting ``skills`` violates the six-skill-parity contract, and a Codex package without its runtime hook
+    pointer is not integration-complete either.
+    """
     codex = valid_package / ".codex-plugin" / "plugin.json"
-    payload = b'{"name": "codemap-py", "version": "0.25.0"}\n'
     codex.write_bytes(payload)
     _mutate_manifest(valid_package, lambda m: _sync_hash(m, ".codex-plugin/plugin.json", payload))
-    assert any(
-        "codex manifest must declare skills: ./codex-skills/" in item for item in _validate_findings(valid_package)
-    )
 
-
-@pytest.mark.packaging
-def test_codex_manifest_missing_hooks_key_flagged(valid_package: Path) -> None:
-    """A Codex package without its runtime hook pointer is not integration-complete."""
-    codex = valid_package / ".codex-plugin" / "plugin.json"
-    payload = b'{"name": "codemap-py", "version": "0.25.0", "skills": "./codex-skills/"}\n'
-    codex.write_bytes(payload)
-    _mutate_manifest(valid_package, lambda m: _sync_hash(m, ".codex-plugin/plugin.json", payload))
-
-    assert any(
-        "codex manifest must declare hooks: ./hooks/codex-hooks.json" in item
-        for item in _validate_findings(valid_package)
-    )
-
-
-@pytest.mark.packaging
-def test_rostered_codex_skill_missing_skillmd_flagged(valid_package: Path) -> None:
-    """A rostered Codex skill whose ``SKILL.md`` is absent violates the six-skill-parity contract."""
-    _drop_member(valid_package, "codex-skills/scan-codebase/SKILL.md")
-    assert any(
-        "rostered codex skill missing SKILL.md: codex-skills/scan-codebase/SKILL.md" == item
-        for item in _validate_findings(valid_package)
-    )
+    assert any(expected_fragment in item for item in _validate_findings(valid_package))
 
 
 @pytest.mark.packaging

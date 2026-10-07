@@ -49,7 +49,9 @@ import shlex
 import sys
 from typing import Final
 
+#: Valid flag name: lowercase letters and digits in hyphen-separated groups, as listed in --flags.
 _FLAG_NAME_RE: Final = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+#: Matches the quoted --keep "items" option so its text can be captured and removed from the arguments.
 _KEEP_RE: Final = re.compile(r'--keep\s+"([^"]+)"')
 
 

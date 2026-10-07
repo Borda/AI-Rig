@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from _bench_common import manifest_session
 
 

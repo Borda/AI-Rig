@@ -134,6 +134,16 @@ def _write_codex(sid: str, tool_use_id: str, *, since: str) -> None:
     )
 
 
+def _ago(seconds: float | None) -> str | None:
+    """Return the ISO timestamp ``seconds`` before now, or None when no timestamp is wanted.
+
+    Examples:
+        >>> (_ago(None), _ago(0) is not None)
+        (None, True)
+    """
+    return None if seconds is None else (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
@@ -186,16 +196,28 @@ class TestAgentDisplay:
         assert "rescue" in rendered
         assert "🤖 none" not in rendered
 
-    def test_non_worktree_agent_past_10_min_stays_visible(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """A non-worktree agent (since-only, no ``last_active``) past the old 10-min cutoff stays visible.
+    @pytest.mark.parametrize(
+        ("since_s", "last_active_s"),
+        [
+            # Non-worktree agents (plain ``Agent()`` calls, the common case) get no per-agent liveness signal — the tool
+            # event payload carries no agent_id, so ``last_active`` is never refreshed for them. They use the longer
+            # 30-minute backstop instead of the worktree-only 10-min one, so a genuinely still-working 20-min background
+            # task (e.g. a multi-file refactor) is not hidden.
+            pytest.param(20 * 60, None, id="non-worktree-past-10-min-cutoff"),
+            # Reproduces the reported bug: a 20-min-old dispatch (``since``) would drop under the 10-min filter, but
+            # ongoing tool activity keeps ``last_active`` current so the agent must remain in the 🤖 segment.
+            pytest.param(20 * 60, 0, id="fresh-last-active-beats-stale-since"),
+        ],
+    )
+    def test_long_running_agent_stays_visible(
+        self, sid: str, tmp_home: Path, run_hook, since_s: float, last_active_s: float | None
+    ) -> None:
+        """An agent older than the old 10-min cutoff stays visible while it is within its liveness backstop.
 
-        Non-worktree agents (plain ``Agent()`` calls, the common case) get no per-agent liveness signal — the tool event
-        payload carries no agent_id, so ``last_active`` is never refreshed for them. They use the longer 30-minute
-        backstop instead of the worktree-only 10-min one, so a genuinely still-working 20-min background task (e.g. a
-        multi-file refactor) is not hidden.
+        Scenario: a non-worktree agent (since-only, no ``last_active``) past 10 min stays visible under the 30-minute
+        backstop; a long-running agent with a stale ``since`` but a fresh ``last_active`` also stays visible.
         """
-        stale = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
-        _write_agent(sid, "a-longrun", since=stale)
+        _write_agent(sid, "a-longrun", since=_ago(since_s), last_active=_ago(last_active_s))
 
         result = run_hook("statusline.js", _payload(sid), home=tmp_home)
 
@@ -204,43 +226,24 @@ class TestAgentDisplay:
         assert "sw-engineer" in rendered
         assert "🤖 none" not in rendered
 
-    def test_non_worktree_agent_dropped_after_30_min(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """A non-worktree agent past the 30-min backstop is dropped → ``🤖 none`` rendered."""
-        stale = (datetime.now(timezone.utc) - timedelta(minutes=70)).isoformat()
-        _write_agent(sid, "a-stale", since=stale)
+    @pytest.mark.parametrize(
+        ("since_s", "last_active_s"),
+        [
+            pytest.param(70 * 60, None, id="non-worktree-past-30-min-backstop"),
+            # Confirms the refresh path does not defeat the staleness net: a crashed/hung agent that stopped emitting
+            # activity has a stale ``last_active`` (older than 10 min) and is still reaped.
+            pytest.param(20 * 60, 20 * 60, id="idle-agent-with-stale-last-active"),
+        ],
+    )
+    def test_stale_agent_dropped(
+        self, sid: str, tmp_home: Path, run_hook, since_s: float, last_active_s: float | None
+    ) -> None:
+        """An agent past its staleness backstop is dropped → ``🤖 none`` rendered.
 
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
-
-        assert result.returncode == 0, result.stderr
-        rendered = _strip_ansi(result.stdout)
-        assert "🤖 none" in rendered
-
-    def test_long_running_agent_kept_visible_by_last_active(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """A long-running agent with a stale ``since`` but a fresh ``last_active`` stays visible.
-
-        Reproduces the reported bug: a 20-min-old dispatch (``since``) would drop under the
-        10-min filter, but ongoing tool activity keeps ``last_active`` current so the agent
-        must remain in the 🤖 segment.
+        Scenario: a non-worktree agent past the 30-min backstop is dropped; an agent whose ``last_active`` is also older
+        than 10 min ages out.
         """
-        stale_since = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
-        fresh_active = datetime.now(timezone.utc).isoformat()
-        _write_agent(sid, "a-longrun", since=stale_since, last_active=fresh_active)
-
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
-
-        assert result.returncode == 0, result.stderr
-        rendered = _strip_ansi(result.stdout)
-        assert "sw-engineer" in rendered
-        assert "🤖 none" not in rendered
-
-    def test_idle_agent_with_stale_last_active_dropped(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """An agent whose ``last_active`` is also older than 10 min ages out (backstop preserved).
-
-        Confirms the refresh path does not defeat the staleness net: a crashed/hung agent that
-        stopped emitting activity has a stale ``last_active`` and is still reaped.
-        """
-        stale = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
-        _write_agent(sid, "a-dead", since=stale, last_active=stale)
+        _write_agent(sid, "a-stale", since=_ago(since_s), last_active=_ago(last_active_s))
 
         result = run_hook("statusline.js", _payload(sid), home=tmp_home)
 
@@ -251,25 +254,6 @@ class TestAgentDisplay:
 
 class TestCodexDisplay:
     """statusline.js: codex:* agents shown in 🤖 segment via agents/ dir."""
-
-    def test_no_codex_shows_none(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """Empty agents directory renders the ``🤖 none`` marker."""
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
-
-        assert result.returncode == 0, result.stderr
-        rendered = _strip_ansi(result.stdout)
-        assert "🤖 none" in rendered
-
-    def test_active_codex_agent_shows_type_label(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """Codex:rescue agent in agents/ renders its short type label in the 🤖 segment."""
-        _write_agent(sid, "tu-cdx-1", since=datetime.now(timezone.utc).isoformat(), agent_type="codex:rescue")
-
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
-
-        assert result.returncode == 0, result.stderr
-        rendered = _strip_ansi(result.stdout)
-        assert "🤖" in rendered
-        assert "rescue" in rendered
 
     def test_active_codex_dir_agent_shows_label(self, sid: str, tmp_home: Path, run_hook) -> None:
         """Codex agent tracked in the codex/ dir (not agents/) still renders in the 🤖 segment."""
@@ -308,54 +292,57 @@ class TestToolDisplay:
         assert result.returncode == 0, result.stderr
         assert "🛠️ none" in _strip_ansi(result.stdout)
 
-    def test_recent_call_shows_type_and_count(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """A tool called just now renders ``<tool>:<count>x``."""
-        now = datetime.now(timezone.utc).isoformat()
-        _write_tool(sid, "Bash", since=now, last=now, count=3, inflight=0)
+    @pytest.mark.parametrize(
+        ("tool", "since_s", "last_s", "count", "inflight", "expected"),
+        [
+            pytest.param("Bash", 0, 0, 3, 0, "Bash:3x", id="recent-call"),
+            # Regression guard: filtering on ``since`` (a FIXED window start) blanked the segment during active work.
+            pytest.param("Bash", 40, 5, 7, 0, "Bash:7x", id="fresh-last-survives-stale-window-start"),
+            pytest.param("Bash", 4 * 60, 4 * 60, 1, 1, "Bash:1x", id="inflight-call-past-window"),
+            pytest.param("Read", 0, None, 4, None, "Read:4x", id="legacy-record-without-last-uses-since"),
+        ],
+    )
+    def test_visible_call_shows_type_and_count(
+        self,
+        sid: str,
+        tmp_home: Path,
+        run_hook,
+        tool: str,
+        since_s: float,
+        last_s: float | None,
+        count: int,
+        inflight: int | None,
+        expected: str,
+    ) -> None:
+        """A tool still within its freshness rule renders ``<tool>:<count>x``.
 
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
-
-        assert result.returncode == 0, result.stderr
-        assert "Bash:3x" in _strip_ansi(result.stdout)
-
-    def test_fresh_last_survives_stale_window_start(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """A call 5 s ago inside a window opened 40 s ago stays visible.
-
-        Regression guard: filtering on ``since`` (a FIXED window start) blanked the segment during active work.
+        Scenario: a tool called just now renders; a call 5 s ago inside a window opened 40 s ago stays visible; a single
+        slow call still in flight after 4 min keeps its type displayed; a record written by an older hook version (no
+        ``last``) still renders off ``since``.
         """
-        old_window = (datetime.now(timezone.utc) - timedelta(seconds=40)).isoformat()
-        recent = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
-        _write_tool(sid, "Bash", since=old_window, last=recent, count=7, inflight=0)
+        _write_tool(sid, tool, since=_ago(since_s), last=_ago(last_s), count=count, inflight=inflight)
 
         result = run_hook("statusline.js", _payload(sid), home=tmp_home)
 
         assert result.returncode == 0, result.stderr
-        assert "Bash:7x" in _strip_ansi(result.stdout)
+        assert expected in _strip_ansi(result.stdout)
 
-    def test_inflight_call_stays_visible_past_window(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """A single slow call (still in flight after 4 min) keeps its type displayed."""
-        started = (datetime.now(timezone.utc) - timedelta(minutes=4)).isoformat()
-        _write_tool(sid, "Bash", since=started, last=started, count=1, inflight=1)
+    @pytest.mark.parametrize(
+        ("age_s", "count", "inflight"),
+        [
+            pytest.param(90, 2, 0, id="finished-call-past-30s-window"),
+            pytest.param(20 * 60, 1, 1, id="leaked-inflight-past-10-min-cap"),
+        ],
+    )
+    def test_expired_call_dropped(
+        self, sid: str, tmp_home: Path, run_hook, age_s: float, count: int, inflight: int
+    ) -> None:
+        """A returned call older than 30 s, or an inflight slot leaked past the 10-min cap, is dropped.
 
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
-
-        assert result.returncode == 0, result.stderr
-        assert "Bash:1x" in _strip_ansi(result.stdout)
-
-    def test_finished_call_dropped_after_window(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """A returned call (inflight 0) older than 30 s is dropped."""
-        old = (datetime.now(timezone.utc) - timedelta(seconds=90)).isoformat()
-        _write_tool(sid, "Bash", since=old, last=old, count=2, inflight=0)
-
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
-
-        assert result.returncode == 0, result.stderr
-        assert "Bash" not in _strip_ansi(result.stdout)
-
-    def test_leaked_inflight_dropped_past_cap(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """An inflight slot leaked by a missing PostToolUse is dropped past the 10-min cap."""
-        ancient = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
-        _write_tool(sid, "Bash", since=ancient, last=ancient, count=1, inflight=1)
+        Scenario: a returned call (inflight 0) older than 30 s is dropped; an inflight slot leaked by a missing
+        PostToolUse is dropped past the 10-min cap.
+        """
+        _write_tool(sid, "Bash", since=_ago(age_s), last=_ago(age_s), count=count, inflight=inflight)
 
         result = run_hook("statusline.js", _payload(sid), home=tmp_home)
 
@@ -382,13 +369,3 @@ class TestToolDisplay:
 
         assert result.returncode == 0, result.stderr
         assert "Bash:1x" in _strip_ansi(result.stdout)
-
-    def test_legacy_record_without_last_uses_since(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """A record written by an older hook version (no ``last``) still renders off ``since``."""
-        now = datetime.now(timezone.utc).isoformat()
-        _write_tool(sid, "Read", since=now, count=4)
-
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
-
-        assert result.returncode == 0, result.stderr
-        assert "Read:4x" in _strip_ansi(result.stdout)

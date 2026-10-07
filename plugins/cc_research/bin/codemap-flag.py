@@ -24,6 +24,7 @@ from pathlib import Path
 
 # Currency sentinel basename read back by skills/_shared/codemap-gates.md. Owned here
 # because codemap_resolve.py is byte-identical across plugins and cannot name one.
+#: Basename prefix of the codemap currency sentinel file that the shared codemap gate documentation reads back.
 CURRENCY_PREFIX = "research-codemap-currency"
 
 
@@ -55,7 +56,7 @@ def _run_resolver(raw: str, csid: str) -> tuple[str, bool]:
     command = [sys.executable, str(resolver)]
     env = dict(os.environ, CSID=csid)
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S603 - argv list, no shell; command is a fixed resolved script
             [*command, raw, "--currency-prefix", CURRENCY_PREFIX],
             stdout=subprocess.PIPE,
             text=True,

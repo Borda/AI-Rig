@@ -41,6 +41,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+#: Directory holding the probe scripts, put on ``sys.path`` so ``build_package`` can be imported.
 _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
@@ -49,12 +50,14 @@ import build_package  # noqa: E402  (needs the scripts path insert above)
 
 _MIN_MINOR, _MAX_MINOR_EXCLUSIVE = 11, 15
 _MAJOR, _PROBE_FIELDS = "3", 3
-# Version-specific names first: a bare ``python3`` on PATH may resolve to an
-# ineligible build (e.g. a 3.10 framework python shadowing an eligible 3.14).
+#: Version-specific names first: a bare ``python3`` on PATH may resolve to an
+#: ineligible build (e.g. a 3.10 framework python shadowing an eligible 3.14).
 _INTERP_NAMES = ("python3.14", "python3.13", "python3.12", "python3.11", "python3", "python")
+#: Installed-plugin commands the runtime proof executes, keyed by step name, as ``codemap-py`` arguments.
 _STEPS: dict[str, list[str]] = {"doctor": ["doctor", "--json"], "index": ["index"], "query": ["query", "central"]}
+#: Environment variables removed from the proof's child processes; one surviving in the scrubbed env fails the check.
 _FORBIDDEN_ENV_KEYS = ("PYTHONPATH", "CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA")
-# Working-tree junk never copied into the disposable source (tests are not needed to build).
+#: Working-tree junk never copied into the disposable source (tests are not needed to build).
 _STAGE_IGNORE = shutil.ignore_patterns(
     "__pycache__",
     ".cache",
@@ -88,7 +91,7 @@ def stage_disposable_source(repo_root: Path, checkout_parent: Path) -> Path:
     checkout = checkout_parent / "codemap-py"
     shutil.copytree(repo_root / "plugins" / "codemap-py", checkout, ignore=_STAGE_IGNORE)
     for argv in (["git", "-C", str(checkout), "init", "-q"], ["git", "-C", str(checkout), "add", "-A"]):
-        subprocess.run(argv, capture_output=True, text=True, timeout=30, check=True)
+        subprocess.run(argv, capture_output=True, text=True, timeout=30, check=True)  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
     return checkout
 
 
@@ -116,7 +119,7 @@ def build_from_checkout(checkout: Path, candidate: Path, mode_map_path: Path) ->
     ``mode_map_path`` (``write_real_mode_map``'s output) overrides the copy's own synthesized git index — the copy is
     never the mode authority.
     """
-    proc = subprocess.run(
+    proc = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
         [
             sys.executable,
             str(checkout / "scripts" / "build_package.py"),
@@ -157,7 +160,7 @@ def _nonforbidden_interpreter(forbidden: list[str], search_path: str) -> str | N
         if not found or any(root in str(Path(found).resolve()) for root in forbidden):
             continue
         try:
-            out = subprocess.run(
+            out = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
                 [found, "-c", "import sys;v=sys.version_info;print(sys.implementation.name,v.major,v.minor)"],
                 capture_output=True,
                 text=True,
@@ -247,7 +250,7 @@ def _no_source_refs(installed_path: Path, forbidden: list[str]) -> bool:
 def _run(cmd: list[str], proj: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """Run one installed-CLI command; a non-executable launcher surfaces as exit 126, not a raise."""
     try:
-        return subprocess.run(cmd, cwd=str(proj), env=env, capture_output=True, text=True, timeout=120, check=False)
+        return subprocess.run(cmd, cwd=str(proj), env=env, capture_output=True, text=True, timeout=120, check=False)  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
     except OSError as error:
         return subprocess.CompletedProcess(cmd, returncode=126, stdout="", stderr=f"exec failed: {error}")
 

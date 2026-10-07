@@ -6,18 +6,19 @@ retain transport, prompt parsing, and terminal formatting through callbacks; the
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 import hashlib
 import json
-from pathlib import Path
 import re
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Generic, TypeVar
-
 
 Task = TypeVar("Task")
 Arm = TypeVar("Arm")
+#: Number of leading scope-hash characters that make up a paid-run approval token.
 PAID_APPROVAL_PREFIX_LENGTH = 16
+#: Matches a lowercase 64-character hexadecimal scope hash, the only form accepted for approval tokens.
 _SCOPE_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 

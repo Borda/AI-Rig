@@ -32,6 +32,7 @@ import tempfile
 from pathlib import Path
 
 # skill -> (setup_worktree.py ``--sentinel`` value, run-dir sentinel basename)
+#: Per-skill worktree setup: the --sentinel value for setup_worktree.py and the run-dir sentinel name.
 _SKILLS: dict[str, tuple[str, str]] = {
     "feature": ("", "dev-feature-team-dir"),
     "fix": ("fix-team-check", "dev-fix-run-dir"),
@@ -59,7 +60,7 @@ def _run_setup(bin_dir: Path, sentinel: str) -> str:
     if sentinel:
         cmd += ["--sentinel", sentinel]
     try:
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=False)
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=False)  # noqa: S603 - argv list, no shell
     except OSError as exc:
         print(f"dev_setup_worktree_wrap.py: cannot run setup_worktree.py: {exc}", file=sys.stderr)
         return ""

@@ -99,31 +99,45 @@ def _read_events(file_path: str) -> list[dict[str, Any]]:
     ]
 
 
-def test_external_path_evidence_records_the_observed_path_under_a_simulated_windows_workspace(
-    script_run_agentic: Any,
+@pytest.mark.parametrize(
+    ("observed_path", "workspace_root", "expected_paths"),
+    [
+        pytest.param(
+            "/host/source.py",
+            PureWindowsPath(r"D:\agent\disposable"),
+            ["/host/source.py"],
+            id="simulated-windows-host-path",
+        ),
+        pytest.param(
+            "/disposable/repository/src/app.py",
+            PurePosixPath("/disposable/repository"),
+            [],
+            id="workspace-member-is-not-external",
+        ),
+        pytest.param(
+            "/disposable/repository-backup/src/app.py",
+            PurePosixPath("/disposable/repository"),
+            ["/disposable/repository-backup/src/app.py"],
+            id="prefix-sibling-stays-external",
+        ),
+    ],
+)
+def test_external_path_evidence_is_decided_against_the_workspace_root(
+    script_run_agentic: Any, observed_path: str, workspace_root: Any, expected_paths: list[str]
 ) -> None:
     """Recorded evidence is the path the agent named, never one re-rooted on the scoring host.
 
-    Regression: the observed path was pushed through ``Path.resolve()``. On Windows that
-    gives a leading-slash path the current drive letter, so ``/host/source.py`` was
-    reported as ``D:\\host\\source.py`` — evidence about a file that was never touched.
+    Regression: the observed path was pushed through ``Path.resolve()``. On Windows that gives a leading-slash path the
+    current drive letter, so ``/host/source.py`` was reported as ``D:\\host\\source.py``: evidence about a file that was
+    never touched. A checkout is never its own leak, and a neighbour whose name merely starts with the checkout's is
+    outside it.
     """
     attempted, successful = script_run_agentic._outside_workspace_path_evidence(
-        _read_events("/host/source.py"), PureWindowsPath(r"D:\agent\disposable")
+        _read_events(observed_path), workspace_root
     )
 
-    assert attempted == ["/host/source.py"]
-    assert successful == ["/host/source.py"]
-
-
-def test_workspace_members_are_not_external_evidence(script_run_agentic: Any) -> None:
-    """A checkout is never its own leak."""
-    attempted, successful = script_run_agentic._outside_workspace_path_evidence(
-        _read_events("/disposable/repository/src/app.py"), PurePosixPath("/disposable/repository")
-    )
-
-    assert attempted == []
-    assert successful == []
+    assert attempted == expected_paths
+    assert successful == expected_paths
 
 
 @pytest.mark.parametrize(
@@ -156,12 +170,3 @@ def test_simulated_windows_rooted_containment_is_decided_lexically(
     roots = script_run_agentic._workspace_containment_roots(PureWindowsPath(r"D:\agent\repo"))
 
     assert script_run_agentic._is_inside_workspace(PurePosixPath(observed), roots) is inside
-
-
-def test_sibling_directory_sharing_a_workspace_prefix_stays_external(script_run_agentic: Any) -> None:
-    """A neighbour whose name merely starts with the checkout's is outside it."""
-    attempted, _ = script_run_agentic._outside_workspace_path_evidence(
-        _read_events("/disposable/repository-backup/src/app.py"), PurePosixPath("/disposable/repository")
-    )
-
-    assert attempted == ["/disposable/repository-backup/src/app.py"]

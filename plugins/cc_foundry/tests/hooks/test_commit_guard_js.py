@@ -144,12 +144,6 @@ class TestCommitGuard:
 
         assert result.returncode == 0, result.stderr
 
-    def test_non_push_bash_passes_through(self, git_repo: Path, run_hook) -> None:
-        """Non-push Bash command bypasses the gate regardless of sentinel state."""
-        result = run_hook("commit-guard.js", _bash_push(cmd="echo hello"), cwd=git_repo)
-
-        assert result.returncode == 0, result.stderr
-
     def test_session_start_clears_push_sentinel(self, git_repo: Path, run_hook, push_sentinel: Path) -> None:
         """SessionStart wipes any leftover push sentinel from a prior session."""
         push_sentinel.touch()
@@ -262,9 +256,9 @@ class TestForcePushSpelling:
         assert result.returncode == 2, f"{command!r} bypassed the sentinel gate"
         assert "AskUserQuestion" in result.stderr
 
-    @pytest.mark.parametrize("command", ["git log --oneline", "git status", "echo 'git push --force'"])
+    @pytest.mark.parametrize("command", ["echo hello", "git log --oneline", "git status", "echo 'git push --force'"])
     def test_non_push_commands_still_pass(self, git_repo: Path, run_hook, command: str) -> None:
-        """Commands that are not a push are untouched.
+        """Commands that are not a push bypass the gate regardless of sentinel state.
 
         ``echo 'git push --force'`` is quoted text, not a push. It passes because no segment resolves to a ``git``
         argv[0] — quoting is not parsed, so the protection here is incidental rather than a quoting guarantee. A

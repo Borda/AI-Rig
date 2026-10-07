@@ -36,10 +36,18 @@ class TestMakeRunDir:
     ``~/.claude``; chdir into ``tmp_path`` so the relative ``runs`` base resolves to a writable sandbox location.
     """
 
-    def test_creates_directory(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Created path exists as a directory."""
+    @pytest.mark.parametrize(
+        "base_dir",
+        [
+            pytest.param("runs", id="single-level"),
+            # Nested base dirs are created transparently (``mkdir -p`` semantics).
+            pytest.param("level1/level2/runs", id="intermediate-parents"),
+        ],
+    )
+    def test_creates_directory(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, base_dir: str) -> None:
+        """Created path exists as a directory, with any missing intermediate parents created too."""
         monkeypatch.chdir(tmp_path)
-        result = make_run_dir("runs")
+        result = make_run_dir(base_dir)
         assert result.is_dir()
 
     def test_returns_path_under_base(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -54,33 +62,9 @@ class TestMakeRunDir:
         result = make_run_dir("runs")
         assert TIMESTAMP_RE.match(result.name)
 
-    def test_creates_intermediate_parents(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Nested base dirs are created transparently (``mkdir -p`` semantics)."""
-        monkeypatch.chdir(tmp_path)
-        result = make_run_dir("level1/level2/runs")
-        assert result.is_dir()
-
 
 class TestMain:
     """Integration tests for ``main()``."""
-
-    def test_happy_path_exit_zero(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Single valid arg → exit 0, prints path to stdout."""
-        monkeypatch.chdir(tmp_path)
-        rc = main(["runs"])
-        assert rc == 0
-
-    def test_happy_path_prints_path(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Printed path matches directory created on disk."""
-        monkeypatch.chdir(tmp_path)
-        rc = main(["runs"])
-        assert rc == 0
-        out = capsys.readouterr().out.strip()
-        assert Path(out).is_dir()
 
     def test_golden_positional_invocation(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
@@ -127,20 +111,16 @@ class TestMain:
 class TestSecurity:
     """Path-validation tests."""
 
-    def test_rejects_traversal(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Reject parent-directory traversal with an explanatory error."""
-        rc = main(["../escape"])
-        assert rc == 2
-        assert "make_run_dir:" in capsys.readouterr().err
-
-    def test_rejects_system_prefix(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Absolute path under ``/etc`` → exit 2."""
-        rc = main(["/etc/evil"])
-        assert rc == 2
-        assert "make_run_dir:" in capsys.readouterr().err
-
-    def test_rejects_tmp_prefix(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Absolute path under ``/tmp`` → exit 2 (CWE-22)."""
-        rc = main(["/tmp/evil"])
+    @pytest.mark.parametrize(
+        "base_dir",
+        [
+            pytest.param("../escape", id="parent-directory-traversal"),
+            pytest.param("/etc/evil", id="system-prefix"),
+            pytest.param("/tmp/evil", id="tmp-prefix-cwe-22"),
+        ],
+    )
+    def test_rejects_unsafe_base_dir(self, capsys: pytest.CaptureFixture[str], base_dir: str) -> None:
+        """Parent-directory traversal and absolute paths under ``/etc`` or ``/tmp`` exit 2 with an explanatory error."""
+        rc = main([base_dir])
         assert rc == 2
         assert "make_run_dir:" in capsys.readouterr().err

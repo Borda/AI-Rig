@@ -65,16 +65,18 @@ from pathlib import Path
 
 # Guard against pathological inputs that would exhaust heap memory when read in one
 # shot. 10 MB is well above any realistic Markdown / Python source file.
+#: Scripts larger than this many bytes (10 MiB) are skipped when reading documented flags.
 _MAX_FILE_SIZE = 10 * 1024 * 1024
-# A --long-flag token within a command. Single-dash short options (-f, -z, -n) are
-# deliberately NOT matched: they collide with bash test operators ([ -z "$X" ]) and
-# other shell short flags that legitimately appear on a script's command line, so
-# treating them as documented CLI flags produces false positives. Drift on a renamed
-# short option is rare and not worth that noise; long flags carry the real signal.
+#: A --long-flag token within a command. Single-dash short options (-f, -z, -n) are
+#: deliberately NOT matched: they collide with bash test operators ([ -z "$X" ]) and
+#: other shell short flags that legitimately appear on a script's command line, so
+#: treating them as documented CLI flags produces false positives. Drift on a renamed
+#: short option is rare and not worth that noise; long flags carry the real signal.
 _FLAG_RE = re.compile(r"(?<![\w-])--[a-z][a-z0-9-]*\b")
-# Shell boundaries that end the command owning the flags — a piped/chained command
-# (grep, printf, git) past one of these contributes its own flags, not the script's.
+#: Shell boundaries that end the command owning the flags — a piped/chained command
+#: (grep, printf, git) past one of these contributes its own flags, not the script's.
 _CMD_BOUNDARY_RE = re.compile(r"\||;|&&|\|\||\$\(|`|>&|2>")
+#: Default plugins root used by the command line when none is given.
 _DEFAULT_PLUGINS_DIR = "plugins"
 #: Opens a module docstring's invocation block. Everything until the block dedents is
 #: treated as the script's self-documented command line.
@@ -82,6 +84,7 @@ _USAGE_HEADING_RE = re.compile(r"^\s*Usage:(?P<inline>.*)$")
 
 #: Documents that can advertise a flag, named in the finding so a reader knows where to look.
 ORIGIN_SKILL_MD = "SKILL.md"
+#: Origin label for a finding sourced from a script's own module docstring.
 ORIGIN_DOCSTRING = "module docstring"
 
 

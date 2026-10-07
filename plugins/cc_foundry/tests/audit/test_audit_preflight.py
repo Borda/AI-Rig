@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import audit_preflight as ap
+import pytest
 
 
 class TestParseArguments:
@@ -26,7 +25,10 @@ class TestParseArguments:
     def test_flags_recognised(self) -> None:
         """Each supported flag sets its state key and leaves the scope clean."""
         state, _, scope = ap.parse_arguments("plugins --local --efficiency --skip-gate --fast")
-        assert state["local-mode"] and state["efficiency"] and state["skip-gate"] and state["fast"]
+        assert state["local-mode"]
+        assert state["efficiency"]
+        assert state["skip-gate"]
+        assert state["fast"]
         assert scope == "plugins"
 
     def test_challenge_is_adversarial_alias(self) -> None:

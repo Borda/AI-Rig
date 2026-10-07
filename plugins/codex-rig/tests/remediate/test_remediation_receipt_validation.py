@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import pytest
-
 from test_review_completion_gate import _assessed_pr, _module
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 HEAD_BRANCH = "widget-fix"
@@ -102,7 +100,7 @@ def test_remediation_receipt_supported_route_is_accepted(remediation_pr: Path, m
 
 
 @pytest.mark.parametrize(
-    "artifact, field, value",
+    ("artifact", "field", "value"),
     [
         pytest.param("local-checkout.json", "gh_checkout_failure", None, id="missing-failed-gh-proof"),
         pytest.param("local-checkout.json", "gh_checkout_failure", {}, id="empty-failed-gh-proof"),
@@ -136,7 +134,7 @@ def test_remediation_fallback_requires_proof_and_repository_identity(
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload[field] = value
     path.write_text(json.dumps(payload), encoding="utf-8")
-    with pytest.raises(SystemExit, match="^code-remediate-pr-routing-checkout-command-invalid$"):
+    with pytest.raises(SystemExit, match=r"^code-remediate-pr-routing-checkout-command-invalid$"):
         _module(PLUGIN_ROOT / "shared" / "validate-artifacts.py")._validate_code_remediate_pr_source(
             remediation_pr,
             json.loads((remediation_pr / "pr-routing.json").read_text(encoding="utf-8")),

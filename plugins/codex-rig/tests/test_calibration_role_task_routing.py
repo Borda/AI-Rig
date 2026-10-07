@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -34,7 +33,8 @@ def _load_runner() -> object:
     """Load the shipped calibration runner for its role-routing check."""
     path = PLUGIN_ROOT / "runtime" / "calibration" / "run.py"
     spec = importlib.util.spec_from_file_location("codex_rig_role_task_runner", path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     runner = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = runner
     spec.loader.exec_module(runner)

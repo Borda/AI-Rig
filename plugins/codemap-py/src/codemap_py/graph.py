@@ -28,7 +28,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from codemap_py import index_paths, rwgate
-from codemap_py.schema import SCAN_VERSION
 from codemap_py.scanner import (
     _GLOB_META_RE,
     _STDLIB_MODULES,
@@ -52,10 +51,14 @@ from codemap_py.scanner import (
     scan_mkdocs_xrefs,
     scan_rst_xrefs,
 )
+from codemap_py.schema import SCAN_VERSION
 from codemap_py.telemetry import CliInvocation
 
+#: Number of attempts for an atomic file replace on Windows (defined here; the retry loop lives in rwgate).
 _WINDOWS_REPLACE_RETRIES = 8
+#: Base back-off in seconds between Windows replace attempts (defined here; the retry loop lives in rwgate).
 _WINDOWS_REPLACE_DELAY_SECONDS = 0.025
+#: Accepted labels for what triggered an index refresh; any other value is recorded as direct_cli.
 _REFRESH_TRIGGERS = {
     "missing_index_explicit",
     "claude_prompt_background",
@@ -191,6 +194,7 @@ def _build_fixture_rdep_count(modules: list[dict]) -> dict[str, int]:
 # below (read(), measured_files(), lines(), contexts_by_lineno()). 7.4 was the
 # first release to stabilise the SQLite schema and the contexts_by_lineno API
 # shape we depend on; lower versions raise/return unexpected types.
+#: Minimum (major, minor) version of the coverage library whose CoverageData API this module reads.
 _COVERAGE_MIN_LIB_VERSION: tuple[int, int] = (7, 4)
 
 
@@ -982,7 +986,7 @@ def _dedup_modules(modules: list[dict], src_root_rel: str | tuple[str, ...]) -> 
         dropped = [m.get("path", "") for m in losers]
         collisions.append({"name": name, "kept": winner.get("path", ""), "dropped": dropped})
         print(
-            f"[codemap] ⚠ name collision: '{name}' at {[winner.get('path', '')] + dropped} "
+            f"[codemap] ⚠ name collision: '{name}' at {[winner.get('path', ''), *dropped]} "
             f"— kept '{winner.get('path', '')}'",
             file=sys.stderr,
         )
@@ -1610,7 +1614,7 @@ def _run_scan(invocation: CliInvocation) -> None:
 
     if args.timeout > 0 and hasattr(signal, "SIGALRM"):
 
-        def _timeout_handler(signum: int, frame: object) -> None:  # noqa: ARG001
+        def _timeout_handler(signum: int, frame: object) -> None:
             """Retain the handled timeout outcome before unwinding the scan."""
             invocation.result = {"error": "timeout", "timeout_seconds": args.timeout}
             print(f"scan-index: timed out after {args.timeout}s", file=sys.stderr)

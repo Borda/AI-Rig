@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import importlib.util
 import hashlib
+import importlib.util
 import json
 import sys
 from dataclasses import replace
@@ -11,9 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from _launcher_capability import _private_filesystem_available
-
 
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCHMARKS_DIR))
@@ -22,7 +20,6 @@ sys.path.insert(0, str(BENCHMARKS_DIR))
 # the defining module, so patching the shim would leave those bindings untouched.
 from _bench_codex.structural import diff_impact as codex_diff_impact  # noqa: E402
 from _bench_codex.structural import provisioning as codex_provisioning  # noqa: E402
-
 from _bench_common.presentation import LEGEND_CLOSE_RULE, LEGEND_OPEN_RULE  # noqa: E402
 
 #: Task ids read from the shipped suite rather than counted out here, so adding a task to the suite changes the
@@ -51,7 +48,8 @@ def _load_agentic() -> Any:
         return existing
     path = BENCHMARKS_DIR / "run-codex-agentic.py"
     spec = importlib.util.spec_from_file_location(module_name, path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
@@ -209,7 +207,7 @@ def test_dry_run_accepts_a_positive_explicit_repeat_override(agentic: Any) -> No
     assert {parts[1] for parts in plan} == set(AGENTIC_TASK_IDS)
     assert {parts[2] for parts in plan} == {"rep=1", "rep=2"}
     assert {parts[3] for parts in plan} == set(AGENTIC_ARMS)
-    with pytest.raises(ValueError, match="positive|at least 1"):
+    with pytest.raises(ValueError, match=r"positive|at least 1"):
         agentic.dry_run(repetitions=0)
 
 
@@ -1254,8 +1252,11 @@ def test_completed_invalid_answer_is_unscored_without_becoming_transport_failure
     line = agentic._progress_line(1, 1, result)
     assert line.startswith("(1/1) ✗  ")
     assert "component=n/a" in line
-    assert "pass=" not in line and "status=" not in line
-    assert "EREC=" in line and "RREC=" in line and "DEFF=" in line
+    assert "pass=" not in line
+    assert "status=" not in line
+    assert "EREC=" in line
+    assert "RREC=" in line
+    assert "DEFF=" in line
     assert "answer:✗" in agentic._progress_line(1, 1, result)
     assert "correct:" not in agentic._progress_line(1, 1, result)
 
@@ -1309,7 +1310,8 @@ def test_progress_symbol_distinguishes_execution_failure_from_pass(
     line = agentic._progress_line(3, 48, result)
 
     assert line.startswith(f"(3/48) {symbol}  BA-01")
-    assert "pass=" not in line and "status=" not in line
+    assert "pass=" not in line
+    assert "status=" not in line
     assert f"component={'1.000' if correct else '0.667'}" in line
     expected_grade = 0.0 if not success or incomplete or not adherent else (1.0 if correct else 56 / 57)
     assert f"quality={expected_grade:.1%}" in line
@@ -1507,28 +1509,28 @@ class TestRelocatedIndexAdmission:
 
         assert hashlib.sha256(index_path.read_bytes()).hexdigest() != relocation["frozen_index_sha256"]
 
-    def test_provenance_naming_the_wrong_frozen_source_is_rejected(self, agentic: Any, tmp_path: Path) -> None:
-        """Provenance whose frozen source is not the locked index is rejected.
+    @pytest.mark.parametrize(
+        ("field", "bad_digest", "match"),
+        [
+            pytest.param("frozen_index_sha256", "0" * 64, "wrong frozen source", id="wrong-frozen-source"),
+            pytest.param(
+                "derived_index_sha256", "1" * 64, "changed after relocation", id="derived-hash-misses-bytes-on-disk"
+            ),
+        ],
+    )
+    def test_inconsistent_provenance_is_rejected(
+        self, agentic: Any, tmp_path: Path, field: str, bad_digest: str, match: str
+    ) -> None:
+        """Provenance whose frozen source is not the locked index, or whose derived hash misses the disk, is rejected.
 
-        Scenario: a caller supplies provenance derived from some other frozen index; admitting it
-        would let an unrelated graph enter the run under the locked manifest's authority.
+        Scenario: a caller supplies provenance derived from some other frozen index, and admitting it would let an
+        unrelated graph enter the run under the locked manifest's authority; or the relocated copy changed after its
+        provenance was written, so the digest the run would attest to is no longer the index the model actually reads.
         """
         repo, index_path, manifest, relocation = _relocated_worktree_index(tmp_path)
-        relocation["frozen_index_sha256"] = "0" * 64
+        relocation[field] = bad_digest
 
-        with pytest.raises(ValueError, match="wrong frozen source"):
-            agentic._validate_agentic_runtime(manifest, repo, index_path, relocation)
-
-    def test_provenance_disagreeing_with_the_bytes_on_disk_is_rejected(self, agentic: Any, tmp_path: Path) -> None:
-        """Provenance whose derived hash misses the on-disk index is rejected.
-
-        Scenario: the relocated copy changed after its provenance was written, so the digest the
-        run would attest to is no longer the index the model actually reads.
-        """
-        repo, index_path, manifest, relocation = _relocated_worktree_index(tmp_path)
-        relocation["derived_index_sha256"] = "1" * 64
-
-        with pytest.raises(ValueError, match="changed after relocation"):
+        with pytest.raises(ValueError, match=match):
             agentic._validate_agentic_runtime(manifest, repo, index_path, relocation)
 
     def test_absent_provenance_keeps_the_byte_gate(self, agentic: Any, tmp_path: Path) -> None:
@@ -1565,7 +1567,8 @@ def test_probe_rows_separate_the_optional_and_required_arms(agentic: Any) -> Non
     """
     optional, required = (agentic._format_probe(agentic.probe_arm(arm)) for arm in ("B_auto", "C_strict"))
 
-    assert "codemap=true" in optional and "codemap=true" in required
+    assert "codemap=true" in optional
+    assert "codemap=true" in required
     assert "use=optional" in optional
     assert "use=required" in required
 

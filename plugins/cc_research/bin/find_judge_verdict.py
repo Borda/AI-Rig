@@ -32,14 +32,19 @@ import sys
 import tempfile
 from pathlib import Path
 
+#: Matches a judge report line that starts with a Verdict label, allowing Markdown bold markers and any letter case.
 _VERDICT_LINE_RE = re.compile(r"^\**verdict\**:", re.IGNORECASE)
+#: Matches a judge report line that starts with a Program, program_file or program file label.
 _PROGRAM_LINE_RE = re.compile(r"^\**(program(_file)?|program file)\**:", re.IGNORECASE)
 #: Case-sensitive on purpose — faithful to the ``sed -E 's/.*[Vv]erdict[: ]+//'`` it replaces,
 #: which leaves an all-caps ``VERDICT:`` label in place.
 _VERDICT_STRIP_RE = re.compile(r".*[Vv]erdict[: ]+")
+#: Strips everything through the first colon and following whitespace, leaving the program file value.
 _PROGRAM_STRIP_RE = re.compile(r".*:[ \t\r\f\v]*")
+#: Matches trailing horizontal whitespace so it can be removed from an extracted value.
 _TRAILING_WS_RE = re.compile(r"[ \t\r\f\v]*$")
 
+#: Default directory searched for judge reports, used when --reports-dir is not given.
 _REPORTS_DIR = Path(".reports/research")
 
 

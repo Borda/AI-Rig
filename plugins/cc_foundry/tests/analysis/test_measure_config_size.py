@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import measure_config_size as mcs
+import pytest
 
 
 def _write(path: Path, size: int) -> None:
@@ -67,26 +66,26 @@ class TestInventory:
 class TestOverhead:
     """Covers --mode overhead."""
 
-    def test_small_config_passes(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """A tiny config reports OK and exits 0."""
-        project = tmp_path / "CLAUDE.md"
-        _write(project, 100)
-        mcs.report_overhead(tmp_path / ".claude", project, tmp_path / "global")
-        assert "✓ OK Check 34" in capsys.readouterr().out
+    @pytest.mark.parametrize(
+        ("size", "expected"),
+        [
+            pytest.param(100, "✓ OK Check 34", id="small-config-ok"),
+            pytest.param(mcs.OVERHEAD_WARN_BYTES + 10, "⚠ WARN Check 34a", id="warn-threshold"),
+            pytest.param(mcs.OVERHEAD_FAIL_BYTES + 10, "! FAIL Check 34a", id="fail-threshold"),
+        ],
+    )
+    def test_total_size_verdict(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], size: int, expected: str
+    ) -> None:
+        """The total overhead is graded by size.
 
-    def test_warn_threshold(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Between 50 KB and 100 KB warns without failing."""
+        Scenario: a tiny config reports OK and exits 0; between 50 KB and 100 KB warns without failing; over 100 KB
+        fails.
+        """
         project = tmp_path / "CLAUDE.md"
-        _write(project, mcs.OVERHEAD_WARN_BYTES + 10)
+        _write(project, size)
         mcs.report_overhead(tmp_path / ".claude", project, tmp_path / "global")
-        assert "⚠ WARN Check 34a" in capsys.readouterr().out
-
-    def test_fail_threshold(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Over 100 KB fails."""
-        project = tmp_path / "CLAUDE.md"
-        _write(project, mcs.OVERHEAD_FAIL_BYTES + 10)
-        mcs.report_overhead(tmp_path / ".claude", project, tmp_path / "global")
-        assert "! FAIL Check 34a" in capsys.readouterr().out
+        assert expected in capsys.readouterr().out
 
     def test_global_claude_counted_once(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Global CLAUDE.md contributes its own size, not twice."""
@@ -95,19 +94,24 @@ class TestOverhead:
         mcs.report_overhead(tmp_path / ".claude", tmp_path / "absent.md", global_dir)
         assert "Global ~/.claude/:  3000 bytes" in capsys.readouterr().out
 
-    def test_oversized_rules_file_fails(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """A rules file over 10 KB fails even when the total is small."""
-        claude = tmp_path / ".claude"
-        _write(claude / "rules" / "big.md", mcs.RULES_FAIL_BYTES + 10)
-        mcs.report_overhead(claude, tmp_path / "absent.md", tmp_path / "global")
-        assert "! FAIL Check 34b" in capsys.readouterr().out
+    @pytest.mark.parametrize(
+        ("size", "expected"),
+        [
+            pytest.param(mcs.RULES_FAIL_BYTES + 10, "! FAIL Check 34b", id="over-10kb-fails"),
+            pytest.param(mcs.RULES_WARN_BYTES + 10, "⚠ WARN Check 34b", id="between-thresholds-warns"),
+        ],
+    )
+    def test_rules_file_size_verdict(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], size: int, expected: str
+    ) -> None:
+        """A single rules file is graded by size even when the total is small.
 
-    def test_rules_file_between_thresholds_warns(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """A rules file between 5 KB and 10 KB warns without failing."""
+        Scenario: a rules file over 10 KB fails; one between 5 KB and 10 KB warns without failing.
+        """
         claude = tmp_path / ".claude"
-        _write(claude / "rules" / "mid.md", mcs.RULES_WARN_BYTES + 10)
+        _write(claude / "rules" / "file.md", size)
         mcs.report_overhead(claude, tmp_path / "absent.md", tmp_path / "global")
-        assert "⚠ WARN Check 34b" in capsys.readouterr().out
+        assert expected in capsys.readouterr().out
 
     def test_user_rules_dir_counted(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Rules delivered to the user directory count toward the total.

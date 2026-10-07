@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SHARED_CONTRACT = PLUGIN_ROOT / "shared" / "native-skill-contract.md"
 GLOBAL_INSTRUCTIONS = PLUGIN_ROOT / "assets" / "AGENTS.md"

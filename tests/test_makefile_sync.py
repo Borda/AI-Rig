@@ -19,7 +19,6 @@ from typing import NamedTuple
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 MAKEFILE = ROOT / "Makefile"
 

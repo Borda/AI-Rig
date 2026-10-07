@@ -59,22 +59,29 @@ from pathlib import Path
 from typing import Any, NamedTuple
 from urllib.parse import urlparse
 
-
 # Keep this executable helper importable when pytest discovers it as a module.
+#: Directory containing this helper and its sibling modules, added to `sys.path` for file-path loading.
 SHARED_DIRECTORY = Path(__file__).resolve().parent
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
 from github_read import GitHubReadError, read_with_fallback, run_gh_read  # noqa: E402
 
-
+#: Largest stdout or stderr, in bytes, accepted from a git or gh command run by the collector.
 MAX_OUTPUT_BYTES = 16 * 1024 * 1024
+#: Pull-request states GitHub can report that this collector accepts.
 VALID_PR_STATES = frozenset({"OPEN", "MERGED", "CLOSED"})
+#: Accepted values for the checkout mode argument: review or remediate.
 CHECKOUT_MODES = frozenset({"review", "remediate"})
+#: Only host whose repositories and pull-request URLs the collector will target.
 GITHUB_HOST = "github.com"
+#: Pattern for a valid pull-request number: decimal digits with no leading zero.
 PR_NUMBER_PATTERN = re.compile(r"[1-9][0-9]*")
+#: Pattern for a safe GitHub owner or repository name, which must start with a letter or digit.
 GITHUB_PATH_COMPONENT_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+#: Pattern for a full 40-character hexadecimal git object id.
 GIT_OBJECT_ID_PATTERN = re.compile(r"[0-9a-fA-F]{40}")
+#: Git error-line patterns grouped by the failure reason they classify (rejected ref, transport, permission, and so on).
 GIT_FAILURE_PATTERNS = (
     (
         "ref-update-rejected",
@@ -116,6 +123,7 @@ GIT_FAILURE_PATTERNS = (
         ),
     ),
 )
+#: Evidence kinds missing from the public-HTTPS fallback, recorded so reviewers know the data is limited.
 FALLBACK_UNAVAILABLE_EVIDENCE = (
     "github_provided_file_list",
     "mergeability",
@@ -123,6 +131,7 @@ FALLBACK_UNAVAILABLE_EVIDENCE = (
     "reviews",
     "top_level_comments",
 )
+#: Names of evidence files the collector writes, deleted up front so one output directory never mixes attempts.
 COLLECTOR_EVIDENCE_ARTIFACTS = (
     "comments.json",
     "checkout-state.json",
@@ -150,11 +159,13 @@ COLLECTOR_EVIDENCE_ARTIFACTS = (
     "untracked.txt",
     "worktree-preflight.json",
 )
+#: Comma-separated field list passed to `gh pr view --json` when fetching pull-request metadata.
 PR_FIELDS = (
     "number,title,body,url,author,baseRefName,baseRefOid,headRefName,headRefOid,"
     "headRepository,headRepositoryOwner,isCrossRepository,state,isDraft,"
     "reviewDecision,mergeable,comments,reviews,files,statusCheckRollup"
 )
+#: GraphQL query that fetches a pull request's review threads and their comments.
 GRAPHQL_QUERY = """
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
@@ -213,7 +224,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--timeout-seconds", type=int, default=60, help="Per-command timeout")
     tokens = sys.argv[1:] if argv is None else argv
     # A later target must not override the PR identity in a runtime-approved command prefix.
-    if sum(token == "--target" or token.startswith("--target=") for token in tokens) > 1:
+    if sum(token == "--target" or token.startswith("--target=") for token in tokens) > 1:  # noqa: S105 - CLI argv token, not a credential
         parser.error("--target must be supplied at most once")
     arguments = parser.parse_args(tokens)
     if arguments.timeout_seconds < 1:

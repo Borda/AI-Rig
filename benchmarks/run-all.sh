@@ -416,7 +416,9 @@ prepare_run_worktree() {
   git -C "$MANAGED_REPO" worktree prune >/dev/null 2>&1 || true
   run_token="${CLAUDE_CODE_SESSION_ID:-$$}"
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  BENCH_RUN_WORKTREE="$BENCHMARK_TEMP_ROOT/codemap-parity-run-${stamp}-${run_token##*-}"
+  # The session token is shared by every run one session starts and the stamp has one-second resolution,
+  # so the PID keeps two isolated studies started in the same second from claiming the same worktree.
+  BENCH_RUN_WORKTREE="$BENCHMARK_TEMP_ROOT/codemap-parity-run-${stamp}-${run_token##*-}-$$"
   section_rule "PREPARE private run worktree"
   if ! git -C "$MANAGED_REPO" worktree add --detach --force "$BENCH_RUN_WORKTREE" "$PL_TAG" >/dev/null; then
     echo "ERROR: cannot create the isolated run worktree at $BENCH_RUN_WORKTREE" >&2
@@ -697,7 +699,7 @@ agentic_scope_is_default() {
 }
 
 resolve_agentic_scope() {
-  local scope_json
+  local scope_json scope_fields
   local -a resolver
   AGENTIC_TASK_IDS=()
   resolve_agentic_model || return "$?"
@@ -733,15 +735,30 @@ resolve_agentic_scope() {
     echo "$scope_json" >&2
     return 2
   fi
-  # Three fields out of one blob in one interpreter start, not three.
-  {
-    IFS= read -r AGENTIC_SCOPE_SHA
-    IFS= read -r AGENTIC_TOTAL_CELLS
-    IFS= read -r AGENTIC_COORDINATE_TIMEOUT
-  } < <(python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(d["scope_sha256"]); print(d["total_cells"]); print(d["coordinate_timeout_seconds"])' <<<"$scope_json")
-  while IFS= read -r task_id; do
-    [ -n "$task_id" ] && AGENTIC_TASK_IDS+=("$task_id")
-  done < <(python3 -c 'import json,sys; print(*json.loads(sys.stdin.read())["task_ids"], sep="\n")' <<<"$scope_json")
+  # Every field out of one blob in one interpreter start, not two. The fast path is taken only when that
+  # start succeeds: the blob is valid JSON holding all four keys and every scalar is one non-empty line
+  # (command substitution drops trailing newlines, so an empty scalar could leave a read at end of input).
+  # Any other answer replays the field-by-field reads below, so a malformed resolver still gets the
+  # diagnostics and the partial state it always had.
+  if scope_fields="$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); f=[str(d[k]) for k in ("scope_sha256","total_cells","coordinate_timeout_seconds")]; (not all(f) or any(c in v for v in f for c in "\n\0")) and sys.exit(1); print(*f, sep="\n"); print(*d["task_ids"], sep="\n")' <<<"$scope_json" 2>/dev/null)"; then
+    {
+      IFS= read -r AGENTIC_SCOPE_SHA
+      IFS= read -r AGENTIC_TOTAL_CELLS
+      IFS= read -r AGENTIC_COORDINATE_TIMEOUT
+      while IFS= read -r task_id; do
+        [ -n "$task_id" ] && AGENTIC_TASK_IDS+=("$task_id")
+      done
+    } <<<"$scope_fields"
+  else
+    {
+      IFS= read -r AGENTIC_SCOPE_SHA
+      IFS= read -r AGENTIC_TOTAL_CELLS
+      IFS= read -r AGENTIC_COORDINATE_TIMEOUT
+    } < <(python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(d["scope_sha256"]); print(d["total_cells"]); print(d["coordinate_timeout_seconds"])' <<<"$scope_json")
+    while IFS= read -r task_id; do
+      [ -n "$task_id" ] && AGENTIC_TASK_IDS+=("$task_id")
+    done < <(python3 -c 'import json,sys; print(*json.loads(sys.stdin.read())["task_ids"], sep="\n")' <<<"$scope_json")
+  fi
   if [ "${#AGENTIC_TASK_IDS[@]}" -eq 0 ]; then
     echo "ERROR: $MODE agentic scope resolver returned no task IDs." >&2
     return 2

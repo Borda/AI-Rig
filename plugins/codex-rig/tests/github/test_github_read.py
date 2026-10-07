@@ -13,7 +13,6 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 MODULE = PLUGIN_ROOT / "shared" / "github_read.py"
 
@@ -22,7 +21,8 @@ def _load_reader() -> ModuleType:
     """Load the standalone GitHub reader without package installation."""
     assert MODULE.is_file(), MODULE
     specification = importlib.util.spec_from_file_location("codex_rig_github_read", MODULE)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module

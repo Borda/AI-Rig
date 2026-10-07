@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-import hashlib
 import errno
+import hashlib
 import json
 import os
 import shlex
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-
 
 # Every test here drives ``run-all.sh`` through ``/bin/bash`` with executable
 # shell stubs, so the whole module is POSIX-only — same boundary the shared
@@ -32,9 +32,8 @@ _PLATFORM_TESTS_DIR = BENCHMARKS_DIR.parent / "plugins" / "codex-rig" / "tests"
 if str(_PLATFORM_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PLATFORM_TESTS_DIR))
 
-from _platform import POSIX_BASH  # noqa: E402
-
 from _bench_common.presentation import LEGEND_CLOSE_RULE, LEGEND_OPEN_RULE  # noqa: E402
+from _platform import POSIX_BASH  # noqa: E402
 
 REAL_GIT = shutil.which("git")
 ACTIVE_MANIFEST = BENCHMARKS_DIR / "manifests" / "codex-integration.json"
@@ -482,6 +481,61 @@ def _run_batch(mode: str, env: dict[str, str], *args: str) -> subprocess.Complet
     )
 
 
+@dataclass(frozen=True)
+class _RecordedRun:
+    """One finished launcher run: its captured output plus every stub call it logged.
+
+    Module-scoped fixtures record a run once and several tests read it. Nothing mutates a recorded run afterwards, so
+    each reading test stays independent of the order the others run in.
+    """
+
+    completed: subprocess.CompletedProcess[str]
+    calls: str
+    root: Path
+
+
+def _record_run(root: Path, env: dict[str, str], call_log: Path, mode: str, *args: str) -> _RecordedRun:
+    """Run the launcher once against command stubs and freeze its output with the call log it wrote."""
+    completed = _run_batch(mode, env, *args)
+    return _RecordedRun(completed, call_log.read_text(encoding="utf-8"), root)
+
+
+@pytest.fixture(name="struct_dry_run", scope="module")
+def _struct_dry_run(tmp_path_factory: pytest.TempPathFactory) -> _RecordedRun:
+    """Record one plain Codex structural dry run that several tests inspect read-only."""
+    root = tmp_path_factory.mktemp("struct-dry-run")
+    env, call_log = _batch_env.__wrapped__(root)
+    return _record_run(root, env, call_log, "codex", "--struct", "--dry-run")
+
+
+@pytest.fixture(name="isolated_struct_dry_run", scope="module")
+def _isolated_struct_dry_run(tmp_path_factory: pytest.TempPathFactory) -> _RecordedRun:
+    """Record one isolated Codex structural dry run from a managed clone holding a frozen index.
+
+    The managed clone lives at ``root / "managed"``; tests read the run's output, call log and worktree state only.
+    """
+    root = tmp_path_factory.mktemp("isolated-struct-dry-run")
+    env, call_log = _batch_env.__wrapped__(root)
+    _managed_clone_with_frozen_index(env, root)
+    return _record_run(root, env, call_log, "codex", "--struct", "--isolated", "--dry-run")
+
+
+@pytest.fixture(name="agentic_luna_dry_run", scope="module")
+def _agentic_luna_dry_run(tmp_path_factory: pytest.TempPathFactory) -> _RecordedRun:
+    """Record one agentic-only Codex dry run that selects the gpt-6-luna stratum."""
+    root = tmp_path_factory.mktemp("agentic-luna-dry-run")
+    env, call_log = _batch_env.__wrapped__(root)
+    return _record_run(root, env, call_log, "codex", "--agentic", "--models=gpt-6-luna", "--dry-run")
+
+
+@pytest.fixture(name="combined_strata_dry_run", scope="module")
+def _combined_strata_dry_run(tmp_path_factory: pytest.TempPathFactory) -> _RecordedRun:
+    """Record one combined Codex dry run that selects two strata for both lanes."""
+    root = tmp_path_factory.mktemp("combined-strata-dry-run")
+    env, call_log = _batch_env.__wrapped__(root)
+    return _record_run(root, env, call_log, "codex", "--models=gpt-6-sol,gpt-6-luna", "--dry-run")
+
+
 @pytest.mark.skipif(POSIX_BASH is None, reason="requires a working POSIX Bash executable")
 @pytest.mark.parametrize("executable", [r"D:\a\project\.venv\Scripts\python.exe", "/opt/Python Runtime/bin/python3"])
 @pytest.mark.parametrize("argument", ["-c", "--render-results"])
@@ -615,7 +669,7 @@ def _run_batch_tty(mode: str, env: dict[str, str], *args: str) -> subprocess.Com
 
 
 @_skip_windows_posix
-@pytest.mark.parametrize("obsolete", ("all", "full", "refresh", "unknown"))
+@pytest.mark.parametrize("obsolete", ["all", "full", "refresh", "unknown"])
 def test_batch_entrypoint_accepts_exactly_three_modes(batch_env: tuple[dict[str, str], Path], obsolete: str) -> None:
     """Reject missing, obsolete, or extra modes before any setup command runs."""
     env, call_log = batch_env
@@ -840,23 +894,35 @@ def test_struct_flag_dispatches_only_the_provider_structural_runner(
 
 
 @_skip_windows_posix
-@pytest.mark.parametrize("provider", ["claude", "codex"])
 @pytest.mark.parametrize(
-    "selectors",
+    ("provider", "args"),
     [
-        pytest.param(("--struct", "--agentic"), id="conflicting-selectors"),
-        pytest.param(("--struct", "--struct"), id="duplicate-struct"),
+        pytest.param("claude", ("--struct", "--agentic"), id="claude-conflicting-selectors"),
+        pytest.param("codex", ("--struct", "--agentic"), id="codex-conflicting-selectors"),
+        pytest.param("claude", ("--struct", "--struct"), id="claude-duplicate-struct"),
+        pytest.param("codex", ("--struct", "--struct"), id="codex-duplicate-struct"),
+        pytest.param("claude", ("--repetitions=2",), id="claude-repeat-without-agentic"),
+        pytest.param("claude", ("--agentic", "--agentic"), id="claude-duplicate-agentic"),
+        pytest.param("claude", ("--agentic", "--dry-run", "--dry-run"), id="claude-duplicate-dry-run"),
+        pytest.param("claude", ("--agentic", "--repetitions=0"), id="claude-zero-repeat"),
+        pytest.param("claude", ("--agentic", "--repetitions=invalid"), id="claude-invalid-repeat"),
+        pytest.param("claude", ("--agentic", "--unknown"), id="claude-unknown-flag"),
     ],
 )
-def test_struct_selector_rejects_conflicts_before_setup(
+def test_launcher_rejects_invalid_or_duplicate_flags_before_setup(
     batch_env: tuple[dict[str, str], Path],
     provider: str,
-    selectors: tuple[str, str],
+    args: tuple[str, ...],
 ) -> None:
-    """Mode selection must be singular and validated before repository setup."""
+    """Invalid, conflicting, or duplicated launcher flags print usage and stop before repository setup.
+
+    Scenario: mode selection must be singular for both providers, and Claude's agentic flag validation is symmetric
+    with Codex. Each malformed invocation has to exit with usage before any stub is called, so no setup or runner
+    side effect can follow from a rejected command line.
+    """
     env, call_log = batch_env
 
-    completed = _run_batch(provider, env, *selectors)
+    completed = _run_batch(provider, env, *args)
 
     assert completed.returncode == 2
     assert "usage: bash benchmarks/run-all.sh" in completed.stderr
@@ -976,32 +1042,6 @@ def test_claude_agentic_launcher_binds_repeat_override_to_its_exact_scope(
     assert "--repeat 2" in plan_call
     assert f"--scope-sha256 {CLAUDE_AGENTIC_REPEAT_TWO_SCOPE_SHA}" in plan_call
     assert "360 cells" in completed.stdout
-
-
-@_skip_windows_posix
-@pytest.mark.parametrize(
-    "args",
-    [
-        pytest.param(("--repetitions=2",), id="repeat-without-agentic"),
-        pytest.param(("--agentic", "--agentic"), id="duplicate-agentic"),
-        pytest.param(("--agentic", "--dry-run", "--dry-run"), id="duplicate-dry-run"),
-        pytest.param(("--agentic", "--repetitions=0"), id="zero-repeat"),
-        pytest.param(("--agentic", "--repetitions=invalid"), id="invalid-repeat"),
-        pytest.param(("--agentic", "--unknown"), id="unknown-flag"),
-    ],
-)
-def test_claude_agentic_launcher_rejects_invalid_or_duplicate_flags_before_setup(
-    batch_env: tuple[dict[str, str], Path],
-    args: tuple[str, ...],
-) -> None:
-    """Claude flag validation is symmetric with Codex and runs before setup."""
-    env, call_log = batch_env
-
-    completed = _run_batch("claude", env, *args)
-
-    assert completed.returncode == 2
-    assert "usage: bash benchmarks/run-all.sh" in completed.stderr
-    assert not call_log.exists()
 
 
 @_skip_windows_posix
@@ -1660,18 +1700,14 @@ def test_generated_codex_manifest_build_failure_blocks_claude_and_codex_plans(
 
 
 @_skip_windows_posix
-def test_codex_index_preparation_retains_the_dual_lock_cross_check(
-    batch_env: tuple[dict[str, str], Path],
-) -> None:
+def test_codex_index_preparation_retains_the_dual_lock_cross_check(struct_dry_run: _RecordedRun) -> None:
     """Codex keeps its integration-lock comparison against the methodology lock."""
-    env, call_log = batch_env
-
-    completed = _run_batch("codex", env, "--struct", "--dry-run")
+    completed = struct_dry_run.completed
 
     assert completed.returncode == 0, completed.stderr
     contract_call = next(
         line
-        for line in call_log.read_text(encoding="utf-8").splitlines()
+        for line in struct_dry_run.calls.splitlines()
         if "prepare-codex-index.py" in line and "--print-contract" in line
     )
     assert f"--manifest-path {ACTIVE_MANIFEST}" in contract_call
@@ -2563,34 +2599,66 @@ def test_models_selection_restricts_and_orders_the_claude_tiers(
 
 
 @_skip_windows_posix
+@pytest.mark.parametrize(
+    ("provider", "args", "message", "absent_call"),
+    [
+        pytest.param(
+            "claude",
+            ("--struct", "--dry-run", "--models=opus,gpt-6.1-sol"),
+            "not a declared claude stratum",
+            "--model gpt-6.1-sol",
+            id="structural-foreign-model",
+        ),
+        pytest.param(
+            "codex",
+            ("--agentic", "--models=nope", "--dry-run"),
+            "not a declared codex stratum",
+            "run-codex-agentic.py",
+            id="agentic-only-typo",
+        ),
+    ],
+)
 def test_models_selection_rejects_a_model_the_provider_never_declared(
-    batch_env: tuple[dict[str, str], Path],
+    batch_env: tuple[dict[str, str], Path], provider: str, args: tuple[str, ...], message: str, absent_call: str
 ) -> None:
     """A model outside the provider's declared strata fails instead of running an unlocked tier.
 
     Scenario: --models is a restriction, never an addition, so a typo or a Codex model name passed
-    to Claude has to stop the run before any study starts.
+    to Claude has to stop the run before any study starts. Accepting the agentic-only pairing must
+    not turn --models into free text on that lane either; a typo caught there is a typo the operator
+    would otherwise carry into the structural run.
     """
     env, call_log = batch_env
 
-    completed = _run_batch("claude", env, "--struct", "--dry-run", "--models=opus,gpt-6.1-sol")
+    completed = _run_batch(provider, env, *args)
 
     assert completed.returncode == 2
-    assert "not a declared claude stratum" in completed.stderr
+    assert message in completed.stderr
     calls = call_log.read_text(encoding="utf-8") if call_log.exists() else ""
-    assert "--model gpt-6.1-sol" not in calls
+    assert absent_call not in calls
 
 
 @_skip_windows_posix
-def test_models_selection_rejects_a_repeated_model(batch_env: tuple[dict[str, str], Path]) -> None:
-    """A duplicated name is a typo rather than a request to run a tier twice.
+@pytest.mark.parametrize(
+    ("provider", "models"),
+    [
+        pytest.param("claude", "--models=opus,opus", id="repeated-name"),
+        pytest.param("codex", "--models=luna,gpt-6-luna", id="nickname-and-full-name"),
+    ],
+)
+def test_models_selection_rejects_a_stratum_selected_twice(
+    batch_env: tuple[dict[str, str], Path], provider: str, models: str
+) -> None:
+    """A stratum named twice, verbatim or under two spellings, is a typo rather than a request to run it twice.
 
     Scenario: --models exists to narrow a run; silently collapsing or silently repeating a duplicate
-    would make the printed model list disagree with what actually ran.
+    would make the printed model list disagree with what actually ran. A nickname and its full name
+    are one stratum, so canonicalizing before the duplicate check is what makes the two-spelling case
+    fail; comparing the raw spellings would let "luna,gpt-6-luna" run one stratum twice under one approval.
     """
     env, _ = batch_env
 
-    completed = _run_batch("claude", env, "--struct", "--dry-run", "--models=opus,opus")
+    completed = _run_batch(provider, env, "--struct", "--dry-run", models)
 
     assert completed.returncode == 2
     assert "selected more than once" in completed.stderr
@@ -2638,32 +2706,19 @@ def test_codex_multi_stratum_token_binds_the_ordered_model_list(
 
 
 @_skip_windows_posix
-def test_codex_models_selection_runs_the_named_stratum(batch_env: tuple[dict[str, str], Path]) -> None:
-    """A single declared stratum reaches the structural runner as its --model argument.
+@pytest.mark.parametrize("models", ["--models=gpt-6-luna", "--models=luna"])
+def test_codex_models_selection_runs_the_named_stratum(batch_env: tuple[dict[str, str], Path], models: str) -> None:
+    """A single declared stratum, named in full or by nickname, reaches the structural runner as its --model argument.
 
     Scenario: the second Codex tier is run as its own study, so the launcher must forward that name
-    rather than the manifest's primary stratum.
+    rather than the manifest's primary stratum. The Codex strata differ only after the last dash, so
+    an operator naming "luna" means exactly one declared stratum; the runner still has to receive the
+    full declared name, because that name is what the manifest, the run directory, and the results
+    are keyed by.
     """
     env, call_log = batch_env
 
-    completed = _run_batch("codex", env, "--struct", "--dry-run", "--models=gpt-6-luna")
-
-    assert completed.returncode == 0, completed.stderr
-    calls = call_log.read_text(encoding="utf-8") if call_log.exists() else ""
-    assert "--model gpt-6-luna" in calls
-
-
-@_skip_windows_posix
-def test_models_selection_accepts_a_stratum_nickname(batch_env: tuple[dict[str, str], Path]) -> None:
-    """A stratum's trailing nickname selects the declared full name it belongs to.
-
-    Scenario: the Codex strata differ only after the last dash, so an operator naming "luna" means
-    exactly one declared stratum. The runner still has to receive the full declared name, because
-    that name is what the manifest, the run directory, and the results are keyed by.
-    """
-    env, call_log = batch_env
-
-    completed = _run_batch("codex", env, "--struct", "--dry-run", "--models=luna")
+    completed = _run_batch("codex", env, "--struct", "--dry-run", models)
 
     assert completed.returncode == 0, completed.stderr
     calls = call_log.read_text(encoding="utf-8") if call_log.exists() else ""
@@ -2695,26 +2750,7 @@ def test_nickname_and_full_name_mint_the_same_multi_stratum_token(
 
 
 @_skip_windows_posix
-def test_models_selection_rejects_a_stratum_named_twice_under_two_spellings(
-    batch_env: tuple[dict[str, str], Path],
-) -> None:
-    """A nickname and its full name are one stratum, so naming both is still a duplicate.
-
-    Scenario: canonicalizing before the duplicate check is what makes this fail; comparing the raw
-    spellings would let "luna,gpt-6-luna" through and run one stratum twice under one approval.
-    """
-    env, _ = batch_env
-
-    completed = _run_batch("codex", env, "--struct", "--dry-run", "--models=luna,gpt-6-luna")
-
-    assert completed.returncode == 2
-    assert "selected more than once" in completed.stderr
-
-
-@_skip_windows_posix
-def test_agentic_selector_runs_the_stratum_it_names(
-    batch_env: tuple[dict[str, str], Path],
-) -> None:
+def test_agentic_selector_runs_the_stratum_it_names(agentic_luna_dry_run: _RecordedRun) -> None:
     """An agentic-only run executes the selected stratum instead of the manifest default.
 
     Scenario: the agentic lane used to keep its manifest default whatever --models named, printing a
@@ -2722,13 +2758,11 @@ def test_agentic_selector_runs_the_stratum_it_names(
     studies of the default one and read them back as the stratum they had asked for, so the selection
     now reaches the runner that executes it and appears in the block that mints the token.
     """
-    env, call_log = batch_env
-
-    completed = _run_batch("codex", env, "--agentic", "--models=gpt-6-luna", "--dry-run")
+    completed = agentic_luna_dry_run.completed
 
     assert completed.returncode == 0, completed.stderr
     assert "stratum           gpt-6-luna" in completed.stdout
-    calls = call_log.read_text(encoding="utf-8").splitlines()
+    calls = agentic_luna_dry_run.calls.splitlines()
     agentic_calls = [line for line in calls if "run-codex-agentic.py" in line]
     assert agentic_calls
     assert all("--model gpt-6-luna" in line for line in agentic_calls)
@@ -2815,23 +2849,6 @@ def test_explicit_agentic_luna_selection_keeps_the_manifest_default_study(
 
 
 @_skip_windows_posix
-def test_agentic_selector_still_rejects_an_undeclared_model(batch_env: tuple[dict[str, str], Path]) -> None:
-    """A stratum the provider never declared fails on an agentic-only run too.
-
-    Scenario: accepting the pairing must not turn --models into free text on the lane that ignores
-    it; a typo caught here is a typo the operator would otherwise carry into the structural run.
-    """
-    env, call_log = batch_env
-
-    completed = _run_batch("codex", env, "--agentic", "--models=nope", "--dry-run")
-
-    assert completed.returncode == 2
-    assert "not a declared codex stratum" in completed.stderr
-    calls = call_log.read_text(encoding="utf-8") if call_log.exists() else ""
-    assert "run-codex-agentic.py" not in calls
-
-
-@_skip_windows_posix
 def test_combined_dry_run_prints_exactly_one_copyable_paid_command(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2859,9 +2876,7 @@ def test_combined_dry_run_prints_exactly_one_copyable_paid_command(
 
 
 @_skip_windows_posix
-def test_structural_only_dry_run_keeps_the_command_its_own_lane_authorizes(
-    batch_env: tuple[dict[str, str], Path],
-) -> None:
+def test_structural_only_dry_run_keeps_the_command_its_own_lane_authorizes(struct_dry_run: _RecordedRun) -> None:
     """A structural-only plan names exactly one command, and the launcher is what names it.
 
     Scenario: `--struct --dry-run` is the entire plan for a structural-only study, so it must still
@@ -2869,9 +2884,7 @@ def test_structural_only_dry_run_keeps_the_command_its_own_lane_authorizes(
     The runner's own command is suppressed because it is a python entrypoint carrying absolute paths
     that bypasses the launcher; the launcher prints the invocation the operator typed instead.
     """
-    env, call_log = batch_env
-
-    completed = _run_batch("codex", env, "--struct", "--dry-run")
+    completed = struct_dry_run.completed
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.count("PAID_COMMAND:") == 1
@@ -2879,7 +2892,7 @@ def test_structural_only_dry_run_keeps_the_command_its_own_lane_authorizes(
     assert "bash benchmarks/run-all.sh codex --struct\n" in authorization
     lane_plans = [
         line
-        for line in call_log.read_text(encoding="utf-8").splitlines()
+        for line in struct_dry_run.calls.splitlines()
         if "run-codex-structural.py" in line and "--dry-run" in line and "--tasks FN-02" not in line
     ]
     assert lane_plans
@@ -2944,7 +2957,7 @@ def test_explicit_luna_agentic_dry_run_names_the_command_it_authorizes(
 
 @_skip_windows_posix
 def test_combined_mode_binds_every_selected_stratum_into_one_authorization(
-    batch_env: tuple[dict[str, str], Path],
+    combined_strata_dry_run: _RecordedRun,
 ) -> None:
     """Several strata and both lanes mint a single combined token that carries the ordered list.
 
@@ -2953,9 +2966,7 @@ def test_combined_mode_binds_every_selected_stratum_into_one_authorization(
     combined half wraps that with the agentic scope, and the reprinted command must carry both
     strata — a copy that dropped one would re-derive a different scope and be refused.
     """
-    env, call_log = batch_env
-
-    completed = _run_batch("codex", env, "--models=gpt-6-sol,gpt-6-luna", "--dry-run")
+    completed = combined_strata_dry_run.completed
 
     assert completed.returncode == 0, completed.stderr
     authorization = completed.stdout.split("== CODEX COMBINED AUTHORIZATION", 1)[1]
@@ -2965,7 +2976,7 @@ def test_combined_mode_binds_every_selected_stratum_into_one_authorization(
     # One combined token, so one copyable command: a structural-only block here would drop the
     # agentic study from whatever the operator pastes.
     assert "== CODEX MULTI-STRATUM AUTHORIZATION ==" not in completed.stdout
-    calls = call_log.read_text(encoding="utf-8").splitlines()
+    calls = combined_strata_dry_run.calls.splitlines()
     assert [line for line in calls if "run-codex-structural.py" in line]
     assert [line for line in calls if "run-codex-agentic.py" in line]
 
@@ -3035,22 +3046,18 @@ def test_combined_dry_run_runs_one_selected_stratum_in_both_lanes(
 
 
 @_skip_windows_posix
-def test_combined_dry_run_sweeps_every_selected_stratum_in_both_lanes(
-    batch_env: tuple[dict[str, str], Path],
-) -> None:
+def test_combined_dry_run_sweeps_every_selected_stratum_in_both_lanes(combined_strata_dry_run: _RecordedRun) -> None:
     """Several strata reach the structural and agentic lanes in the requested order.
 
     Scenario: combined selection must not make the agentic lane fall back to its manifest default;
     both lanes need scalar children for every selected model.
     """
-    env, call_log = batch_env
-
-    completed = _run_batch("codex", env, "--models=gpt-6-sol,gpt-6-luna", "--dry-run")
+    completed = combined_strata_dry_run.completed
 
     assert completed.returncode == 0, completed.stderr
     authorization = completed.stdout.split("== CODEX COMBINED AUTHORIZATION", 1)[1]
     assert "gpt-6-sol gpt-6-luna (both lanes)" in authorization
-    calls = call_log.read_text(encoding="utf-8").splitlines()
+    calls = combined_strata_dry_run.calls.splitlines()
     agentic_dry_run = [line for line in calls if "run-codex-agentic.py" in line and "--dry-run" in line]
     assert [_option_value(line, "--model") for line in agentic_dry_run if "--resolve-scope" not in line] == [
         "gpt-6-sol",
@@ -3126,8 +3133,7 @@ def test_isolated_refuses_to_share_the_run_with_an_operator_supplied_repo(
 
 @_skip_windows_posix
 def test_isolated_run_uses_its_own_worktree_and_removes_it_when_the_study_succeeds(
-    batch_env: tuple[dict[str, str], Path],
-    tmp_path: Path,
+    isolated_struct_dry_run: _RecordedRun,
 ) -> None:
     """A successful isolated run works in a private worktree and leaves nothing behind.
 
@@ -3135,19 +3141,7 @@ def test_isolated_run_uses_its_own_worktree_and_removes_it_when_the_study_succee
     tree of its own rather than the one shared checkout. A tree that outlived every successful run
     would turn the feature into a disk leak, so the clean exit has to remove what it created.
     """
-    env, call_log = batch_env
-    managed = tmp_path / "managed"
-    (managed / ".git").mkdir(parents=True)
-    frozen_index = managed / ".cache" / "codemap" / f"{managed.name}.json"
-    frozen_index.parent.mkdir(parents=True)
-    frozen_index.write_text(
-        json.dumps({"scan_version": LOCKED_INDEX_SCAN_VERSION, "scan_root": str(managed), "modules": []}),
-        encoding="utf-8",
-    )
-    env.pop("REPO")
-    env["BENCH_MANAGED_REPO"] = str(managed)
-
-    completed = _run_batch("codex", env, "--struct", "--isolated", "--dry-run")
+    completed = isolated_struct_dry_run.completed
 
     assert completed.returncode == 0, completed.stderr
     assert "== PREPARE private run worktree ==" in completed.stdout
@@ -3157,8 +3151,7 @@ def test_isolated_run_uses_its_own_worktree_and_removes_it_when_the_study_succee
         if line.startswith("→ run worktree: ")
     )
     assert not Path(worktree).exists()
-    calls = call_log.read_text(encoding="utf-8")
-    assert f"--repo-path {worktree}" in calls
+    assert f"--repo-path {worktree}" in isolated_struct_dry_run.calls
 
 
 @_skip_windows_posix
@@ -3195,7 +3188,7 @@ def test_isolated_run_keeps_its_worktree_when_the_study_fails(
 
 @_skip_windows_posix
 def test_index_gate_off_the_canonical_clone_verifies_semantics_and_names_the_skipped_byte_check(
-    batch_env: tuple[dict[str, str], Path],
+    struct_dry_run: _RecordedRun,
 ) -> None:
     """Away from the canonical clone the byte hash is skipped out loud, not demanded or dropped.
 
@@ -3203,13 +3196,11 @@ def test_index_gate_off_the_canonical_clone_verifies_semantics_and_names_the_ski
     only reproduce there. Demanding it elsewhere would reject every correct index a private worktree
     builds; dropping it silently would leave the operator believing a check that never ran.
     """
-    env, call_log = batch_env
-
-    completed = _run_batch("codex", env, "--struct", "--dry-run")
+    completed = struct_dry_run.completed
 
     assert completed.returncode == 0, completed.stderr
     assert "raw byte-identity check skipped" in completed.stderr
-    calls = call_log.read_text(encoding="utf-8")
+    calls = struct_dry_run.calls
     verify_calls = [line for line in calls.splitlines() if "prepare-codex-index.py" in line and "--verify" in line]
     assert verify_calls
     assert all("--require-hash" not in line for line in verify_calls)
@@ -3217,8 +3208,7 @@ def test_index_gate_off_the_canonical_clone_verifies_semantics_and_names_the_ski
 
 @_skip_windows_posix
 def test_isolated_run_relocates_the_locked_index_and_forwards_its_provenance(
-    batch_env: tuple[dict[str, str], Path],
-    tmp_path: Path,
+    isolated_struct_dry_run: _RecordedRun,
 ) -> None:
     """An isolated run installs the locked graph by relocation and tells the runner where its proof is.
 
@@ -3226,22 +3216,11 @@ def test_isolated_run_relocates_the_locked_index_and_forwards_its_provenance(
     every admission gate would refuse it. The launcher must copy the frozen index instead and pass
     the relocation provenance down, because that is what admission checks in place of the byte hash.
     """
-    env, call_log = batch_env
-    managed = tmp_path / "managed"
-    (managed / ".git").mkdir(parents=True)
-    frozen_index = managed / ".cache" / "codemap" / f"{managed.name}.json"
-    frozen_index.parent.mkdir(parents=True)
-    frozen_index.write_text(
-        json.dumps({"scan_version": LOCKED_INDEX_SCAN_VERSION, "scan_root": str(managed), "modules": []}),
-        encoding="utf-8",
-    )
-    env.pop("REPO")
-    env["BENCH_MANAGED_REPO"] = str(managed)
-
-    completed = _run_batch("codex", env, "--struct", "--isolated", "--dry-run")
+    completed = isolated_struct_dry_run.completed
+    managed = isolated_struct_dry_run.root / "managed"
 
     assert completed.returncode == 0, completed.stderr
-    calls = call_log.read_text(encoding="utf-8").splitlines()
+    calls = isolated_struct_dry_run.calls.splitlines()
     assert any("--relocate-into" in line for line in calls)
     assert all("codemap-py index" not in line for line in calls)
     # The relocated graph still records the canonical clone's module paths, so the semantic digest
@@ -3462,13 +3441,9 @@ def test_multi_stratum_authorization_keeps_the_task_selection_its_token_binds(
 
 
 @_skip_windows_posix
-def test_agentic_authorization_reprints_the_selected_model(
-    batch_env: tuple[dict[str, str], Path],
-) -> None:
+def test_agentic_authorization_reprints_the_selected_model(agentic_luna_dry_run: _RecordedRun) -> None:
     """The paid command preserves the model selected in the reviewed agentic plan."""
-    env, _ = batch_env
-
-    completed = _run_batch("codex", env, "--agentic", "--models=gpt-6-luna", "--dry-run")
+    completed = agentic_luna_dry_run.completed
 
     assert completed.returncode == 0, completed.stderr
     authorization = completed.stdout.split("== CODEX AGENTIC AUTHORIZATION", 1)[1]
@@ -3477,8 +3452,7 @@ def test_agentic_authorization_reprints_the_selected_model(
 
 @_skip_windows_posix
 def test_structural_paid_command_never_names_the_worktree_the_dry_run_removes(
-    batch_env: tuple[dict[str, str], Path],
-    tmp_path: Path,
+    isolated_struct_dry_run: _RecordedRun,
 ) -> None:
     """No PAID_COMMAND block names an ephemeral run worktree path.
 
@@ -3487,10 +3461,7 @@ def test_structural_paid_command_never_names_the_worktree_the_dry_run_removes(
     it was handed a command pointing at a repo and an index that no longer existed — not a different
     study but an impossible one. Every printed command must survive the run that printed it.
     """
-    env, _ = batch_env
-    _managed_clone_with_frozen_index(env, tmp_path)
-
-    completed = _run_batch("codex", env, "--struct", "--isolated", "--dry-run")
+    completed = isolated_struct_dry_run.completed
 
     assert completed.returncode == 0, completed.stderr
     blocks = _paid_command_blocks(completed.stdout)
@@ -3500,8 +3471,7 @@ def test_structural_paid_command_never_names_the_worktree_the_dry_run_removes(
 
 @_skip_windows_posix
 def test_structural_authorization_reprints_the_isolation_the_operator_asked_for(
-    batch_env: tuple[dict[str, str], Path],
-    tmp_path: Path,
+    isolated_struct_dry_run: _RecordedRun,
 ) -> None:
     """A structural plan started with --isolated names --isolated in the command it authorizes.
 
@@ -3509,10 +3479,7 @@ def test_structural_authorization_reprints_the_isolation_the_operator_asked_for(
     clone rather than the private worktree is what `--isolated` exists to prevent. Reprinting the
     flag lets the paid run cut its own fresh worktree instead of being pointed at a stale one.
     """
-    env, _ = batch_env
-    _managed_clone_with_frozen_index(env, tmp_path)
-
-    completed = _run_batch("codex", env, "--struct", "--isolated", "--dry-run")
+    completed = isolated_struct_dry_run.completed
 
     assert completed.returncode == 0, completed.stderr
     authorization = completed.stdout.split("== CODEX STRUCTURAL AUTHORIZATION", 1)[1]

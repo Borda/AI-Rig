@@ -19,6 +19,7 @@ import re
 import sys
 from pathlib import Path
 
+#: Whitelist for plugin and agent names, which become path components under the plugin cache.
 _SAFE_NAME: re.Pattern[str] = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 

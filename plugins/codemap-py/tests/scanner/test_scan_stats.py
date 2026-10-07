@@ -22,7 +22,8 @@ import pytest
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "bin" / "scan-stats.py"
 _spec = importlib.util.spec_from_file_location("codemap_scan_stats", _SCRIPT)
-assert _spec and _spec.loader, "scan-stats.py not found in bin/"
+assert _spec, "scan-stats.py not found in bin/"
+assert _spec.loader, "scan-stats.py not found in bin/"
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 
@@ -191,54 +192,71 @@ class TestMain:
         assert "2 indexed" in out
         assert "1 degraded" in out
 
-    def test_symbol_total_summed_across_modules(
+    @pytest.mark.parametrize(
+        ("modules", "expected_line"),
+        [
+            # Total symbol count is printed as sum of all ok-module symbol lists.
+            pytest.param(
+                [
+                    {"name": "x", "status": "ok", "rdep_count": 0, "symbols": [{}, {}]},
+                    {"name": "y", "status": "ok", "rdep_count": 0, "symbols": [{}]},
+                ],
+                "Symbols: 3",
+                id="symbol-total-summed-across-modules",
+            ),
+            # Degraded modules do not contribute to the symbol total.
+            pytest.param(
+                [
+                    {"name": "ok_mod", "status": "ok", "rdep_count": 0, "symbols": [{}]},
+                    {"name": "bad_mod", "status": "degraded", "rdep_count": 0, "symbols": [{}, {}]},
+                ],
+                "Symbols: 1",
+                id="degraded-modules-excluded-from-symbol-count",
+            ),
+        ],
+    )
+    def test_symbol_total_counts_only_ok_modules(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
+        modules: list[dict[str, Any]],
+        expected_line: str,
     ) -> None:
-        """Total symbol count is printed as sum of all ok-module symbol lists."""
-        modules = [
-            {"name": "x", "status": "ok", "rdep_count": 0, "symbols": [{}, {}]},
-            {"name": "y", "status": "ok", "rdep_count": 0, "symbols": [{}]},
-        ]
+        """The printed symbol total is the sum over ok modules; degraded modules contribute nothing."""
         _write_index(tmp_path, modules)
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("SCAN_ARGS", "")
         with patch("subprocess.check_output", return_value=str(tmp_path).encode()):
             main([])
         out = capsys.readouterr().out
-        assert "Symbols: 3" in out
+        assert expected_line in out
 
-    def test_calls_line_present_for_v3_index(
+    @pytest.mark.parametrize(
+        ("symbols", "calls_line_printed"),
+        [
+            # 'Calls:' line is printed when at least one resolved call edge exists.
+            pytest.param([{"calls": [{"target": "n"}]}], True, id="calls-line-present-for-v3-index"),
+            # 'Calls:' line is omitted when all call lists are empty.
+            pytest.param([{"calls": []}], False, id="calls-line-absent-when-no-call-edges"),
+        ],
+    )
+    def test_calls_line_follows_resolved_call_edges(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
+        symbols: list[dict[str, Any]],
+        calls_line_printed: bool,
     ) -> None:
-        """'Calls:' line is printed when at least one resolved call edge exists."""
-        modules = [{"name": "m", "status": "ok", "rdep_count": 0, "symbols": [{"calls": [{"target": "n"}]}]}]
+        """The 'Calls:' line appears only when the index holds at least one resolved call edge."""
+        modules = [{"name": "m", "status": "ok", "rdep_count": 0, "symbols": symbols}]
         _write_index(tmp_path, modules)
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("SCAN_ARGS", "")
         with patch("subprocess.check_output", return_value=str(tmp_path).encode()):
             main([])
-        assert "Calls:" in capsys.readouterr().out
-
-    def test_calls_line_absent_when_no_call_edges(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """'Calls:' line is omitted when all call lists are empty."""
-        modules = [{"name": "m", "status": "ok", "rdep_count": 0, "symbols": [{"calls": []}]}]
-        _write_index(tmp_path, modules)
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("SCAN_ARGS", "")
-        with patch("subprocess.check_output", return_value=str(tmp_path).encode()):
-            main([])
-        assert "Calls:" not in capsys.readouterr().out
+        assert ("Calls:" in capsys.readouterr().out) is calls_line_printed
 
     def test_top_modules_ranked_by_rdep_count(
         self,
@@ -258,25 +276,6 @@ class TestMain:
             main([])
         out = capsys.readouterr().out
         assert out.index("high") < out.index("low"), "highest rdep_count must appear first"
-
-    def test_degraded_modules_excluded_from_symbol_count(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """Degraded modules do not contribute to the symbol total."""
-        modules = [
-            {"name": "ok_mod", "status": "ok", "rdep_count": 0, "symbols": [{}]},
-            {"name": "bad_mod", "status": "degraded", "rdep_count": 0, "symbols": [{}, {}]},
-        ]
-        _write_index(tmp_path, modules)
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("SCAN_ARGS", "")
-        with patch("subprocess.check_output", return_value=str(tmp_path).encode()):
-            main([])
-        out = capsys.readouterr().out
-        assert "Symbols: 1" in out
 
 
 # ---------------------------------------------------------------------------

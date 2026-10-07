@@ -29,8 +29,11 @@ if sys.platform == "win32":  # pragma: no cover - exercised on Windows CI only
 else:
     import fcntl
 
+#: Name of the directory inside an index directory that holds the reader/writer coordination state.
 COORDINATION_NAME = ".index-rw"
+#: Name of the subdirectory under the coordination root that records active readers.
 READERS_NAME = "readers"
+#: Name of the lock file under the coordination root that guards the reader registry.
 REGISTRY_NAME = "registry.lock"
 
 

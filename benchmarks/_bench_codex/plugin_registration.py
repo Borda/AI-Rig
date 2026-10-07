@@ -7,6 +7,7 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 
+#: Pattern matching a ``[plugins."name"]`` table header in Codex config text and capturing the plugin name.
 PLUGIN_TABLE = re.compile(r'^\[plugins\."([^"]+)"\]', flags=re.MULTILINE)
 
 #: Plugins the C arm installs into its disposable home; every other enabled name is host tooling.

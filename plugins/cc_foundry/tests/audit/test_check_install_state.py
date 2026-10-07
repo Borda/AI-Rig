@@ -9,9 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import check_install_state as cis
+import pytest
 
 _GOOD_SETTINGS = {
     "statusLine": {"command": "node /x/statusline.js"},
@@ -88,26 +87,28 @@ class TestCheckSettings:
         assert cis.check_settings(tmp_path) == 1
         assert "settings.json not found" in capsys.readouterr().out
 
-    def test_statusline_missing(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """A statusLine not pointing at statusline.js is an I2a finding."""
-        settings = {**_GOOD_SETTINGS, "statusLine": {"command": "echo hi"}}
-        _write_settings(tmp_path, settings)
-        assert cis.check_settings(tmp_path) == 1
-        assert "Check I2a — statusLine not set" in capsys.readouterr().out
+    @pytest.mark.parametrize(
+        ("override", "fragment"),
+        [
+            pytest.param(
+                {"statusLine": {"command": "echo hi"}}, "Check I2a — statusLine not set", id="statusline-missing"
+            ),
+            # Ten or fewer allow entries reads as an unmerged list.
+            pytest.param({"permissions": {"allow": ["Bash(ls:*)"]}}, "Check I2b", id="short-allow-list"),
+            pytest.param({"enabledPlugins": {"bridge@borda-ai-rig": False}}, "Check I2c", id="bridge-not-enabled"),
+        ],
+    )
+    def test_unmerged_setting_is_reported(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], override: dict, fragment: str
+    ) -> None:
+        """Each settings condition that is not satisfied is one finding naming its sub-check.
 
-    def test_short_allow_list(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Ten or fewer allow entries reads as an unmerged list."""
-        settings = {**_GOOD_SETTINGS, "permissions": {"allow": ["Bash(ls:*)"]}}
-        _write_settings(tmp_path, settings)
+        Covers a statusLine not pointing at statusline.js (I2a), an allow list of ten or fewer entries (I2b), and the
+        bridge plugin not set to true (I2c).
+        """
+        _write_settings(tmp_path, {**_GOOD_SETTINGS, **override})
         assert cis.check_settings(tmp_path) == 1
-        assert "Check I2b" in capsys.readouterr().out
-
-    def test_bridge_not_enabled(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """The bridge plugin not set to true is an I2c finding."""
-        settings = {**_GOOD_SETTINGS, "enabledPlugins": {"bridge@borda-ai-rig": False}}
-        _write_settings(tmp_path, settings)
-        assert cis.check_settings(tmp_path) == 1
-        assert "Check I2c" in capsys.readouterr().out
+        assert fragment in capsys.readouterr().out
 
     def test_stale_hooks_block(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """A top-level hooks key is an I2d finding with its own fix hint."""

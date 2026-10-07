@@ -30,9 +30,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# Guard against pathological inputs that would exhaust heap memory when read
-# in one shot. 10 MB is well above any realistic Markdown / agent file.
+#: Guard against pathological inputs that would exhaust heap memory when read
+#: in one shot. 10 MB is well above any realistic Markdown / agent file.
 _MAX_FILE_SIZE = 10 * 1024 * 1024
+#: Regex character-class body of characters that can be part of a script file name; used to reject partial-name matches.
 _SCRIPT_BOUNDARY_CHARS = r"A-Za-z0-9_.-"
 
 

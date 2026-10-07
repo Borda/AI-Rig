@@ -38,10 +38,11 @@ from shutil import which
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import check_bridge  # noqa: E402 — sibling script in this plugin's bin/, not an installed module
-import get_plugin_install_path  # noqa: E402 — sibling script in this plugin's bin/, not an installed module
+import check_bridge
+import get_plugin_install_path
 
 _PREFLIGHT_TTL = 14400  # 4 hours in seconds
+#: Directory of per-check marker files recording preflight checks that already passed.
 _PREFLIGHT_DIR = Path(".temp/state/preflight")
 
 

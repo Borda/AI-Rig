@@ -59,15 +59,16 @@ class TestMakeRunDir:
 class TestMainValidation:
     """Argument validation tests for ``main()``."""
 
-    def test_no_args_exit_one(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """No args → exit 1 with usage message on stderr."""
-        rc = main([])
-        assert rc == 1
-        assert "usage" in capsys.readouterr().err
+    @pytest.mark.parametrize(
+        "argv", [pytest.param([], id="no-args"), pytest.param(["myskill"], id="slug-only-base-dir-also-required")]
+    )
+    def test_missing_args_exit_one(self, argv: list[str], capsys: pytest.CaptureFixture[str]) -> None:
+        """Missing args (none, or only the skill-slug) → exit 1 with usage message on stderr.
 
-    def test_one_arg_exit_one(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Only skill-slug provided → exit 1 (base-dir also required)."""
-        rc = main(["myskill"])
+        Both the skill-slug and the base-dir are required, so an empty argv and a slug-only argv are each a usage error
+        (exit 1) rather than a validation error (exit 2).
+        """
+        rc = main(argv)
         assert rc == 1
         assert "usage" in capsys.readouterr().err
 
@@ -95,22 +96,14 @@ class TestMainValidation:
 class TestMainHappyPath:
     """Integration tests for ``main()`` happy path."""
 
-    def test_exit_zero(
+    def test_prints_created_path(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Valid args → exit 0.
+        """Valid args → exit 0 and the printed path matches the directory created on disk.
 
         The path-validation contract mandates a strictly relative ``base_dir`` (no leading ``/``, ``os.path.isabs()``
         rejected); chdir into ``tmp_path`` so a relative ``runs`` base resolves to a writable sandbox location.
         """
-        monkeypatch.chdir(tmp_path)
-        rc = main(["myskill", "runs"])
-        assert rc == 0
-
-    def test_prints_created_path(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Printed path matches directory created on disk."""
         monkeypatch.chdir(tmp_path)
         rc = main(["myskill", "runs"])
         assert rc == 0

@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REVIEW_SKILL = PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md"
 CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
@@ -19,11 +18,14 @@ def test_review_prior_choice_precedes_run_creation() -> None:
     skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
     entry = skill.split("### Entry: resume or previous completed review", 1)[1].split("### 01:", 1)[0]
 
-    assert "--target" in entry and "--result" in entry
-    assert "Reuse completed review" in entry and "Run fresh review" in entry
+    assert "--target" in entry
+    assert "--result" in entry
+    assert "Reuse completed review" in entry
+    assert "Run fresh review" in entry
     assert "No eligible completed report means fresh review without a question" in entry
     assert "before creating or promoting another run" in entry
-    assert "recorded revision" in entry and "current-head" in entry
+    assert "recorded revision" in entry
+    assert "current-head" in entry
     assert "first unmet checkpoint" in entry
 
 

@@ -7,33 +7,36 @@ extraction, and legacy result rendering; they pass an already parsed answer mapp
 from __future__ import annotations
 
 import ast
+import json
+import re
 from collections import defaultdict, deque
 from collections.abc import Mapping
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from functools import lru_cache
-import json
 from pathlib import Path
-import re
 from types import MappingProxyType
 from typing import Any
 
 from .provider_parity_contracts import materialize_task_prompt
 from .python_source import extract_import_targets
 
-
+#: Treatment arms every agentic task is run under, in the order they are cycled.
 AGENTIC_ARMS = ("A_plain", "B_auto", "C_strict")
+#: Number of times each task and arm cell is repeated unless a runner overrides it.
 DEFAULT_REPETITIONS = 1
 
-# The oracle's single import-resolution convention, stated to the model in every scored
-# prompt. Without it an honest answer under an equally defensible reading (crediting only
-# the concrete submodule, or only the package) loses points for a disclosure gap rather
-# than for being wrong.
+#: The oracle's single import-resolution convention, stated to the model in every scored
+#: prompt. Without it an honest answer under an equally defensible reading (crediting only
+#: the concrete submodule, or only the package) loses points for a disclosure gap rather
+#: than for being wrong.
 IMPORT_CONVENTION_INSTRUCTION = (
     "Import convention: a `from a.b import c` statement counts as importing the package `a.b`, "
     "and additionally the submodule `a.b.c` when `a.b.c` is itself a module in this repository. "
     "`import a.b` counts as importing `a.b`. Only modules that exist in this repository count; "
     "third-party and standard-library imports are ignored."
 )
+#: Prompt text defining which modules the oracle counts, how they are named, and how rankings break ties.
 ORACLE_POPULATION_INSTRUCTION = (
     "Oracle population, naming, and ranking: use only statically resolved imports between repository Python modules. "
     "A module name is its repository-relative dotted path after a leading `src` layout directory is stripped and a "
@@ -49,6 +52,7 @@ ORACLE_POPULATION_INSTRUCTION = (
     "break ties, and return the requested leading positions."
 )
 
+#: Every answer field a task may declare; a task naming any other field is rejected.
 _ANSWER_FIELDS = frozenset(
     {
         "production_importers",
@@ -68,6 +72,7 @@ _ANSWER_FIELDS = frozenset(
         "high_centrality",
     }
 )
+#: Answer fields whose expected value depends on task parameters, so the task must supply them.
 _PARAMETERIZED_FIELDS = frozenset(
     {
         "ranking",
@@ -81,6 +86,7 @@ _PARAMETERIZED_FIELDS = frozenset(
         "risk_tier",
     }
 )
+#: Accepted values of a ranking task's candidate_set parameter, naming the module population to rank.
 _CANDIDATE_SETS = frozenset({"production_importers", "non_migrated_importers", "helper_dependent_importers"})
 
 

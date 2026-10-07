@@ -10,20 +10,22 @@ import hashlib
 import json
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from functools import partial
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-
 Task = Mapping[str, Any]
 Evaluator = Callable[[Task, str], "EvaluationResult"]
 
 
+#: Seconds one paired coordinate may run; recorded as coordinate_timeout_seconds in the parity manifest.
 PARITY_TIMEOUT_SECONDS = 600
 
 
+#: Use-policy text for each canonical arm, with the SHA-256 of that text for tamper detection.
 ARM_CONTRACTS: Mapping[str, Mapping[str, str]] = MappingProxyType(
     {
         "A_plain": MappingProxyType(
@@ -47,38 +49,40 @@ ARM_CONTRACTS: Mapping[str, Mapping[str, str]] = MappingProxyType(
     }
 )
 
-# Every provider now runs the same three named arms. The contract text above is the use policy and
-# is shared; how a home makes Codemap reachable stays provider-native. A Codex ``C_strict`` home
-# offers only the installed Skill, so "use Codemap at least once" resolves to the Skill there
-# without needing a separate contract string, and a Claude home that also exposes the direct CLI
-# satisfies the same sentence by either route.
+#: Every provider now runs the same three named arms. The contract text above is the use policy and
+#: is shared; how a home makes Codemap reachable stays provider-native. A Codex ``C_strict`` home
+#: offers only the installed Skill, so "use Codemap at least once" resolves to the Skill there
+#: without needing a separate contract string, and a Claude home that also exposes the direct CLI
+#: satisfies the same sentence by either route.
 COMPARISON_ARMS_BY_PROVIDER: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         "claude": frozenset(ARM_CONTRACTS),
         "codex": frozenset(ARM_CONTRACTS),
     }
 )
+#: Names of the three canonical arms, taken from ARM_CONTRACTS.
 CANONICAL_ARM_NAMES = frozenset(ARM_CONTRACTS)
 
-# Codex structural runs before the 2026-09-06 arm alignment recorded provider-native arm names.
-# Those artifacts are immutable, so the names survive in frozen telemetry and in every published
-# table describing those runs. Reading such a row canonicalizes it for grouping and pairing; it
-# never relabels what a frozen table displays, because the frozen run's prompt is what it was.
+#: Codex structural runs before the 2026-09-06 arm alignment recorded provider-native arm names.
+#: Those artifacts are immutable, so the names survive in frozen telemetry and in every published
+#: table describing those runs. Reading such a row canonicalizes it for grouping and pairing; it
+#: never relabels what a frozen table displays, because the frozen run's prompt is what it was.
 LEGACY_ARM_ALIASES: Mapping[str, str] = MappingProxyType(
     {
         "B_direct_required": "B_auto",
         "C_skill_required": "C_strict",
     }
 )
+#: Every arm name a result row may carry: the canonical names plus the legacy aliases.
 COMPARISON_ARM_NAMES = CANONICAL_ARM_NAMES | frozenset(LEGACY_ARM_ALIASES)
 
-# B is an optional-use canary on every provider: Codemap is made available and the model decides
-# whether to call it, so a zero-query B cell has followed its assigned contract (README "B is an
-# optional-use canary, so a no-query B cell is compliant"; AGENTS.md "B_auto is an optional-use
-# canary"). Treating the Codex B arm as required-use made zero-query Codex B cells non-adherent and
-# therefore pooling-ineligible, dropping exactly the cells where Codemap went unused and inflating
-# the measured B benefit. The Codex structural runner enforced a required query until the same
-# alignment removed it, which is why frozen Codex B rows measure a required-use arm.
+#: B is an optional-use canary on every provider: Codemap is made available and the model decides
+#: whether to call it, so a zero-query B cell has followed its assigned contract (README "B is an
+#: optional-use canary, so a no-query B cell is compliant"; AGENTS.md "B_auto is an optional-use
+#: canary"). Treating the Codex B arm as required-use made zero-query Codex B cells non-adherent and
+#: therefore pooling-ineligible, dropping exactly the cells where Codemap went unused and inflating
+#: the measured B benefit. The Codex structural runner enforced a required query until the same
+#: alignment removed it, which is why frozen Codex B rows measure a required-use arm.
 _OPTIONAL_USE_ARMS = frozenset({"B_auto"})
 
 
@@ -507,6 +511,7 @@ def deterministic_arm_order(
     return tuple(sorted(sorted(arms), key=partial(_arm_order_digest, coordinates)))
 
 
+#: Codemap capability stratum labels assigned to a task by its type.
 _CAPABILITY_BY_TASK_TYPE = {
     "develop_blast_radius": ("direct_reverse_call",),
     "fn_call_graph": ("direct_reverse_call",),
@@ -516,6 +521,7 @@ _CAPABILITY_BY_TASK_TYPE = {
     "graph_central": ("graph_centrality",),
     "diff_impact": ("diff_impact", "test_selection"),
 }
+#: Caller or importer count in a task's ground truth at which it also gets the high_fan_in stratum.
 _HIGH_FAN_IN_MINIMUM = 16
 
 

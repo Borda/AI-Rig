@@ -128,7 +128,7 @@ def check_script(script: Path) -> str | None:
 def repo_root() -> Path:
     """Return the git repository root for the current working directory."""
     output = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
+        ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - git resolved via PATH on purpose
         check=True,
         capture_output=True,
         text=True,

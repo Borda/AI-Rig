@@ -32,7 +32,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from codemap_py import query
 
 
@@ -118,15 +117,13 @@ def _query_from(scan_query: Path, cwd: Path, index_path: Path, *args: str, froze
     return json.loads(result.stdout)
 
 
-@pytest.fixture(name="committed_repo")
-def _committed_repo(tmp_path: Path, scan_index: Path) -> tuple[Path, Path]:
-    """Create a clean indexed repository with a nested package.
+def _build_committed_repo(root: Path, scan_index: Path) -> tuple[Path, Path]:
+    """Create a clean indexed repository with a nested package under *root*.
 
     Nesting matters: ``pkg/deep/`` is the subdirectory a query is issued from, and
     is deep enough that subdirectory-relative paths cannot coincide with the
     root-relative paths the index recorded.
     """
-    root = tmp_path / "anchored"
     (root / "pkg" / "deep").mkdir(parents=True)
     (root / "pkg" / "__init__.py").write_text("")
     (root / "pkg" / "gamma.py").write_text('"""Leaf."""\n\n\ndef func_gamma(x):\n    return x + 1\n')
@@ -144,6 +141,24 @@ def _committed_repo(tmp_path: Path, scan_index: Path) -> tuple[Path, Path]:
     index_path = root / ".cache" / "codemap" / f"{root.name}.json"
     assert index_path.exists()
     return root, index_path
+
+
+@pytest.fixture(name="committed_repo")
+def _committed_repo(tmp_path: Path, scan_index: Path) -> tuple[Path, Path]:
+    """Create a fresh clean indexed repository for tests that commit further changes to it."""
+    return _build_committed_repo(tmp_path / "anchored", scan_index)
+
+
+@pytest.fixture(name="pristine_committed_repo", scope="module")
+def _pristine_committed_repo(tmp_path_factory: pytest.TempPathFactory, scan_index: Path) -> tuple[Path, Path]:
+    """Create the clean indexed repository once per module for tests that only query it.
+
+    The queries here are fully committed and never write under the root, so no self-heal rewrites the index and the
+    shared tree stays pristine across tests.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("CODEMAP_LOGGING", "false")  # the autouse gate is function-scoped, so it is off during setup
+        return _build_committed_repo(tmp_path_factory.mktemp("pristine") / "anchored", scan_index)
 
 
 # Commit dates are pinned so a ``--since`` window can sit strictly between the two commits.
@@ -210,27 +225,28 @@ def _reset_query_caches(monkeypatch: pytest.MonkeyPatch) -> None:
 class TestGitRootAnchoring:
     """A query answers identically from the repository root and from a subdirectory."""
 
-    def test_query_from_root_is_not_stale(self, committed_repo, scan_query) -> None:
-        """Baseline: a freshly scanned, fully committed repo is not stale from its root."""
-        root, index_path = committed_repo
-        data = _query_from(scan_query, root, index_path, "deps", "pkg.alpha")
+    @pytest.mark.parametrize(
+        "query_dir_parts",
+        [
+            pytest.param((), id="repository-root"),
+            pytest.param(("pkg", "deep"), id="nested-subdirectory"),
+        ],
+    )
+    def test_unchanged_repo_is_not_stale(self, pristine_committed_repo, scan_query, query_dir_parts) -> None:
+        """A freshly scanned, fully committed repo is not stale from its root or from a nested subdirectory."""
+        root, index_path = pristine_committed_repo
+        data = _query_from(scan_query, root.joinpath(*query_dir_parts), index_path, "deps", "pkg.alpha")
         assert data["index"]["stale"] is False
 
-    def test_query_from_subdirectory_is_not_stale(self, committed_repo, scan_query) -> None:
-        """The same unchanged repo is not stale when queried from a nested subdirectory."""
-        root, index_path = committed_repo
-        data = _query_from(scan_query, root / "pkg" / "deep", index_path, "deps", "pkg.alpha")
-        assert data["index"]["stale"] is False
-
-    def test_subdirectory_query_stays_complete(self, committed_repo, scan_query) -> None:
+    def test_subdirectory_query_stays_complete(self, pristine_committed_repo, scan_query) -> None:
         """A subdirectory query still claims completeness rather than a phantom blind spot."""
-        root, index_path = committed_repo
+        root, index_path = pristine_committed_repo
         data = _query_from(scan_query, root / "pkg" / "deep", index_path, "rdeps", "pkg.gamma")
         assert data["index"]["query_complete"] is True
 
-    def test_subdirectory_query_reports_no_untracked_blind_spot(self, committed_repo, scan_query) -> None:
+    def test_subdirectory_query_reports_no_untracked_blind_spot(self, pristine_committed_repo, scan_query) -> None:
         """Fully committed tree: the untracked-file blind spot list is empty from a subdirectory."""
-        root, index_path = committed_repo
+        root, index_path = pristine_committed_repo
         data = _query_from(scan_query, root / "pkg" / "deep", index_path, "rdeps", "pkg.gamma")
         assert data["index"]["untracked_py"] == []
 
@@ -383,26 +399,26 @@ class TestWriterReaderFileSetParity:
         query.check_staleness("2020-01-01T00:00:00+00:00")
         assert seen[seen.index("--") + 1 :] == list(query._INDEXED_PATHSPEC)
 
-    def test_timestamp_fallback_sees_a_stub_only_commit(self, dated_repo, monkeypatch) -> None:
-        """A commit touching only a ``.pyi`` registers as a change.
+    @pytest.mark.parametrize(
+        ("window_start", "expected_stale"),
+        [
+            pytest.param(_BETWEEN_COMMITS, True, id="window-spans-stub-only-commit"),
+            pytest.param(_AFTER_ALL_COMMITS, False, id="window-after-every-commit"),
+        ],
+    )
+    def test_timestamp_fallback_sees_a_stub_only_commit(
+        self, dated_repo, monkeypatch, window_start, expected_stale
+    ) -> None:
+        """A commit touching only a ``.pyi`` registers as a change, and a window past it reports fresh.
 
-        The pre-fix pathspec watched ``*.py`` alone, so this commit read as "fresh" and a ``file_shas``-less index
-        claimed currency it did not have.
+        The pre-fix pathspec watched ``*.py`` alone, so the stub-only commit read as "fresh" and a ``file_shas``-less
+        index claimed currency it did not have. The after-every-commit case is the control: without it, the stale case
+        could pass merely because the window also swept in the earlier ``.py`` commit.
         """
         monkeypatch.chdir(dated_repo)
         monkeypatch.setattr(query.index_io, "_git_root_cache", dated_repo)
         monkeypatch.setattr(query.index_io, "_git_root_resolved", True)
-        assert query.check_staleness(_BETWEEN_COMMITS) is True
-
-    def test_window_after_every_commit_reports_fresh(self, dated_repo, monkeypatch) -> None:
-        """Control: past the last commit the same repo reports no change.
-
-        Without this, the assertion above could pass merely because the window also swept in the earlier ``.py`` commit.
-        """
-        monkeypatch.chdir(dated_repo)
-        monkeypatch.setattr(query.index_io, "_git_root_cache", dated_repo)
-        monkeypatch.setattr(query.index_io, "_git_root_resolved", True)
-        assert query.check_staleness(_AFTER_ALL_COMMITS) is False
+        assert query.check_staleness(window_start) is expected_stale
 
 
 class TestIndexSizeCapAgreement:

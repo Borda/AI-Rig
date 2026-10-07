@@ -1,9 +1,10 @@
 """Extract a module's imports, exports and symbol aliases from its AST."""
 
 from __future__ import annotations
+
 import ast
 import sys
-
+from collections.abc import Callable
 
 _STDLIB_MODULES: frozenset[str] = frozenset(sys.stdlib_module_names)  # Python 3.10+; project requires 3.10+
 
@@ -235,6 +236,160 @@ def _extract_imports_and_scope(
     return sorted(imports), sorted(submodule_candidates), name_map, module_map, star_imports
 
 
+#: Module-level statements that can bind a name on only some execution paths.
+_CONDITIONAL_SCOPE_NODES = (ast.For, ast.AsyncFor, ast.With, ast.AsyncWith, ast.Try, ast.If, ast.Match)
+
+
+def _import_bound_names(node: ast.Import | ast.ImportFrom) -> list[str]:
+    """Return the local names an import statement binds, skipping star imports.
+
+    Examples:
+        >>> _import_bound_names(ast.parse("import os.path, json as j").body[0])
+        ['os', 'j']
+        >>> _import_bound_names(ast.parse("from pkg import a, b as c").body[0])
+        ['a', 'c']
+        >>> _import_bound_names(ast.parse("from pkg import *").body[0])
+        []
+    """
+    if isinstance(node, ast.Import):
+        return [alias.asname or alias.name.split(".")[0] for alias in node.names]
+    return [alias.asname or alias.name for alias in node.names if alias.name != "*"]
+
+
+def _assignment_targets(node: ast.Assign | ast.AnnAssign | ast.AugAssign) -> list[ast.expr]:
+    """Return the target expressions of an assignment statement."""
+    return node.targets if isinstance(node, ast.Assign) else [node.target]
+
+
+def _simple_target_names(target: ast.expr) -> set[str]:
+    """Return the bound name when *target* is a plain name, ignoring unpacking.
+
+    Examples:
+        >>> _simple_target_names(ast.parse("a = 1").body[0].targets[0])
+        {'a'}
+        >>> _simple_target_names(ast.parse("a, b = 1, 2").body[0].targets[0])
+        set()
+    """
+    return {target.id} if isinstance(target, ast.Name) else set()
+
+
+def _unpacked_target_names(target: ast.expr, *, include_starred: bool = True) -> set[str]:
+    """Return every name bound by an assignment target, descending into tuple and list unpacking.
+
+    Args:
+        target: assignment, loop, or ``with`` target expression.
+        include_starred: also bind the name under a ``*rest`` element. The rebinding pass for the import scope
+            historically ignores starred elements, so it passes ``False``.
+
+    Examples:
+        >>> sorted(_unpacked_target_names(ast.parse("a, [b, *c] = x").body[0].targets[0]))
+        ['a', 'b', 'c']
+        >>> sorted(_unpacked_target_names(ast.parse("a, *c = x").body[0].targets[0], include_starred=False))
+        ['a']
+    """
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if include_starred and isinstance(target, ast.Starred):
+        return _unpacked_target_names(target.value, include_starred=include_starred)
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return {name for item in target.elts for name in _unpacked_target_names(item, include_starred=include_starred)}
+    return set()
+
+
+def _statement_bound_names(node: ast.AST, target_names: Callable[[ast.expr], set[str]]) -> set[str]:
+    """Return the names one statement binds in its own scope, without descending into its body.
+
+    Args:
+        node: statement or exception handler to inspect.
+        target_names: extracts bound names from an assignment, loop, or ``with`` target.
+    """
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        return set(_import_bound_names(node))
+    if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+        return {name for target in _assignment_targets(node) for name in target_names(target)}
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        return target_names(node.target)
+    if isinstance(node, (ast.With, ast.AsyncWith)):
+        return {name for item in node.items if item.optional_vars for name in target_names(item.optional_vars)}
+    if isinstance(node, ast.ExceptHandler) and node.name:
+        return {node.name}
+    return set()
+
+
+def _import_from_aliases(node: ast.ImportFrom, package: str) -> list[tuple[str, str]]:
+    """Return ``(local_name, "module::name")`` pairs for a non-star ``from`` import, in source order.
+
+    Returns an empty list when the base module cannot be resolved.
+    """
+    base = _resolve_import_from_base(node, package)
+    if not base:
+        return []
+    return [
+        (imported.asname or imported.name, f"{base}::{imported.name}")
+        for imported in node.names
+        if imported.name != "*"
+    ]
+
+
+def _conditional_bindings(
+    node: ast.AST, target_names: Callable[[ast.expr], set[str]], package: str | None = None
+) -> tuple[set[str], list[tuple[str, str]]]:
+    """Collect bindings nested under a conditional scope, excluding local bodies.
+
+    A nested function or class contributes only its own name; its body is a separate scope and is not entered.
+
+    Args:
+        node: conditional module-level statement (loop, ``with``, ``try``, ``if``, ``match``).
+        target_names: extracts bound names from an assignment, loop, or ``with`` target.
+        package: package anchoring relative ``from`` imports; when given, nested ``from`` imports are also
+            returned as ``(local_name, "module::name")`` pairs. ``None`` skips that collection.
+
+    Returns:
+        Bound names plus the nested ``from`` import aliases (empty when *package* is ``None``).
+    """
+    names: set[str] = set()
+    imports: list[tuple[str, str]] = []
+    pending = list(ast.iter_child_nodes(node))
+    while pending:
+        current = pending.pop()
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(current.name)
+            continue
+        names.update(_statement_bound_names(current, target_names))
+        if package is not None and isinstance(current, ast.ImportFrom):
+            imports.extend(_import_from_aliases(current, package))
+        pending.extend(ast.iter_child_nodes(current))
+    return names, imports
+
+
+def _top_level_binding_positions(tree: ast.Module) -> tuple[dict[str, int], dict[str, int], set[str]]:
+    """Record where each module-level name is imported and where it is last rebound.
+
+    Returns:
+        ``(imported_at, rebound_at, conditional_names)``: body index of each name's last import, body index of
+        each name's last non-import binding, and the names bound only under conditional control flow.
+    """
+    imported_at: dict[str, int] = {}
+    rebound_at: dict[str, int] = {}
+    conditional_names: set[str] = set()
+    for position, node in enumerate(tree.body):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for name in _import_bound_names(node):
+                imported_at[name] = position
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            rebound_at[node.name] = position
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            for target in _assignment_targets(node):
+                for name in _unpacked_target_names(target, include_starred=False):
+                    rebound_at[name] = position
+        elif isinstance(node, _CONDITIONAL_SCOPE_NODES):
+            names, _ = _conditional_bindings(node, _simple_target_names)
+            for name in names:
+                rebound_at[name] = position
+                conditional_names.add(name)
+    return imported_at, rebound_at, conditional_names
+
+
 def _drop_top_level_rebindings(tree: ast.Module, name_map: dict[str, str], module_map: dict[str, str]) -> None:
     """Drop direct import names overwritten later in module scope.
 
@@ -242,65 +397,7 @@ def _drop_top_level_rebindings(tree: ast.Module, name_map: dict[str, str], modul
     only corrects a module-level import that is replaced by a later module-level binding; treating that call as the
     original import would create a false reverse edge.
     """
-    imported_at: dict[str, int] = {}
-    rebound_at: dict[str, int] = {}
-    conditional_names: set[str] = set()
-
-    def _record_targets(target: ast.expr, position: int) -> None:
-        if isinstance(target, ast.Name):
-            rebound_at[target.id] = position
-        elif isinstance(target, (ast.Tuple, ast.List)):
-            for item in target.elts:
-                _record_targets(item, position)
-
-    def _conditional_bindings(node: ast.AST) -> set[str]:
-        """Collect bindings nested under a conditional scope, excluding local bodies."""
-        names: set[str] = set()
-        pending = list(ast.iter_child_nodes(node))
-        while pending:
-            current = pending.pop()
-            if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                names.add(current.name)
-                continue
-            if isinstance(current, ast.Import):
-                names.update(alias.asname or alias.name.split(".")[0] for alias in current.names)
-            elif isinstance(current, ast.ImportFrom):
-                names.update(alias.asname or alias.name for alias in current.names if alias.name != "*")
-            elif isinstance(current, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-                targets = current.targets if isinstance(current, ast.Assign) else [current.target]
-                for target in targets:
-                    if isinstance(target, ast.Name):
-                        names.add(target.id)
-            elif isinstance(current, (ast.For, ast.AsyncFor)) and isinstance(current.target, ast.Name):
-                names.add(current.target.id)
-            elif isinstance(current, (ast.With, ast.AsyncWith)):
-                names.update(
-                    item.optional_vars.id for item in current.items if isinstance(item.optional_vars, ast.Name)
-                )
-            elif isinstance(current, ast.ExceptHandler) and current.name:
-                names.add(current.name)
-            pending.extend(ast.iter_child_nodes(current))
-        return names
-
-    for position, node in enumerate(tree.body):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                imported_at[alias.asname or alias.name.split(".")[0]] = position
-        elif isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                if alias.name != "*":
-                    imported_at[alias.asname or alias.name] = position
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            rebound_at[node.name] = position
-        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            for target in targets:
-                _record_targets(target, position)
-        elif isinstance(node, (ast.For, ast.AsyncFor, ast.With, ast.AsyncWith, ast.Try, ast.If, ast.Match)):
-            for name in _conditional_bindings(node):
-                rebound_at[name] = position
-                conditional_names.add(name)
-
+    imported_at, rebound_at, conditional_names = _top_level_binding_positions(tree)
     for name, imported_position in imported_at.items():
         if rebound_at.get(name, -1) > imported_position:
             name_map.pop(name, None)
@@ -333,80 +430,29 @@ def _symbol_alias_provenance(
     aliases: dict[str, str] = {}
     limitations: set[tuple[str, str, str]] = set()
 
-    def _target_names(target: ast.expr) -> set[str]:
-        if isinstance(target, ast.Name):
-            return {target.id}
-        if isinstance(target, ast.Starred):
-            return _target_names(target.value)
-        elif isinstance(target, (ast.Tuple, ast.List)):
-            return {name for item in target.elts for name in _target_names(item)}
-        return set()
-
     def _reject(names: set[str], reason: str) -> None:
         for local_name in names:
             target = aliases.pop(local_name, None)
             if target is not None:
                 limitations.add((f"{module_name}::{local_name}", target, reason))
 
-    def _conditional_bindings(node: ast.AST) -> tuple[set[str], list[tuple[str, str]]]:
-        """Collect module bindings/import aliases without entering local bodies."""
-        names: set[str] = set()
-        imports: list[tuple[str, str]] = []
-        pending = list(ast.iter_child_nodes(node))
-        while pending:
-            current = pending.pop()
-            if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                names.add(current.name)
-                continue
-            if isinstance(current, ast.Import):
-                names.update(alias.asname or alias.name.split(".")[0] for alias in current.names)
-            elif isinstance(current, ast.ImportFrom):
-                names.update(alias.asname or alias.name for alias in current.names if alias.name != "*")
-                base = _resolve_import_from_base(current, package)
-                if base:
-                    imports.extend(
-                        (imported.asname or imported.name, f"{base}::{imported.name}")
-                        for imported in current.names
-                        if imported.name != "*"
-                    )
-            elif isinstance(current, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-                targets = current.targets if isinstance(current, ast.Assign) else [current.target]
-                names.update(name for target in targets for name in _target_names(target))
-            elif isinstance(current, (ast.For, ast.AsyncFor)):
-                names.update(_target_names(current.target))
-            elif isinstance(current, (ast.With, ast.AsyncWith)):
-                names.update(
-                    name for item in current.items if item.optional_vars for name in _target_names(item.optional_vars)
-                )
-            elif isinstance(current, ast.ExceptHandler) and current.name:
-                names.add(current.name)
-            pending.extend(ast.iter_child_nodes(current))
-        return names, imports
-
     for node in tree.body:
         if isinstance(node, ast.ImportFrom):
-            base = _resolve_import_from_base(node, package)
-            if not base:
-                continue
-            for imported in node.names:
-                if imported.name != "*":
-                    aliases[imported.asname or imported.name] = f"{base}::{imported.name}"
-        elif isinstance(node, ast.Import):
-            _reject({imported.asname or imported.name.split(".")[0] for imported in node.names}, "top_level_rebinding")
+            aliases.update(_import_from_aliases(node, package))
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             _reject({node.name}, "top_level_rebinding")
-        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            for target in targets:
-                _reject(_target_names(target), "top_level_rebinding")
-        elif isinstance(node, (ast.For, ast.AsyncFor, ast.With, ast.AsyncWith, ast.Try, ast.If, ast.Match)):
+        elif isinstance(node, _CONDITIONAL_SCOPE_NODES):
             # Conditional control flow can bind a module name only on some paths.
             # Excluding it is conservative: no alias provenance is better than a
             # false canonical edge.
-            names, imports = _conditional_bindings(node)
+            names, imports = _conditional_bindings(node, _unpacked_target_names, package)
             _reject(names, "conditional_binding")
-            for local_name, target in imports:
-                limitations.add((f"{module_name}::{local_name}", target, "conditional_import"))
+            limitations.update(
+                (f"{module_name}::{local_name}", target, "conditional_import") for local_name, target in imports
+            )
+        else:
+            # A plain `import` or an assignment rebinds the name unconditionally.
+            _reject(_statement_bound_names(node, _unpacked_target_names), "top_level_rebinding")
     return aliases, [
         {"alias_qname": alias_qname, "target_qname": target_qname, "reason": reason}
         for alias_qname, target_qname, reason in sorted(limitations)

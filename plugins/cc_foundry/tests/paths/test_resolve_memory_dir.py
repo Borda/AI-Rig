@@ -11,9 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-
-import resolve_memory_dir  # noqa: E402
+import resolve_memory_dir
 
 
 class _FakeCompleted:

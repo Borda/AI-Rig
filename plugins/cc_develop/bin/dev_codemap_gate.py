@@ -35,10 +35,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+#: Skill names this gate accepts, as a pipe-separated list that is also shown in the unknown-skill error message.
 _KNOWN_SKILLS = "debug|feature|fix|plan|refactor|review"
 
 # Currency sentinel basename read back by skills/_shared/codemap-gates.md. Owned here
 # because codemap_resolve.py is byte-identical across plugins and cannot name one.
+#: Basename prefix of the codemap currency sentinel file that the shared codemap gate documentation reads back.
 CURRENCY_PREFIX = "dev-codemap-currency"
 
 
@@ -103,7 +105,7 @@ def _run_codemap_resolve(bin_dir: Path, raw: str) -> tuple[str, int]:
     that shared file.
     """
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S603 - argv list, no shell; interpreter plus a sibling script path
             [sys.executable, str(bin_dir / "codemap_resolve.py"), raw, "--currency-prefix", CURRENCY_PREFIX],
             stdout=subprocess.PIPE,
             text=True,

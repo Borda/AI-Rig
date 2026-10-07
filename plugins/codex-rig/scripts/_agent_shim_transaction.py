@@ -38,8 +38,9 @@ receives recovery-required evidence instead of a success result.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, NoReturn
+from typing import NoReturn
 
 from _agent_shim_journal import (
     Journal,
@@ -51,8 +52,8 @@ from _agent_shim_journal import (
     validate_successor,
 )
 from _agent_shim_posix import (
-    FileIdentity,
     PRIVATE_FILE_MODE,
+    FileIdentity,
     PosixPrimitiveError,
     detach_verified,
     publish_noclobber,
@@ -64,7 +65,6 @@ from _agent_shim_posix import (
     restore_state_from_transaction,
     unlink_verified_at,
 )
-
 
 Checkpoint = Callable[[str], None]
 
@@ -158,11 +158,14 @@ def _advance(
     elif rollback_state is not None:
         value["rollback_state_progress"] = rollback_state
     else:
-        assert operation_index is not None
+        if operation_index is None:
+            raise RuntimeError("operation_index must not be None")
         operations = value["operations"]
-        assert isinstance(operations, list)
+        if not isinstance(operations, list):
+            raise TypeError(f"operations must be list, got {type(operations).__name__}")
         operation = operations[operation_index]
-        assert isinstance(operation, dict)
+        if not isinstance(operation, dict):
+            raise TypeError(f"operation must be dict, got {type(operation).__name__}")
         operation["progress" if progress is not None else "rollback_progress"] = (
             progress if progress is not None else rollback_progress
         )
@@ -218,7 +221,8 @@ def _forward_operation(
             return journal
         artifact = f"{operation.role_id}.toml"
         if operation.intent in {"update", "remove", "retire"}:
-            assert operation.before_hash is not None
+            if operation.before_hash is None:
+                raise RuntimeError("operation.before_hash must not be None")
             detach_verified(
                 handles.target_fd,
                 operation.target_name,
@@ -229,7 +233,8 @@ def _forward_operation(
             _checkpoint(checkpoint, f"{operation.role_id}:detached")
             journal = _advance(handles.transaction_fd, journal, operation_index=index, progress="DETACHED")
         if operation.intent in {"create", "repair-missing", "update"}:
-            assert operation.after_hash is not None
+            if operation.after_hash is None:
+                raise RuntimeError("operation.after_hash must not be None")
             publish_noclobber(
                 handles.after_fd,
                 artifact,
@@ -267,7 +272,8 @@ def _restore_operation(handles: TransactionDirectories, operation: JournalOperat
         return
     if operation.intent == "noop":
         return
-    assert operation.before_hash is not None
+    if operation.before_hash is None:
+        raise RuntimeError("operation.before_hash must not be None")
     if quarantine is not None:
         _, quarantined = quarantine
         if quarantined.sha256 != operation.before_hash or quarantined.link_count != 1:

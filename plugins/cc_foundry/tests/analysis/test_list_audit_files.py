@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import list_audit_files as inventory
+import pytest
 
 
 def _touch(path: Path, text: str = "x\n") -> Path:
@@ -35,19 +34,27 @@ class TestCollect:
         _touch(tmp_path / "cc_x" / "skills" / "_shared" / "s.md")
         assert len(inventory.collect(tmp_path, inventory.LOCAL_PATTERNS)) == 3
 
-    def test_local_sweep_excludes_nested_agent_sidecars(self, tmp_path: Path) -> None:
-        """References-style nesting under agents/ stays out of the sweep."""
-        _touch(tmp_path / "cc_x" / "agents" / "curator.md")
-        _touch(tmp_path / "cc_x" / "agents" / "curator" / "sidecar.md")
-        found = inventory.collect(tmp_path, inventory.LOCAL_PATTERNS)
-        assert [p.name for p in found] == ["curator.md"]
+    @pytest.mark.parametrize(
+        ("files", "expected"),
+        [
+            pytest.param(
+                ["cc_x/agents/curator.md", "cc_x/agents/curator/sidecar.md"],
+                ["cc_x/agents/curator.md"],
+                id="nested-agent-sidecars",
+            ),
+            pytest.param(["cc_x/rules/a.md", "cc_x/rules/_full/a.md"], ["cc_x/rules/a.md"], id="rules-full-long-form"),
+        ],
+    )
+    def test_local_sweep_excludes(self, tmp_path: Path, files: list[str], expected: list[str]) -> None:
+        """Nested agent sidecars and rules/_full/ long-form bodies stay out of the local sweep.
 
-    def test_local_sweep_excludes_rules_full(self, tmp_path: Path) -> None:
-        """rules/_full/ long-form bodies are not part of the sweep."""
-        _touch(tmp_path / "cc_x" / "rules" / "a.md")
-        _touch(tmp_path / "cc_x" / "rules" / "_full" / "a.md")
+        Scenario: references-style nesting under agents/ and the rules/_full/ copy of a rule are both skipped, leaving
+        only the flat file.
+        """
+        for rel in files:
+            _touch(tmp_path / rel)
         found = inventory.collect(tmp_path, inventory.LOCAL_PATTERNS)
-        assert [p.parent.name for p in found] == ["rules"]
+        assert [p.relative_to(tmp_path).as_posix() for p in found] == expected
 
     def test_installed_sweep_is_narrower(self, tmp_path: Path) -> None:
         """The installed sweep covers only skill entrypoints and flat agents."""
@@ -69,19 +76,17 @@ class TestCollect:
 class TestCountBlocks:
     """Covers fenced-block counting."""
 
-    def test_single_block(self, tmp_path: Path) -> None:
-        """One open/close pair is one block."""
-        path = _touch(tmp_path / "a.md", "```bash\necho hi\n```\n")
-        assert inventory.count_blocks(path) == 1
-
-    def test_two_blocks(self, tmp_path: Path) -> None:
-        """Two pairs are two blocks."""
-        path = _touch(tmp_path / "a.md", "```bash\nx\n```\n\n```python\ny\n```\n")
-        assert inventory.count_blocks(path) == 2
-
-    def test_no_blocks(self, tmp_path: Path) -> None:
-        """Prose with no fences counts zero."""
-        assert inventory.count_blocks(_touch(tmp_path / "a.md", "# Title\ntext\n")) == 0
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            pytest.param("```bash\necho hi\n```\n", 1, id="one-pair-one-block"),
+            pytest.param("```bash\nx\n```\n\n```python\ny\n```\n", 2, id="two-pairs-two-blocks"),
+            pytest.param("# Title\ntext\n", 0, id="prose-without-fences"),
+        ],
+    )
+    def test_counts_fenced_pairs(self, tmp_path: Path, text: str, expected: int) -> None:
+        """Each open/close fence pair is one block; prose with no fences counts zero."""
+        assert inventory.count_blocks(_touch(tmp_path / "a.md", text)) == expected
 
     def test_unreadable_file_counts_zero(self, tmp_path: Path) -> None:
         """A missing file counts zero rather than raising."""

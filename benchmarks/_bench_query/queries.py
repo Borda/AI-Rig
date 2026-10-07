@@ -7,13 +7,11 @@ import re
 import subprocess
 from pathlib import Path
 
-from _bench_query.models import Query, ScanResult, ValidationResult
-from _bench_query.sources import path_to_module
-
 # Imported as a module, not a name: ``_run`` is the seam tests patch, and both this module
 # and ``cold`` itself call it — one patch on ``cold._run`` has to reach every caller.
 from _bench_query import cold
-
+from _bench_query.models import Query, ScanResult, ValidationResult
+from _bench_query.sources import path_to_module
 
 # ---- WARM QUERIES ----
 
@@ -39,7 +37,7 @@ def run_scan_query_result(scan_query_bin: Path, args: list[str], index_path: Pat
         :class:`ScanResult` with ``data`` set and ``error=None`` on success, or
         ``data=None`` and a non-empty ``error`` reason on any failure.
     """
-    cmd = ["python3", str(scan_query_bin.resolve()), "--index", str(index_path.resolve())] + args
+    cmd = ["python3", str(scan_query_bin.resolve()), "--index", str(index_path.resolve()), *args]
     try:
         result = cold._run(cmd, cwd=str(repo_path))
     except subprocess.TimeoutExpired:
@@ -236,6 +234,7 @@ def validate_deps_json(data: dict) -> ValidationResult:
     return ValidationResult(ok=True, reason="")
 
 
+#: Output-shape validator for each query command that the query-shape suite checks.
 _QUERY_SHAPE_VALIDATORS = {"central": validate_central_json, "rdeps": validate_rdeps_json, "deps": validate_deps_json}
 
 
@@ -268,7 +267,7 @@ def run_query_shape_query(
         - ``error`` (``str | None``): Short scan-query failure reason, or ``None``
           on success.
     """
-    res = run_scan_query_result(scan_query_bin, [query.cmd] + query.args, index_path, repo_path)
+    res = run_scan_query_result(scan_query_bin, [query.cmd, *query.args], index_path, repo_path)
     if not res.ok:
         return False, False, None, res.error
     data = res.data

@@ -40,11 +40,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+#: Matches characters outside the file-name-safe set; they are replaced with ``_`` in the namespace.
 _NS_SAFE = re.compile(r"[^A-Za-z0-9._-]")
-# ``load_values`` emits ``KEY='VALUE'`` for the caller's ``eval``.  KEY sits outside
-# the quoting that protects VALUE, so a metacharacter-bearing key would run as a
-# separate shell statement (CWE-78).  Restricted to shell identifiers on both the
-# write path (``set_values``) and the emit path (``load_values``).
+#: ``load_values`` emits ``KEY='VALUE'`` for the caller's ``eval``.  KEY sits outside
+#: the quoting that protects VALUE, so a metacharacter-bearing key would run as a
+#: separate shell statement (CWE-78).  Restricted to shell identifiers on both the
+#: write path (``set_values``) and the emit path (``load_values``).
 _KEY_SAFE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 

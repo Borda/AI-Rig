@@ -47,7 +47,9 @@ import re
 import sys
 from pathlib import Path
 
+#: Characters permitted in a skill name; any other character is rejected as unsafe.
 _SKILL_RE_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789-_"
+#: Matches each run of digits in a version path segment, used to sort versions numerically.
 _VERSION_TOKEN_RE = re.compile(r"\d+")
 
 

@@ -29,8 +29,8 @@ from __future__ import annotations
 
 import json
 import math
-from pathlib import Path
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -39,18 +39,13 @@ import pytest
 BENCHMARKS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARKS))
 
-from _bench_common.presentation import (  # noqa: E402
-    BENCHMARK_OUTPUT_WIDTH,
-    LEGEND_CLOSE_RULE,
-    LEGEND_OPEN_RULE,
-)
-
 # Patch seams live in the package modules the runner shim re-exports from: patching the shim
 # would leave each package module's own global binding untouched.
 from _bench_claude.structural import cli as bench_cli  # noqa: E402
 from _bench_claude.structural import config as bench_config  # noqa: E402
 from _bench_claude.structural import report as bench_report  # noqa: E402
 from _bench_claude.structural import tasks as bench_tasks  # noqa: E402
+from _bench_common.presentation import BENCHMARK_OUTPUT_WIDTH, LEGEND_CLOSE_RULE, LEGEND_OPEN_RULE  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers shared across test classes
@@ -445,7 +440,7 @@ class TestProviderParityIntegration:
         )
         runner._execute = lambda *_args, **_kwargs: pytest.fail("canonical mismatch reached execution")
 
-        with pytest.raises(ValueError, match="task.*hash|hash.*task"):
+        with pytest.raises(ValueError, match=r"task.*hash|hash.*task"):
             runner.run(task, "A_plain")
 
     def test_c_strict_tracks_no_call_as_noncompliance_without_changing_quality(
@@ -940,7 +935,7 @@ class TestExtractInt:
     """Regex-based integer extraction from free-form model output."""
 
     @pytest.mark.parametrize(
-        "text,patterns,expected",
+        ("text", "patterns", "expected"),
         [
             pytest.param("found 42 callers in total", [r"(\d+) caller"], 42, id="found-42-callers-in-total"),
             pytest.param("there are 7 unique callers", [r"(\d+) unique"], 7, id="there-are-7-unique-callers"),
@@ -961,7 +956,7 @@ class TestExtractInt:
         assert script_run_bench._extract_int(text, patterns) == expected
 
     @pytest.mark.parametrize(
-        "text,patterns",
+        ("text", "patterns"),
         [
             pytest.param("no numbers here", [r"(\d+) caller"], id="no-numbers-here"),
             pytest.param("", [r"(\d+) caller"], id="empty"),
@@ -1107,6 +1102,21 @@ class TestDiffImpactStagerResilience:
             subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
         return repo
 
+    @staticmethod
+    def _refuse_checkout(script_run_bench: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Make every ``git checkout`` fail while other subprocess calls run for real."""
+        import subprocess as real_subprocess
+
+        real_run = real_subprocess.run
+
+        def _run(command: list[str], **kwargs: Any) -> Any:
+            """Supply scenario-specific subprocess outcomes at the worktree and test-command boundary."""
+            if "checkout" in command:
+                return SimpleNamespace(returncode=1, stderr="checkout refused", stdout="")
+            return real_run(command, **kwargs)
+
+        monkeypatch.setattr(script_run_bench.subprocess, "run", _run)
+
     def test_enter_reverts_partial_apply_on_missing_anchor(self, script_run_bench: Any, tmp_path: Any) -> None:
         """First edit applies, second edit's anchor is absent → raise AND revert the first (no residue)."""
         repo = self._git_repo(tmp_path)
@@ -1140,19 +1150,9 @@ class TestDiffImpactStagerResilience:
         survived into every later task, which then saw an unexplained dirty tree far from
         the task that caused it.
         """
-        import subprocess as real_subprocess
-
         repo = self._git_repo(tmp_path)
         stage = [{"file": "pkg/a.py", "append": "\n# staged change\n"}]
-        real_run = real_subprocess.run
-
-        def _run(command: list[str], **kwargs: Any) -> Any:
-            """Supply scenario-specific subprocess outcomes at the worktree and test-command boundary."""
-            if "checkout" in command:
-                return SimpleNamespace(returncode=1, stderr="checkout refused", stdout="")
-            return real_run(command, **kwargs)
-
-        monkeypatch.setattr(script_run_bench.subprocess, "run", _run)
+        self._refuse_checkout(script_run_bench, monkeypatch)
 
         with pytest.raises(script_run_bench.DirtyTreeError, match="still mutated"):
             with script_run_bench.DiffImpactStager(repo, stage):
@@ -1162,19 +1162,9 @@ class TestDiffImpactStagerResilience:
         self, script_run_bench: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Escalation must never replace the exception carrying the real cause."""
-        import subprocess as real_subprocess
-
         repo = self._git_repo(tmp_path)
         stage = [{"file": "pkg/a.py", "append": "\n# staged change\n"}]
-        real_run = real_subprocess.run
-
-        def _run(command: list[str], **kwargs: Any) -> Any:
-            """Supply scenario-specific subprocess outcomes at the worktree and test-command boundary."""
-            if "checkout" in command:
-                return SimpleNamespace(returncode=1, stderr="checkout refused", stdout="")
-            return real_run(command, **kwargs)
-
-        monkeypatch.setattr(script_run_bench.subprocess, "run", _run)
+        self._refuse_checkout(script_run_bench, monkeypatch)
 
         with pytest.raises(RuntimeError, match="original cause"):
             with script_run_bench.DiffImpactStager(repo, stage):
@@ -1224,52 +1214,48 @@ class TestPatchSandboxExitCodes:
             },
         )
 
-    @pytest.mark.parametrize("code", [2, 3, 4, 5])
-    def test_baseline_non_result_exit_raises_sandbox_error(
-        self, script_run_bench: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
+    @pytest.mark.parametrize(
+        ("codes", "message"),
+        [
+            pytest.param([2], "baseline pytest exited", id="baseline-exit-2"),
+            pytest.param([3], "baseline pytest exited", id="baseline-exit-3"),
+            pytest.param([4], "baseline pytest exited", id="baseline-exit-4"),
+            pytest.param([5], "baseline pytest exited", id="baseline-exit-5"),
+            pytest.param([1, 4], "post-patch pytest exited", id="post-patch-exit-4"),
+        ],
+    )
+    def test_non_result_exit_raises_sandbox_error(
+        self, script_run_bench: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, codes: list[int], message: str
     ) -> None:
-        """A baseline that produced no test result is a sandbox error, not a failed patch.
+        """A baseline or post-patch run that produced no test result is a sandbox error, not a failed patch.
 
         Exit 4 is the in-tree trigger: ``--timeout=60`` requires pytest-timeout, and
-        without the plugin every patch task scored a silent zero.
+        without the plugin every patch task scored a silent zero. The same rule applies
+        after the patch — no result means no evidence.
         """
-        sandbox = self._sandbox(script_run_bench, tmp_path, monkeypatch, [code])
+        sandbox = self._sandbox(script_run_bench, tmp_path, monkeypatch, codes)
 
-        with pytest.raises(script_run_bench.SandboxError, match="baseline pytest exited"):
+        with pytest.raises(script_run_bench.SandboxError, match=message):
             sandbox.run("diff --git a/a.py b/a.py\n")
 
-    def test_baseline_exit_one_is_a_valid_baseline_failure(
-        self, script_run_bench: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        ("codes", "expected"),
+        [
+            pytest.param([1, 0], True, id="baseline-exit-one-then-pass-scores-fix"),
+            pytest.param([0], False, id="baseline-exit-zero-is-already-passing"),
+            pytest.param([1, 1], False, id="post-patch-exit-one-is-failed-patch"),
+        ],
+    )
+    def test_run_scores_patch_from_test_result_exit_codes(
+        self, script_run_bench: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, codes: list[int], expected: bool
     ) -> None:
-        """Exit 1 means the target test genuinely fails, so scoring proceeds."""
-        sandbox = self._sandbox(script_run_bench, tmp_path, monkeypatch, [1, 0])
+        """Exit 1 at baseline means the target test genuinely fails, so scoring proceeds; exit 0 cannot validate a fix.
 
-        assert sandbox.run("diff --git a/a.py b/a.py\n") is True
+        A baseline that already passes cannot validate a fix, and exit 1 after patching is a genuine failed fix.
+        """
+        sandbox = self._sandbox(script_run_bench, tmp_path, monkeypatch, codes)
 
-    def test_baseline_exit_zero_reports_an_already_passing_test(
-        self, script_run_bench: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A test that already passes cannot validate a fix."""
-        sandbox = self._sandbox(script_run_bench, tmp_path, monkeypatch, [0])
-
-        assert sandbox.run("diff --git a/a.py b/a.py\n") is False
-
-    def test_post_patch_non_result_exit_raises_sandbox_error(
-        self, script_run_bench: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The same rule applies after the patch — no result means no evidence."""
-        sandbox = self._sandbox(script_run_bench, tmp_path, monkeypatch, [1, 4])
-
-        with pytest.raises(script_run_bench.SandboxError, match="post-patch pytest exited"):
-            sandbox.run("diff --git a/a.py b/a.py\n")
-
-    def test_post_patch_exit_one_scores_a_failed_patch(
-        self, script_run_bench: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Exit 1 after patching is a genuine failed fix."""
-        sandbox = self._sandbox(script_run_bench, tmp_path, monkeypatch, [1, 1])
-
-        assert sandbox.run("diff --git a/a.py b/a.py\n") is False
+        assert sandbox.run("diff --git a/a.py b/a.py\n") is expected
 
 
 class TestPatchSandboxApply:
@@ -1447,7 +1433,7 @@ class TestIntClose:
     """Tolerance-based integer comparison helper."""
 
     @pytest.mark.parametrize(
-        "got,expected,tolerance,result",
+        ("got", "expected", "tolerance", "result"),
         [
             pytest.param(42, 40, 0.10, True, id="42-40"),  # within 10%
             pytest.param(44, 40, 0.10, True, id="44"),  # exactly at boundary: 4/40 = 0.10
@@ -1520,7 +1506,7 @@ class TestSafeRatio:
     """Division helper that returns NaN for undefined denominators."""
 
     @pytest.mark.parametrize(
-        "num,den,expected",
+        ("num", "den", "expected"),
         [
             pytest.param(10, 4, 2.5, id="10"),
             pytest.param(0, 5, 0.0, id="0"),
@@ -1533,7 +1519,7 @@ class TestSafeRatio:
         assert script_run_bench._safe_ratio(num, den) == pytest.approx(expected)
 
     @pytest.mark.parametrize(
-        "num,den",
+        ("num", "den"),
         [
             pytest.param(10, 0, id="10-0"),
             pytest.param(0, 0, id="0"),
@@ -1556,7 +1542,7 @@ class TestParseScanQuerySubcommand:
     """Extract scan-query subcommand from Bash command strings."""
 
     @pytest.mark.parametrize(
-        "command,expected",
+        ("command", "expected"),
         [
             pytest.param(
                 "scan-query --index /x.json fn-rdeps a.b --exclude-tests",
@@ -1590,40 +1576,12 @@ class TestParseScanQuerySubcommand:
             pytest.param(
                 "/path/to/bin/scan-query symbol Trainer", "symbol", id="path-to-bin-scan-query-symbol-trainer"
             ),  # full path form
-        ],
-    )
-    def test_known_subcommands_extracted(self, script_run_bench: Any, command: str, expected: str) -> None:
-        """_parse_scan_query_subcommand returns the recognised subcommand token."""
-        assert script_run_bench._parse_scan_query_subcommand(command) == expected
-
-    @pytest.mark.parametrize("command", ["grep -r foo .", "ls -la", "python3 -m pytest", ""])
-    def test_non_scan_query_command_returns_none(self, script_run_bench: Any, command: str) -> None:
-        """_parse_scan_query_subcommand returns None for commands without scan-query."""
-        assert script_run_bench._parse_scan_query_subcommand(command) is None
-
-    def test_unknown_subcommand_returns_none(self, script_run_bench: Any) -> None:
-        """Unrecognised subcommands (not in the known set) return None."""
-        assert script_run_bench._parse_scan_query_subcommand("scan-query unknown-subcmd foo") is None
-
-    def test_index_flag_value_skipped(self, script_run_bench: Any) -> None:
-        """Verify command-line option behavior.
-
-        ``--index <path>`` flag-value pair is skipped before finding the subcommand.
-        """
-        cmd = "scan-query --index /some/path/index.json fn-rdeps lightning.pytorch.trainer"
-        assert script_run_bench._parse_scan_query_subcommand(cmd) == "fn-rdeps"
-
-    def test_equals_form_flag_skipped(self, script_run_bench: Any) -> None:
-        """Verify command-line option behavior.
-
-        ``--index=/path`` form (= present) is treated as a single token and skipped.
-        """
-        cmd = "scan-query --index=/some/path.json symbol Trainer"
-        assert script_run_bench._parse_scan_query_subcommand(cmd) == "symbol"
-
-    @pytest.mark.parametrize(
-        "command,expected",
-        [
+            pytest.param(
+                "scan-query --index /some/path/index.json fn-rdeps lightning.pytorch.trainer",
+                "fn-rdeps",
+                id="index-flag-value-skipped",
+            ),
+            pytest.param("scan-query --index=/some/path.json symbol Trainer", "symbol", id="equals-form-flag-skipped"),
             pytest.param(
                 'scan-query --index "/tmp/index with spaces.json" symbol Trainer',
                 "symbol",
@@ -1641,21 +1599,34 @@ class TestParseScanQuerySubcommand:
             ),
         ],
     )
-    def test_shell_token_edge_cases(self, script_run_bench: Any, command: str, expected: str) -> None:
-        """Quoted paths, repeated index flags, and env prefixes still expose the subcommand."""
+    def test_known_subcommands_extracted(self, script_run_bench: Any, command: str, expected: str) -> None:
+        """_parse_scan_query_subcommand returns the recognised subcommand token.
+
+        Covers the bare, full-path, ``--index <path>``, ``--index=<path>``, quoted-path, repeated-index-flag, and
+        env-prefixed invocation shapes: each global flag and its value is skipped so the subcommand is exposed.
+        """
         assert script_run_bench._parse_scan_query_subcommand(command) == expected
 
     @pytest.mark.parametrize(
         "command",
         [
-            "echo scan-query symbol Trainer",
-            "python -c 'print(\"scan-query symbol Trainer\")'",
-            "scan-query --unknown value symbol Trainer",
-            "scan-query --unknown=value symbol Trainer",
+            pytest.param("grep -r foo .", id="grep-command"),
+            pytest.param("ls -la", id="ls-command"),
+            pytest.param("python3 -m pytest", id="pytest-command"),
+            pytest.param("", id="empty-command"),
+            pytest.param("scan-query unknown-subcmd foo", id="unknown-subcommand"),
+            pytest.param("echo scan-query symbol Trainer", id="scan-query-as-echo-data"),
+            pytest.param("python -c 'print(\"scan-query symbol Trainer\")'", id="scan-query-inside-python-string"),
+            pytest.param("scan-query --unknown value symbol Trainer", id="unknown-global-flag-with-value"),
+            pytest.param("scan-query --unknown=value symbol Trainer", id="unknown-global-flag-equals-form"),
         ],
     )
-    def test_non_invocations_and_unknown_global_flags_return_none(self, script_run_bench: Any, command: str) -> None:
-        """Scan-query mentioned as data or with unknown global flags is not credited as a query."""
+    def test_non_invocations_return_none(self, script_run_bench: Any, command: str) -> None:
+        """_parse_scan_query_subcommand returns None when no scan-query query is actually invoked.
+
+        Unrelated commands, an empty command, unrecognised subcommands, scan-query mentioned only as data, and unknown
+        global flags are not credited as a query.
+        """
         assert script_run_bench._parse_scan_query_subcommand(command) is None
 
 
@@ -1692,26 +1663,35 @@ class TestNormalizeExternalTask:
         result = script_run_bench._normalize_external_task(task)
         assert result["scoreable"] is False
 
-    def test_scoreable_true_preserved_when_ground_truth_present(self, script_run_bench: Any) -> None:
-        """Tasks with ground_truth and explicit scoreable=True keep that flag."""
-        task = {
-            "id": "DBG-01",
-            "type": "debug_from_trace",
-            "scoreable": True,
-            "prompt": "p",
-            "ground_truth": {"function": "f", "file": "a.py", "start_line": 1},
-        }
-        result = script_run_bench._normalize_external_task(task)
-        assert result["scoreable"] is True
+    @pytest.mark.parametrize(
+        "task",
+        [
+            pytest.param(
+                {
+                    "id": "DBG-01",
+                    "type": "debug_from_trace",
+                    "scoreable": True,
+                    "prompt": "p",
+                    "ground_truth": {"function": "f", "file": "a.py", "start_line": 1},
+                },
+                id="explicit-flag-preserved",
+            ),
+            pytest.param(
+                {
+                    "id": "DBG-02",
+                    "type": "debug_from_trace",
+                    "prompt": "p",
+                    "ground_truth": {"function": "g", "file": "b.py", "start_line": 5},
+                },
+                id="defaults-true-without-flag",
+            ),
+        ],
+    )
+    def test_scoreable_true_when_ground_truth_present(self, script_run_bench: Any, task: dict) -> None:
+        """Tasks with ground_truth are scoreable, whether the flag is explicit or omitted.
 
-    def test_scoreable_defaults_true_when_ground_truth_present_but_no_flag(self, script_run_bench: Any) -> None:
-        """ground_truth present without explicit scoreable → defaults to True."""
-        task = {
-            "id": "DBG-02",
-            "type": "debug_from_trace",
-            "prompt": "p",
-            "ground_truth": {"function": "g", "file": "b.py", "start_line": 5},
-        }
+        An explicit scoreable=True keeps that flag; a task carrying ground_truth but no flag defaults to True.
+        """
         result = script_run_bench._normalize_external_task(task)
         assert result["scoreable"] is True
 
@@ -1773,18 +1753,20 @@ class TestLoadTasksFile:
         with pytest.raises(FileNotFoundError, match="not found"):
             script_run_bench._load_tasks_file(tmp_path / "nonexistent.json")
 
-    def test_malformed_json_raises_value_error(self, script_run_bench: Any, tmp_path: Path) -> None:
-        """ValueError raised when the file contains invalid JSON."""
+    @pytest.mark.parametrize(
+        ("content", "message"),
+        [
+            pytest.param("{not valid json", "not valid JSON", id="malformed-json"),
+            pytest.param("42", "must be a JSON list or object", id="unexpected-shape"),
+        ],
+    )
+    def test_invalid_content_raises_value_error(
+        self, script_run_bench: Any, tmp_path: Path, content: str, message: str
+    ) -> None:
+        """ValueError raised when the file is invalid JSON or JSON that is neither a list nor an object."""
         p = tmp_path / "bad.json"
-        p.write_text("{not valid json")
-        with pytest.raises(ValueError, match="not valid JSON"):
-            script_run_bench._load_tasks_file(p)
-
-    def test_unexpected_shape_raises_value_error(self, script_run_bench: Any, tmp_path: Path) -> None:
-        """ValueError raised when JSON is neither a list nor a dict."""
-        p = tmp_path / "bad.json"
-        p.write_text("42")
-        with pytest.raises(ValueError, match="must be a JSON list or object"):
+        p.write_text(content)
+        with pytest.raises(ValueError, match=message):
             script_run_bench._load_tasks_file(p)
 
     def test_empty_list_returns_empty(self, script_run_bench: Any, tmp_path: Path) -> None:
@@ -1814,7 +1796,7 @@ class TestEvaluateSymbol:
     """symbol_extraction evaluator: start_line within ±5 lines of ground truth."""
 
     @pytest.mark.parametrize(
-        "output_text,start_line,expected_correct",
+        ("output_text", "start_line", "expected_correct"),
         [
             pytest.param(
                 "file_path: x.py  start_line: 100  end_line: 110",
@@ -1846,6 +1828,15 @@ class TestEvaluateSymbol:
                 True,
                 id="file_path-x.py-start_line-104-end_line-110",
             ),  # full backticked format
+            pytest.param(
+                "**start_line**: 200", 200, True, id="bold-markers-stripped-before-parsing"
+            ),  # markdown bold around start_line is ignored by the parser
+            pytest.param(
+                "file_path: src/lightning/trainer/trainer.py:1110\N{EN DASH}1125",
+                1110,
+                True,
+                id="source-location-range-without-generic-line-prose",
+            ),  # a compact ``path.py:start-end`` answer is scoreable without the redundant word "Lines"
         ],
     )
     def test_correct_when_start_line_within_tolerance(
@@ -1864,12 +1855,6 @@ class TestEvaluateSymbol:
         assert result.scored is True
         assert result.extraction_failed is True
         assert result.correct is False
-
-    def test_bold_markers_stripped_before_parsing(self, script_run_bench: Any) -> None:
-        """Markdown bold markers around start_line are ignored by the parser."""
-        task = _se_task(start_line=200)
-        result = script_run_bench._evaluate_symbol(task, "**start_line**: 200")
-        assert result.correct is True
 
     def test_backtick_wrapped_value_parsed_not_failed(self, script_run_bench: Any) -> None:
         """Regression: a backtick between the colon and the digit must not defeat extraction.
@@ -1904,18 +1889,6 @@ class TestEvaluateSymbol:
         assert result.scoring_detail["threshold"] == 5
         assert result.scoring_detail["method"] == "line_tolerance"
 
-    def test_source_location_range_does_not_need_generic_line_prose(self, script_run_bench: Any) -> None:
-        """A conventional ``path.py:start-end`` answer remains scoreable.
-
-        Prevents a valid compact symbol answer from being marked wrong merely because it omits the redundant word
-        ``Lines``.
-        """
-        task = _se_task(start_line=1110)
-        result = script_run_bench._evaluate_symbol(
-            task, "file_path: src/lightning/trainer/trainer.py:1110\N{EN DASH}1125"
-        )
-        assert result.correct is True
-
 
 # ===========================================================================
 # ===========================================================================
@@ -1948,18 +1921,21 @@ class TestEvaluateRv:
         result = script_run_bench._evaluate_rv(task, "something")
         assert result.scored is False
 
-    def test_count_path_correct_within_tolerance(self, script_run_bench: Any) -> None:
-        """Count path: correct when extracted count is within 10% of expected."""
+    @pytest.mark.parametrize(
+        ("answer", "expected_correct"),
+        [
+            pytest.param("found 20 undocumented symbols", True, id="within-tolerance"),
+            pytest.param("found 30 undocumented symbols", False, id="outside-tolerance"),
+        ],
+    )
+    def test_count_path_correct_only_within_tolerance(
+        self, script_run_bench: Any, answer: str, expected_correct: bool
+    ) -> None:
+        """Count path: correct when the extracted count is within 10% of expected, incorrect outside it."""
         task = self._rv_task_count(20)
-        result = script_run_bench._evaluate_rv(task, "found 20 undocumented symbols")
+        result = script_run_bench._evaluate_rv(task, answer)
         assert result.scored is True
-        assert result.correct is True
-
-    def test_count_path_incorrect_outside_tolerance(self, script_run_bench: Any) -> None:
-        """Count path: incorrect when extracted count is outside 10%."""
-        task = self._rv_task_count(20)
-        result = script_run_bench._evaluate_rv(task, "found 30 undocumented symbols")
-        assert result.correct is False
+        assert result.correct is expected_correct
 
     def test_count_path_prefers_answer_region_over_stray_prose(self, script_run_bench: Any) -> None:
         """Count path: a stray count in exploration must not outrank the answer-region count.
@@ -2054,55 +2030,61 @@ class TestEvaluateRv:
         assert result.recall == pytest.approx(0.7, abs=1e-9)
         assert result.evaluator_version == "v8"
 
-    def test_rv04_counts_production_functions_with_a_trailing_qualifier(self, script_run_bench: Any) -> None:
-        """A correct count is credited when the qualifier follows the noun instead of preceding it."""
-        answer = "1. **24** production functions uniquely call `lightning.pytorch.trainer.call::_call_callback_hooks`."
+    @pytest.mark.parametrize(
+        ("count", "answer"),
+        [
+            pytest.param(
+                24,
+                "1. **24** production functions uniquely call `lightning.pytorch.trainer.call::_call_callback_hooks`.",
+                id="trailing-qualifier-after-the-noun",
+            ),
+            pytest.param(
+                11,
+                "Checked the oracle directly.\n1. **11**\n\n2. Lexicographically first five uncovered symbols:\n",
+                id="bare-numbered-sub-answer",
+            ),
+            pytest.param(
+                20,
+                "1. 3 candidate files inspected.\nThe module has 20 undocumented symbols.",
+                id="phrased-count-outranks-enumerated-step-number",
+            ),
+        ],
+    )
+    def test_count_extracted_from_answer_shape(self, script_run_bench: Any, count: int, answer: str) -> None:
+        """The expected count is extracted and credited across the answer shapes a model may produce.
 
-        result = script_run_bench._evaluate_rv(self._rv_task_count(24), answer)
+        A qualifier following the noun instead of preceding it still counts, an enumerated sub-answer carrying the
+        number alone is still an extractable count, and a noun-anchored count wins over a leading integer on an
+        enumerated exploration line.
+        """
+        result = script_run_bench._evaluate_rv(self._rv_task_count(count), answer)
 
-        assert result.metric_got == 24
+        assert result.metric_got == count
         assert result.extraction_failed is False
         assert result.correct is True
 
-    def test_bare_numbered_sub_answer_supplies_the_count(self, script_run_bench: Any) -> None:
-        """An enumerated sub-answer carrying the number alone is still an extractable count."""
-        answer = "Checked the oracle directly.\n1. **11**\n\n2. Lexicographically first five uncovered symbols:\n"
+    @pytest.mark.parametrize(
+        ("found", "expected_correct"),
+        [
+            pytest.param(7, True, id="at-threshold"),
+            pytest.param(5, False, id="below-threshold"),
+        ],
+    )
+    def test_symbol_recall_path_correct_only_at_threshold(
+        self, script_run_bench: Any, found: int, expected_correct: bool
+    ) -> None:
+        """Symbol-recall path: correct when >=70% of expected symbols appear in output, incorrect below it.
 
-        result = script_run_bench._evaluate_rv(self._rv_task_count(11), answer)
-
-        assert result.metric_got == 11
-        assert result.extraction_failed is False
-
-    def test_phrased_count_outranks_an_enumerated_step_number(self, script_run_bench: Any) -> None:
-        """A noun-anchored count wins over a leading integer on an enumerated exploration line."""
-        answer = "1. 3 candidate files inspected.\nThe module has 20 undocumented symbols."
-
-        result = script_run_bench._evaluate_rv(self._rv_task_count(20), answer)
-
-        assert result.metric_got == 20
-        assert result.correct is True
-
-    def test_symbol_recall_path_correct_at_threshold(self, script_run_bench: Any) -> None:
-        """Symbol-recall path: correct when ≥70% of expected symbols appear in output."""
+        Of 10 expected symbols, 7 found by short name gives recall 0.70 (correct); only 5 gives 0.50 (incorrect).
+        """
         syms = [f"lightning.pytorch.mod::Cls.method{i}" for i in range(10)]
         task = self._rv_task_symbols(syms)
-        # Include 7 of 10 symbols by their short name (last component after split)
-        text = " ".join(s.split(".")[-1] for s in syms[:7])
+        text = " ".join(s.split(".")[-1] for s in syms[:found])
         result = script_run_bench._evaluate_rv(task, text)
         assert result.scored is True
-        assert result.correct is True
+        assert result.correct is expected_correct
         assert result.recall is not None
-        assert result.recall >= 0.70
-
-    def test_symbol_recall_path_incorrect_below_threshold(self, script_run_bench: Any) -> None:
-        """Symbol-recall path: incorrect when fewer than 70% of symbols found."""
-        syms = [f"lightning.pytorch.mod::Cls.method{i}" for i in range(10)]
-        task = self._rv_task_symbols(syms)
-        # Only 5 of 10 symbols present → recall = 0.50 < 0.70 → incorrect
-        text = " ".join(f"method{i}" for i in range(5))
-        result = script_run_bench._evaluate_rv(task, text)
-        assert result.correct is False
-        assert result.recall is not None and result.recall < 0.70
+        assert (result.recall >= 0.70) is expected_correct
 
     def test_evaluator_name_recorded(self, script_run_bench: Any) -> None:
         """evaluator_used is always _evaluate_rv."""
@@ -2166,17 +2148,62 @@ class TestEvaluateOss:
             "ground_truth": {"check": check, **gt_fields},
         }
 
-    def test_coupled_correct_when_dep_count_within_tolerance(self, script_run_bench: Any) -> None:
-        """Coupled check: correct when dep_count is within 10% of GT."""
-        task = self._oss_task("coupled", top_dep_count=100)
-        result = script_run_bench._evaluate_oss(task, "dep_count: 100")
+    @pytest.mark.parametrize(
+        ("check", "gt_fields", "answer"),
+        [
+            pytest.param("coupled", {"top_dep_count": 100}, "dep_count: 100", id="coupled-within-tolerance"),
+            pytest.param(
+                "xrefs_broken",
+                {"broken_count": 3, "broken_targets": []},
+                "3 broken xrefs detected",
+                id="xrefs-broken-exact-match",
+            ),
+            pytest.param(
+                "undocumented",
+                {"undocumented_count": 10},
+                "10 undocumented symbols found",
+                id="undocumented-within-tolerance",
+            ),
+            pytest.param("uncovered", {"uncovered_count": 20}, "20 uncovered symbols", id="uncovered-within-tolerance"),
+            pytest.param(
+                "combined_health",
+                {"undocumented_count": 5, "uncovered_count": 8},
+                "## Answer\nundocumented_count: 5\nuncovered_count: 8\n",
+                id="combined-health-both-explicit-counts",
+            ),
+        ],
+    )
+    def test_scored_and_correct_when_count_matches_ground_truth(
+        self, script_run_bench: Any, check: str, gt_fields: dict, answer: str
+    ) -> None:
+        """Every check type scores an answer whose extracted count matches the ground truth.
+
+        coupled / undocumented / uncovered accept a count within 10% of GT, xrefs_broken needs the exact broken count,
+        and combined_health requires and accepts its two labelled count fields.
+        """
+        task = self._oss_task(check, **gt_fields)
+        result = script_run_bench._evaluate_oss(task, answer)
         assert result.scored is True
         assert result.correct is True
 
-    def test_coupled_incorrect_outside_tolerance(self, script_run_bench: Any) -> None:
-        """Coupled check: incorrect when extracted count is outside 10%."""
-        task = self._oss_task("coupled", top_dep_count=100)
-        result = script_run_bench._evaluate_oss(task, "120 dependencies found")
+    @pytest.mark.parametrize(
+        ("check", "gt_fields", "answer"),
+        [
+            pytest.param("coupled", {"top_dep_count": 100}, "120 dependencies found", id="coupled-outside-tolerance"),
+            pytest.param(
+                "xrefs_broken",
+                {"broken_count": 3, "broken_targets": []},
+                "4 broken xrefs",
+                id="xrefs-broken-wrong-count",
+            ),
+        ],
+    )
+    def test_incorrect_when_count_misses_ground_truth(
+        self, script_run_bench: Any, check: str, gt_fields: dict, answer: str
+    ) -> None:
+        """An extracted count outside the 10% coupled tolerance, or not exactly the xrefs_broken count, is incorrect."""
+        task = self._oss_task(check, **gt_fields)
+        result = script_run_bench._evaluate_oss(task, answer)
         assert result.correct is False
 
     @staticmethod
@@ -2258,39 +2285,12 @@ class TestEvaluateOss:
         assert result.extraction_failed is False
         assert result.correct is False
 
-    def test_xrefs_broken_exact_match_correct(self, script_run_bench: Any) -> None:
-        """xrefs_broken check: correct when exact broken count found in output."""
-        task = self._oss_task("xrefs_broken", broken_count=3, broken_targets=[])
-        result = script_run_bench._evaluate_oss(task, "3 broken xrefs detected")
-        assert result.scored is True
-        assert result.correct is True
-
-    def test_xrefs_broken_wrong_count_incorrect(self, script_run_bench: Any) -> None:
-        """xrefs_broken check: incorrect when count does not exactly match GT."""
-        task = self._oss_task("xrefs_broken", broken_count=3, broken_targets=[])
-        result = script_run_bench._evaluate_oss(task, "4 broken xrefs")
-        assert result.correct is False
-
     def test_xrefs_broken_uses_target_names_when_available(self, script_run_bench: Any) -> None:
         """xrefs_broken check: count found symbols from broken_targets list."""
         broken_targets = [{"target": "mod::foo"}, {"target": "mod::bar"}]
         task = self._oss_task("xrefs_broken", broken_count=2, broken_targets=broken_targets)
         # Both short names present in output → got=2 == expected=2 → correct
         result = script_run_bench._evaluate_oss(task, "References to foo and bar are broken.")
-        assert result.correct is True
-
-    def test_undocumented_correct_within_tolerance(self, script_run_bench: Any) -> None:
-        """combined_health / undocumented: correct within 10%."""
-        task = self._oss_task("undocumented", undocumented_count=10)
-        result = script_run_bench._evaluate_oss(task, "10 undocumented symbols found")
-        assert result.scored is True
-        assert result.correct is True
-
-    def test_combined_health_accepts_both_explicit_counts(self, script_run_bench: Any) -> None:
-        """combined_health requires and accepts its two labelled count fields."""
-        task = self._oss_task("combined_health", undocumented_count=5, uncovered_count=8)
-        result = script_run_bench._evaluate_oss(task, "## Answer\nundocumented_count: 5\nuncovered_count: 8\n")
-        assert result.scored is True
         assert result.correct is True
 
     def test_independent_ast_count_wins_over_codemap_static_count(self, script_run_bench: Any) -> None:
@@ -2435,13 +2435,6 @@ class TestEvaluateOss:
         assert result.correct is False
         assert result.scoring_detail["components"]["uncovered_count"]["correct"] is False
 
-    def test_uncovered_correct_within_tolerance(self, script_run_bench: Any) -> None:
-        """Uncovered check: correct when extracted count is within 10%."""
-        task = self._oss_task("uncovered", uncovered_count=20)
-        result = script_run_bench._evaluate_oss(task, "20 uncovered symbols")
-        assert result.scored is True
-        assert result.correct is True
-
     def test_unknown_check_type_returns_unscored(self, script_run_bench: Any) -> None:
         """An unrecognised check value results in scored=False."""
         task = self._oss_task("unknown_check", some_count=5)
@@ -2455,7 +2448,7 @@ class TestEvaluateOss:
         assert result.evaluator_used == "_evaluate_oss"
 
     @pytest.mark.parametrize(
-        "check,gt_fields",
+        ("check", "gt_fields"),
         [
             pytest.param("coupled", {}, id="coupled"),
             pytest.param("undocumented", {}, id="undocumented-punctuation"),
@@ -2498,16 +2491,23 @@ class TestEvaluateDebug:
         assert result.scored is True
         assert result.correct is True
 
-    def test_incorrect_when_only_fn_present(self, script_run_bench: Any) -> None:
-        """Reject output when only the function name appears but not the file."""
-        task = self._debug_task()
-        result = script_run_bench._evaluate_debug(task, "The bug is in my_function somewhere")
-        assert result.correct is False
+    @pytest.mark.parametrize(
+        "output",
+        [
+            pytest.param("The bug is in my_function somewhere", id="only-fn-present"),
+            pytest.param("Check inside utils.py for the problem", id="only-file-present"),
+            pytest.param("The issue is in my_function_extra inside utils_extra.py", id="longer-identifiers"),
+            pytest.param("my_functionality moved to old_utils.py", id="substrings-of-longer-names"),
+        ],
+    )
+    def test_incorrect_unless_both_exact_function_and_file_present(self, script_run_bench: Any, output: str) -> None:
+        """Reject output that names only one of function/file, or only longer identifiers embedding them.
 
-    def test_incorrect_when_only_file_present(self, script_run_bench: Any) -> None:
-        """Reject output when only the file basename appears but not the function."""
-        task = self._debug_task()
-        result = script_run_bench._evaluate_debug(task, "Check inside utils.py for the problem")
+        Only the function name, only the file basename, and function/file substrings embedded in longer names
+        (``my_function_extra``, ``utils_extra.py``) are not enough to score.
+        """
+        task = self._debug_task(fn="my_function", filepath="src/mod/utils.py")
+        result = script_run_bench._evaluate_debug(task, output)
         assert result.correct is False
 
     def test_incorrect_when_neither_present(self, script_run_bench: Any) -> None:
@@ -2517,17 +2517,23 @@ class TestEvaluateDebug:
         assert result.correct is False
         assert result.extraction_failed is True
 
-    def test_recall_1_when_both_found(self, script_run_bench: Any) -> None:
-        """Report full recall when both expected tokens are present in the output."""
-        task = self._debug_task()
-        result = script_run_bench._evaluate_debug(task, "my_function in utils.py is the culprit")
-        assert result.recall == pytest.approx(1.0)
+    @pytest.mark.parametrize(
+        ("output", "expected_recall"),
+        [
+            pytest.param("my_function in utils.py is the culprit", 1.0, id="both-tokens-full-recall"),
+            pytest.param("only my_function appears here", 0.5, id="one-of-two-half-recall"),
+        ],
+    )
+    def test_recall_is_fraction_of_expected_tokens_found(
+        self, script_run_bench: Any, output: str, expected_recall: float
+    ) -> None:
+        """Recall is the fraction of the two expected tokens (function, file) present in the output.
 
-    def test_recall_0_5_when_one_of_two_found(self, script_run_bench: Any) -> None:
-        """Report half recall when exactly one of two expected tokens is found."""
+        Both present reports full recall; exactly one of two reports half recall.
+        """
         task = self._debug_task()
-        result = script_run_bench._evaluate_debug(task, "only my_function appears here")
-        assert result.recall == pytest.approx(0.5)
+        result = script_run_bench._evaluate_debug(task, output)
+        assert result.recall == pytest.approx(expected_recall)
 
     def test_evaluator_name_recorded(self, script_run_bench: Any) -> None:
         """evaluator_used is always _evaluate_debug."""
@@ -2540,16 +2546,6 @@ class TestEvaluateDebug:
         task = self._debug_task(fn="MyFunction")
         result = script_run_bench._evaluate_debug(task, "MYFUNCTION in utils.py")
         assert result.correct is True
-
-    @pytest.mark.parametrize(
-        "output",
-        ["The issue is in my_function_extra inside utils_extra.py", "my_functionality moved to old_utils.py"],
-    )
-    def test_longer_identifiers_and_unrelated_filenames_do_not_match(self, script_run_bench: Any, output: str) -> None:
-        """Function/file substrings embedded in longer names are not enough to score."""
-        task = self._debug_task(fn="my_function", filepath="src/mod/utils.py")
-        result = script_run_bench._evaluate_debug(task, output)
-        assert result.correct is False
 
 
 # ===========================================================================
@@ -2591,6 +2587,7 @@ class TestEvaluateFeature:
             pytest.param("entry_point: Trainer.validate.", True, id="terminal-period"),
             pytest.param("entry_point: `Trainer.validate`.", True, id="backticked-terminal-period"),
             pytest.param("entry_point: validate.", False, id="bare-method"),
+            pytest.param("entry_point: validate", False, id="bare-method-without-period"),
             pytest.param("entry_point: Other.validate.", False, id="wrong-class"),
             pytest.param("entry_point: Trainer.validate_extra.", False, id="longer-entry-point"),
             pytest.param("entry_point: Trainer.validate..", False, id="doubled-period"),
@@ -2607,14 +2604,6 @@ class TestEvaluateFeature:
         )
 
         assert result.correct is expected_correct
-
-    def test_bare_method_name_is_not_an_entry_point(self, script_run_bench: Any) -> None:
-        """A bare method name cannot substitute for the requested Class.method."""
-        task = self._feature_task(entry_point="Trainer.validate")
-        result = script_run_bench._evaluate_feature(
-            task, "## Files\nprimary_file: src/lightning/trainer/trainer.py\nentry_point: validate\n"
-        )
-        assert result.correct is False
 
     def test_exploration_prose_cannot_credit_a_different_entry_point(self, script_run_bench: Any) -> None:
         """An exploratory mention of the GT method cannot override the final labelled answer."""
@@ -2633,12 +2622,6 @@ class TestEvaluateFeature:
 
         assert result.correct is False
 
-    def test_incorrect_when_file_missing_from_output(self, script_run_bench: Any) -> None:
-        """Reject output when the file basename is absent from the output."""
-        task = self._feature_task()
-        result = script_run_bench._evaluate_feature(task, "implement validate somewhere")
-        assert result.correct is False
-
     def test_extraction_failed_when_neither_found(self, script_run_bench: Any) -> None:
         """Mark extraction as failed when neither the entry point nor file stem is found."""
         task = self._feature_task()
@@ -2653,10 +2636,18 @@ class TestEvaluateFeature:
 
     @pytest.mark.parametrize(
         "output",
-        ["Add invalidate logic in trainer_extra.py", "validation belongs in pretrainer.py"],
+        [
+            pytest.param("implement validate somewhere", id="file-missing-from-output"),
+            pytest.param("Add invalidate logic in trainer_extra.py", id="longer-method-and-file-names"),
+            pytest.param("validation belongs in pretrainer.py", id="substrings-of-longer-names"),
+        ],
     )
-    def test_longer_identifiers_and_unrelated_filenames_do_not_match(self, script_run_bench: Any, output: str) -> None:
-        """Method/file substrings embedded in longer names are not enough to score."""
+    def test_incorrect_unless_exact_entry_point_and_file_present(self, script_run_bench: Any, output: str) -> None:
+        """Reject output that omits the file, or only embeds the method/file as substrings of longer names.
+
+        A missing file basename, ``invalidate``/``trainer_extra.py`` and ``validation``/``pretrainer.py`` are not enough
+        to score.
+        """
         task = self._feature_task(entry_point="Trainer.validate", primary_file="src/lightning/trainer/trainer.py")
         result = script_run_bench._evaluate_feature(task, output)
         assert result.correct is False
@@ -2686,23 +2677,25 @@ class TestEvaluateRealIssue:
         assert result.correct is True
         assert result.recall == pytest.approx(1.0)
 
-    def test_correct_at_exactly_threshold(self, script_run_bench: Any) -> None:
-        """Accept output when recall equals exactly 0.70."""
-        files = [f"src/mod{i}.py" for i in range(10)]
-        task = self._ri_task(files)
-        # Mention exactly 7 out of 10 basenames → recall = 0.70
-        text = " ".join(f"mod{i}" for i in range(7))
-        result = script_run_bench._evaluate_real_issue(task, text)
-        assert result.correct is True
+    @pytest.mark.parametrize(
+        ("mentioned", "expected_correct"),
+        [
+            pytest.param(7, True, id="exactly-threshold"),
+            pytest.param(5, False, id="below-threshold"),
+        ],
+    )
+    def test_correct_only_when_recall_reaches_threshold(
+        self, script_run_bench: Any, mentioned: int, expected_correct: bool
+    ) -> None:
+        """Accept output when recall is at least 0.70 of GT files; reject below it.
 
-    def test_incorrect_below_threshold(self, script_run_bench: Any) -> None:
-        """Reject output when fewer than 70% of GT files are found."""
+        Of 10 GT files, mentioning exactly 7 (recall 0.70) is correct; mentioning only 5 (recall 0.50) is not.
+        """
         files = [f"src/mod{i}.py" for i in range(10)]
         task = self._ri_task(files)
-        # Only 5 of 10 → recall = 0.50 < 0.70
-        text = " ".join(f"mod{i}" for i in range(5))
+        text = " ".join(f"mod{i}" for i in range(mentioned))
         result = script_run_bench._evaluate_real_issue(task, text)
-        assert result.correct is False
+        assert result.correct is expected_correct
 
     def test_empty_files_changed_returns_unscored(self, script_run_bench: Any) -> None:
         """Leave the result unscored when ground_truth.files_changed is empty."""
@@ -2722,37 +2715,52 @@ class TestEvaluateRealIssue:
         result = script_run_bench._evaluate_real_issue(task, "trainer.py")
         assert result.evaluator_used == "_evaluate_real_issue"
 
-    def test_bare_basename_does_not_match_deep_path(self, script_run_bench: Any) -> None:
-        """A bare basename no longer scores a deeply-nested GT file — path-with-parent required."""
-        task = self._ri_task(["deeply/nested/path/trainer.py"])
-        result = script_run_bench._evaluate_real_issue(task, "edit trainer.py to fix the bug")
-        assert result.correct is False
+    @pytest.mark.parametrize(
+        ("files", "answer", "expected_correct"),
+        [
+            pytest.param(
+                ["deeply/nested/path/trainer.py"],
+                "edit trainer.py to fix the bug",
+                False,
+                id="bare-basename-does-not-match-deep-path",
+            ),
+            pytest.param(
+                ["deeply/nested/path/trainer.py"],
+                "## Files\npath/trainer.py\n",
+                True,
+                id="path-with-parent-matches",
+            ),
+            pytest.param(
+                ["src/lightning/pytorch/trainer/trainer.py"],
+                "The trainer orchestrates training; the trainer loop runs many trainer callbacks.",
+                False,
+                id="verbose-prose-common-stem-does-not-score",
+            ),
+            pytest.param(
+                ["src/lightning/pytorch/trainer/trainer.py"],
+                "## Files\nlightning/pytorch/trainer/trainer.py\n",
+                True,
+                id="structured-answer-with-path-scores",
+            ),
+            pytest.param(
+                ["src/pkg/foo.py"],
+                "## Files\npkg/foobar.py\n",
+                False,
+                id="path-substring-inside-longer-filename-does-not-score",
+            ),
+        ],
+    )
+    def test_file_hit_requires_path_with_parent_not_bare_name(
+        self, script_run_bench: Any, files: list[str], answer: str, expected_correct: bool
+    ) -> None:
+        """A GT file is credited only when the answer names it by a path-with-parent, never by prose or substring.
 
-    def test_path_with_parent_matches(self, script_run_bench: Any) -> None:
-        """A path-with-parent form (parent/stem) scores the GT file."""
-        task = self._ri_task(["deeply/nested/path/trainer.py"])
-        result = script_run_bench._evaluate_real_issue(task, "## Files\npath/trainer.py\n")
-        assert result.correct is True
-
-    def test_verbose_prose_mentioning_common_stem_does_not_score(self, script_run_bench: Any) -> None:
-        """A verbose answer that only name-drops `trainer` in prose scores nothing."""
-        task = self._ri_task(["src/lightning/pytorch/trainer/trainer.py"])
-        prose = "The trainer orchestrates training; the trainer loop runs many trainer callbacks."
-        result = script_run_bench._evaluate_real_issue(task, prose)
-        assert result.correct is False
-
-    def test_structured_answer_with_path_scores(self, script_run_bench: Any) -> None:
-        """The same task scores when the answer names the file by its path in a block."""
-        task = self._ri_task(["src/lightning/pytorch/trainer/trainer.py"])
-        answer = "## Files\nlightning/pytorch/trainer/trainer.py\n"
+        A bare basename or a verbose name-drop of the stem scores nothing against a deeply-nested GT file, a path
+        candidate embedded in a longer filename is not a hit, while a ``parent/stem`` path in a block scores.
+        """
+        task = self._ri_task(files)
         result = script_run_bench._evaluate_real_issue(task, answer)
-        assert result.correct is True
-
-    def test_path_substring_inside_unrelated_filename_does_not_score(self, script_run_bench: Any) -> None:
-        """A path candidate embedded in a longer filename must not count as a file hit."""
-        task = self._ri_task(["src/pkg/foo.py"])
-        result = script_run_bench._evaluate_real_issue(task, "## Files\npkg/foobar.py\n")
-        assert result.correct is False
+        assert result.correct is expected_correct
 
 
 # ===========================================================================
@@ -2783,7 +2791,7 @@ class TestStructuredBlockScoring:
         assert degraded is False
 
     @pytest.mark.parametrize(
-        "stem,text,expected",
+        ("stem", "text", "expected"),
         [
             pytest.param(
                 "trainer", "the trainer runs the loop", False, id="trainer-the-trainer-runs-the-loop"
@@ -2805,7 +2813,7 @@ class TestStructuredBlockScoring:
         assert script_run_bench._stem_matches(stem, text) is expected
 
     @pytest.mark.parametrize(
-        "file_path,text,expected",
+        ("file_path", "text", "expected"),
         [
             pytest.param(
                 "a/b/logger_connector.py",
@@ -2858,7 +2866,7 @@ class TestContaminationDetection:
         }
 
     @pytest.mark.parametrize(
-        "text,expected",
+        ("text", "expected"),
         [
             pytest.param("cat /repo/.cache/codemap/proj.json", True, id="cat-repo-.cache-codemap-proj.json"),
             pytest.param("less .cache/scan/x.json", True, id="less-.cache-scan-x.json"),
@@ -2877,23 +2885,26 @@ class TestContaminationDetection:
         """Full-string index/binary access is detected on POSIX and Windows paths; ordinary grep is not."""
         assert script_run_bench._is_contaminating_access(text) is expected
 
-    def test_plain_arm_index_read_flags_contamination(self, script_run_bench: Any, tmp_path: Path) -> None:
-        """A plain-arm Read of .cache/codemap/*.json increments contamination_hits."""
-        runner = self._runner(script_run_bench, tmp_path)
-        result = script_run_bench.BenchRun(
-            arm="plain", task_id="RI-01", task_type="real_issue", model="haiku", success=False
-        )
-        runner._handle(self._read_event(tmp_path), result, {}, 0.0)
-        assert result.contamination_hits == 1
+    @pytest.mark.parametrize(
+        ("arm", "expected_hits"),
+        [
+            pytest.param("plain", 1, id="plain-arm-flagged"),
+            pytest.param("codemap", 0, id="codemap-arm-not-flagged"),
+        ],
+    )
+    def test_index_read_flags_contamination_only_for_plain_arm(
+        self, script_run_bench: Any, tmp_path: Path, arm: str, expected_hits: int
+    ) -> None:
+        """A Read of .cache/codemap/*.json increments contamination_hits for the plain arm only.
 
-    def test_codemap_arm_index_read_not_flagged(self, script_run_bench: Any, tmp_path: Path) -> None:
-        """The codemap arm legitimately touches the index — no contamination is recorded for it."""
+        The codemap arm legitimately touches the index, so no contamination is recorded for it.
+        """
         runner = self._runner(script_run_bench, tmp_path)
         result = script_run_bench.BenchRun(
-            arm="codemap", task_id="RI-01", task_type="real_issue", model="haiku", success=False
+            arm=arm, task_id="RI-01", task_type="real_issue", model="haiku", success=False
         )
         runner._handle(self._read_event(tmp_path), result, {}, 0.0)
-        assert result.contamination_hits == 0
+        assert result.contamination_hits == expected_hits
 
 
 # ===========================================================================
@@ -2939,7 +2950,8 @@ class TestEvaluateDevelopBr:
         output = " ".join(f"lightning.pytorch.mod::Cls.method{i}" for i in range(5))
         result = script_run_bench._evaluate_develop_br(task, output)
         assert result.correct is False
-        assert result.recall is not None and result.recall < 0.70
+        assert result.recall is not None
+        assert result.recall < 0.70
 
     def test_empty_callers_returns_unscored(self, script_run_bench: Any) -> None:
         """Leave the result unscored when ground_truth.fn_callers is an empty list."""
@@ -2953,15 +2965,6 @@ class TestEvaluateDevelopBr:
         task = self._br_task(callers)
         result = script_run_bench._evaluate_develop_br(task, "lightning.pytorch.trainer::Trainer.fit")
         assert result.recall is not None
-
-    def test_dotted_form_matched_as_fallback(self, script_run_bench: Any) -> None:
-        """Dotted-form output (no ::) is matched against expected callers."""
-        callers = ["lightning.pytorch.trainer.trainer::Trainer.fit"]
-        task = self._br_task(callers)
-        # Write the dotted equivalent without :: separator
-        output = "lightning.pytorch.trainer.trainer.Trainer.fit was found"
-        result = script_run_bench._evaluate_develop_br(task, output)
-        assert result.recall == pytest.approx(1.0)
 
     def test_extraction_failed_when_no_caller_found(self, script_run_bench: Any) -> None:
         """Mark extraction as failed when output contains no recognizable caller token."""
@@ -2984,56 +2987,65 @@ class TestEvaluateDevelopBr:
         result = script_run_bench._evaluate_develop_br(task, "lightning.pytorch.mod::Cls.fn")
         assert result.evaluator_used == "_evaluate_develop_br"
 
-    def test_fuzzy_underscore_prefix_matched(self, script_run_bench: Any) -> None:
-        """Underscore-prefixed class names match when method is identical (same module)."""
-        callers = ["lightning.pytorch.loops.fit_loop::_FitLoop.advance"]
-        task = self._br_task(callers)
-        # Agent wrote without underscore prefix
-        output = "lightning.pytorch.loops.fit_loop::FitLoop.advance"
-        result = script_run_bench._evaluate_develop_br(task, output)
-        assert result.recall == pytest.approx(1.0)
+    @pytest.mark.parametrize(
+        ("callers", "output", "expected_recall"),
+        [
+            pytest.param(
+                ["lightning.pytorch.trainer.trainer::Trainer.fit"],
+                "lightning.pytorch.trainer.trainer.Trainer.fit was found",
+                1.0,
+                id="dotted-form-matched-as-fallback",
+            ),
+            pytest.param(
+                ["lightning.pytorch.loops.fit_loop::_FitLoop.advance"],
+                "lightning.pytorch.loops.fit_loop::FitLoop.advance",
+                1.0,
+                id="fuzzy-underscore-prefix-same-module",
+            ),
+            pytest.param(
+                ["lightning.pytorch.loops.evaluation_loop::_EvaluationLoop.advance"],
+                "loops.evaluation_loop::EvaluationLoop.advance",
+                1.0,
+                id="abbreviated-module-and-dropped-underscore",
+            ),
+            pytest.param(
+                ["lightning.pytorch.loops.evaluation_loop::_EvaluationLoop._evaluation_step"],
+                "The caller is _EvaluationLoop._evaluation_step here.",
+                1.0,
+                id="bare-distinctive-tail-credits-via-form-11",
+            ),
+            pytest.param(
+                ["lightning.pytorch.loops.evaluation_loop::_EvaluationLoop._evaluation_step"],
+                "lightning.pytorch.other.mod::EvaluationLoop._evaluation_step",
+                0.0,
+                id="same-tail-in-different-module-rejected",
+            ),
+            pytest.param(
+                ["lightning.pytorch.trainer.trainer::Trainer.fit"],
+                "lightning.pytorch.wrong.module::WrongClass.wrong_method",
+                0.0,
+                id="plausible-but-wrong-qname-rejected",
+            ),
+            pytest.param(
+                ["lightning.pytorch.trainer.trainer::Trainer.setup"],
+                "The relevant caller looks like Trainer.setup based on my search.",
+                0.0,
+                id="bare-common-tail-too-weak-to-credit",
+            ),
+        ],
+    )
+    def test_caller_form_variants_credit_or_reject(
+        self, script_run_bench: Any, callers: list[str], output: str, expected_recall: float
+    ) -> None:
+        """Recall credits a caller answered in a tolerated form and nothing for a wrong or too-weak one.
 
-    def test_abbreviated_module_underscore_variant_still_scores(self, script_run_bench: Any) -> None:
-        """An abbreviated-module + dropped-underscore answer still scores (module suffix)."""
-        callers = ["lightning.pytorch.loops.evaluation_loop::_EvaluationLoop.advance"]
+        Dotted form (no ``::``), a dropped underscore prefix in the same module, an abbreviated module suffix,
+        and a distinctive bare ``Class.method`` tail credit the GT caller. A same tail in a different module, a
+        fully-qualified but wrong name, and a bare common method tail (``setup``) must score nothing.
+        """
         task = self._br_task(callers)
-        output = "loops.evaluation_loop::EvaluationLoop.advance"
         result = script_run_bench._evaluate_develop_br(task, output)
-        assert result.recall == pytest.approx(1.0)
-
-    def test_wrong_module_same_tail_rejected(self, script_run_bench: Any) -> None:
-        """A same Class.method tail in a DIFFERENT module must not credit the GT caller."""
-        callers = ["lightning.pytorch.loops.evaluation_loop::_EvaluationLoop._evaluation_step"]
-        task = self._br_task(callers)
-        # Fully qualified but wrong module (and dropped underscore) — the tail matches, the module does not.
-        output = "lightning.pytorch.other.mod::EvaluationLoop._evaluation_step"
-        result = script_run_bench._evaluate_develop_br(task, output)
-        assert result.recall == pytest.approx(0.0)
-
-    def test_plausible_but_wrong_qname_rejected(self, script_run_bench: Any) -> None:
-        """A fully-qualified but entirely wrong caller scores nothing."""
-        callers = ["lightning.pytorch.trainer.trainer::Trainer.fit"]
-        task = self._br_task(callers)
-        output = "lightning.pytorch.wrong.module::WrongClass.wrong_method"
-        result = script_run_bench._evaluate_develop_br(task, output)
-        assert result.recall == pytest.approx(0.0)
-
-    def test_bare_common_tail_fallback_rejected(self, script_run_bench: Any) -> None:
-        """An unqualified bare `Class.common_method` tail is too weak to credit."""
-        callers = ["lightning.pytorch.trainer.trainer::Trainer.setup"]
-        task = self._br_task(callers)
-        # No module-qualified name anywhere → Form 11 fires, but `setup` is a common method tail.
-        output = "The relevant caller looks like Trainer.setup based on my search."
-        result = script_run_bench._evaluate_develop_br(task, output)
-        assert result.recall == pytest.approx(0.0)
-
-    def test_bare_distinctive_tail_fallback_still_scores(self, script_run_bench: Any) -> None:
-        """A distinctive (non-common) bare Class.method tail still credits via Form 11."""
-        callers = ["lightning.pytorch.loops.evaluation_loop::_EvaluationLoop._evaluation_step"]
-        task = self._br_task(callers)
-        output = "The caller is _EvaluationLoop._evaluation_step here."
-        result = script_run_bench._evaluate_develop_br(task, output)
-        assert result.recall == pytest.approx(1.0)
+        assert result.recall == pytest.approx(expected_recall)
 
     def test_md_pointer_does_not_read_file(self, script_run_bench: Any, tmp_path: Path) -> None:
         """A `→ foo.md` pointer is treated as inline text; the file is never read."""
@@ -3056,7 +3068,7 @@ class TestModuleCompatible:
     """Module compatibility gate for the underscore-insensitive fuzzy tier."""
 
     @pytest.mark.parametrize(
-        "gt_module,found_module,expected",
+        ("gt_module", "found_module", "expected"),
         [
             pytest.param("x.mod", "x.mod", True, id="equal"),
             pytest.param("lightning.pytorch.loops.evaluation_loop", "loops.evaluation_loop", True, id="found-suffix"),
@@ -3083,7 +3095,7 @@ class TestMaxTurnsForTask:
         assert script_run_bench._max_turns_for_task({"type": "symbol_extraction"}) == 40
 
     @pytest.mark.parametrize(
-        "task_type,callers,expected",
+        ("task_type", "callers", "expected"),
         [
             pytest.param("develop_blast_radius", 30, 120, id="br-scales-with-callers"),
             pytest.param("fn_call_graph", 5, 80, id="fn-hits-floor"),
@@ -3130,7 +3142,7 @@ class TestPairedAccuracy:
         return dict(scored=True, extraction_failed=False, **kw)
 
     @pytest.mark.parametrize(
-        "run,expected",
+        ("run", "expected"),
         [
             pytest.param(None, False, id="none"),
             pytest.param(dict(scored=True, correct=True), True, id="extracted"),
@@ -3269,10 +3281,6 @@ class TestExtractDiff:
         assert "--- a/x.py" in result
         assert "+++ b/x.py" in result
 
-    def test_none_when_no_diff_present(self, script_run_bench: Any) -> None:
-        """None returned when the text contains no unified diff headers."""
-        assert script_run_bench._extract_diff("no diff here") is None
-
     def test_trailing_fence_stripped(self, script_run_bench: Any) -> None:
         """Trailing markdown code fence is stripped from the extracted diff."""
         text = "Here:\n--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a\n+b\n```"
@@ -3287,13 +3295,17 @@ class TestExtractDiff:
         assert result is not None
         assert result.endswith("\n")
 
-    def test_empty_string_returns_none(self, script_run_bench: Any) -> None:
-        """Empty input string returns None."""
-        assert script_run_bench._extract_diff("") is None
-
-    def test_partial_diff_header_returns_none(self, script_run_bench: Any) -> None:
-        """Text with only --- but no +++ header returns None."""
-        assert script_run_bench._extract_diff("--- a/x.py\njust a comment") is None
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("no diff here", id="no-diff-headers"),
+            pytest.param("", id="empty-string"),
+            pytest.param("--- a/x.py\njust a comment", id="minus-header-without-plus-header"),
+        ],
+    )
+    def test_returns_none_without_complete_diff(self, script_run_bench: Any, text: str) -> None:
+        """None is returned for text with no unified diff headers, empty input, or only a ``---`` header."""
+        assert script_run_bench._extract_diff(text) is None
 
 
 # ===========================================================================
@@ -3304,20 +3316,11 @@ class TestExtractDiff:
 class TestWorkflowTypeOf:
     """Workflow key accessor with task_type fallback."""
 
-    def test_returns_workflow_type_when_set(self, script_run_bench: Any) -> None:
-        """Return workflow_type field when it is non-empty."""
-        run = _make_run(script_run_bench, workflow_type="query", task_type="symbol_extraction")
-        assert script_run_bench._workflow_type_of(run) == "query"
-
-    def test_falls_back_to_task_type_when_empty(self, script_run_bench: Any) -> None:
-        """Return task_type when workflow_type is empty string."""
-        run = _make_run(script_run_bench, workflow_type="", task_type="symbol_extraction")
-        assert script_run_bench._workflow_type_of(run) == "symbol_extraction"
-
     @pytest.mark.parametrize(
-        "workflow_type,task_type,expected",
+        ("workflow_type", "task_type", "expected"),
         [
             pytest.param("query", "symbol_extraction", "query", id="query"),
+            pytest.param("", "symbol_extraction", "symbol_extraction", id="empty-falls-back-to-symbol-extraction"),
             pytest.param("", "fn_call_graph", "fn_call_graph", id="empty"),
             pytest.param("debug", "debug_from_trace", "debug", id="debug"),
         ],
@@ -3424,19 +3427,37 @@ class TestEffectiveRecall:
         run.quality = script_run_bench.BenchQuality(scored=True, correct=False, extraction_failed=True)
         assert script_run_bench._effective_recall(run) is None
 
-    def test_correct_line_task_scores_one(self, script_run_bench: Any) -> None:
-        """Line/count evaluators (no recall field) score 1.0 when correct within tolerance."""
-        run = _make_run(script_run_bench)
-        run.quality = script_run_bench.BenchQuality(scored=True, correct=True, metric_got=100, metric_expected=98)
-        assert script_run_bench._effective_recall(run) == pytest.approx(1.0)
+    @pytest.mark.parametrize(
+        ("quality_fields", "expected_recall"),
+        [
+            pytest.param(
+                {"scored": True, "correct": True, "metric_got": 100, "metric_expected": 98},
+                1.0,
+                id="correct-line-task-scores-one",
+            ),
+            pytest.param(
+                {
+                    "scored": True,
+                    "correct": False,
+                    "extraction_failed": False,
+                    "metric_got": 1116,
+                    "metric_expected": 1024,
+                },
+                0.0,
+                id="wrong-but-parsed-line-scores-zero-not-ratio",
+            ),
+        ],
+    )
+    def test_line_task_without_recall_field_scores_binary_correctness(
+        self, script_run_bench: Any, quality_fields: dict, expected_recall: float
+    ) -> None:
+        """Line/count evaluators (no recall field) score 1.0 when correct and 0.0 when parsed but wrong.
 
-    def test_wrong_but_parsed_line_scores_zero_not_ratio(self, script_run_bench: Any) -> None:
-        """A parsed-but-wrong line number (got≫expected) is a real miss → 0.0, never a ratio above 1.0."""
+        A parsed-but-wrong line number (got much greater than expected) is a real miss, never a ratio above 1.0.
+        """
         run = _make_run(script_run_bench)
-        run.quality = script_run_bench.BenchQuality(
-            scored=True, correct=False, extraction_failed=False, metric_got=1116, metric_expected=1024
-        )
-        assert script_run_bench._effective_recall(run) == pytest.approx(0.0)
+        run.quality = script_run_bench.BenchQuality(**quality_fields)
+        assert script_run_bench._effective_recall(run) == pytest.approx(expected_recall)
 
     def test_returns_none_when_none_run(self, script_run_bench: Any) -> None:
         """Return None for a None run argument."""
@@ -3517,34 +3538,34 @@ class TestRelocatedIndexAdmission:
 
         assert manifest["index"]["raw_sha256"] == relocation["frozen_index_sha256"]
 
-    def test_provenance_naming_the_wrong_frozen_source_is_rejected(
-        self, script_run_bench: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("field", "digest", "message"),
+        [
+            pytest.param("frozen_index_sha256", "0" * 64, "wrong frozen source", id="wrong-frozen-source"),
+            pytest.param("derived_index_sha256", "1" * 64, "changed after relocation", id="bytes-on-disk-disagree"),
+        ],
+    )
+    def test_inconsistent_provenance_is_rejected(
+        self,
+        script_run_bench: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        field: str,
+        digest: str,
+        message: str,
     ) -> None:
-        """Provenance whose frozen source is not the locked index is rejected.
+        """Provenance whose frozen source is not the locked index, or whose derived hash misses the disk, is rejected.
 
-        Scenario: a caller supplies provenance derived from some other frozen index; admitting it
-        would let an unrelated graph enter the run under the locked manifest's authority.
+        Scenarios: a caller supplies provenance derived from some other frozen index, so admitting it would
+        let an unrelated graph enter the run under the locked manifest's authority; or the relocated copy
+        changed after its provenance was written, so the digest the run would attest to is no longer the index
+        the model actually reads.
         """
         repo, index_path, manifest, relocation = _relocated_worktree_index(tmp_path)
         monkeypatch.setattr(bench_tasks, "_PARITY_MANIFEST", manifest)
-        relocation["frozen_index_sha256"] = "0" * 64
+        relocation[field] = digest
 
-        with pytest.raises(ValueError, match="wrong frozen source"):
-            script_run_bench._validate_primary_runtime(repo, index_path, relocation)
-
-    def test_provenance_disagreeing_with_the_bytes_on_disk_is_rejected(
-        self, script_run_bench: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        """Provenance whose derived hash misses the on-disk index is rejected.
-
-        Scenario: the relocated copy changed after its provenance was written, so the digest the
-        run would attest to is no longer the index the model actually reads.
-        """
-        repo, index_path, manifest, relocation = _relocated_worktree_index(tmp_path)
-        monkeypatch.setattr(bench_tasks, "_PARITY_MANIFEST", manifest)
-        relocation["derived_index_sha256"] = "1" * 64
-
-        with pytest.raises(ValueError, match="changed after relocation"):
+        with pytest.raises(ValueError, match=message):
             script_run_bench._validate_primary_runtime(repo, index_path, relocation)
 
     def test_absent_provenance_keeps_the_byte_gate(

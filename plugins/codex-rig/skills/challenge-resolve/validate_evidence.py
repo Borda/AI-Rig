@@ -59,9 +59,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
+#: Directory containing this validator, used to locate the plugin root.
 SKILL_DIRECTORY = Path(__file__).resolve().parent
+#: Root of the Codex Rig plugin, from which role cards and the code-review validator are read.
 PLUGIN_ROOT = SKILL_DIRECTORY.parents[1]
+#: Plugin shared directory placed on the import path for the adversarial-loop and diff helpers.
 SHARED_DIRECTORY = PLUGIN_ROOT / "shared"
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
@@ -69,17 +71,27 @@ if str(SHARED_DIRECTORY) not in sys.path:
 from adversarial_loop import ledger_digest, load_ledger, summarize_ledger, validate_ledger  # noqa: E402
 from collect_diff import capture_source_snapshot  # noqa: E402
 
-
+#: Pattern for a lowercase 64-character hexadecimal SHA-256 digest.
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+#: Exact key set required in each finding record of an evidence report.
 _FINDING_KEYS = {"signature", "tier", "structural", "disposition", "evidence"}
+#: Exact top-level key set of schema version 1 evidence.
 _EVIDENCE_KEYS = {"schema_version", "repository", "scope_paths", "current_source_path", "rounds"}
+#: Exact key set of each review round entry in schema version 1 evidence.
 _ROUND_EVIDENCE_KEYS = {"index", "source_path", "review_run", "role"}
+#: Exact top-level key set of schema version 2 evidence bound to a request and supporting sources.
 _BOUND_EVIDENCE_KEYS = _EVIDENCE_KEYS | {"request", "supporting_paths", "current_supporting_source_path"}
+#: Top-level key set of schema version 2 evidence that continues earlier work, adding an origin.
 _CONTINUED_EVIDENCE_KEYS = _BOUND_EVIDENCE_KEYS | {"origin"}
+#: Round entry keys for bound evidence: the base round keys plus the supporting source path.
 _BOUND_ROUND_KEYS = _ROUND_EVIDENCE_KEYS | {"supporting_source_path"}
+#: Exact round entry key set for schema version 2 evidence, adding the triage record.
 _TRIAGED_ROUND_KEYS = _BOUND_ROUND_KEYS | {"triage"}
+#: Exact key set of each triage entry that re-maps a reported finding signature.
 _TRIAGE_KEYS = {"reported_signature", "signature", "tier", "reason", "evidence"}
+#: Exact key set of the request block describing the goal, specification, and completion criteria.
 _REQUEST_KEYS = {"goal", "specification", "done_when"}
+#: Pattern matching a whole report that is one adversarial-loop fenced block, with optional provenance comment.
 _REPORT_BLOCK = re.compile(
     r"(?:<!-- codex-review-provenance role=[a-z-]+ run=\S+ input=[0-9a-f]{64} "
     r"context=[0-9a-f]{64} attempt=[1-9][0-9]* -->\n)?```adversarial-loop\n(.*?)\n```",
@@ -177,8 +189,8 @@ def _current_scoped_diff(
 ) -> bytes:
     """Read the current tracked patch and reject a concurrent scoped source change."""
     try:
-        diff = subprocess.run(
-            [
+        diff = subprocess.run(  # noqa: S603 - argv list, no shell
+            [  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
                 "git",
                 "-C",
                 os.fspath(repository_path),
@@ -419,7 +431,7 @@ def preflight_review_plan(plan_path: Path, request_evidence_path: Path, supporti
 def _validate_manifest_only(review_run: Path, codex_home: Path, parent_thread_id: str) -> dict[str, Any]:
     """Delegate route and output provenance verification to Code Review's authoritative validator."""
     validator = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
-    completed = subprocess.run(
+    completed = subprocess.run(  # noqa: S603 - argv list, no shell
         [
             sys.executable,
             str(validator),
@@ -796,7 +808,8 @@ def validate_loop_evidence(run_dir: Path, codex_home: Path) -> None:
     if not isinstance(entries, list) or len(entries) != len(rounds):
         raise ValueError("loop-evidence-round-count-mismatch")
     author = ledger["implementation_author"]
-    assert isinstance(author, str)
+    if not isinstance(author, str):
+        raise TypeError(f"author must be str, got {type(author).__name__}")
     if rounds:
         active_owner = os.environ.get("CODEX_THREAD_ID", "")
         if not active_owner.strip():

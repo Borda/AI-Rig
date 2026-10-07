@@ -11,12 +11,13 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 from test_finding_presentation import VALIDATOR, _write_remediation_candidate
 
 # Importing the fixture function registers the shared `assessed_pr` fixture in this module.
-from test_review_completion_gate import FINDER, _assessed_pr  # noqa: F401
-
+from test_review_completion_gate import (
+    FINDER,
+    _assessed_pr,  # noqa: F401
+)
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 DERIVED_HANDOFF_FIELDS = ("verification", "confidence", "artifacts", "tables", "source_records", "source_coverage")
@@ -26,7 +27,8 @@ def _load_helper() -> ModuleType:
     """Load the remediation finalize helper by file path, as the skill invokes it."""
     path = PLUGIN_ROOT / "shared" / "remediation_finalize.py"
     spec = importlib.util.spec_from_file_location("codex_rig_remediation_finalize", path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

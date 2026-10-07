@@ -11,13 +11,12 @@ from pathlib import Path
 from _bench_query.models import TimingStats
 from _bench_query.sources import module_to_grep_pattern, module_to_package
 
-
 # ---- COLD BASELINE ----
 
 
 def _run(cmd: list[str], *, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
     """Run a command with standard benchmark defaults (capture, text, 30s timeout)."""
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=cwd)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=cwd)  # noqa: S603 - argv list, no shell
 
 
 class CallCounter:

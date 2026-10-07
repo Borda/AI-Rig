@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 CONSUMER_PLUGINS = ("cc_foundry", "cc_oss", "cc_develop", "cc_research")
 TARGET_SELECTOR = "bridge@borda-ai-rig"

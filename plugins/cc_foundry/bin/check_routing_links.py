@@ -95,10 +95,11 @@ class RefType(str, Enum):
     HARDCODED = "hardcoded"
 
 
+#: Default location of Claude Code's installed-plugins registry, used to resolve cached plugin paths.
 _DEFAULT_INSTALLED_PLUGINS_JSON = Path.home() / ".claude" / "plugins" / "installed_plugins.json"
 
-# Guard against pathological inputs that would exhaust heap memory when read
-# in one shot. 10 MB is well above any realistic Markdown / agent file.
+#: Guard against pathological inputs that would exhaust heap memory when read
+#: in one shot. 10 MB is well above any realistic Markdown / agent file.
 _MAX_FILE_SIZE = 10 * 1024 * 1024
 
 
@@ -243,26 +244,26 @@ class CheckResults:
 # Path extraction helpers
 # ---------------------------------------------------------------------------
 
-# Pattern 1: $VAR/../<dir>/<file>.md  e.g. $AUDIT_TPL/../modes/upgrade.md
+#: Pattern 1: $VAR/../<dir>/<file>.md  e.g. $AUDIT_TPL/../modes/upgrade.md
 _COMPUTED_REL_RE = re.compile(r'"?\$\{?([A-Z_]+)\}?\s*/\.\./([^\s"\'`]+\.[a-zA-Z]{1,6})"?')
 
-# Pattern 2: $VAR/<file>.ext  e.g. Read "$_FS/task-hygiene.md"
+#: Pattern 2: $VAR/<file>.ext  e.g. Read "$_FS/task-hygiene.md"
 _COMPUTED_ABS_RE = re.compile(r'"?\$\{?([A-Z_]+)\}?/([a-zA-Z0-9_.-]+\.[a-zA-Z]{1,6})"?')
 
-# Pattern 3: ${CLAUDE_PLUGIN_ROOT:-plugins/<x>}/bin/<script>  OR  ${CLAUDE_PLUGIN_ROOT}/bin/<script>
+#: Pattern 3: ${CLAUDE_PLUGIN_ROOT:-plugins/<x>}/bin/<script>  OR  ${CLAUDE_PLUGIN_ROOT}/bin/<script>
 _BIN_SCRIPT_RE = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT(?::-plugins/([a-zA-Z0-9_-]+))?\}/bin/([a-zA-Z0-9_.-]+)")
 
-# Pattern 4: Read "$X/filename.ext" where X is a variable
+#: Pattern 4: Read "$X/filename.ext" where X is a variable
 _READ_VAR_RE = re.compile(r'(?:Read|read)\s+"?\$\{?([A-Z_]+)\}?/([a-zA-Z0-9_.-]+\.[a-zA-Z]{1,6})"?')
 
-# Pattern 5: hardcoded plugins/<plugin>/skills/<dir>/<file>.md
+#: Pattern 5: hardcoded plugins/<plugin>/skills/<dir>/<file>.md
 _HARDCODED_RE = re.compile(r'plugins/([a-zA-Z0-9_-]+)/[^\s"\'`]*?/([a-zA-Z0-9_.-]+\.md)\b')
 
-# Map known variable names to their resolution roots within the local plugin tree.
-# Value is (folder, path_within_plugin). The first element is the on-disk SOURCE
-# folder (cc_-prefixed after the folder rename) so resolved_local points at a
-# path that exists in the repo working tree. The marketplace plugin NAME used for
-# cache/registry lookup is derived separately via `_folder_to_name`.
+#: Map known variable names to their resolution roots within the local plugin tree.
+#: Value is (folder, path_within_plugin). The first element is the on-disk SOURCE
+#: folder (cc_-prefixed after the folder rename) so resolved_local points at a
+#: path that exists in the repo working tree. The marketplace plugin NAME used for
+#: cache/registry lookup is derived separately via `_folder_to_name`.
 _VAR_ROOTS: dict[str, tuple[str, str]] = {
     "AUDIT_TPL": ("cc_foundry", "skills/audit/templates"),
     "_FS": ("cc_foundry", "skills/_shared"),
@@ -1144,7 +1145,7 @@ def main(argv: list[str] | None = None) -> int:
         import subprocess as _sp
 
         _r = _sp.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - git resolved via PATH on purpose
             capture_output=True,
             text=True,
             cwd=str(plugins_dir),

@@ -7,9 +7,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
 from smoke_test_index import SmokeResult, compute_age_hours, main, smoke_test_index
-
 
 # ---------------------------------------------------------------------------
 # compute_age_hours — pure function
@@ -19,21 +17,22 @@ from smoke_test_index import SmokeResult, compute_age_hours, main, smoke_test_in
 class TestComputeAgeHours:
     """compute_age_hours: rounding, clamping, and boundary values."""
 
-    def test_exactly_one_hour(self) -> None:
-        """3600-second gap returns exactly 1.0."""
-        assert compute_age_hours(0.0, 3600.0) == 1.0
-
-    def test_rounds_to_two_decimal_places(self) -> None:
-        """Result is rounded to 2 dp."""
-        assert compute_age_hours(0.0, 8190.0) == 2.27
-
-    def test_clamped_at_zero_when_mtime_in_future(self) -> None:
-        """Mtime > now (future file) returns 0.0, never negative."""
-        assert compute_age_hours(100.0, 50.0) == 0.0
-
-    def test_zero_age(self) -> None:
-        """Report zero age when the modification and current times match."""
-        assert compute_age_hours(42.0, 42.0) == 0.0
+    @pytest.mark.parametrize(
+        ("mtime", "now", "expected_hours"),
+        [
+            # 3600-second gap returns exactly 1.0.
+            pytest.param(0.0, 3600.0, 1.0, id="exactly-one-hour"),
+            # Result is rounded to 2 dp.
+            pytest.param(0.0, 8190.0, 2.27, id="rounds-to-two-decimal-places"),
+            # Mtime > now (future file) returns 0.0, never negative.
+            pytest.param(100.0, 50.0, 0.0, id="clamped-at-zero-when-mtime-in-future"),
+            # Report zero age when the modification and current times match.
+            pytest.param(42.0, 42.0, 0.0, id="zero-age"),
+        ],
+    )
+    def test_age_in_hours(self, mtime: float, now: float, expected_hours: float) -> None:
+        """The age is the mtime-to-now gap in hours: rounded to 2 dp and never negative."""
+        assert compute_age_hours(mtime, now) == expected_hours
 
 
 # ---------------------------------------------------------------------------
@@ -100,21 +99,24 @@ class TestSmokeTestIndex:
         assert result.ok is True
         assert result.stale is True
 
-    def test_invalid_json_returns_not_ok(self, tmp_path: Path) -> None:
-        """Corrupted JSON → ok=False with error describing the problem."""
-        p = tmp_path / "bad.json"
-        p.write_text("not json {{{")
+    @pytest.mark.parametrize(
+        ("filename", "content", "error_fragment"),
+        [
+            # Corrupted JSON → ok=False with error describing the problem.
+            pytest.param("bad.json", "not json {{{", "unreadable", id="invalid-json"),
+            # Empty JSON object → ok=False (payload must be non-empty).
+            pytest.param("empty.json", "{}", "empty", id="empty-dict"),
+        ],
+    )
+    def test_unusable_payload_returns_not_ok(
+        self, tmp_path: Path, filename: str, content: str, error_fragment: str
+    ) -> None:
+        """A corrupted or empty index payload → ok=False with an error describing the problem."""
+        p = tmp_path / filename
+        p.write_text(content)
         result = smoke_test_index(p, max_age_hours=24)
         assert result.ok is False
-        assert "unreadable" in (result.error or "")
-
-    def test_empty_dict_returns_not_ok(self, tmp_path: Path) -> None:
-        """Empty JSON object → ok=False (payload must be non-empty)."""
-        p = tmp_path / "empty.json"
-        p.write_text("{}")
-        result = smoke_test_index(p, max_age_hours=24)
-        assert result.ok is False
-        assert "empty" in (result.error or "")
+        assert error_fragment in (result.error or "")
 
     def test_non_dict_json_returns_not_ok(self, tmp_path: Path) -> None:
         """JSON array at top level → ok=False."""

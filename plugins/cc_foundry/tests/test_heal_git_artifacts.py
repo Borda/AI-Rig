@@ -18,6 +18,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -43,16 +44,16 @@ class _FakeKernel32:
         self._last_error = last_error
         self.closed: list[int] = []
 
-    def OpenProcess(self, access: int, inherit: bool, pid: int) -> int:  # noqa: N802 - Win32 name
+    def OpenProcess(self, access: int, inherit: bool, pid: int) -> int:
         """Return the configured fake process handle."""
         return self._handle
 
-    def CloseHandle(self, handle: int) -> bool:  # noqa: N802 - Win32 name
+    def CloseHandle(self, handle: int) -> bool:
         """Record closure of ``handle`` and report Win32 success."""
         self.closed.append(handle)
         return True
 
-    def GetLastError(self) -> int:  # noqa: N802 - Win32 name
+    def GetLastError(self) -> int:
         """Return the configured Win32 last-error value."""
         return self._last_error
 
@@ -91,21 +92,22 @@ class TestPidLivenessPosix:
         monkeypatch.setattr(_mod.os, "kill", _raise_perm)
         assert _mod._pid_alive_posix(12345) is True
 
-    def test_missing_process_is_dead(self, monkeypatch):
-        def _raise_lookup(pid, sig):
-            """Raise the missing-process error for this liveness case."""
-            raise ProcessLookupError
+    @pytest.mark.parametrize(
+        ("error", "expected"),
+        [
+            pytest.param(ProcessLookupError, False, id="missing-process-is-dead"),
+            pytest.param(OSError, False, id="generic-oserror-is-dead"),
+        ],
+    )
+    def test_kill_error_means_dead(self, monkeypatch, error, expected):
+        """A missing process or any other OS error from the signal-0 probe is treated as a dead process."""
 
-        monkeypatch.setattr(_mod.os, "kill", _raise_lookup)
-        assert _mod._pid_alive_posix(12345) is False
+        def _raise(pid, sig):
+            """Raise the configured error for this liveness case."""
+            raise error
 
-    def test_oserror_is_dead(self, monkeypatch):
-        def _raise_os(pid, sig):
-            """Raise the generic OS error treated as a dead process."""
-            raise OSError
-
-        monkeypatch.setattr(_mod.os, "kill", _raise_os)
-        assert _mod._pid_alive_posix(12345) is False
+        monkeypatch.setattr(_mod.os, "kill", _raise)
+        assert _mod._pid_alive_posix(12345) is expected
 
 
 class TestSimulatedWindowsPidLiveness:
@@ -117,15 +119,18 @@ class TestSimulatedWindowsPidLiveness:
         assert _mod._pid_alive_windows(4242) is True
         assert kernel.closed == [777], "handle must be closed to avoid a leak"
 
-    def test_access_denied_is_alive(self, monkeypatch):
-        kernel = _FakeKernel32(handle=0, last_error=_mod._WIN_ERROR_ACCESS_DENIED)
+    @pytest.mark.parametrize(
+        ("last_error", "expected"),
+        [
+            pytest.param(_mod._WIN_ERROR_ACCESS_DENIED, True, id="access-denied-is-alive"),
+            pytest.param(87, False, id="invalid-parameter-is-dead"),  # ERROR_INVALID_PARAMETER
+        ],
+    )
+    def test_open_process_failure_is_classified_by_last_error(self, monkeypatch, last_error, expected):
+        """A failed OpenProcess is alive only when the last error is access denied; any other error means dead."""
+        kernel = _FakeKernel32(handle=0, last_error=last_error)
         monkeypatch.setattr(ctypes, "windll", _FakeWindll(kernel), raising=False)
-        assert _mod._pid_alive_windows(4242) is True
-
-    def test_other_error_is_dead(self, monkeypatch):
-        kernel = _FakeKernel32(handle=0, last_error=87)  # ERROR_INVALID_PARAMETER
-        monkeypatch.setattr(ctypes, "windll", _FakeWindll(kernel), raising=False)
-        assert _mod._pid_alive_windows(4242) is False
+        assert _mod._pid_alive_windows(4242) is expected
 
     def test_absent_windll_degrades_to_false(self, monkeypatch):
         """Regression: prove absence is handled, not merely untested.
@@ -135,12 +140,6 @@ class TestSimulatedWindowsPidLiveness:
         """
         monkeypatch.delattr(ctypes, "windll", raising=False)
         assert _mod._pid_alive_windows(4242) is False
-
-    def test_dispatcher_routes_to_simulated_windows_branch(self, monkeypatch):
-        kernel = _FakeKernel32(handle=99)
-        monkeypatch.setattr(ctypes, "windll", _FakeWindll(kernel), raising=False)
-        monkeypatch.setattr(_mod.os, "name", "nt")
-        assert _mod.pid_alive(4242) is True
 
     def test_simulated_windows_branch_never_uses_os_kill(self, monkeypatch):
         """Avoid probing a live Windows process through a disruptive signal."""
@@ -181,25 +180,26 @@ class TestParseLockPid:
 
 
 class TestClassifyLock:
-    def test_dead_holder_reclaims_immediately(self):
-        """The fast path age alone cannot provide."""
-        assert _mod.classify_lock(42, alive=False, age_minutes=0.1, max_age_minutes=30) is LockVerdict.STALE_DEAD
+    @pytest.mark.parametrize(
+        ("pid", "alive", "age_minutes", "verdict"),
+        [
+            # The fast path age alone cannot provide.
+            pytest.param(42, False, 0.1, LockVerdict.STALE_DEAD, id="dead-holder-reclaims-immediately"),
+            pytest.param(42, True, 5, LockVerdict.HELD, id="live-holder-holds"),
+            # Secondary guard for PID reuse and locks copied between machines.
+            pytest.param(42, True, 31, LockVerdict.STALE_AGED, id="age-overrides-live-holder"),
+            pytest.param(42, True, 30, LockVerdict.STALE_AGED, id="age-boundary-is-inclusive"),
+            pytest.param(None, False, 1, LockVerdict.MALFORMED, id="fresh-unparseable-is-held-not-stolen"),
+            pytest.param(None, False, 99, LockVerdict.STALE_AGED, id="aged-unparseable-is-reclaimable"),
+        ],
+    )
+    def test_lock_verdict(self, pid, alive, age_minutes, verdict):
+        """A lock is classified from its holder's liveness and its age against a 30-minute limit.
 
-    def test_live_holder_holds(self):
-        assert _mod.classify_lock(42, alive=True, age_minutes=5, max_age_minutes=30) is LockVerdict.HELD
-
-    def test_age_overrides_live_holder(self):
-        """Secondary guard for PID reuse and locks copied between machines."""
-        assert _mod.classify_lock(42, alive=True, age_minutes=31, max_age_minutes=30) is LockVerdict.STALE_AGED
-
-    def test_age_boundary_is_inclusive(self):
-        assert _mod.classify_lock(42, alive=True, age_minutes=30, max_age_minutes=30) is LockVerdict.STALE_AGED
-
-    def test_fresh_unparseable_is_held_not_stolen(self):
-        assert _mod.classify_lock(None, alive=False, age_minutes=1, max_age_minutes=30) is LockVerdict.MALFORMED
-
-    def test_aged_unparseable_is_reclaimable(self):
-        assert _mod.classify_lock(None, alive=False, age_minutes=99, max_age_minutes=30) is LockVerdict.STALE_AGED
+        Scenario: a dead holder reclaims immediately; a live holder holds until the age limit, which is inclusive; an
+        unparsable lock is held while fresh and reclaimable once aged.
+        """
+        assert _mod.classify_lock(pid, alive=alive, age_minutes=age_minutes, max_age_minutes=30) is verdict
 
     @pytest.mark.parametrize("verdict", [LockVerdict.STALE_DEAD, LockVerdict.STALE_AGED])
     def test_reclaimable_set(self, verdict):
@@ -211,7 +211,7 @@ class TestClassifyLock:
 
 
 class TestClassifyWorktree:
-    BASE = dict(
+    BASE: ClassVar = dict(
         is_main=False,
         registered=True,
         dirty_files=0,
@@ -224,34 +224,39 @@ class TestClassifyWorktree:
         """Classify a worktree using this test's baseline fields and overrides."""
         return _mod.classify_worktree(name, **{**self.BASE, **over})
 
-    def test_main_tree_never_touched(self):
-        assert self._tier("Borda.local", is_main=True) is WorktreeTier.MAIN
+    @pytest.mark.parametrize(
+        ("name", "overrides", "tier"),
+        [
+            pytest.param("Borda.local", {"is_main": True}, WorktreeTier.MAIN, id="main-tree-never-touched"),
+            # A worktree a human made by hand must never be auto-removed.
+            pytest.param("my-experiment", {}, WorktreeTier.PROTECTED, id="unmanaged-name-protected"),
+            # worktree-isolation.md contracts dev-* as a user-reviewed deliverable.
+            pytest.param("dev-review-auth", {}, WorktreeTier.PROTECTED, id="dev-prefix-protected"),
+            pytest.param("agent-abc", {"age_days": 1}, WorktreeTier.LIVE, id="recent-activity-outranks-everything"),
+            pytest.param(
+                "agent-abc", {"age_days": 13.9}, WorktreeTier.LIVE, id="recent-activity-protects-clean-registered"
+            ),
+            pytest.param(
+                "agent-abc",
+                {"dirty_files": 17, "age_days": 9999},
+                WorktreeTier.DIRTY,
+                id="dirty-never-removed-at-any-age",
+            ),
+            pytest.param(
+                "agent-abc", {"registered": False}, WorktreeTier.ORPHAN, id="unregistered-clean-aged-is-orphan"
+            ),
+            pytest.param("agent-abc", {}, WorktreeTier.REMOVABLE, id="registered-clean-aged-is-removable"),
+            pytest.param("oss-review-1301", {}, WorktreeTier.REMOVABLE, id="oss-review-prefix-managed"),
+        ],
+    )
+    def test_worktree_tier(self, name, overrides, tier):
+        """A worktree is tiered from its name, registration, dirtiness and age against a 14-day floor.
 
-    def test_unmanaged_name_protected(self):
-        """A worktree a human made by hand must never be auto-removed."""
-        assert self._tier("my-experiment") is WorktreeTier.PROTECTED
-
-    def test_dev_prefix_protected(self):
-        """worktree-isolation.md contracts dev-* as a user-reviewed deliverable."""
-        assert self._tier("dev-review-auth") is WorktreeTier.PROTECTED
-
-    def test_recent_activity_outranks_everything(self):
-        assert self._tier("agent-abc", age_days=1) is WorktreeTier.LIVE
-
-    def test_recent_activity_protects_even_when_clean_and_registered(self):
-        assert self._tier("agent-abc", age_days=13.9) is WorktreeTier.LIVE
-
-    def test_dirty_reported_never_removed_at_any_age(self):
-        assert self._tier("agent-abc", dirty_files=17, age_days=9999) is WorktreeTier.DIRTY
-
-    def test_unregistered_clean_aged_is_orphan(self):
-        assert self._tier("agent-abc", registered=False) is WorktreeTier.ORPHAN
-
-    def test_registered_clean_aged_is_removable(self):
-        assert self._tier("agent-abc") is WorktreeTier.REMOVABLE
-
-    def test_oss_review_prefix_managed(self):
-        assert self._tier("oss-review-1301") is WorktreeTier.REMOVABLE
+        Scenario: the main tree is never touched; an unmanaged or dev-* name is protected; recent activity outranks
+        everything; a dirty tree is reported at any age; an unregistered clean aged tree is an orphan; a registered
+        clean aged tree with a managed prefix is removable.
+        """
+        assert self._tier(name, **overrides) is tier
 
     @pytest.mark.parametrize("tier", [WorktreeTier.DIRTY, WorktreeTier.PROTECTED, WorktreeTier.LIVE, WorktreeTier.MAIN])
     def test_protected_tiers_not_reclaimable(self, tier):
@@ -377,26 +382,23 @@ class TestCli:
         assert rc == 1
         assert out == ""
 
-    def test_wildcard_prefix_manages_every_child(self, tmp_path, monkeypatch, capsys):
-        """Skill-private roots (fortify variants) have arbitrary child names."""
+    @pytest.mark.parametrize(
+        ("extra_args", "rc", "output"),
+        [
+            # Skill-private roots (fortify variants) have arbitrary child names.
+            pytest.param(["--managed-prefix", "*"], 1, "removable", id="wildcard-prefix-manages-every-child"),
+            pytest.param([], 0, "protected", id="unmanaged-name-untouched-without-wildcard"),
+        ],
+    )
+    def test_wildcard_prefix_scopes_management(self, tmp_path, monkeypatch, capsys, extra_args, rc, output):
+        """A wildcard managed prefix manages every child of the root; without it an unmanaged name is left protected."""
         root = tmp_path / "variants"
         (root / "lr-1e-4").mkdir(parents=True)
         past = time.time() - 5 * 86400
         os.utime(root / "lr-1e-4", (past, past))
         monkeypatch.setattr(_mod, "_git", lambda args, cwd=None: str(tmp_path) if args[0] == "rev-parse" else "")
-        rc = _mod.main(["worktrees", "--root", str(root), "--managed-prefix", "*", "--min-age-days", "1"])
-        assert rc == 1
-        assert "removable" in capsys.readouterr().out
-
-    def test_unmanaged_name_untouched_without_wildcard(self, tmp_path, monkeypatch, capsys):
-        root = tmp_path / "variants"
-        (root / "lr-1e-4").mkdir(parents=True)
-        past = time.time() - 5 * 86400
-        os.utime(root / "lr-1e-4", (past, past))
-        monkeypatch.setattr(_mod, "_git", lambda args, cwd=None: str(tmp_path) if args[0] == "rev-parse" else "")
-        rc = _mod.main(["worktrees", "--root", str(root), "--min-age-days", "1"])
-        assert rc == 0
-        assert "protected" in capsys.readouterr().out
+        assert _mod.main(["worktrees", "--root", str(root), *extra_args, "--min-age-days", "1"]) == rc
+        assert output in capsys.readouterr().out
 
     def test_outside_git_repo_exits_2(self, monkeypatch, capsys):
         monkeypatch.setattr(_mod, "_git", lambda args, cwd=None: "")
@@ -432,10 +434,14 @@ class TestCli:
         assert "! SECURITY" in capsys.readouterr().err
         assert (outside / "lr-1e-4").is_dir(), "must fail closed — nothing removed"
 
-    def test_mode_is_required(self):
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            pytest.param([], id="mode-is-required"),
+            pytest.param(["locks"], id="pattern-is-required"),
+        ],
+    )
+    def test_missing_required_argument_exits(self, argv):
+        """Omitting the mode, or the --pattern a locks sweep needs, exits through argparse."""
         with pytest.raises(SystemExit):
-            _mod.main([])
-
-    def test_pattern_is_required(self):
-        with pytest.raises(SystemExit):
-            _mod.main(["locks"])
+            _mod.main(argv)

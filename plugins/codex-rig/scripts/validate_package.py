@@ -48,9 +48,11 @@ from typing import Any
 
 from _package_identity import verify_package
 
-
+#: Root directory of the codex-rig plugin package, derived from this script's location.
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+#: Path of build_package.py, which is run with --check to confirm generated files are current.
 BUILD_SCRIPT = PACKAGE_ROOT / "scripts" / "build_package.py"
+#: Exact set of skill identifiers the package manifest must list.
 EXPECTED_SKILLS = {
     "agent-shims",
     "challenge-resolve",
@@ -68,6 +70,7 @@ EXPECTED_SKILLS = {
     "research",
     "sync",
 }
+#: Exact set of role identifiers the package manifest must list.
 EXPECTED_ROLES = {
     "challenger",
     "cicd-steward",
@@ -85,9 +88,11 @@ EXPECTED_ROLES = {
     "sw-engineer",
     "web-explorer",
 }
+#: Pattern for a user home path (/Users, /home, or a Windows Users directory) that must not ship in the package.
 PRIVATE_PATH_PATTERN = re.compile(
     rb"(?:/(?:Users|home)/[^/\\\s]+|(?i:[A-Z]:[\\/]+Users[\\/]+[^/\\\s]+))",
 )
+#: Byte string that begins a PEM private key block; its presence in a package file fails validation.
 PRIVATE_KEY_MARKER = b"BEGIN " + b"PRIVATE KEY"
 
 
@@ -165,7 +170,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Run deterministic and semantic package validation."""
     parse_args()
-    generated = subprocess.run([sys.executable, str(BUILD_SCRIPT), "--check"], check=False)
+    generated = subprocess.run([sys.executable, str(BUILD_SCRIPT), "--check"], check=False)  # noqa: S603 - argv list, no shell
     if generated.returncode != 0:
         raise SystemExit(generated.returncode)
     try:

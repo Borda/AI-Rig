@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
 
-
+#: Identifiers of the roles the package must contain, in the order the manifest lists them.
 ROLE_IDS = (
     "challenger",
     "cicd-steward",
@@ -67,12 +67,17 @@ ROLE_IDS = (
     "sw-engineer",
     "web-explorer",
 )
+#: Role runtime settings (model, reasoning effort, approval policy, sandbox mode) that card and manifest must agree on.
 RUNTIME_KEYS = ("model", "model_reasoning_effort", "approval_policy", "sandbox_mode")
+#: Exact key set allowed in a role card's frontmatter.
 FRONTMATTER_KEYS = frozenset({"role_id", "name", *RUNTIME_KEYS, "fallback_modes"})
+#: Exact top-level key set required in the plugin manifest (plus mcpServers when native questions are enabled).
 PLUGIN_FIELDS = frozenset(
     {"name", "version", "description", "author", "homepage", "repository", "license", "skills", "interface"}
 )
+#: Exact key set required in the plugin manifest's author record.
 PLUGIN_AUTHOR_FIELDS = frozenset({"name", "url"})
+#: Exact key set required in the plugin manifest's interface record.
 PLUGIN_INTERFACE_FIELDS = frozenset(
     {
         "displayName",
@@ -84,16 +89,24 @@ PLUGIN_INTERFACE_FIELDS = frozenset(
         "defaultPrompt",
     }
 )
+#: Pattern for a lowercase 64-character hexadecimal SHA-256 digest string.
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+#: Regular-expression fragment for one dot-separated pre-release identifier in a Semantic Versioning string.
 SEMVER_IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+#: Pattern for a Semantic Versioning string, used to validate the package manifest version.
 SEMVER_PATTERN = re.compile(
     rf"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
     rf"(?:-{SEMVER_IDENTIFIER}(?:\.{SEMVER_IDENTIFIER})*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
 )
+#: Maximum UTF-8 length, in bytes, of a package-relative path accepted from a manifest.
 MAX_PATH_BYTES = 4096
+#: Largest package manifest, in bytes (2 MiB), that will be read.
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+#: Largest role card or plugin manifest file, in bytes (2 MiB), that will be read.
 MAX_ROLE_BYTES = 2 * 1024 * 1024
+#: Largest file, in bytes (512 MiB), that will be read when digesting a binary.
 MAX_BINARY_BYTES = 512 * 1024 * 1024
+#: Largest generated shim payload, in bytes (256 KiB), that will be accepted.
 MAX_SHIM_BYTES = 262_144
 
 

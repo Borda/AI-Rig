@@ -33,12 +33,11 @@ import json
 import os
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
-
-import pytest
 
 import build_blueprint_manifest as bbm
+import pytest
 
 HOOK = Path(__file__).resolve().parent.parent.parent / "hooks" / "blueprint-allow.js"
 VECTORS = json.loads(
@@ -250,19 +249,21 @@ class TestPassthrough:
         result = run_blueprint(spliced, manifest=seeded)
         assert result == {}, f"{spliced!r} was allowed — composition bypass: {result}"
 
-    def test_missing_manifest(self, run_blueprint: Callable[..., dict]) -> None:
-        """With no manifest on disk the hook allows nothing and still exits 0."""
-        result = run_blueprint(SINGLE)
-        assert result == {}
+    @pytest.mark.parametrize(
+        "manifest",
+        [
+            pytest.param(None, id="missing-manifest"),
+            pytest.param(b'{"schema": 1, "entries": {', id="malformed-manifest-json"),
+            pytest.param(b'{"schema": 1, "entries": []}', id="entries-wrong-type"),
+        ],
+    )
+    def test_unusable_manifest_allows_nothing(self, run_blueprint: Callable[..., dict], manifest: bytes | None) -> None:
+        """An absent, truncated or corrupt manifest allows nothing and still exits 0.
 
-    def test_malformed_manifest_json(self, run_blueprint: Callable[..., dict]) -> None:
-        """A truncated or corrupt manifest is treated as absent, never as a crash."""
-        result = run_blueprint(SINGLE, manifest=b'{"schema": 1, "entries": {')
-        assert result == {}
-
-    def test_manifest_entries_wrong_type(self, run_blueprint: Callable[..., dict]) -> None:
-        """A manifest whose ``entries`` is not an object is rejected rather than indexed."""
-        result = run_blueprint(SINGLE, manifest=b'{"schema": 1, "entries": []}')
+        Scenario: no manifest on disk; a truncated manifest; a manifest whose ``entries`` is not an object is rejected
+        rather than indexed. Each is treated as absent, never as a crash.
+        """
+        result = run_blueprint(SINGLE, manifest=manifest)
         assert result == {}
 
     def test_non_bash_tool(self, run_blueprint: Callable[..., dict], seeded: bytes) -> None:
@@ -481,7 +482,8 @@ class TestEvaluateClassification:
         result = self._evaluate(plugin_root, SINGLE)
         assert (result["decision"], result["lane"], result["rank"]) == ("allow", "blueprint", 1)
         assert result["src"] == "skills/review/SKILL.md:12"
-        assert result["digest"] and "digest" in result
+        assert result["digest"]
+        assert "digest" in result
 
     def test_danger_refusal_is_labelled_as_such(self, plugin_root: Path) -> None:
         """The independent danger re-check is a decision, and the record must say which check refused.

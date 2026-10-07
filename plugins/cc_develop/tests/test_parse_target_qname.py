@@ -25,7 +25,7 @@ main = _mod.main
 _SENTINELS = ("codemap-query-kind", "target-module", "target-fn", "target-qualified")
 
 
-@pytest.fixture()
+@pytest.fixture
 def session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point sentinel writes at an isolated directory under a fixed session token."""
     monkeypatch.setenv("TMPDIR", str(tmp_path))

@@ -10,9 +10,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 import check_bin_test_coverage as cbtc
+import pytest
 
 
 def _plugin(root: Path, name: str = "cc_demo") -> Path:
@@ -25,33 +24,27 @@ def _plugin(root: Path, name: str = "cc_demo") -> Path:
 class TestTestFunctions:
     """Covers the AST scan of a test module."""
 
-    def test_counts_real_functions(self) -> None:
-        """A module with one asserting test reports one total, one real."""
-        assert cbtc.test_functions("def test_a():\n    assert True\n") == (1, 1)
+    @pytest.mark.parametrize(
+        ("source", "expected"),
+        [
+            pytest.param("def test_a():\n    assert True\n", (1, 1), id="real-function"),
+            pytest.param("def test_a():\n    pass\n", (1, 0), id="pass-body-is-stub"),
+            pytest.param("def test_a():\n    ...\n", (1, 0), id="ellipsis-body-is-stub"),
+            pytest.param("async def test_a():\n    assert 1\n", (1, 1), id="async-test-counted"),
+            pytest.param("def helper():\n    assert 1\n", (0, 0), id="non-test-function-ignored"),
+            pytest.param(
+                "class TestX:\n    def test_a(self):\n        assert 1\n", (1, 1), id="nested-in-class-counted"
+            ),
+            pytest.param("def test_a(:\n", (1, 1), id="syntax-error-treated-as-covered"),
+        ],
+    )
+    def test_reports_total_and_real_function_counts(self, source: str, expected: tuple[int, int]) -> None:
+        """A test module is scanned into (total, real) counts of test_ functions.
 
-    def test_pass_body_is_stub(self) -> None:
-        """A `pass`-only body counts as a stub."""
-        assert cbtc.test_functions("def test_a():\n    pass\n") == (1, 0)
-
-    def test_ellipsis_body_is_stub(self) -> None:
-        """An `...`-only body counts as a stub."""
-        assert cbtc.test_functions("def test_a():\n    ...\n") == (1, 0)
-
-    def test_async_test_counted(self) -> None:
-        """An async test function is counted like a sync one."""
-        assert cbtc.test_functions("async def test_a():\n    assert 1\n") == (1, 1)
-
-    def test_non_test_function_ignored(self) -> None:
-        """A helper that is not named test_* does not count."""
-        assert cbtc.test_functions("def helper():\n    assert 1\n") == (0, 0)
-
-    def test_nested_test_in_class_counted(self) -> None:
-        """A test method inside a class is counted."""
-        assert cbtc.test_functions("class TestX:\n    def test_a(self):\n        assert 1\n") == (1, 1)
-
-    def test_syntax_error_treated_as_covered(self) -> None:
-        """An unparsable test module is left to the lint hooks, not double-reported."""
-        assert cbtc.test_functions("def test_a(:\n") == (1, 1)
+        Covers an asserting test, ``pass``- and ``...``-only stubs, an async test, a non-test helper, a method inside a
+        class, and an unparsable module, which is left to the lint hooks rather than double-reported.
+        """
+        assert cbtc.test_functions(source) == expected
 
 
 class TestCheckScript:
@@ -75,25 +68,22 @@ class TestCheckScript:
         assert "R4-FAIL (no test file)" in finding
         assert "test_thing.py" in finding
 
-    def test_empty_test_file(self, tmp_path: Path) -> None:
-        """A zero-byte test file is its own failure mode."""
+    @pytest.mark.parametrize(
+        ("test_source", "fragment"),
+        [
+            pytest.param("", "R4-FAIL (empty test file)", id="zero-byte-test-file"),
+            pytest.param("import os\n", "no test functions", id="no-test-functions"),
+        ],
+    )
+    def test_unusable_test_file_is_reported(self, tmp_path: Path, test_source: str, fragment: str) -> None:
+        """A zero-byte test file and a non-empty one without test_ functions are distinct failure modes."""
         plugin = _plugin(tmp_path)
         script = plugin / "bin" / "thing.py"
         script.write_text("x = 1\n", encoding="utf-8")
-        (plugin / "tests" / "test_thing.py").write_text("", encoding="utf-8")
+        (plugin / "tests" / "test_thing.py").write_text(test_source, encoding="utf-8")
         finding = cbtc.check_script(script)
         assert finding is not None
-        assert "R4-FAIL (empty test file)" in finding
-
-    def test_no_test_functions(self, tmp_path: Path) -> None:
-        """A non-empty file with no test_ functions is reported."""
-        plugin = _plugin(tmp_path)
-        script = plugin / "bin" / "thing.py"
-        script.write_text("x = 1\n", encoding="utf-8")
-        (plugin / "tests" / "test_thing.py").write_text("import os\n", encoding="utf-8")
-        finding = cbtc.check_script(script)
-        assert finding is not None
-        assert "no test functions" in finding
+        assert fragment in finding
 
     def test_stub_only(self, tmp_path: Path) -> None:
         """All-stub tests are reported with the function count."""
@@ -238,7 +228,8 @@ class TestMainManifestExemption:
 
         assert cbtc.main() == 0
         out = capsys.readouterr().out
-        assert "canon.py" in out and "R4-FAIL" in out
+        assert "canon.py" in out
+        assert "R4-FAIL" in out
         assert "copy.py" not in out
         assert "(1 MANIFEST copies deferred to their canonical)" in out
 
@@ -273,5 +264,6 @@ class TestMainManifestExemption:
         assert cbtc.main() == 0
         out = capsys.readouterr().out
         assert "exempt_copy.py" not in out
-        assert "orphan_copy.py" in out and "R4-FAIL" in out
+        assert "orphan_copy.py" in out
+        assert "R4-FAIL" in out
         assert "(1 MANIFEST copies deferred to their canonical)" in out

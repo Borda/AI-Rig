@@ -157,19 +157,20 @@ def test_missing_report_is_denied(tmp_path: Path, profile_run: tuple[Path, Path,
 
 
 @_skip_node_unavailable
-def test_empty_report_is_denied(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
-    """A zero-byte report.md counts as not written → deny."""
+@pytest.mark.parametrize(
+    "report",
+    [
+        pytest.param("", id="zero-byte-report"),
+        pytest.param("---\nTitle: profile\n---\n", id="written-report-without-delivery"),
+    ],
+)
+def test_undelivered_report_is_denied(tmp_path: Path, profile_run: tuple[Path, Path, str], report: str) -> None:
+    """A zero-byte report counts as not written, and an unverified report delivery blocks only the follow-up.
+
+    Scenario: an empty report.md and a written report.md with no verified delivery both deny the follow-up transition.
+    """
     report_dir, _, cwd = profile_run
-    (report_dir / "report.md").touch()
-
-    assert _denial_reason(_run(tmp_path, _ask_payload(cwd=cwd))) is not None
-
-
-@_skip_node_unavailable
-def test_written_report_without_delivery_is_denied(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
-    """Unverified report delivery must block only the follow-up transition."""
-    report_dir, _, cwd = profile_run
-    (report_dir / "report.md").write_text("---\nTitle: profile\n---\n", encoding="utf-8")
+    (report_dir / "report.md").write_text(report, encoding="utf-8")
 
     assert _denial_reason(_run(tmp_path, _ask_payload(cwd=cwd))) is not None
 

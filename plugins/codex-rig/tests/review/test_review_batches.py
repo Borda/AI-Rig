@@ -2,17 +2,47 @@
 
 from __future__ import annotations
 
-import importlib.util
+import contextlib
+import copy
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
 import sys
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from types import ModuleType
+from typing import Any
+from unittest import mock
 
 import pytest
-
 import test_review_prepare as preparation
+
+#: Per-test budget for the multi-minute tests below. On Windows pytest-timeout's thread method ends the whole xdist
+#: worker, not just the test, once the global cap passes, and these tests ran at 55-85% of that cap with no headroom.
+HEAVY_TEST_TIMEOUT_SECONDS = 300
+#: Test functions measured over about 45 s on a Windows runner, each carrying the budget above.
+HEAVY_TESTS = frozenset(
+    {
+        "test_bounded_final_union_retains_early_adverse_part",
+        "test_multipart_confidence_recovery_retains_scoped_judgments",
+        "test_local_source_gate_evidence_reaches_ordinary_confidence_intake",
+        "test_emitted_scoped_deductions_require_evidence_for_reduction",
+    }
+)
+
+
+def test_heavy_tests_carry_a_timeout_above_the_global_cap(request: pytest.FixtureRequest) -> None:
+    """Keep measured-slow tests from reaching the global cap, which kills a Windows xdist worker without a report."""
+    budgets = {
+        name: [
+            mark.args[0] for mark in getattr(getattr(request.module, name), "pytestmark", []) if mark.name == "timeout"
+        ]
+        for name in sorted(HEAVY_TESTS)
+    }
+    assert budgets == {name: [HEAVY_TEST_TIMEOUT_SECONDS] for name in sorted(HEAVY_TESTS)}
+    assert HEAVY_TEST_TIMEOUT_SECONDS > float(request.config.getoption("timeout"))
 
 
 def test_batch_response_declares_scalar_closure_evidence() -> None:
@@ -44,7 +74,7 @@ def test_batch_response_declares_scalar_closure_evidence() -> None:
 def test_batch_native_prefix_preserves_raw_and_strict_body(tmp_path: Path, prefix: str) -> None:
     """Only a frozen-identity marker may precede an otherwise unchanged strict native batch response."""
     run = _batch_inputs(tmp_path)
-    assert _batch_command(run, "prepare").returncode == 0
+    _in_process_step(run, "prepare")
     wave = run / "batches/source-001"
     marker = preparation._CONTEXT_READER(wave / "inspection-plan.json", "challenger", 1, 1).splitlines()[0]
     record = _batch_finding("A", "medium", "Preserve the reviewed obligation.")
@@ -125,7 +155,7 @@ def test_batch_native_prefix_preserves_raw_and_strict_body(tmp_path: Path, prefi
 def test_same_wave_schema_repair_preserves_original_claims(tmp_path: Path, mutation: str) -> None:
     """Accept one independently observed shape correction and reject substantive substitutions."""
     run = _batch_inputs(tmp_path)
-    assert _batch_command(run, "prepare").returncode == 0
+    _in_process_step(run, "prepare")
     wave = run / "batches/source-001"
     record = _batch_finding("A", "medium", "Preserve every original obligation.")
     record["closure_evidence"] = ["Check the first invariant.", "Check the second invariant."]
@@ -267,7 +297,7 @@ def test_schema_repair_rejects_other_closure_shapes(closure: object) -> None:
     record = _batch_finding("A", "medium", "Retained obligation.")
     record["closure_evidence"] = closure
     snapshot = {"files": [{"path": "widget.py", "kind": "text", "content": "value = 2\n", "sha256": "a" * 64}]}
-    with pytest.raises(SystemExit, match="review-repair-(ineligible-closure|no-shape-error):challenger"):
+    with pytest.raises(SystemExit, match=r"review-repair-(ineligible-closure|no-shape-error):challenger"):
         validator["_closure_shape_repair"](_batch_output([record], 3), snapshot, "challenger")
 
 
@@ -275,7 +305,7 @@ def test_schema_repair_rejects_other_closure_shapes(closure: object) -> None:
 def test_dispatch_repair_rejects_shell_redirection(tmp_path: Path, redirect: str) -> None:
     """Reject a failed dispatch that accesses unrelated files through shell redirection."""
     run = _batch_inputs(tmp_path)
-    assert _batch_command(run, "prepare").returncode == 0
+    _in_process_step(run, "prepare")
     wave = run / "batches/source-001"
     _, home, children = preparation._assembly_evidence(
         tmp_path,
@@ -330,6 +360,19 @@ def test_dispatch_repair_rejects_shell_redirection(tmp_path: Path, redirect: str
     assert not (wave / "repair-dispatch.challenger.json").exists()
 
 
+def _snapshot_once(real: Callable[..., tuple[dict[str, object], set[str]]]) -> Callable[..., object]:
+    """Wrap source verification so each distinct call signature runs the real Git checks exactly once."""
+    verified: dict[tuple[object, ...], tuple[dict[str, object], set[str]]] = {}
+
+    def once(out, source_root, expected_head, paths, expected_diff_base, scope_path):
+        key = (out, source_root, expected_head, tuple(paths), expected_diff_base, scope_path)
+        if key not in verified:
+            verified[key] = real(out, source_root, expected_head, paths, expected_diff_base, scope_path)
+        return copy.deepcopy(verified[key])
+
+    return once
+
+
 def _verify_unchanged_source_once(monkeypatch: pytest.MonkeyPatch) -> None:
     """Run the real source verification once per call signature for the rest of one test.
 
@@ -338,20 +381,41 @@ def _verify_unchanged_source_once(monkeypatch: pytest.MonkeyPatch) -> None:
     test that cut runtime by about a third. Opt in only where the source tree is immutable for the remaining test body;
     tests that mutate source or exercise drift detection must keep verifying every call.
     """
-    import copy
-
     import review_prepare  # on sys.path once a fixture has prepared a run
 
-    verified: dict[tuple[object, ...], tuple[dict[str, object], set[str]]] = {}
-    real = review_prepare._source_snapshot
+    monkeypatch.setattr(review_prepare, "_source_snapshot", _snapshot_once(review_prepare._source_snapshot))
 
-    def once(out, source_root, expected_head, paths, expected_diff_base, scope_path):
-        key = (out, source_root, expected_head, tuple(paths), expected_diff_base, scope_path)
-        if key not in verified:
-            verified[key] = real(out, source_root, expected_head, paths, expected_diff_base, scope_path)
-        return copy.deepcopy(verified[key])
 
-    monkeypatch.setattr(review_prepare, "_source_snapshot", once)
+@contextlib.contextmanager
+def _arranging_unchanged_source() -> Iterator[None]:
+    """Verify the frozen checkout once per call signature while one fixture builds its completed run.
+
+    A fixture never edits the checkout between its preparation steps, so each later step would repeat the same Git
+    verification over bytes that cannot have changed. Every test that acts on source drift does so after the fixture
+    returns, through a real subprocess that verifies again from scratch.
+    """
+    producer, _ = _batch_producer()
+    with mock.patch.object(producer, "_source_snapshot", _snapshot_once(producer._source_snapshot)):
+        yield
+
+
+def _restore_bytes(files: dict[Path, bytes]) -> None:
+    """Rewrite each changed or deleted file with its recorded bytes, leaving untouched files and their timestamps."""
+    for path, data in files.items():
+        if not path.is_file() or path.read_bytes() != data:
+            path.write_bytes(data)
+
+
+def _tree_bytes(*roots: Path) -> dict[Path, bytes]:
+    """Record every file below the given directories so a later check can be undone exactly."""
+    return {path: path.read_bytes() for root in roots for path in root.rglob("*") if path.is_file()}
+
+
+def _restore_tree(files: dict[Path, bytes], *roots: Path) -> None:
+    """Return directories to their recorded files, deleting anything a check added and rewriting what it changed."""
+    for path in {path for root in roots for path in root.rglob("*") if path.is_file() and path not in files}:
+        path.unlink()
+    _restore_bytes(files)
 
 
 def _batch_command(
@@ -383,10 +447,85 @@ runpy.run_path(sys.argv[0], run_name="__main__")
     return subprocess.run(args, capture_output=True, text=True, encoding="utf-8", check=False)
 
 
+def _batch_producer() -> tuple[ModuleType, ModuleType]:
+    """Import the shipped batch producer modules that the command line dispatches to."""
+    if str(preparation.SKILL) not in sys.path:
+        sys.path.insert(0, str(preparation.SKILL))
+    import review_batches
+    import review_prepare
+
+    return review_prepare, review_batches
+
+
+def _command_step(run: Path, operation: str, home: Path | None = None, *, source_only: bool = False) -> None:
+    """Build one fixture phase through the shipped command line, exactly as a native session runs it."""
+    result = _batch_command(run, operation, home, source_only=source_only)
+    assert result.returncode == 0, result.stderr
+
+
+def _in_process_step(run: Path, operation: str, home: Path | None = None, *, source_only: bool = False) -> None:
+    """Build one fixture phase by calling the producer functions the command line dispatches to.
+
+    Building a run is Arrange, not the command-line contract under test, and one interpreter launch per phase made
+    fixture construction dominate these tests on hosts with slow process creation. The same functions write the same
+    artifacts; a producer error propagates as its original exception instead of exit status 2, so a broken fixture still
+    fails with the exact diagnostic. Tests built with ``_command_step`` keep every phase on the real command line, and
+    every test still acts through ``_batch_command`` subprocesses where the command itself is under test.
+    """
+    producer, batches = _batch_producer()
+    if operation != "prepare":
+        phases = {
+            "assemble-wave": batches.assemble_wave,
+            "prepare-interactions": batches.prepare_interactions,
+            "prepare-consolidation": batches.prepare_consolidation,
+        }
+        phases[operation](run, home)
+        return
+    root = json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
+    original = batches.prepare_source_batches
+
+    def historical(out, plan, *args):
+        """Reproduce the historical frozen producer shape without a shipped legacy option."""
+        plan = dict(plan)
+        plan.pop("review_topology", None)
+        return original(out, plan, *args)
+
+    shape = (
+        contextlib.nullcontext() if source_only else mock.patch.object(batches, "prepare_source_batches", historical)
+    )
+    with shape, _arranging_unchanged_source():
+        producer.prepare(run, "bounded-review", "parent", Path(root), batches=True)
+
+
 def _completed_source_only(
-    tmp_path: Path, *, retain_finding: bool = False, runtime_test: bool = False
+    tmp_path: Path, *, step: Callable[..., None] = _in_process_step, **options: bool
 ) -> tuple[Path, Path]:
     """Admit every bounded source responsibility without creating report-review waves."""
+    with contextlib.ExitStack() as arranging:
+        return _build_source_only(tmp_path, step=step, arranging=arranging, **options)
+
+
+def _completed_batches(
+    tmp_path: Path, *, step: Callable[..., None] = _in_process_step, **options: Any
+) -> tuple[Path, Path]:
+    """Record actual context-reader bytes for every source wave and final interaction wave."""
+    with contextlib.ExitStack() as arranging:
+        return _build_batches(tmp_path, step=step, arranging=arranging, **options)
+
+
+def _build_source_only(
+    tmp_path: Path,
+    *,
+    step: Callable[..., None],
+    arranging: contextlib.ExitStack,
+    retain_finding: bool = False,
+    runtime_test: bool = False,
+) -> tuple[Path, Path]:
+    """Prepare and admit every source-only wave with one phase runner.
+
+    Source verification is memoized only from preparation onward, after the review inputs exist, so building the inputs
+    still imports the shipped validator exactly as an isolated helper would.
+    """
     run = _batch_inputs(tmp_path)
     if runtime_test:
         source = Path(json.loads((run / "local-source/review-worktree.json").read_bytes())["source_worktree"])
@@ -424,8 +563,8 @@ def _completed_source_only(
             brief["source_paths"].append("test_runtime.py")
         (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
     (run / "challenger-evidence.md").write_text("Bounded source review.\n" * 3500, encoding="utf-8", newline="\n")
-    prepared = _batch_command(run, "prepare", source_only=True)
-    assert prepared.returncode == 0, prepared.stderr
+    arranging.enter_context(_arranging_unchanged_source())
+    step(run, "prepare", source_only=True)
     inventory = json.loads((run / "batch-inventory.json").read_bytes())
     assert inventory["plan"]["review_topology"] == "source-only"
     home = tmp_path / "codex-home"
@@ -463,14 +602,17 @@ def _completed_source_only(
                 for role in roles
             },
         )
-        admitted = _batch_command(directory, "assemble-wave", home)
-        assert admitted.returncode == 0, admitted.stderr
+        step(directory, "assemble-wave", home)
     return run, home
 
 
 def test_source_only_review_reaches_ordinary_intake_without_report_review(tmp_path: Path) -> None:
-    """Complete all source parts, preserving judgments at the next ordinary report consumer."""
-    run, home = _completed_source_only(tmp_path)
+    """Complete all source parts, preserving judgments at the next ordinary report consumer.
+
+    Every source-only phase runs through the shipped command line here, so the plain source-only preparation and wave
+    commands stay proven end to end while other tests build the same run in-process.
+    """
+    run, home = _completed_source_only(tmp_path, step=_command_step)
     assembled = _batch_command(run, "assemble-batches", home)
     assert assembled.returncode == 0, assembled.stderr
     manifest = json.loads((run / "specialist-manifest.json").read_bytes())
@@ -493,9 +635,14 @@ def test_source_only_review_reaches_ordinary_intake_without_report_review(tmp_pa
 
 
 @pytest.mark.parametrize("source_only", [True, False])
-@pytest.mark.parametrize("problem", ["missing-parts", "altered-part"])
-def test_ordinary_intake_rejects_duplicate_role_metadata(tmp_path: Path, source_only: bool, problem: str) -> None:
-    """An earlier duplicate cannot hide missing or forged source or historical final responsibility."""
+def test_ordinary_intake_rejects_duplicate_role_metadata(
+    tmp_path: Path, subtests: pytest.Subtests, source_only: bool
+) -> None:
+    """An earlier duplicate cannot hide missing or forged source or historical final responsibility.
+
+    One aggregated run per topology serves both problems: each subtest forges its own duplicate pass inside a fresh
+    canonical report, so neither problem edits the aggregated run the other one reads.
+    """
     run, home = (
         _completed_source_only(tmp_path)
         if source_only
@@ -505,24 +652,26 @@ def test_ordinary_intake_rejects_duplicate_role_metadata(tmp_path: Path, source_
     manifest = json.loads((run / "specialist-manifest.json").read_bytes())
     passes = json.loads(json.dumps(manifest["passes"]))
     assert len({item["role"] for item in passes}) == len(passes) > 1
-    duplicate = json.loads(json.dumps(passes[0]))
     parts_key = "source_parts" if source_only else "final_parts"
-    if problem == "missing-parts":
-        duplicate.pop(parts_key)
-    else:
-        duplicate[parts_key][0]["output_sha256"] = "0" * 64
-        duplicate[parts_key][0]["confidence"]["score"] = 1.0
-    path = _canonical_report(
-        run, [], {}, "accept-as-is", confidence_metadata={"specialist_passes": [duplicate, *passes]}
-    )
-    spec = importlib.util.spec_from_file_location(
-        "duplicate_role_intake", preparation.SKILL.parents[1] / "shared/find-review-report.py"
-    )
-    finder = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = finder
-    spec.loader.exec_module(finder)
-    with pytest.raises(LookupError, match=f"metadata-specialist-pass-duplicate-role:{duplicate['role']}"):
-        finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
+    for problem in ("missing-parts", "altered-part"):
+        with subtests.test(problem=problem):
+            duplicate = json.loads(json.dumps(passes[0]))
+            if problem == "missing-parts":
+                duplicate.pop(parts_key)
+            else:
+                duplicate[parts_key][0]["output_sha256"] = "0" * 64
+                duplicate[parts_key][0]["confidence"]["score"] = 1.0
+            path = _canonical_report(
+                run, [], {}, "accept-as-is", confidence_metadata={"specialist_passes": [duplicate, *passes]}
+            )
+            spec = importlib.util.spec_from_file_location(
+                "duplicate_role_intake", preparation.SKILL.parents[1] / "shared/find-review-report.py"
+            )
+            finder = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = finder
+            spec.loader.exec_module(finder)
+            with pytest.raises(LookupError, match=f"metadata-specialist-pass-duplicate-role:{duplicate['role']}"):
+                finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
 
 
 def test_source_only_later_clean_part_cannot_erase_earlier_original(tmp_path: Path) -> None:
@@ -555,9 +704,21 @@ def test_source_only_later_clean_part_cannot_erase_earlier_original(tmp_path: Pa
         finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
 
 
-@pytest.mark.parametrize(
-    "problem",
-    [
+def test_source_only_intake_rejects_lost_or_altered_source_responsibility(
+    tmp_path: Path, subtests: pytest.Subtests
+) -> None:
+    """A final source assessment cannot hide an earlier source part or change frozen producer topology.
+
+    One aggregated source-only run serves every problem: each subtest forges the manifest, and for the context
+    topology problem the inventory, then asks the real ordinary intake to reject it. The run returns to its aggregated
+    files when the subtest exits, so every problem starts from the same aggregated run.
+    """
+    run, home = _completed_source_only(tmp_path)
+    assert _batch_command(run, "assemble-batches", home).returncode == 0
+    manifest_path = run / "specialist-manifest.json"
+    inventory_path = run / "batch-inventory.json"
+    intact = _tree_bytes(run)
+    problems = (
         "missing-parts",
         "dropped-part",
         "output",
@@ -568,53 +729,51 @@ def test_source_only_later_clean_part_cannot_erase_earlier_original(tmp_path: Pa
         "origin",
         "topology",
         "context-topology",
-    ],
-)
-def test_source_only_intake_rejects_lost_or_altered_source_responsibility(tmp_path: Path, problem: str) -> None:
-    """A final source assessment cannot hide an earlier source part or change frozen producer topology."""
-    run, home = _completed_source_only(tmp_path)
-    assert _batch_command(run, "assemble-batches", home).returncode == 0
-    manifest_path = run / "specialist-manifest.json"
-    manifest = json.loads(manifest_path.read_bytes())
-    passes = json.loads(json.dumps(manifest["passes"]))
-    item = next(item for item in passes if len(item["source_parts"]) > 1)
-    extra = {"specialist_passes": passes}
-    if problem == "missing-parts":
-        item.pop("source_parts")
-    elif problem == "dropped-part":
-        item["source_parts"].pop(0)
-    elif problem in {"output", "rating", "confidence", "attempt"}:
-        part = item["source_parts"][0]
-        if problem == "output":
-            part["output_path"] = "specialists/unreviewed.md"
-        elif problem == "rating":
-            part["rating"] = 5
-        elif problem == "confidence":
-            part["confidence"]["score"] = 1.0
-        else:
-            part["attempt"]["context_sha256"] = "0" * 64
-    elif problem == "wave":
-        manifest["batch_execution"]["waves"].pop(0)
-    elif problem == "origin":
-        manifest["source_findings"] = [{"finding_id": "invented"}]
-    elif problem == "topology":
-        manifest.pop("review_topology")
-    else:
-        inventory_path = run / "batch-inventory.json"
-        inventory = json.loads(inventory_path.read_bytes())
-        inventory["plan"].pop("review_topology")
-        inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
-        manifest["batch_execution"]["inventory_sha256"] = hashlib.sha256(inventory_path.read_bytes()).hexdigest()
-    path = _canonical_report(run, [], {}, "accept-as-is", confidence_metadata=extra)
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    spec = importlib.util.spec_from_file_location(
-        "source_parts_intake", preparation.SKILL.parents[1] / "shared/find-review-report.py"
     )
-    finder = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = finder
-    spec.loader.exec_module(finder)
-    with pytest.raises(LookupError, match="(metadata-specialist-pass-mismatch|review-batch)"):
-        finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
+    for problem in problems:
+        with subtests.test(problem=problem), contextlib.ExitStack() as restore:
+            restore.callback(_restore_tree, intact, run)
+            manifest = json.loads(intact[manifest_path])
+            passes = json.loads(json.dumps(manifest["passes"]))
+            item = next(item for item in passes if len(item["source_parts"]) > 1)
+            extra = {"specialist_passes": passes}
+            if problem == "missing-parts":
+                item.pop("source_parts")
+            elif problem == "dropped-part":
+                item["source_parts"].pop(0)
+            elif problem in {"output", "rating", "confidence", "attempt"}:
+                part = item["source_parts"][0]
+                if problem == "output":
+                    part["output_path"] = "specialists/unreviewed.md"
+                elif problem == "rating":
+                    part["rating"] = 5
+                elif problem == "confidence":
+                    part["confidence"]["score"] = 1.0
+                else:
+                    part["attempt"]["context_sha256"] = "0" * 64
+            elif problem == "wave":
+                manifest["batch_execution"]["waves"].pop(0)
+            elif problem == "origin":
+                manifest["source_findings"] = [{"finding_id": "invented"}]
+            elif problem == "topology":
+                manifest.pop("review_topology")
+            else:
+                inventory = json.loads(intact[inventory_path])
+                inventory["plan"].pop("review_topology")
+                inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+                manifest["batch_execution"]["inventory_sha256"] = hashlib.sha256(
+                    inventory_path.read_bytes()
+                ).hexdigest()
+            path = _canonical_report(run, [], {}, "accept-as-is", confidence_metadata=extra)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            spec = importlib.util.spec_from_file_location(
+                "source_parts_intake", preparation.SKILL.parents[1] / "shared/find-review-report.py"
+            )
+            finder = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = finder
+            spec.loader.exec_module(finder)
+            with pytest.raises(LookupError, match=r"(metadata-specialist-pass-mismatch|review-batch)"):
+                finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
 
 
 def test_historical_inventory_cannot_skip_report_coverage_with_an_aggregate_flag(tmp_path: Path) -> None:
@@ -685,9 +844,11 @@ def _batch_output(
     )
 
 
-def _completed_batches(
+def _build_batches(
     tmp_path: Path,
     *,
+    step: Callable[..., None],
+    arranging: contextlib.ExitStack,
     blocker: tuple[int, str] | None = None,
     large: bool = False,
     disposition: str | None = None,
@@ -711,7 +872,11 @@ def _completed_batches(
     consolidation_confidence: dict[str, object] | None = None,
     consolidation_prefix: bool = False,
 ) -> tuple[Path, Path]:
-    """Record actual context-reader bytes for every source wave and final interaction wave."""
+    """Build every source, interaction, and final wave with one phase runner and real context-reader bytes.
+
+    Source verification is memoized only from preparation onward, after the review inputs exist, so building the inputs
+    still imports the shipped validator exactly as an isolated helper would.
+    """
     run = (
         preparation._five_role_review_inputs(tmp_path)
         if five_roles
@@ -759,8 +924,8 @@ def _completed_batches(
         (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
     # Separate source waves without expensive large native fixture transcripts.
     (run / "challenger-evidence.md").write_text("Bounded source review.\n" * 3500, encoding="utf-8", newline="\n")
-    result = _batch_command(run, "prepare")
-    assert result.returncode == 0, result.stderr
+    arranging.enter_context(_arranging_unchanged_source())
+    step(run, "prepare")
     schedule = json.loads((run / "batch-dispatch.json").read_text(encoding="utf-8"))
     assert len(schedule["waves"]) > 1
     home = tmp_path / "codex-home"
@@ -788,8 +953,7 @@ def _completed_batches(
             if blocker and blocker[0] == wave["wave"]
             else None,
         )
-        result = _batch_command(directory, "assemble-wave", home)
-        assert result.returncode == 0, result.stderr
+        step(directory, "assemble-wave", home)
     inventory = json.loads((run / "batch-inventory.json").read_text(encoding="utf-8"))
     lengths = {item["path"]: len(item["content"].splitlines()) for item in inventory["source_snapshot"]["files"]}
     briefs = {}
@@ -817,8 +981,7 @@ def _completed_batches(
             brief["source_paths"] = [{"path": "widget.py", "start_line": 1, "end_line": lengths["widget.py"]}]
             brief.pop("paired_ranges")
     (run / "interaction-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
-    result = _batch_command(run, "prepare-interactions", home)
-    assert result.returncode == 0, result.stderr
+    step(run, "prepare-interactions", home)
     interaction_schedule = json.loads((run / "interaction-dispatch.json").read_text(encoding="utf-8"))
     padded_reports = 0
     for index, wave in enumerate(interaction_schedule["waves"], len(schedule["waves"]) + 1):
@@ -874,12 +1037,10 @@ def _completed_batches(
             active_limit=1 if fast_reviewers else 4 if five_roles else None,
             findings=findings,
         )
-        result = _batch_command(directory, "assemble-wave", home)
-        assert result.returncode == 0, result.stderr
+        step(directory, "assemble-wave", home)
     if stop_before_consolidation:
         return run, home
-    result = _batch_command(run, "prepare-consolidation", home)
-    assert result.returncode == 0, result.stderr
+    step(run, "prepare-consolidation", home)
     if consolidation_reports:
         final_schedule = json.loads((run / "consolidation-dispatch.json").read_bytes())
         for part, wave in enumerate(final_schedule["waves"]):
@@ -909,8 +1070,7 @@ def _completed_batches(
                 final_header="missing",
                 findings=findings,
             )
-            result = _batch_command(directory, "assemble-wave", home)
-            assert result.returncode == 0, result.stderr
+            step(directory, "assemble-wave", home)
         return run, home
     interactions = run / "batches/interactions"
     preparation._assembly_evidence(
@@ -937,11 +1097,11 @@ def _completed_batches(
         if final_dispositions
         else None,
     )
-    result = _batch_command(interactions, "assemble-wave", home)
-    assert result.returncode == 0, result.stderr
+    step(interactions, "assemble-wave", home)
     return run, home
 
 
+@pytest.mark.timeout(HEAVY_TEST_TIMEOUT_SECONDS)
 def test_bounded_final_union_retains_early_adverse_part(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Admit complete bounded final comparisons without letting a clean last part erase an early defect."""
     run, home = _completed_batches(
@@ -1076,7 +1236,7 @@ def test_bounded_final_union_retains_early_adverse_part(tmp_path: Path, monkeypa
     context_path = run / schedule["waves"][0]["directory"] / "specialists/qa-specialist-context.md"
     frozen_context = context_path.read_bytes()
     context_path.write_bytes(frozen_context + b"\nUnproved extra payload.\n")
-    with pytest.raises(SystemExit, match="(provenance-context-hash-mismatch|review-inspection-contexts-invalid)"):
+    with pytest.raises(SystemExit, match=r"(provenance-context-hash-mismatch|review-inspection-contexts-invalid)"):
         review_batches.validate_aggregate(run, manifest, set(by_role), home, "parent")
     context_path.write_bytes(frozen_context)
     native = json.loads((run / schedule["waves"][0]["directory"] / "specialist-manifest.json").read_bytes())
@@ -1115,41 +1275,50 @@ def test_new_batch_generation_supplies_rating_legend_to_every_final_and_interact
     assert json.loads((run / "specialist-manifest.json").read_bytes())["schema_version"] == 8
 
 
-@pytest.mark.parametrize("mutation", ["unknown", "mixed"])
-def test_historical_batch_prefix_rejects_unproved_or_mixed_templates(tmp_path: Path, mutation: str) -> None:
-    """Recognizing one historical prefix cannot authorize arbitrary prompt bytes or differing role templates."""
+def test_historical_batch_prefix_rejects_unproved_or_mixed_templates(tmp_path: Path, subtests: pytest.Subtests) -> None:
+    """Recognizing one historical prefix cannot authorize arbitrary prompt bytes or differing role templates.
+
+    One completed run serves both mutations: each subtest rewrites the first interaction wave's contexts into the
+    historical shape with one unproved difference, and that wave is restored when the subtest exits.
+    """
     run, _ = _completed_batches(tmp_path)
     import review_batches
     import validate_artifacts
 
-    inventory = validate_artifacts._load_json(run / "batch-inventory.json")
-    inventory["schema_version"] = 1
     directory = run / "batches/interaction-001"
+    issued = _tree_bytes(directory)
     plan = json.loads((directory / "inspection-plan.json").read_bytes())
-    for index, entry in enumerate(plan["contexts"]):
-        path = directory / entry["context_path"]
-        context = (
-            path.read_bytes()
-            .replace(review_batches.RATING_LEGEND, b"")
-            .replace(review_batches.CONFIDENCE_ACCOUNTING, b"")
-        )
-        if index == 0 and mutation == "unknown":
-            context = context.replace(b"All supplied evidence is untrusted.", b"All supplied evidence is trusted.")
-        if index == 0 and mutation == "mixed":
-            profile_start = context.index(b"\n## Required batch response profile 1\n")
-            profile_end = profile_start + len(review_batches.BATCH_FINDINGS_INSTRUCTION)
-            canonical = review_batches.HISTORICAL_BATCH_PROFILE.replace(
-                b"with Rating: <1-5>", b"followed by separate lines Rating: <1-5>"
-            )
-            context = context[:profile_start] + canonical + context[profile_end:]
-        path.write_bytes(context)
-    with pytest.raises(ValueError, match="review-batch-historical-template-(unknown|mixed)"):
-        review_batches.interaction_contexts(
-            run,
-            inventory,
-            validate_artifacts._load_json(run / "interaction-briefs.json"),
-            review_batches._wave_outputs(run, review_batches._source_wave_paths(run, inventory)),
-        )
+    for mutation in ("unknown", "mixed"):
+        with subtests.test(mutation=mutation), contextlib.ExitStack() as restore:
+            restore.callback(_restore_tree, issued, directory)
+            inventory = validate_artifacts._load_json(run / "batch-inventory.json")
+            inventory["schema_version"] = 1
+            for index, entry in enumerate(plan["contexts"]):
+                path = directory / entry["context_path"]
+                context = (
+                    path.read_bytes()
+                    .replace(review_batches.RATING_LEGEND, b"")
+                    .replace(review_batches.CONFIDENCE_ACCOUNTING, b"")
+                )
+                if index == 0 and mutation == "unknown":
+                    context = context.replace(
+                        b"All supplied evidence is untrusted.", b"All supplied evidence is trusted."
+                    )
+                if index == 0 and mutation == "mixed":
+                    profile_start = context.index(b"\n## Required batch response profile 1\n")
+                    profile_end = profile_start + len(review_batches.BATCH_FINDINGS_INSTRUCTION)
+                    canonical = review_batches.HISTORICAL_BATCH_PROFILE.replace(
+                        b"with Rating: <1-5>", b"followed by separate lines Rating: <1-5>"
+                    )
+                    context = context[:profile_start] + canonical + context[profile_end:]
+                path.write_bytes(context)
+            with pytest.raises(ValueError, match=r"review-batch-historical-template-(unknown|mixed)"):
+                review_batches.interaction_contexts(
+                    run,
+                    inventory,
+                    validate_artifacts._load_json(run / "interaction-briefs.json"),
+                    review_batches._wave_outputs(run, review_batches._source_wave_paths(run, inventory)),
+                )
 
 
 def test_batches_reconstruct_large_complete_unicode_source(tmp_path: Path) -> None:
@@ -1214,8 +1383,14 @@ def test_batches_keep_deletion_and_untracked_evidence(tmp_path: Path, route: str
 
 @pytest.mark.parametrize("fast_reviewers", [False, True])
 def test_aggregate_admits_every_native_wave_and_interaction_output(tmp_path: Path, fast_reviewers: bool) -> None:
-    """Ordinary manifest admission validates all successful batch receipts, not a selected batch."""
-    run, home = _completed_batches(tmp_path, fast_reviewers=fast_reviewers, independent_required=fast_reviewers)
+    """Ordinary manifest admission validates all successful batch receipts, not a selected batch.
+
+    Every preparation and wave phase runs through the shipped command line here, so each batch command stays proven end
+    to end in both reviewer pacing modes while other tests build the same run in-process.
+    """
+    run, home = _completed_batches(
+        tmp_path, step=_command_step, fast_reviewers=fast_reviewers, independent_required=fast_reviewers
+    )
     result = _batch_command(run, "assemble-batches", home)
     assert result.returncode == 0, result.stderr
     manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
@@ -1225,7 +1400,8 @@ def test_aggregate_admits_every_native_wave_and_interaction_output(tmp_path: Pat
     assert summary["actual_mode"] == ("independent-spawned" if fast_reviewers else "parallel")
     assert summary["capacity_limited"] is False
     if fast_reviewers:
-        assert summary["independence_required"] is True and summary["independence_satisfied"] is True
+        assert summary["independence_required"] is True
+        assert summary["independence_satisfied"] is True
     spec = importlib.util.spec_from_file_location(
         "batch_acceptance_validator", preparation.SKILL / "validate_artifacts.py"
     )
@@ -1368,30 +1544,41 @@ def test_ordinary_consumers_admit_native_runtime_once_each(tmp_path: Path, monke
     assert len(calls) == 3
 
 
-@pytest.mark.parametrize(
-    "problem", ["missing-wave", "segment-drift", "source-drift", "missing-interactions", "lost-output"]
-)
-def test_aggregate_rejects_incomplete_source_or_interaction_evidence(tmp_path: Path, problem: str) -> None:
-    """No absent batch, stale source, or dropped original finding can produce accepted coverage."""
+def test_aggregate_rejects_incomplete_source_or_interaction_evidence(tmp_path: Path, subtests: pytest.Subtests) -> None:
+    """No absent batch, stale source, or dropped original finding can produce accepted coverage.
+
+    One intact completed run serves every problem: each subtest damages exactly one artifact and runs the real aggregate
+    command. The run and its review checkout return to their completed files when the subtest exits, so every problem
+    starts from the same intact run even after a failed check.
+    """
     run, home = _completed_batches(tmp_path)
-    if problem == "missing-wave":
-        (run / "batches/source-001/specialist-manifest.json").unlink()
-    elif problem == "segment-drift":
-        path = run / "batches/source-001/specialists/challenger-context.md"
-        path.write_bytes(path.read_bytes() + b"forged")
-    elif problem == "source-drift":
-        root = json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
-        (Path(root) / "widget.py").write_text("value = 99\n", encoding="utf-8", newline="\n")
-    elif problem == "missing-interactions":
-        (run / "batches/interactions/specialist-manifest.json").unlink()
-    else:
-        path = run / "batches/interactions/specialists/challenger-context.md"
-        before = path.read_bytes()
-        assert b"The inspected scope is clean." in before
-        path.write_bytes(before.replace(b"The inspected scope is clean.", b"Finding ignored.", 1))
-    result = _batch_command(run, "assemble-batches", home)
-    assert result.returncode != 0
-    assert not (run / "specialist-manifest.json").exists()
+    root = json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
+    clean = b"The inspected scope is clean."
+    assert clean in (run / "batches/interactions/specialists/challenger-context.md").read_bytes()
+    damages = {
+        "missing-wave": (run / "batches/source-001/specialist-manifest.json", lambda path, data: path.unlink()),
+        "segment-drift": (
+            run / "batches/source-001/specialists/challenger-context.md",
+            lambda path, data: path.write_bytes(data + b"forged"),
+        ),
+        "source-drift": (Path(root) / "widget.py", lambda path, data: path.write_bytes(b"value = 99\n")),
+        "missing-interactions": (
+            run / "batches/interactions/specialist-manifest.json",
+            lambda path, data: path.unlink(),
+        ),
+        "lost-output": (
+            run / "batches/interactions/specialists/challenger-context.md",
+            lambda path, data: path.write_bytes(data.replace(clean, b"Finding ignored.", 1)),
+        ),
+    }
+    intact = _tree_bytes(run, Path(root))
+    for problem, (path, damage) in damages.items():
+        with subtests.test(problem=problem), contextlib.ExitStack() as restore:
+            restore.callback(_restore_tree, intact, run, Path(root))
+            damage(path, intact[path])
+            result = _batch_command(run, "assemble-batches", home)
+            assert result.returncode != 0
+            assert not (run / "specialist-manifest.json").exists()
 
 
 @pytest.mark.parametrize("header", ["missing", "truncated"])
@@ -1454,38 +1641,46 @@ def test_challenge_preflight_admits_native_seven_single_reviewer(tmp_path: Path)
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("problem", ["raw-output", "normalized-output", "input", "reader", "role", "extra-read"])
-def test_native_seven_rejects_tampering_despite_missing_final_header(tmp_path: Path, problem: str) -> None:
-    """Derived provenance never accepts forged outputs, input identity, reader, or native page receipts."""
+def test_native_seven_rejects_tampering_despite_missing_final_header(tmp_path: Path, subtests: pytest.Subtests) -> None:
+    """Derived provenance never accepts forged outputs, input identity, reader, or native page receipts.
+
+    One assembled native wave serves every problem: each subtest forges one output file, manifest field, or child
+    receipt and asks a freshly loaded validator to reject it. The run and Codex home are returned to their assembled
+    files when each subtest exits, so every forgery is judged against the same intact wave.
+    """
     run, home, children = preparation._assembly_evidence(tmp_path, final_header="missing")
     assert preparation._assemble(run, home).returncode == 0
-    manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
-    item = manifest["passes"][0]
-    if problem in {"raw-output", "normalized-output"}:
-        key = "raw_output_path" if problem == "raw-output" else "output_path"
-        path = run / item["attempts"][0][key]
-        path.write_bytes(path.read_bytes() + b"forged")
-    elif problem == "input":
-        manifest["review_input_sha256"] = "a" * 64
-    elif problem == "reader":
-        manifest["context_reader_sha256"] = "a" * 64
-    elif problem == "role":
-        item["role"] = "doc-scribe"
-    else:
-        path = children[item["role"]]
-        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-        receipt = next(row for row in rows if row["payload"].get("type") == "custom_tool_call_output")
-        rows.insert(-1, receipt)
-        preparation._write_jsonl(path, rows)
-    spec = importlib.util.spec_from_file_location(
-        "native_tamper_validator", preparation.SKILL / "validate_artifacts.py"
-    )
-    validator = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(validator)
-    with pytest.raises(SystemExit):
-        validator._validate_manifest_entries(
-            run, manifest, manifest["passes"], {"challenger", "qa-specialist"}, home, "parent", tmp_path
-        )
+    assembled = _tree_bytes(run, home)
+    for problem in ("raw-output", "normalized-output", "input", "reader", "role", "extra-read"):
+        with subtests.test(problem=problem), contextlib.ExitStack() as restore:
+            restore.callback(_restore_tree, assembled, run, home)
+            manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
+            item = manifest["passes"][0]
+            if problem in {"raw-output", "normalized-output"}:
+                key = "raw_output_path" if problem == "raw-output" else "output_path"
+                path = run / item["attempts"][0][key]
+                path.write_bytes(path.read_bytes() + b"forged")
+            elif problem == "input":
+                manifest["review_input_sha256"] = "a" * 64
+            elif problem == "reader":
+                manifest["context_reader_sha256"] = "a" * 64
+            elif problem == "role":
+                item["role"] = "doc-scribe"
+            else:
+                path = children[item["role"]]
+                rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+                receipt = next(row for row in rows if row["payload"].get("type") == "custom_tool_call_output")
+                rows.insert(-1, receipt)
+                preparation._write_jsonl(path, rows)
+            spec = importlib.util.spec_from_file_location(
+                "native_tamper_validator", preparation.SKILL / "validate_artifacts.py"
+            )
+            validator = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(validator)
+            with pytest.raises(SystemExit):
+                validator._validate_manifest_entries(
+                    run, manifest, manifest["passes"], {"challenger", "qa-specialist"}, home, "parent", tmp_path
+                )
 
 
 @pytest.mark.parametrize(
@@ -1549,8 +1744,7 @@ def test_batch_wave_preserves_explicit_advisor_selection(tmp_path: Path, role: s
     briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
     briefs[role] = {**briefs["challenger"], "axis": "Explicit advisory"}
     (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
-    result = _batch_command(run, "prepare")
-    assert result.returncode == 0, result.stderr
+    _in_process_step(run, "prepare")
     directory = run / "batches/source-001"
     home = tmp_path / "codex-home"
     preparation._assembly_evidence(tmp_path, prepared_run=directory, home=home, wave_index=1, final_header="missing")
@@ -1570,8 +1764,7 @@ def test_batch_assembly_accepts_documented_assessment_shape_and_retains_source_a
     for role, brief in briefs.items():
         brief["axis"] = f"Frozen contract boundary for {role}"
     briefs_path.write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
-    prepared = _batch_command(run, "prepare")
-    assert prepared.returncode == 0, prepared.stderr
+    _in_process_step(run, "prepare")
     wave = run / "batches/source-001"
     home = tmp_path / "codex-home"
     _, _, children = preparation._assembly_evidence(
@@ -1611,7 +1804,7 @@ def test_batch_assembly_accepts_documented_assessment_shape_and_retains_source_a
 def test_batch_wave_producer_admits_runtime_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Count complete runtime admission in the native batch wave producer."""
     run = _batch_inputs(tmp_path)
-    assert _batch_command(run, "prepare").returncode == 0
+    _in_process_step(run, "prepare")
     directory = run / "batches/source-001"
     home = tmp_path / "codex-home"
     preparation._assembly_evidence(tmp_path, prepared_run=directory, home=home, wave_index=1, final_header="missing")
@@ -1636,7 +1829,7 @@ def test_batch_wave_producer_admits_runtime_once(tmp_path: Path, monkeypatch: py
 def test_interactions_reject_missing_frozen_source_obligation(tmp_path: Path, gap: str) -> None:
     """Every unchanged caller and cross-segment file interval is required for interaction admission."""
     run = _batch_inputs(tmp_path, large=gap == "split-file")
-    assert _batch_command(run, "prepare").returncode == 0
+    _in_process_step(run, "prepare")
     spec = importlib.util.spec_from_file_location(
         "interaction_obligation_batches", preparation.SKILL / "review_batches.py"
     )
@@ -1837,7 +2030,7 @@ def test_mixed_source_findings_keep_each_original_severity(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize(
-    "phase,role,rating",
+    ("phase", "role", "rating"),
     [
         pytest.param("interaction", "qa-specialist", 3, id="intermediate-other-role-blocker"),
         pytest.param("interaction", "challenger", 2, id="intermediate-minor"),
@@ -1982,7 +2175,7 @@ def test_all_wave_selection_subsets_retain_global_advisory_authority(tmp_path: P
 def test_batch_admission_rejects_prose_only_two_minor_findings(tmp_path: Path) -> None:
     """Two prose obligations cannot become an invented empty or pass-level batch inventory."""
     run = _batch_inputs(tmp_path)
-    assert _batch_command(run, "prepare").returncode == 0
+    _in_process_step(run, "prepare")
     directory = run / "batches/source-001"
     home = tmp_path / "codex-home"
     preparation._assembly_evidence(
@@ -2244,7 +2437,7 @@ def _canonical_report(
 
 
 @pytest.mark.parametrize(
-    "phase,role",
+    ("phase", "role"),
     [
         pytest.param("interaction", "qa-specialist", id="original-two-minors"),
         pytest.param("source", "challenger", id="source-sibling"),
@@ -2325,13 +2518,25 @@ def test_every_individual_minor_survives_complete_consumers(tmp_path: Path, phas
         run, records, {item["finding_id"]: [item["original"]["id"]] for item in originals}, "minor-changes"
     )
     final = finder.complete_review_run(run, codex_home=home, parent_thread_id="parent")
-    assert b"F_ONE" in final and b"F_TWO" in final
+    assert b"F_ONE" in final
+    assert b"F_TWO" in final
     assert finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent") == path
 
 
-@pytest.mark.parametrize(
-    "problem",
-    [
+def test_batch_raw_inventory_rejects_malformed_or_unbound_obligations(
+    tmp_path: Path, subtests: pytest.Subtests
+) -> None:
+    """Receipt-bound parser refuses ambiguous records, unseen source coordinates and invented counts.
+
+    One prepared source wave serves every problem. Each subtest records its own native session in a separate Codex home
+    and runs the real wave command, which must refuse without writing a manifest. The command freezes raw outputs before
+    refusing, so the wave directory is returned to its prepared files when each subtest exits.
+    """
+    run = _batch_inputs(tmp_path)
+    _in_process_step(run, "prepare")
+    directory = run / "batches/source-001"
+    prepared = _tree_bytes(directory)
+    problems = (
         "duplicate-id",
         "duplicate-key",
         "unbound-path",
@@ -2343,49 +2548,47 @@ def test_every_individual_minor_survives_complete_consumers(tmp_path: Path, phas
         "confidence-missing",
         "confidence-score",
         "confidence-gap",
-    ],
-)
-def test_batch_raw_inventory_rejects_malformed_or_unbound_obligations(tmp_path: Path, problem: str) -> None:
-    """Receipt-bound parser refuses ambiguous records, unseen source coordinates and invented counts."""
-    run = _batch_inputs(tmp_path)
-    assert _batch_command(run, "prepare").returncode == 0
-    directory, home = run / "batches/source-001", tmp_path / "codex-home"
-    record = _batch_finding("F_ONE", "low", "Document the returned value.")
-    records = [record, record] if problem == "duplicate-id" else [record]
-    if problem == "unbound-path":
-        record["evidence"] = [{"path": "not-frozen.py", "start_line": 1, "end_line": 1}]
-    elif problem == "model-hash":
-        record["evidence"] = [{"path": "widget.py", "start_line": 1, "end_line": 1, "source_sha256": "a" * 64}]
-    elif problem == "empty-claim":
-        record["summary"] = ""
-    elif problem == "container-severity":
-        record["severity"] = []
-    output = _batch_output(records, 2)
-    if problem == "confidence-missing":
-        start = output.index("## Reviewer Confidence")
-        end = output.index("## Reviewer Assessment")
-        output = output[:start] + output[end:]
-    elif problem == "confidence-score":
-        output = output.replace('"score": 0.95', '"score": []')
-    elif problem == "confidence-gap":
-        output = output.replace('"status": "unresolved"', '"status": []')
-    elif problem == "duplicate-key":
-        output = output.replace('"id": "F_ONE"', '"id": "F_ONE", "id": "F_LOST"')
-    elif problem == "prose-outside":
-        output = "F_EXTRA: Correct an independent caller defect.\n" + output
-    preparation._assembly_evidence(
-        tmp_path,
-        prepared_run=directory,
-        home=home,
-        wave_index=1,
-        final_header="missing",
-        findings={"qa-specialist": output},
-        blocking_counts={"qa-specialist": 1 if problem == "wrong-blocker-count" else 0},
     )
-    result = _batch_command(directory, "assemble-wave", home)
-    assert result.returncode != 0
-    assert "review-batch-individual-findings" in result.stderr
-    assert not (directory / "specialist-manifest.json").exists()
+    for problem in problems:
+        with subtests.test(problem=problem), contextlib.ExitStack() as restore:
+            restore.callback(_restore_tree, prepared, directory)
+            home = tmp_path / f"codex-home-{problem}"
+            record = _batch_finding("F_ONE", "low", "Document the returned value.")
+            records = [record, record] if problem == "duplicate-id" else [record]
+            if problem == "unbound-path":
+                record["evidence"] = [{"path": "not-frozen.py", "start_line": 1, "end_line": 1}]
+            elif problem == "model-hash":
+                record["evidence"] = [{"path": "widget.py", "start_line": 1, "end_line": 1, "source_sha256": "a" * 64}]
+            elif problem == "empty-claim":
+                record["summary"] = ""
+            elif problem == "container-severity":
+                record["severity"] = []
+            output = _batch_output(records, 2)
+            if problem == "confidence-missing":
+                start = output.index("## Reviewer Confidence")
+                end = output.index("## Reviewer Assessment")
+                output = output[:start] + output[end:]
+            elif problem == "confidence-score":
+                output = output.replace('"score": 0.95', '"score": []')
+            elif problem == "confidence-gap":
+                output = output.replace('"status": "unresolved"', '"status": []')
+            elif problem == "duplicate-key":
+                output = output.replace('"id": "F_ONE"', '"id": "F_ONE", "id": "F_LOST"')
+            elif problem == "prose-outside":
+                output = "F_EXTRA: Correct an independent caller defect.\n" + output
+            preparation._assembly_evidence(
+                tmp_path,
+                prepared_run=directory,
+                home=home,
+                wave_index=1,
+                final_header="missing",
+                findings={"qa-specialist": output},
+                blocking_counts={"qa-specialist": 1 if problem == "wrong-blocker-count" else 0},
+            )
+            result = _batch_command(directory, "assemble-wave", home)
+            assert result.returncode != 0
+            assert "review-batch-individual-findings" in result.stderr
+            assert not (directory / "specialist-manifest.json").exists()
 
 
 @pytest.mark.parametrize("case", ["supported", "self", "wrong-id", "missing-range", "unsupported-fix"])
@@ -2465,44 +2668,42 @@ def test_individual_duplicate_actions_require_exact_obligations_and_origins(tmp_
     if case == "exact":
         assert finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent") == path
         rendered = finder.complete_review_run(run, codex_home=home, parent_thread_id="parent")
-        assert b"widget.py:1-1" in rendered and b"Challenger" in rendered and b"QA specialist" in rendered
+        assert b"widget.py:1-1" in rendered
+        assert b"Challenger" in rendered
+        assert b"QA specialist" in rendered
     else:
         with pytest.raises(
             LookupError,
-            match="review-batch-(duplicate-accounting-mismatch|result-source-finding-inventory-dropped|distinct-findings-collapsed)",
+            match=r"review-batch-(duplicate-accounting-mismatch|result-source-finding-inventory-dropped|distinct-findings-collapsed)",
         ):
             finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
 
 
 @pytest.mark.parametrize(
-    "problem",
+    "problems",
     [
-        "none",
-        "origin",
-        "author",
-        "pointer",
-        "coordinate",
-        "original",
-        "severity",
-        "digest",
-        "range",
-        "witness",
-        "reason",
-        "duplicates",
-        "unknown-group",
-        "inventory",
-        "no-reconciliation",
-        "identical-origins",
+        pytest.param(("none", "origin", "author", "pointer", "coordinate"), id="accepted-and-action-identity"),
+        pytest.param(("original", "severity", "digest", "range", "witness"), id="original-claim-and-witness"),
+        pytest.param(("reason", "duplicates", "unknown-group", "inventory", "no-reconciliation"), id="reconciliation"),
+        pytest.param(("identical-origins",), id="identical-origins"),
     ],
 )
-def test_semantic_group_preserves_origins_at_ordinary_report_intake(tmp_path: Path, problem: str) -> None:
-    """Wording variants share one evidenced action while every original obligation reaches remediation."""
+def test_semantic_group_preserves_origins_at_ordinary_report_intake(
+    tmp_path: Path, subtests: pytest.Subtests, problems: tuple[str, ...]
+) -> None:
+    """Wording variants share one evidenced action while every original obligation reaches remediation.
+
+    Each origin shape builds and aggregates one completed run, then every problem for that shape is a subtest that
+    writes its own canonical report and asks the real ordinary intake to admit or reject it. The run returns to its
+    aggregated files when each subtest exits, so no problem can change what the next one sees. Problems are grouped so
+    that each test stays far below the per-test timeout on slow hosts.
+    """
     first = _batch_finding("F_ONE", "medium", "Make the result distinguish an input transpose.")
     duplicate = {**first, "id": "F_COPY"}
     variant = _batch_finding("F_VARIANT", "low", "Use an asymmetric input to detect a transposed result.")
     variant["closure_evidence"] = "The correct orientation passes and a deliberately transposed result fails."
     variant["evidence"] = [{"path": "other.py", "start_line": 1, "end_line": 1}]
-    if problem == "identical-origins":
+    if "identical-origins" in problems:
         variant = {**first, "id": "F_VARIANT"}
     run, home = _completed_batches(
         tmp_path,
@@ -2512,90 +2713,98 @@ def test_semantic_group_preserves_origins_at_ordinary_report_intake(tmp_path: Pa
         interaction_records=[variant],
     )
     assert _batch_command(run, "assemble-batches", home).returncode == 0
-    manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
-    originals = manifest["source_findings"]
+    aggregated = _tree_bytes(run)
+    manifest_bytes = aggregated[run / "specialist-manifest.json"]
+    originals = json.loads(manifest_bytes)["source_findings"]
     assert len(originals) == 3
-    record = {
-        **first,
-        "id": "F_CANONICAL",
-        "authors": ["Challenger", "QA specialist"],
-        "summary": "The oracle must detect a transposed result.",
-        "required_change": "Use asymmetric input to make the result distinguish an input transpose.",
-        "closure_evidence": variant["closure_evidence"],
-        "evidence": [*[item["manifest_path"] for item in originals], "widget.py:1-1", "other.py:1-1"],
-    }
-    exact = sorted(item["finding_id"] for item in originals if item["original"]["id"] != "F_VARIANT")
-    duplicates = {exact[1]: exact[0]}
-    if problem == "identical-origins":
-        exact = sorted(item["finding_id"] for item in originals)
-        duplicates = {identity: exact[0] for identity in exact[1:]}
-    group = {
-        "invariant": "The test oracle distinguishes orientation.",
-        "rationale": "All originals require the same asymmetric oracle and transpose negative control.",
-        "origins": {
-            item[
-                "finding_id"
-            ]: "The asymmetric input and transpose control cover this original change and closure demand."
-            for item in originals
-        },
-        "evidence": [originals[0]["original"]["evidence"][0].copy()],
-    }
-    reconciliation = {"F_CANONICAL": group}
-    extra = {"source_finding_reconciliation": reconciliation}
-    if problem == "origin":
-        group["origins"].pop(originals[0]["finding_id"])
-    elif problem == "author":
-        record["authors"] = ["Challenger"]
-    elif problem == "pointer":
-        record["evidence"] = [entry for entry in record["evidence"] if entry != originals[0]["manifest_path"]]
-    elif problem == "coordinate":
-        record["evidence"].remove("other.py:1-1")
-    elif problem == "original":
-        extra["source_findings"] = json.loads(json.dumps(originals))
-        extra["source_findings"][0]["original"]["required_change"] = "Discard the original obligation."
-    elif problem == "severity":
-        record["severity"] = "low"
-    elif problem == "digest":
-        group["evidence"][0]["source_sha256"] = "0" * 64
-    elif problem == "range":
-        group["evidence"][0]["end_line"] = 999999
-    elif problem == "witness":
-        group["evidence"] = []
-    elif problem == "reason":
-        group["origins"][originals[0]["finding_id"]] = " "
-    elif problem == "duplicates":
-        duplicates[originals[-1]["finding_id"]] = exact[0]
-    elif problem == "unknown-group":
-        reconciliation["UNKNOWN"] = group
-    elif problem == "inventory":
-        manifest["batch_execution"]["inventory_sha256"] = "0" * 64
-        (run / "specialist-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    elif problem == "no-reconciliation":
-        extra = {}
-    path = _canonical_report(
-        run,
-        [record],
-        {item["finding_id"]: ["F_CANONICAL"] for item in originals},
-        "needs-more-work",
-        status="fail",
-        duplicates=duplicates,
-        confidence_metadata=extra,
-    )
-    spec = importlib.util.spec_from_file_location(
-        "semantic_consumer_intake", preparation.SKILL.parents[1] / "shared/find-review-report.py"
-    )
-    finder = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = finder
-    spec.loader.exec_module(finder)
-    if problem != "none":
-        with pytest.raises(LookupError, match="review-batch"):
-            finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
-        return
-    assert finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent") == path
-    evidence = finder.finding_evidence(path, "F_CANONICAL")
-    assert evidence["source_origins"] == originals
-    assert evidence["source_reconciliation"] == group
-    assert json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))["source_findings"] == originals
+    for problem in problems:
+        with subtests.test(problem=problem), contextlib.ExitStack() as restore:
+            restore.callback(_restore_tree, aggregated, run)
+            manifest = json.loads(manifest_bytes)
+            record = {
+                **first,
+                "id": "F_CANONICAL",
+                "authors": ["Challenger", "QA specialist"],
+                "summary": "The oracle must detect a transposed result.",
+                "required_change": "Use asymmetric input to make the result distinguish an input transpose.",
+                "closure_evidence": variant["closure_evidence"],
+                "evidence": [*[item["manifest_path"] for item in originals], "widget.py:1-1", "other.py:1-1"],
+            }
+            exact = sorted(item["finding_id"] for item in originals if item["original"]["id"] != "F_VARIANT")
+            duplicates = {exact[1]: exact[0]}
+            if problem == "identical-origins":
+                exact = sorted(item["finding_id"] for item in originals)
+                duplicates = {identity: exact[0] for identity in exact[1:]}
+            group = {
+                "invariant": "The test oracle distinguishes orientation.",
+                "rationale": "All originals require the same asymmetric oracle and transpose negative control.",
+                "origins": {
+                    item[
+                        "finding_id"
+                    ]: "The asymmetric input and transpose control cover this original change and closure demand."
+                    for item in originals
+                },
+                "evidence": [originals[0]["original"]["evidence"][0].copy()],
+            }
+            reconciliation = {"F_CANONICAL": group}
+            extra = {"source_finding_reconciliation": reconciliation}
+            if problem == "origin":
+                group["origins"].pop(originals[0]["finding_id"])
+            elif problem == "author":
+                record["authors"] = ["Challenger"]
+            elif problem == "pointer":
+                record["evidence"] = [entry for entry in record["evidence"] if entry != originals[0]["manifest_path"]]
+            elif problem == "coordinate":
+                record["evidence"].remove("other.py:1-1")
+            elif problem == "original":
+                extra["source_findings"] = json.loads(json.dumps(originals))
+                extra["source_findings"][0]["original"]["required_change"] = "Discard the original obligation."
+            elif problem == "severity":
+                record["severity"] = "low"
+            elif problem == "digest":
+                group["evidence"][0]["source_sha256"] = "0" * 64
+            elif problem == "range":
+                group["evidence"][0]["end_line"] = 999999
+            elif problem == "witness":
+                group["evidence"] = []
+            elif problem == "reason":
+                group["origins"][originals[0]["finding_id"]] = " "
+            elif problem == "duplicates":
+                duplicates[originals[-1]["finding_id"]] = exact[0]
+            elif problem == "unknown-group":
+                reconciliation["UNKNOWN"] = group
+            elif problem == "inventory":
+                manifest["batch_execution"]["inventory_sha256"] = "0" * 64
+                (run / "specialist-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            elif problem == "no-reconciliation":
+                extra = {}
+            path = _canonical_report(
+                run,
+                [record],
+                {item["finding_id"]: ["F_CANONICAL"] for item in originals},
+                "needs-more-work",
+                status="fail",
+                duplicates=duplicates,
+                confidence_metadata=extra,
+            )
+            spec = importlib.util.spec_from_file_location(
+                "semantic_consumer_intake", preparation.SKILL.parents[1] / "shared/find-review-report.py"
+            )
+            finder = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = finder
+            spec.loader.exec_module(finder)
+            if problem != "none":
+                with pytest.raises(LookupError, match="review-batch"):
+                    finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
+            else:
+                assert finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent") == path
+                evidence = finder.finding_evidence(path, "F_CANONICAL")
+                assert evidence["source_origins"] == originals
+                assert evidence["source_reconciliation"] == group
+                assert (
+                    json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))["source_findings"]
+                    == originals
+                )
 
 
 def test_optional_disposition_witness_over_capacity_keeps_actionable_finding(tmp_path: Path) -> None:
@@ -2628,9 +2837,13 @@ def test_optional_disposition_witness_over_capacity_keeps_actionable_finding(tmp
     assert finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent") == path
 
 
-@pytest.mark.parametrize("mutation", [None, "missing", "duplicate", "allocated-five", "reverse-queue"])
-def test_five_role_batches_preserve_roster_and_findings(tmp_path: Path, mutation: str | None) -> None:
-    """Five mandatory roles remain admitted through all phases without lost findings or duplicate passes."""
+def test_five_role_batches_preserve_roster_and_findings(tmp_path: Path, subtests: pytest.Subtests) -> None:
+    """Five mandatory roles remain admitted through all phases without lost findings or duplicate passes.
+
+    One completed and aggregated five-role run serves every mutation: each subtest damages the aggregate manifest or
+    one source wave's native chronology and runs the real manifest validator. The run and Codex home return to their
+    aggregated files when the subtest exits, so each mutation is judged against the same intact run.
+    """
     run, home = _completed_batches(
         tmp_path,
         five_roles=True,
@@ -2674,105 +2887,124 @@ def test_five_role_batches_preserve_roster_and_findings(tmp_path: Path, mutation
         ("doc-scribe", "F_INTERACTION"),
         ("data-steward", "F_FINAL"),
     }
-    if mutation == "missing":
-        manifest["passes"] = [item for item in manifest["passes"] if item["role"] != "data-steward"]
-    elif mutation == "duplicate":
-        manifest["passes"].append(manifest["passes"][0])
-    if mutation in {"allocated-five", "reverse-queue"}:
-        schedule = json.loads((run / "batch-dispatch.json").read_text(encoding="utf-8"))
-        wave = schedule["waves"][0]
-        source = run / wave["directory"]
-        source_manifest = json.loads((source / "specialist-manifest.json").read_text(encoding="utf-8"))
-        children = {
-            item["role"]: home / "sessions" / f"rollout-{item['attempts'][0]['agent_thread_id']}.jsonl"
-            for item in source_manifest["passes"]
-        }
-        preparation._record_native_schedule(
-            source,
-            home,
-            children,
-            scenario="spawn-all-five" if mutation == "allocated-five" else "reversed-largest-order",
-            wave_index=wave["wave"],
-        )
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8", newline="\n")
-    checked = subprocess.run(
-        [
-            sys.executable,
-            str(preparation.SKILL / "validate_artifacts.py"),
-            "--out",
-            str(run),
-            "--manifest-only",
-            "--codex-home",
-            str(home),
-            "--parent-thread-id",
-            "parent",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if mutation:
-        assert checked.returncode != 0
-        if mutation in {"allocated-five", "reverse-queue"}:
-            expected_error = (
-                "review-inspection-active-capacity-exceeded"
-                if mutation == "allocated-five"
-                else "review-inspection-dispatch-order-mismatch"
+    wave = json.loads((run / "batch-dispatch.json").read_text(encoding="utf-8"))["waves"][0]
+    source = run / wave["directory"]
+    source_manifest = json.loads((source / "specialist-manifest.json").read_text(encoding="utf-8"))
+    children = {
+        item["role"]: home / "sessions" / f"rollout-{item['attempts'][0]['agent_thread_id']}.jsonl"
+        for item in source_manifest["passes"]
+    }
+    intact = _tree_bytes(run, home)
+
+    def rescheduled(scenario: str) -> Callable[[], dict[str, object]]:
+        """Rewrite the first source wave's native chronology under one invalid scheduling scenario."""
+
+        def damage() -> dict[str, object]:
+            """Record the invalid chronology and keep the aggregate manifest itself unchanged."""
+            preparation._record_native_schedule(source, home, children, scenario=scenario, wave_index=wave["wave"])
+            return manifest
+
+        return damage
+
+    cases = [
+        ("none", lambda: manifest, None),
+        (
+            "missing",
+            lambda: {**manifest, "passes": [item for item in manifest["passes"] if item["role"] != "data-steward"]},
+            ("role", "pass"),
+        ),
+        ("duplicate", lambda: {**manifest, "passes": [*manifest["passes"], manifest["passes"][0]]}, ("role", "pass")),
+        ("allocated-five", rescheduled("spawn-all-five"), ("review-inspection-active-capacity-exceeded",)),
+        ("reverse-queue", rescheduled("reversed-largest-order"), ("review-inspection-dispatch-order-mismatch",)),
+    ]
+    for mutation, damage, diagnostics in cases:
+        with subtests.test(mutation=mutation), contextlib.ExitStack() as restore:
+            restore.callback(_restore_tree, intact, run, home)
+            manifest_path.write_text(json.dumps(damage()), encoding="utf-8", newline="\n")
+            checked = subprocess.run(
+                [
+                    sys.executable,
+                    str(preparation.SKILL / "validate_artifacts.py"),
+                    "--out",
+                    str(run),
+                    "--manifest-only",
+                    "--codex-home",
+                    str(home),
+                    "--parent-thread-id",
+                    "parent",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
             )
-            assert expected_error in checked.stderr
-        else:
-            assert "role" in checked.stderr or "pass" in checked.stderr
-    else:
-        assert checked.returncode == 0, checked.stderr
+            assert (checked.returncode == 0) is (diagnostics is None), checked.stderr
+            assert diagnostics is None or any(diagnostic in checked.stderr for diagnostic in diagnostics)
 
 
-@pytest.mark.parametrize("route", ["interaction", "fitting-final"])
-def test_unissued_historical_inventory_uses_complete_current_instructions(tmp_path: Path, route: str) -> None:
-    """Fresh work on a retained generation must explain ratings and confidence without changing issued templates."""
+def test_unissued_historical_inventory_uses_complete_current_instructions(
+    tmp_path: Path, subtests: pytest.Subtests
+) -> None:
+    """Fresh work on a retained generation must explain ratings and confidence without changing issued templates.
+
+    One completed run serves both routes: each subtest deletes one wave's issued contexts and regenerates them, and
+    every batch wave is restored to its issued files when the subtest exits.
+    """
     run, _ = _completed_batches(tmp_path)
     import review_batches
     import validate_artifacts
 
-    inventory = validate_artifacts._load_json(run / "batch-inventory.json")
-    inventory["schema_version"] = 1
-    directory = run / "batches" / ("interaction-001" if route == "interaction" else "interactions")
-    plan = validate_artifacts._load_json(directory / "inspection-plan.json")
-    for entry in plan["contexts"]:
-        (directory / entry["context_path"]).unlink()
-    if route == "interaction":
-        rendered = review_batches.interaction_contexts(
-            run,
-            inventory,
-            validate_artifacts._load_json(run / "interaction-briefs.json"),
-            review_batches._wave_outputs(run, review_batches._source_wave_paths(run, inventory)),
-        )
-        contexts = {role: packets[0] for role, packets in rendered.items()}
-    else:
-        contexts = review_batches.consolidation_contexts(run, inventory)
-    for role, content in contexts.items():
-        assert review_batches.RATING_LEGEND in content
-        assert review_batches.CONFIDENCE_ACCOUNTING in content
-        # The newly issued full prefix must itself remain a recognized exact historical template.
-        (directory / "specialists" / f"{role}-context.md").write_bytes(content)
-    if route == "interaction":
-        repeated = review_batches.interaction_contexts(
-            run,
-            inventory,
-            validate_artifacts._load_json(run / "interaction-briefs.json"),
-            review_batches._wave_outputs(run, review_batches._source_wave_paths(run, inventory)),
-        )
-        assert {role: packets[0] for role, packets in repeated.items()} == contexts
-    else:
-        assert review_batches.consolidation_contexts(run, inventory) == contexts
+    issued = _tree_bytes(run / "batches")
+    for route in ("interaction", "fitting-final"):
+        with subtests.test(route=route), contextlib.ExitStack() as restore:
+            restore.callback(_restore_tree, issued, run / "batches")
+            inventory = validate_artifacts._load_json(run / "batch-inventory.json")
+            inventory["schema_version"] = 1
+            directory = run / "batches" / ("interaction-001" if route == "interaction" else "interactions")
+            plan = validate_artifacts._load_json(directory / "inspection-plan.json")
+            for entry in plan["contexts"]:
+                (directory / entry["context_path"]).unlink()
+            if route == "interaction":
+                rendered = review_batches.interaction_contexts(
+                    run,
+                    inventory,
+                    validate_artifacts._load_json(run / "interaction-briefs.json"),
+                    review_batches._wave_outputs(run, review_batches._source_wave_paths(run, inventory)),
+                )
+                contexts = {role: packets[0] for role, packets in rendered.items()}
+            else:
+                contexts = review_batches.consolidation_contexts(run, inventory)
+            for role, content in contexts.items():
+                assert review_batches.RATING_LEGEND in content
+                assert review_batches.CONFIDENCE_ACCOUNTING in content
+                # The newly issued full prefix must itself remain a recognized exact historical template.
+                (directory / "specialists" / f"{role}-context.md").write_bytes(content)
+            if route == "interaction":
+                repeated = review_batches.interaction_contexts(
+                    run,
+                    inventory,
+                    validate_artifacts._load_json(run / "interaction-briefs.json"),
+                    review_batches._wave_outputs(run, review_batches._source_wave_paths(run, inventory)),
+                )
+                assert {role: packets[0] for role, packets in repeated.items()} == contexts
+            else:
+                assert review_batches.consolidation_contexts(run, inventory) == contexts
 
 
-def test_multipart_confidence_recovery_retains_scoped_judgments(tmp_path: Path) -> None:
-    """Allow fully mapped global recovery without altering historical scores or accepting invented evidence."""
+@pytest.mark.timeout(HEAVY_TEST_TIMEOUT_SECONDS)
+def test_multipart_confidence_recovery_retains_scoped_judgments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Allow fully mapped global recovery without altering historical scores or accepting invented evidence.
+
+    The checkout never changes after aggregation, so the many in-process result validations below verify the frozen
+    source once per call signature instead of repeating identical Git checks for every confidence mutation.
+    """
     run, home = _completed_batches(tmp_path, large=True, consolidation_reports=3)
     import validate_artifacts
 
     assembled = _batch_command(run, "assemble-batches", home)
     assert assembled.returncode == 0, assembled.stderr
+    _verify_unchanged_source_once(monkeypatch)
     manifest_bytes = (run / "specialist-manifest.json").read_bytes()
     manifest = json.loads(manifest_bytes)
     first_wave = run / manifest["batch_execution"]["waves"][0]["manifest_path"]
@@ -2873,6 +3105,7 @@ def test_multipart_confidence_recovery_retains_scoped_judgments(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("placement", ["gap", "rationale", "duplicate"])
+@pytest.mark.timeout(HEAVY_TEST_TIMEOUT_SECONDS)
 def test_emitted_scoped_deductions_require_evidence_for_reduction(tmp_path: Path, placement: str) -> None:
     """Bind permitted raw token positions through native assembly before checking a global reduction."""
     profile = {"score": 0.70, "scope": "Bounded implementation and regression inspection.", "gaps": []}
@@ -2954,7 +3187,7 @@ def test_emitted_scoped_deductions_require_evidence_for_reduction(tmp_path: Path
 
 
 @pytest.mark.parametrize(
-    "gap,rationale,expected",
+    ("gap", "rationale", "expected"),
     [
         pytest.param("Missing evidence (-0.25).", "Evidence is absent.", 25, id="gap-only"),
         pytest.param("Missing evidence.", "Evidence is absent (-0.25).", 25, id="rationale-only"),
@@ -2982,6 +3215,7 @@ def test_scoped_contribution_positions_are_unambiguous(gap: str, rationale: str,
 
 
 @pytest.mark.parametrize("workers", [0, 2])
+@pytest.mark.timeout(HEAVY_TEST_TIMEOUT_SECONDS)
 def test_local_source_gate_evidence_reaches_ordinary_confidence_intake(tmp_path: Path, workers: int) -> None:
     """Current import-bound local tests can close runtime gaps without changing source scores."""
     run, home = _completed_source_only(tmp_path, runtime_test=True)
@@ -3225,7 +3459,7 @@ def test_local_source_gate_evidence_reaches_ordinary_confidence_intake(tmp_path:
             worker = json.loads(json.dumps(proof))
             worker["local_source"]["snapshot_sha256"] = "0" * 64
             proof["workers"] = {"gw0": worker}
-        with pytest.raises(SystemExit, match="(local-source-tests|pr-source-review-tests-import-proof-invalid)"):
+        with pytest.raises(SystemExit, match=r"(local-source-tests|pr-source-review-tests-import-proof-invalid)"):
             validator._validate_pr_tests_import_proof(changed_checks, mirror, changed_snapshot)
     with pytest.raises(SystemExit, match="pr-source-review-tests-import-proof-invalid"):
         validator._validate_pr_tests_import_proof(gate_records["checks"], mirror)

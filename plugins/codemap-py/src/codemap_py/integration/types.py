@@ -1,34 +1,42 @@
 """The runtimes, consumers and error types the integration boundary is defined in."""
 
 from __future__ import annotations
+
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 
-
+#: Schema revision of the JSON reports emitted by the plan and audit modes.
 SCHEMA_VERSION = 2
 
 
+#: Plugin name of the codemap provider being integrated.
 PROVIDER_NAME = "codemap-py"
 
 
+#: Name of the plugin marketplace that consumers install plugins from.
 MARKETPLACE_NAME = "borda-ai-rig"
 
 
+#: Git URL of the marketplace repository, used when the plan sources from the remote rather than a local checkout.
 MARKETPLACE_REMOTE = "https://github.com/Borda/AI-Rig.git"
 
 
+#: Exit status for a successful integrate command.
 _EXIT_OK = 0
 
 
+#: Exit status for a runtime failure; the default for integration errors.
 _EXIT_RUNTIME = 1
 
 
+#: Exit status for invalid arguments or an unknown target.
 _EXIT_USAGE = 2
 
 
 # Finalized Phase 5 consumer target map. Each entry is an explicit, allowlisted
 # source-owned integration site; no runtime discovery or installed-cache mutation occurs.
+#: Per-consumer relative path of the one file in which a managed block may be written.
 CONSUMER_MANAGED_FILE: dict[str, str] = {
     "foundry": "skills/_shared/codemap-context.md",
     "oss": "skills/_shared/codemap-gates.md",
@@ -103,6 +111,7 @@ class ConsumerTarget:
     plugin_dir: str
 
 
+#: Consumer plugins integrated through the Claude runtime.
 CLAUDE_TARGETS: tuple[ConsumerTarget, ...] = (
     ConsumerTarget(Runtime.CLAUDE, "foundry", "plugins/cc_foundry"),
     ConsumerTarget(Runtime.CLAUDE, "oss", "plugins/cc_oss"),
@@ -111,12 +120,15 @@ CLAUDE_TARGETS: tuple[ConsumerTarget, ...] = (
 )
 
 
+#: Consumer plugins integrated through the Codex runtime.
 CODEX_TARGETS: tuple[ConsumerTarget, ...] = (ConsumerTarget(Runtime.CODEX, "codex-rig", "plugins/codex-rig"),)
 
 
+#: Closed set of every known integration target across both runtimes.
 ALL_TARGETS: tuple[ConsumerTarget, ...] = CLAUDE_TARGETS + CODEX_TARGETS
 
 
+#: Repository-relative directory of the codemap provider plugin.
 PROVIDER_DIR = "plugins/codemap-py"
 
 

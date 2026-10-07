@@ -10,9 +10,8 @@ import json
 import os
 from pathlib import Path
 
-import pytest
-
 import agent_watch as aw
+import pytest
 
 _SPAWNED = 1_000_000.0
 
@@ -44,17 +43,24 @@ class TestClassify:
         """An agent with no deliverable stays open until its deadline, then is timed out, never waited on further."""
         assert aw.classify(deliverable, _SPAWNED + 300, now) == expected
 
-    def test_written_deliverable_is_done_even_past_deadline(self, tmp_path: Path) -> None:
-        """A late but complete deliverable counts as done; the deadline only judges missing work."""
-        out = tmp_path / "out.md"
-        out.write_text("findings\n", encoding="utf-8", newline="\n")
-        assert aw.classify(str(out), _SPAWNED, _SPAWNED + 999) == "done"
+    @pytest.mark.parametrize(
+        ("content", "deadline", "now", "expected"),
+        [
+            pytest.param("findings\n", _SPAWNED, _SPAWNED + 999, "done", id="written-done-even-past-deadline"),
+            pytest.param("", _SPAWNED + 300, _SPAWNED + 10, "pending", id="empty-is-not-done"),
+        ],
+    )
+    def test_status_of_an_existing_deliverable_file(
+        self, tmp_path: Path, content: str, deadline: float, now: float, expected: str
+    ) -> None:
+        """Only a non-empty deliverable file counts as done; an empty placeholder stays pending.
 
-    def test_empty_deliverable_is_not_done(self, tmp_path: Path) -> None:
-        """An empty file is a stalled agent's placeholder, not a deliverable."""
+        A late but complete deliverable is done, since the deadline only judges missing work. An empty file is a stalled
+        agent's placeholder, not a deliverable.
+        """
         out = tmp_path / "out.md"
-        out.write_text("", encoding="utf-8", newline="\n")
-        assert aw.classify(str(out), _SPAWNED + 300, _SPAWNED + 10) == "pending"
+        out.write_text(content, encoding="utf-8", newline="\n")
+        assert aw.classify(str(out), deadline, now) == expected
 
 
 class TestWatch:

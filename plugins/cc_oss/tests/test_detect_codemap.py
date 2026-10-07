@@ -10,9 +10,8 @@ import subprocess
 import unittest.mock as mock
 from pathlib import Path
 
-import pytest
-
 import detect_codemap  # type: ignore[import-not-found]
+import pytest
 
 
 class TestMain:
@@ -45,17 +44,6 @@ class TestMain:
         assert rc == 2
         assert "--proj" in capsys.readouterr().err
 
-    def test_proj_bare_name_still_works(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A normal bare project name is unaffected by the path-separator guard."""
-        idx_dir = tmp_path / "idx"
-        idx_dir.mkdir()
-        (idx_dir / "myproj.json").write_text("{}")
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        with mock.patch("detect_codemap.shutil.which", return_value="/usr/bin/codemap-py"):
-            rc = detect_codemap.main(["--prefix", "test", "--proj", "myproj", "--idx-dir", str(idx_dir)])
-        assert rc == 0
-        assert (tmp_path / "test-codemap-enabled-shared").read_text() == "true\n"
-
     def test_force_off_writes_false_and_exits_0(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Verify command-line option behavior.
 
@@ -67,16 +55,29 @@ class TestMain:
         assert rc == 0
         assert (tmp_path / "test-codemap-enabled-shared").read_text() == "false\n"
 
+    @pytest.mark.parametrize(
+        ("idx_dirname", "proj"),
+        [
+            pytest.param("idx", "myproj", id="bare-project-name"),
+            pytest.param("idx", "custom-proj", id="proj-override-used-as-index-slug"),
+            pytest.param("custom-index", "proj", id="idx-dir-override"),
+        ],
+    )
     def test_scan_query_present_index_present_writes_true(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, idx_dirname: str, proj: str
     ) -> None:
-        """Codemap-py query on PATH + index file exists → writes 'true', exits 0."""
-        idx_dir = tmp_path / "idx"
+        """Codemap-py query on PATH + index file exists → writes 'true', exits 0.
+
+        A normal bare ``--proj`` name is unaffected by the path-separator guard. ``--proj`` overrides the git-derived
+        slug, so the index is looked up as ``<proj>.json``, and ``--idx-dir`` overrides the default .cache/codemap
+        lookup path.
+        """
+        idx_dir = tmp_path / idx_dirname
         idx_dir.mkdir()
-        (idx_dir / "myproj.json").write_text("{}")
+        (idx_dir / f"{proj}.json").write_text("{}")
         monkeypatch.setenv("TMPDIR", str(tmp_path))
         with mock.patch("detect_codemap.shutil.which", return_value="/usr/bin/codemap-py"):
-            rc = detect_codemap.main(["--prefix", "test", "--proj", "myproj", "--idx-dir", str(idx_dir)])
+            rc = detect_codemap.main(["--prefix", "test", "--proj", proj, "--idx-dir", str(idx_dir)])
         assert rc == 0
         assert (tmp_path / "test-codemap-enabled-shared").read_text() == "true\n"
 
@@ -134,34 +135,6 @@ class TestMain:
         assert rc == 1
         assert "/codemap-py:scan-codebase" in capsys.readouterr().err
 
-    def test_proj_override_used_as_index_slug(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Verify command-line option behavior.
-
-        ``--proj`` overrides git-derived slug; index looked up as <proj>.json.
-        """
-        idx_dir = tmp_path / "idx"
-        idx_dir.mkdir()
-        (idx_dir / "custom-proj.json").write_text("{}")
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        with mock.patch("detect_codemap.shutil.which", return_value="/usr/bin/codemap-py"):
-            rc = detect_codemap.main(["--prefix", "test", "--proj", "custom-proj", "--idx-dir", str(idx_dir)])
-        assert rc == 0
-        assert (tmp_path / "test-codemap-enabled-shared").read_text() == "true\n"
-
-    def test_idx_dir_override(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Verify command-line option behavior.
-
-        ``--idx-dir`` overrides default .cache/codemap lookup path.
-        """
-        custom_idx = tmp_path / "custom-index"
-        custom_idx.mkdir()
-        (custom_idx / "proj.json").write_text("{}")
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        with mock.patch("detect_codemap.shutil.which", return_value="/usr/bin/codemap-py"):
-            rc = detect_codemap.main(["--prefix", "test", "--proj", "proj", "--idx-dir", str(custom_idx)])
-        assert rc == 0
-        assert (tmp_path / "test-codemap-enabled-shared").read_text() == "true\n"
-
     def test_codemap_index_dir_env_var(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """CODEMAP_INDEX_DIR env var sets default index dir when ``--idx-dir`` is absent."""
         idx_dir = tmp_path / "env-idx"
@@ -208,39 +181,36 @@ class TestProjectRoot:
         with mock.patch("detect_codemap.subprocess.run", return_value=mock_result):
             assert detect_codemap._project_root() == Path("/home/user/my-project")
 
-    def test_git_nonzero_exit_falls_back_to_cwd(self) -> None:
-        """Git rev-parse non-zero exit → CWD, matching the provider's own fallback."""
-        mock_result = mock.Mock(returncode=128, stdout="")
-        with mock.patch("detect_codemap.subprocess.run", return_value=mock_result):
-            assert detect_codemap._project_root() == Path.cwd()
+    @pytest.mark.parametrize(
+        "patch_kwargs",
+        [
+            pytest.param({"return_value": mock.Mock(returncode=128, stdout="")}, id="nonzero-exit"),
+            pytest.param({"side_effect": subprocess.TimeoutExpired("git", 5)}, id="timeout"),
+            pytest.param({"side_effect": OSError("no git")}, id="missing-binary"),
+        ],
+    )
+    def test_git_failure_falls_back_to_cwd(self, patch_kwargs: dict[str, object]) -> None:
+        """Git rev-parse non-zero exit, a timeout, or an absent binary (OSError) → CWD, never an exception.
 
-    def test_git_timeout_falls_back_to_cwd(self) -> None:
-        """subprocess.run raising TimeoutExpired → CWD, never an exception."""
-        with mock.patch(
-            "detect_codemap.subprocess.run",
-            side_effect=subprocess.TimeoutExpired("git", 5),
-        ):
-            assert detect_codemap._project_root() == Path.cwd()
-
-    def test_git_missing_binary_falls_back_to_cwd(self) -> None:
-        """Git absent (OSError) → CWD, never an exception."""
-        with mock.patch("detect_codemap.subprocess.run", side_effect=OSError("no git")):
+        The non-zero exit matches the provider's own fallback to the CWD.
+        """
+        with mock.patch("detect_codemap.subprocess.run", **patch_kwargs):
             assert detect_codemap._project_root() == Path.cwd()
 
 
 class TestResolveProj:
     """Match provider naming through the raw project basename."""
 
-    def test_basename_used_verbatim(self) -> None:
-        """Plain basename returned as-is."""
-        assert detect_codemap._resolve_proj(None, Path("/home/user/my-project")) == "my-project"
-
-    def test_proj_override_wins(self) -> None:
-        """Verify command-line option behavior.
-
-        ``--proj`` bypasses the root-derived name entirely.
-        """
-        assert detect_codemap._resolve_proj("explicit-proj", Path("/home/user/other")) == "explicit-proj"
+    @pytest.mark.parametrize(
+        ("proj", "root", "expected"),
+        [
+            pytest.param(None, Path("/home/user/my-project"), "my-project", id="basename-used-verbatim"),
+            pytest.param("explicit-proj", Path("/home/user/other"), "explicit-proj", id="proj-override-wins"),
+        ],
+    )
+    def test_project_name_is_override_or_root_basename(self, proj: str | None, root: Path, expected: str) -> None:
+        """A plain basename is returned as-is; ``--proj`` bypasses the root-derived name entirely."""
+        assert detect_codemap._resolve_proj(proj, root) == expected
 
     @pytest.mark.parametrize("name", ["my repo with spaces", "café", "a+b", "proj(1)"])
     def test_special_chars_are_not_stripped(self, name: str) -> None:

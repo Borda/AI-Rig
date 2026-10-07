@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 import run_pytest_short  # type: ignore[import-not-found]
 
 
@@ -59,65 +58,42 @@ def _make_lines(n: int) -> str:
     return "\n".join(f"line-{i + 1}" for i in range(n))
 
 
-def test_default_tail_20(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    """30 lines of output, default tail (20) → only lines 11..30 printed."""
-    _patch_subprocess(monkeypatch, returncode=0, stdout=_make_lines(30))
-    rc = run_pytest_short.main(["pytest", "."])
-    assert rc == 0
-    out_lines = capsys.readouterr().out.splitlines()
-    assert out_lines == [f"line-{i}" for i in range(11, 31)]
-    assert len(out_lines) == 20
+def _line_range(first: int, last: int) -> list[str]:
+    """Return the expected printed lines ``line-<first>`` … ``line-<last>``.
 
-
-def test_custom_tail_n(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    """``--tail-n`` prints only the requested number of trailing lines."""
-    _patch_subprocess(monkeypatch, returncode=0, stdout=_make_lines(30))
-    rc = run_pytest_short.main(["pytest", ".", "--tail-n", "5"])
-    assert rc == 0
-    out_lines = capsys.readouterr().out.splitlines()
-    assert out_lines == [f"line-{i}" for i in range(26, 31)]
-    assert len(out_lines) == 5
-
-
-@pytest.mark.parametrize("tail_n", ["abc", "-1"])
-def test_bad_tail_n_falls_back_to_20(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    tail_n: str,
-) -> None:
-    """Bad ``--tail-n`` values silently use default 20."""
-    _patch_subprocess(monkeypatch, returncode=0, stdout=_make_lines(25))
-    rc = run_pytest_short.main(["pytest", ".", "--tail-n", tail_n])
-    assert rc == 0
-    out_lines = capsys.readouterr().out.splitlines()
-    assert len(out_lines) == 20
-    assert out_lines == [f"line-{i}" for i in range(6, 26)]
-
-
-def test_tail_n_larger_than_output(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Print all output when the requested tail exceeds its length."""
-    _patch_subprocess(monkeypatch, returncode=0, stdout=_make_lines(3))
-    rc = run_pytest_short.main(["pytest", ".", "--tail-n", "100"])
-    assert rc == 0
-    out_lines = capsys.readouterr().out.splitlines()
-    assert out_lines == ["line-1", "line-2", "line-3"]
+    Examples:
+        >>> _line_range(2, 3)
+        ['line-2', 'line-3']
+    """
+    return [f"line-{i}" for i in range(first, last + 1)]
 
 
 @pytest.mark.parametrize(
-    "tail_n,expected", [pytest.param("0", [], id="zero-lines"), pytest.param("1", ["line-3"], id="last-line")]
+    ("line_count", "extra_args", "expected"),
+    [
+        pytest.param(30, [], _line_range(11, 30), id="default-tail-20"),
+        pytest.param(30, ["--tail-n", "5"], _line_range(26, 30), id="custom-tail-5"),
+        pytest.param(25, ["--tail-n", "abc"], _line_range(6, 25), id="bad-tail-n-non-numeric-falls-back-to-20"),
+        pytest.param(25, ["--tail-n", "-1"], _line_range(6, 25), id="bad-tail-n-negative-falls-back-to-20"),
+        pytest.param(3, ["--tail-n", "100"], ["line-1", "line-2", "line-3"], id="tail-larger-than-output-prints-all"),
+        pytest.param(3, ["--tail-n", "0"], [], id="zero-lines"),
+        pytest.param(3, ["--tail-n", "1"], ["line-3"], id="last-line"),
+    ],
 )
-def test_numeric_tail_n_boundaries(
+def test_tail_n_selects_trailing_lines(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    tail_n: str,
+    line_count: int,
+    extra_args: list[str],
     expected: list[str],
 ) -> None:
-    """Numeric ``--tail-n`` values at boundaries behave explicitly."""
-    _patch_subprocess(monkeypatch, returncode=0, stdout=_make_lines(3))
-    rc = run_pytest_short.main(["pytest", ".", "--tail-n", tail_n])
+    """Only the requested number of trailing output lines is printed, and the exit code is 0.
+
+    The default tail is 20 lines, ``--tail-n`` selects another count (0 prints nothing, a count above the output length
+    prints everything), and a non-numeric or negative ``--tail-n`` silently falls back to the default 20.
+    """
+    _patch_subprocess(monkeypatch, returncode=0, stdout=_make_lines(line_count))
+    rc = run_pytest_short.main(["pytest", ".", *extra_args])
     assert rc == 0
     assert capsys.readouterr().out.splitlines() == expected
 

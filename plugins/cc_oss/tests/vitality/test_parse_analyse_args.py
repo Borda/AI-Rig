@@ -9,9 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import parse_analyse_args as paa
+import pytest
 
 
 class _FakeCompleted:
@@ -119,20 +118,19 @@ def test_repo_from_argument(extra: str, expected: str) -> None:
     assert paa.repo_from_argument(extra) == expected
 
 
-def test_repo_from_argument_rejects_non_github_url() -> None:
-    """A non-GitHub URL stops the run with a soft exit code."""
+@pytest.mark.parametrize(
+    ("argument", "message"),
+    [
+        pytest.param("https://gitlab.com/owner/repo", "Not a GitHub URL", id="non-github-url"),
+        pytest.param("not a repo", "Unrecognised vitality argument", id="garbage-argument-shape"),
+    ],
+)
+def test_repo_from_argument_rejects_unusable_argument(argument: str, message: str) -> None:
+    """A non-GitHub URL or an unrecognised argument shape stops the run with a soft exit code and a hint."""
     with pytest.raises(paa._Abort) as excinfo:
-        paa.repo_from_argument("https://gitlab.com/owner/repo")
+        paa.repo_from_argument(argument)
     assert excinfo.value.code == 0
-    assert "Not a GitHub URL" in excinfo.value.lines[0]
-
-
-def test_repo_from_argument_rejects_garbage() -> None:
-    """An unrecognised argument shape stops the run with a usage hint."""
-    with pytest.raises(paa._Abort) as excinfo:
-        paa.repo_from_argument("not a repo")
-    assert excinfo.value.code == 0
-    assert "Unrecognised vitality argument" in excinfo.value.lines[0]
+    assert message in excinfo.value.lines[0]
 
 
 def test_repo_from_context_prefers_gh(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -157,23 +155,25 @@ def test_repo_from_context_falls_back_to_remote(monkeypatch: pytest.MonkeyPatch,
     assert paa.repo_from_context(5) == expected
 
 
-def test_repo_from_context_rejects_non_github_remote(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A non-GitHub origin stops the run rather than guessing a slug."""
-    _fake_commands(
-        monkeypatch,
-        {"gh": _FakeCompleted(returncode=1), "git": _FakeCompleted(stdout="https://gitlab.com/owner/repo.git")},
-    )
+@pytest.mark.parametrize(
+    ("git_result", "message"),
+    [
+        pytest.param(
+            _FakeCompleted(stdout="https://gitlab.com/owner/repo.git"),
+            "not a GitHub repository",
+            id="non-github-origin-remote",
+        ),
+        pytest.param(_FakeCompleted(returncode=1), "No GitHub repository detected", id="no-remote-at-all"),
+    ],
+)
+def test_repo_from_context_stops_without_a_github_remote(
+    monkeypatch: pytest.MonkeyPatch, git_result: _FakeCompleted, message: str
+) -> None:
+    """A non-GitHub origin stops the run rather than guessing a slug; no remote at all asks for an explicit URL."""
+    _fake_commands(monkeypatch, {"gh": _FakeCompleted(returncode=1), "git": git_result})
     with pytest.raises(paa._Abort) as excinfo:
         paa.repo_from_context(5)
-    assert "not a GitHub repository" in excinfo.value.lines[0]
-
-
-def test_repo_from_context_without_any_remote(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No remote at all asks the user for an explicit URL."""
-    _fake_commands(monkeypatch, {"gh": _FakeCompleted(returncode=1), "git": _FakeCompleted(returncode=1)})
-    with pytest.raises(paa._Abort) as excinfo:
-        paa.repo_from_context(5)
-    assert "No GitHub repository detected" in excinfo.value.lines[0]
+    assert message in excinfo.value.lines[0]
 
 
 def test_vitality_mode_normalises_args(tmp_sentinels: Path) -> None:
@@ -211,17 +211,24 @@ class TestDryRun:
     never produced, and the hook denial that followed blocked an unrelated question.
     """
 
-    def test_writes_no_sentinels(self, tmp_sentinels: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """--dry-run leaves the sentinel directory empty and exits 0."""
-        assert paa.main(["--mode", "classify", "--args", "42", "--dry-run"]) == 0
-        assert list(tmp_sentinels.glob("*")) == []
+    @pytest.mark.parametrize(
+        ("extra_args", "expect_written"),
+        [
+            pytest.param(["--dry-run"], False, id="dry-run-writes-no-sentinels"),
+            pytest.param([], True, id="default-still-writes"),
+        ],
+    )
+    def test_sentinels_written_only_without_dry_run(
+        self, tmp_sentinels: Path, extra_args: list[str], expect_written: bool
+    ) -> None:
+        """--dry-run leaves the sentinel directory empty and exits 0.
+
+        Without the flag the real skill path is unchanged and writes its sentinels.
+        """
+        assert paa.main(["--mode", "classify", "--args", "42", *extra_args]) == 0
+        assert (list(tmp_sentinels.glob("*")) != []) is expect_written
 
     def test_announces_what_it_would_write(self, tmp_sentinels: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Each suppressed write is still reported, so a verifier sees the computed value."""
         assert paa.main(["--mode", "classify", "--args", "42", "--dry-run"]) == 0
         assert "[dry-run] would write " in capsys.readouterr().out
-
-    def test_default_still_writes(self, tmp_sentinels: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Without the flag the real skill path is unchanged."""
-        assert paa.main(["--mode", "classify", "--args", "42"]) == 0
-        assert list(tmp_sentinels.glob("*")) != []

@@ -27,15 +27,19 @@ import os
 import sys
 from pathlib import Path
 
-
+#: Name of the plugin whose installed and enabled state this detector reports.
 TARGET_PLUGIN = "bridge"
 #: Marketplace the bridge is installed from. Overridable so a fork published under
 #: another marketplace name can use this detector unmodified — the selector and the
 #: cache layout both key off it, and neither is discoverable from the plugin alone.
 MARKETPLACE = os.environ.get("AI_RIG_MARKETPLACE") or "borda-ai-rig"
+#: Plugin and marketplace joined as name@marketplace, the key used in Claude's plugin registry and settings.
 TARGET_SELECTOR = f"{TARGET_PLUGIN}@{MARKETPLACE}"
+#: Status printed when the plugin is installed and not disabled.
 _STATUS_AVAILABLE = "available"
+#: Status printed when the plugin is installed but switched off in settings.
 _STATUS_DISABLED = "disabled"
+#: Status printed when the plugin is not installed.
 _STATUS_ABSENT = "absent"
 
 

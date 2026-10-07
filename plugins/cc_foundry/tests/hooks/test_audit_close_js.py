@@ -19,9 +19,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from _audit_harness import install
-
 
 CLOSE_HOOK = "audit-close.js"
 SESSION = "session-under-test"
@@ -90,11 +88,6 @@ class TestCompletionRows:
         env.run(CLOSE_HOOK, _event("PostToolUse"))
         (row,) = env.rows()
         assert row["trust_level"] == "unknown"
-
-    def test_non_bash_completion_is_ignored(self, env) -> None:
-        """This hook observes Bash calls; every other tool belongs to nothing here."""
-        env.run(CLOSE_HOOK, _event("PostToolUse", tool_name="Read"))
-        assert env.rows() == []
 
     def test_missing_tool_use_id_is_recorded_as_null(self, env) -> None:
         """An unjoinable row is still written.
@@ -252,16 +245,28 @@ class TestSilenceAndFootprint:
         assert proc.stdout == b""
         assert proc.returncode == 0
 
-    def test_unhandled_events_write_nothing(self, env) -> None:
-        """An event this hook does not handle produces no record at all."""
-        env.run(CLOSE_HOOK, _event("PreCompact"))
+    @pytest.mark.parametrize(
+        ("event", "overrides"),
+        [
+            pytest.param("PostToolUse", {"tool_name": "Read"}, id="non-bash-completion"),
+            pytest.param("PreCompact", {}, id="unhandled-event"),
+        ],
+    )
+    def test_unobserved_event_writes_nothing(self, env, event: str, overrides: dict) -> None:
+        """An event or tool this hook does not observe produces no record at all.
+
+        Scenario: this hook observes Bash calls, so a completion for any other tool belongs to nothing here; an event
+        this hook does not handle likewise writes nothing.
+        """
+        env.run(CLOSE_HOOK, _event(event, **overrides))
         assert env.rows() == []
 
     @pytest.mark.parametrize("payload", ["not json", "", "null", "[]"])
     def test_malformed_stdin_never_crashes(self, env, payload: str) -> None:
         """A logging hook must not interfere with execution, whatever arrives on stdin."""
         proc = env.run(CLOSE_HOOK, payload)
-        assert proc.returncode == 0 and proc.stdout == b""
+        assert proc.returncode == 0
+        assert proc.stdout == b""
 
     def test_creates_and_removes_nothing_outside_the_log(self, env) -> None:
         """No state directory, no tombstone, no sweep — a session teardown has nothing here to collide with."""

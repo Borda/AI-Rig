@@ -18,7 +18,9 @@ import re
 import sys
 from pathlib import Path
 
+#: Allowed shape of an agent name used to build a reference path: letters, digits, underscore and hyphen only.
 _AGENT_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+#: Allowed shape of a reference fragment name: letters, digits, underscore, dot and hyphen only.
 _FRAGMENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 

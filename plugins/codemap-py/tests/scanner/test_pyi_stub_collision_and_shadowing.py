@@ -121,14 +121,16 @@ def test_stub_only_contributes_declarations_and_imports(index: dict) -> None:
 def test_stub_only_package_init_indexed_once(index: dict) -> None:
     """A package whose only init is ``__init__.pyi`` is indexed once as stub-only."""
     pkg = _module(index, "stubpkg")
-    assert pkg is not None and pkg.get("stub_only") is True
+    assert pkg is not None
+    assert pkg.get("stub_only") is True
     assert pkg["path"] == "stubpkg/__init__.pyi"
 
 
 def test_stub_only_module_inside_stub_package_resolves(index: dict) -> None:
     """A stub module inside a stub-only package resolves to a dotted name."""
     leaf = _module(index, "stubpkg.leaf")
-    assert leaf is not None and leaf.get("stub_only") is True
+    assert leaf is not None
+    assert leaf.get("stub_only") is True
 
 
 # --- nested mix / invariants ----------------------------------------------------
@@ -193,5 +195,6 @@ def test_malformed_stub_degrades_without_failing_scan(tmp_path: Path) -> None:
     (root / "pkg" / "broken.pyi").write_text("def f( ->:\n")  # invalid syntax
     result = scan(root)
     broken = _by_path(result, "pkg/broken.pyi")
-    assert broken is not None and broken["status"] == "degraded"
+    assert broken is not None
+    assert broken["status"] == "degraded"
     assert _module(result, "pkg.good")["status"] == "ok"

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import importlib.util
-import errno
 import os
 import stat
 import sys
@@ -13,7 +13,6 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = PLUGIN_ROOT / "scripts" / "_agent_shim_posix.py"
@@ -248,7 +247,7 @@ def test_created_directory_descriptor_closes_when_fsync_fails(
         os.close(root_fd)
 
     assert len(opened) == 1
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match=r"\[Errno 9\]"):
         os.fstat(opened[0])
 
 
@@ -633,7 +632,7 @@ def test_lock_path_swap_after_flock_is_rejected(
         os.close(home_fd)
 
     assert len(held) == 1
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match=r"\[Errno 9\]"):
         os.fstat(held[0])
 
 

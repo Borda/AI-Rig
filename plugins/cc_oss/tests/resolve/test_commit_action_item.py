@@ -10,10 +10,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import commit_action_item as cai
-
+import pytest
 
 # ---------------------------------------------------------------------------
 # --help + argparse migration (argv → variable mapping only; git logic untouched)
@@ -97,13 +95,20 @@ class _FakeCompleted:
 # ---------------------------------------------------------------------------
 
 
-def test_missing_message_file_arg_exits_1(
-    capsys: pytest.CaptureFixture[str],
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        pytest.param([], "--message-file required", id="no-args-message-file-required"),
+        pytest.param(["--unknown"], "unknown arg", id="unrecognized-flag"),
+    ],
+)
+def test_invalid_args_exit_1_with_stderr_message(
+    capsys: pytest.CaptureFixture[str], argv: list[str], message: str
 ) -> None:
-    """No args → exit 1 with '--message-file required' on stderr."""
-    rc = cai.main([])
+    """No args or an unrecognized flag → exit 1 with the matching message on stderr."""
+    rc = cai.main(argv)
     assert rc == 1
-    assert "--message-file required" in capsys.readouterr().err
+    assert message in capsys.readouterr().err
 
 
 def test_message_file_not_found_exits_1(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -120,13 +125,6 @@ def test_missing_files_arg_exits_1(tmp_path: Path, capsys: pytest.CaptureFixture
     rc = cai.main(["--message-file", str(msg)])
     assert rc == 1
     assert "--files requires" in capsys.readouterr().err
-
-
-def test_unknown_arg_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
-    """Unrecognized flag → exit 1 with 'unknown arg' on stderr."""
-    rc = cai.main(["--unknown"])
-    assert rc == 1
-    assert "unknown arg" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +167,7 @@ def test_empty_stage_exits_3(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Staging area empty after add → exit 3 (distinct from 0), 'staging area empty' in stderr.
+    """Staging area empty after add → exit 3 (distinct from 0), 'staging area empty' in stderr, no ``git commit``.
 
     Not 0: a caller whose combined-reset design pre-stages several groups' files at once must be
     able to tell "nothing staged for THESE files" from "committed" — treating both as 0 let one
@@ -178,21 +176,12 @@ def test_empty_stage_exits_3(
     """
     msg = tmp_path / "msg.txt"
     msg.write_text("msg\n")
-    monkeypatch.setattr(cai, "which", lambda _: "/fake/git")
-    monkeypatch.setattr(cai.subprocess, "run", _make_git_mock(empty_stage=True))
-    rc = cai.main(["--message-file", str(msg), "--files", str(tmp_path / "f.py")])
-    assert rc == 3
-    assert "staging area empty" in capsys.readouterr().err
-
-
-def test_empty_stage_no_commit_called(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Empty staging area → git commit never invoked."""
-    msg = tmp_path / "msg.txt"
-    msg.write_text("msg\n")
     calls: list[list[str]] = []
     monkeypatch.setattr(cai, "which", lambda _: "/fake/git")
     monkeypatch.setattr(cai.subprocess, "run", _make_git_mock(empty_stage=True, calls=calls))
-    cai.main(["--message-file", str(msg), "--files", str(tmp_path / "f.py")])
+    rc = cai.main(["--message-file", str(msg), "--files", str(tmp_path / "f.py")])
+    assert rc == 3
+    assert "staging area empty" in capsys.readouterr().err
     commit_calls = [c for c in calls if "commit" in c]
     assert not commit_calls
 
@@ -214,24 +203,20 @@ def test_cached_diff_check_scoped_to_given_files(monkeypatch: pytest.MonkeyPatch
     assert diff_calls == [["/fake/git", "diff", "--cached", "--quiet", "--", "src/a.py", "docs/b.md"]]
 
 
-def test_successful_commit_exits_0(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Staged changes + commit rc 0 → exit 0."""
+@pytest.mark.parametrize(
+    ("commit_rc", "expected_rc"),
+    [pytest.param(0, 0, id="commit-success-exits-0"), pytest.param(1, 1, id="commit-failure-forwards-returncode")],
+)
+def test_commit_exit_code_follows_git_commit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, commit_rc: int, expected_rc: int
+) -> None:
+    """Staged changes + commit rc 0 → exit 0; a non-zero ``git commit`` exit code is forwarded unchanged."""
     msg = tmp_path / "msg.txt"
     msg.write_text("msg\n")
     monkeypatch.setattr(cai, "which", lambda _: "/fake/git")
-    monkeypatch.setattr(cai.subprocess, "run", _make_git_mock())
+    monkeypatch.setattr(cai.subprocess, "run", _make_git_mock(commit_rc=commit_rc))
     rc = cai.main(["--message-file", str(msg), "--files", str(tmp_path / "f.py")])
-    assert rc == 0
-
-
-def test_commit_failure_forwards_returncode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Git commit exits non-zero → that exit code forwarded."""
-    msg = tmp_path / "msg.txt"
-    msg.write_text("msg\n")
-    monkeypatch.setattr(cai, "which", lambda _: "/fake/git")
-    monkeypatch.setattr(cai.subprocess, "run", _make_git_mock(commit_rc=1))
-    rc = cai.main(["--message-file", str(msg), "--files", str(tmp_path / "f.py")])
-    assert rc == 1
+    assert rc == expected_rc
 
 
 def test_multiple_files_with_spaces_are_added_as_separate_args(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

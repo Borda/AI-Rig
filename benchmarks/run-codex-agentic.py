@@ -23,15 +23,41 @@ import stat
 import sys
 import tempfile
 import time
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Iterable, Iterator, Mapping, NoReturn, Sequence
+from typing import Any, NoReturn
 
+#: Benchmarks directory, added to the import path and used to locate suites and manifests.
 _BENCHMARKS_DIR = Path(__file__).resolve().parent
 if str(_BENCHMARKS_DIR) not in sys.path:
     sys.path.insert(0, str(_BENCHMARKS_DIR))
 
+from _bench_codex import runtime as codex_runtime  # noqa: E402
+from _bench_codex.fixture_runtime import FixtureCodexRuntime  # noqa: E402
+from _bench_common.agentic_contracts import (  # noqa: E402
+    AGENTIC_ARMS,
+    DEFAULT_REPETITIONS,
+    answer_failure_details,
+    assess_answer_response,
+    build_oracle,
+    materialize_agentic_prompt,
+    score_answer,
+    score_evidence_metrics,
+    validate_answer_contract,
+)
+from _bench_common.agentic_contracts import parse_labeled_answer as parse_labeled_answer  # noqa: E402
+from _bench_common.agentic_reporting import (  # noqa: E402
+    REPORTING_VERSION,
+    cell_failure_details,
+    cell_passes,
+    cell_quality,
+    summarize_agentic,
+)
+from _bench_common.agentic_reporting import summary_lines as _summary_lines  # noqa: E402
+from _bench_common.change_impact_stage import run_stage as run_change_impact_stage  # noqa: E402
+from _bench_common.mutation_isolation import load_index_relocation, verify_index_relocation  # noqa: E402
 from _bench_common.presentation import (  # noqa: E402
     LEGEND_CLOSE_RULE,
     LEGEND_OPEN_RULE,
@@ -41,33 +67,6 @@ from _bench_common.presentation import (  # noqa: E402
     format_probe_row,
     print_arm_row,
     print_legend,
-)
-from _bench_codex import runtime as codex_runtime  # noqa: E402
-from _bench_codex.fixture_runtime import FixtureCodexRuntime  # noqa: E402
-from _bench_common.change_impact_stage import run_stage as run_change_impact_stage  # noqa: E402
-from _bench_common.mutation_isolation import (  # noqa: E402
-    load_index_relocation,
-    verify_index_relocation,
-)
-from _bench_common.agentic_contracts import (  # noqa: E402
-    AGENTIC_ARMS,
-    DEFAULT_REPETITIONS,
-    answer_failure_details,
-    assess_answer_response,
-    build_oracle,
-    materialize_agentic_prompt,
-    parse_labeled_answer as parse_labeled_answer,
-    score_answer,
-    score_evidence_metrics,
-    validate_answer_contract,
-)
-from _bench_common.agentic_reporting import (  # noqa: E402
-    cell_quality,
-    REPORTING_VERSION,
-    cell_failure_details,
-    cell_passes,
-    summarize_agentic,
-    summary_lines as _summary_lines,
 )
 from _bench_common.provider_parity_contracts import (  # noqa: E402
     ARM_CONTRACTS,
@@ -79,10 +78,13 @@ from _bench_common.provider_parity_contracts import (  # noqa: E402
     treatment_adherence,
 )
 
-
+#: Default agentic task suite.
 _TASKS_PATH = _BENCHMARKS_DIR / "suites" / "tasks-agentic.json"
+#: Default Codex agentic manifest that tasks and the model stratum are validated against.
 _MANIFEST_PATH = _BENCHMARKS_DIR / "manifests" / "codex-agentic.json"
+#: Default repetitions per task and arm cell for agentic runs; the shared default.
 AGENTIC_DEFAULT_REPETITIONS = DEFAULT_REPETITIONS
+#: Native Codex home profile to prepare for each treatment arm.
 _NATIVE_HOME_ARM = {
     "A_plain": "A_plain",
     "B_auto": "B_auto",
@@ -108,6 +110,7 @@ _LEGEND_BODY = (
     "  input tokens: gross total; summaries separate fresh/gross/output tokens and time with eligible pair counts",
     "  failures: semantic details in telemetry/summary.json; formatting, treatment, execution and unobserved separated",
 )
+#: Legend body wrapped in its framing rules, written to the run log.
 _OUTPUT_LEGEND = "\n".join((LEGEND_OPEN_RULE, *_LEGEND_BODY, LEGEND_CLOSE_RULE))
 
 
@@ -897,7 +900,8 @@ class AgenticCodexRunner:
                     )
                     break
                 if self.transport is None:
-                    assert home is not None
+                    if home is None:
+                        raise RuntimeError("home must not be None")
                     stream = self.adapter._subprocess(command, home.env, timeout=remaining)
                 else:
                     stream = self.transport(command, arm=arm)
@@ -927,7 +931,8 @@ class AgenticCodexRunner:
                 )
                 if not empty_retryable or attempt == 2:
                     break
-            assert result is not None
+            if result is None:
+                raise RuntimeError("result must not be None")
         finally:
             if home is not None:
                 try:
@@ -1344,12 +1349,14 @@ def _load_replay_launcher_map(
             not isinstance(task_id, str)
             or type(repetition) is not int
             or arm not in AGENTIC_ARMS
-            or launcher is not None
-            and (
-                not isinstance(launcher, str)
-                or not codex_runtime.is_absolute_launcher_path(launcher)
-                or not isinstance(evidence, Mapping)
-                or not evidence
+            or (
+                launcher is not None
+                and (
+                    not isinstance(launcher, str)
+                    or not codex_runtime.is_absolute_launcher_path(launcher)
+                    or not isinstance(evidence, Mapping)
+                    or not evidence
+                )
             )
         ):
             raise ValueError("diagnostic replay launcher map has an invalid coordinate provenance entry")
@@ -1855,7 +1862,7 @@ def _require_dry_run_admission_arguments(**arguments: Any) -> None:
         _cli_error(f"Codex agentic dry-run admission requires {' '.join(missing)}")
 
 
-def main(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag with a default (0 required)
+def main(
     dry_run: bool = False,
     resolve_scope: bool = False,
     replay_telemetry_path: Path | None = None,

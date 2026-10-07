@@ -12,14 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from _bench_common.mutation_isolation import verify_index_relocation
 
 from _bench_codex import runtime
-from _bench_common.mutation_isolation import (
-    verify_index_relocation,
-)
-
-from _bench_codex.structural.config import PARITY_CODEX_REASONING_EFFORT, PARITY_MANIFEST_PATH, _CODEX_BIN
 from _bench_codex.structural import provenance
+from _bench_codex.structural.config import _CODEX_BIN, PARITY_CODEX_REASONING_EFFORT, PARITY_MANIFEST_PATH
 
 
 @dataclass(frozen=True)
@@ -49,8 +46,8 @@ def _diff_impact_stage_evidence(
 def _git_porcelain_status(repo_path: Path) -> dict[str, str]:
     """Return exact short Git statuses, rejecting malformed or rename records."""
     try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo_path), "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        proc = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", "-C", str(repo_path), "status", "--porcelain=v1", "-z", "--untracked-files=all"],  # noqa: S607 - git/tool resolved via PATH on purpose
             capture_output=True,
             text=True,
             timeout=10,
@@ -93,8 +90,8 @@ def _stage_relative_path(repo_path: Path, relative_path: str) -> Path:
     if not stat.S_ISREG(path_stat.st_mode) or path_stat.st_nlink != 1:
         raise ValueError("canonical Codex DI stage requires unlinked regular tracked files")
     try:
-        tracked = subprocess.run(
-            ["git", "-C", str(repo_path), "ls-files", "--error-unmatch", "--", relative_path],
+        tracked = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", "-C", str(repo_path), "ls-files", "--error-unmatch", "--", relative_path],  # noqa: S607 - git/tool resolved via PATH on purpose
             capture_output=True,
             text=True,
             timeout=10,

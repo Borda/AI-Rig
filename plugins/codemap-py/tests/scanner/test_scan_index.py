@@ -124,21 +124,28 @@ def test_incremental_picks_up_new_file(tmp_path, scan_index):
 class TestExtractDynamicImports:
     """Unit tests for extract_dynamic_imports — AST-based dynamic import detection."""
 
-    def test_importlib_string_literal(self):
-        """importlib.import_module with a string constant is captured."""
-        src = 'import importlib\nimportlib.import_module("my.pkg")'
-        result = extract_dynamic_imports(ast.parse(src))
-        assert result == [{"literal": "my.pkg", "line": 2}]
-
-    def test_dunder_import_string_literal(self):
-        """__import__ with a string constant is captured."""
-        result = extract_dynamic_imports(ast.parse("__import__('os.path')"))
-        assert result == [{"literal": "os.path", "line": 1}]
-
-    def test_dynamic_expression_skipped(self):
-        """Ignore dynamic imports whose module name is not a literal."""
-        src = "importlib.import_module(name)"
-        assert extract_dynamic_imports(ast.parse(src)) == []
+    @pytest.mark.parametrize(
+        ("src", "expected"),
+        [
+            # importlib.import_module with a string constant is captured.
+            pytest.param(
+                'import importlib\nimportlib.import_module("my.pkg")',
+                [{"literal": "my.pkg", "line": 2}],
+                id="importlib-string-literal",
+            ),
+            # __import__ with a string constant is captured.
+            pytest.param(
+                "__import__('os.path')", [{"literal": "os.path", "line": 1}], id="dunder-import-string-literal"
+            ),
+            # Ignore dynamic imports whose module name is not a literal.
+            pytest.param("importlib.import_module(name)", [], id="dynamic-expression-skipped"),
+            # Plain file with no dynamic imports returns empty list.
+            pytest.param("import os\nimport sys\n", [], id="no-dynamic-imports-returns-empty"),
+        ],
+    )
+    def test_literal_dynamic_imports_are_captured(self, src: str, expected: list[dict]):
+        """Only string-literal ``importlib.import_module`` / ``__import__`` calls are captured, with their line."""
+        assert extract_dynamic_imports(ast.parse(src)) == expected
 
     def test_multiple_calls_collected(self):
         """Multiple dynamic imports across same file all returned."""
@@ -147,17 +154,12 @@ class TestExtractDynamicImports:
         literals = [r["literal"] for r in result]
         assert literals == ["pkg.a", "pkg.b"]
 
-    def test_no_dynamic_imports_returns_empty(self):
-        """Plain file with no dynamic imports returns empty list."""
-        src = "import os\nimport sys\n"
-        assert extract_dynamic_imports(ast.parse(src)) == []
-
 
 class TestClassifyEntity:
     """Unit tests for _classify_entity — entity_type + package derivation."""
 
     @pytest.mark.parametrize(
-        "path_str, name, expected_type, expected_pkg",
+        ("path_str", "name", "expected_type", "expected_pkg"),
         [
             pytest.param("tests/test_foo.py", "tests.test_foo", EntityType.TEST, "tests", id="tests-dir"),
             pytest.param("test_bar.py", "test_bar", EntityType.PKG, "test_bar", id="root-test-file"),
@@ -191,17 +193,18 @@ class TestScanConfigRefs:
         assert "mypackage.utils" in refs
         assert refs["mypackage.utils"][0]["file"] == "pyproject.toml"
 
-    def test_setup_cfg_match(self, tmp_path: Path):
-        """Module name in setup.cfg is detected."""
-        (tmp_path / "setup.cfg").write_text("[options]\npackages = mypackage.core\n")
-        refs = scan_config_refs(tmp_path, {"mypackage.core"})
-        assert "mypackage.core" in refs
-
-    def test_yaml_match(self, tmp_path: Path):
-        """Module name in a YAML file at project root is detected."""
-        (tmp_path / "conf.yaml").write_text("defaults:\n  - module: mypackage.model\n")
-        refs = scan_config_refs(tmp_path, {"mypackage.model"})
-        assert "mypackage.model" in refs
+    @pytest.mark.parametrize(
+        ("filename", "content", "module"),
+        [
+            pytest.param("setup.cfg", "[options]\npackages = mypackage.core\n", "mypackage.core", id="setup-cfg"),
+            pytest.param("conf.yaml", "defaults:\n  - module: mypackage.model\n", "mypackage.model", id="yaml-at-root"),
+        ],
+    )
+    def test_config_file_match(self, tmp_path: Path, filename: str, content: str, module: str):
+        """A known module name in a setup.cfg or a YAML file at the project root is detected."""
+        (tmp_path / filename).write_text(content)
+        refs = scan_config_refs(tmp_path, {module})
+        assert module in refs
 
     def test_unknown_module_not_returned(self, tmp_path: Path):
         """String matching no known module name is not included."""
@@ -295,17 +298,20 @@ class TestIterPythonFilesExclusions:
 class TestDedupKey:
     """_dedup_key ranks candidate paths: under-src > shortest > lexicographic."""
 
-    def test_under_src_root_wins(self):
-        """A path under the source root outranks one outside it regardless of length."""
-        assert _dedup_key("src/m.py", "src") < _dedup_key("a/b/c/m.py", "src")
-
-    def test_shortest_path_wins_when_src_tied(self):
-        """With no src root, fewer path components wins."""
-        assert _dedup_key("m.py", "") < _dedup_key("pkg/m.py", "")
-
-    def test_lexicographic_tiebreak(self):
-        """Equal depth and src status falls back to lexicographic order."""
-        assert _dedup_key("a/m.py", "") < _dedup_key("b/m.py", "")
+    @pytest.mark.parametrize(
+        ("winner", "loser", "src_root"),
+        [
+            # A path under the source root outranks one outside it regardless of length.
+            pytest.param("src/m.py", "a/b/c/m.py", "src", id="under-src-root-wins"),
+            # With no src root, fewer path components wins.
+            pytest.param("m.py", "pkg/m.py", "", id="shortest-path-wins-when-src-tied"),
+            # Equal depth and src status falls back to lexicographic order.
+            pytest.param("a/m.py", "b/m.py", "", id="lexicographic-tiebreak"),
+        ],
+    )
+    def test_winner_sorts_before_loser(self, winner: str, loser: str, src_root: str):
+        """Candidate paths rank under-src first, then shortest, then lexicographic."""
+        assert _dedup_key(winner, src_root) < _dedup_key(loser, src_root)
 
 
 class TestDedupModules:

@@ -30,10 +30,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+#: Directory of the check scripts, resolved from this file so registry script names map to real paths.
 BIN = Path(__file__).resolve().parent
 
-# Registry of deterministic checks. `script` is a bin/ filename; `kind` selects
-# how the scope is passed. `globs` (files kind) are patterns relative to scope.
+#: Registry of deterministic checks. `script` is a bin/ filename; `kind` selects
+#: how the scope is passed. `globs` (files kind) are patterns relative to scope.
 CHECKS: list[dict[str, object]] = [
     {
         "id": "tag-symmetry",
@@ -111,7 +112,9 @@ def run_checks(scope: Path) -> list[dict[str, object]]:
             continue
         env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
         try:
-            proc = subprocess.run(argv, capture_output=True, text=True, timeout=120, env=env)
+            proc = subprocess.run(  # noqa: S603 - argv list, no shell; fixed checker commands
+                argv, capture_output=True, text=True, timeout=120, env=env
+            )
         except subprocess.TimeoutExpired:
             # A runaway checker must not crash the whole audit (breaks the 0/1/2
             # exit contract) — record it as an errored row and keep going.

@@ -34,9 +34,13 @@ from pathlib import Path
 
 # [ \t\r\f\v], not \s: grep matches within a line, where POSIX [[:space:]] cannot include the
 # newline that Python's \s would. \S is safe as-is for the same reason.
+#: Regex character class for horizontal whitespace, used instead of \s so matching never spans a line break.
 _WS = r"[ \t\r\f\v]"
+#: Matches a program line that lists one source file (py, ts, js, cpp, go or rs), optionally as a bullet.
 _SCOPE_RE = re.compile(rf"^{_WS}*[-*]?{_WS}*\S+\.(py|ts|js|cpp|go|rs){_WS}*$")
+#: Matches everything up to and including the agent_strategy: label, so substituting it away leaves the strategy value.
 _STRATEGY_RE = re.compile(rf"^.*agent_strategy:{_WS}*")
+#: Case-insensitive phrases in a program that signal cross-domain or multi-component work and mark it complex.
 _CROSS_DOMAIN_RE = re.compile(
     r"cross.domain|multi.system|distributed|multiple.*component|pipeline.*stage",
     re.IGNORECASE,

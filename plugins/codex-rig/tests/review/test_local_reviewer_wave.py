@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-import importlib.util
 import hashlib
+import importlib.util
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from collections.abc import Callable
+from pathlib import Path
 from types import ModuleType
 
 import pytest
 from _platform import DIRECTORY_SYMLINKS_AVAILABLE
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CANONICAL_ROLES = PLUGIN_ROOT / "roles"
@@ -28,7 +28,8 @@ def _adapter() -> ModuleType:
         return _ADAPTER
     path = PLUGIN_ROOT / "shared" / "local_reviewer_wave.py"
     spec = importlib.util.spec_from_file_location("local_reviewer_wave", path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -173,7 +174,8 @@ class _PopenFactory:
         """Create the next planned local process without inspecting command arguments."""
         del kwargs
         command = args[0]
-        assert isinstance(command, list) and all(isinstance(part, str) for part in command)
+        assert isinstance(command, list)
+        assert all(isinstance(part, str) for part in command)
         self.commands.append(command)
         process = _FakeProcess(self._launches[len(self.processes)])
         self.processes.append(process)
@@ -461,7 +463,8 @@ def test_check_host_accepts_exact_two_mebibyte_unicode_control_context_before_la
 
     assert len(expected.encode("utf-8")) == adapter.MAX_CONTEXT_BYTES
     assert len(expected.encode("utf-8")) > adapter.MAX_FILE_BYTES
-    assert "😀" in expected and "\x00" in expected
+    assert "😀" in expected
+    assert "\x00" in expected
     requests = [json.loads(line) for line in factory.processes[1].stdin.getvalue().splitlines()]
     first_turn = next(request for request in requests if request["method"] == "turn/start")
     preload = next(request for request in requests if request["method"] == "thread/inject_items")
@@ -515,7 +518,7 @@ def test_failed_later_preload_prevents_every_turn(tmp_path: Path, monkeypatch: p
     plan_path, _ = review_evidence_files(tmp_path)
     _replace_context_bytes(plan_path, 1, b"x" * 1_048_576)
     launches = _launches_for_plan(plan_path)
-    launches[1] = launches[1][:5] + [{"id": 5, "error": {"code": -32601, "message": "Method not found"}}]
+    launches[1] = [*launches[1][:5], {"id": 5, "error": {"code": -32601, "message": "Method not found"}}]
     factory = _fake_public_processes(monkeypatch, launches)
 
     with pytest.raises(_adapter().ReviewRouteError, match="app-server-request-failed:thread/inject_items"):
@@ -820,7 +823,8 @@ def test_dispatch_accepts_tracked_symlink_to_in_repository_directory(tmp_path: P
     )
     collector_path = PLUGIN_ROOT / "shared" / "collect_diff.py"
     spec = importlib.util.spec_from_file_location("collect_diff_symlink_test", collector_path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     collector = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(collector)
     source = collector.capture_source_snapshot(repository, ["directory-link"])
@@ -1267,7 +1271,7 @@ def test_review_validates_source_bound_finding_fields(
         _adapter().run_review(plan_path, output, Path("codex"), 10)
     else:
         with pytest.raises(
-            _adapter().ReviewRouteError, match="app-server-review-output-(schema-mismatch|finding-invalid)"
+            _adapter().ReviewRouteError, match=r"app-server-review-output-(schema-mismatch|finding-invalid)"
         ):
             _adapter().run_review(plan_path, output, Path("codex"), 10)
     assert (output / "challenger.md").read_text() == raw
@@ -1682,7 +1686,7 @@ def test_rpc_failure_retains_only_allowlisted_diagnostics(
     """Keep actionable RPC categories without copying provider messages, data or arbitrary codes."""
     plan_path, _ = review_evidence_files(tmp_path)
     launches = _launches_for_plan(plan_path)
-    launches[1] = launches[1][:5] + [{"id": 5, "error": {"code": code, "message": message, "data": "private-data"}}]
+    launches[1] = [*launches[1][:5], {"id": 5, "error": {"code": code, "message": message, "data": "private-data"}}]
     _fake_public_processes(monkeypatch, launches)
 
     with pytest.raises(_adapter().ReviewRouteError, match="app-server-request-failed:turn/start"):
@@ -1694,7 +1698,8 @@ def test_rpc_failure_retains_only_allowlisted_diagnostics(
     assert diagnostic["reason"] == reason
     assert diagnostic["method_category"] == "turn/start"
     assert diagnostic["rpc_code"] == (code if type(code) is int and code in {-32602, -32601} else None)
-    assert "private-data" not in evidence_text and message not in evidence_text
+    assert "private-data" not in evidence_text
+    assert message not in evidence_text
     assert set(diagnostic) == {"stage", "reason", "method_category", "rpc_code", "recovery"}
 
 
@@ -1730,26 +1735,25 @@ def test_run_review_rejects_duplicate_user_message_completion(tmp_path: Path, mo
         _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
 
 
-def test_run_review_rejects_image_user_message_echo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Reject an image input instead of treating it as a bound text-context echo."""
-    plan_path, _ = review_evidence_files(tmp_path)
-    launches = _launches_for_plan(plan_path, echo_input=True)
-    echo = next(frame for frame in launches[1] if frame.get("method") == "item/started")
-    echo["params"]["item"]["content"] = [{"type": "image", "url": "ignored"}]
-    _fake_public_processes(monkeypatch, launches)
-
-    with pytest.raises(_adapter().ReviewRouteError, match="app-server-user-message-lifecycle-invalid"):
-        _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
-
-
-def test_run_review_rejects_user_message_echo_with_extra_content(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "reshape_content",
+    [
+        pytest.param(lambda content: [{"type": "image", "url": "ignored"}], id="image-input"),
+        pytest.param(lambda content: [*content, {"type": "text", "text": "extra"}], id="extra-content-part"),
+    ],
+)
+def test_run_review_rejects_unbound_user_message_echo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reshape_content: Callable[[list[dict[str, str]]], object]
 ) -> None:
-    """Reject a text echo carrying an additional content part beyond the frozen context."""
+    """Reject an echoed input that is not exactly the bound text context.
+
+    An image input is not a text-context echo, and a text echo carrying an additional content part goes beyond the
+    frozen context; both fail the user-message lifecycle.
+    """
     plan_path, _ = review_evidence_files(tmp_path)
     launches = _launches_for_plan(plan_path, echo_input=True)
     echo = next(frame for frame in launches[1] if frame.get("method") == "item/started")
-    echo["params"]["item"]["content"].append({"type": "text", "text": "extra"})
+    echo["params"]["item"]["content"] = reshape_content(echo["params"]["item"]["content"])
     _fake_public_processes(monkeypatch, launches)
 
     with pytest.raises(_adapter().ReviewRouteError, match="app-server-user-message-lifecycle-invalid"):
@@ -1784,33 +1788,34 @@ def test_run_review_accepts_maximum_final_output_frame(tmp_path: Path, monkeypat
     _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
 
 
-def test_run_review_consumes_disabled_remote_control_status_before_turns(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "notification",
+    [
+        pytest.param(
+            {"jsonrpc": "2.0", "method": "remoteControl/status/changed", "params": {"status": "disabled"}},
+            id="disabled-remote-control-status",
+        ),
+        pytest.param(
+            {
+                "jsonrpc": "2.0",
+                "method": "account/rateLimits/updated",
+                "params": {"rateLimits": {"primary": {"usedPercent": 1}}},
+            },
+            id="rate-limit-update",
+        ),
+    ],
+)
+def test_run_review_consumes_documented_notification_before_turns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, notification: dict[str, object]
 ) -> None:
-    """Consume the approved disabled remote-control notification in the public event loop."""
+    """Consume a documented host notification in the public event loop without retaining its account data.
+
+    The approved disabled remote-control status and the rolling rate-limit update arrive before the reviewer turns and
+    must not interrupt the run.
+    """
     plan_path, _ = review_evidence_files(tmp_path)
     launches = _launches_for_plan(plan_path)
-    launches[1][2] = {
-        "jsonrpc": "2.0",
-        "method": "remoteControl/status/changed",
-        "params": {"status": "disabled"},
-    }
-    _fake_public_processes(monkeypatch, launches)
-
-    _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
-
-
-def test_run_review_discards_rate_limit_notification_before_turns(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Discard the documented rolling rate-limit update without retaining its account data."""
-    plan_path, _ = review_evidence_files(tmp_path)
-    launches = _launches_for_plan(plan_path)
-    launches[1][2] = {
-        "jsonrpc": "2.0",
-        "method": "account/rateLimits/updated",
-        "params": {"rateLimits": {"primary": {"usedPercent": 1}}},
-    }
+    launches[1][2] = notification
     _fake_public_processes(monkeypatch, launches)
 
     _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
@@ -1922,24 +1927,44 @@ def test_run_review_rejects_unknown_event_method(tmp_path: Path, monkeypatch: py
 
 
 @pytest.mark.parametrize(
-    ("method", "category"),
+    ("event", "category", "secret"),
     [
-        pytest.param("model/verification", "model/verification", id="model-notification"),
-        pytest.param("item/autoApprovalReview/started", "item/autoApprovalReview/started", id="approval-review"),
+        pytest.param(
+            {"jsonrpc": "2.0", "method": "model/verification", "params": {"sensitive": "do-not-retain-this-payload"}},
+            "model/verification",
+            "do-not-retain-this-payload",
+            id="model-notification",
+        ),
+        pytest.param(
+            {
+                "jsonrpc": "2.0",
+                "method": "item/autoApprovalReview/started",
+                "params": {"sensitive": "do-not-retain-this-payload"},
+            },
+            "item/autoApprovalReview/started",
+            "do-not-retain-this-payload",
+            id="approval-review",
+        ),
+        pytest.param(
+            {"jsonrpc": "2.0", "method": {"sensitive": "do-not-retain-this-method"}, "params": {}},
+            "unrecognized",
+            "do-not-retain-this-method",
+            id="nontext-method",
+        ),
     ],
 )
-def test_run_review_classifies_documented_rejected_event_without_retaining_payload(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str, category: str
+def test_run_review_classifies_rejected_event_without_retaining_its_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event: dict[str, object], category: str, secret: str
 ) -> None:
-    """Identify a documented event by static label while failing closed and discarding its payload."""
+    """Identify a rejected event by static label while failing closed and discarding its payload or method.
+
+    A documented event is classified by its own label, and a malformed non-text method is treated as unknown rather than
+    raising a Python type error; neither the payload nor the method value is retained in the evidence.
+    """
     plan_path, _ = review_evidence_files(tmp_path)
     launches = _launches_for_plan(plan_path)
     first_event = next(index for index, frame in enumerate(launches[1]) if frame.get("method") == "item/completed")
-    launches[1][first_event] = {
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": {"sensitive": "do-not-retain-this-payload"},
-    }
+    launches[1][first_event] = event
     _fake_public_processes(monkeypatch, launches)
 
     with pytest.raises(_adapter().ReviewRouteError, match="app-server-event-rejected"):
@@ -1948,30 +1973,7 @@ def test_run_review_classifies_documented_rejected_event_without_retaining_paylo
     evidence_text = (tmp_path / "review-output" / "evidence.json").read_text(encoding="utf-8")
     diagnostic = json.loads(evidence_text)["failure_diagnostic"]
     assert diagnostic["method_category"] == category
-    assert "do-not-retain-this-payload" not in evidence_text
-
-
-def test_run_review_rejects_nontext_event_method_without_retaining_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Treat malformed method values as unknown rather than raising a Python type error."""
-    plan_path, _ = review_evidence_files(tmp_path)
-    launches = _launches_for_plan(plan_path)
-    first_event = next(index for index, frame in enumerate(launches[1]) if frame.get("method") == "item/completed")
-    launches[1][first_event] = {
-        "jsonrpc": "2.0",
-        "method": {"sensitive": "do-not-retain-this-method"},
-        "params": {},
-    }
-    _fake_public_processes(monkeypatch, launches)
-
-    with pytest.raises(_adapter().ReviewRouteError, match="app-server-event-rejected"):
-        _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
-
-    evidence_text = (tmp_path / "review-output" / "evidence.json").read_text(encoding="utf-8")
-    diagnostic = json.loads(evidence_text)["failure_diagnostic"]
-    assert diagnostic["method_category"] == "unrecognized"
-    assert "do-not-retain-this-method" not in evidence_text
+    assert secret not in evidence_text
 
 
 def test_run_review_accepts_schema_planning_events_bound_to_active_turn(
@@ -2016,10 +2018,21 @@ def test_run_review_accepts_schema_planning_events_bound_to_active_turn(
     assert "Inspect the supplied source." not in evidence
 
 
-def test_run_review_rejects_schema_planning_event_for_other_turn(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("thread_id", "status", "error"),
+    [
+        pytest.param("other-thread", "pending", "app-server-thread-or-turn-mismatch", id="other-thread"),
+        pytest.param("thread-0", "unreviewed", "app-server-plan-notification-invalid", id="status-outside-schema"),
+    ],
+)
+def test_run_review_rejects_invalid_schema_planning_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, thread_id: str, status: str, error: str
 ) -> None:
-    """Keep planning events bound to the active reviewer turns."""
+    """Keep planning events bound to the active reviewer turns and inside the generated schema.
+
+    A plan update naming another thread is rejected as a thread mismatch, and a plan update whose step status is outside
+    the generated schema is rejected as an invalid notification.
+    """
     plan_path, _ = review_evidence_files(tmp_path)
     launches = _launches_for_plan(plan_path)
     first_final = next(index for index, frame in enumerate(launches[1]) if frame.get("method") == "item/completed")
@@ -2029,38 +2042,15 @@ def test_run_review_rejects_schema_planning_event_for_other_turn(
             "jsonrpc": "2.0",
             "method": "turn/plan/updated",
             "params": {
-                "threadId": "other-thread",
+                "threadId": thread_id,
                 "turnId": "turn-0",
-                "plan": [{"step": "Inspect the supplied source.", "status": "pending"}],
+                "plan": [{"step": "Inspect the supplied source.", "status": status}],
             },
         },
     )
     _fake_public_processes(monkeypatch, launches)
 
-    with pytest.raises(_adapter().ReviewRouteError, match="app-server-thread-or-turn-mismatch"):
-        _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
-
-
-def test_run_review_rejects_malformed_schema_planning_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Reject a plan update whose step status is outside the generated schema."""
-    plan_path, _ = review_evidence_files(tmp_path)
-    launches = _launches_for_plan(plan_path)
-    first_final = next(index for index, frame in enumerate(launches[1]) if frame.get("method") == "item/completed")
-    launches[1].insert(
-        first_final,
-        {
-            "jsonrpc": "2.0",
-            "method": "turn/plan/updated",
-            "params": {
-                "threadId": "thread-0",
-                "turnId": "turn-0",
-                "plan": [{"step": "Inspect the supplied source.", "status": "unreviewed"}],
-            },
-        },
-    )
-    _fake_public_processes(monkeypatch, launches)
-
-    with pytest.raises(_adapter().ReviewRouteError, match="app-server-plan-notification-invalid"):
+    with pytest.raises(_adapter().ReviewRouteError, match=error):
         _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
 
 
@@ -2242,7 +2232,7 @@ def _replace_context_to_size(plan_path: Path, role_index: int, size: int) -> str
     prefix = role_card + b"\nFrozen source:\n" + source + b"\nFrozen diff:\n" + diff
     remaining = size - len(prefix)
     assert remaining >= 0
-    pattern = "😀\x00x".encode("utf-8")
+    pattern = "😀\x00x".encode()
     suffix = pattern * (remaining // len(pattern)) + b"x" * (remaining % len(pattern))
     _replace_context_bytes(plan_path, role_index, suffix)
     return (prefix + suffix).decode("utf-8")
@@ -2277,7 +2267,7 @@ def review_evidence_files(
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    diff = f"diff --git a/{source_path} b/{source_path}\n".encode("utf-8")
+    diff = f"diff --git a/{source_path} b/{source_path}\n".encode()
     (tmp_path / "source.json").write_bytes(source)
     (tmp_path / "diff.patch").write_bytes(diff)
     nodes: list[dict[str, object]] = []
@@ -2509,27 +2499,23 @@ def test_local_reviewer_rejects_explicit_selection_advisors(tmp_path: Path) -> N
         pytest.param("output_sha256", "0" * 64, "evidence-output-sha256-mismatch", id="output-digest"),
         pytest.param("thread_id", "thread-0", "evidence-thread-or-turn-id-duplicate", id="duplicate-thread"),
         pytest.param("terminal_status", "failed", "evidence-terminal-status-invalid", id="failed-turn"),
+        pytest.param(
+            "output_path", "CHALLENGER.MD", "evidence-output-path-duplicate", id="cross-platform-output-alias"
+        ),
     ],
 )
 def test_validate_evidence_rejects_tampered_node_binding(tmp_path: Path, field: str, value: str, match: str) -> None:
-    """Reject output-root escape, identity drift, and incomplete reviewer results."""
+    """Reject output-root escape, identity drift, incomplete reviewer results, and colliding output aliases.
+
+    An output path that collides with another node's output after Windows separator and case normalization is a
+    duplicate even though its raw spelling differs.
+    """
     plan_path, evidence_path = review_evidence_files(tmp_path)
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     evidence["nodes"][1][field] = value
     _write_json(evidence_path, evidence)
 
     with pytest.raises(_adapter().ReviewRouteError, match=match):
-        _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)
-
-
-def test_validate_evidence_rejects_cross_platform_duplicate_output_alias(tmp_path: Path) -> None:
-    """Reject output paths that collide after Windows separator and case normalization."""
-    plan_path, evidence_path = review_evidence_files(tmp_path)
-    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-    evidence["nodes"][1]["output_path"] = "CHALLENGER.MD"
-    _write_json(evidence_path, evidence)
-
-    with pytest.raises(_adapter().ReviewRouteError, match="evidence-output-path-duplicate"):
         _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)
 
 

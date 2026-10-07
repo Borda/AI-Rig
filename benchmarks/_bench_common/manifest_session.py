@@ -7,21 +7,24 @@ importable by its own tests.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-import subprocess
-import sys
 
+#: Absolute path of the benchmarks directory that holds the manifest builder scripts.
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
+#: Repository root, used as the working directory when the manifest builders run.
 REPO_ROOT = BENCHMARKS_DIR.parent
-# Dependency order: codex-agentic hashes codex-integration.json, and both Codex builders
-# read provider-parity-methodology.json. Mirrors run-all.sh refresh_generated_manifests.
+#: Dependency order: codex-agentic hashes codex-integration.json, and both Codex builders
+#: read provider-parity-methodology.json. Mirrors run-all.sh refresh_generated_manifests.
 _MANIFEST_BUILDERS = (
     BENCHMARKS_DIR / "build-provider-parity-methodology-manifest.py",
     BENCHMARKS_DIR / "build-codex-integration-manifest.py",
     BENCHMARKS_DIR / "build-codex-agentic-manifest.py",
 )
+#: Generated manifest files whose bytes are snapshotted before a session so they can be restored.
 _GENERATED_MANIFEST_PATHS = (
     BENCHMARKS_DIR / "manifests" / "provider-parity-methodology.json",
     BENCHMARKS_DIR / "manifests" / "codex-integration.json",
@@ -44,7 +47,7 @@ class GeneratedManifestArtifacts:
 def _generate_manifest_artifacts() -> None:
     """Generate the methodology, integration, and agentic manifests in dependency order."""
     for builder in _MANIFEST_BUILDERS:
-        subprocess.run(
+        subprocess.run(  # noqa: S603 - argv list, no shell
             [sys.executable, str(builder)],
             cwd=REPO_ROOT,
             check=True,

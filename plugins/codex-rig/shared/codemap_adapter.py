@@ -57,13 +57,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
+#: Identifier of the Codemap integration protocol this adapter speaks, recorded in every context artifact.
 PROTOCOL_VERSION = "codemap-py.integration.v1"
+#: Schema revision of the structural-context artifact this adapter writes.
 ARTIFACT_SCHEMA_VERSION = 3
+#: Status reported when the Codemap launcher is healthy and its queries returned complete results.
 STATUS_AVAILABLE = "available"
+#: Status reported when no `codemap-py` launcher could be found.
 STATUS_ABSENT = "absent"
+#: Status reported when query results describe an older tree than the one on disk.
 STATUS_STALE = "stale"
+#: Status reported when the Codemap launcher, its health check, or its query output cannot be used.
 STATUS_INCOMPATIBLE = "incompatible"
+#: Status reported when Codemap ran but one or more queries failed or returned incomplete results.
 STATUS_DEGRADED = "degraded"
 # One composed status, not a seventh independent one: `stale` and `degraded` are the only two
 # conditions that can hold at once (every other status short-circuits before any query runs, and
@@ -71,11 +77,17 @@ STATUS_DEGRADED = "degraded"
 # by exact value, so ranking one condition above the other would silently drop the other's caveat:
 # reporting `stale` alone invites the false conclusion that re-indexing restores exhaustiveness,
 # and reporting `degraded` alone hides that the evidence describes an older tree.
+#: Composed status for results that are both stale and degraded, so neither caveat is hidden.
 STATUS_STALE_DEGRADED = "stale+degraded"
+#: Status reported when the caller asked for no Codemap queries, so no subprocess was started.
 STATUS_SKIPPED = "skipped"
+#: Default per-subprocess timeout, in seconds, for Codemap probe and query calls.
 _DEFAULT_TIMEOUT = 15.0
+#: Error text recorded for a query that needs a target when the caller supplied none.
 _MISSING_TARGET_ERROR = "target required, none supplied"
+#: Exit code Codemap uses to signal that the project has no index yet.
 _EXIT_NOT_INDEXED = 3
+#: Lowercase file suffixes treated as directly executable launchers on Windows.
 _WINDOWS_EXECUTABLE_SUFFIXES = {".bat", ".cmd", ".com", ".exe"}
 
 
@@ -88,6 +100,7 @@ class QuerySpec:
     extra_args: tuple[str, ...] = ()
 
 
+#: Codemap queries planned for each structural-context category (analysis, implementation, review, audit).
 CATEGORY_QUERIES: dict[str, tuple[QuerySpec, ...]] = {
     # analysis/research: centrality, symbol/import context, completeness metadata.
     "analysis": (
@@ -110,6 +123,7 @@ CATEGORY_QUERIES: dict[str, tuple[QuerySpec, ...]] = {
 }
 
 
+#: Accepted query kinds for a fact request; `skip` runs nothing and `standard` uses the category plan.
 QUERY_KINDS = (
     "skip",
     "central",
@@ -121,6 +135,7 @@ QUERY_KINDS = (
     "standard",
 )
 
+#: Single Codemap query planned for each non-standard query kind.
 _FACT_QUERY_SPECS: dict[str, QuerySpec] = {
     "central": QuerySpec("central", requires_target=False, extra_args=("--top", "5")),
     "callers": QuerySpec("fn-rdeps", requires_target=True, extra_args=("--exclude-tests",)),
@@ -258,7 +273,7 @@ def _run_json(argv: list[str], timeout: float) -> tuple[int, dict[str, Any] | No
         ``(exit_code, parsed_json_or_none, error_message_or_none)``.
     """
     try:
-        completed = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+        completed = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603 - argv list, no shell
     except (OSError, subprocess.SubprocessError) as error:
         return -1, None, str(error)
     try:

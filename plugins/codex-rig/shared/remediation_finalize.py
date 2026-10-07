@@ -73,25 +73,40 @@ from pathlib import Path, PurePosixPath
 from types import ModuleType
 from typing import Any
 
+#: Directory containing this helper and its sibling modules, added to `sys.path` for file-path loading.
 SHARED_DIRECTORY = Path(__file__).resolve().parent
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
 import final_handoff  # noqa: E402
 
+#: Item fields that identify a review item and are carried over unchanged when metadata is merged.
 IDENTITY_FIELDS = ("input_item_id", "item_name", "item_type", "severity", "selectable", "sources")
+#: Maps each parallel-approval response to the approval status stored in the workplan.
 APPROVAL_STATUS = {"approve": "approved", "parent-only": "parent-only", "not-required": "not-required"}
+#: Maps a handoff presentation version to the table layout used when rendering the final handoff.
 LAYOUTS = {2: "grouped", 3: "concise", 4: "concise"}
+#: Verification gate identifiers, in the order they are reported in the handoff.
 GATE_IDS = ("lint", "format", "types", "tests", "review")
+#: Workplan section headings this helper regenerates; any other section is preserved as written.
 MANAGED_SECTIONS = ("Work Bucket Plan", "Parallel Approval", "Execution Order", "Ungrouped Items")
+#: Action-items section headings this helper regenerates from the resolution ledger.
 LEDGER_SECTIONS = ("Review Item Resolution Table", "Expanded Source Records")
+#: File name of the append-only log of item and bucket resolution events.
 EVENTS_LEDGER = "resolution-events.jsonl"
+#: File name of the append-only closure evidence log.
 CLOSURE_LEDGER = "closure-log.md"
+#: Run ledgers that the `append` action is allowed to write to.
 APPEND_LEDGERS = (CLOSURE_LEDGER, EVENTS_LEDGER)
+#: File name of the review run's resolution ledger that remediation results are written back to.
 REVIEW_RESOLUTION_LEDGER = "resolution.jsonl"
+#: Schema revision of each record in the resolution-events ledger.
 EVENT_SCHEMA_VERSION = 1
+#: Schema revision of each record written to the review resolution ledger.
 RESOLUTION_SCHEMA_VERSION = 1
+#: Allowed status values for a work-bucket event.
 BUCKET_STATUSES = frozenset({"planned", "in-progress", "fixed", "verified", "deferred", "unresolved"})
+#: Allowed values for each enumerated field of an item event.
 ITEM_EVENT_ENUMS = {
     # ``stale`` stays readable in historical results but is never a new disposition.
     "triage_status": frozenset(
@@ -123,11 +138,17 @@ ITEM_EVENT_ENUMS = {
     ),
     "pr_relation": frozenset({"direct-diff", "pr-intent", "adjacent", "unknown", "unrelated"}),
 }
+#: Free-text fields an item event may carry, which must be non-empty strings when present.
 ITEM_EVENT_TEXT_FIELDS = ("resolved_how", "evidence")
+#: Fields that together record an item's outcome and must all be set before it can be finalized.
 ITEM_OUTCOME_FIELDS = ("triage_status", "resolution_status", "owner_status", "resolved_how", "evidence")
+#: Resolution statuses that count an item as fixed.
 FIXED_RESOLUTIONS = frozenset({"implemented", "resolved", "already-fixed", "already-applied"})
+#: Resolution statuses that count an item as rejected; `stale` stays readable for historical results.
 REJECTED_RESOLUTIONS = frozenset({"rejected", "not-applicable", "duplicate", "stale"})
+#: Owner statuses that mean an item was deferred or not selected for this run.
 DEFERRED_OWNERS = frozenset({"deferred", "not-selected"})
+#: Pattern for an abbreviated or full lowercase hex commit hash of 7 to 64 characters.
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{7,64}")
 
 
@@ -980,7 +1001,7 @@ def _review_validate(arguments: argparse.Namespace, run: Path) -> dict[str, Any]
         command += ["--parent-thread-id", arguments.parent_thread_id]
     if arguments.codex_home:
         command += ["--codex-home", str(arguments.codex_home)]
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603 - argv list, no shell
     try:
         report = json.loads(completed.stdout)
     except json.JSONDecodeError:
@@ -1011,6 +1032,7 @@ def _ledger_action(arguments: argparse.Namespace) -> dict[str, Any]:
     return {"status": "pass", "action_items": str(path)}
 
 
+#: Dispatch table from command-line action name to the function that performs it.
 ACTIONS = {
     "metadata": _metadata_action,
     "workplan": _workplan_action,

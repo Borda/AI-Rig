@@ -8,66 +8,59 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import check_skill_contracts as csc
+import pytest
 
 
 class TestUnenforcedTimeouts:
     """Covers the `# timeout:` comment scan."""
 
-    def test_bare_comment_flagged(self, tmp_path: Path) -> None:
-        """A command with only a timeout comment beside it is flagged."""
-        findings = csc.unenforced_timeouts(tmp_path / "a.md", ["gh pr view 1  # timeout: 5000"])
-        assert len(findings) == 1
+    @pytest.mark.parametrize(
+        ("lines", "expected"),
+        [
+            pytest.param(["gh pr view 1  # timeout: 5000"], 1, id="bare-comment-flagged"),
+            pytest.param(["timeout 5 gh pr view 1  # timeout: 5000"], 0, id="shell-timeout-prefix-exempts"),
+            # Python scripts enforce internally via their own --timeout default.
+            pytest.param(['python "x/bin/y.py"  # timeout: 5000'], 0, id="python-line-exempt"),
+            pytest.param(["# timeout: 5000 is the convention"], 0, id="comment-only-line-ignored"),
+        ],
+    )
+    def test_timeout_comment_needs_real_enforcement(self, tmp_path: Path, lines: list[str], expected: int) -> None:
+        """A `# timeout:` comment is flagged unless a real `timeout S` prefix or a Python script enforces it.
 
-    def test_shell_timeout_exempts(self, tmp_path: Path) -> None:
-        """A real `timeout S` prefix satisfies the check."""
-        findings = csc.unenforced_timeouts(tmp_path / "a.md", ["timeout 5 gh pr view 1  # timeout: 5000"])
-        assert findings == []
-
-    def test_python_line_exempt(self, tmp_path: Path) -> None:
-        """Python scripts enforce internally via their own --timeout default."""
-        findings = csc.unenforced_timeouts(tmp_path / "a.md", ['python "x/bin/y.py"  # timeout: 5000'])
-        assert findings == []
-
-    def test_comment_only_line_ignored(self, tmp_path: Path) -> None:
-        """A line that is entirely a comment is prose, not a command."""
-        findings = csc.unenforced_timeouts(tmp_path / "a.md", ["# timeout: 5000 is the convention"])
-        assert findings == []
+        A command with only the comment beside it is reported; a ``timeout`` prefix and a Python invocation satisfy the
+        check, and a line that is entirely a comment is prose rather than a command.
+        """
+        assert len(csc.unenforced_timeouts(tmp_path / "a.md", lines)) == expected
 
 
 class TestUntimedSubprocess:
     """Covers the subprocess timeout= scan."""
 
-    def test_single_line_without_timeout_flagged(self, tmp_path: Path) -> None:
-        """A one-line call with no timeout= is flagged."""
-        findings = csc.untimed_subprocess(tmp_path / "a.py", ["subprocess.run(['ls'])"])
-        assert len(findings) == 1
+    @pytest.mark.parametrize(
+        ("lines", "expected"),
+        [
+            pytest.param(["subprocess.run(['ls'])"], 1, id="single-line-without-timeout"),
+            pytest.param(["subprocess.run(['ls'], timeout=5)"], 0, id="single-line-with-timeout"),
+            # The shell original missed a timeout= two lines below the call.
+            pytest.param(
+                ["    result = subprocess.run(", "        ['ls'],", "        timeout=30,", "    )"],
+                0,
+                id="multiline-with-timeout",
+            ),
+            pytest.param(
+                ["    result = subprocess.run(", "        ['ls'],", "    )"], 1, id="multiline-without-timeout"
+            ),
+            pytest.param(["# subprocess.run(['ls'])"], 0, id="commented-out-call-ignored"),
+        ],
+    )
+    def test_subprocess_call_needs_timeout(self, tmp_path: Path, lines: list[str], expected: int) -> None:
+        """A live subprocess call is flagged exactly when no ``timeout=`` appears within the call.
 
-    def test_single_line_with_timeout_passes(self, tmp_path: Path) -> None:
-        """A one-line call carrying timeout= passes."""
-        findings = csc.untimed_subprocess(tmp_path / "a.py", ["subprocess.run(['ls'], timeout=5)"])
-        assert findings == []
-
-    def test_multiline_call_with_timeout_passes(self, tmp_path: Path) -> None:
-        """Timeout= two lines below the call still counts — the shell original missed this."""
-        lines = [
-            "    result = subprocess.run(",
-            "        ['ls'],",
-            "        timeout=30,",
-            "    )",
-        ]
-        assert csc.untimed_subprocess(tmp_path / "a.py", lines) == []
-
-    def test_multiline_call_without_timeout_flagged(self, tmp_path: Path) -> None:
-        """A multi-line call genuinely missing timeout= is still reported."""
-        lines = ["    result = subprocess.run(", "        ['ls'],", "    )"]
-        assert len(csc.untimed_subprocess(tmp_path / "a.py", lines)) == 1
-
-    def test_commented_call_ignored(self, tmp_path: Path) -> None:
-        """A commented-out call is not a live call site."""
-        assert csc.untimed_subprocess(tmp_path / "a.py", ["# subprocess.run(['ls'])"]) == []
+        Covers one-line and multi-line calls with and without ``timeout=``, and a commented-out call that is not a live
+        call site.
+        """
+        assert len(csc.untimed_subprocess(tmp_path / "a.py", lines)) == expected
 
 
 class TestMissingTimeoutFlag:
@@ -79,14 +72,20 @@ class TestMissingTimeoutFlag:
         assert finding is not None
         assert "--timeout argparse argument absent" in finding
 
-    def test_script_with_flag_passes(self, tmp_path: Path) -> None:
-        """Declaring --timeout satisfies the check."""
-        text = 'parser.add_argument("--timeout")\nsubprocess.run(["ls"], timeout=5)'
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param('parser.add_argument("--timeout")\nsubprocess.run(["ls"], timeout=5)', id="declared-flag"),
+            pytest.param("x = 1\n", id="script-never-shells-out"),
+            pytest.param(
+                'parser.add_argument(\n    "--timeout",\n    type=float,\n)\nsubprocess.run(["x"], timeout=1)',
+                id="wrapped-add-argument-call",
+            ),
+        ],
+    )
+    def test_script_with_flag_or_without_subprocess_passes(self, tmp_path: Path, text: str) -> None:
+        """Declaring --timeout (even in a wrapped call) or never shelling out satisfies the check."""
         assert csc.missing_timeout_flag(tmp_path / "a.py", text) is None
-
-    def test_script_without_subprocess_exempt(self, tmp_path: Path) -> None:
-        """A script that never shells out needs no --timeout."""
-        assert csc.missing_timeout_flag(tmp_path / "a.py", "x = 1\n") is None
 
     def test_docstring_mention_does_not_exempt(self, tmp_path: Path) -> None:
         """`--timeout` in the module docstring is not a declared flag.
@@ -98,10 +97,8 @@ class TestMissingTimeoutFlag:
         finding = csc.missing_timeout_flag(tmp_path / "a.py", text)
         assert finding is not None
 
-    def test_multiline_add_argument_exempts(self, tmp_path: Path) -> None:
-        """A wrapped `add_argument(` call still counts as declaring the flag."""
-        text = 'parser.add_argument(\n    "--timeout",\n    type=float,\n)\nsubprocess.run(["x"], timeout=1)'
-        assert csc.missing_timeout_flag(tmp_path / "a.py", text) is None
+
+_LINES = [f"line {i}" for i in range(30)]
 
 
 class TestShadowedMode:
@@ -135,22 +132,24 @@ class TestShadowedMode:
         skill_md.write_text("\n".join(body), encoding="utf-8")
         assert csc.shadowed_mode(skill_md, mode_file) is None
 
-    def test_small_mode_file_skipped(self, tmp_path: Path) -> None:
-        """A mode file under the size threshold is too small to judge."""
-        body = [f"line {i}" for i in range(5)]
-        skill_md, mode_file = self._pair(tmp_path, body, body)
-        assert csc.shadowed_mode(skill_md, mode_file) is None
+    @pytest.mark.parametrize(
+        ("mode_body", "inline"),
+        [
+            # A mode file under the size threshold is too small to judge.
+            pytest.param(_LINES[:5], _LINES[:5], id="small-mode-file"),
+            # A large mode file with only a few shared lines is not a shadow.
+            pytest.param(_LINES, _LINES[:5], id="low-overlap"),
+            # Blanks and comments do not inflate the overlap count.
+            pytest.param(["", "# note"] * 30, ["", "# note"] * 30, id="blank-and-comment-lines-excluded"),
+        ],
+    )
+    def test_mode_not_reported_as_shadow(self, tmp_path: Path, mode_body: list[str], inline: list[str]) -> None:
+        """A referenced mode file is not a shadow when it is too small, barely overlaps, or overlaps only on filler.
 
-    def test_low_overlap_not_reported(self, tmp_path: Path) -> None:
-        """A large mode file with only a few shared lines is not a shadow."""
-        body = [f"line {i}" for i in range(30)]
-        skill_md, mode_file = self._pair(tmp_path, body, body[:5])
-        assert csc.shadowed_mode(skill_md, mode_file) is None
-
-    def test_blank_and_comment_lines_excluded(self, tmp_path: Path) -> None:
-        """Blanks and comments do not inflate the overlap count."""
-        body = ["", "# note"] * 30
-        skill_md, mode_file = self._pair(tmp_path, body, body)
+        Covers a mode file under the size threshold, a large one sharing only a few lines with the SKILL.md, and one
+        whose duplicated lines are all blanks or comments.
+        """
+        skill_md, mode_file = self._pair(tmp_path, mode_body, inline)
         assert csc.shadowed_mode(skill_md, mode_file) is None
 
 
@@ -199,19 +198,20 @@ class TestConfigFileDiscovery:
         found = {p.name for p in csc._config_files(claude)}
         assert found == {"a.md", "r.md", "SKILL.md"}
 
-    def test_source_tree_layout_matched(self, tmp_path: Path) -> None:
-        """`plugins/cc_x/agents/a.md` is still in scope."""
-        agents = tmp_path / "plugins" / "cc_x" / "agents"
-        agents.mkdir(parents=True)
-        (agents / "a.md").write_text("x\n", encoding="utf-8")
-        assert [p.name for p in csc._config_files(tmp_path / "plugins")] == ["a.md"]
-
-    def test_nested_rules_matched(self, tmp_path: Path) -> None:
-        """`rules/_full/*.md` is scanned, as the `find` original scanned it."""
-        full = tmp_path / "plugins" / "cc_x" / "rules" / "_full"
-        full.mkdir(parents=True)
-        (full / "deep.md").write_text("x\n", encoding="utf-8")
-        assert [p.name for p in csc._config_files(tmp_path / "plugins")] == ["deep.md"]
+    @pytest.mark.parametrize(
+        ("subdir", "name"),
+        [
+            pytest.param("agents", "a.md", id="source-tree-agents"),
+            # The `find` original scanned `rules/_full/*.md`, so the nested directory stays in scope.
+            pytest.param("rules/_full", "deep.md", id="nested-rules"),
+        ],
+    )
+    def test_source_tree_layout_matched(self, tmp_path: Path, subdir: str, name: str) -> None:
+        """Markdown under `plugins/cc_x/agents` and the nested `plugins/cc_x/rules/_full` stays in scope."""
+        directory = tmp_path / "plugins" / "cc_x" / subdir
+        directory.mkdir(parents=True)
+        (directory / name).write_text("x\n", encoding="utf-8")
+        assert [p.name for p in csc._config_files(tmp_path / "plugins")] == [name]
 
     def test_unrelated_markdown_ignored(self, tmp_path: Path) -> None:
         """A README outside the three shapes is not a config file."""

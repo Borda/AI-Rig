@@ -35,10 +35,15 @@ from pathlib import Path
 
 from codemap_py import index_paths, integration, query
 
+#: Lowest (major, minor) CPython version the launcher accepts as an interpreter.
 _MIN = (3, 11)
+#: First (major, minor) CPython version the launcher rejects; interpreters must be strictly older.
 _MAX_EXCLUSIVE = (3, 15)
+#: Number of whitespace-separated fields (implementation, major, minor) an interpreter probe must print.
 _PROBE_FIELDS = 3
+#: One-line usage string written to stderr on a missing or unknown subcommand.
 _USAGE = "usage: codemap-py {index,query,doctor,integrate} [args...]"
+#: Full top-level help text printed to stdout for the bare help request.
 _HELP = """usage: codemap-py {index,query,doctor,integrate} [args...]
 
 Commands:
@@ -56,7 +61,9 @@ Direct compact query examples:
 
 Run `codemap-py query --help` for every query and its arguments.
 """
+#: Argument spellings that request help for the index subcommand.
 _HELP_FLAGS = frozenset({"--help", "-h"})
+#: Help text printed to stdout when the index subcommand receives a help flag.
 _INDEX_HELP = """usage: codemap-py index [--root PATH] [args...]
 
 Build or update the structural index for a project root.
@@ -66,9 +73,13 @@ Build or update the structural index for a project root.
 
 Full options come from the `scan-index` launcher, which is not installed here.
 """
+#: Python one-liner run with `-c` to print an interpreter's implementation name, major and minor version.
 _PROBE_SNIPPET = "import sys;v=sys.version_info;print(sys.implementation.name,v.major,v.minor)"
+#: Exit status 127 (shell "command not found" convention) intended for when no compatible interpreter is found.
 _NO_INTERPRETER_EXIT = 127
+#: Exit status returned for usage errors such as a missing or unknown subcommand.
 _USAGE_EXIT = 2
+#: Exit status returned for runtime failures and for SystemExit values that are not integers.
 _RUNTIME_ERROR_EXIT = 1
 
 ProbeResult = tuple[str, int, int]
@@ -129,7 +140,7 @@ def candidate_interpreters(env: Mapping[str, str], platform: str) -> list[list[s
 def _probe_version(executable: Sequence[str]) -> ProbeResult | None:
     """Run the version probe for a candidate; return identity or ``None``."""
     try:
-        completed = subprocess.run(
+        completed = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
             [*executable, "-c", _PROBE_SNIPPET],
             capture_output=True,
             text=True,
@@ -269,10 +280,10 @@ def _run_index(rest: Sequence[str], plugin_root: Path) -> int:
         return _emit_error("missing_executable", "scan-index")
     resolved = index_paths.resolve_index()
     argv = _child_argv("scan-index", rest, plugin_root, resolved.root)
-    return subprocess.run(argv, check=False).returncode
+    return subprocess.run(argv, check=False).returncode  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
 
 
-def main(argv: Sequence[str] | None = None, plugin_root: Path | None = None) -> int:
+def main(argv: Sequence[str] | None = None, plugin_root: Path | None = None) -> int:  # noqa: PLR0911
     """Dispatch ``index``/``query``/``doctor``/``integrate``."""
     argv = sys.argv[1:] if argv is None else list(argv)
     root = _default_plugin_root() if plugin_root is None else plugin_root

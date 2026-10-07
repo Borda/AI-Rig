@@ -42,12 +42,16 @@ import re
 import sys
 from pathlib import Path
 
+#: Filename of the JSON manifest expected at the root of a built package.
 _MANIFEST = "package-manifest.json"
+#: Top-level documents every package must contain.
 _REQUIRED_DOCS: tuple[str, ...] = ("README.md", "LICENSE", "NOTICE", "CHANGELOG.md")
+#: Plugin manifests, one per host, every package must contain.
 _REQUIRED_MANIFESTS: tuple[str, ...] = (".claude-plugin/plugin.json", ".codex-plugin/plugin.json")
+#: Default-discovery paths (``skills/`` and ``hooks/hooks.json``) that a valid package must not contain.
 _FORBIDDEN_PATHS: tuple[str, ...] = ("skills", "hooks/hooks.json")
 
-# Basic secret material — private-key headers and common token prefixes.
+#: Basic secret material — private-key headers and common token prefixes.
 _SECRET_PATTERNS: tuple[re.Pattern[bytes], ...] = (
     re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
     re.compile(rb"gh[pousr]_[A-Za-z0-9]{20,}"),

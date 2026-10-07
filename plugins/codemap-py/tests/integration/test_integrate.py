@@ -27,7 +27,6 @@ from enum import Enum
 from pathlib import Path
 
 import pytest
-
 from codemap_py import integration
 
 _PATH_CLASSES = {"normal": "repo", "spaces_nonascii": "a repo café"}
@@ -781,9 +780,22 @@ def test_audit_empty_logs_warns_that_runtime_evidence_was_not_observed(
     assert {finding["code"] for finding in payload["findings"]} >= {"runtime_logs_not_observed"}
 
 
-def test_check_is_rejected_without_a_compatibility_alias(repo: Path) -> None:
-    """The removed ``check`` subcommand is a usage error, not an audit forwarding alias."""
-    assert integration.run(["check", "--runtime", "claude"], repo / integration.PROVIDER_DIR) == integration._EXIT_USAGE
+@pytest.mark.parametrize(
+    "argv",
+    [
+        pytest.param(["check", "--runtime", "claude"], id="removed-check-subcommand"),
+        pytest.param(["audit", "--since", "2026-13-40"], id="invalid-audit-since-date"),
+        pytest.param(["plan", "--runtime", "claude", "--consumers", "not-a-target"], id="unknown-plan-consumer"),
+    ],
+)
+def test_invalid_invocation_is_a_usage_error(repo: Path, argv: list[str]) -> None:
+    """A removed subcommand, an invalid date, or an unknown consumer is a usage error, never silently accepted.
+
+    The removed ``check`` subcommand is rejected rather than forwarded as an audit alias; an invalid ``--since`` date
+    never falls through as an unbounded audit request; an unrecognized ``--consumers`` name is a ``2``-class syntax
+    error, never a lookup.
+    """
+    assert integration.run(argv, repo / integration.PROVIDER_DIR) == integration._EXIT_USAGE
 
 
 def test_sentinel_schema_stays_v1_while_body_protocol_is_v2() -> None:
@@ -820,13 +832,6 @@ def test_audit_since_bounds_runtime_evidence(
     payload = json.loads(capsys.readouterr().out)
     assert payload["window"]["since"] == since
     assert payload["runtime_logs"]["selected"]["claude"]["records"] == expected_records
-
-
-def test_audit_invalid_since_is_usage_error(repo: Path) -> None:
-    """An invalid date never falls through as an unbounded audit request."""
-    assert (
-        integration.run(["audit", "--since", "2026-13-40"], repo / integration.PROVIDER_DIR) == integration._EXIT_USAGE
-    )
 
 
 def test_audit_skips_malformed_jsonl_without_claiming_a_record(repo: Path) -> None:
@@ -1038,33 +1043,28 @@ def test_plan_sha256_is_stable_and_self_consistent(repo: Path) -> None:
     assert integration.compute_plan_sha256(plan) == plan["plan_sha256"]
 
 
-def test_plan_unknown_consumer_exits_usage(repo: Path) -> None:
-    """An unrecognized ``--consumers`` name is a ``2``-class syntax error, never a lookup."""
-    code = integration.run(
-        ["plan", "--runtime", "claude", "--consumers", "not-a-target"], repo / integration.PROVIDER_DIR
-    )
-    assert code == integration._EXIT_USAGE
-
-
 # --------------------------------------------------------------------------------------
 # Approval digest.
 # --------------------------------------------------------------------------------------
 
 
-def test_approve_malformed_rejected(repo: Path) -> None:
-    """A non-hex/wrong-length ``--approve`` value is ``approve_malformed``."""
+@pytest.mark.parametrize(
+    ("approval", "expected_code"),
+    [
+        pytest.param("not-a-sha256", "approve_malformed", id="non-hex-wrong-length"),
+        pytest.param("0" * 64, "approve_mismatch", id="well-formed-but-wrong"),
+    ],
+)
+def test_bad_approval_rejected(repo: Path, approval: str, expected_code: str) -> None:
+    """A malformed ``--approve`` is ``approve_malformed``; a well-formed but wrong SHA-256 is ``approve_mismatch``.
+
+    ``verify_approval`` distinguishes the two failure shapes by code, so a caller can tell a typo from a stale plan: a
+    value that is not a SHA-256 at all, and a well-formed digest that does not match the plan.
+    """
     plan = integration.build_plan("claude", ["oss"], None, repo / integration.PROVIDER_DIR)
     with pytest.raises(integration.ApprovalError) as exc:
-        integration.verify_approval(plan, "not-a-sha256")
-    assert exc.value.code == "approve_malformed"
-
-
-def test_approve_mismatch_rejected(repo: Path) -> None:
-    """A well-formed but wrong SHA-256 is ``approve_mismatch``."""
-    plan = integration.build_plan("claude", ["oss"], None, repo / integration.PROVIDER_DIR)
-    with pytest.raises(integration.ApprovalError) as exc:
-        integration.verify_approval(plan, "0" * 64)
-    assert exc.value.code == "approve_mismatch"
+        integration.verify_approval(plan, approval)
+    assert exc.value.code == expected_code
 
 
 def test_approve_correct_sha_proceeds(repo: Path) -> None:
@@ -1102,20 +1102,25 @@ def _assert_refused(repo: Path, plan: dict, code: str, original_bytes: bytes | N
     assert after == original_bytes
 
 
-def test_apply_refuses_installed_cache_root(repo: Path) -> None:
-    """A target resolving under any ``plugins/cache/...`` tree is refused, never written."""
-    plan = _single_op_plan(repo)
-    plan["ops"][0]["path"] = "plugins/cache/oss/skills/_shared/codemap-context.md"
-    plan["plan_sha256"] = integration.compute_plan_sha256(plan)
-    _assert_refused(repo, plan, "installed_cache_root", None)
+@pytest.mark.parametrize(
+    ("target_path", "expected_code"),
+    [
+        pytest.param(
+            "plugins/cache/oss/skills/_shared/codemap-context.md", "installed_cache_root", id="installed-cache-root"
+        ),
+        pytest.param("plugins/some-other-dir/escape.md", "path_escape", id="path-escape"),
+    ],
+)
+def test_apply_refuses_unsafe_target(repo: Path, target_path: str, expected_code: str) -> None:
+    """A target under any ``plugins/cache/...`` tree, or outside its consumer's own plugin directory, is refused.
 
-
-def test_apply_refuses_path_escape(repo: Path) -> None:
-    """A target outside its consumer's own plugin directory is refused."""
+    Each unsafe target is refused with its own stable code and the target file is left untouched; the plan digest is
+    recomputed so the refusal comes from the path check, never from a digest mismatch.
+    """
     plan = _single_op_plan(repo)
-    plan["ops"][0]["path"] = "plugins/some-other-dir/escape.md"
+    plan["ops"][0]["path"] = target_path
     plan["plan_sha256"] = integration.compute_plan_sha256(plan)
-    _assert_refused(repo, plan, "path_escape", None)
+    _assert_refused(repo, plan, expected_code, None)
 
 
 @_skip_file_symlink_unavailable

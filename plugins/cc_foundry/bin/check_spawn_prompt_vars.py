@@ -25,7 +25,7 @@ import re
 import sys
 from pathlib import Path
 
-# Variables that callers explicitly substitute into the prompt string before dispatch
+#: Variables that callers explicitly substitute into the prompt string before dispatch
 _CALLER_SUBSTITUTED: frozenset[str] = frozenset(
     {
         "ARGUMENTS",
@@ -40,21 +40,24 @@ _CALLER_SUBSTITUTED: frozenset[str] = frozenset(
     }
 )
 
-# Well-known env vars the spawned subagent resolves in its OWN environment — a bare
-# $TMPDIR / ${HOME} etc. is not orchestrator-context payload, so never flag them.
+#: Well-known env vars the spawned subagent resolves in its OWN environment — a bare
+#: $TMPDIR / ${HOME} etc. is not orchestrator-context payload, so never flag them.
 _WELL_KNOWN_ENV: frozenset[str] = frozenset({"TMPDIR", "HOME", "PWD", "CLAUDE_PLUGIN_ROOT"})
 
+#: Matches the opening fence of a ``markdown`` code block, which holds a spawn prompt.
 _MD_OPEN = re.compile(r"^```markdown\s*$")
+#: Matches a bare closing code fence.
 _FENCE_CLOSE = re.compile(r"^```\s*$")
+#: Matches a ``$VAR`` or ``${VAR}`` reference with a name of at least two characters.
 _VAR_REF = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]+)\}?")
-# Parameter-expansion-with-default idiom: ${VAR:-default}. Portable shell the subagent
-# reproduces and expands in its own shell — never an unexpanded-literal bug.
+#: Parameter-expansion-with-default idiom: ${VAR:-default}. Portable shell the subagent
+#: reproduces and expands in its own shell — never an unexpanded-literal bug.
 _DEFAULT_EXPANSION = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]+):-[^}]*\}")
-# A directive line telling the orchestrator to resolve a token before dispatch.
+#: A directive line telling the orchestrator to resolve a token before dispatch.
 _DIRECTIVE_WORDS = re.compile(r"(?i)\b(?:expand|substitute|replace)\b")
-# "env var" / "environment variable" — the $VAR on the line is a documented env-var name.
+#: "env var" / "environment variable" — the $VAR on the line is a documented env-var name.
 _ENV_VAR_PHRASE = re.compile(r"(?i)\benv(?:ironment)?\s+var(?:iable)?s?\b")
-# Editorial square-bracket span, e.g. [Continue with template from $TEMPLATE_FILE].
+#: Editorial square-bracket span, e.g. [Continue with template from $TEMPLATE_FILE].
 _BRACKET_SPAN = re.compile(r"\[[^\[\]]*\]")
 
 

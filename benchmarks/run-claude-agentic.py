@@ -214,10 +214,6 @@ reducing tool call count, elapsed time, and context consumption.
 
 from __future__ import annotations
 
-import json  # noqa: F401
-import os  # noqa: F401
-import subprocess  # noqa: F401
-import time  # noqa: F401
 import sys
 from pathlib import Path
 
@@ -227,15 +223,28 @@ import fire
 # regardless of how this script is launched (direct path, symlink, or any cwd).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _bench_claude.agentic.config import (  # noqa: E402,F401
-    AgenticOracle,
+import json  # noqa: F401
+import os  # noqa: F401
+import subprocess  # noqa: F401
+import time  # noqa: F401
+
+from _bench_claude.agentic.cli import (  # noqa: F401
+    Benchmark,
+    _iter_combos,
+    deterministic_arm_order,
+    main,
+    score_answer,
+    summarize_agentic,
+)
+from _bench_claude.agentic.config import (  # noqa: F401
+    _FIX_MULTI_QUERY_ARGUMENTS,
+    _FIX_SINGLE_QUERY_ARGUMENTS,
+    _PATCH_QUERY_ARGUMENTS,
     FIX_MULTI_TASKS_PATH,
     FIX_SINGLE_TASKS_PATH,
     PARITY_MANIFEST_PATH,
     READCROP_TASKS_PATH,
-    _FIX_MULTI_QUERY_ARGUMENTS,
-    _FIX_SINGLE_QUERY_ARGUMENTS,
-    _PATCH_QUERY_ARGUMENTS,
+    AgenticOracle,
     _claude_codemap_evidence,
     _claude_event_summary,
     _console,
@@ -255,21 +264,7 @@ from _bench_claude.agentic.config import (  # noqa: E402,F401
     resolve_readcrop_scope,
     resolve_relative_base,
 )
-from _bench_claude.agentic.models import (  # noqa: E402,F401
-    ARM_CONTRACTS,
-    BenchmarkRun,
-    QualityScore,
-    Task,
-    ToolCounts,
-    parity_arm_identity,
-)
-from _bench_claude.agentic.provenance import (  # noqa: E402,F401
-    _codemap_use_attempted,
-    _invokes_scan_query,
-    _sha256_file,
-    _validate_parity_runtime,
-)
-from _bench_claude.agentic.discovery import (  # noqa: E402,F401
+from _bench_claude.agentic.discovery import (  # noqa: F401
     _derive_module_name,
     _scan_repo_importers,
     _tool_key_arg,
@@ -277,30 +272,17 @@ from _bench_claude.agentic.discovery import (  # noqa: E402,F401
     count_tokens,
     find_index,
 )
-from _bench_claude.agentic.scope import (  # noqa: E402,F401
-    AGENTIC_ARMS,
-    MODELS,
-    _delivered_prompt_hash,
-    materialize_agentic_prompt,
-    resolve_agentic_scope,
-    run_cost_usd,
+from _bench_claude.agentic.evidence import _absolute_filetool_pattern, _claude_evidence_isolation_settings  # noqa: F401
+from _bench_claude.agentic.ground_truth import GroundTruth  # noqa: F401
+from _bench_claude.agentic.models import (  # noqa: F401
+    ARM_CONTRACTS,
+    BenchmarkRun,
+    QualityScore,
+    Task,
+    ToolCounts,
+    parity_arm_identity,
 )
-from _bench_claude.agentic.tasks import (  # noqa: E402,F401
-    _canonical_agentic_row,
-    canonical_task_hash,
-    load_legacy_tasks,
-    load_task_suite,
-    load_tasks_with_provenance,
-    semantic_suite_hash,
-)
-from _bench_claude.agentic.ground_truth import GroundTruth  # noqa: E402,F401
-from _bench_claude.agentic.evidence import (  # noqa: E402,F401
-    _absolute_filetool_pattern,
-    _claude_evidence_isolation_settings,
-)
-from _bench_claude.agentic.scoring import aggregate, score_fix, score_read_crop  # noqa: E402,F401
-from _bench_claude.agentic.report import Report, _run_line, agentic_reporting  # noqa: E402,F401
-from _bench_claude.agentic.paid import (  # noqa: E402,F401
+from _bench_claude.agentic.paid import (  # noqa: F401
     PATCH_PYTEST_ENV,
     _claude_fix_prompt,
     _format_claude_stage_row,
@@ -314,14 +296,30 @@ from _bench_claude.agentic.paid import (  # noqa: E402,F401
     impact_runtime,
     run_claude_paid_stage,
 )
-from _bench_claude.agentic.runner import ModelRunner  # noqa: E402,F401
-from _bench_claude.agentic.cli import (  # noqa: E402,F401
-    Benchmark,
-    _iter_combos,
-    deterministic_arm_order,
-    main,
-    score_answer,
-    summarize_agentic,
+from _bench_claude.agentic.provenance import (  # noqa: F401
+    _codemap_use_attempted,
+    _invokes_scan_query,
+    _sha256_file,
+    _validate_parity_runtime,
+)
+from _bench_claude.agentic.report import Report, _run_line, agentic_reporting  # noqa: F401
+from _bench_claude.agentic.runner import ModelRunner  # noqa: F401
+from _bench_claude.agentic.scope import (  # noqa: F401
+    AGENTIC_ARMS,
+    MODELS,
+    _delivered_prompt_hash,
+    materialize_agentic_prompt,
+    resolve_agentic_scope,
+    run_cost_usd,
+)
+from _bench_claude.agentic.scoring import aggregate, score_fix, score_read_crop  # noqa: F401
+from _bench_claude.agentic.tasks import (  # noqa: F401
+    _canonical_agentic_row,
+    canonical_task_hash,
+    load_legacy_tasks,
+    load_task_suite,
+    load_tasks_with_provenance,
+    semantic_suite_hash,
 )
 
 if __name__ == "__main__":

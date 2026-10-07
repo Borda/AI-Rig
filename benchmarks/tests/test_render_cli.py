@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
 
 BENCHMARKS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARKS))
 
 from _bench_common import render_cli  # noqa: E402
 from _bench_common.presentation import LEGEND_CLOSE_RULE, LEGEND_OPEN_RULE  # noqa: E402
-
 
 RENDER_CLI = BENCHMARKS / "_bench_common" / "render_cli.py"
 

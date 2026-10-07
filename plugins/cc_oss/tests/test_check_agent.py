@@ -8,51 +8,31 @@ or ``"false"``; always exits 0. Invalid names trigger exit 2.
 
 from __future__ import annotations
 
-import pytest
-
-import check_agent  # type: ignore[import-not-found]
 from pathlib import Path
 
-
-def test_missing_both_args_exits_2(capsys: pytest.CaptureFixture[str]) -> None:
-    """No args → exit 2 with usage message on stderr."""
-    rc = check_agent.main([])
-    assert rc == 2
-    assert "Usage" in capsys.readouterr().err
-
-
-def test_missing_second_arg_exits_2(capsys: pytest.CaptureFixture[str]) -> None:
-    """One arg → exit 2 with usage message."""
-    rc = check_agent.main(["foundry"])
-    assert rc == 2
-    assert "Usage" in capsys.readouterr().err
-
-
-def test_invalid_plugin_name_exits_2(capsys: pytest.CaptureFixture[str]) -> None:
-    """Plugin name with spaces → exit 2."""
-    rc = check_agent.main(["bad name", "shepherd"])
-    assert rc == 2
-    assert "invalid plugin name" in capsys.readouterr().err
-
-
-def test_invalid_agent_name_exits_2(capsys: pytest.CaptureFixture[str]) -> None:
-    """Agent name with slashes → exit 2."""
-    rc = check_agent.main(["oss", "bad/agent"])
-    assert rc == 2
-    assert "invalid agent name" in capsys.readouterr().err
+import check_agent  # type: ignore[import-not-found]
+import pytest
 
 
 @pytest.mark.parametrize(
-    ("plugin", "agent", "needle"),
+    ("argv", "needle"),
     [
-        pytest.param("", "shepherd", "invalid plugin name", id="empty-plugin"),
-        pytest.param("bad/name", "shepherd", "invalid plugin name", id="plugin-slash"),
-        pytest.param("oss", "", "invalid agent name", id="empty-agent"),
-        pytest.param("oss", "../agent", "invalid agent name", id="agent-traversal"),
+        pytest.param([], "Usage", id="missing-both-args"),
+        pytest.param(["foundry"], "Usage", id="missing-second-arg"),
+        pytest.param(["bad name", "shepherd"], "invalid plugin name", id="plugin-with-space"),
+        pytest.param(["oss", "bad/agent"], "invalid agent name", id="agent-with-slash"),
+        pytest.param(["", "shepherd"], "invalid plugin name", id="empty-plugin"),
+        pytest.param(["bad/name", "shepherd"], "invalid plugin name", id="plugin-slash"),
+        pytest.param(["oss", ""], "invalid agent name", id="empty-agent"),
+        pytest.param(["oss", "../agent"], "invalid agent name", id="agent-traversal"),
     ],
 )
-def test_invalid_names_exit_2(plugin: str, agent: str, needle: str, capsys: pytest.CaptureFixture[str]) -> None:
-    rc = check_agent.main([plugin, agent])
+def test_missing_or_invalid_args_exit_2(argv: list[str], needle: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """Missing args exit 2 with a usage message on stderr; an invalid plugin or agent name exits 2.
+
+    The stderr message names the invalid plugin or agent.
+    """
+    rc = check_agent.main(argv)
     assert rc == 2
     assert needle in capsys.readouterr().err
 
@@ -63,20 +43,27 @@ def test_agent_not_found(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     assert result is False
 
 
-def test_agent_found_in_cache(tmp_path: Path) -> None:
-    """Cache contains ``<plugin>/<version>/agents/<agent>.md`` → True."""
-    agents_dir = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "oss" / "0.1.0" / "agents"
-    agents_dir.mkdir(parents=True)
-    (agents_dir / "shepherd.md").write_text("---\nname: shepherd\n---\n")
-    assert check_agent.check_agent("oss", "shepherd", home=tmp_path) is True
+@pytest.mark.parametrize(
+    ("cache_plugin", "version", "content", "query_agent", "expected"),
+    [
+        pytest.param("oss", "0.1.0", "---\nname: shepherd\n---\n", "shepherd", True, id="found-in-cache"),
+        pytest.param("oss", "1.2.3", "", "shepherd", True, id="found-in-different-version"),
+        pytest.param("foundry", "0.1.0", "", "shepherd", False, id="cache-of-another-plugin-does-not-match"),
+        pytest.param("oss", "0.1.0", "", "cicd-steward", False, id="cache-has-a-different-agent"),
+    ],
+)
+def test_agent_lookup_in_plugin_cache(
+    tmp_path: Path, cache_plugin: str, version: str, content: str, query_agent: str, expected: bool
+) -> None:
+    """The cache holds ``<plugin>/<version>/agents/shepherd.md``; only the requested plugin and agent match.
 
-
-def test_agent_found_in_different_version(tmp_path: Path) -> None:
-    """Agent in any version subdir → True (not just exact version match)."""
-    agents_dir = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "oss" / "1.2.3" / "agents"
+    The agent counts as installed in any version subdirectory (not just an exact version match). An agent under another
+    plugin's cache does not satisfy the requested plugin, and a cached agent X does not satisfy a query for agent Y.
+    """
+    agents_dir = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / cache_plugin / version / "agents"
     agents_dir.mkdir(parents=True)
-    (agents_dir / "shepherd.md").write_text("")
-    assert check_agent.check_agent("oss", "shepherd", home=tmp_path) is True
+    (agents_dir / "shepherd.md").write_text(content)
+    assert check_agent.check_agent("oss", query_agent, home=tmp_path) is expected
 
 
 def test_agent_found_in_project_local_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -88,14 +75,6 @@ def test_agent_found_in_project_local_fallback(tmp_path: Path, monkeypatch: pyte
     assert check_agent.check_agent("oss", "shepherd", home=tmp_path / "home") is True
 
 
-def test_cache_plugin_mismatch_returns_false(tmp_path: Path) -> None:
-    """Agent under another plugin cache does not satisfy the requested plugin."""
-    agents_dir = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "foundry" / "0.1.0" / "agents"
-    agents_dir.mkdir(parents=True)
-    (agents_dir / "shepherd.md").write_text("")
-    assert check_agent.check_agent("oss", "shepherd", home=tmp_path) is False
-
-
 def test_empty_version_dirs_return_false(tmp_path: Path) -> None:
     """Empty plugin version directories are ignored."""
     version_dir = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "oss" / "0.1.0"
@@ -103,24 +82,28 @@ def test_empty_version_dirs_return_false(tmp_path: Path) -> None:
     assert check_agent.check_agent("oss", "shepherd", home=tmp_path) is False
 
 
-def test_cache_different_agent_returns_false(tmp_path: Path) -> None:
-    """Cache has agent X; querying agent Y → False."""
-    agents_dir = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "oss" / "0.1.0" / "agents"
-    agents_dir.mkdir(parents=True)
-    (agents_dir / "shepherd.md").write_text("")
-    assert check_agent.check_agent("oss", "cicd-steward", home=tmp_path) is False
+@pytest.mark.parametrize(
+    ("plugin", "version", "agent"),
+    [
+        pytest.param("foundry", "0.5.0", "sw-engineer", id="foundry-sw-engineer"),
+        pytest.param("oss", "0.1.0", "shepherd", id="documented-call-site-oss-shepherd"),
+    ],
+)
+def test_main_prints_true(
+    plugin: str, version: str, agent: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Print ``true`` to stdout and exit 0 when the agent is found.
 
-
-def test_main_prints_true(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Print ``true`` to stdout when agent found."""
-    agents_dir = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "foundry" / "0.5.0" / "agents"
+    Covers the documented call site ``check_agent.py oss shepherd`` (2 positional arguments).
+    """
+    agents_dir = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / plugin / version / "agents"
     agents_dir.mkdir(parents=True)
-    (agents_dir / "sw-engineer.md").write_text("")
+    (agents_dir / f"{agent}.md").write_text("")
     # Monkeypatch Path.home to return tmp_path
     import unittest.mock as mock
 
     with mock.patch.object(check_agent.Path, "home", return_value=tmp_path):
-        rc = check_agent.main(["foundry", "sw-engineer"])
+        rc = check_agent.main([plugin, agent])
     assert rc == 0
     assert capsys.readouterr().out.strip() == "true"
 
@@ -133,16 +116,3 @@ def test_main_prints_false(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -
         rc = check_agent.main(["oss", "missing-agent"])
     assert rc == 0
     assert capsys.readouterr().out.strip() == "false"
-
-
-def test_golden_invocation_two_positionals(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Documented call site ``check_agent.py oss shepherd`` (2 positional) prints true/false, exits 0."""
-    import unittest.mock as mock
-
-    agents_dir = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "oss" / "0.1.0" / "agents"
-    agents_dir.mkdir(parents=True)
-    (agents_dir / "shepherd.md").write_text("")
-    with mock.patch.object(check_agent.Path, "home", return_value=tmp_path):
-        rc = check_agent.main(["oss", "shepherd"])
-    assert rc == 0
-    assert capsys.readouterr().out.strip() == "true"

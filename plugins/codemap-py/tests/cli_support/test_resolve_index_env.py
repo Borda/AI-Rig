@@ -15,8 +15,8 @@ Tests cover:
 
 from __future__ import annotations
 
-import importlib.util
 import doctest
+import importlib.util
 import os
 import shlex
 import subprocess
@@ -161,33 +161,41 @@ def _make_empty_resolver_mock() -> Any:
 class TestParseResolverOutput:
     """Unit tests for ``parse_resolver_output()``."""
 
-    def test_two_line_input(self) -> None:
-        """Extracts PROJ from line 1 and INDEX from line 2."""
-        assert parse_resolver_output("myproj\n/tmp/idx.json\n") == ("myproj", "/tmp/idx.json")
+    @pytest.mark.parametrize(
+        ("stdout", "expected"),
+        [
+            pytest.param("myproj\n/tmp/idx.json\n", ("myproj", "/tmp/idx.json"), id="two-line-input"),
+            pytest.param("only-proj\n", ("only-proj", ""), id="missing-second-line"),
+            pytest.param("", ("", ""), id="empty-input"),
+            pytest.param("a\nb\nc\nd\n", ("a", "b"), id="extra-lines-ignored"),
+        ],
+    )
+    def test_resolver_output_is_split_into_proj_and_index(self, stdout: str, expected: tuple[str, str]) -> None:
+        """PROJ comes from line 1 and INDEX from line 2.
 
-    def test_missing_second_line(self) -> None:
-        """Return empty INDEX when only PROJ line present."""
-        assert parse_resolver_output("only-proj\n") == ("only-proj", "")
-
-    def test_empty_input(self) -> None:
-        """Return both empty when stdout is empty."""
-        assert parse_resolver_output("") == ("", "")
-
-    def test_extra_lines_ignored(self) -> None:
-        """Lines beyond the second are discarded."""
-        assert parse_resolver_output("a\nb\nc\nd\n") == ("a", "b")
+        INDEX is empty when only the PROJ line is present, both are empty when stdout is empty, and lines beyond the
+        second are discarded.
+        """
+        assert parse_resolver_output(stdout) == expected
 
 
 class TestFormatEvalLine:
     """Unit tests for ``format_eval_line()`` — retained as pure helper."""
 
-    def test_simple_values_unquoted(self) -> None:
-        """Values without metacharacters appear bare (shlex.quote shortcut)."""
-        assert format_eval_line("myproj", "/tmp/index.json") == "PROJ=myproj INDEX=/tmp/index.json"
-
-    def test_space_in_proj_is_quoted(self) -> None:
-        """Whitespace forces single-quote wrapping."""
-        assert format_eval_line("proj with space", "/tmp/x.json") == "PROJ='proj with space' INDEX=/tmp/x.json"
+    @pytest.mark.parametrize(
+        ("proj", "index", "expected"),
+        [
+            # Values without metacharacters appear bare (shlex.quote shortcut).
+            pytest.param("myproj", "/tmp/index.json", "PROJ=myproj INDEX=/tmp/index.json", id="simple-values-unquoted"),
+            # Whitespace forces single-quote wrapping.
+            pytest.param(
+                "proj with space", "/tmp/x.json", "PROJ='proj with space' INDEX=/tmp/x.json", id="space-in-proj-quoted"
+            ),
+        ],
+    )
+    def test_values_are_shell_quoted_only_when_needed(self, proj: str, index: str, expected: str) -> None:
+        """Plain values stay bare while a value containing whitespace is single-quoted."""
+        assert format_eval_line(proj, index) == expected
 
     def test_eval_round_trip_simple(self) -> None:
         """format_eval_line output round-trips through shlex back to original values."""
@@ -346,21 +354,25 @@ class TestValidatePluginRoot:
         own = str(_own_plugin_root())
         assert _validate_plugin_root(own) == own
 
-    def test_unrelated_absolute_path_is_rejected(self) -> None:
-        """A directory that merely matches the old shape (``.../plugins/codemap``) is rejected."""
+    @pytest.mark.parametrize(
+        "candidate",
+        [
+            # A directory that merely matches the old shape (``.../plugins/codemap``) is rejected.
+            pytest.param("/tmp/attacker/plugins/codemap", id="unrelated-absolute-path"),
+            # A relative value is rejected before any resolution is attempted.
+            pytest.param("plugins/codemap-py", id="relative-path"),
+        ],
+    )
+    def test_foreign_plugin_root_is_rejected(self, candidate: str) -> None:
+        """An unrelated absolute path or a relative path is not a safe plugin root."""
         with pytest.raises(ValueError, match="not a safe path"):
-            _validate_plugin_root("/tmp/attacker/plugins/codemap")
+            _validate_plugin_root(candidate)
 
     def test_traversal_out_of_own_root_is_rejected(self) -> None:
         """Appending ``../`` segments to the real root no longer bypasses containment."""
         own = _own_plugin_root()
         with pytest.raises(ValueError, match="not a safe path"):
             _validate_plugin_root(str(own) + "/../../../../tmp/evil")
-
-    def test_relative_path_is_rejected(self) -> None:
-        """A relative value is rejected before any resolution is attempted."""
-        with pytest.raises(ValueError, match="not a safe path"):
-            _validate_plugin_root("plugins/codemap-py")
 
 
 class TestValidateOutputPrefix:
@@ -398,7 +410,7 @@ class TestSentinelSymlinkSafety:
         link = tmp_path / "codemap-resolve-proj-shared"
         link.symlink_to(victim)
 
-        with pytest.raises(OSError):
+        with pytest.raises(OSError, match=r"refusing to write through symlink"):
             _write_sentinel_file(link, "PWNED\n")
 
         assert victim.read_text(encoding="utf-8") == "IMPORTANT ORIGINAL CONTENT\n"

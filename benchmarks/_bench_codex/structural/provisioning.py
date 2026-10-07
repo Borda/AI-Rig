@@ -10,40 +10,34 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-import sys
+from _bench_common.coordination_gate import COORDINATION_NAME as _COORDINATION_NAME
+from _bench_common.coordination_gate import assert_safe_path_components as _assert_safe_path_components
+from _bench_common.coordination_gate import cleanup_coordination_root as _cleanup_coordination_root
+from _bench_common.coordination_gate import prepare_coordination_root
+from _bench_common.coordination_gate import validate_coordination_root as _validate_coordination_root
+from _bench_common.mutation_isolation import ExecutableAgentWorkspace
 
 from _bench_codex import plugin_registration, runtime
-from _bench_common.coordination_gate import (
-    COORDINATION_NAME as _COORDINATION_NAME,
-    assert_safe_path_components as _assert_safe_path_components,
-    cleanup_coordination_root as _cleanup_coordination_root,
-    prepare_coordination_root,
-    validate_coordination_root as _validate_coordination_root,
-)
-from _bench_common.mutation_isolation import (
-    ExecutableAgentWorkspace,
-)
-
+from _bench_codex.structural.arms import _is_known_codex_arm
 from _bench_codex.structural.config import (
-    PACKAGE_DIR,
-    PARITY_MANIFEST_PATH,
-    REPO_ROOT,
     _AUTH_MAX_BYTES,
     _BENCHMARK_EVIDENCE_ROOTS_ENV,
     _CODEMAP_PERMISSION_PROFILE,
     _CODEX_BIN,
     _FROZEN_MARKETPLACE_NAME,
     _PLAIN_PERMISSION_PROFILE,
+    PACKAGE_DIR,
+    PARITY_MANIFEST_PATH,
+    REPO_ROOT,
 )
-from _bench_codex.structural.arms import _is_known_codex_arm
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # annotation-only: a real import would close a cycle with ``runner``.
     from _bench_codex.structural.runner import CodexRunner
@@ -82,7 +76,7 @@ class ArmHome:
         """Remove the disposable home after a run."""
         _remove_private_directory(self.path, description="disposable Codex home")
 
-    def __enter__(self) -> "ArmHome":
+    def __enter__(self) -> ArmHome:
         return self
 
     def __exit__(self, *_exc: object) -> None:
@@ -90,7 +84,7 @@ class ArmHome:
 
 
 @contextlib.contextmanager
-def bind_executable_agent_workspace(adapter: "CodexRunner", workspace: ExecutableAgentWorkspace) -> Iterable[None]:
+def bind_executable_agent_workspace(adapter: CodexRunner, workspace: ExecutableAgentWorkspace) -> Iterable[None]:
     """Bind one existing frozen adapter to a per-cell editable worktree temporarily."""
     original_repo_path, original_index_path = adapter.repo_path, adapter.index_path
     adapter.repo_path, adapter.index_path = workspace.worktree, workspace.index_path
@@ -723,7 +717,7 @@ def _invoke_plugin_command(
     except TypeError:
         completed = runner(command, dict(env))
     if isinstance(completed, tuple):
-        code, stdout, stderr = (list(completed) + ["", ""])[:3]
+        code, stdout, stderr = ([*list(completed), "", ""])[:3]
         return int(code), str(stdout), str(stderr)
     return (
         int(getattr(completed, "returncode", 1)),

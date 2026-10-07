@@ -13,9 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 import compute_effect_size as ces
+import pytest
 
 _SCRIPT = Path(__file__).resolve().parent.parent / "bin" / "compute_effect_size.py"
 
@@ -26,29 +25,31 @@ _SCRIPT = Path(__file__).resolve().parent.parent / "bin" / "compute_effect_size.
 class TestRankBiserialR:
     """Effect-size formula contract: r = 4*W/(n*(n+1)) - 1."""
 
-    def test_zero_statistic_returns_minus_one(self) -> None:
-        """Map an all-negative signed-rank result to the lower effect-size bound."""
-        assert ces.rank_biserial_r(0.0, 8) == -1.0
+    @pytest.mark.parametrize(
+        ("statistic", "expected"),
+        [
+            pytest.param(0.0, -1.0, id="zero-statistic-is-minus-one"),
+            pytest.param(36.0, 1.0, id="max-statistic-is-plus-one"),
+            pytest.param(18.0, 0.0, id="midpoint-statistic-is-zero"),
+        ],
+    )
+    def test_statistic_maps_to_effect_size(self, statistic: float, expected: float) -> None:
+        """Signed-rank statistics at n=8 map onto the effect-size range [-1, 1].
 
-    def test_max_statistic_returns_plus_one(self) -> None:
-        """Map an all-positive signed-rank result to the upper effect-size bound."""
-        # n=8 → max W = 36; r should be 1.0
-        assert ces.rank_biserial_r(36.0, 8) == 1.0
+        W=0 is the all-negative lower bound, W=36 (the maximum for n=8) is the all-positive upper bound, and the
+        midpoint W=18 is neutral (r=0).
+        """
+        assert ces.rank_biserial_r(statistic, 8) == expected
 
-    def test_midpoint_statistic_is_zero(self) -> None:
-        """W at n*(n+1)/4 maps to r=0 — neutral."""
-        # n=8 → midpoint W = 18; r should be 0.0
-        assert ces.rank_biserial_r(18.0, 8) == 0.0
+    @pytest.mark.parametrize("n", [0, -3])
+    def test_non_positive_n_raises(self, n: int) -> None:
+        """N must be positive — zero and negative n raise ValueError.
 
-    def test_zero_n_raises(self) -> None:
-        """N must be positive — n=0 raises ValueError."""
+        The formula divides by ``n*(n+1)``, so a non-positive sample size has no meaningful effect size; both boundaries
+        (n=0, n=-3) are rejected with the same message.
+        """
         with pytest.raises(ValueError, match="n must be positive"):
-            ces.rank_biserial_r(5.0, 0)
-
-    def test_negative_n_raises(self) -> None:
-        """Negative n is invalid — raises ValueError."""
-        with pytest.raises(ValueError, match="n must be positive"):
-            ces.rank_biserial_r(5.0, -3)
+            ces.rank_biserial_r(5.0, n)
 
 
 # ---------- Payload glue: compute_from_payload ----------
@@ -57,43 +58,44 @@ class TestRankBiserialR:
 class TestComputeFromPayload:
     """JSON payload to printed-line glue — preserves original inline-block behavior."""
 
-    def test_none_statistic_returns_empty_string(self) -> None:
-        """Insufficient data (statistic=None) → empty line, matching inline block."""
-        assert ces.compute_from_payload({"n": 8, "statistic": None}) == ""
+    @pytest.mark.parametrize(
+        ("payload", "expected"),
+        [
+            pytest.param({"n": 8, "statistic": None}, "", id="none-statistic-is-empty"),
+            pytest.param({"n": 8}, "", id="missing-statistic-key-is-empty"),
+            pytest.param({"n": 8, "statistic": 36.0}, "1.0", id="numeric-statistic-is-str-of-float"),
+            pytest.param(
+                {"n": 8, "statistic": 36.0, "p_value": 0.01, "significant": True}, "1.0", id="extra-keys-ignored"
+            ),
+        ],
+    )
+    def test_payload_renders_printed_line(self, payload: dict[str, object], expected: str) -> None:
+        """A valid payload renders the printed line exactly as the original inline block did.
 
-    def test_missing_statistic_key_returns_empty_string(self) -> None:
-        """Treat a missing statistic key like an explicit null value."""
-        assert ces.compute_from_payload({"n": 8}) == ""
+        Insufficient data (statistic null or absent) → empty line. A numeric statistic → ``str(r)`` — the same shape as
+        Python ``print`` (n=8, statistic=36.0 → r=1.0 → ``"1.0"``). Extra keys retro_analyze emits ('p_value',
+        'significant', 'reason') must not interfere.
+        """
+        assert ces.compute_from_payload(payload) == expected
 
-    def test_numeric_statistic_produces_str_of_float(self) -> None:
-        """Output is ``str(r)`` — same shape as Python ``print`` in the inline block."""
-        # n=8, statistic=36.0 → r=1.0 → "1.0"
-        assert ces.compute_from_payload({"n": 8, "statistic": 36.0}) == "1.0"
+    @pytest.mark.parametrize(
+        ("payload", "message"),
+        [
+            pytest.param({"statistic": 5.0}, "missing required key 'n'", id="missing-n"),
+            pytest.param({"n": 8.0, "statistic": 5.0}, "'n' must be int", id="float-n-rejected"),
+            pytest.param({"n": True, "statistic": 5.0}, "'n' must be int", id="bool-n-rejected"),
+            pytest.param({"n": 8, "statistic": "0.5"}, "'statistic' must be numeric or null", id="string-statistic"),
+        ],
+    )
+    def test_invalid_payload_raises(self, payload: dict[str, object], message: str) -> None:
+        """A malformed payload raises ValueError naming the offending field.
 
-    def test_extra_keys_are_ignored(self) -> None:
-        """retro_analyze emits 'p_value', 'significant', 'reason' — must not interfere."""
-        payload = {"n": 8, "statistic": 36.0, "p_value": 0.01, "significant": True}
-        assert ces.compute_from_payload(payload) == "1.0"
-
-    def test_missing_n_raises(self) -> None:
-        """Required key 'n' missing → ValueError."""
-        with pytest.raises(ValueError, match="missing required key 'n'"):
-            ces.compute_from_payload({"statistic": 5.0})
-
-    def test_non_int_n_raises(self) -> None:
-        """'n' must be int — float n rejected (would corrupt formula)."""
-        with pytest.raises(ValueError, match="'n' must be int"):
-            ces.compute_from_payload({"n": 8.0, "statistic": 5.0})
-
-    def test_bool_n_rejected(self) -> None:
-        """Python bool is technically int — explicitly reject to avoid silent corruption."""
-        with pytest.raises(ValueError, match="'n' must be int"):
-            ces.compute_from_payload({"n": True, "statistic": 5.0})
-
-    def test_non_numeric_statistic_raises(self) -> None:
-        """Statistic must be numeric or null — strings rejected."""
-        with pytest.raises(ValueError, match="'statistic' must be numeric or null"):
-            ces.compute_from_payload({"n": 8, "statistic": "0.5"})
+        Required key 'n' missing; 'n' must be int — a float would corrupt the formula, and a Python bool is technically
+        an int but is explicitly rejected to avoid silent corruption; the statistic must be numeric or null, so strings
+        are rejected.
+        """
+        with pytest.raises(ValueError, match=message):
+            ces.compute_from_payload(payload)
 
 
 # ---------- CLI: main() ----------
@@ -112,68 +114,62 @@ class TestArgparseCLI:
 class TestMainCLI:
     """End-to-end stdin/stdout/exit-code contract."""
 
-    def test_valid_payload_exits_zero_and_prints_r(
+    @pytest.mark.parametrize(
+        ("payload", "expected_out"),
+        [
+            pytest.param(
+                {"n": 8, "statistic": 36.0, "p_value": 0.01, "significant": True},
+                "1.0\n",
+                id="valid-payload-prints-r",
+            ),
+            pytest.param(
+                {"n": 3, "statistic": None, "reason": "insufficient data"}, "\n", id="none-statistic-prints-empty-line"
+            ),
+        ],
+    )
+    def test_valid_payload_exits_zero(
         self,
+        payload: dict[str, object],
+        expected_out: str,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Well-formed retro_analyze JSON → exit 0, single line of effect size."""
-        payload = json.dumps({"n": 8, "statistic": 36.0, "p_value": 0.01, "significant": True})
-        monkeypatch.setattr("sys.stdin", _StdinStub(payload))
+        """Well-formed retro_analyze JSON → exit 0, single line of effect size.
+
+        Insufficient data (statistic=null) still exits 0 and prints an empty stdout line.
+        """
+        monkeypatch.setattr("sys.stdin", _StdinStub(json.dumps(payload)))
         exit_code = ces.main([])
         captured = capsys.readouterr()
         assert exit_code == 0
-        assert captured.out == "1.0\n"
+        assert captured.out == expected_out
         assert captured.err == ""
 
-    def test_none_statistic_exits_zero_with_empty_line(
+    @pytest.mark.parametrize(
+        ("stdin_text", "message"),
+        [
+            pytest.param('{"n": 8, "statistic":', "malformed JSON", id="malformed-json"),
+            pytest.param("[1, 2, 3]", "expected JSON object", id="non-object-json"),
+            pytest.param('{"statistic": 5.0}', "missing required key 'n'", id="missing-n"),
+        ],
+    )
+    def test_invalid_stdin_exits_two(
         self,
+        stdin_text: str,
+        message: str,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Insufficient data (statistic=null) → exit 0, empty stdout line."""
-        payload = json.dumps({"n": 3, "statistic": None, "reason": "insufficient data"})
-        monkeypatch.setattr("sys.stdin", _StdinStub(payload))
-        exit_code = ces.main([])
-        captured = capsys.readouterr()
-        assert exit_code == 0
-        assert captured.out == "\n"
+        """Broken JSON, a non-object JSON value, or a payload missing 'n' → exit 2 with a descriptive stderr error.
 
-    def test_malformed_json_exits_two(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """Broken JSON on stdin → exit 2 with error on stderr."""
-        monkeypatch.setattr("sys.stdin", _StdinStub('{"n": 8, "statistic":'))
+        Each case feeds a different invalid stdin shape — truncated JSON, a JSON array instead of an object, and an
+        object without the required 'n' key — and expects the same exit code with an error naming the problem.
+        """
+        monkeypatch.setattr("sys.stdin", _StdinStub(stdin_text))
         exit_code = ces.main([])
         captured = capsys.readouterr()
         assert exit_code == 2
-        assert "malformed JSON" in captured.err
-
-    def test_non_object_json_exits_two(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """JSON array (not object) → exit 2."""
-        monkeypatch.setattr("sys.stdin", _StdinStub("[1, 2, 3]"))
-        exit_code = ces.main([])
-        captured = capsys.readouterr()
-        assert exit_code == 2
-        assert "expected JSON object" in captured.err
-
-    def test_missing_n_exits_two(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """Payload missing 'n' → exit 2 with descriptive error."""
-        monkeypatch.setattr("sys.stdin", _StdinStub('{"statistic": 5.0}'))
-        exit_code = ces.main([])
-        captured = capsys.readouterr()
-        assert exit_code == 2
-        assert "missing required key 'n'" in captured.err
+        assert message in captured.err
 
 
 class _StdinStub:

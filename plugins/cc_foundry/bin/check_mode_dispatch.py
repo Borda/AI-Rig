@@ -51,16 +51,17 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# Dispatch reference: verb (go to / skip to / see) + "Mode: <Name>" or **Mode: <Name>**.
-# Name runs until the first closing quote ("), asterisk (*), em-dash (—), or newline.
+#: Dispatch reference: verb (go to / skip to / see) + "Mode: <Name>" or **Mode: <Name>**.
+#: Name runs until the first closing quote ("), asterisk (*), em-dash (—), or newline.
 _DISPATCH_RE = re.compile(
     r'(?:go to|skip to|see)\s+(?:"|\*\*)\s*Mode:\s*([^"*—\n]+)',
     re.IGNORECASE,
 )
 
-# Header: ## Mode: <Name> or ### Mode: <Name>, optional trailing "— <qualifier>".
+#: Header: ## Mode: <Name> or ### Mode: <Name>, optional trailing "— <qualifier>".
 _HEADER_RE = re.compile(r"^#{2,3}\s+Mode:\s*(.+?)\s*$", re.MULTILINE)
 
+#: Files larger than this many bytes (10 MiB) are skipped rather than read into memory.
 _MAX_FILE_SIZE = 10 * 1024 * 1024
 
 

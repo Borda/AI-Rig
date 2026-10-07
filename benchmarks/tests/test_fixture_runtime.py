@@ -6,11 +6,11 @@ import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
-
-from _bench_common import change_impact_contracts as contracts
 from _bench_codex import fixture_runtime
+from _bench_common import change_impact_contracts as contracts
 
 
 def _fixture_runtime_coordinate(source_root: Path, index_path: Path) -> dict[str, object]:
@@ -72,7 +72,7 @@ def test_fixture_runtime_maps_native_stream_and_rechecks_coordinate(tmp_path: Pa
     class Home:
         """Provide the native home fields used by the fixture adapter."""
 
-        env: dict[str, str] = {}
+        env: ClassVar[dict[str, str]] = {}
         coordination_path = tmp_path / "gate"
         codemap_launcher_path = None
         codemap_skill_path = None

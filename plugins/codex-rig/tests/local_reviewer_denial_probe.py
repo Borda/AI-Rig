@@ -53,11 +53,11 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, Sequence, TextIO
-
+from typing import TextIO
 
 APPROVAL_METHOD = "item/commandExecution/requestApproval"
 RESOLVED_METHOD = "serverRequest/resolved"

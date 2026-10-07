@@ -9,11 +9,22 @@ import sys
 from pathlib import Path
 
 import pytest
-
-from test_collect_pr_git_recovery import _collect, _git, _load_collector, _setup_repositories
-
+from test_collect_pr_git_recovery import (
+    RepositoryTemplate,
+    _build_repository_template,
+    _collect,
+    _git,
+    _load_collector,
+    _setup_repositories,
+)
 
 HELPER = Path(__file__).resolve().parents[2] / "shared" / "remediation_branch.py"
+
+
+@pytest.fixture(scope="session")
+def repository_template(tmp_path_factory: pytest.TempPathFactory) -> RepositoryTemplate:
+    """Build the shared PR repositories once per test process; tests receive private copies."""
+    return _build_repository_template(tmp_path_factory.mktemp("remediation-git-template"))
 
 
 @pytest.mark.parametrize("cross_repository", [False, True])
@@ -34,10 +45,10 @@ HELPER = Path(__file__).resolve().parents[2] / "shared" / "remediation_branch.py
     ],
 )
 def test_legacy_recovery_preserves_work_and_enables_topic_commits(
-    tmp_path: Path, cross_repository: bool, invalid: str
+    tmp_path: Path, repository_template: RepositoryTemplate, cross_repository: bool, invalid: str
 ) -> None:
     """Resume legacy runs only on the verified original destination without replaying checkout."""
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     pr_dir = tmp_path / "pr"
     assert (
         _collect(
@@ -165,9 +176,9 @@ def test_legacy_recovery_preserves_work_and_enables_topic_commits(
     assert _git(worktree, "status", "--porcelain=v1") == "?? user.txt"
 
 
-def test_prepare_retains_collected_github_branch(tmp_path: Path) -> None:
+def test_prepare_retains_collected_github_branch(tmp_path: Path, repository_template: RepositoryTemplate) -> None:
     """Never replace a PR branch with a generated branch before the user's next commit."""
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     pr_dir = tmp_path / "pr"
     assert (
         _collect(
@@ -200,6 +211,7 @@ def test_prepare_retains_collected_github_branch(tmp_path: Path) -> None:
 )
 def test_prepared_branch_retains_next_commit_and_original_pr_push_destination(
     tmp_path: Path,
+    repository_template: RepositoryTemplate,
     monkeypatch: pytest.MonkeyPatch,
     starting_state: str,
     cross_repository: bool,
@@ -212,7 +224,7 @@ def test_prepared_branch_retains_next_commit_and_original_pr_push_destination(
     monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
     monkeypatch.setenv("GIT_TERMINAL_PROMPT", "0")
     monkeypatch.setenv("LC_ALL", "C")
-    source, worktree, base, old, head = _setup_repositories(tmp_path)
+    source, worktree, base, old, head = _setup_repositories(tmp_path, repository_template)
     if missing_branch:
         _git(worktree, "branch", "-m", "saved-topic")
     elif gh_checkout_fails:
@@ -319,9 +331,11 @@ def test_prepared_branch_retains_next_commit_and_original_pr_push_destination(
 @pytest.mark.parametrize(
     "mismatch", ["none", "branch", "worktree", "head", "ancestry", "legacy", "upstream", "remote", "push-remote"]
 )
-def test_receipt_checks_actual_state_without_repair(tmp_path: Path, mismatch: str) -> None:
+def test_receipt_checks_actual_state_without_repair(
+    tmp_path: Path, repository_template: RepositoryTemplate, mismatch: str
+) -> None:
     """Reject destination or revision drift without repairing or discarding local work."""
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     assert (
         _collect(
             _load_collector(),
@@ -382,9 +396,11 @@ def test_receipt_checks_actual_state_without_repair(tmp_path: Path, mismatch: st
     assert _git(worktree, "rev-parse", "HEAD") == head
 
 
-def test_branch_preparation_rejects_changed_head_and_preserves_dirty_files(tmp_path: Path) -> None:
+def test_branch_preparation_rejects_changed_head_and_preserves_dirty_files(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
     """Never replace local commits or discard unrelated changes while preparing a branch."""
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     assert (
         _collect(
             _load_collector(),
@@ -417,9 +433,11 @@ def test_branch_preparation_rejects_changed_head_and_preserves_dirty_files(tmp_p
 
 
 @pytest.mark.parametrize("invalid", ["review", "detached", "missing-upstream", "pull-ref", "custom-push", "renamed"])
-def test_prepare_rejects_unusable_destination_without_git_mutation(tmp_path: Path, invalid: str) -> None:
+def test_prepare_rejects_unusable_destination_without_git_mutation(
+    tmp_path: Path, repository_template: RepositoryTemplate, invalid: str
+) -> None:
     """Do not approve editing when checkout evidence or the PR publication destination is missing."""
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     pr_dir = tmp_path / "pr"
     assert (
         _collect(
@@ -484,9 +502,11 @@ def test_prepare_rejects_unusable_destination_without_git_mutation(tmp_path: Pat
 
 
 @pytest.mark.parametrize("invalid", ["fork", "missing-failure", "missing-gh-command", "wrong-command"])
-def test_prepare_rejects_unverified_direct_branch_fallback(tmp_path: Path, invalid: str) -> None:
+def test_prepare_rejects_unverified_direct_branch_fallback(
+    tmp_path: Path, repository_template: RepositoryTemplate, invalid: str
+) -> None:
     """Require positive same-repository identity and an auditable direct checkout after gh failure."""
-    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     pr_dir = tmp_path / "pr"
     assert (
         _collect(

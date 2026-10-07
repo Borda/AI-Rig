@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import importlib.util
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -12,9 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from _platform import FILE_SYMLINKS_AVAILABLE, HARD_LINKS_AVAILABLE
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 FINALIZER = PLUGIN_ROOT / "shared" / "final_handoff.py"
@@ -27,7 +25,8 @@ def _load_finalizer() -> Any:
     """Load the standalone finalizer without requiring a package import."""
     assert FINALIZER.is_file(), FINALIZER
     specification = importlib.util.spec_from_file_location("codex_rig_final_handoff", FINALIZER)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -36,7 +35,8 @@ def _load_finalizer() -> Any:
 def _load_shared_validator() -> Any:
     """Load the shared artifact validator without requiring a package import."""
     specification = importlib.util.spec_from_file_location("codex_rig_final_validator", SHARED_VALIDATOR)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -45,7 +45,8 @@ def _load_shared_validator() -> Any:
 def _load_result_writer() -> Any:
     """Load the standalone result writer without requiring a package import."""
     specification = importlib.util.spec_from_file_location("codex_rig_result_writer", RESULT_WRITER)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -344,7 +345,7 @@ def test_retained_v2_handoff_checks_original_next_steps_bytes(tmp_path: Path) ->
         "Gap [unresolved]: External CI was not run. — CI is external.\n\n"
         "**Artifact**\n\n"
         "Result: run/result.json\n"
-    ).encode("utf-8")
+    ).encode()
     handoff_path = tmp_path / "final-handoff.json"
     final_path = tmp_path / "final.md"
     validation_path = tmp_path / "final-handoff.validation.json"
@@ -1009,7 +1010,7 @@ def test_schema_v2_result_requires_digest_bound_final_output(tmp_path: Path) -> 
     validator.validate("assess", tmp_path, result_path)
 
     (tmp_path / "final.md").write_text("truncated\n", encoding="utf-8")
-    with pytest.raises(SystemExit, match="final-handoff-validation-failed:.*rendered-final-mismatch"):
+    with pytest.raises(SystemExit, match=r"final-handoff-validation-failed:.*rendered-final-mismatch"):
         validator.validate("assess", tmp_path, result_path)
 
 

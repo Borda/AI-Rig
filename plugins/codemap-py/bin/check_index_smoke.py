@@ -34,7 +34,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+#: Index age in hours above which the smoke check flags the index as stale; default of ``--max-age-hours``.
 DEFAULT_MAX_AGE_HOURS = 24
+#: Fallback plugin directory used to locate ``bin/smoke_test_index.py`` when ``CLAUDE_PLUGIN_ROOT`` is unset.
 DEFAULT_PLUGIN_ROOT = "plugins/codemap"
 
 
@@ -260,7 +262,7 @@ def run_smoke(
         (always well-formed, with ``error`` set on failure).
     """
     try:
-        completed = subprocess.run(
+        completed = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
             [
                 sys.executable,
                 str(smoke_script),
@@ -312,7 +314,7 @@ def _validate_index_path(index_path: str) -> tuple[bool, str]:
         Path(os.path.expanduser("~")).resolve(),
         Path.cwd().resolve(),
         Path(tempfile.gettempdir()).resolve(),  # pytest / CI temp dirs
-        Path("/tmp").resolve(),  # macOS: /tmp → /private/tmp
+        Path("/tmp").resolve(),  # macOS: /tmp → /private/tmp  # noqa: S108
     ]
     if any(resolved.is_relative_to(root) for root in allowed_roots):
         return True, ""

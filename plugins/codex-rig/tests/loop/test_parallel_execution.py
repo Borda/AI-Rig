@@ -7,12 +7,11 @@ import importlib.util
 import json
 import subprocess
 import sys
-import tempfile  # noqa: F401 - used by executable doctest examples
+import tempfile  # noqa: F401
 from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SKILLS_ROOT = PLUGIN_ROOT / "skills"
@@ -22,7 +21,8 @@ VALIDATOR_PATH = PLUGIN_ROOT / "shared" / "parallel_execution.py"
 def _load_validator() -> ModuleType:
     """Load the standalone installed-package helper by file path."""
     specification = importlib.util.spec_from_file_location("codex_rig_parallel_execution", VALIDATOR_PATH)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -179,6 +179,14 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     """Write one rollout-shaped fixture with portable newlines."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8", newline="\n")
+
+
+def _set_path(root: dict[str, object], path: tuple[str | int, ...], value: object) -> None:
+    """Replace the value at a nested key and index path inside a manifest fixture."""
+    node: object = root
+    for key in path[:-1]:
+        node = node[key]  # type: ignore[index]
+    node[path[-1]] = value  # type: ignore[index]
 
 
 def _runtime_fixture(
@@ -411,7 +419,7 @@ def _schema_v2_runtime_fixture(
 ) -> tuple[dict[str, object], Path, Path, Path, Path, Path]:
     """Create a portable schema-v2 run with restricted, approval-free networking."""
     fixture = _runtime_fixture(tmp_path)
-    manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = fixture
+    manifest, manifest_path, _plan_path, _parent_rollout, sessions_dir, _roles_dir = fixture
     manifest["schema_version"] = 2
     manifest["capability_evidence"] = {
         "tier": "portable",
@@ -624,86 +632,82 @@ def test_sequential_intervals_cannot_claim_parallel(tmp_path: Path) -> None:
     second["attempts"][0]["terminal_event"] = _event("N2-terminal", 6)  # type: ignore[index]
     second["join_event"] = _event("N2-join", 7)  # type: ignore[index]
 
-    with pytest.raises(ValueError, match="^false-parallel-claim$"):
+    with pytest.raises(ValueError, match=r"^false-parallel-claim$"):
         _validate(manifest, run_dir, roles_dir)
 
 
+#: Manifest path to the first node of the first stage, shared by field-mutation cases.
+_NODE = ("stages", 0, "nodes", 0)
+
+
 @pytest.mark.parametrize(
-    ("mutation", "error"),
-    (
-        pytest.param("role", "role-card-hash-mismatch:N1", id="role"),
-        pytest.param("context", "context-hash-mismatch:N1", id="context"),
-        pytest.param("output", "output-hash-mismatch:N1", id="output"),
-        pytest.param("join", "join-before-terminal:N1", id="join"),
-    ),
+    ("path", "value", "error"),
+    [
+        pytest.param((*_NODE, "role_card_sha256"), "0" * 64, "role-card-hash-mismatch:N1", id="role-hash"),
+        pytest.param((*_NODE, "context_sha256"), "0" * 64, "context-hash-mismatch:N1", id="context-hash"),
+        pytest.param((*_NODE, "attempts", 0, "output_sha256"), "0" * 64, "output-hash-mismatch:N1", id="output-hash"),
+        pytest.param(
+            (*_NODE, "join_event"), _event("N1-join", 4), "join-before-terminal:N1", id="join-before-terminal"
+        ),
+        pytest.param(
+            ("stages", 0, "depends_on"), ["missing"], "stage-dependency-missing:S1", id="missing-stage-dependency"
+        ),
+        pytest.param(("configured_limit",), 5, "configured-limit-invalid", id="limit-above-ceiling"),
+        pytest.param(
+            (*_NODE, "resource_locks"), ["custom-lock"], "resource-lock-invalid:N1", id="unscoped-resource-lock"
+        ),
+        pytest.param(
+            (*_NODE, "observed_controls", "enforced"),
+            False,
+            "capability-enforcement-required:N1",
+            id="unproved-controls",
+        ),
+    ],
 )
-def test_hash_and_join_provenance_fail_closed(
+def test_validation_rejects_mutated_manifest_field(
     tmp_path: Path,
-    mutation: str,
+    path: tuple[str | int, ...],
+    value: object,
     error: str,
 ) -> None:
-    """Bind acceptance to exact role, context, output, and parent join evidence."""
+    """Fail closed on a single tampered or invalid field in an otherwise valid parallel manifest.
+
+    Starting from a valid two-node wave, one field is replaced: role, context, or output hashes and an early join event
+    break the exact role, context, output, and parent-join provenance; a missing stage dependency would let a stage
+    start outside its barrier; a limit of five exceeds the four-child safety ceiling; an unscoped custom lock cannot be
+    compared consistently; and requested-only sandbox controls cannot satisfy least privilege.
+    """
     run_dir = tmp_path / "run"
     roles_dir = tmp_path / "roles"
     run_dir.mkdir()
     manifest = _parallel_manifest(run_dir, roles_dir)
-    first = manifest["stages"][0]["nodes"][0]  # type: ignore[index]
-    if mutation == "role":
-        first["role_card_sha256"] = "0" * 64  # type: ignore[index]
-    elif mutation == "context":
-        first["context_sha256"] = "0" * 64  # type: ignore[index]
-    elif mutation == "output":
-        first["attempts"][0]["output_sha256"] = "0" * 64  # type: ignore[index]
-    else:
-        first["join_event"] = _event("N1-join", 4)  # type: ignore[index]
+    _set_path(manifest, path, value)
 
     with pytest.raises(ValueError, match=f"^{error}$"):
         _validate(manifest, run_dir, roles_dir)
 
 
-def test_stage_dependencies_must_form_a_complete_dag(tmp_path: Path) -> None:
-    """Prevent a missing or cyclic stage from starting outside its barrier."""
-    run_dir = tmp_path / "run"
-    roles_dir = tmp_path / "roles"
-    run_dir.mkdir()
-    manifest = _parallel_manifest(run_dir, roles_dir)
-    manifest["stages"][0]["depends_on"] = ["missing"]  # type: ignore[index]
+@pytest.mark.parametrize(
+    ("depends_on", "wave_id", "start", "terminal", "join", "error"),
+    [
+        pytest.param([], "wave-beta", 2, 5, 8, "stage-barrier-required:S2", id="independent-stage-bypasses-barrier"),
+        pytest.param(["S1"], "wave-alpha", 8, 9, 10, "wave-id-duplicate:wave-alpha", id="reused-wave-id"),
+    ],
+)
+def test_second_stage_must_respect_barrier_and_unique_wave_id(
+    tmp_path: Path,
+    depends_on: list[str],
+    wave_id: str,
+    start: int,
+    terminal: int,
+    join: int,
+    error: str,
+) -> None:
+    """Reject a second stage that escapes the serial barrier or reuses an earlier wave identifier.
 
-    with pytest.raises(ValueError, match="^stage-dependency-missing:S1$"):
-        _validate(manifest, run_dir, roles_dir)
-
-
-def test_independent_stages_cannot_bypass_the_serial_barrier(tmp_path: Path) -> None:
-    """Prevent cross-stage overlap from escaping ownership, lock, and concurrency checks."""
-    run_dir = tmp_path / "run"
-    roles_dir = tmp_path / "roles"
-    run_dir.mkdir()
-    manifest = _parallel_manifest(run_dir, roles_dir)
-    manifest["stages"].append(  # type: ignore[union-attr]
-        {
-            "stage_id": "S2",
-            "depends_on": [],
-            "wave_id": "wave-beta",
-            "nodes": [
-                _completed_node(
-                    run_dir,
-                    roles_dir,
-                    node_id="N3",
-                    role_id="qa-specialist-secondary",
-                    start=2,
-                    terminal=5,
-                    join=8,
-                )
-            ],
-        }
-    )
-
-    with pytest.raises(ValueError, match="^stage-barrier-required:S2$"):
-        _validate(manifest, run_dir, roles_dir)
-
-
-def test_wave_identifiers_are_unique_across_serial_stages(tmp_path: Path) -> None:
-    """Keep event and join evidence attributable to exactly one staged wave."""
+    An independent stage overlapping the first would escape ownership, lock, and concurrency checks; a stage that reuses
+    a wave identifier would make event and join evidence ambiguous across serial stages.
+    """
     run_dir = tmp_path / "run"
     roles_dir = tmp_path / "roles"
     run_dir.mkdir()
@@ -711,35 +715,23 @@ def test_wave_identifiers_are_unique_across_serial_stages(tmp_path: Path) -> Non
     manifest["stages"].append(  # type: ignore[union-attr]
         {
             "stage_id": "S2",
-            "depends_on": ["S1"],
-            "wave_id": "wave-alpha",
+            "depends_on": depends_on,
+            "wave_id": wave_id,
             "nodes": [
                 _completed_node(
                     run_dir,
                     roles_dir,
                     node_id="N3",
                     role_id="qa-specialist-secondary",
-                    start=8,
-                    terminal=9,
-                    join=10,
+                    start=start,
+                    terminal=terminal,
+                    join=join,
                 )
             ],
         }
     )
 
-    with pytest.raises(ValueError, match="^wave-id-duplicate:wave-alpha$"):
-        _validate(manifest, run_dir, roles_dir)
-
-
-def test_configured_limit_cannot_exceed_the_default_ceiling(tmp_path: Path) -> None:
-    """Keep a local configuration from silently exceeding the four-child safety ceiling."""
-    run_dir = tmp_path / "run"
-    roles_dir = tmp_path / "roles"
-    run_dir.mkdir()
-    manifest = _parallel_manifest(run_dir, roles_dir)
-    manifest["configured_limit"] = 5
-
-    with pytest.raises(ValueError, match="^configured-limit-invalid$"):
+    with pytest.raises(ValueError, match=f"^{error}$"):
         _validate(manifest, run_dir, roles_dir)
 
 
@@ -767,7 +759,7 @@ def test_parallel_write_paths_and_resources_cannot_overlap(tmp_path: Path) -> No
         node["requested_controls"] = controls
         node["observed_controls"] = {**controls, "enforced": True}
 
-    with pytest.raises(ValueError, match="^write-ownership-overlap:N1:N2$"):
+    with pytest.raises(ValueError, match=r"^write-ownership-overlap:N1:N2$"):
         _validate(manifest, run_dir, roles_dir)
 
 
@@ -798,20 +790,7 @@ def test_windows_and_posix_owned_path_aliases_overlap(tmp_path: Path) -> None:
         node["requested_controls"] = controls
         node["observed_controls"] = {**controls, "enforced": True}
 
-    with pytest.raises(ValueError, match="^write-ownership-overlap:N1:N2$"):
-        _validate(manifest, run_dir, roles_dir)
-
-
-def test_resource_locks_use_the_validated_vocabulary(tmp_path: Path) -> None:
-    """Reject an unscoped custom lock that cannot be compared consistently."""
-    run_dir = tmp_path / "run"
-    roles_dir = tmp_path / "roles"
-    run_dir.mkdir()
-    manifest = _parallel_manifest(run_dir, roles_dir)
-    first = manifest["stages"][0]["nodes"][0]  # type: ignore[index]
-    first["resource_locks"] = ["custom-lock"]  # type: ignore[index]
-
-    with pytest.raises(ValueError, match="^resource-lock-invalid:N1$"):
+    with pytest.raises(ValueError, match=r"^write-ownership-overlap:N1:N2$"):
         _validate(manifest, run_dir, roles_dir)
 
 
@@ -849,7 +828,7 @@ def test_every_serial_write_requires_exact_frozen_plan_approval(tmp_path: Path, 
         "source": "explicit-input",
     }
     manifest["write_approval"] = {**valid_approval, field: value}
-    with pytest.raises(ValueError, match="^write-approval-invalid$"):
+    with pytest.raises(ValueError, match=r"^write-approval-invalid$"):
         _validate(manifest, run_dir, roles_dir)
 
 
@@ -873,7 +852,7 @@ def test_serial_write_requires_then_accepts_exact_frozen_plan_approval(tmp_path:
     node["requested_controls"] = controls
     node["observed_controls"] = {**controls, "enforced": True}
 
-    with pytest.raises(ValueError, match="^write-approval-required$"):
+    with pytest.raises(ValueError, match=r"^write-approval-required$"):
         _validate(manifest, run_dir, roles_dir)
 
     valid_approval = {
@@ -885,19 +864,6 @@ def test_serial_write_requires_then_accepts_exact_frozen_plan_approval(tmp_path:
     manifest["write_approval"] = valid_approval
 
     assert _validate(manifest, run_dir, roles_dir)["actual_mode"] == "serial"
-
-
-def test_unproved_node_controls_block_parallel_acceptance(tmp_path: Path) -> None:
-    """Prevent requested-only sandbox claims from satisfying least privilege."""
-    run_dir = tmp_path / "run"
-    roles_dir = tmp_path / "roles"
-    run_dir.mkdir()
-    manifest = _parallel_manifest(run_dir, roles_dir)
-    first = manifest["stages"][0]["nodes"][0]  # type: ignore[index]
-    first["observed_controls"]["enforced"] = False  # type: ignore[index]
-
-    with pytest.raises(ValueError, match="^capability-enforcement-required:N1$"):
-        _validate(manifest, run_dir, roles_dir)
 
 
 def test_common_secret_material_is_rejected_from_context_packs(tmp_path: Path) -> None:
@@ -912,7 +878,7 @@ def test_common_secret_material_is_rejected_from_context_packs(tmp_path: Path) -
     context.write_text(synthetic_private_key_marker, encoding="utf-8", newline="\n")
     first["context_sha256"] = _sha256(context)
 
-    with pytest.raises(ValueError, match="^context-sensitive-material:N1$"):
+    with pytest.raises(ValueError, match=r"^context-sensitive-material:N1$"):
         _validate(manifest, run_dir, roles_dir)
 
 
@@ -938,7 +904,7 @@ def test_retry_is_limited_to_one_transient_failure(tmp_path: Path) -> None:
     ]
     first["selected_attempt"] = 2
 
-    with pytest.raises(ValueError, match="^invalid-retry:N1$"):
+    with pytest.raises(ValueError, match=r"^invalid-retry:N1$"):
         _validate(manifest, run_dir, roles_dir)
 
 
@@ -998,7 +964,7 @@ def test_cancel_requested_blocks_acceptance_and_cannot_be_joined(tmp_path: Path)
     assert summary["acceptance_blocked"] is True
 
     first["join_event"] = _event("N1-join", 6)
-    with pytest.raises(ValueError, match="^cancel-requested-joined:N1$"):
+    with pytest.raises(ValueError, match=r"^cancel-requested-joined:N1$"):
         _validate(manifest, run_dir, roles_dir)
 
 
@@ -1041,7 +1007,7 @@ def test_read_only_runtime_binds_plan_lineage_terminal_output_and_declared_contr
 
 @pytest.mark.parametrize(
     ("mutation", "error"),
-    (
+    [
         pytest.param("missing", "runtime-parent-join-missing:N1", id="missing"),
         pytest.param("duplicate", "runtime-parent-join-duplicate:N1", id="duplicate"),
         pytest.param("wrong-sender", "runtime-parent-join-sender-mismatch:N1", id="wrong-sender"),
@@ -1049,7 +1015,7 @@ def test_read_only_runtime_binds_plan_lineage_terminal_output_and_declared_contr
         pytest.param("empty-recipient", "runtime-parent-join-recipient-required:N1", id="empty-recipient"),
         pytest.param("early", "runtime-parent-join-before-terminal:N1", id="early"),
         pytest.param("self-attested", "runtime-parent-join-missing:N1", id="self-attested"),
-    ),
+    ],
 )
 def test_read_only_runtime_host_binds_each_join_to_one_consumed_final_answer(
     tmp_path: Path,
@@ -1100,7 +1066,7 @@ def test_read_only_runtime_rejects_plan_bytes_that_do_not_match_the_approved_dig
     manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = _schema_v2_runtime_fixture(tmp_path)
     plan_path.write_text('{"run_id":"changed"}\n', encoding="utf-8", newline="\n")
 
-    with pytest.raises(ValueError, match="^runtime-plan-hash-mismatch$"):
+    with pytest.raises(ValueError, match=r"^runtime-plan-hash-mismatch$"):
         _validate_runtime(
             manifest,
             manifest_path,
@@ -1121,7 +1087,7 @@ def test_read_only_runtime_rejects_a_child_without_a_real_terminal_event(tmp_pat
         [row for row in rows if row.get("payload", {}).get("type") != "task_complete"],
     )
 
-    with pytest.raises(ValueError, match="^runtime-child-terminal-missing:N2$"):
+    with pytest.raises(ValueError, match=r"^runtime-child-terminal-missing:N2$"):
         _validate_runtime(
             manifest,
             manifest_path,
@@ -1143,25 +1109,7 @@ def test_read_only_runtime_rejects_rollout_schema_drift(tmp_path: Path) -> None:
             break
     _write_jsonl(parent_rollout, rows)
 
-    with pytest.raises(ValueError, match="^runtime-parent-start-missing:N1$"):
-        _validate_runtime(
-            manifest,
-            manifest_path,
-            plan_path,
-            parent_rollout,
-            sessions_dir,
-            roles_dir,
-        )
-
-
-def test_read_only_runtime_refuses_write_nodes_without_trusted_per_call_controls(tmp_path: Path) -> None:
-    """Keep declared thread controls from authorizing write-capable parallel execution."""
-    manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = _schema_v2_runtime_fixture(tmp_path)
-    first = manifest["stages"][0]["nodes"][0]  # type: ignore[index]
-    first["mutation"] = "write"
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
-
-    with pytest.raises(ValueError, match="^runtime-write-parallel-unsupported:N1$"):
+    with pytest.raises(ValueError, match=r"^runtime-parent-start-missing:N1$"):
         _validate_runtime(
             manifest,
             manifest_path,
@@ -1185,24 +1133,7 @@ def test_runtime_declared_model_and_effort_match_the_packaged_role_card(tmp_path
             payload["model"] = "unexpected-model"
     _write_jsonl(child_one, rows)
 
-    with pytest.raises(ValueError, match="^runtime-role-model-effort-mismatch:N1$"):
-        _validate_runtime(
-            manifest,
-            manifest_path,
-            plan_path,
-            parent_rollout,
-            sessions_dir,
-            roles_dir,
-        )
-
-
-def test_runtime_rejects_a_serial_claim_when_child_work_actually_overlaps(tmp_path: Path) -> None:
-    """Keep a planned serial label from concealing observed parallel execution."""
-    manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = _schema_v2_runtime_fixture(tmp_path)
-    manifest["claimed_mode"] = "serial"
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
-
-    with pytest.raises(ValueError, match="^runtime-mode-claim-mismatch:serial:parallel$"):
+    with pytest.raises(ValueError, match=r"^runtime-role-model-effort-mismatch:N1$"):
         _validate_runtime(
             manifest,
             manifest_path,
@@ -1250,7 +1181,7 @@ def test_schema_v1_remains_readable_but_cannot_earn_new_runtime_promotion(tmp_pa
     runtime_root = tmp_path / "runtime"
     runtime_root.mkdir()
     manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = _runtime_fixture(runtime_root)
-    with pytest.raises(ValueError, match="^runtime-schema-v2-required$"):
+    with pytest.raises(ValueError, match=r"^runtime-schema-v2-required$"):
         _validate_runtime(manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir)
 
 
@@ -1294,7 +1225,7 @@ def test_read_only_runtime_reconciles_filesystem_grants(
     _write_jsonl(child_rollout, rows)
 
     if access == "write":
-        with pytest.raises(ValueError, match="^runtime-child-filesystem-write-grant:N1$"):
+        with pytest.raises(ValueError, match=r"^runtime-child-filesystem-write-grant:N1$"):
             _validate_runtime(
                 manifest,
                 manifest_path,
@@ -1337,7 +1268,7 @@ def test_read_only_runtime_rejects_unrecognized_filesystem_controls(tmp_path: Pa
             row["payload"]["permission_profile"]["file_system"] = filesystem
     _write_jsonl(child_rollout, rows)
 
-    with pytest.raises(ValueError, match="^runtime-child-filesystem-controls-invalid:N1$"):
+    with pytest.raises(ValueError, match=r"^runtime-child-filesystem-controls-invalid:N1$"):
         _validate_runtime(manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir)
 
 
@@ -1368,7 +1299,7 @@ def test_schema_v2_runtime_rejects_duration_outside_endpoint_precision(tmp_path:
             payload["duration_ms"] += 1000
     _write_jsonl(child_rollout, rows)
 
-    with pytest.raises(ValueError, match="^runtime-child-terminal-invalid:N1$"):
+    with pytest.raises(ValueError, match=r"^runtime-child-terminal-invalid:N1$"):
         _validate_runtime(manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir)
 
 
@@ -1385,31 +1316,20 @@ def test_schema_v2_runtime_requires_join_delivery_to_authoritative_parent(tmp_pa
             )
     _write_jsonl(parent_rollout, rows)
 
-    with pytest.raises(ValueError, match="^runtime-parent-join-recipient-mismatch:N1$"):
-        _validate_runtime(manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir)
-
-
-def test_schema_v2_portable_tier_rejects_legacy_false_node_controls(tmp_path: Path) -> None:
-    """Prevent legacy false-denial records from earning a restricted portable promotion."""
-    manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = _schema_v2_runtime_fixture(tmp_path)
-    first = manifest["stages"][0]["nodes"][0]  # type: ignore[index]
-    first["observed_controls"]["network"] = False  # type: ignore[index]
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
-
-    with pytest.raises(ValueError, match="^runtime-node-capability-mismatch:N1$"):
+    with pytest.raises(ValueError, match=r"^runtime-parent-join-recipient-mismatch:N1$"):
         _validate_runtime(manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir)
 
 
 @pytest.mark.parametrize(
     ("plan", "error"),
-    (
+    [
         pytest.param(
             {"run_id": "run-1", "capability_policy": {"task_sensitivity": "sensitive"}},
             "runtime-plan-task-sensitivity-mismatch",
             id="run_id-run-1-capability_policy-task_sensitivity-sensitive",
         ),
         pytest.param({"run_id": "run-1"}, "runtime-plan-capability-policy-missing", id="run_id-run-1"),
-    ),
+    ],
 )
 def test_schema_v2_portable_tier_requires_parent_plan_task_sensitivity(
     tmp_path: Path,
@@ -1428,11 +1348,11 @@ def test_schema_v2_portable_tier_requires_parent_plan_task_sensitivity(
 
 @pytest.mark.parametrize(
     ("mutation", "error"),
-    (
+    [
         pytest.param("missing", "runtime-plan-token-budgets-missing", id="missing"),
         pytest.param("overflow", "runtime-token-budget-dispatch-exceeds-admission:wave-alpha", id="overflow"),
         pytest.param("node-mismatch", "runtime-plan-token-budget-node-mismatch:wave-alpha", id="node-mismatch"),
-    ),
+    ],
 )
 def test_schema_v2_runtime_binds_every_spawned_node_to_the_frozen_token_budget(
     tmp_path: Path,
@@ -1481,46 +1401,69 @@ def test_schema_v2_historical_reader_preserves_unbudgeted_evidence_without_promo
     assert summary["evidence_level"] == "historical-portable-read-restricted-unbudgeted"
 
 
-def test_schema_v2_portable_tier_rejects_restricted_network_with_on_request_approval(
-    tmp_path: Path,
-) -> None:
-    """Prevent approval-gated network access from being presented as portable denial."""
-    fixture = _schema_v2_runtime_fixture(tmp_path)
-    manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = fixture
-    manifest["capability_evidence"]["network"]["approval_policy"] = "on-request"  # type: ignore[index]
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
-
-    with pytest.raises(ValueError, match="^portable-network-approval-policy-invalid$"):
-        _validate_runtime(manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir)
+#: Manifest path to the schema-v2 capability evidence record.
+_EVIDENCE = ("capability_evidence",)
 
 
 @pytest.mark.parametrize(
-    ("case", "error"),
-    (
-        pytest.param("malformed", "capability-evidence-invalid", id="malformed"),
-        pytest.param("declared-external-event", "portable-external-events-invalid", id="declared-external-event"),
-        pytest.param("context-scan-failed", "portable-context-scan-required", id="context-scan-failed"),
+    ("path", "value", "error"),
+    [
+        pytest.param((*_NODE, "mutation"), "write", "runtime-write-parallel-unsupported:N1", id="write-node"),
         pytest.param(
-            "filesystem-isolation-claimed", "portable-filesystem-isolation-invalid", id="filesystem-isolation-claimed"
+            ("claimed_mode",), "serial", "runtime-mode-claim-mismatch:serial:parallel", id="false-serial-claim"
         ),
-    ),
+        pytest.param(
+            (*_NODE, "observed_controls", "network"),
+            False,
+            "runtime-node-capability-mismatch:N1",
+            id="legacy-false-node-network",
+        ),
+        pytest.param(
+            (*_EVIDENCE, "network", "approval_policy"),
+            "on-request",
+            "portable-network-approval-policy-invalid",
+            id="on-request-network-approval",
+        ),
+        pytest.param((*_EVIDENCE, "unexpected"), "field", "capability-evidence-invalid", id="malformed"),
+        pytest.param(
+            (*_EVIDENCE, "network", "external_events"),
+            ["browser.open"],
+            "portable-external-events-invalid",
+            id="declared-external-event",
+        ),
+        pytest.param(
+            (*_EVIDENCE, "credentials", "context_scan"),
+            "failed",
+            "portable-context-scan-required",
+            id="context-scan-failed",
+        ),
+        pytest.param(
+            (*_EVIDENCE, "credentials", "filesystem_isolation"),
+            "isolated",
+            "portable-filesystem-isolation-invalid",
+            id="filesystem-isolation-claimed",
+        ),
+        pytest.param((*_EVIDENCE, "task_sensitivity"), "sensitive", "portable-sensitive-task", id="sensitive-task"),
+        pytest.param(
+            (*_EVIDENCE, "tier"), "host-isolated", "host-isolation-evidence-unavailable", id="unobserved-host-isolation"
+        ),
+    ],
 )
-def test_schema_v2_portable_tier_rejects_untrusted_capability_evidence(
+def test_schema_v2_runtime_rejects_untrusted_manifest_claims(
     tmp_path: Path,
-    case: str,
+    path: tuple[str | int, ...],
+    value: object,
     error: str,
 ) -> None:
-    """Prevent capability self-attestation from expanding portable-read-restricted scope."""
+    """Prevent a manifest self-attestation from expanding portable-read-restricted scope.
+
+    A valid portable schema-v2 run has one manifest field replaced. Declared thread controls must not authorize a write-
+    capable parallel node, a planned serial label must not conceal observed parallel work, and legacy false denial
+    records must not earn a restricted promotion. Approval-gated network access, malformed or unsafe capability
+    evidence, sensitive tasks, and an unobserved stronger host-isolation tier must each be rejected.
+    """
     manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = _schema_v2_runtime_fixture(tmp_path)
-    evidence = manifest["capability_evidence"]  # type: ignore[index]
-    if case == "malformed":
-        evidence["unexpected"] = "field"
-    elif case == "declared-external-event":
-        evidence["network"]["external_events"] = ["browser.open"]
-    elif case == "context-scan-failed":
-        evidence["credentials"]["context_scan"] = "failed"
-    else:
-        evidence["credentials"]["filesystem_isolation"] = "isolated"
+    _set_path(manifest, path, value)
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
 
     with pytest.raises(ValueError, match=f"^{error}$"):
@@ -1540,18 +1483,7 @@ def test_schema_v2_portable_tier_rejects_mixed_host_network_records(tmp_path: Pa
             payload["permission_profile"]["network"] = False
     _write_jsonl(child_rollout, rows)
 
-    with pytest.raises(ValueError, match="^portable-network-record-mismatch:N2$"):
-        _validate_runtime(manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir)
-
-
-def test_schema_v2_portable_tier_rejects_sensitive_tasks(tmp_path: Path) -> None:
-    """Keep sensitive work serial until stronger host isolation is observable."""
-    fixture = _schema_v2_runtime_fixture(tmp_path)
-    manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = fixture
-    manifest["capability_evidence"]["task_sensitivity"] = "sensitive"  # type: ignore[index]
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
-
-    with pytest.raises(ValueError, match="^portable-sensitive-task$"):
+    with pytest.raises(ValueError, match=r"^portable-network-record-mismatch:N2$"):
         _validate_runtime(manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir)
 
 
@@ -1572,14 +1504,14 @@ def test_schema_v2_portable_tier_rejects_external_network_events(tmp_path: Path)
     _write_jsonl(child_rollout, rows)
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
 
-    with pytest.raises(ValueError, match="^portable-external-network-event$"):
+    with pytest.raises(ValueError, match=r"^portable-external-network-event$"):
         _validate_runtime(manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir)
 
 
 def test_schema_v2_portable_tier_rejects_secret_material_in_bound_output_and_terminal(tmp_path: Path) -> None:
     """Prevent a hash-valid child result from persisting a common credential pattern."""
     manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = _schema_v2_runtime_fixture(tmp_path)
-    secret_message = "ghp_abcdefghijklmnopqrst"
+    secret_message = "ghp_abcdefghijklmnopqrst"  # noqa: S105 - fake credential fixture for redaction test
     first = manifest["stages"][0]["nodes"][0]  # type: ignore[index]
     attempt = first["attempts"][0]  # type: ignore[index]
     output_path = manifest_path.parent / str(attempt["output_path"])
@@ -1607,7 +1539,7 @@ def test_schema_v2_portable_tier_rejects_secret_material_in_bound_output_and_ter
     _write_jsonl(parent_rollout, parent_rows)
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
 
-    with pytest.raises(ValueError, match="^runtime-output-sensitive-material:N1$"):
+    with pytest.raises(ValueError, match=r"^runtime-output-sensitive-material:N1$"):
         _validate_runtime(manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir)
 
 
@@ -1626,7 +1558,7 @@ def test_schema_v2_portable_tier_rejects_unknown_response_item_calls(tmp_path: P
     )
     _write_jsonl(child_rollout, rows)
 
-    with pytest.raises(ValueError, match="^portable-external-network-event$"):
+    with pytest.raises(ValueError, match=r"^portable-external-network-event$"):
         _validate_runtime(manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir)
 
 
@@ -1657,23 +1589,12 @@ def test_schema_v2_portable_tier_reports_configuration_not_exec_network_observat
     assert "network_guarantee" not in summary
 
 
-def test_schema_v2_host_isolated_tier_requires_authoritative_evidence(tmp_path: Path) -> None:
-    """Keep the stronger future tier unavailable when host isolation is unobserved."""
-    fixture = _schema_v2_runtime_fixture(tmp_path)
-    manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = fixture
-    manifest["capability_evidence"]["tier"] = "host-isolated"  # type: ignore[index]
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
-
-    with pytest.raises(ValueError, match="^host-isolation-evidence-unavailable$"):
-        _validate_runtime(manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir)
-
-
 class TestPortableReadConsumerRuntimeMatrix:
     """Bind each promoted consumer to the portable read-only runtime contract."""
 
     @pytest.mark.parametrize(
         ("skill", "safe_surface", "serial_surface", "join_clause", "resource_clause"),
-        (
+        [
             pytest.param(
                 "implement",
                 "read-only evidence, acceptance, and documentation-impact passes",
@@ -1690,7 +1611,7 @@ class TestPortableReadConsumerRuntimeMatrix:
                 "Shared targets, paths, indexes, caches, generated outputs, test environments, ports, devices, or undeclared resources force serial execution or re-planning.",
                 id="manage",
             ),
-        ),
+        ],
     )
     def test_documents_portable_read_only_contract(
         self,
@@ -1772,7 +1693,7 @@ class TestPortableReadConsumerRuntimeMatrix:
             == "parallel-read"
         )
 
-    @pytest.mark.parametrize("skill", ("implement", "manage"))
+    @pytest.mark.parametrize("skill", ["implement", "manage"])
     def test_accepts_promoted_complete_join(self, tmp_path: Path, skill: str) -> None:
         """Accept complete read-only runtime evidence for each promoted consumer."""
         fixture = _schema_v2_runtime_fixture(tmp_path)
@@ -1795,14 +1716,14 @@ class TestPortableReadConsumerRuntimeMatrix:
 
     @pytest.mark.parametrize(
         ("skill", "case", "error"),
-        (
+        [
             pytest.param(
                 "implement", "incomplete-join", "runtime-parent-join-missing:N1", id="implement-incomplete-join"
             ),
             pytest.param("implement", "write-authority", "runtime-write-parallel-unsupported:N1", id="implement-write"),
             pytest.param("manage", "incomplete-join", "runtime-parent-join-missing:N1", id="manage-incomplete-join"),
             pytest.param("manage", "write-authority", "runtime-write-parallel-unsupported:N1", id="manage-write"),
-        ),
+        ],
     )
     def test_rejects_incomplete_join_or_write_nodes(
         self,
@@ -1901,11 +1822,11 @@ def test_consumer_preflight_cli_binds_auto_and_exact_parent_write_approval(tmp_p
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    (
+    [
         pytest.param("plan_sha256", "0" * 64, id="plan_sha256"),
         pytest.param("response", "deny", id="response"),
         pytest.param("source", "environment", id="source"),
-    ),
+    ],
 )
 @pytest.mark.parametrize("route", ["parallel-read", "serial", "serial-fallback"])
 def test_consumer_preflight_rejects_each_invalid_write_approval_field(
@@ -1930,7 +1851,7 @@ def test_consumer_preflight_rejects_each_invalid_write_approval_field(
     approval_path = plan_path.with_name("write-approval.json")
     approval_path.write_text(json.dumps(approval) + "\n", encoding="utf-8", newline="\n")
 
-    with pytest.raises(ValueError, match="^write-approval-invalid$"):
+    with pytest.raises(ValueError, match=r"^write-approval-invalid$"):
         _load_validator().resolve_consumer_execution_mode(
             "implement",
             "--execution=serial" if route == "serial" else "--execution=auto",
@@ -1993,7 +1914,7 @@ def test_consumer_preflight_requires_approval_for_planned_parent_writes(tmp_path
         manifest, manifest_path, plan_path, consumer_id="manage", parent_writes="planned"
     )
 
-    with pytest.raises(ValueError, match="^write-approval-required$"):
+    with pytest.raises(ValueError, match=r"^write-approval-required$"):
         _load_validator().resolve_consumer_execution_mode(
             "manage",
             None,
@@ -2044,7 +1965,7 @@ def test_consumer_runtime_cli_requires_identity_and_returns_bound_summary(tmp_pa
 @pytest.mark.parametrize("consumer_id", ["implement", "manage"])
 @pytest.mark.parametrize(
     ("field", "value", "error"),
-    (
+    [
         pytest.param("consumer_id", "other", "runtime-consumer-id-mismatch", id="consumer_id"),
         pytest.param("capability", "parallel-write", "runtime-consumer-capability-invalid", id="capability"),
         pytest.param("promotion_status", "pending", "runtime-consumer-promotion-required", id="promotion_status"),
@@ -2052,7 +1973,7 @@ def test_consumer_runtime_cli_requires_identity_and_returns_bound_summary(tmp_pa
             "parent_mutations", "parallel", "runtime-consumer-parent-mutations-invalid", id="parent_mutations"
         ),
         pytest.param("canonical_gates", "parallel", "runtime-consumer-canonical-gates-invalid", id="canonical_gates"),
-    ),
+    ],
 )
 def test_portable_read_runtime_requires_exact_promoted_consumer_policy(
     tmp_path: Path,
@@ -2112,7 +2033,7 @@ def test_token_budget_admits_a_stable_prefix_and_preserves_existing_work() -> No
 
 @pytest.mark.parametrize(
     ("overrides", "error"),
-    (
+    [
         pytest.param({"ceiling_tokens": 0}, "token-budget-ceiling-invalid", id="ceiling_tokens-0"),
         pytest.param({"node_order": "first"}, "token-budget-node-order-invalid", id="node_order-first"),
         pytest.param(
@@ -2140,7 +2061,7 @@ def test_token_budget_admits_a_stable_prefix_and_preserves_existing_work() -> No
             "token-budget-already-exceeded",
             id="ceiling_tokens-10-completed_node_ids-first",
         ),
-    ),
+    ],
 )
 def test_token_budget_rejects_unsafe_or_incoherent_admission_state(
     overrides: dict[str, object],

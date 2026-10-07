@@ -9,47 +9,59 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from dataclasses import replace
-from pathlib import Path, PurePath
 import re
 import shlex
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import replace
+from pathlib import Path, PurePath
 from types import ModuleType
-from collections.abc import Iterable
-from typing import Any, Callable, Mapping
+from typing import Any
 from uuid import uuid4
 
-
+#: The ``benchmarks/`` directory, one level above this package.
 BENCHMARKS = Path(__file__).resolve().parents[1]
+#: The repository root, the parent of the ``benchmarks/`` directory.
 ROOT = BENCHMARKS.parent
+#: Structural runner script the fix stages load; its hash is recorded in run provenance.
 STRUCTURAL_PATH = BENCHMARKS / "run-codex-structural.py"
+#: Codex integration manifest whose hash is recorded in run provenance and which pins the experiment revision.
 PARITY_MANIFEST_PATH = BENCHMARKS / "manifests" / "codex-integration.json"
+#: Task suite file for the single-file fix stage.
 FIX_SINGLE_TASKS_PATH = BENCHMARKS / "suites" / "tasks-fix-single.json"
+#: Task suite file for the multi-file fix stage.
 FIX_MULTI_TASKS_PATH = BENCHMARKS / "suites" / "tasks-fix-multi.json"
+#: Task suite file for the patch stage.
 PATCH_TASKS_PATH = BENCHMARKS / "suites" / "tasks-patch.json"
+#: JSON file locking the codemap index bindings for patch tasks; validated and hashed into run provenance.
 PATCH_INDEX_LOCKS_PATH = BENCHMARKS / "suites" / "patch-index-locks.json"
+#: Directory name of the managed provider-parity repository checkout, which the locked patch index expects.
 _MANAGED_PARITY_REPO_NAME = "codemap-provider-parity-pl-2.6.5"
-# The canonical managed target is the *root* temp directory, not the per-user one:
-# `suites/patch-index-locks.json` locks `canonical_scan_root` to
-# `/private/tmp/codemap-provider-parity-pl-2.6.5`, which is what `/tmp` resolves to on the
-# canonical macOS host. `tempfile.gettempdir()` honours $TMPDIR and would silently point
-# at a different directory, so it cannot be used here. The env override keeps the path
-# overridable on a host where the root temp dir is wrong (Windows especially, where the
-# old `Path(os.sep) / "tmp"` resolved to the drive root).
+#: The canonical managed target is the *root* temp directory, not the per-user one:
+#: `suites/patch-index-locks.json` locks `canonical_scan_root` to
+#: `/private/tmp/codemap-provider-parity-pl-2.6.5`, which is what `/tmp` resolves to on the
+#: canonical macOS host. `tempfile.gettempdir()` honours $TMPDIR and would silently point
+#: at a different directory, so it cannot be used here. The env override keeps the path
+#: overridable on a host where the root temp dir is wrong (Windows especially, where the
+#: old `Path(os.sep) / "tmp"` resolved to the drive root).
 _MANAGED_PARITY_REPO = Path(
     os.environ.get("CODEMAP_PARITY_REPO")
     or f"{os.sep}tmp{os.sep}{_MANAGED_PARITY_REPO_NAME}"  # portable-paths: canonical-target
 ).resolve()
+#: Canonical arm labels the fix stages run: plain, optional Codemap, required Codemap.
 ARMS = ("A_plain", "B_auto", "C_strict")
+#: Map from stage arm label to the label used by the native structural runner; every arm maps to itself.
 NATIVE_ARMS = {"A_plain": "A_plain", "B_auto": "B_auto", "C_strict": "C_strict"}
+#: Per single-file fix task id, the locked ``scan-query`` arguments expected from the Codemap arms.
 _FIX_SINGLE_QUERY_ARGUMENTS = {
     "FS-01": ("symbol", "EarlyStopping.__init__"),
     "FS-02": ("symbol", "EarlyStopping.__init__"),
     "FS-03": ("symbol", "ModelCheckpoint._save_checkpoint"),
     "FS-04": ("symbol", "ModelCheckpoint.__init__"),
 }
+#: Per multi-file fix task id, the locked ``scan-query`` arguments expected from the Codemap arms.
 _FIX_MULTI_QUERY_ARGUMENTS = {
     "FM-01": (
         "fn-rdeps",
@@ -63,9 +75,13 @@ _FIX_MULTI_QUERY_ARGUMENTS = {
     ),
     "FM-03": ("find-symbol", r"Strategy\.setup_environment$", "--exclude-tests", "--limit", "0"),
 }
+#: Pattern extracting the fenced diff that follows the single-file fix answer marker.
 _FIX_SINGLE_ANSWER_RE = re.compile(r"BEGIN_FIX_SINGLE_DIFF\s*(?P<diff>```diff\s*.*?```)", re.DOTALL)
+#: Pattern extracting the fenced diff that follows the multi-file fix answer marker.
 _FIX_MULTI_ANSWER_RE = re.compile(r"BEGIN_FIX_MULTI_DIFF\s*(?P<diff>```diff\s*.*?```)", re.DOTALL)
+#: Pattern extracting the fenced diff that follows the patch answer marker.
 _PATCH_ANSWER_RE = re.compile(r"BEGIN_PATCH_DIFF\s*(?P<diff>```diff\s*.*?```)", re.DOTALL)
+#: Per patch task id, the locked ``scan-query`` arguments expected from the Codemap arms.
 _PATCH_QUERY_ARGUMENTS = {
     "PT-01": ("symbol", "FitLoop.setup_data"),
     "PT-02": ("symbol", "DistributedSamplerWrapper"),
@@ -82,22 +98,22 @@ from _bench_common.edit_patch_contracts import (  # noqa: E402
     StageIdentity,
     assess_patch_answer,
     build_edit_task_contract,
-    build_patch_answer,
     build_fix_multi_contract,
     build_fix_single_contract,
+    build_patch_answer,
     score_edit_execution,
     stage_contract_sha256,
-    validate_patch_index_bundle,
-    validate_provider_binding,
     validate_fix_multi_binding,
     validate_fix_single_binding,
+    validate_patch_index_bundle,
+    validate_provider_binding,
 )
 from _bench_common.mutation_isolation import (  # noqa: E402
     PATCH_PYTEST_ENV,
     create_executable_agent_workspace,
-    execute_patch_task_answer,
     execute_fix_multi_patch,
     execute_fix_single_patch,
+    execute_patch_task_answer,
     patch_test_runtime_identity,
     stage_patch_task_agent_workspace,
 )
@@ -110,12 +126,13 @@ from _bench_common.paid_lifecycle import (  # noqa: E402
     write_checksums,
 )
 from _bench_common.presentation import format_paid_command_block, format_quality  # noqa: E402
-from . import runtime  # noqa: E402
 from _bench_common.provider_parity_contracts import (  # noqa: E402
     fresh_input_tokens,
     load_task_suite,
     token_accounting_inconsistent,
 )
+
+from . import runtime  # noqa: E402
 
 
 def _structural() -> ModuleType:
@@ -1252,7 +1269,8 @@ def run_fix_stage(
                 patch_pytest=(str(admitted["patch_test_runtime"]["pytest_executable"]) if study == "patch" else None),
             )
         return
-    assert run_dir is not None
+    if run_dir is None:
+        raise RuntimeError("run_dir must not be None")
     try:
         _preflight_stage_workspaces(
             adapter,

@@ -13,7 +13,6 @@ from typing import Any
 
 import pytest
 
-
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 AGENTIC_SUITE_PATH = BENCHMARKS_DIR / "suites" / "tasks-agentic.json"
 PARITY_MANIFEST_PATH = BENCHMARKS_DIR / "manifests" / "provider-parity-methodology.json"
@@ -66,7 +65,7 @@ def test_agentic_loader_rejects_a_known_id_with_tampered_task_bytes(tmp_path: Pa
     suite_path = tmp_path / "tampered-agentic-suite.json"
     suite_path.write_text(json.dumps([task]), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="(task|prompt).*hash|hash.*(task|prompt)"):
+    with pytest.raises(ValueError, match=r"(task|prompt).*hash|hash.*(task|prompt)"):
         script_run_agentic.load_tasks_with_provenance(suite_path, PARITY_MANIFEST_PATH)
 
 

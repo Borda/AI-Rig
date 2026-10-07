@@ -46,9 +46,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-
+#: Largest hook event payload, in bytes, read from standard input before it is rejected as oversized.
 MAX_INPUT_BYTES = 65_536
+#: Largest stdout or stderr size, in bytes, accepted from the doctor subprocess.
 MAX_OUTPUT_BYTES = 1_048_576
+#: Character cap for the failed-check reason shown in the startup health message.
 MAX_REASON_CHARS = 240
 
 
@@ -129,12 +131,11 @@ def main() -> int:
         _input()
         root = _plugin_root()
         manager = root / "scripts" / "manage_role_agents.py"
-        completed = subprocess.run(
+        completed = subprocess.run(  # noqa: S603 - argv list, no shell
             [sys.executable, str(manager), "doctor"],
             check=False,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=25,
         )
         if len(completed.stdout) > MAX_OUTPUT_BYTES or len(completed.stderr) > MAX_OUTPUT_BYTES:

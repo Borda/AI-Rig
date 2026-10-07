@@ -44,24 +44,35 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+#: Words showing a line forbids or describes a wait pattern rather than prescribing it.
 _NEGATION = re.compile(
     r"(?i)\b(?:never|no|not|nor|don't|do not|forbid\w*|ban\w*|without|instead of|replac\w*|retired|stale|zero)\b"
 )
+#: Matches lines that are themselves grep or regex detector code, which must not be flagged.
 _DETECTOR_SOURCE = re.compile(r"\bgrep\b|re\.compile|\brg\b")
+#: Marker text that exempts a line from the wait check.
 _ALLOW = "wait-check: allow"
+#: Matches tools that must not be used to wait on spawned agents (ScheduleWakeup, ListAgents, Monitor).
 _WAIT_TOOL = re.compile(r"\b(?:ScheduleWakeup|ListAgents)\b|\bMonitor\(|`Monitor`")
+#: Matches fixed-interval polling wording, such as ``poll every`` or ``MONITOR_INTERVAL``.
 _FIXED_POLL = re.compile(
     r"(?i)poll every|\bevery \d+\s*(?:s|sec|secs|seconds|min|mins|minutes)\b.*\b(?:wait|waiting|poll|probe|check)"
     r"|MONITOR_INTERVAL|health_sentinel|-newer\b.*\bwc -l"
 )
+#: Matches mentions of the TaskCreate, TaskUpdate and TaskList tools.
 _TASK_TOOL = re.compile(r"\bTask(?:Create|Update|List)\b")
+#: Matches wording that gives a task update its own separate turn or response.
 _OWN_TURN = re.compile(
     r"(?i)\b(?:own turn|separate turn|own response|separate response|standalone turn|turn of its own"
     r"|response of its own|bookkeeping-only (?:turn|response))\b"
 )
+#: Matches the ``long output`` wording of the one sanctioned standalone task-update exception.
 _LONG_OUTPUT = re.compile(r"(?i)long output")
+#: Glob patterns selecting the skill and agent Markdown files that are scanned.
 _SCAN_GLOBS = ("**/skills/**/*.md", "**/agents/*.md")
+#: Matches an ``Agent(subagent_type`` call, marking a skill as one that spawns agents.
 _SPAWN = re.compile(r"\bAgent\(subagent_type")
+#: Matches wording showing a timed-out agent is surfaced to the user (the clock symbol or ``timed_out``).
 _TIMEOUT_VISIBLE = re.compile(r"⏱|timed_out|timed out")
 
 

@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import importlib.util
 import json
-from pathlib import Path
 import subprocess
 import sys
+from collections.abc import Callable
+from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR_PATH = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
@@ -20,7 +19,8 @@ VALIDATOR_PATH = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py
 def _load_validator() -> ModuleType:
     """Load the standalone review validator without package installation."""
     specification = importlib.util.spec_from_file_location("codex_rig_review_identity_validator", VALIDATOR_PATH)
-    assert specification is not None and specification.loader is not None
+    assert specification is not None
+    assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module

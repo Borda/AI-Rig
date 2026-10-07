@@ -33,11 +33,12 @@ import re
 import statistics
 import sys
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
 
+#: Tool names treated as local work when bucketing time; unknown tools also fall into this bucket.
 _LOCAL_TOOLS = frozenset(
     {
         "Bash",
@@ -56,8 +57,11 @@ _LOCAL_TOOLS = frozenset(
         "ExitPlanMode",
     }
 )
+#: Tool names that spawn a subagent and are bucketed as agent time.
 _AGENT_TOOLS = frozenset({"Task", "Agent"})
+#: Tool names that invoke a skill and are bucketed as skill time.
 _SKILL_TOOLS = frozenset({"Skill"})
+#: Tool names that wait on the user and are bucketed as idle time.
 _IDLE_TOOLS = frozenset({"AskUserQuestion"})
 
 _BASH_CLIP_MS = 3_600_000  # 1h cap on runaway Bash

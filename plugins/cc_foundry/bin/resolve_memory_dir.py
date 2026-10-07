@@ -29,6 +29,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+#: Matches each run of characters outside ``a-z0-9``, which is collapsed into a single hyphen in the slug.
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -62,7 +63,7 @@ def _git_toplevel(timeout: int = 5) -> str | None:
     """Return ``git rev-parse --show-toplevel`` of cwd, or None if not in a repo."""
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - git resolved via PATH on purpose
             capture_output=True,
             text=True,
             check=False,

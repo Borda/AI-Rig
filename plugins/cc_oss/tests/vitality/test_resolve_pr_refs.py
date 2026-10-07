@@ -10,7 +10,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 import resolve_pr_refs as rpr
 
 

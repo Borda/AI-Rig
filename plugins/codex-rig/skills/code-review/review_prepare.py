@@ -59,21 +59,23 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Keep sibling modules importable when pytest collects this file by path.
+#: Keep sibling modules importable when pytest collects this file by path.
 SKILL_DIRECTORY = Path(__file__).resolve().parent
 if str(SKILL_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SKILL_DIRECTORY))
 
+import review_batches  # noqa: E402
 import review_context  # noqa: E402
 import review_routing  # noqa: E402
-import review_batches  # noqa: E402
 import validate_artifacts as validator  # noqa: E402
 
+#: Plugin shared directory placed on the import path for the collect_diff helper.
 SHARED_DIRECTORY = SKILL_DIRECTORY.parents[1] / "shared"
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 import collect_diff  # noqa: E402
 
+#: Largest unbatched review context, in bytes, before preparation fails with a capacity error.
 MAX_REVIEW_CONTEXT_BYTES = 262144
 
 
@@ -186,7 +188,7 @@ def _source_snapshot(
     root = source_root.resolve(strict=True)
     local_receipt = out / "local-source" / "review-worktree.json"
     pr_receipts = [path for path in (out / "local-checkout.json", out / "pr" / "local-checkout.json") if path.exists()]
-    if local_receipt.exists() and pr_receipts or len(pr_receipts) > 1:
+    if (local_receipt.exists() and pr_receipts) or len(pr_receipts) > 1:
         raise ValueError("review-source-receipt-ambiguous")
     if local_receipt.exists():
         receipt = json.loads(local_receipt.read_text(encoding="utf-8"))
@@ -202,9 +204,12 @@ def _source_snapshot(
         collect_diff.verify_review_worktree(local_receipt.parent)
         scopes = collect_diff._normalize_scope_paths(root, [scope_path if scope_path is not None else "."])
         comparison = ("HEAD", "--", *scopes)
-        if collect_diff._git_output(root, ("diff", "--binary", *comparison)) != (out / "diff.patch").read_bytes():
+        collected_patch, changed_names = collect_diff._git_attempts(
+            [(root, ("diff", "--binary", *comparison)), (root, ("diff", "--name-only", "-z", *comparison))]
+        )
+        if collect_diff._settled(collected_patch) != (out / "diff.patch").read_bytes():
             raise ValueError("review-source-diff-stale")
-        changed = collect_diff._git_output(root, ("diff", "--name-only", "-z", *comparison))
+        changed = collect_diff._settled(changed_names)
         return snapshot, {path.decode("utf-8") for path in changed.split(b"\0") if path}
     if scope_path is not None:
         raise ValueError("review-source-path-scope-requires-local-receipt")
@@ -442,11 +447,11 @@ def prepare(
         elif not batches:
             # Batch source templates embed the historical task verbatim; clarify only new ordinary contexts.
             context += (
-                "\n\n## Response layout\n\n"
-                "Put findings and confidence under their own separate headings. Keep `## Reviewer Assessment` "
-                "to exactly the separate lines `Rating: <integer>` and `Rationale: <one-line explanation>`. "
-                "Preserve all required findings, confidence deductions and evidence; do not put them inside the assessment section.\n"
-            ).encode("utf-8")
+                b"\n\n## Response layout\n\n"
+                b"Put findings and confidence under their own separate headings. Keep `## Reviewer Assessment` "
+                b"to exactly the separate lines `Rating: <integer>` and `Rationale: <one-line explanation>`. "
+                b"Preserve all required findings, confidence deductions and evidence; do not put them inside the assessment section.\n"
+            )
         # The page reader transports larger contexts without dropping source; cap total work at 256 KiB.
         if not batches and len(context) > MAX_REVIEW_CONTEXT_BYTES:
             raise ValueError(f"review-context-capacity-exceeded:{role}:{MAX_REVIEW_CONTEXT_BYTES}-bytes")

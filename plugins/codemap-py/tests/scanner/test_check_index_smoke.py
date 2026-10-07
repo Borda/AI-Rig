@@ -15,15 +15,9 @@ import json
 import subprocess
 from typing import Any
 
+import check_index_smoke
 import pytest
-
-import check_index_smoke  # noqa: E402 — bin/ on sys.path via conftest.py
-from check_index_smoke import (  # noqa: E402
-    SmokeResult,
-    derive_exit_code,
-    main,
-    project_smoke_result,
-)
+from check_index_smoke import SmokeResult, derive_exit_code, main, project_smoke_result
 
 
 def _completed(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess[str]:

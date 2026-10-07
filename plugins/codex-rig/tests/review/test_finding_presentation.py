@@ -2,25 +2,23 @@
 
 import copy
 import hashlib
-from io import StringIO
 import json
-from pathlib import Path
 import subprocess
 import sys
+from io import StringIO
+from pathlib import Path
 
 import pytest
 from _platform import FILE_SYMLINKS_AVAILABLE
+from markdown_it import MarkdownIt
 from rich.console import Console
 from rich.markdown import Markdown
-from markdown_it import MarkdownIt
-
-from test_final_handoff import FINALIZER, _handoff_payload, _load_finalizer
-from test_code_remediate_final_outcome_validation import VALIDATOR
-from test_code_remediate_final_outcome_validation import _metadata as resolution_metadata, _write_action_items
-from test_final_handoff import _write_schema_v2_assess
+from test_code_remediate_final_outcome_validation import VALIDATOR, _write_action_items
+from test_code_remediate_final_outcome_validation import _metadata as resolution_metadata
 from test_code_remediate_work_bucket_validation import _write_workplan
-from test_review_finding_identity import _load_validator, _metadata, _result
+from test_final_handoff import FINALIZER, _handoff_payload, _load_finalizer, _write_schema_v2_assess
 from test_review_completion_gate import _assessed_pr
+from test_review_finding_identity import _load_validator, _metadata, _result
 
 
 def _selection() -> dict:
@@ -114,7 +112,9 @@ def test_selection_rejects_invalid_inventory(mutation: str) -> None:
         payload["selected_indexes"] = [7]
     else:
         payload["source_records_total"] = 19
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match=r"selection-(count-mismatch|index-invalid|source-duplicate|source-finding-id-mismatch)"
+    ):
         _load_finalizer().render_selection(payload)
 
 
@@ -214,7 +214,9 @@ def test_concise_review_states_actions_once_and_names_gate() -> None:
     assert "- Context: Both selectors satisfy the current assertion." in rendered
     assert "- Done when: The regression fails with the wrong selector." in rendered
     assert "- Evidence: gates.json" in rendered
-    assert "- Status:" not in rendered and "- Required change:" not in rendered and "- Issue:" not in rendered
+    assert "- Status:" not in rendered
+    assert "- Required change:" not in rendered
+    assert "- Issue:" not in rendered
 
 
 def test_concise_selection_aggregates_sources_without_losing_references() -> None:
@@ -290,7 +292,8 @@ def test_concise_remediation_expands_resolution_once() -> None:
     assert "**CR-1**" not in rendered
     assert "Ledger: .reports/codex/code-remediate/run/action-items.md" in rendered
     assert "- Outcome:" not in rendered
-    assert "[O1]" not in rendered and "[E1]" not in rendered
+    assert "[O1]" not in rendered
+    assert "[E1]" not in rendered
 
 
 def test_prior_concise_remediation_keeps_detail_blocks() -> None:
@@ -701,9 +704,13 @@ def test_selection_preview_retains_names_and_references(width: int) -> None:
     console.print(Markdown(_load_finalizer().render_selection(_selection())))
     text = output.getvalue()
     assert all(len(line) <= width for line in text.splitlines())
-    assert "F7" in text and "Preserve input compatibility" in text
-    assert "Done when:" in text and "result.json#F7" in text and "comment-9" in text
-    assert "[S1]" not in text and "[C1]" not in text
+    assert "F7" in text
+    assert "Preserve input compatibility" in text
+    assert "Done when:" in text
+    assert "result.json#F7" in text
+    assert "comment-9" in text
+    assert "[S1]" not in text
+    assert "[C1]" not in text
 
 
 def test_report_alias_mentions_share_one_canonical_owner() -> None:
@@ -1221,28 +1228,26 @@ def test_remediation_report_coverage_preserves_grouped_obligations(tmp_path: Pat
     VALIDATOR._validate_code_remediate_report_coverage(metadata, tmp_path)
 
 
-def test_remediation_report_finding_id_cannot_replace_closure_details(tmp_path: Path) -> None:
-    """Keep the finding's closure contract even when its ID remains in the intake ledger."""
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("closure_evidence", "Compare both actual downstream outcomes.", id="closure_evidence"),
+        pytest.param("title", "The downstream state remains invalid after the reported success.", id="title"),
+        pytest.param("evidence", ["The downstream state remains invalid after the reported success."], id="evidence"),
+    ],
+)
+def test_remediation_report_keeps_original_finding_details(tmp_path: Path, field: str, value: object) -> None:
+    """Retain the original finding's label, evidence, and closure contract, not just its intake ID.
+
+    A remediation result may keep a finding's ID in the intake ledger while dropping the detail a reader needs: the
+    closure evidence that proves it fixed, the title that names it, or the evidence that located it. Each case changes
+    one original detail so the remediation summary no longer reproduces it, and coverage validation must name it.
+    """
     result_path = _write_remediation_candidate(tmp_path, "code")
     metadata = json.loads(result_path.read_text(encoding="utf-8"))["metadata"]
     path = tmp_path / "findings-input.txt"
     report = json.loads(path.read_text(encoding="utf-8"))
-    report["metadata"]["review_findings"][0]["closure_evidence"] = "Compare both actual downstream outcomes."
-    path.write_text(json.dumps(report), encoding="utf-8")
-
-    with pytest.raises(SystemExit, match="code-remediate-report-finding-detail-omitted:R1:closure_evidence"):
-        VALIDATOR._validate_code_remediate_report_coverage(metadata, tmp_path)
-
-
-@pytest.mark.parametrize("field", ["title", "evidence"])
-def test_remediation_report_keeps_original_finding_details(tmp_path: Path, field: str) -> None:
-    """Retain the original finding's label and evidence instead of only its closure text."""
-    result_path = _write_remediation_candidate(tmp_path, "code")
-    metadata = json.loads(result_path.read_text(encoding="utf-8"))["metadata"]
-    path = tmp_path / "findings-input.txt"
-    report = json.loads(path.read_text(encoding="utf-8"))
-    original = "The downstream state remains invalid after the reported success."
-    report["metadata"]["review_findings"][0][field] = [original] if field == "evidence" else original
+    report["metadata"]["review_findings"][0][field] = value
     path.write_text(json.dumps(report), encoding="utf-8")
 
     with pytest.raises(SystemExit, match=f"code-remediate-report-finding-detail-omitted:R1:{field}"):
@@ -1748,5 +1753,5 @@ def test_grouped_review_binds_every_display_field(field: str, layout: str) -> No
         rows[0]["cells"][1 if field == "action" else 2] = "Substituted content"
     else:
         rows[0][field] = "Substituted content"
-    with pytest.raises(SystemExit, match="code-review-final-handoff-finding-.*-mismatch"):
+    with pytest.raises(SystemExit, match=r"code-review-final-handoff-finding-.*-mismatch"):
         VALIDATOR._validate_code_review_final_handoff(result, payload)

@@ -15,7 +15,8 @@ import pytest
 
 _MOD_PATH = Path(__file__).resolve().parent.parent.parent / "bin" / "check_readme_drift.py"
 _spec = importlib.util.spec_from_file_location("check_readme_drift", _MOD_PATH)
-assert _spec and _spec.loader
+assert _spec
+assert _spec.loader
 crd = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(crd)
 
@@ -61,14 +62,25 @@ def _make_plugin(root: Path, *, version: str, readme: str, bin_scripts: tuple[st
     return plugin
 
 
-def test_clean_plugin_passes(tmp_path: Path) -> None:
-    """A README whose facts match disk produces no findings."""
-    plugin = _make_plugin(
-        tmp_path,
-        version="1.2.3",
-        readme="Current version: `1.2.3`.\n\nShared bin/ scripts: `run.py`.\n",
-        bin_scripts=("run.py",),
-    )
+@pytest.mark.parametrize(
+    ("readme", "bin_scripts"),
+    [
+        pytest.param(
+            "Current version: `1.2.3`.\n\nShared bin/ scripts: `run.py`.\n", ("run.py",), id="facts-match-disk"
+        ),
+        # A `.py` token on a line that does not mention bin/ is not a bin reference.
+        pytest.param(
+            "Current version: `1.2.3`.\n\nRun `train.py` to start training.\n", (), id="script-token-off-bin-line"
+        ),
+    ],
+)
+def test_clean_plugin_passes(tmp_path: Path, readme: str, bin_scripts: tuple[str, ...]) -> None:
+    """A README whose facts match disk produces no findings.
+
+    Covers a matching version marker with a bin/ line naming a script that exists, and a ``.py`` token on a line that
+    never mentions bin/, which is not a bin reference.
+    """
+    plugin = _make_plugin(tmp_path, version="1.2.3", readme=readme, bin_scripts=bin_scripts)
     assert crd.check_plugin(plugin) == []
 
 
@@ -82,7 +94,8 @@ def test_version_marker_drift_flagged(tmp_path: Path) -> None:
     findings = crd.check_plugin(plugin)
     assert len(findings) == 1
     assert findings[0].kind is crd.FindingKind.VERSION
-    assert "1.0.0" in findings[0].message and "2.0.0" in findings[0].message
+    assert "1.0.0" in findings[0].message
+    assert "2.0.0" in findings[0].message
 
 
 def test_stale_bin_reference_flagged(tmp_path: Path) -> None:
@@ -97,17 +110,6 @@ def test_stale_bin_reference_flagged(tmp_path: Path) -> None:
     assert len(findings) == 1
     assert findings[0].kind is crd.FindingKind.BIN_REFS
     assert "gone.sh" in findings[0].message
-
-
-def test_script_reference_off_bin_line_ignored(tmp_path: Path) -> None:
-    """A ``.py`` token on a line that does not mention bin/ is not a bin reference."""
-    plugin = _make_plugin(
-        tmp_path,
-        version="1.0.0",
-        readme="Current version: `1.0.0`.\n\nRun `train.py` to start training.\n",
-        bin_scripts=(),
-    )
-    assert crd.check_plugin(plugin) == []
 
 
 def test_reference_existing_elsewhere_ignored(tmp_path: Path) -> None:

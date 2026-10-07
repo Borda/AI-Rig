@@ -29,7 +29,9 @@ import sys
 from pathlib import Path
 from typing import Final
 
+#: Matches run directory names ``run-<NNN>`` with at least three digits, capturing the index.
 _RUN_RE: Final = re.compile(r"^run-(\d{3,})$")
+#: How many times to retry creating a run directory after losing the exclusive-create race.
 _MAX_ATTEMPTS: Final = 50
 
 

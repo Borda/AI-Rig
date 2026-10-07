@@ -35,17 +35,19 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Claude launches this hook as `python "<plugin-root>/hooks/log-tool-use.py"`, which
-# already puts hooks/ on sys.path — but the test suite loads it through
-# `importlib.util.spec_from_file_location`, which does not. Inserting explicitly makes
-# the shared-helper import resolve under every load mechanism.
+#: Claude launches this hook as `python "<plugin-root>/hooks/log-tool-use.py"`, which
+#: already puts hooks/ on sys.path — but the test suite loads it through
+#: `importlib.util.spec_from_file_location`, which does not. Inserting explicitly makes
+#: the shared-helper import resolve under every load mechanism.
 _HOOKS_DIR = Path(__file__).resolve().parent
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 
 import _hookutil  # noqa: E402  (needs the sys.path insert above)
 
+#: Size in bytes above which a session's tool-use shard is rotated before the next record is appended.
 _LOG_MAX_BYTES = 10 * 1024 * 1024
+#: Matches a Bash command that starts a ``grep``-family or ``rg`` search, also after a pipe, ``;``, ``&`` or ``(``.
 _BASH_SEARCH = re.compile(r"(^|[|;&(]\s*)(rg|grep|egrep|fgrep)\s")
 #: Bytes of the shard the repeated-read nudge inspects. It runs on every matched Read, so
 #: scanning the whole 10 MB budget to decide one advisory was the dominant cost of a hook

@@ -1,9 +1,11 @@
 """Exit codes and the error emitters every command exits through."""
 
 from __future__ import annotations
+
 import json
 import sys
 from pathlib import Path
+
 from codemap_py import query_state as state
 
 # Transitional seam: exclusion rules live in codemap_py.scanner, but this
@@ -12,6 +14,7 @@ from codemap_py import query_state as state
 # bin/-relative sys.path insert, the same route bin/scan-index used to take.
 # Every other import below is a direct package-internal import.
 # parents[3] not [2]: this file sits one level deeper than the pre-split query.py
+#: Plugin bin/ directory, added to sys.path so the _exclusions shim can be imported.
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
@@ -28,6 +31,7 @@ _builtin_print = print  # saved before print( → _print( sweep below
 # Exit-code contract: every error exit prints a parseable JSON object
 # to stdout — never a bare non-zero exit with empty stdout. Codes let a caller branch
 # on failure class without string-matching the message.
+#: Exit status for generic query failures such as a missing symbol, invalid index or disabled feature.
 _EXIT_GENERIC = 1  # generic failure (missing symbol, invalid index, feature gate)
 
 

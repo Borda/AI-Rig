@@ -71,7 +71,9 @@ IMPORTER_THRESHOLD = 5
 #: Matches the review's own fn-rdeps/fn-blast context loop cap, which bounds block wall time.
 SYMBOL_CAP = 12
 
+#: Verdict printed when the change reaches the main path or its impact cannot be determined.
 FULL = "FULL"
+#: Verdict printed when every change stays in tests, leaf modules or private code without main-path callers.
 LIGHT = "LIGHT"
 
 BlastFn = Callable[[str], "dict | None"]
@@ -171,7 +173,7 @@ def run_fn_blast(qname: str) -> dict | None:
     if exe is None:
         return None
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S603 - argv list, no shell
             [exe, "query", "--timeout", "8", "fn-blast", qname],
             capture_output=True,
             text=True,

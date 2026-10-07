@@ -14,10 +14,9 @@ import sys
 import traceback
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
-
 from _launcher_capability import _private_filesystem_available
 
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
@@ -26,6 +25,7 @@ sys.path.insert(0, str(BENCHMARKS_DIR))
 # Patch seams live in the package modules the runner shim re-exports from: patching the shim
 # would leave each package module's own global binding untouched. Inside the package every seam
 # below is reached through its defining module, so this is the single place to patch it.
+from _bench_codex import runtime as codex_runtime  # noqa: E402
 from _bench_codex.structural import arms as codex_arms  # noqa: E402
 from _bench_codex.structural import cli as codex_cli  # noqa: E402
 from _bench_codex.structural import config as codex_config  # noqa: E402
@@ -37,11 +37,9 @@ from _bench_codex.structural import rescore as codex_rescore  # noqa: E402
 from _bench_codex.structural import runner as codex_structural_runner  # noqa: E402
 from _bench_codex.structural import scoring as codex_scoring  # noqa: E402
 from _bench_codex.structural import tasks as codex_tasks  # noqa: E402
-
-from _bench_codex import runtime as codex_runtime  # noqa: E402
 from _bench_common.presentation import LEGEND_CLOSE_RULE, LEGEND_OPEN_RULE  # noqa: E402
-from benchmarks._bench_common import provider_parity_contracts as core  # noqa: E402
 
+from benchmarks._bench_common import provider_parity_contracts as core  # noqa: E402
 
 SCRIPT_PATH = BENCHMARKS_DIR / "run-codex-structural.py"
 SUITE_PATH = BENCHMARKS_DIR / "suites" / "tasks-bench.json"
@@ -797,7 +795,7 @@ def test_loader_rejects_reordered_known_tasks(script_run_codex: Any, tmp_path: P
     reordered_path = tmp_path / "tasks-bench-reordered.json"
     reordered_path.write_text(json.dumps(list(reversed(tasks))), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="order|membership|suite"):
+    with pytest.raises(ValueError, match=r"order|membership|suite"):
         script_run_codex.load_tasks_with_provenance(reordered_path, MANIFEST_PATH)
 
 
@@ -912,7 +910,7 @@ def test_skill_arm_installs_and_locks_rig_and_codemap_plugins(script_run_codex: 
         home.codemap_available = True
         home.codemap_verified = True
         home.env["CODEMAP_PYTHON"] = "/usr/bin/python3"
-        home.env["SECRET"] = "must-not-reach-adapter"
+        home.env["SECRET"] = "must-not-reach-adapter"  # noqa: S105 - fake env value in test fixture
         index_path = tmp_path / "locked-index.json"
         index_path.write_text("{}", encoding="utf-8")
         lock_path = tmp_path / "locks.json"
@@ -1538,7 +1536,7 @@ def test_arm_home_cleanup_rejects_non_private_credential_directory(
 
     home = script_run_codex.ArmHome("A_plain", home_path, {}, False)
 
-    with pytest.raises(RuntimeError, match="owned by the current user|permissions must be exactly 0700"):
+    with pytest.raises(RuntimeError, match=r"owned by the current user|permissions must be exactly 0700"):
         home.cleanup()
 
     assert home_path.is_dir()
@@ -1607,7 +1605,7 @@ def test_auth_source_path_validation_error_is_generic_and_does_not_expose_source
     auth_source = alias / "auth.json"
     runner = script_run_codex.CodexRunner("gpt-6.1-sol", tmp_path, auth_source=auth_source)
 
-    with pytest.raises(ValueError) as raised:
+    with pytest.raises(ValueError, match=r"auth source path is unsafe") as raised:
         runner._ensure_auth_state()
 
     assert "path is unsafe" in str(raised.value)
@@ -1817,7 +1815,7 @@ def test_runner_rejects_auth_source_drift_before_the_next_model_call(
         source.write_bytes(b'{"state":"changed"}')
         source.chmod(0o600)
 
-        with pytest.raises(ValueError, match="auth source.*changed|changed.*auth source"):
+        with pytest.raises(ValueError, match=r"auth source.*changed|changed.*auth source"):
             runner.run({"id": "second", "prompt": "prompt", "type": "demo"}, "A_plain")
     finally:
         closer = getattr(runner, "close", None)
@@ -2215,11 +2213,15 @@ def test_coordination_cleanup_never_raises_from_a_finally_block(
 
     monkeypatch.setattr(codex_provisioning, "_cleanup_coordination_root", _refuse)
 
-    try:
-        raise RuntimeError("original cause")
-    except RuntimeError as exc:
-        runner._cleanup_coordination(tmp_path / "coordination")
-        assert str(exc) == "original cause"
+    def _fail_then_clean_up() -> None:
+        """Raise the real cause while cleanup runs from a ``finally`` block."""
+        try:
+            raise RuntimeError("original cause")
+        finally:
+            runner._cleanup_coordination(tmp_path / "coordination")
+
+    with pytest.raises(RuntimeError, match=r"original cause"):
+        _fail_then_clean_up()
 
 
 def test_timed_out_transport_preserves_streamed_usage_events(
@@ -2641,16 +2643,47 @@ def test_pooling_admits_a_non_compliant_optional_use_cell(script_run_codex: Any)
     assert script_run_codex._pooling_ineligibility_reasons(run) == ()
 
 
-def test_main_stops_after_three_equivalent_unknown_infrastructure_failures(
+@pytest.mark.parametrize(
+    ("task_count", "error", "error_type", "match", "stem", "expected_task_ids"),
+    [
+        pytest.param(
+            4,
+            "provider temporarily unavailable",
+            "transport_error",
+            "infrastructure failure",
+            "infrastructure",
+            ["task-1", "task-2", "task-3"],
+            id="three-equivalent-unknown-infrastructure-failures",
+        ),
+        pytest.param(
+            2,
+            "HTTP 401 Unauthorized: refresh token has already been used",
+            "authentication_failed",
+            "authentication failed",
+            "authentication",
+            ["task-1"],
+            id="deterministic-authentication-failure-stops-immediately",
+        ),
+    ],
+)
+def test_main_stops_after_a_provider_failure_pattern(
     script_run_codex: Any,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    task_count: int,
+    error: str,
+    error_type: str,
+    match: str,
+    stem: str,
+    expected_task_ids: list[str],
 ) -> None:
-    """Stop after three matching unknown pre-response infrastructure failures.
+    """Stop after three matching unknown pre-response infrastructure failures, or at once on a known auth failure.
 
-    Deterministic auth errors stop immediately; semantic failures continue.
+    Deterministic auth errors stop immediately; semantic failures continue. A known expired or consumed refresh token
+    requires no recurrence wait, which prevents a deterministic credential failure from paying for two additional cells
+    merely to satisfy the generic unknown-infrastructure threshold.
     """
-    tasks = [{"id": f"task-{index}", "prompt": "prompt", "type": "demo"} for index in range(1, 5)]
+    tasks = [{"id": f"task-{index}", "prompt": "prompt", "type": "demo"} for index in range(1, task_count + 1)]
     calls: list[tuple[str, str]] = []
 
     class FixtureRunner:
@@ -2674,17 +2707,17 @@ def test_main_stops_after_three_equivalent_unknown_infrastructure_failures(
                 success=False,
                 scoreable=False,
                 incomplete=True,
-                error="provider temporarily unavailable",
-                error_type="transport_error",
+                error=error,
+                error_type=error_type,
             )
 
     monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: tasks)
     monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
     monkeypatch.setattr(codex_manifest, "_validate_execution_manifest", lambda _path: None)
     monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
-    output_path = tmp_path / "infrastructure.jsonl"
+    output_path = tmp_path / f"{stem}.jsonl"
 
-    with pytest.raises(RuntimeError, match="infrastructure failure"):
+    with pytest.raises(RuntimeError, match=match):
         script_run_codex.main(
             repo_path=tmp_path,
             model=script_run_codex.PARITY_CODEX_MODEL,
@@ -2694,77 +2727,14 @@ def test_main_stops_after_three_equivalent_unknown_infrastructure_failures(
         )
 
     rows = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
-    assert calls == [("task-1", "A_plain"), ("task-2", "A_plain"), ("task-3", "A_plain")]
+    assert calls == [(task_id, "A_plain") for task_id in expected_task_ids]
     assert [(row["task_id"], row["error_type"]) for row in rows] == [
-        ("task-1", "transport_error"),
-        ("task-2", "transport_error"),
-        ("task-3", "transport_error"),
+        (task_id, error_type) for task_id in expected_task_ids
     ]
-    metadata = json.loads((tmp_path / "infrastructure-metadata.json").read_text(encoding="utf-8"))
+    metadata = json.loads((tmp_path / f"{stem}-metadata.json").read_text(encoding="utf-8"))
     assert metadata["status"] == "failed"
-    assert metadata["persisted_cells"] == 3
+    assert metadata["persisted_cells"] == len(expected_task_ids)
     assert metadata["error"]["type"] == "RuntimeError"
-
-
-def test_main_stops_immediately_after_a_deterministic_authentication_failure(
-    script_run_codex: Any,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A known expired or consumed refresh token requires no recurrence wait.
-
-    Prevents a deterministic credential failure from paying for two additional cells merely to satisfy the generic
-    unknown-infrastructure threshold.
-    """
-    tasks = [{"id": f"task-{index}", "prompt": "prompt", "type": "demo"} for index in range(1, 3)]
-    calls: list[tuple[str, str]] = []
-
-    class FixtureRunner:
-        """Return a recognized authentication failure for every coordinate."""
-
-        timeout = 600.0
-
-        def __init__(self, model: str, *_args: Any, **_kwargs: Any) -> None:
-            """Initialize fixture state."""
-            self.model = model
-
-        def run(self, task: dict[str, Any], arm: str, **_kwargs: Any) -> Any:
-            """Return a fixture result without provider calls."""
-            calls.append((task["id"], arm))
-            return script_run_codex.CodexRun(
-                arm=arm,
-                task_id=task["id"],
-                task_type="demo",
-                model=self.model,
-                parity_arm=arm,
-                success=False,
-                scoreable=False,
-                incomplete=True,
-                error="HTTP 401 Unauthorized: refresh token has already been used",
-                error_type="authentication_failed",
-            )
-
-    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: tasks)
-    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
-    monkeypatch.setattr(codex_manifest, "_validate_execution_manifest", lambda _path: None)
-    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
-    output_path = tmp_path / "authentication.jsonl"
-
-    with pytest.raises(RuntimeError, match="authentication failed"):
-        script_run_codex.main(
-            repo_path=tmp_path,
-            model=script_run_codex.PARITY_CODEX_MODEL,
-            tasks_path=tmp_path / "tasks.json",
-            output_path=output_path,
-            arm="A_plain",
-        )
-
-    rows = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
-    assert calls == [("task-1", "A_plain")]
-    assert [(row["task_id"], row["error_type"]) for row in rows] == [("task-1", "authentication_failed")]
-    metadata = json.loads((tmp_path / "authentication-metadata.json").read_text(encoding="utf-8"))
-    assert metadata["status"] == "failed"
-    assert metadata["persisted_cells"] == 1
 
 
 def test_main_continues_after_semantic_or_model_quality_failures(
@@ -3866,6 +3836,30 @@ def test_codex_arm_envelopes_define_plain_cli_and_skill_treatments(script_run_co
             False,
             id="multiple-json-documents",
         ),
+        pytest.param(
+            '"$CODEMAP_BIN" query --compact coupled',
+            "completed",
+            0,
+            '{"index":{"query_complete":true,"compact":true}}',
+            True,
+            id="quoted-public-zero-argument-query",
+        ),
+        pytest.param(
+            '"${CODEMAP_BIN}" query --compact coupled',
+            "completed",
+            0,
+            '{"index":{"query_complete":true,"compact":true}}',
+            True,
+            id="braced-public-zero-argument-query",
+        ),
+        pytest.param(
+            '"$CODEMAP_BIN" query --help',
+            "completed",
+            0,
+            '{"index":{"query_complete":true,"compact":true}}',
+            False,
+            id="help-only",
+        ),
     ],
 )
 def test_canonical_native_item_query_contract(
@@ -3879,7 +3873,8 @@ def test_canonical_native_item_query_contract(
     """Credit B only for the standalone canonical native command item.
 
     Prevents telemetry from treating shell interpretation or loosely embedded JSON as equivalent to the future
-    benchmark's explicit native-item proof.
+    benchmark's explicit native-item proof. A public compact query may omit target arguments; a help call is not
+    evidence.
     """
     parsed = codex_runtime.parse_codex_jsonl(
         _completed_stream(
@@ -4151,7 +4146,7 @@ def test_query_mismatch_does_not_reclassify_successful_transport_or_pooling(
     "task_id",
     json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))["preregistered_cells"]["structural_execution_task_ids"],
 )
-@pytest.mark.parametrize("arm", ("B_auto", "C_strict"))
+@pytest.mark.parametrize("arm", ["B_auto", "C_strict"])
 def test_all_locked_execution_queries_accept_strict_option_permutations(
     script_run_codex: Any, task_id: str, arm: str
 ) -> None:
@@ -4195,7 +4190,8 @@ def test_all_locked_execution_queries_accept_strict_option_permutations(
         assert isinstance(query, dict), (task_id, query_index)
         command = query.get("cmd")
         arguments = query.get("args")
-        assert isinstance(command, str) and isinstance(arguments, list), (task_id, query_index, query)
+        assert isinstance(command, str), (task_id, query_index, query)
+        assert isinstance(arguments, list), (task_id, query_index, query)
         assert all(isinstance(argument, str) for argument in arguments), (task_id, query_index, query)
         actual.append([command, *_permute_options(arguments)])
     run = script_run_codex.CodexRun(
@@ -4434,7 +4430,7 @@ def test_snapshot_copy_rejects_source_replacement_between_validation_and_open(
 
     monkeypatch.setattr(script_run_codex.os, "open", _replace_before_open)
 
-    with pytest.raises(ValueError, match="changed|copied securely|symlink"):
+    with pytest.raises(ValueError, match=r"changed|copied securely|symlink"):
         script_run_codex._archive_snapshot_file(
             source,
             destination,
@@ -4474,7 +4470,7 @@ def test_snapshot_source_indirection_fails_closed(
     destination = tmp_path / "snapshot" / "source.json"
     entries: list[dict[str, Any]] = []
 
-    with pytest.raises(ValueError, match="symlink|single-link|escaped"):
+    with pytest.raises(ValueError, match=r"symlink|single-link|escaped"):
         script_run_codex._archive_snapshot_file(
             source,
             destination,
@@ -4575,7 +4571,7 @@ def test_expected_query_preflight_runs_unique_b_queries_once_and_never_replays_c
         """Supply the B-only runtime fields required by query preflight."""
 
         arm = "B_auto"
-        env = {"PATH": "/fixture"}
+        env: ClassVar = {"PATH": "/fixture"}
         permission_profile = "provider-parity-codemap"
         codemap_launcher_path = launcher
         coordination_path = None
@@ -4634,7 +4630,7 @@ def test_expected_query_preflight_rejects_malformed_or_failed_b_queries(
     class Home:
         """Supply the B-only runtime fields required by rejecting preflight."""
 
-        env = {"PATH": "/fixture"}
+        env: ClassVar = {"PATH": "/fixture"}
         permission_profile = "provider-parity-codemap"
         codemap_launcher_path = launcher
         coordination_path = None
@@ -4650,7 +4646,7 @@ def test_expected_query_preflight_rejects_malformed_or_failed_b_queries(
             [{"id": "malformed", "expected_queries": [{"cmd": "central", "args": "package"}]}],
             ("B_auto",),
         )
-    with pytest.raises(RuntimeError, match="expected query failed.*fixture failure"):
+    with pytest.raises(RuntimeError, match=r"expected query failed.*fixture failure"):
         runner.preflight_expected_queries(
             [{"id": "failed", "expected_queries": [{"cmd": "central", "args": ["package"]}]}],
             ("B_auto",),
@@ -4866,10 +4862,15 @@ def test_diff_impact_stager_wraps_all_arms_and_restores_on_success_or_failure(
 
     failing = script_run_codex._diff_impact_stager(repo, task)
     assert failing is not None
-    with pytest.raises(RuntimeError):
+
+    def _run_expected_failure() -> None:
+        """Run the statements expected to fail as one callable."""
         with failing:
             assert target.read_text(encoding="utf-8") == "BASE\nSTAGED\n"
             raise RuntimeError("arm failure")
+
+    with pytest.raises(RuntimeError):
+        _run_expected_failure()
     assert target.read_text(encoding="utf-8") == "BASE\n"
 
 
@@ -5154,38 +5155,6 @@ def test_main_dry_run_calls_diff_impact_preflight_and_can_suppress_legend(
     assert "LEGEND" not in output
     assert "PROBE   A_plain " in output
     assert "PLAN    DI-fixture" in output
-
-
-@pytest.mark.parametrize(
-    ("command", "expected_credit"),
-    [
-        pytest.param('"$CODEMAP_BIN" query --compact coupled', True, id="quoted-public-zero-argument-query"),
-        pytest.param('"${CODEMAP_BIN}" query --compact coupled', True, id="braced-public-zero-argument-query"),
-        pytest.param('"$CODEMAP_BIN" query --help', False, id="help-only"),
-    ],
-)
-def test_public_query_forms_credit_completed_queries_but_not_help(
-    script_run_codex: Any,
-    command: str,
-    expected_credit: bool,
-) -> None:
-    """A public compact query may omit target arguments; a help call is not evidence."""
-    parsed = codex_runtime.parse_codex_jsonl(
-        _completed_stream(
-            commands=[
-                {
-                    "type": "command_execution",
-                    "command": command,
-                    "status": "completed",
-                    "exit_code": 0,
-                    "aggregated_output": '{"index":{"query_complete":true,"compact":true}}',
-                }
-            ]
-        )
-    )
-
-    assert parsed.codemap_direct_compact_successful_calls == int(expected_credit)
-    assert script_run_codex._arm_compliance("B_auto", parsed) is expected_credit
 
 
 def test_skill_activation_then_public_coupled_query_satisfies_compliance_and_adherence(

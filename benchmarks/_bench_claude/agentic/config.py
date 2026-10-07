@@ -2,36 +2,29 @@
 
 from pathlib import Path
 
-
-from _bench_common import presentation  # noqa: E402
-
-# Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
-from _bench_common.python_source import resolve_relative_base  # noqa: E402,F401
-from _bench_common.agentic_contracts import (  # noqa: E402
-    AgenticOracle,  # noqa: F401
-    AnswerScore,  # noqa: F401
-)
+from _bench_common import presentation
+from _bench_common.agentic_contracts import AgenticOracle, AnswerScore  # noqa: F401
 
 # Stage plumbing lives in a private module so this runner stays under the suite's 250 KB maintenance limit.
 # Every name it defines is re-exported here, including ones this file no longer calls itself: callers and tests
 # reach these through the runner module, so pruning an apparently unused re-export breaks patch.object targets.
-from _bench_common.claude_stages import (  # noqa: E402,F401
-    FIX_MULTI_TASKS_PATH,
-    FIX_SINGLE_ARMS,
-    FIX_SINGLE_TASKS_PATH,
-    FixMultiContract,
-    FixSingleContract,
-    PARITY_MANIFEST_PATH,
-    PATCH_TASKS_PATH,
-    PurePosixPath,
-    READCROP_ARMS,
-    READCROP_TASKS_PATH,
-    ReadcropUsage,
-    StageIdentity,
+from _bench_common.claude_stages import (  # noqa: F401
     _FIX_MULTI_QUERY_ARGUMENTS,
     _FIX_SINGLE_QUERY_ARGUMENTS,
     _PATCH_QUERY_ARGUMENTS,
     _READCROP_ANSWER_RE,
+    FIX_MULTI_TASKS_PATH,
+    FIX_SINGLE_ARMS,
+    FIX_SINGLE_TASKS_PATH,
+    PARITY_MANIFEST_PATH,
+    PATCH_TASKS_PATH,
+    READCROP_ARMS,
+    READCROP_TASKS_PATH,
+    FixMultiContract,
+    FixSingleContract,
+    PurePosixPath,
+    ReadcropUsage,
+    StageIdentity,
     _absolute_codemap_launchers,
     _claude_codemap_evidence,
     _claude_event_summary,
@@ -76,19 +69,27 @@ from _bench_common.claude_stages import (  # noqa: E402,F401
     score_readcrop_answer,
     stage_contract_sha256,
 )
+from _bench_common.python_source import resolve_relative_base  # noqa: F401
 
+# Re-exported for call-site/test compatibility (tests reference it via this module's namespace).
 
 _console = presentation.benchmark_console()
 
 #: This package sits at ``benchmarks/_bench_claude/agentic/``; every sibling path is anchored
 #: here rather than off each module's own ``__file__``, which moves with the module.
 PACKAGE_DIR = Path(__file__).resolve().parent
+#: The ``benchmarks/`` directory, two levels above this package; base for suites, manifests and runner scripts.
 BENCHMARKS_DIR = PACKAGE_DIR.parents[1]
+#: The repository root, the parent of the ``benchmarks/`` directory.
 REPO_ROOT = BENCHMARKS_DIR.parent
 #: The entrypoint this package implements. Provenance records the pair, not either alone.
 RUNNER_PATH = BENCHMARKS_DIR / "run-claude-agentic.py"
 
+#: JSON file locking the codemap index bindings for patch tasks; validated and hashed into paid-run provenance.
 PATCH_INDEX_LOCKS_PATH = BENCHMARKS_DIR / "suites" / "patch-index-locks.json"
+#: Arm labels the multi-file fix stage runs; identical to the read-crop arm set.
 FIX_MULTI_ARMS = READCROP_ARMS
+#: Arm labels the patch stage runs; identical to the read-crop arm set.
 PATCH_ARMS = READCROP_ARMS
+#: Experiment revision recorded for results produced before revisions were tracked.
 LEGACY_EXPERIMENT_REVISION = "legacy-unversioned"

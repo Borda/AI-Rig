@@ -100,7 +100,8 @@ def test_windows_legacy_single_path_rules_are_validated(monkeypatch: pytest.Monk
     """Accept owned legacy rules using the former single native Windows path."""
     monkeypatch.syspath_prepend(str(SCRIPT.parent))
     spec = importlib.util.spec_from_file_location("install_github_read_rules", SCRIPT)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     installer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(installer)
 
@@ -205,20 +206,79 @@ def test_setup_rejects_proxy_change_that_revokes_selected_profile_network(tmp_pa
     assert not (home / "backups" / "codex-rig").exists()
 
 
-def test_setup_rejects_proxy_change_for_nondefault_network_profile(tmp_path: Path) -> None:
-    """Protect a profile that may be selected after setup, even if it is not the default."""
+@pytest.mark.parametrize(
+    ("original", "message"),
+    [
+        pytest.param(
+            b"[features]\nnetwork_proxy = false\n\n[permissions.research.network]\nenabled = true\n",
+            "network-enabled permission profile",
+            id="proxy-change-for-nondefault-network-profile",
+        ),
+        pytest.param(
+            b'sandbox_mode = "workspace-write"\n[sandbox_workspace_write]\nnetwork_access = true\n',
+            "legacy sandbox_mode overrides permission profiles",
+            id="legacy-workspace-table-with-root-mode",
+        ),
+        pytest.param(
+            b"[sandbox_workspace_write]\nnetwork_access = true\n",
+            "legacy sandbox_workspace_write conflicts",
+            id="legacy-workspace-table-without-root-mode",
+        ),
+        pytest.param(
+            b'sandbox_mode = "read-only"\n',
+            "legacy sandbox_mode overrides permission profiles",
+            id="legacy-read-only-sandbox-mode",
+        ),
+        pytest.param(
+            b'sandbox_mode = "danger-full-access"\n',
+            "legacy sandbox_mode overrides permission profiles",
+            id="legacy-danger-full-access-sandbox-mode",
+        ),
+        pytest.param(
+            b'default_permissions = "personal"\nsandbox_mode = "workspace-write"\n',
+            "legacy sandbox_mode overrides permission profiles",
+            id="ambiguous-legacy-sandbox-override",
+        ),
+        pytest.param(
+            b'[profiles.personal]\nsandbox_mode = "workspace-write"\n',
+            "profile sandbox_mode overrides default_permissions",
+            id="selectable-profile-sandbox-override",
+        ),
+        pytest.param(
+            b"features = { network_proxy = false, multi_agent = true }\n",
+            "manual migration",
+            id="inline-features-table",
+        ),
+    ],
+)
+def test_setup_rejects_conflicting_config_before_write(tmp_path: Path, original: bytes, message: str) -> None:
+    """Refuse setup with a named reason and leave config, user rules, and state untouched.
+
+    Each starting config holds a setting setup cannot adopt without silently changing meaning: a proxy change that
+    would restrict a network-enabled profile that may be selected later, a legacy sandbox mode or workspace table
+    needing explicit migration, a profile sandbox mode that would override a later opt-in selection, or valid TOML
+    (an inline features table) that would otherwise gain a duplicate table. A user rule file must survive, and no
+    profile state, managed rule file, or backup may appear.
+    """
     home = tmp_path / "home"
     root = _installed_plugin(home)
     config = home / "config.toml"
-    original = b"[features]\nnetwork_proxy = false\n\n[permissions.research.network]\nenabled = true\n"
     config.write_bytes(original)
+    rules = home / "rules"
+    rules.mkdir()
+    user_rule = rules / "default.rules"
+    rule_bytes = b'prefix_rule(pattern=["git", "status"], decision="allow")\n'
+    user_rule.write_bytes(rule_bytes)
 
     result = _run(home, "--plugin-root", str(root))
 
     assert result.returncode != 0
-    assert "network-enabled permission profile" in result.stderr
+    assert message in result.stderr
     assert config.read_bytes() == original
+    assert user_rule.read_bytes() == rule_bytes
     assert not (home / "codex-rig-github-read-profile.json").exists()
+    assert not (rules / "codex-rig-github-read.rules").exists()
+    assert not (home / "backups" / "codex-rig").exists()
 
 
 @pytest.mark.parametrize("line_ending", ["\n", "\r\n"])
@@ -290,143 +350,65 @@ def test_setup_resumes_workspace_migration_after_state_write(tmp_path: Path) -> 
     assert "sandbox_mode" not in _config(home)
 
 
-def test_clear_restores_legacy_workspace_mode_after_unrelated_edit(tmp_path: Path) -> None:
-    """Retain later model edits while reversing the unchanged workspace migration."""
-    home = tmp_path / "home"
-    root = _installed_plugin(home)
-    config = home / "config.toml"
-    config.write_bytes(b'model = "old"\nsandbox_mode = "workspace-write"\n')
-    assert _run(home, "--plugin-root", str(root)).returncode == 0
-    config.write_text(
-        config.read_text(encoding="utf-8").replace('model = "old"', 'model = "new"'), encoding="utf-8", newline="\n"
-    )
-
-    result = _run(home, "--remove")
-
-    assert result.returncode == 0, result.stderr
-    assert _config(home) == {"model": "new", "sandbox_mode": "workspace-write"}
-
-
-def test_clear_preserves_user_replacement_of_migrated_default(tmp_path: Path) -> None:
-    """A later explicit permission choice must not regain the old sandbox mode."""
-    home = tmp_path / "home"
-    root = _installed_plugin(home)
-    config = home / "config.toml"
-    config.write_bytes(b'sandbox_mode = "workspace-write"\n')
-    assert _run(home, "--plugin-root", str(root)).returncode == 0
-    config.write_text(
-        config.read_text(encoding="utf-8").replace(
-            'default_permissions = ":workspace"', 'default_permissions = ":read-only"'
+@pytest.mark.parametrize(
+    ("original", "before", "after", "expected"),
+    [
+        pytest.param(
+            'model = "old"\nsandbox_mode = "workspace-write"\n',
+            'model = "old"',
+            'model = "new"',
+            {"model": "new", "sandbox_mode": "workspace-write"},
+            id="unrelated-edit-restores-legacy-workspace-mode",
         ),
-        encoding="utf-8",
-        newline="\n",
-    )
+        pytest.param(
+            'sandbox_mode = "workspace-write"\n',
+            'default_permissions = ":workspace"',
+            'default_permissions = ":read-only"',
+            {"default_permissions": ":read-only"},
+            id="replaced-migrated-default-keeps-user-choice",
+        ),
+        pytest.param(
+            'model = "gpt-6-sol"\n',
+            'model = "gpt-6-sol"',
+            'model = "gpt-6-luna"',
+            {"model": "gpt-6-luna"},
+            id="unrelated-edit-survives-removal",
+        ),
+        pytest.param(
+            'model = "gpt-6-sol"\n\n[features]\nnetwork_proxy = false\n',
+            'model = "gpt-6-sol"',
+            'model = "gpt-6-luna"',
+            {"model": "gpt-6-luna", "features": {"network_proxy": False}},
+            id="unrelated-edit-restores-disabled-proxy",
+        ),
+    ],
+)
+def test_clear_keeps_user_edit_made_after_setup(
+    tmp_path: Path, original: str, before: str, after: str, expected: dict[str, object]
+) -> None:
+    """Remove the owned profile while keeping a later user edit and reversing only the owned changes.
+
+    After setup the user changes one setting. Clear must retain that change: a later model edit survives while an
+    unchanged legacy workspace mode or disabled proxy is restored, and a user's replacement of a migrated default must
+    not regain the old sandbox mode.
+    """
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    config = home / "config.toml"
+    config.write_text(original, encoding="utf-8", newline="\n")
+    assert _run(home, "--plugin-root", str(root)).returncode == 0
+    installed = config.read_text(encoding="utf-8")
+    assert installed.count(before) == 1
+    config.write_text(installed.replace(before, after), encoding="utf-8", newline="\n")
 
     result = _run(home, "--remove")
 
     assert result.returncode == 0, result.stderr
-    assert _config(home) == {"default_permissions": ":read-only"}
-
-
-def test_setup_rejects_ambiguous_legacy_sandbox_override_before_write(tmp_path: Path) -> None:
-    """Reject a legacy sandbox value mixed with a separate permission default."""
-    home = tmp_path / "home"
-    root = _installed_plugin(home)
-    config = home / "config.toml"
-    original = b'default_permissions = "personal"\nsandbox_mode = "workspace-write"\n'
-    config.write_bytes(original)
-    rules = home / "rules"
-    rules.mkdir()
-    user_rule = rules / "default.rules"
-    rule_bytes = b'prefix_rule(pattern=["git", "status"], decision="allow")\n'
-    user_rule.write_bytes(rule_bytes)
-
-    result = _run(home, "--plugin-root", str(root))
-
-    assert result.returncode != 0
-    assert "legacy sandbox_mode overrides permission profiles" in result.stderr
-    assert config.read_bytes() == original
-    assert user_rule.read_bytes() == rule_bytes
-    assert not (home / "codex-rig-github-read-profile.json").exists()
-    assert not (rules / "codex-rig-github-read.rules").exists()
-    assert not (home / "backups" / "codex-rig").exists()
-
-
-def test_setup_rejects_legacy_workspace_table_before_write(tmp_path: Path) -> None:
-    """Do not discard extra settings attached to the old workspace sandbox."""
-    home = tmp_path / "home"
-    root = _installed_plugin(home)
-    config = home / "config.toml"
-    original = b'sandbox_mode = "workspace-write"\n[sandbox_workspace_write]\nnetwork_access = true\n'
-    config.write_bytes(original)
-
-    result = _run(home, "--plugin-root", str(root))
-
-    assert result.returncode != 0
-    assert "legacy sandbox_mode overrides permission profiles" in result.stderr
-    assert config.read_bytes() == original
-    assert not (home / "codex-rig-github-read-profile.json").exists()
-
-
-def test_setup_rejects_legacy_workspace_table_without_root_mode(tmp_path: Path) -> None:
-    """A remaining legacy workspace table still requires an explicit migration."""
-    home = tmp_path / "home"
-    root = _installed_plugin(home)
-    config = home / "config.toml"
-    original = b"[sandbox_workspace_write]\nnetwork_access = true\n"
-    config.write_bytes(original)
-
-    result = _run(home, "--plugin-root", str(root))
-
-    assert result.returncode != 0
-    assert "legacy sandbox_workspace_write conflicts" in result.stderr
-    assert config.read_bytes() == original
-    assert not (home / "codex-rig-github-read-profile.json").exists()
-
-
-@pytest.mark.parametrize("legacy_mode", ["read-only", "danger-full-access"])
-def test_setup_rejects_other_legacy_sandbox_modes(tmp_path: Path, legacy_mode: str) -> None:
-    """Keep other sandbox policies under explicit owner review."""
-    home = tmp_path / "home"
-    root = _installed_plugin(home)
-    config = home / "config.toml"
-    original = f'sandbox_mode = "{legacy_mode}"\n'.encode()
-    config.write_bytes(original)
-
-    result = _run(home, "--plugin-root", str(root))
-
-    assert result.returncode != 0
-    assert "legacy sandbox_mode overrides permission profiles" in result.stderr
-    assert config.read_bytes() == original
-    assert not (home / "codex-rig-github-read-profile.json").exists()
-
-
-def test_setup_rejects_selectable_profile_sandbox_override_before_write(tmp_path: Path) -> None:
-    """Reject a profile sandbox mode that would override a later opt-in selection."""
-    home = tmp_path / "home"
-    root = _installed_plugin(home)
-    config = home / "config.toml"
-    original = b'[profiles.personal]\nsandbox_mode = "workspace-write"\n'
-    config.write_bytes(original)
-    rules = home / "rules"
-    rules.mkdir()
-    user_rule = rules / "default.rules"
-    rule_bytes = b'prefix_rule(pattern=["git", "status"], decision="allow")\n'
-    user_rule.write_bytes(rule_bytes)
-
-    result = _run(home, "--plugin-root", str(root))
-
-    assert result.returncode != 0
-    assert "profile sandbox_mode overrides default_permissions" in result.stderr
-    assert config.read_bytes() == original
-    assert user_rule.read_bytes() == rule_bytes
-    assert not (home / "codex-rig-github-read-profile.json").exists()
-    assert not (rules / "codex-rig-github-read.rules").exists()
-    assert not (home / "backups" / "codex-rig").exists()
+    assert _config(home) == expected
 
 
 @pytest.mark.parametrize(
-    "initial_proxy,network_enabled",
+    ("initial_proxy", "network_enabled"),
     [
         pytest.param(True, True, id="proxy-already-enabled"),
         pytest.param(False, False, id="existing-profile-network-disabled"),
@@ -590,23 +572,6 @@ def test_setup_rejects_unsupported_equivalent_profile_keys_before_write(tmp_path
     assert _config(home) == tomllib.loads(original)
 
 
-def test_clear_preserves_unrelated_edits_made_after_setup(tmp_path: Path) -> None:
-    """A later user change outside the owned profile survives removal."""
-    home = tmp_path / "home"
-    root = _installed_plugin(home)
-    config = home / "config.toml"
-    config.write_text('model = "gpt-6-sol"\n', encoding="utf-8", newline="\n")
-    assert _run(home, "--plugin-root", str(root)).returncode == 0
-    installed = config.read_text(encoding="utf-8")
-    assert installed.count('model = "gpt-6-sol"') == 1
-    config.write_text(installed.replace('model = "gpt-6-sol"', 'model = "gpt-6-luna"'), encoding="utf-8", newline="\n")
-
-    result = _run(home, "--remove")
-
-    assert result.returncode == 0, result.stderr
-    assert _config(home) == {"model": "gpt-6-luna"}
-
-
 def test_comment_named_features_does_not_keep_created_table_on_clear(tmp_path: Path) -> None:
     """A commented table name must not count as an original TOML table."""
     home = tmp_path / "home"
@@ -694,23 +659,6 @@ def test_clear_rejects_later_selection_of_managed_profile(tmp_path: Path) -> Non
     assert state_path.read_bytes() == state
 
 
-def test_clear_preserves_prior_network_proxy_after_unrelated_edit(tmp_path: Path) -> None:
-    """Restore a disabled proxy when another setting changes after setup."""
-    home = tmp_path / "home"
-    root = _installed_plugin(home)
-    config = home / "config.toml"
-    original = 'model = "gpt-6-sol"\n\n[features]\nnetwork_proxy = false\n'
-    config.write_text(original, encoding="utf-8", newline="\n")
-    assert _run(home, "--plugin-root", str(root)).returncode == 0
-    installed = config.read_text(encoding="utf-8")
-    config.write_text(installed.replace('model = "gpt-6-sol"', 'model = "gpt-6-luna"'), encoding="utf-8", newline="\n")
-
-    result = _run(home, "--remove")
-
-    assert result.returncode == 0, result.stderr
-    assert _config(home) == {"model": "gpt-6-luna", "features": {"network_proxy": False}}
-
-
 def test_clear_rejects_new_network_profile_before_write(tmp_path: Path) -> None:
     """Do not disable the global proxy after a user adds a network-enabled profile."""
     home = tmp_path / "home"
@@ -764,7 +712,8 @@ def _interrupted_first_write(home: Path, root: Path, monkeypatch: pytest.MonkeyP
 
     monkeypatch.syspath_prepend(str(SCRIPT.parent))
     spec = importlib.util.spec_from_file_location("install_github_read_rules", SCRIPT)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     installer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(installer)
     apply_change = installer._apply_change
@@ -1009,7 +958,8 @@ def _write_interrupted_legacy_migration(
 
     monkeypatch.syspath_prepend(str(SCRIPT.parent))
     spec = importlib.util.spec_from_file_location("install_github_read_rules", SCRIPT)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     installer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(installer)
     apply_change = installer._apply_change
@@ -1034,7 +984,7 @@ def test_interrupted_legacy_migration_writes_schema4_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trailing_table: bool
 ) -> None:
     """A config write failure right after migrating a legacy profile leaves schema-4 state."""
-    home, _root, config, _state_path, current_legacy, migrated = _write_interrupted_legacy_migration(
+    _home, _root, config, _state_path, current_legacy, migrated = _write_interrupted_legacy_migration(
         tmp_path, monkeypatch, trailing_table
     )
 
@@ -1131,23 +1081,6 @@ def test_edited_owned_profile_blocks_lifecycle(tmp_path: Path, mode: str) -> Non
     assert config.read_text(encoding="utf-8") == edited
 
 
-def test_clear_rejects_edited_owned_network_grant(tmp_path: Path) -> None:
-    """Keep a locally edited managed domain grant for manual reconciliation."""
-    home = tmp_path / "home"
-    root = _installed_plugin(home)
-    assert _run(home, "--plugin-root", str(root)).returncode == 0
-    config = home / "config.toml"
-    original = config.read_text(encoding="utf-8")
-    edited = original.replace('"api.github.com" = "allow"', '"api.github.com" = "deny"')
-    assert edited != original
-    config.write_text(edited, encoding="utf-8", newline="\n")
-
-    result = _run(home, "--remove")
-
-    assert result.returncode != 0
-    assert config.read_text(encoding="utf-8") == edited
-
-
 def test_clear_preserves_later_root_sandbox_choice(tmp_path: Path) -> None:
     """Removal retains a user sandbox choice added after profile setup."""
     home = tmp_path / "home"
@@ -1223,22 +1156,32 @@ def test_setup_rejects_state_larger_than_later_reader_limit(tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize(
-    "key",
-    [pytest.param('"github-read"', id="quoted"), pytest.param('"\\u0067ithub-read"', id="escaped")],
+    "original",
+    [
+        pytest.param('[permissions]\n"github-read" = { extends = ":workspace" }\n', id="assignment-quoted"),
+        pytest.param('[permissions]\n"\\u0067ithub-read" = { extends = ":workspace" }\n', id="assignment-escaped"),
+        pytest.param("[permissions.'github-read']\nextends = \":workspace\"\n", id="single-quoted-profile"),
+        pytest.param("[ permissions . 'github-read' ]\nextends = \":workspace\"\n", id="spaced-profile"),
+        pytest.param('["permissions"."github-read"]\nextends = ":workspace"\n', id="quoted-parent"),
+        pytest.param("[permissions.'github-read'.network]\nextends = \":workspace\"\n", id="nested-profile"),
+    ],
 )
-def test_setup_rejects_profile_defined_with_permission_assignment(tmp_path: Path, key: str) -> None:
-    """A profile value in the parent permissions table cannot be duplicated."""
+def test_setup_rejects_existing_reserved_profile_spellings_before_writing(tmp_path: Path, original: str) -> None:
+    """Recognize every valid TOML spelling of an existing reserved profile and refuse to duplicate it.
+
+    The reserved profile may arrive as a value assigned in the parent permissions table (quoted or with a unicode
+    escape) or as a table header written with single quotes, spacing, a quoted parent, or a nested network table.
+    """
     home = tmp_path / "home"
     root = _installed_plugin(home)
     config = home / "config.toml"
-    original = f'[permissions]\n{key} = {{ extends = ":workspace" }}\n'.encode()
-    tomllib.loads(original.decode())
-    config.write_bytes(original)
+    tomllib.loads(original)
+    config.write_bytes(original.encode())
 
     result = _run(home, "--plugin-root", str(root))
 
     assert result.returncode != 0
-    assert config.read_bytes() == original
+    assert config.read_bytes() == original.encode()
     assert not (home / "codex-rig-github-read-profile.json").exists()
 
 
@@ -1272,22 +1215,6 @@ def test_setup_accepts_config_without_final_newline(tmp_path: Path) -> None:
     assert config.read_text(encoding="utf-8") == 'model = "gpt-6-sol"'
 
 
-def test_setup_rejects_inline_features_before_writing(tmp_path: Path) -> None:
-    """Unsupported valid TOML forms must fail before creating duplicate feature tables."""
-    home = tmp_path / "home"
-    root = _installed_plugin(home)
-    config = home / "config.toml"
-    original = "features = { network_proxy = false, multi_agent = true }\n"
-    config.write_text(original, encoding="utf-8")
-
-    result = _run(home, "--plugin-root", str(root))
-
-    assert result.returncode != 0
-    assert "manual migration" in result.stderr
-    assert config.read_text(encoding="utf-8") == original
-    assert not (home / "codex-rig-github-read-profile.json").exists()
-
-
 @pytest.mark.parametrize("managed_name", ["github-read", "local-workflow"])
 def test_setup_rejects_existing_user_profile_collision(tmp_path: Path, managed_name: str) -> None:
     """Never overwrite a profile with the name reserved for GitHub evidence."""
@@ -1304,31 +1231,6 @@ def test_setup_rejects_existing_user_profile_collision(tmp_path: Path, managed_n
 
     assert result.returncode != 0
     assert config.read_bytes() == original
-
-
-@pytest.mark.parametrize(
-    "header",
-    [
-        pytest.param("[permissions.'github-read']", id="single-quoted-profile"),
-        pytest.param("[ permissions . 'github-read' ]", id="spaced-profile"),
-        pytest.param('["permissions"."github-read"]', id="quoted-parent"),
-        pytest.param("[permissions.'github-read'.network]", id="nested-profile"),
-    ],
-)
-def test_setup_rejects_equivalent_user_profile_headers_before_writing(tmp_path: Path, header: str) -> None:
-    """Recognize valid TOML spellings of an existing reserved profile."""
-    home = tmp_path / "home"
-    root = _installed_plugin(home)
-    config = home / "config.toml"
-    original = f'{header}\nextends = ":workspace"\n'.encode()
-    tomllib.loads(original.decode())
-    config.write_bytes(original)
-
-    result = _run(home, "--plugin-root", str(root))
-
-    assert result.returncode != 0
-    assert config.read_bytes() == original
-    assert not (home / "codex-rig-github-read-profile.json").exists()
 
 
 def test_setup_removes_validated_old_managed_rules(tmp_path: Path) -> None:

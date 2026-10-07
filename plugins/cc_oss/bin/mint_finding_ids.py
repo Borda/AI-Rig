@@ -38,11 +38,17 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Final
 
+#: Accepted finding severity words, ordered from most to least severe.
 SEVERITIES: Final = ("critical", "high", "medium", "low", "cosmetic")
+#: Fields a finding record must carry, non-empty, before an ID can be minted for it.
 REQUIRED_FIELDS: Final = ("section", "severity", "title")
+#: Matches a leading "low confidence" tag, stripped from titles before slugging.
 _LOW_CONFIDENCE_PREFIX_RE: Final = re.compile(r"^\W*low confidence\W*", re.IGNORECASE)
+#: Matches the ``[blocking]`` tag, stripped from titles before slugging.
 _BLOCKING_RE: Final = re.compile(r"\[blocking\]", re.IGNORECASE)
+#: Matches each run of characters outside ``[a-z0-9]``, which slugification replaces with a hyphen.
 _NON_SLUG_RE: Final = re.compile(r"[^a-z0-9]+")
+#: Matches whitespace runs, collapsed to a single space when normalizing titles and text.
 _WHITESPACE_RE: Final = re.compile(r"\s+")
 
 

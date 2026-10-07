@@ -12,7 +12,6 @@ from typing import Any
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 BENCHMARKS = ROOT / "benchmarks"
 BUILDER = BENCHMARKS / "build-codex-agentic-manifest.py"
@@ -92,7 +91,8 @@ def test_manifest_is_current_and_regeneration_is_byte_stable() -> None:
 
 
 @pytest.mark.parametrize(
-    "study,command_count", [pytest.param("agentic", 2, id="agentic"), pytest.param("integration", 1, id="integration")]
+    ("study", "command_count"),
+    [pytest.param("agentic", 2, id="agentic"), pytest.param("integration", 1, id="integration")],
 )
 def test_single_model_manifest_commands_name_the_locked_model(study: str, command_count: int) -> None:
     """Single-model approval examples must not inherit the launcher's multi-model default."""

@@ -18,36 +18,32 @@ import json
 from pathlib import Path
 
 import pytest
-
 import resolve_shared_path
 
 
 class TestValidation:
     """Argument validation: invalid PLUGIN/SUBDIR exit 2 with stderr message."""
 
-    def test_invalid_plugin_path_traversal(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Plugin containing ``/`` fails regex → exit 2."""
-        rc = resolve_shared_path.main(["../evil", "skills/_shared"])
-        assert rc == 2
-        assert "invalid PLUGIN" in capsys.readouterr().err
+    @pytest.mark.parametrize(
+        ("argv", "message"),
+        [
+            pytest.param(["../evil", "skills/_shared"], "invalid PLUGIN", id="plugin-path-traversal"),
+            pytest.param(["plug!in", "skills/_shared"], "invalid PLUGIN", id="plugin-special-chars"),
+            pytest.param(["foundry", "skills/../etc"], "invalid SUBDIR", id="subdir-traversal"),
+            pytest.param(["foundry", "skills/_shared!"], "invalid SUBDIR", id="subdir-special-chars"),
+        ],
+    )
+    def test_invalid_argument_exits_two(
+        self, capsys: pytest.CaptureFixture[str], argv: list[str], message: str
+    ) -> None:
+        """An invalid PLUGIN or SUBDIR exits 2 with a stderr message naming the offending argument.
 
-    def test_invalid_plugin_special_chars(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Plugin with ``!`` fails regex → exit 2."""
-        rc = resolve_shared_path.main(["plug!in", "skills/_shared"])
+        Scenario: a plugin containing ``/`` or ``!`` fails the regex; a subdir containing ``..`` or a disallowed
+        character is rejected.
+        """
+        rc = resolve_shared_path.main(argv)
         assert rc == 2
-        assert "invalid PLUGIN" in capsys.readouterr().err
-
-    def test_invalid_subdir_traversal(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Subdir containing ``..`` is rejected → exit 2."""
-        rc = resolve_shared_path.main(["foundry", "skills/../etc"])
-        assert rc == 2
-        assert "invalid SUBDIR" in capsys.readouterr().err
-
-    def test_invalid_subdir_special_chars(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Subdir with disallowed chars exits 2."""
-        rc = resolve_shared_path.main(["foundry", "skills/_shared!"])
-        assert rc == 2
-        assert "invalid SUBDIR" in capsys.readouterr().err
+        assert message in capsys.readouterr().err
 
 
 class TestTier0EnvHit:
@@ -121,7 +117,7 @@ class TestTier2Cache:
         (base / "0.20.0").mkdir(parents=True)  # no skills/_shared
         monkeypatch.setattr(resolve_shared_path, "_tier1_registry", lambda *a, **kw: None)
         monkeypatch.chdir(tmp_path)  # isolate CWD so relative source-tree path doesn't exist
-        path, tier = resolve_shared_path.resolve("foundry", "skills/_shared", home=tmp_path, env_root="")
+        _path, tier = resolve_shared_path.resolve("foundry", "skills/_shared", home=tmp_path, env_root="")
         # Falls through to tier -1 (no source tree at tmp_path either)
         assert tier == -1
 

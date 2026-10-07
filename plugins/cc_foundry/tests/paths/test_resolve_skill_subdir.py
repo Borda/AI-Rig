@@ -9,9 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-
-from resolve_skill_subdir import main, resolve  # noqa: E402
+from resolve_skill_subdir import main, resolve
 
 
 @pytest.fixture(name="fake_home")
@@ -189,7 +187,7 @@ class TestMain:
         assert "nope/missing not found" in err
 
     @pytest.mark.parametrize(
-        "skill,subdir",
+        ("skill", "subdir"),
         [
             pytest.param("", "templates", id="empty"),
             pytest.param("audit", "", id="audit-empty"),

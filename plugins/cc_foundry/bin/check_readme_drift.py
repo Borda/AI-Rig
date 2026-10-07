@@ -36,7 +36,9 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+#: Matches the README ``Current version: `X.Y.Z` `` line, capturing the version.
 VERSION_MARKER = re.compile(r"Current version:\s*`(\d+\.\d+\.\d+)`")
+#: Matches a backticked ``.py`` or ``.sh`` file name in README prose, capturing the name.
 BACKTICK_SCRIPT = re.compile(r"`([A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:py|sh))`")
 
 

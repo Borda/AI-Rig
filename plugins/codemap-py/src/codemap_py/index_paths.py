@@ -52,15 +52,23 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+#: Timeout in seconds for each git subprocess call made while resolving the index location.
 _GIT_TIMEOUT_S = 5
+#: Default index directory, relative to the project root, when no override is configured.
 INDEX_SUBDIR = Path(".cache", "codemap")
+#: Name of the read/write coordination directory created inside the index directory.
 COORDINATION_DIRNAME = ".index-rw"
+#: Glob, relative to the Claude plugin cache, that matches installed codemap-py plugin versions.
 _CLAUDE_CACHE_GLOB = "borda-ai-rig/codemap-py/*"
 
+#: Diagnostic code reported when the index at the resolved path was built for a different project root.
 INDEX_ROOT_COLLISION = "index_root_collision"
+#: Diagnostic code reported when two runtime environments resolve to different index paths.
 SPLIT_INDEX_ROOTS = "split_index_roots"
 
+#: Sentinel marking an override argument as not passed, so an explicit None remains distinguishable.
 _UNSET = object()
+#: Environment variable that overrides where the read/write coordination directory is placed.
 COORDINATION_DIR_ENV = "CODEMAP_COORDINATION_DIR"
 
 
@@ -156,7 +164,7 @@ def canonical_root(cwd: Path | str | None = None) -> Path:
     git = shutil.which("git")
     if git:
         try:
-            out = subprocess.run(
+            out = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
                 [git, "rev-parse", "--show-toplevel"],
                 capture_output=True,
                 text=True,

@@ -32,6 +32,7 @@ import sys
 from pathlib import Path
 from shutil import which
 
+#: The only pytest launch commands this gate will run, so an arbitrary command cannot be passed through it.
 _PYTEST_ALLOWLIST: frozenset[str] = frozenset(
     {
         "pytest",

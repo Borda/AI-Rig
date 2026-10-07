@@ -37,6 +37,7 @@ import sys
 from pathlib import Path
 from shutil import which
 
+#: The only pytest launch commands this runner will execute, so an arbitrary command cannot be passed through it.
 _PYTEST_ALLOWLIST: frozenset[str] = frozenset(
     {
         "pytest",
@@ -46,6 +47,7 @@ _PYTEST_ALLOWLIST: frozenset[str] = frozenset(
         "poetry run python -m pytest",
     }
 )
+#: Number of trailing output lines printed when the caller gives no valid count.
 _DEFAULT_TAIL_N: int = 20
 
 
@@ -75,6 +77,7 @@ def _validate_target_in_cwd(target: str) -> None:
 
 
 # Hard cap on captured subprocess output (50 MB) — guards against adversarial test floods.
+#: Most bytes of pytest output captured before the rest is dropped and a truncation note is appended.
 _MAX_OUTPUT_BYTES: int = 50 * 1024 * 1024
 
 
@@ -207,20 +210,22 @@ def main(argv: list[str] | None = None) -> int:
     chunks: list[str] = []
     total = 0
     truncated = False
-    assert proc.stdout is not None  # PIPE guarantees a stream.
+    # PIPE guarantees a stream.
+    if proc.stdout is None:
+        raise RuntimeError("proc.stdout must not be None")
     for chunk in iter(lambda: proc.stdout.read(64 * 1024), ""):
         remaining = _MAX_OUTPUT_BYTES - total
         if remaining <= 0:
             truncated = True
             # Drain remaining output without buffering so the child can exit cleanly.
-            for _ in iter(lambda: proc.stdout.read(64 * 1024), ""):  # noqa: B023 — intentional rebinding per loop.
+            for _ in iter(lambda: proc.stdout.read(64 * 1024), ""):
                 pass
             break
         if len(chunk) > remaining:
             chunks.append(chunk[:remaining])
             total += remaining
             truncated = True
-            for _ in iter(lambda: proc.stdout.read(64 * 1024), ""):  # noqa: B023 — intentional rebinding per loop.
+            for _ in iter(lambda: proc.stdout.read(64 * 1024), ""):
                 pass
             break
         chunks.append(chunk)

@@ -50,6 +50,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+#: Location of a plugin's manifest relative to the plugin root.
 _MANIFEST_REL = Path(".claude-plugin") / "plugin.json"
 
 

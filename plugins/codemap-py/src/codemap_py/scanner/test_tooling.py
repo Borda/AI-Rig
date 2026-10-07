@@ -1,6 +1,7 @@
 """Extract pytest and subprocess structure: fixtures, conftest paths, spawned scripts."""
 
 from __future__ import annotations
+
 import ast
 import sys
 from pathlib import Path
@@ -20,25 +21,44 @@ def _extract_path_file_parent_dir(arg: ast.expr, conftest_dir: Path) -> Path | N
         conftest_dir: directory containing the conftest.py being parsed —
             used as the anchor for ``Path(__file__).parent``.
     """
-    if not (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id == "str"):
-        return None
-    if not arg.args:
+    name = _path_file_parent_child(arg)
+    return None if name is None else conftest_dir / name
+
+
+def _path_file_parent_child(arg: ast.expr) -> str | None:
+    """Return ``"name"`` from the exact ``str(Path(__file__).parent / "name")`` shape, else ``None``.
+
+    Examples:
+        >>> _path_file_parent_child(ast.parse('str(Path(__file__).parent / "lib")', mode="eval").body)
+        'lib'
+        >>> _path_file_parent_child(ast.parse('str(Path(__file__).parent.parent / "lib")', mode="eval").body) is None
+        True
+    """
+    if not (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id == "str" and arg.args):
         return None
     inner = arg.args[0]
-    if not (isinstance(inner, ast.BinOp) and isinstance(inner.op, ast.Div)):
-        return None
-    if not (isinstance(inner.right, ast.Constant) and isinstance(inner.right.value, str)):
+    if not (
+        isinstance(inner, ast.BinOp)
+        and isinstance(inner.op, ast.Div)
+        and isinstance(inner.right, ast.Constant)
+        and isinstance(inner.right.value, str)
+    ):
         return None
     left = inner.left
     # Require Attribute chain: Path(__file__).parent — left.attr == "parent", left.value is Call to Path(__file__).
     if not (isinstance(left, ast.Attribute) and left.attr == "parent"):
         return None
     base = left.value
-    if not (isinstance(base, ast.Call) and isinstance(base.func, ast.Name) and base.func.id == "Path"):
+    if not (
+        isinstance(base, ast.Call)
+        and isinstance(base.func, ast.Name)
+        and base.func.id == "Path"
+        and base.args
+        and isinstance(base.args[0], ast.Name)
+        and base.args[0].id == "__file__"
+    ):
         return None
-    if not (base.args and isinstance(base.args[0], ast.Name) and base.args[0].id == "__file__"):
-        return None
-    return conftest_dir / inner.right.value
+    return inner.right.value
 
 
 def _is_syspath_insert_call(call: ast.Call) -> bool:
@@ -162,12 +182,7 @@ def _collect_module_aliases(
             seen_dirs.add(resolved_dir)
             if not resolved_dir.is_dir():
                 continue
-            for entry in sorted(resolved_dir.iterdir()):
-                if entry.is_symlink() or not entry.is_file() or entry.suffix != ".py":
-                    continue
-                bare = entry.stem
-                if bare == "__init__":
-                    continue
+            for bare in _bare_module_stems(resolved_dir):
                 if bare in aliases:
                     continue
                 candidates = by_last.get(bare, [])
@@ -181,6 +196,18 @@ def _collect_module_aliases(
                     continue
                 aliases[bare] = candidates[0]
     return aliases
+
+
+def _bare_module_stems(directory: Path) -> list[str]:
+    """Return the importable module stems of the regular ``.py`` files directly inside *directory*, sorted.
+
+    Symlinks, non-files, and ``__init__.py`` are skipped.
+    """
+    return [
+        entry.stem
+        for entry in sorted(directory.iterdir())
+        if not entry.is_symlink() and entry.is_file() and entry.suffix == ".py" and entry.stem != "__init__"
+    ]
 
 
 # Bare interpreter tokens recognised at index 0 of the args list / os.system string.
@@ -199,24 +226,8 @@ def _resolve_path_file_parent_script(arg: ast.expr, caller_dir: Path) -> Path | 
         caller_dir: directory containing the file whose AST is being walked —
             anchor for ``Path(__file__).parent``.
     """
-    if not (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id == "str"):
-        return None
-    if not arg.args:
-        return None
-    inner = arg.args[0]
-    if not (isinstance(inner, ast.BinOp) and isinstance(inner.op, ast.Div)):
-        return None
-    if not (isinstance(inner.right, ast.Constant) and isinstance(inner.right.value, str)):
-        return None
-    left = inner.left
-    if not (isinstance(left, ast.Attribute) and left.attr == "parent"):
-        return None
-    base = left.value
-    if not (isinstance(base, ast.Call) and isinstance(base.func, ast.Name) and base.func.id == "Path"):
-        return None
-    if not (base.args and isinstance(base.args[0], ast.Name) and base.args[0].id == "__file__"):
-        return None
-    return caller_dir / inner.right.value
+    name = _path_file_parent_child(arg)
+    return None if name is None else caller_dir / name
 
 
 def _is_python_token(node: ast.expr) -> bool:
@@ -448,30 +459,26 @@ def _is_pytest_fixture_decorator(decorator: ast.expr) -> tuple[bool, str | None]
         >>> _is_pytest_fixture_decorator(tree.body[1].decorator_list[0])
         (True, 'session')
     """
-    # Bare @pytest.fixture
-    if isinstance(decorator, ast.Attribute) and decorator.attr == "fixture":
-        if isinstance(decorator.value, ast.Name) and decorator.value.id == "pytest":
-            return True, None
-        return False, None
-    # Bare @fixture (assumes `from pytest import fixture`)
-    if isinstance(decorator, ast.Name) and decorator.id == "fixture":
+    # Bare @pytest.fixture or @fixture
+    if _is_fixture_reference(decorator):
         return True, None
     # @pytest.fixture(...) or @fixture(...)
-    if isinstance(decorator, ast.Call):
-        func = decorator.func
-        is_fixture = False
-        if isinstance(func, ast.Attribute) and func.attr == "fixture":
-            if isinstance(func.value, ast.Name) and func.value.id == "pytest":
-                is_fixture = True
-        elif isinstance(func, ast.Name) and func.id == "fixture":
-            is_fixture = True
-        if not is_fixture:
-            return False, None
+    if isinstance(decorator, ast.Call) and _is_fixture_reference(decorator.func):
         for kw in decorator.keywords:
             if kw.arg == "scope" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
                 return True, kw.value.value
         return True, None
     return False, None
+
+
+def _is_fixture_reference(node: ast.expr) -> bool:
+    """Check whether an expression names the pytest fixture decorator.
+
+    Matches ``pytest.fixture`` and a bare ``fixture`` (assumes ``from pytest import fixture``).
+    """
+    if isinstance(node, ast.Attribute) and node.attr == "fixture":
+        return isinstance(node.value, ast.Name) and node.value.id == "pytest"
+    return isinstance(node, ast.Name) and node.id == "fixture"
 
 
 def _body_yields(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
@@ -634,46 +641,47 @@ def extract_fixture_uses(
         {'name': 'tmp_path', 'scope': None, 'defined_in': None}
     """
     seen: dict[str, dict] = {}
-
-    def _record(name: str) -> None:
-        if name in seen:
-            return
-        if name in defined_fixtures:
-            scope = defined_fixtures[name].get("scope", "function")
-            seen[name] = {"name": name, "scope": scope, "defined_in": None}
-            return
-        if name in all_conftest_exports:
-            entry = all_conftest_exports[name]
-            seen[name] = {
-                "name": name,
-                "scope": entry.get("scope", "function"),
-                "defined_in": entry.get("defined_in"),
-            }
-            return
-        # Builtin or unknown — emit with sentinel nulls so callers can still see usage.
-        seen[name] = {"name": name, "scope": None, "defined_in": None}
-
-    def _is_relevant(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-        if fn.name.startswith("test_"):
-            return True
-        for decorator in fn.decorator_list:
-            is_fix, _ = _is_pytest_fixture_decorator(decorator)
-            if is_fix:
-                return True
-        return False
-
-    def _walk_function(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        if not _is_relevant(fn):
-            return
+    for fn in _module_functions(tree):
+        if not _consumes_fixtures(fn):
+            continue
         for param in _function_param_names(fn):
-            _record(param)
+            if param not in seen:
+                seen[param] = _fixture_use(param, defined_fixtures, all_conftest_exports)
+    return sorted(seen.values(), key=lambda d: d["name"])
 
+
+def _module_functions(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Return top-level functions and the methods of top-level classes, in source order."""
+    functions: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            _walk_function(node)
+            functions.append(node)
         elif isinstance(node, ast.ClassDef):
-            for child in node.body:
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    _walk_function(child)
+            functions.extend(child for child in node.body if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)))
+    return functions
 
-    return sorted(seen.values(), key=lambda d: d["name"])
+
+def _consumes_fixtures(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Check whether pytest injects fixtures into a function: a ``test_*`` function or a fixture itself."""
+    if fn.name.startswith("test_"):
+        return True
+    return any(_is_pytest_fixture_decorator(decorator)[0] for decorator in fn.decorator_list)
+
+
+def _fixture_use(name: str, defined_fixtures: dict[str, dict], all_conftest_exports: dict[str, dict]) -> dict:
+    """Describe one consumed fixture name, resolving it against local fixtures first, then conftest exports.
+
+    Builtin or unknown names get ``scope=None`` / ``defined_in=None`` so callers can still see the usage.
+    """
+    if name in defined_fixtures:
+        scope = defined_fixtures[name].get("scope", "function")
+        return {"name": name, "scope": scope, "defined_in": None}
+    if name in all_conftest_exports:
+        entry = all_conftest_exports[name]
+        return {
+            "name": name,
+            "scope": entry.get("scope", "function"),
+            "defined_in": entry.get("defined_in"),
+        }
+    # Builtin or unknown — emit with sentinel nulls so callers can still see usage.
+    return {"name": name, "scope": None, "defined_in": None}

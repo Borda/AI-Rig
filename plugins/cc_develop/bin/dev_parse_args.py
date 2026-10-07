@@ -109,6 +109,7 @@ class SpecType(str, Enum):
 
 # Spec keyword → count of positional tokens it consumes. Codemap takes 2 (VAR DEFAULT,
 # no FLAG — it is always the ``--codemap``/``--no-codemap`` pair); every other kind takes 3.
+#: Maps each spec kind keyword to the number of positional tokens it consumes when spec declarations are parsed.
 _TYPE_ARITIES: dict[str, int] = {f"--{kind.value}": (2 if kind == SpecType.CODEMAP else 3) for kind in SpecType}
 
 
@@ -269,6 +270,7 @@ def _extract_str_flag(spec: FlagSpec, clean: str) -> tuple[str, str]:
     return val if val is not None else spec.default, clean
 
 
+#: Dispatch table from flag kind to the function that extracts that flag's value from the argument string.
 _FLAG_HANDLERS: dict[SpecType, Callable[[FlagSpec, str], tuple[str, str]]] = {
     SpecType.BOOL: lambda spec, clean: _extract_bool_flag(spec, clean, "true"),
     SpecType.NEG_BOOL: lambda spec, clean: _extract_bool_flag(spec, clean, "false"),
@@ -356,6 +358,7 @@ def _spec(kind: SpecType, flag: str, var: str, default: str) -> FlagSpec:
 # so the surgical replacement of the eval block in each SKILL.md does not
 # need to touch any later block.  ``None`` means no legacy path was written
 # before (e.g. a newly registered flag).
+#: Flag declarations for each skill, paired with the legacy temp-file name its downstream blocks still read.
 SKILL_SPECS: dict[str, list[tuple[FlagSpec, str | None]]] = {
     "feature": [
         (_spec(SpecType.NEG_BOOL, "no-challenge", "CHALLENGE_ENABLED", "true"), "dev-challenge-enabled"),

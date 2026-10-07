@@ -3,7 +3,6 @@
 import math
 
 import pytest
-
 from _bench_common.agentic_reporting import cell_passes, summarize_agentic, summary_lines
 
 
@@ -63,8 +62,10 @@ def test_planned_denominator_retains_execution_failures_and_unobserved_cells() -
     assert plain["component_scored_cells"] == 2
     assert plain["failure_counts"] == {"execution_failure": 1, "unobserved": 1}
     output = "\n".join(line for line, _ in summary_lines(summary))
-    assert "pass=1/3" in output and "component=1.000" in output
-    assert "PASS=" not in output and "COMPONENT=" not in output
+    assert "pass=1/3" in output
+    assert "component=1.000" in output
+    assert "PASS=" not in output
+    assert "COMPONENT=" not in output
     assert "SCORE=" not in output
 
 
@@ -170,7 +171,8 @@ def test_graded_quality_retains_small_errors_without_hiding_exact_mismatches() -
     assert comparison["graded_quality"]["mean_percentage_point_change"] == pytest.approx(-100 / 57)
     assert comparison["efficiency"]["input_tokens"]["paired_cells"] == 0
     output = "\n".join(line for line, _ in summary_lines(summary))
-    assert "quality=98.2%" in output and "exact_pass=0/1" in output
+    assert "quality=98.2%" in output
+    assert "exact_pass=0/1" in output
 
 
 @pytest.mark.parametrize("flag", ["success", "answer_contract_valid", "answer_pooling_eligible", "treatment_adherence"])
@@ -221,4 +223,6 @@ def test_historical_summary_keeps_pass_labels() -> None:
     del summary["all_assigned"]["A_plain"]["quality_mean"]
     del summary["all_assigned"]["A_plain"]["quality_unavailable_cells"]
     output = "\n".join(line for line, _ in summary_lines(summary))
-    assert "pass=1/1" in output and "quality=" not in output and "exact_pass=" not in output
+    assert "pass=1/1" in output
+    assert "quality=" not in output
+    assert "exact_pass=" not in output

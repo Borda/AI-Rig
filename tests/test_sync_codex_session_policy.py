@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import runpy
 import re
+import runpy
 from pathlib import Path
 
 import pytest
@@ -93,57 +93,42 @@ def test_sync_converts_an_exact_terminal_policy_copy_to_the_managed_block(tmp_pa
     assert instructions.count("borda-local:session-model-policy begin") == 1
 
 
-def test_sync_inserts_missing_root_setting_before_toml_tables(tmp_path: Path, legacy_source_config: Path) -> None:
-    """Keep a missing root setting out of an unrelated TOML table."""
-    namespace = _namespace()
-    home = tmp_path / "codex-home"
-    home.mkdir()
-    (home / "config.toml").write_text(
-        'model = "gpt-5.6-luna"\n\n[agents.example]\nname = "example"\n', encoding="utf-8"
-    )
-
-    namespace["sync"](legacy_source_config, SOURCE_POLICY, home)
-
-    assert (home / "config.toml").read_text(encoding="utf-8") == (
-        'model = "gpt-6.1-sol"\n\nreview_model = "gpt-6.1-sol"\n[agents.example]\nname = "example"\n'
-    )
-
-
-def test_sync_updates_single_quoted_root_settings_without_appending_duplicates(
-    tmp_path: Path, legacy_source_config: Path
+@pytest.mark.parametrize(
+    ("existing", "expected"),
+    [
+        pytest.param(
+            'model = "gpt-5.6-luna"\n\n[agents.example]\nname = "example"\n',
+            'model = "gpt-6.1-sol"\n\nreview_model = "gpt-6.1-sol"\n[agents.example]\nname = "example"\n',
+            id="missing-root-setting-stays-before-toml-tables",
+        ),
+        pytest.param(
+            "model = 'gpt-5.6-luna'\nreview_model = 'gpt-5.6-luna'\ncustom = true\n",
+            'model = "gpt-6.1-sol"\nreview_model = "gpt-6.1-sol"\ncustom = true\n',
+            id="single-quoted-root-settings-without-duplicates",
+        ),
+        pytest.param(
+            "  \"model\" = 'gpt-5.6-luna' # parent\n'review_model'='gpt-5.6-luna'\ncustom = true\n",
+            '  "model" = "gpt-6.1-sol" # parent\n\'review_model\'="gpt-6.1-sol"\ncustom = true\n',
+            id="quoted-root-keys-and-leading-whitespace-without-duplicates",
+        ),
+    ],
+)
+def test_sync_updates_root_model_settings_in_place(
+    tmp_path: Path, legacy_source_config: Path, existing: str, expected: str
 ) -> None:
-    """Accept valid TOML literal strings in a user-owned target configuration."""
+    """Valid TOML spellings of the root model settings are updated in place without semantic duplicates.
+
+    A missing root setting is inserted before any unrelated TOML table, TOML literal strings are accepted as existing
+    values, and quoted root keys with leading whitespace and trailing comments are rewritten rather than appended again.
+    """
     namespace = _namespace()
     home = tmp_path / "codex-home"
     home.mkdir()
-    (home / "config.toml").write_text(
-        "model = 'gpt-5.6-luna'\nreview_model = 'gpt-5.6-luna'\ncustom = true\n", encoding="utf-8"
-    )
+    (home / "config.toml").write_text(existing, encoding="utf-8")
 
     namespace["sync"](legacy_source_config, SOURCE_POLICY, home)
 
-    assert (home / "config.toml").read_text(encoding="utf-8") == (
-        'model = "gpt-6.1-sol"\nreview_model = "gpt-6.1-sol"\ncustom = true\n'
-    )
-
-
-def test_sync_updates_quoted_root_keys_and_leading_whitespace_without_duplicates(
-    tmp_path: Path, legacy_source_config: Path
-) -> None:
-    """Accept valid TOML root-key spellings without appending semantic duplicates."""
-    namespace = _namespace()
-    home = tmp_path / "codex-home"
-    home.mkdir()
-    (home / "config.toml").write_text(
-        "  \"model\" = 'gpt-5.6-luna' # parent\n'review_model'='gpt-5.6-luna'\ncustom = true\n",
-        encoding="utf-8",
-    )
-
-    namespace["sync"](legacy_source_config, SOURCE_POLICY, home)
-
-    assert (home / "config.toml").read_text(encoding="utf-8") == (
-        '  "model" = "gpt-6.1-sol" # parent\n\'review_model\'="gpt-6.1-sol"\ncustom = true\n'
-    )
+    assert (home / "config.toml").read_text(encoding="utf-8") == expected
 
 
 def test_source_models_accepts_literal_strings(tmp_path: Path) -> None:
@@ -300,7 +285,7 @@ def test_invalid_auto_review_source_stops_before_writes(tmp_path: Path, invalid:
 
 
 @pytest.mark.parametrize(
-    "location, delimiter, embedded_key",
+    ("location", "delimiter", "embedded_key"),
     [
         pytest.param(location, delimiter, key, id=f"{location}-{name}-{key}")
         for location in ("source", "target")

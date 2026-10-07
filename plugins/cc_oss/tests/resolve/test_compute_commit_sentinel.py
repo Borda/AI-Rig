@@ -7,34 +7,28 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from compute_commit_sentinel import get_sentinel_path, main, to_slug
 
 
 class TestToSlug:
-    def test_lowercase(self) -> None:
-        assert to_slug("MyRepo") == "myrepo"
+    """to_slug: lowercase, collapse non-alphanumeric runs to one dash, strip edge dashes."""
 
-    def test_dots_become_dash(self) -> None:
-        assert to_slug("MyRepo.local") == "myrepo-local"
-
-    def test_slash_becomes_dash(self) -> None:
-        assert to_slug("feature/my-branch") == "feature-my-branch"
-
-    def test_consecutive_non_alnum_collapsed(self) -> None:
-        assert to_slug("UPPER-CASE--extra-") == "upper-case-extra"
-
-    def test_trailing_dash_stripped(self) -> None:
-        assert to_slug("foo-") == "foo"
-
-    def test_empty_string(self) -> None:
-        assert to_slug("") == ""
-
-    def test_plain_main(self) -> None:
-        assert to_slug("main") == "main"
-
-    def test_numeric_preserved(self) -> None:
-        assert to_slug("repo123") == "repo123"
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            pytest.param("MyRepo", "myrepo", id="lowercase"),
+            pytest.param("MyRepo.local", "myrepo-local", id="dots-become-dash"),
+            pytest.param("feature/my-branch", "feature-my-branch", id="slash-becomes-dash"),
+            pytest.param("UPPER-CASE--extra-", "upper-case-extra", id="consecutive-non-alnum-collapsed"),
+            pytest.param("foo-", "foo", id="trailing-dash-stripped"),
+            pytest.param("", "", id="empty-string"),
+            pytest.param("main", "main", id="plain-main"),
+            pytest.param("repo123", "repo123", id="numeric-preserved"),
+        ],
+    )
+    def test_slug(self, raw: str, expected: str) -> None:
+        """Names are lowercased, each non-alphanumeric run becomes one dash, and edge dashes are stripped."""
+        assert to_slug(raw) == expected
 
 
 class TestGetSentinelPath:

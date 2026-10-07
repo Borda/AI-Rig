@@ -9,7 +9,8 @@ import pytest
 
 _MOD_PATH = Path(__file__).resolve().parent.parent.parent / "bin" / "state.py"
 _spec = importlib.util.spec_from_file_location("state", _MOD_PATH)
-assert _spec and _spec.loader
+assert _spec
+assert _spec.loader
 st = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(st)
 

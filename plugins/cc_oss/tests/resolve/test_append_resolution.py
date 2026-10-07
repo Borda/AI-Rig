@@ -55,10 +55,15 @@ def test_records_cover_each_review_item_once(tmp_path: Path, monkeypatch: pytest
     assert ar.main(["--impl-dir", str(impl), "--review-dir", str(review)]) == 0
     rows = _rows(review)
     assert set(rows) == {1, 2, 3, 4}
-    assert rows[1]["verdict"] == "fixed" and rows[1]["sha"] == "abc1234"
-    assert rows[2]["verdict"] == "rejected" and rows[2]["why"] == "already guarded upstream" and rows[2]["sha"] == ""
-    assert rows[3]["verdict"] == "self-resolved" and rows[3]["why"] == "use fixture"
-    assert rows[4]["verdict"] == "skipped" and rows[4]["why"] == "conflicts with item 1"
+    assert rows[1]["verdict"] == "fixed"
+    assert rows[1]["sha"] == "abc1234"
+    assert rows[2]["verdict"] == "rejected"
+    assert rows[2]["why"] == "already guarded upstream"
+    assert rows[2]["sha"] == ""
+    assert rows[3]["verdict"] == "self-resolved"
+    assert rows[3]["why"] == "use fixture"
+    assert rows[4]["verdict"] == "skipped"
+    assert rows[4]["why"] == "conflicts with item 1"
     assert {r["run"] for r in rows.values()} == {"impl-run"}
 
 
@@ -87,12 +92,25 @@ def test_missing_review_dir_blocks(tmp_path: Path) -> None:
     assert ar.main(["--impl-dir", str(impl), "--review-dir", str(tmp_path / "gone")]) == 1
 
 
-def test_accepted_but_unimplemented_item_is_pending(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A challenge that accepted the fix is not a fix: with no commit or implementation record the item is pending."""
+@pytest.mark.parametrize(
+    "item_id",
+    [
+        pytest.param(1, id="accepted-but-unimplemented"),
+        pytest.param(3, id="self-resolved-without-implementation"),
+    ],
+)
+def test_item_without_implementation_record_is_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, item_id: int
+) -> None:
+    """An accepted or self-resolved item with no commit or implementation record is still pending.
+
+    A challenge that accepted the fix is not a fix, and self-resolved means resolve implemented an alternative; with no
+    record of that the item stays pending.
+    """
     monkeypatch.setattr(ar, "commit_for", _no_commits)
     impl, review = _setup_run(tmp_path)
     assert ar.main(["--impl-dir", str(impl), "--review-dir", str(review)]) == 0
-    assert _rows(review)[1]["verdict"] == "pending"
+    assert _rows(review)[item_id]["verdict"] == "pending"
 
 
 @pytest.mark.parametrize(
@@ -143,14 +161,6 @@ def test_commit_lookup_is_scoped_to_this_run(tmp_path: Path, monkeypatch: pytest
     )
     ar.commit_for(3, tmp_path, "base123")
     assert calls[0][-1] == "base123..HEAD"
-
-
-def test_self_resolved_without_implementation_is_pending(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Self-resolved means resolve implemented an alternative; with no record of that it is still pending."""
-    monkeypatch.setattr(ar, "commit_for", _no_commits)
-    impl, review = _setup_run(tmp_path)
-    assert ar.main(["--impl-dir", str(impl), "--review-dir", str(review)]) == 0
-    assert _rows(review)[3]["verdict"] == "pending"
 
 
 def test_no_records_leaves_no_empty_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

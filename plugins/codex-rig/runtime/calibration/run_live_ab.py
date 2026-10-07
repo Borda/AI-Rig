@@ -54,7 +54,9 @@ from typing import Any, NamedTuple
 
 from live_contract import Layout, build_prompt, candidate_findings, prompt_sha256, role_context, task_contract_sha256
 
+#: Label of the normalized token-cost formula, recorded with each live record's estimated cost.
 PRICING_REF = "normalized-token-v1:uncached+0.1*cached+4*output"
+#: Models the live A/B runner accepts for a campaign; any other model is rejected.
 SUPPORTED_LIVE_MODELS = ("gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra")
 
 
@@ -238,7 +240,7 @@ def _require_local_subscription_run() -> None:
     if os.environ.get("OPENAI_API_KEY"):
         raise SystemExit("live-paid-run-api-key-auth-disallowed")
     status = subprocess.run(
-        ["codex", "login", "status"],
+        ["codex", "login", "status"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
         text=True,
         capture_output=True,
         check=False,
@@ -257,8 +259,8 @@ def _signal_process_tree(process: subprocess.Popen[str], force: bool) -> str | N
         if force:
             process.kill()
             return "process-tree cleanup unproven: forced parent-only fallback"
-        cleanup = subprocess.run(
-            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+        cleanup = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -322,7 +324,7 @@ def _run_bounded_process(
         stdin: Standard-input disposition, e.g. ``subprocess.DEVNULL``; ``None`` inherits the runner's stdin.
     """
     started = time.monotonic()
-    process = subprocess.Popen(
+    process = subprocess.Popen(  # noqa: S603 - argv list, no shell
         argv,
         cwd=cwd,
         text=True,

@@ -10,9 +10,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 from _platform import FILE_SYMLINKS_AVAILABLE
-
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 
@@ -21,7 +19,8 @@ def _load_validator() -> ModuleType:
     """Load the hyphenated artifact-validator module for focused contract tests."""
     path = PLUGIN_ROOT / "shared" / "validate-artifacts.py"
     spec = importlib.util.spec_from_file_location("codex_rig_validate_artifacts", path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -535,7 +534,8 @@ def test_invalid_work_bucket_plans_fail_closed(tmp_path: Path, mutation: str, er
     metadata = copy.deepcopy(_parallel_metadata())
     scope = metadata["resolution_scope"]
     workplan = metadata["resolution_workplan"]
-    assert isinstance(scope, dict) and isinstance(workplan, dict)
+    assert isinstance(scope, dict)
+    assert isinstance(workplan, dict)
     buckets = workplan["work_buckets"]
     assert isinstance(buckets, list)
 
@@ -793,7 +793,8 @@ def test_completed_parallel_remediation_rejects_unbound_patch_evidence(
     lifecycle_path = _write_completed_production_lifecycle(metadata, tmp_path)
     lifecycle = json.loads(lifecycle_path.read_text(encoding="utf-8"))
     nodes = lifecycle["nodes"]
-    assert isinstance(nodes, list) and isinstance(nodes[0], dict)
+    assert isinstance(nodes, list)
+    assert isinstance(nodes[0], dict)
     application = lifecycle["source_application"]
     assert isinstance(application, dict)
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from check_cli_flag_drift import (
     ORIGIN_DOCSTRING,
     DriftFinding,
@@ -71,18 +70,24 @@ class TestExtractArgparseFlags:
         flags = extract_argparse_flags(_ARGPARSE_BODY)
         assert flags == {"--real", "-r", "--recurse"}
 
-    def test_none_when_no_add_argument(self) -> None:
-        assert extract_argparse_flags("x = 1\n") is None
+    @pytest.mark.parametrize(
+        "source",
+        [
+            pytest.param("x = 1\n", id="no-add-argument"),
+            pytest.param("import argparse\np.add_argument('extras', nargs=argparse.REMAINDER)\n", id="remainder-nargs"),
+            pytest.param("p.add_argument('extras', nargs='...')\n", id="ellipsis-nargs"),
+        ],
+    )
+    def test_none_when_flags_are_not_enumerable(self, source: str) -> None:
+        """No argparse flags can be enumerated without add_argument calls or with a passthrough REMAINDER.
+
+        A script lacking add_argument and one whose ``nargs`` swallows the remaining arguments (REMAINDER or ``'...'``)
+        both report ``None`` rather than an empty flag set.
+        """
+        assert extract_argparse_flags(source) is None
 
     def test_positional_only_yields_empty_set(self) -> None:
         assert extract_argparse_flags("p.add_argument('target')\n") == set()
-
-    def test_remainder_passthrough_returns_none(self) -> None:
-        src = "import argparse\np.add_argument('extras', nargs=argparse.REMAINDER)\n"
-        assert extract_argparse_flags(src) is None
-
-    def test_ellipsis_nargs_returns_none(self) -> None:
-        assert extract_argparse_flags("p.add_argument('extras', nargs='...')\n") is None
 
 
 # ---------------------------------------------------------------------------
@@ -93,19 +98,23 @@ class TestExtractArgparseFlags:
 class TestCommandScope:
     def test_single_line_flags(self) -> None:
         scope = command_scope(["x --a --b"], 0, 1)
-        assert "--a" in scope and "--b" in scope
+        assert "--a" in scope
+        assert "--b" in scope
 
     def test_follows_line_continuation(self) -> None:
         scope = command_scope(["x --a \\", "  --b"], 0, 1)
-        assert "--a" in scope and "--b" in scope
+        assert "--a" in scope
+        assert "--b" in scope
 
     def test_stops_at_next_uncontinued_line(self) -> None:
         scope = command_scope(["x --a", "other --b"], 0, 1)
-        assert "--a" in scope and "--b" not in scope
+        assert "--a" in scope
+        assert "--b" not in scope
 
     def test_truncates_at_pipe_boundary(self) -> None:
         scope = command_scope(["x --a | grep --b"], 0, 1)
-        assert "--a" in scope and "--b" not in scope
+        assert "--a" in scope
+        assert "--b" not in scope
 
 
 # ---------------------------------------------------------------------------
@@ -141,55 +150,42 @@ class TestFindDrift:
         findings = find_drift(tmp_path)
         assert [f.flag for f in findings] == ["--ghost"]
         assert findings[0].script == "tool.py"
+        assert isinstance(findings[0], DriftFinding)
 
-    def test_real_flag_not_flagged(self, tmp_path: Path) -> None:
-        """A flag the script's argparse actually defines is never a finding."""
-        _make_script(tmp_path, "myplugin", "tool.py", _ARGPARSE_BODY)
-        _make_skill(tmp_path, "myplugin", "sk", 'python "${ROOT}/bin/tool.py" --real\n')
+    @pytest.mark.parametrize(
+        ("script_body", "skill_body"),
+        [
+            pytest.param(_ARGPARSE_BODY, 'python "${ROOT}/bin/tool.py" --real\n', id="real-flag"),
+            pytest.param(_ARGPARSE_BODY, "This skill does things.\n", id="script-flag-never-mentioned"),
+            pytest.param(
+                _ARGPARSE_BODY, "`tool.py` runs. Then `git log --ghost`.\n", id="prose-mention-anchors-no-flags"
+            ),
+            pytest.param(_ARGPARSE_BODY, 'python "${ROOT}/bin/tool.py" | grep --color\n', id="piped-command-flags"),
+            pytest.param(_ARGPARSE_BODY, 'python "${ROOT}/bin/tool.py" -q\n', id="short-flag-near-invocation"),
+            pytest.param(
+                _ARGPARSE_BODY,
+                'X=$(python "${ROOT}/bin/tool.py" --real) \\\n  && [ -z "$X" ] && [ -f out ]\n',
+                id="bash-test-operators",
+            ),
+            pytest.param(
+                "import argparse\np.add_argument('extras', nargs=argparse.REMAINDER)\n",
+                'python "${ROOT}/bin/tool.py" --anything\n',
+                id="remainder-passthrough-script",
+            ),
+        ],
+    )
+    def test_documentation_without_phantom_flag_is_not_flagged(
+        self, tmp_path: Path, script_body: str, skill_body: str
+    ) -> None:
+        """Documentation that names no flag the script lacks is never a finding.
+
+        The scan is about accuracy, not completeness: a real flag, a flag never mentioned, a bare prose reference, flags
+        after a pipe (they belong to the piped command), a short option or bash test operator near an invocation (they
+        collide with shell syntax) and a REMAINDER passthrough script that accepts arbitrary flags all pass.
+        """
+        _make_script(tmp_path, "myplugin", "tool.py", script_body)
+        _make_skill(tmp_path, "myplugin", "sk", skill_body)
         assert find_drift(tmp_path) == []
-
-    def test_script_flag_never_mentioned_not_flagged(self, tmp_path: Path) -> None:
-        """A real argparse flag absent from all SKILL.md is not a finding (accuracy, not completeness)."""
-        _make_script(tmp_path, "myplugin", "tool.py", _ARGPARSE_BODY)
-        _make_skill(tmp_path, "myplugin", "sk", "This skill does things.\n")
-        assert find_drift(tmp_path) == []
-
-    def test_prose_mention_contributes_no_flags(self, tmp_path: Path) -> None:
-        """A bare backtick reference (no invocation) never anchors a flag."""
-        _make_script(tmp_path, "myplugin", "tool.py", _ARGPARSE_BODY)
-        _make_skill(tmp_path, "myplugin", "sk", "`tool.py` runs. Then `git log --ghost`.\n")
-        assert find_drift(tmp_path) == []
-
-    def test_piped_command_flags_not_attributed(self, tmp_path: Path) -> None:
-        """Flags after a pipe belong to the piped command, not the script."""
-        _make_script(tmp_path, "myplugin", "tool.py", _ARGPARSE_BODY)
-        _make_skill(tmp_path, "myplugin", "sk", 'python "${ROOT}/bin/tool.py" | grep --color\n')
-        assert find_drift(tmp_path) == []
-
-    def test_short_flag_in_docs_not_flagged(self, tmp_path: Path) -> None:
-        """A single-dash short option near an invocation is ignored (collides with shell operators)."""
-        _make_script(tmp_path, "myplugin", "tool.py", _ARGPARSE_BODY)
-        _make_skill(tmp_path, "myplugin", "sk", 'python "${ROOT}/bin/tool.py" -q\n')
-        assert find_drift(tmp_path) == []
-
-    def test_bash_test_operators_not_flagged(self, tmp_path: Path) -> None:
-        """Bash test operators (-z, -f, -n) on a continued command line are never findings."""
-        _make_script(tmp_path, "myplugin", "tool.py", _ARGPARSE_BODY)
-        body = 'X=$(python "${ROOT}/bin/tool.py" --real) \\\n  && [ -z "$X" ] && [ -f out ]\n'
-        _make_skill(tmp_path, "myplugin", "sk", body)
-        assert find_drift(tmp_path) == []
-
-    def test_remainder_script_never_drifts(self, tmp_path: Path) -> None:
-        """A passthrough (nargs=REMAINDER) script accepts arbitrary flags — no drift."""
-        body = "import argparse\np.add_argument('extras', nargs=argparse.REMAINDER)\n"
-        _make_script(tmp_path, "myplugin", "pass.py", body)
-        _make_skill(tmp_path, "myplugin", "sk", 'python "${ROOT}/bin/pass.py" --anything\n')
-        assert find_drift(tmp_path) == []
-
-    def test_finding_is_dataclass(self, tmp_path: Path) -> None:
-        _make_script(tmp_path, "myplugin", "tool.py", _ARGPARSE_BODY)
-        _make_skill(tmp_path, "myplugin", "sk", 'python "${ROOT}/bin/tool.py" --ghost\n')
-        assert isinstance(find_drift(tmp_path)[0], DriftFinding)
 
 
 # ---------------------------------------------------------------------------
@@ -238,23 +234,27 @@ class TestDocstringDrift:
         assert [(f.flag, f.script, f.origin) for f in findings] == [("--check", "tool.py", ORIGIN_DOCSTRING)]
         assert findings[0].document.endswith("myplugin/bin/tool.py")
 
-    def test_real_flag_in_own_usage_block_is_not_a_finding(self, tmp_path: Path) -> None:
-        """Discrimination: the same scan must accept a Usage block naming only real flags."""
-        _make_script(tmp_path, "myplugin", "tool.py", _docstring_script("    tool.py --real --recurse"))
-        assert find_drift(tmp_path) == []
+    @pytest.mark.parametrize(
+        "source",
+        [
+            pytest.param(_docstring_script("    tool.py --real --recurse"), id="real-flags-in-usage-block"),
+            pytest.param(
+                _docstring_script(
+                    "    tool.py --real",
+                    prose="It runs ``pytest --tb=short`` and parses ``--root`` out of $ARGUMENTS.\n\n",
+                ),
+                id="other-tool-flags-in-summary-prose",
+            ),
+            pytest.param(_docstring_script("    other-cli query --top 100 | tool.py --real"), id="piped-producer-flag"),
+        ],
+    )
+    def test_docstring_naming_no_phantom_flag_is_not_a_finding(self, tmp_path: Path, source: str) -> None:
+        """A docstring whose own Usage block names only real flags yields no finding.
 
-    def test_wrapped_tool_flag_in_summary_prose_is_not_a_finding(self, tmp_path: Path) -> None:
-        """Prose naming another tool's flag is not this script's CLI — the dominant false positive."""
-        source = _docstring_script(
-            "    tool.py --real",
-            prose="It runs ``pytest --tb=short`` and parses ``--root`` out of $ARGUMENTS.\n\n",
-        )
-        _make_script(tmp_path, "myplugin", "tool.py", source)
-        assert find_drift(tmp_path) == []
-
-    def test_piped_producer_flag_is_not_attributed_to_this_script(self, tmp_path: Path) -> None:
-        """A Usage line piping another command in owns its own flags up to the pipe."""
-        source = _docstring_script("    other-cli query --top 100 | tool.py --real")
+        Discrimination against the phantom-flag case: a Usage block of real flags is accepted, prose naming another
+        tool's flag is not this script's CLI (the dominant false positive), and a Usage line piping another command in
+        owns its own flags up to the pipe.
+        """
         _make_script(tmp_path, "myplugin", "tool.py", source)
         assert find_drift(tmp_path) == []
 
@@ -338,7 +338,8 @@ class TestMain:
         rc = main(["--plugins-dir", str(tmp_path)])
         assert rc == 1
         out = capsys.readouterr().out
-        assert "⚠ 42" in out and "--ghost" in out
+        assert "⚠ 42" in out
+        assert "--ghost" in out
 
     def test_exit_2_bad_dir(self) -> None:
         rc = main(["--plugins-dir", "/nonexistent/path/does/not/exist"])

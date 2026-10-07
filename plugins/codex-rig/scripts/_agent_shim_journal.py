@@ -45,12 +45,17 @@ from typing import NoReturn
 
 from _agent_shim_lifecycle import LifecycleDataError, parse_json_object
 
-
+#: Largest journal payload, in bytes (4 MiB), that parse_journal will accept.
 MAX_JOURNAL_BYTES = 4_194_304
+#: Maximum number of per-role operation records a single journal may contain.
 MAX_JOURNAL_OPERATIONS = 256
+#: Pattern for a lowercase 64-character hexadecimal SHA-256 digest string.
 DIGEST = re.compile(r"[0-9a-f]{64}")
+#: Pattern for a four-digit octal file-mode string such as 0600.
 MODE = re.compile(r"0[0-7]{3}")
+#: Pattern for a role identifier: a lowercase letter then up to 63 lowercase letters, digits, or hyphens.
 ROLE_ID = re.compile(r"[a-z][a-z0-9-]{0,63}")
+#: Every state a whole journal may be in, from PREPARING through COMMITTED or ROLLED_BACK.
 JOURNAL_STATES = (
     "PREPARING",
     "PREPARED",
@@ -60,6 +65,7 @@ JOURNAL_STATES = (
     "RECOVERY_REQUIRED",
     "ROLLED_BACK",
 )
+#: Journal states allowed to follow each journal state; an empty tuple marks a terminal state.
 JOURNAL_STATE_SUCCESSORS = {
     "PREPARING": ("PREPARED", "RECOVERY_REQUIRED"),
     "PREPARED": ("MUTATING", "RECOVERY_REQUIRED"),
@@ -69,6 +75,7 @@ JOURNAL_STATE_SUCCESSORS = {
     "RECOVERY_REQUIRED": ("RECOVERY_REQUIRED", "ROLLED_BACK"),
     "ROLLED_BACK": (),
 }
+#: Per-intent graph of allowed operation progress steps, such as PLANNED to PUBLISHED to VERIFIED.
 FORWARD_SUCCESSORS = {
     "noop": {"VERIFIED": ()},
     "create": {"PLANNED": ("PUBLISHED",), "PUBLISHED": ("VERIFIED",), "VERIFIED": ()},
@@ -82,10 +89,15 @@ FORWARD_SUCCESSORS = {
     "remove": {"PLANNED": ("DETACHED",), "DETACHED": ("VERIFIED",), "VERIFIED": ()},
     "retire": {"PLANNED": ("DETACHED",), "DETACHED": ("VERIFIED",), "VERIFIED": ()},
 }
+#: Allowed transitions of an operation's rollback progress, from NOT_STARTED to TARGET_RESTORED.
 ROLLBACK_SUCCESSORS = {"NOT_STARTED": ("TARGET_RESTORED",), "TARGET_RESTORED": ()}
+#: Allowed transitions of the journal-wide state-file rollback progress, from PENDING to RESTORED.
 ROLLBACK_STATE_SUCCESSORS = {"PENDING": ("RESTORED",), "RESTORED": ()}
+#: Exact key set required in a root identity record (canonical path, device, inode, ownership, mode).
 ROOT_FIELDS = frozenset({"canonical_path", "device", "inode", "owner", "group", "mode"})
+#: Exact key set required in a file image snapshot record (existence, relative path, digest, mode).
 SNAPSHOT_FIELDS = frozenset({"exists", "relative_path", "sha256", "mode"})
+#: Exact key set required in each journal operation record; also the field list used to serialize an operation.
 OPERATION_FIELDS = frozenset(
     {
         "role_id",
@@ -104,6 +116,7 @@ OPERATION_FIELDS = frozenset(
         "rollback_progress",
     }
 )
+#: Exact key set required at the top level of a journal record.
 JOURNAL_FIELDS = frozenset(
     {
         "schema",
@@ -614,7 +627,8 @@ def validate_successor(before: object, after: object) -> Journal:
         ):
             raise JournalTransitionError("illegal rollback state successor")
     else:
-        assert index is not None
+        if index is None:
+            raise RuntimeError("index must not be None")
         old = previous.operations[index]
         new = successor.operations[index]
         if field == "progress":

@@ -23,7 +23,9 @@ import re
 import sys
 from pathlib import Path
 
+#: Matches a Bash command that runs a codemap query (``scan-query``, ``codemap-py query`` or ``$SQ``).
 _QUERY = re.compile(r"\b(?:scan-query|codemap-py\s+query)\b|\$SQ\b")
+#: Captures the module or qualified name passed to a ``rdeps`` or ``fn-rdeps`` query.
 _TARGET = re.compile(r"\b(?:fn-)?rdeps\s+[\"']?([A-Za-z0-9_.]+(?:::[A-Za-z0-9_.]+)?)[\"']?")
 #: Tool names whose side effect can invalidate a recorded exhaustive caller set.
 _EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch"})
@@ -35,6 +37,7 @@ _SOURCE_SUFFIXES = (".py", ".pyi")
 # already puts hooks/ on sys.path — but the test suite loads it through
 # `importlib.util.spec_from_file_location`, which does not. Inserting explicitly makes
 # the shared-helper import resolve under every load mechanism.
+#: Directory holding this hook, put on ``sys.path`` so the shared ``_hookutil`` helper imports under any loader.
 _HOOKS_DIR = Path(__file__).resolve().parent
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))

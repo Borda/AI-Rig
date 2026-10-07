@@ -13,7 +13,6 @@ from types import ModuleType
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 ADAPTER_PATH = PLUGIN_ROOT / "shared" / "codemap_adapter.py"
 
@@ -434,31 +433,6 @@ def test_fact_routes_run_doctor_and_exactly_one_compact_query(
     assert len(context.queries) == 1
 
 
-def test_fact_route_without_target_records_bounded_error_after_doctor(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A fact route with no target does not guess or execute a query subprocess."""
-    adapter = _load_adapter()
-    launcher = "/explicit/codemap-py"
-    commands: list[list[str]] = []
-    monkeypatch.setattr(
-        adapter,
-        "_resolve_codemap_executable",
-        lambda: adapter.LauncherResolution(launcher, adapter.STATUS_AVAILABLE, "test launcher"),
-    )
-
-    def _run_json(argv: list[str], timeout: float) -> tuple[int, dict | None, str | None]:
-        """Return only the healthy doctor payload for the targetless fact route."""
-        commands.append(argv)
-        return 0, _HEALTHY_DOCTOR, None
-
-    monkeypatch.setattr(adapter, "_run_json", _run_json)
-
-    context = adapter.gather_structural_context("implementation", query_kind="callers")
-
-    assert context.status == adapter.STATUS_DEGRADED
-    assert commands == [[launcher, "doctor", "--json"]]
-    assert context.queries[0].error == "target required, none supplied"
-
-
 @pytest.mark.parametrize(
     ("query_kind", "target"),
     [
@@ -479,7 +453,10 @@ def test_fact_route_without_target_records_bounded_error_after_doctor(monkeypatc
 def test_fact_routes_degrade_without_query_for_missing_or_malformed_target(
     monkeypatch: pytest.MonkeyPatch, query_kind: str, target: str | None
 ) -> None:
-    """Required compact facts never infer missing, incomplete, or module-only symbol targets."""
+    """Required compact facts never infer missing, incomplete, or module-only symbol targets.
+
+    A fact route with no target does not guess or execute a query subprocess after the doctor check.
+    """
     adapter = _load_adapter()
     launcher = "/explicit/codemap-py"
     commands: list[list[str]] = []
@@ -518,26 +495,28 @@ def test_invalid_query_kind_fails_before_launcher_resolution(monkeypatch: pytest
         adapter.gather_structural_context("implementation", query_kind="not-a-route")
 
 
-def test_gather_context_degraded_when_not_covered_present(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Report `degraded` when a query returns non-exhaustive completeness metadata."""
-    _write_fake_codemap_py(tmp_path, _fake_script(_HEALTHY_DOCTOR, 0, _DEGRADED_QUERY, 0))
+@pytest.mark.parametrize(
+    ("query_payload", "category", "expected_status"),
+    [
+        pytest.param(_DEGRADED_QUERY, "review", "STATUS_DEGRADED", id="not-covered-present"),
+        pytest.param(_STALE_QUERY, "audit", "STATUS_STALE", id="query-reports-stale"),
+    ],
+)
+def test_gather_context_reports_query_completeness_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, query_payload: dict, category: str, expected_status: str
+) -> None:
+    """Report `degraded` for non-exhaustive completeness metadata and `stale` for an index older than source.
+
+    A query returning non-exhaustive completeness metadata degrades the context; a query whose index block flags the
+    index older than source marks it stale.
+    """
+    _write_fake_codemap_py(tmp_path, _fake_script(_HEALTHY_DOCTOR, 0, query_payload, 0))
     monkeypatch.setenv("PATH", str(tmp_path))
     adapter = _load_adapter()
 
-    context = adapter.gather_structural_context("review")
+    context = adapter.gather_structural_context(category)
 
-    assert context.status == adapter.STATUS_DEGRADED
-
-
-def test_gather_context_stale_when_query_reports_stale(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Report `stale` when a query's index block flags the index older than source."""
-    _write_fake_codemap_py(tmp_path, _fake_script(_HEALTHY_DOCTOR, 0, _STALE_QUERY, 0))
-    monkeypatch.setenv("PATH", str(tmp_path))
-    adapter = _load_adapter()
-
-    context = adapter.gather_structural_context("audit")
-
-    assert context.status == adapter.STATUS_STALE
+    assert context.status == getattr(adapter, expected_status)
 
 
 def test_gather_context_composes_stale_and_gap_reported_by_one_query(

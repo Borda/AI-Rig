@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import check_bash_persistence as cbp
+import pytest
 
 
 def _skill(tmp_path: Path, content: str) -> Path:
@@ -44,66 +43,84 @@ class TestExtractBashBlocks:
         assert "A=1" in blocks[0]
         assert "B=2" in blocks[1]
 
-    def test_no_fences_returns_empty(self) -> None:
-        """File with no bash fences returns empty list."""
-        assert cbp.extract_bash_blocks("just prose\n") == []
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("just prose\n", id="no-fences"),
+            pytest.param("```python\nFOO=1\n```\n", id="non-bash-fence"),
+        ],
+    )
+    def test_text_without_bash_fence_returns_empty(self, text: str) -> None:
+        """Text with no bash fence yields no blocks.
 
-    def test_non_bash_fence_ignored(self) -> None:
-        """Python fenced block is not included."""
-        assert cbp.extract_bash_blocks("```python\nFOO=1\n```\n") == []
+        Covers a file with no fences at all and one whose only fence is Python, whose assignment must not be mistaken
+        for shell state.
+        """
+        assert cbp.extract_bash_blocks(text) == []
 
 
 class TestAssignedVars:
     """Covers assigned_vars() variable assignment detection."""
 
-    def test_simple_assignment(self) -> None:
-        """Plain VAR=value is detected."""
-        assert "FOO" in cbp.assigned_vars("FOO=bar\n")
+    @pytest.mark.parametrize(
+        "line",
+        [
+            pytest.param("FOO=bar\n", id="plain"),
+            pytest.param("export FOO=bar\n", id="export-prefix"),
+            pytest.param("local FOO=bar\n", id="local-prefix"),
+            pytest.param("  FOO=bar\n", id="indented"),
+            pytest.param("FOO=$(date)\n", id="command-substitution"),
+        ],
+    )
+    def test_assignment_form_detected(self, line: str) -> None:
+        """Every supported VAR=value form is reported as an assignment of FOO.
 
-    def test_export_prefix(self) -> None:
-        """Export VAR=value is detected."""
-        assert "FOO" in cbp.assigned_vars("export FOO=bar\n")
+        Covers the bare form, the export and local prefixes, indentation, and a value produced by command substitution.
+        """
+        assert "FOO" in cbp.assigned_vars(line)
 
-    def test_local_prefix(self) -> None:
-        """Local VAR=value is detected."""
-        assert "FOO" in cbp.assigned_vars("local FOO=bar\n")
+    @pytest.mark.parametrize(
+        "line",
+        [
+            pytest.param("# FOO=bar\n", id="comment-line"),
+            pytest.param("echo $FOO\n", id="dollar-reference"),
+            pytest.param('[ "$FOO" = "x" ]\n', id="test-expression-reference"),
+        ],
+    )
+    def test_non_assignment_line_yields_no_vars(self, line: str) -> None:
+        """A comment or a bare variable reference is not an assignment.
 
-    def test_comment_line_skipped(self) -> None:
-        """Assignment on a comment line is not detected."""
-        assert cbp.assigned_vars("# FOO=bar\n") == frozenset()
-
-    def test_indented_assignment(self) -> None:
-        """Indented assignment is detected."""
-        assert "FOO" in cbp.assigned_vars("  FOO=bar\n")
-
-    def test_subshell_assignment(self) -> None:
-        """Detect assignments made through command substitution."""
-        assert "FOO" in cbp.assigned_vars("FOO=$(date)\n")
-
-    @pytest.mark.parametrize("line", ["echo $FOO\n", '[ "$FOO" = "x" ]\n'])
-    def test_reference_not_treated_as_assignment(self, line: str) -> None:
-        """Variable reference without = at correct position is not an assignment."""
+        Covers an assignment inside a comment and references whose ``=`` is not in assignment position.
+        """
         assert cbp.assigned_vars(line) == frozenset()
 
 
 class TestReferencedVars:
     """Covers referenced_vars() variable reference detection."""
 
-    def test_dollar_var(self) -> None:
-        """$VAR is detected."""
-        assert "FOO" in cbp.referenced_vars("echo $FOO\n")
+    @pytest.mark.parametrize(
+        "block",
+        [
+            pytest.param("echo $FOO\n", id="dollar"),
+            pytest.param("echo ${FOO}\n", id="braced"),
+            pytest.param("# note $BAR\necho $FOO\n", id="code-line-beside-comment"),
+        ],
+    )
+    def test_reference_form_detected(self, block: str) -> None:
+        """A $VAR or ${VAR} reference on a code line is reported, even beside comment lines."""
+        assert "FOO" in cbp.referenced_vars(block)
 
-    def test_braced_var(self) -> None:
-        """${VAR} is detected."""
-        assert "FOO" in cbp.referenced_vars("echo ${FOO}\n")
-
-    def test_env_var_filtered(self) -> None:
-        """Known env vars like $HOME are not returned."""
-        assert "HOME" not in cbp.referenced_vars("echo $HOME\n")
-
-    def test_single_char_filtered(self) -> None:
-        """Single-char vars like $f are not returned."""
-        assert "f" not in cbp.referenced_vars("for f in *; do echo $f; done\n")
+    @pytest.mark.parametrize(
+        ("block", "var"),
+        [
+            pytest.param("echo $HOME\n", "HOME", id="known-env-var"),
+            pytest.param("for f in *; do echo $f; done\n", "f", id="single-char-var"),
+            pytest.param("# $COMMIT_SENTINEL is gone\n", "COMMIT_SENTINEL", id="full-line-comment"),
+        ],
+    )
+    def test_filtered_reference_not_returned(self, block: str, var: str) -> None:
+        """Known env vars, single-character loop vars and names mentioned only in comments are not references."""
+        assert var not in cbp.referenced_vars(block)
 
     def test_multiple_refs_on_one_line(self) -> None:
         """Multiple $VAR references on one line are all detected."""
@@ -119,16 +136,25 @@ class TestReferencedVars:
 class TestCheckFile:
     """Covers check_file() end-to-end violation detection."""
 
-    def test_clean_single_block(self, tmp_path: Path) -> None:
-        """Single bash block with no cross-block refs passes."""
-        f = _skill(tmp_path, "```bash\nFOO=1\necho $FOO\n```\n")
-        assert cbp.check_file(f) == []
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param("```bash\nFOO=1\necho $FOO\n```\n", id="single-block-with-reference"),
+            pytest.param("```bash\nFOO=1\n```\n", id="single-block-skipped"),
+            pytest.param("```bash\nBAR=x\n```\n```bash\nBAZ=y\necho $BAZ\n```\n", id="assign-and-ref-same-block"),
+            pytest.param(
+                '```bash\necho start\n```\n```bash\n[ "$LOCAL_MODE" = "true" ]\n```\n', id="never-assigned-env-var"
+            ),
+        ],
+    )
+    def test_clean_file_reports_no_findings(self, tmp_path: Path, content: str) -> None:
+        """Files with no cross-block variable loss produce no findings.
 
-    def test_clean_same_block_assign_and_ref(self, tmp_path: Path) -> None:
-        """Assign and reference in same block — not a violation."""
-        content = "```bash\nBAR=x\n```\n```bash\nBAZ=y\necho $BAZ\n```\n"
-        f = _skill(tmp_path, content)
-        assert cbp.check_file(f) == []
+        Covers a single block (with or without a reference, which leaves no cross-block issue possible), a variable
+        assigned and used within the same block, and a variable referenced but never assigned anywhere, which is an
+        environment variable rather than lost state.
+        """
+        assert cbp.check_file(_skill(tmp_path, content)) == []
 
     def test_cross_block_violation_detected(self, tmp_path: Path) -> None:
         """Var assigned in block 1, referenced in block 2 is flagged C41."""
@@ -141,12 +167,6 @@ class TestCheckFile:
         assert "block 1" in findings[0]
         assert "block 2" in findings[0]
 
-    def test_skip_var_assigned_env_var_not_flagged(self, tmp_path: Path) -> None:
-        """LOCAL_MODE referenced but never assigned — not flagged (env var)."""
-        content = '```bash\necho start\n```\n```bash\n[ "$LOCAL_MODE" = "true" ]\n```\n'
-        f = _skill(tmp_path, content)
-        assert cbp.check_file(f) == []
-
     def test_var_assigned_in_block2_referenced_in_block3_flagged(self, tmp_path: Path) -> None:
         """Assign in block 2, reference in block 3 is flagged with correct block numbers."""
         content = "```bash\necho a\n```\n```bash\nTS=$(date)\n```\n```bash\necho $TS\n```\n"
@@ -158,126 +178,123 @@ class TestCheckFile:
         """Missing file returns no findings instead of raising."""
         assert cbp.check_file(tmp_path / "missing.md") == []
 
-    def test_file_with_one_block_skipped(self, tmp_path: Path) -> None:
-        """Single-block files are skipped — no cross-block issue possible."""
-        f = _skill(tmp_path, "```bash\nFOO=1\n```\n")
-        assert cbp.check_file(f) == []
-
-
-class TestReferencedVarsComments:
-    """Covers comment-line skipping in referenced_vars()."""
-
-    def test_full_comment_reference_ignored(self) -> None:
-        """A var named only in a full-line # comment is not a reference."""
-        assert "COMMIT_SENTINEL" not in cbp.referenced_vars("# $COMMIT_SENTINEL is gone\n")
-
-    def test_code_reference_still_detected(self) -> None:
-        """A real reference on a code line survives alongside comment lines."""
-        assert "FOO" in cbp.referenced_vars("# note $BAR\necho $FOO\n")
-
 
 class TestTemplateBlock:
     """Covers is_template_block() placeholder detection (suppression rule 3)."""
 
-    def test_unassigned_placeholder_flags_template(self) -> None:
-        """A never-assigned ${I} loop-counter token marks the block a template."""
-        assert cbp.is_template_block("cp x .../ctx-${I}.md\n", frozenset({"RUN_ID"})) is True
+    @pytest.mark.parametrize(
+        ("block", "assigned"),
+        [
+            pytest.param("cp x .../ctx-${I}.md\n", frozenset({"RUN_ID"}), id="unassigned-loop-counter"),
+            pytest.param('grep "$SQ" rdeps <TARGET_MODULE>\n', frozenset({"SQ"}), id="angle-bracket-placeholder"),
+        ],
+    )
+    def test_placeholder_block_flags_template(self, block: str, assigned: frozenset[str]) -> None:
+        """A block carrying a never-assigned token or an <identifier> placeholder is a template.
 
-    def test_all_tokens_assigned_not_template(self) -> None:
-        """Block whose refs are all assigned somewhere is not a template."""
-        assert cbp.is_template_block("echo ${RUN_ID}\n", frozenset({"RUN_ID"})) is False
+        Covers a ``${I}`` loop-counter token no block assigns and an angle-bracket usage-example placeholder.
+        """
+        assert cbp.is_template_block(block, assigned) is True
 
-    def test_known_env_var_not_placeholder(self) -> None:
-        """A known-safe env var (ARGUMENTS) never assigned is not a placeholder."""
-        assert cbp.is_template_block('echo "$ARGUMENTS"\n', frozenset()) is False
+    @pytest.mark.parametrize(
+        ("block", "assigned"),
+        [
+            pytest.param("echo ${RUN_ID}\n", frozenset({"RUN_ID"}), id="all-tokens-assigned"),
+            pytest.param('echo "$ARGUMENTS"\n', frozenset(), id="known-env-var"),
+            pytest.param("# uses ${I}\necho done\n", frozenset(), id="placeholder-only-in-comment"),
+            pytest.param('sort < "$INFILE"\n', frozenset({"INFILE"}), id="redirection-from-file"),
+            pytest.param('diff <(sort "$A") "$B"\n', frozenset({"A", "B"}), id="process-substitution"),
+        ],
+    )
+    def test_ordinary_block_is_not_template(self, block: str, assigned: frozenset[str]) -> None:
+        """Assigned refs, known env vars, comment-only tokens and real shell redirection do not mark a template.
 
-    def test_comment_placeholder_ignored(self) -> None:
-        """A placeholder token appearing only in a comment does not mark a template."""
-        assert cbp.is_template_block("# uses ${I}\necho done\n", frozenset()) is False
-
-    def test_angle_bracket_placeholder_flags_template(self) -> None:
-        """An <identifier> angle-bracket placeholder marks a usage-example block."""
-        assert cbp.is_template_block('grep "$SQ" rdeps <TARGET_MODULE>\n', frozenset({"SQ"})) is True
-
-    def test_shell_redirection_not_angle_placeholder(self) -> None:
-        """Real shell redirection (`< file`, `<(`, `<<`) is not an angle placeholder."""
-        assert cbp.is_template_block('sort < "$INFILE"\n', frozenset({"INFILE"})) is False
-        assert cbp.is_template_block('diff <(sort "$A") "$B"\n', frozenset({"A", "B"})) is False
+        The redirection cases (`< file`, `<(`) must not be mistaken for an angle-bracket placeholder.
+        """
+        assert cbp.is_template_block(block, assigned) is False
 
 
 class TestReloadsBeforeRef:
     """Covers reloads_before_ref() state-reload detection (suppression rule 1)."""
 
-    def test_eval_reload_before_reference(self) -> None:
-        """Eval "$(...)" before the reference re-derives the value."""
-        assert cbp.reloads_before_ref('eval "$(git_slugs.sh)"\nrm -f "$SENTINEL"\n', "SENTINEL") is True
+    @pytest.mark.parametrize(
+        ("block", "var", "expected"),
+        [
+            pytest.param('eval "$(git_slugs.sh)"\nrm -f "$SENTINEL"\n', "SENTINEL", True, id="eval-reload"),
+            pytest.param('source ./state.sh\necho "$VARX"\n', "VARX", True, id="source-reload"),
+            pytest.param(
+                '. "${TMPDIR:-/tmp}/state-${CSID}"\necho "$VARX"\n', "VARX", True, id="dot-reload-quoted-path"
+            ),
+            pytest.param('echo "$VARX"\neval "$(gen)"\n', "VARX", False, id="reload-after-reference"),
+            pytest.param('echo "$VARX"\n', "VARX", False, id="no-reload"),
+        ],
+    )
+    def test_reload_must_precede_reference(self, block: str, var: str, expected: bool) -> None:
+        """Only an eval, source or dot-source placed before the reference re-derives the value.
 
-    def test_source_reload_before_reference(self) -> None:
-        """Source of a state file before the reference re-derives the value."""
-        assert cbp.reloads_before_ref('source ./state.sh\necho "$VARX"\n', "VARX") is True
-
-    def test_dot_reload_quoted_path(self) -> None:
-        """A quoted dot-source path (.
-
-        "$FILE") is recognized as a reload.
+        A reload appearing after the reference does not rescue it, and a plain reference with no reload is not
+        suppressed.
         """
-        assert cbp.reloads_before_ref('. "${TMPDIR:-/tmp}/state-${CSID}"\necho "$VARX"\n', "VARX") is True
-
-    def test_reload_after_reference_not_suppressed(self) -> None:
-        """A reload appearing after the reference does not rescue it — still lost."""
-        assert cbp.reloads_before_ref('echo "$VARX"\neval "$(gen)"\n', "VARX") is False
-
-    def test_no_reload_returns_false(self) -> None:
-        """A plain reference with no reload command is not suppressed."""
-        assert cbp.reloads_before_ref('echo "$VARX"\n', "VARX") is False
+        assert cbp.reloads_before_ref(block, var) is expected
 
 
 class TestRefsAllDefended:
     """Covers refs_all_defended() empty-var defence detection (suppression rule 2)."""
 
-    def test_strip_assignment_with_guard(self) -> None:
-        """Treat a derived variable with an empty-value guard as defended."""
-        block = '_SKILLS="${_SHARED%/_shared}"\n[ -z "$_SKILLS" ] && _SKILLS="fallback"\n'
-        assert cbp.refs_all_defended(block, "_SHARED") is True
+    @pytest.mark.parametrize(
+        ("block", "var", "expected"),
+        [
+            pytest.param(
+                '_SKILLS="${_SHARED%/_shared}"\n[ -z "$_SKILLS" ] && _SKILLS="fallback"\n',
+                "_SHARED",
+                True,
+                id="strip-assignment-with-guard",
+            ),
+            pytest.param('echo "${OUTDIR:-/tmp}"\n', "OUTDIR", True, id="default-expansion"),
+            pytest.param('echo "$OUTDIR"\n', "OUTDIR", False, id="bare-reference"),
+            pytest.param('X="${A:-y}"\necho "$A"\n', "A", False, id="partial-defence"),
+        ],
+    )
+    def test_refs_all_defended_requires_every_reference_guarded(self, block: str, var: str, expected: bool) -> None:
+        """A variable is defended only when every reference guards against an empty value.
 
-    def test_default_expansion_defended(self) -> None:
-        """A ${VAR:-default} parameter expansion defends against empty."""
-        assert cbp.refs_all_defended('echo "${OUTDIR:-/tmp}"\n', "OUTDIR") is True
-
-    def test_bare_reference_not_defended(self) -> None:
-        """A bare $VAR reference is not defended."""
-        assert cbp.refs_all_defended('echo "$OUTDIR"\n', "OUTDIR") is False
-
-    def test_partial_defence_not_all(self) -> None:
-        """One defended and one bare reference means not all-defended."""
-        block = 'X="${A:-y}"\necho "$A"\n'
-        assert cbp.refs_all_defended(block, "A") is False
+        A guarded strip-assignment and a ``${VAR:-default}`` expansion defend; a bare reference does not, and neither
+        does one defended reference beside a bare one.
+        """
+        assert cbp.refs_all_defended(block, var) is expected
 
 
 class TestSuppressionEndToEnd:
     """Covers check_file() suppression of the three FP classes plus real-loss preservation."""
 
-    def test_reload_suppresses_finding(self, tmp_path: Path) -> None:
-        """Eval reload of a state file in the referencing block suppresses C41."""
-        content = '```bash\nSENTINEL=/tmp/x\n```\n```bash\neval "$(gen_slugs)"\nrm -f "$SENTINEL"\n```\n'
-        assert cbp.check_file(_skill(tmp_path, content)) == []
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param(
+                '```bash\nSENTINEL=/tmp/x\n```\n```bash\neval "$(gen_slugs)"\nrm -f "$SENTINEL"\n```\n',
+                id="state-reload",
+            ),
+            pytest.param(
+                "```bash\nSENTINEL=/tmp/x\n```\n```bash\n# $SENTINEL gone\necho done\n```\n",
+                id="comment-only-reference",
+            ),
+            pytest.param(
+                "```bash\n_SHARED=/a/b/_shared\n```\n"
+                '```bash\n_SKILLS="${_SHARED%/_shared}"\n[ -z "$_SKILLS" ] && _SKILLS="x"\n```\n',
+                id="empty-var-defended",
+            ),
+            pytest.param(
+                "```bash\nRUN_ID=$(date -u +%s)\n```\n```bash\ngit log > state/${RUN_ID}/ctx-${I}.md\n```\n",
+                id="template-placeholder-block",
+            ),
+        ],
+    )
+    def test_false_positive_class_is_suppressed(self, tmp_path: Path, content: str) -> None:
+        """Cross-block references that are not real state loss are not flagged.
 
-    def test_comment_only_reference_suppressed(self, tmp_path: Path) -> None:
-        """A cross-block var named only in a comment is not flagged."""
-        content = "```bash\nSENTINEL=/tmp/x\n```\n```bash\n# $SENTINEL gone\necho done\n```\n"
-        assert cbp.check_file(_skill(tmp_path, content)) == []
-
-    def test_defended_reference_suppressed(self, tmp_path: Path) -> None:
-        """A stripped-and-guarded reference is empty-var-defended, not flagged."""
-        content = (
-            "```bash\n_SHARED=/a/b/_shared\n```\n"
-            '```bash\n_SKILLS="${_SHARED%/_shared}"\n[ -z "$_SKILLS" ] && _SKILLS="x"\n```\n'
-        )
-        assert cbp.check_file(_skill(tmp_path, content)) == []
-
-    def test_template_placeholder_block_suppressed(self, tmp_path: Path) -> None:
-        """A referencing block containing a never-assigned ${I} placeholder is suppressed."""
-        content = "```bash\nRUN_ID=$(date -u +%s)\n```\n```bash\ngit log > state/${RUN_ID}/ctx-${I}.md\n```\n"
+        Covers the three suppression classes (a state-file reload in the referencing block, a variable named only in a
+        comment, an empty-value-guarded reference) plus a block holding a never-assigned ``${I}`` placeholder.
+        """
         assert cbp.check_file(_skill(tmp_path, content)) == []
 
     def test_real_bare_loss_still_flags(self, tmp_path: Path) -> None:
@@ -297,17 +314,17 @@ class TestSuppressionEndToEnd:
 class TestMain:
     """Covers main() CLI integration."""
 
-    def test_clean_file_exits_zero(self, tmp_path: Path) -> None:
-        """All-clean files produce exit code 0."""
-        _skill(tmp_path, "```bash\nFOO=1\necho $FOO\n```\n")
-        rc = cbp.main(["--scan-dir", str(tmp_path)])
-        assert rc == 0
-
-    def test_violation_exits_one(self, tmp_path: Path) -> None:
-        """File with cross-block ref produces exit code 1."""
-        _skill(tmp_path, "```bash\nFOO=1\n```\n```bash\necho $FOO\n```\n")
-        rc = cbp.main(["--scan-dir", str(tmp_path)])
-        assert rc == 1
+    @pytest.mark.parametrize(
+        ("content", "expected"),
+        [
+            pytest.param("```bash\nFOO=1\necho $FOO\n```\n", 0, id="clean-file"),
+            pytest.param("```bash\nFOO=1\n```\n```bash\necho $FOO\n```\n", 1, id="cross-block-violation"),
+        ],
+    )
+    def test_scan_dir_exit_code_mirrors_findings(self, tmp_path: Path, content: str, expected: int) -> None:
+        """A scanned tree exits 0 when clean and 1 when a cross-block reference is found."""
+        _skill(tmp_path, content)
+        assert cbp.main(["--scan-dir", str(tmp_path)]) == expected
 
     def test_explicit_file_arg(self, tmp_path: Path) -> None:
         """Explicit file path argument is checked."""

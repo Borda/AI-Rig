@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 QUESTION_REFERENCE = "rules/codex-user-questions.md"
 SKILLS = sorted((PLUGIN_ROOT / "codex-skills").glob("*/SKILL.md"))

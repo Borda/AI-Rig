@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from shutil import which
 
+#: Matches each run of characters outside ``[a-z0-9]``, which slugification replaces with a hyphen.
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -90,10 +91,10 @@ def _sentinel_path(git: str) -> Path:
     Examples:
         No doctest — requires live git; covered by pytest with monkeypatch.
     """
-    root = subprocess.run(
+    root = subprocess.run(  # noqa: S603 - argv list, no shell
         [git, "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False
     ).stdout.strip()
-    branch = subprocess.run(
+    branch = subprocess.run(  # noqa: S603 - argv list, no shell
         [git, "branch", "--show-current"], capture_output=True, text=True, check=False
     ).stdout.strip()
     # Prefer a per-user temp dir over a world-readable default, but only when the value is

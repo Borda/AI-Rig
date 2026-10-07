@@ -55,7 +55,7 @@ from collect_pr import _github_remote_identity, _head_repository
 
 def _git(*arguments: str, optional: bool = False) -> str:
     """Run a local Git query, allowing absent optional configuration only."""
-    result = subprocess.run(["git", *arguments], capture_output=True, text=True, check=False, timeout=30)
+    result = subprocess.run(["git", *arguments], capture_output=True, text=True, check=False, timeout=30)  # noqa: S603, S607 - argv list, no shell; tool resolved via PATH on purpose
     if optional and result.returncode == 1 and arguments[:2] == ("config", "--get"):
         return ""
     if result.returncode:

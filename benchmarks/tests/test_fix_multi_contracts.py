@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import shutil
 import sys
+from pathlib import Path
 
 import pytest
-
 from _launcher_capability import _pinned_frozen_checkout_is_available
 
 SUITE_PATH = Path(__file__).resolve().parents[1] / "suites" / "tasks-fix-multi.json"
@@ -19,7 +18,6 @@ FROZEN_REPO_COMMIT = "be98784a1a03581b7051a355ae1084fd352d7cea"
 sys.path.insert(0, str(BENCHMARKS))
 
 from _bench_common.edit_patch_contracts import build_fix_multi_contract, run_fix_multi_oracle  # noqa: E402
-
 
 _requires_frozen_repo = pytest.mark.skipif(
     not _pinned_frozen_checkout_is_available(FROZEN_REPO, FROZEN_REPO_COMMIT),
@@ -38,15 +36,6 @@ def _contract(task_id: str) -> object:
     """
     tasks = json.loads(SUITE_PATH.read_text(encoding="utf-8"))
     return build_fix_multi_contract(next(task for task in tasks if task["id"] == task_id))
-
-
-def test_pinned_frozen_checkout_rejects_git_directory_without_head(tmp_path: Path) -> None:
-    """A partial Git directory cannot admit source-dependent contract coverage."""
-    source = tmp_path / "source"
-    (source / ".git").mkdir(parents=True)
-
-    assert source.is_dir()
-    assert _pinned_frozen_checkout_is_available(source, FROZEN_REPO_COMMIT) is False
 
 
 def _copy_contract_sources(repo_path: Path, destination: Path, contract: object) -> None:
@@ -217,7 +206,7 @@ def _complete_model_checkpoint_source(source: str) -> str:
 
 
 @_requires_frozen_repo
-@pytest.mark.parametrize("task_id", ("FM-01", "FM-02", "FM-03"))
+@pytest.mark.parametrize("task_id", ["FM-01", "FM-02", "FM-03"])
 def test_frozen_baseline_fails_every_complete_caller_oracle(task_id: str) -> None:
     """Each task begins from a baseline that cannot accidentally satisfy its new contract."""
     assert run_fix_multi_oracle(FROZEN_REPO, _contract(task_id)) is False

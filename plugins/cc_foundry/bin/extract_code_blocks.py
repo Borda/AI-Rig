@@ -43,6 +43,7 @@ from pathlib import Path
 # Language classification tables
 # ---------------------------------------------------------------------------
 
+#: Fence language tags that mark a block as executable or programming code.
 CODE_MARKERS: frozenset[str] = frozenset(
     {
         # Shell
@@ -112,6 +113,7 @@ CODE_MARKERS: frozenset[str] = frozenset(
     }
 )
 
+#: Fence language tags that mark a block as prose, sample output or logs rather than code.
 NON_CODE_MARKERS: frozenset[str] = frozenset(
     {
         "text",
@@ -132,6 +134,7 @@ NON_CODE_MARKERS: frozenset[str] = frozenset(
     }
 )
 
+#: Maps language tag aliases to one canonical language name, such as ``zsh`` to ``bash``.
 LANG_NORMALIZE: dict[str, str] = {
     "sh": "bash",
     "zsh": "bash",
@@ -154,7 +157,7 @@ LANG_NORMALIZE: dict[str, str] = {
     "ps1": "powershell",
 }
 
-# Lines strongly indicating programming code
+#: Lines strongly indicating programming code
 _CODE_SIGNAL = re.compile(
     r"(?m)"
     r"(?:"
@@ -182,11 +185,13 @@ _CODE_SIGNAL = re.compile(
     r")"
 )
 
+#: Matches a line ending in sentence punctuation, evidence that an untagged block is prose.
 _PROSE_END = re.compile(r"[.,?!]\s*$")
+#: Matches an opening backtick or tilde fence, capturing the fence and its language tag.
 _FENCE_OPEN = re.compile(r"^(`{3,}|~{3,})([\w.+\-]*)")
 
-# Guard against pathological inputs that would exhaust heap memory when read
-# in one shot. 10 MB is well above any realistic Markdown / agent file.
+#: Guard against pathological inputs that would exhaust heap memory when read
+#: in one shot. 10 MB is well above any realistic Markdown / agent file.
 _MAX_FILE_SIZE = 10 * 1024 * 1024
 
 

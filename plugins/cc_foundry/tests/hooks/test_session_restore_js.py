@@ -160,18 +160,20 @@ def test_missing_cwd_is_silent(run_hook) -> None:
 
 
 @_skip_node_unavailable
-def test_other_event_is_silent(run_hook, tmp_path: Path) -> None:
-    _write_handover(tmp_path)
-    result = run_hook(HOOK, _payload(tmp_path, hook_event_name="SessionEnd"))
-    assert result.returncode == 0
-    assert result.stdout == ""
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        pytest.param({"hook_event_name": "SessionEnd"}, id="other-event"),
+        pytest.param({"source": "startup"}, id="other-source"),
+    ],
+)
+def test_other_event_or_source_is_silent(run_hook, tmp_path: Path, overrides: dict) -> None:
+    """A non-SessionStart event or a non-clear source exits 0 with empty stdout.
 
-
-@_skip_node_unavailable
-def test_other_source_is_silent(run_hook, tmp_path: Path) -> None:
-    """Filter in production; the in-code gate is a second line."""
+    Scenario: the matcher filters in production; the in-code gate is a second line.
+    """
     _write_handover(tmp_path)
-    result = run_hook(HOOK, _payload(tmp_path, source="startup"))
+    result = run_hook(HOOK, _payload(tmp_path, **overrides))
     assert result.returncode == 0
     assert result.stdout == ""
 
@@ -187,25 +189,17 @@ def test_absent_source_still_injects(run_hook, tmp_path: Path) -> None:
 
 
 @_skip_node_unavailable
-def test_blank_pointer_is_silent(run_hook, tmp_path: Path) -> None:
-    """Empty the latest-session marker during session recall."""
-    _write_handover(tmp_path, pointer="")
-    result = run_hook(HOOK, _payload(tmp_path))
-    assert result.returncode == 0
-    assert result.stdout == ""
-
-
-@_skip_node_unavailable
-def test_traversal_pointer_is_silent(run_hook, tmp_path: Path) -> None:
-    _write_handover(tmp_path, pointer="../../../etc/passwd")
-    result = run_hook(HOOK, _payload(tmp_path))
-    assert result.returncode == 0
-    assert result.stdout == ""
-
-
-@_skip_node_unavailable
-def test_pointer_to_missing_doc_is_silent(run_hook, tmp_path: Path) -> None:
-    _write_handover(tmp_path, pointer="does-not-exist")
+@pytest.mark.parametrize(
+    "pointer",
+    [
+        pytest.param("", id="blank-pointer"),
+        pytest.param("../../../etc/passwd", id="traversal-pointer"),
+        pytest.param("does-not-exist", id="pointer-to-missing-doc"),
+    ],
+)
+def test_unusable_pointer_is_silent(run_hook, tmp_path: Path, pointer: str) -> None:
+    """An empty latest-session marker, a traversal pointer or a pointer to a missing doc exits 0 silently."""
+    _write_handover(tmp_path, pointer=pointer)
     result = run_hook(HOOK, _payload(tmp_path))
     assert result.returncode == 0
     assert result.stdout == ""
@@ -230,15 +224,23 @@ def test_malformed_stdin_is_silent() -> None:
 
 
 @_skip_node_unavailable
-def test_consumed_doc_is_silent(run_hook, tmp_path: Path) -> None:
-    _write_handover(tmp_path, consumed="true")
-    result = run_hook(HOOK, _payload(tmp_path))
-    assert result.stdout == ""
+@pytest.mark.parametrize(
+    "handover",
+    [
+        pytest.param({"consumed": "true"}, id="consumed-doc"),
+        pytest.param({"created": _iso(minutes_ago=31)}, id="expired-doc"),
+        pytest.param({"created": "whenever"}, id="unparseable-created"),
+        pytest.param({"consumed": "true", "newline": "\r\n"}, id="crlf-doc-consumed"),
+    ],
+)
+def test_gated_doc_is_silent(run_hook, tmp_path: Path, handover: dict) -> None:
+    """A consumed, expired or unparseable-age document is not injected.
 
-
-@_skip_node_unavailable
-def test_expired_doc_is_silent(run_hook, tmp_path: Path) -> None:
-    _write_handover(tmp_path, created=_iso(minutes_ago=31))
+    Scenario: the gates read frontmatter, so a doc already consumed, older than 30 minutes, or with an unparsable
+    `created` stamp injects nothing; a CRLF document must still be rejected when consumed, because CRLF parsing has to
+    read the real flag value, not merely find the key.
+    """
+    _write_handover(tmp_path, **handover)
     result = run_hook(HOOK, _payload(tmp_path))
     assert result.stdout == ""
 
@@ -248,13 +250,6 @@ def test_doc_just_inside_window_injects(run_hook, tmp_path: Path) -> None:
     _write_handover(tmp_path, created=_iso(minutes_ago=29))
     result = run_hook(HOOK, _payload(tmp_path))
     assert "[session] restored" in result.stdout
-
-
-@_skip_node_unavailable
-def test_unparseable_created_is_silent(run_hook, tmp_path: Path) -> None:
-    _write_handover(tmp_path, created="whenever")
-    result = run_hook(HOOK, _payload(tmp_path))
-    assert result.stdout == ""
 
 
 # ── Injection content ─────────────────────────────────────────────────────────
@@ -338,14 +333,6 @@ def test_crlf_doc_injects(run_hook, tmp_path: Path) -> None:
     result = run_hook(HOOK, _payload(tmp_path))
     assert "[session] restored from `plan-x`" in result.stdout
     assert "branch main" in result.stdout
-
-
-@_skip_node_unavailable
-def test_crlf_doc_gates_still_reject_consumed(run_hook, tmp_path: Path) -> None:
-    """CRLF parsing must read the real flag value, not merely find the key."""
-    _write_handover(tmp_path, consumed="true", newline="\r\n")
-    result = run_hook(HOOK, _payload(tmp_path))
-    assert result.stdout == ""
 
 
 @_skip_node_unavailable

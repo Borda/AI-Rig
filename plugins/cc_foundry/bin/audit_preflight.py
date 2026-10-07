@@ -50,6 +50,7 @@ from resolve_skill_subdir import resolve as resolve_subdir
 #: How long a successful tool probe stays valid, in seconds.
 PREFLIGHT_TTL = 4 * 60 * 60
 
+#: Matches a quoted ``--keep "..."`` argument so it can be extracted before flag parsing.
 _KEEP = re.compile(r'--keep\s+"([^"]*)"')
 
 #: Flag token → the state key it sets. `--challenge` is an alias of `--adversarial`.
@@ -63,6 +64,7 @@ FLAGS: dict[str, str] = {
     "--fast": "fast",
 }
 
+#: Names of the boolean audit state flags, in the order they are printed as ``key=value`` pairs.
 STATE_KEYS = ("local-mode", "adversarial", "efficiency", "upgrade", "skip-gate", "fast")
 
 

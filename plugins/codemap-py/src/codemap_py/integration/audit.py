@@ -1,18 +1,20 @@
 """Build the read-only audit report from bounded local evidence."""
 
 from __future__ import annotations
+
 import argparse
-from datetime import date, datetime, timezone
 import json
 import re
+from datetime import date, datetime, timezone
 from pathlib import Path
+
 from codemap_py import __version__, index_paths, runtime_log, scanner
-from .managed_block import PROTOCOL_VERSION, _managed_block_status, _managed_protocol
 
 # Reached through the module, not a bound name: tests patch these on the defining
 # module (monkeypatch.setattr(integration.native, ...)), which a `from .native import`
 # binding here would not see.
 from . import native
+from .managed_block import PROTOCOL_VERSION, _managed_block_status, _managed_protocol
 from .native import (
     _MAX_PROVIDER_IDENTITY_BYTES,
     _MAX_PROVIDER_IDENTITY_FILES,
@@ -21,37 +23,42 @@ from .native import (
     _provider_content_identity,
 )
 from .types import (
-    CONSUMER_MANAGED_FILE,
-    ConsumerTarget,
-    PROVIDER_DIR,
-    PROVIDER_NAME,
-    Runtime,
-    SCHEMA_VERSION,
     _EXIT_OK,
     _EXIT_RUNTIME,
+    CONSUMER_MANAGED_FILE,
+    PROVIDER_DIR,
+    PROVIDER_NAME,
+    SCHEMA_VERSION,
+    ConsumerTarget,
+    Runtime,
     _cli_for,
     _runtimes_of,
     _targets_for_runtime,
 )
 from .util import _MAX_JSON_BYTES, _manifest_for, _sha256_bytes
 
-
+#: Maximum number of JSONL log files the audit reads from one directory before marking evidence truncated.
 _MAX_AUDIT_LOG_FILES = 512
 
 
+#: Maximum number of log records the audit collects from one directory before stopping.
 _MAX_AUDIT_LOG_RECORDS = 20_000
 
 
+#: Largest index file in bytes the audit will inspect (eight times the JSON byte limit).
 _MAX_AUDIT_INDEX_BYTES = 8 * _MAX_JSON_BYTES
 
 
+#: Maximum number of degraded module names listed in the audit report.
 _MAX_AUDIT_DEGRADED_MODULES = 200
 
 
 # Selectors that include each concrete runtime — `BOTH` is a member of both sets.
+#: Runtime selector values that include the Claude runtime.
 _CLAUDE_SELECTORS: tuple[Runtime, ...] = (Runtime.CLAUDE, Runtime.BOTH)
 
 
+#: Runtime selector values that include the Codex runtime.
 _CODEX_SELECTORS: tuple[Runtime, ...] = (Runtime.CODEX, Runtime.BOTH)
 
 

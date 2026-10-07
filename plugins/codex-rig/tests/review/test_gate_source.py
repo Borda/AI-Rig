@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 RUN_GATES = PLUGIN_ROOT / "shared" / "run_gates.py"
 GATE_IDS = ("lint", "format", "types", "tests", "review")
@@ -891,7 +890,7 @@ def _local_gate_inputs(tmp_path: Path, variant: str) -> tuple[Path, Path, Path, 
 @pytest.mark.parametrize("variant", ["tracked", "added", "gitlink"])
 def test_local_mirror_import_bound_gate_preserves_admitted_source(tmp_path: Path, variant: str) -> None:
     """Import exact dirty mirror bytes including added files while excluding unchanged gitlinks."""
-    repository, output, mirror, args = _local_gate_inputs(tmp_path, variant)
+    _repository, output, mirror, args = _local_gate_inputs(tmp_path, variant)
     result = subprocess.run(args, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     check = _gate_check(output, "tests")
@@ -912,7 +911,7 @@ def test_local_mirror_import_bound_gate_preserves_admitted_source(tmp_path: Path
 @pytest.mark.parametrize("mutation", ["during-run", "gitlink-pointer", "unreceipted-root"])
 def test_local_gate_rejects_source_binding_changes(tmp_path: Path, mutation: str) -> None:
     """Local source execution never accepts drift, altered gitlink identity or another checkout."""
-    repository, output, mirror, args = _local_gate_inputs(
+    repository, output, mirror, _args = _local_gate_inputs(
         tmp_path, "gitlink" if mutation == "gitlink-pointer" else "added"
     )
     marker = tmp_path / "executed.txt"
@@ -933,7 +932,7 @@ def test_local_gate_rejects_source_binding_changes(tmp_path: Path, mutation: str
 
 def test_parallel_local_added_source_proof_binds_every_worker(tmp_path: Path) -> None:
     """Actual pytest workers retain the same admitted untracked module and test byte membership."""
-    repository, output, mirror, args = _local_gate_inputs(tmp_path, "added")
+    _repository, output, _mirror, args = _local_gate_inputs(tmp_path, "added")
     index = args.index("--pytest-args-json") + 1
     args[index] = json.dumps(["-q", "-n", "2", "-p", "no:cacheprovider", "-o", "addopts=", "test_localmod.py"])
     result = subprocess.run(args, capture_output=True, text=True, check=False)
@@ -948,7 +947,7 @@ def test_parallel_local_added_source_proof_binds_every_worker(tmp_path: Path) ->
 @pytest.mark.parametrize("mutation", ["changed", "deleted"])
 def test_local_gate_rejects_child_sidecar_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str) -> None:
     """Reject child proof changes during real post-run source capture instead of hashing mixed evidence."""
-    repository, output, mirror, args = _local_gate_inputs(tmp_path, "added")
+    _repository, output, mirror, _args = _local_gate_inputs(tmp_path, "added")
     monkeypatch.syspath_prepend(str(PLUGIN_ROOT / "shared"))
     spec = importlib.util.spec_from_file_location("sidecar_gate_runner", RUN_GATES)
     gates = importlib.util.module_from_spec(spec)

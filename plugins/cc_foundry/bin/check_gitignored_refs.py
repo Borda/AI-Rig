@@ -81,7 +81,7 @@ SELF_PATH = Path(__file__).resolve()
 def repo_root() -> Path:
     """Return the git repository root for the current working directory."""
     output = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
+        ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - git resolved via PATH on purpose
         check=True,
         capture_output=True,
         text=True,
@@ -112,8 +112,8 @@ def resolve_existing_file(token: str, root: Path, source_dir: Path) -> Path | No
 
 def is_ignored(path: Path, root: Path) -> bool:
     """Return True when git ignores ``path`` in this checkout."""
-    result = subprocess.run(
-        ["git", "check-ignore", "-q", "--", str(path)],
+    result = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", "check-ignore", "-q", "--", str(path)],  # noqa: S607 - git resolved via PATH on purpose
         check=False,
         capture_output=True,
         cwd=root,
