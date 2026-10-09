@@ -1341,7 +1341,11 @@ def incremental_scan(root: Path, old_index: dict, coverage_path: Path | None = N
     }
     if not changed and not deleted and not legacy_non_python:
         print("[codemap] Index already up to date.", file=sys.stderr)
-        return old_index
+        # Re-stamp the commit the unchanged content was verified against. Returning the old ``git_sha`` after a commit
+        # that left every staged indexed blob unchanged kept the index "behind HEAD" for the prompt hook,
+        # check-index-currency and the integration audit, so each prompt spawned another no-op refresh until the next
+        # staged edit. ``scanned_at`` stays: the content itself was parsed then.
+        return {**old_index, "git_sha": get_git_sha(root)}
 
     # Freshness tracks documentation too, but only Python sources belong in the module graph.
     # Filtering the carried index also repairs indexes produced by the former parse-all path.
@@ -1522,6 +1526,31 @@ def _refresh_result(args: argparse.Namespace) -> dict[str, str | int | bool | No
     }
 
 
+#: Basename prefix of the prompt hook's refresh record; any other path in the environment is ignored.
+_REFRESH_RECORD_PREFIX = "codemap-refresh-fp-"
+
+
+def _mark_refresh_published() -> None:
+    """Mark the prompt hook's refresh record as published, after this scan's own publish succeeded.
+
+    The hook skips later refreshes only for a record whose fingerprint matches and whose state is ``published``. An
+    index publish alone could not prove that: a refresh that failed ``index_busy`` behind an older scan would see the
+    older scan's publish land after its spawn and wrongly count it. Only the scan the hook spawned writes this line, so
+    a failed or still-running refresh leaves the record ``spawned`` and the next prompt may retry.
+
+    Reads ``CODEMAP_REFRESH_RECORD`` and ``CODEMAP_REFRESH_FINGERPRINT``; absent (raw CLI, self-heal) or a record path
+    whose name lacks the hook's prefix means no write.
+    """
+    record = os.environ.get("CODEMAP_REFRESH_RECORD", "")
+    fingerprint = os.environ.get("CODEMAP_REFRESH_FINGERPRINT", "")
+    if not record or not fingerprint or not Path(record).name.startswith(_REFRESH_RECORD_PREFIX):
+        return
+    try:
+        Path(record).write_text(f"{fingerprint}\n{int(time.time() * 1000)}\npublished", encoding="utf-8")
+    except OSError:
+        pass  # best effort: a missing record only costs the hook one more refresh
+
+
 def _resolve_out_path(root: Path) -> Path:
     """Return the index path to publish for *root*.
 
@@ -1652,6 +1681,7 @@ def _run_scan(invocation: CliInvocation) -> None:
                 if m.get("status") == "degraded":
                     print(f"[codemap]   \u26a0 {m['path']}: {m['reason']}", file=sys.stderr)
         invocation.result = {**_refresh_result(args), "modules_indexed": ok, "degraded": degraded}
+        _mark_refresh_published()
     except rwgate.IndexBusy as exc:
         invocation.result = {"error": "index_busy"}
         _die_gate("index_busy", str(exc))

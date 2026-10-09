@@ -29,7 +29,9 @@ helpers to exercise edge cases such as zero denominators.
 
 Emit rounded aggregate and per-route metrics, including explicit fixture-versus-live observation separation and
 threshold failures. The output also records campaign completeness, route evidence, and confidence details so a high
-score cannot hide missing or substituted live data.
+score cannot hide missing or substituted live data. Negative-control specificity is gated on its own, so false alarms
+on clean cases cannot hide inside aggregate precision and overconfidence means dominated by positive cases. It is gated
+again per observation source, so one source's clean negative controls cannot dilute another source's false alarms.
 
 ## Failure
 
@@ -110,6 +112,28 @@ def _raw_metrics(tp: int, fp: int, fn: int) -> dict[str, float]:
         "precision": precision,
         "f1": f1,
     }
+
+
+def _case_quality(expected: set[str], reported: set[str]) -> dict[str, float]:
+    """Score one observation's reported finding IDs against its case's expected IDs.
+
+    A case that expects no findings is a negative control: reporting nothing is the correct answer, so it scores a
+    perfect 1.0 instead of the 0.0 that the undefined precision and recall ratios would otherwise give. Without this
+    rule every correctly handled negative case counted its whole confidence as overconfidence, so adding clean cases
+    pushed ``mean_overconfidence`` toward its threshold. Aggregate buckets keep ``_raw_metrics``, where an empty bucket
+    still reports 0.0. A spurious report on a negative case still scores 0.0.
+
+    Example:
+        >>> _case_quality(set(), set())["f1"]
+        1.0
+        >>> _case_quality(set(), {"spurious"})["f1"]
+        0.0
+        >>> round(_case_quality({"a", "b"}, {"a"})["f1"], 3)
+        0.667
+    """
+    if not expected and not reported:
+        return {"recall": 1.0, "precision": 1.0, "f1": 1.0}
+    return _raw_metrics(len(expected & reported), len(reported - expected), len(expected - reported))
 
 
 def _is_fixture_source(source: str) -> bool:
@@ -307,6 +331,7 @@ def _load_cases(path: Path) -> tuple[dict[str, dict[str, Any]], dict[str, float]
         "min_precision": float(thresholds_raw.get("min_precision", 0.0)),
         "max_confidence_mae": float(thresholds_raw.get("max_confidence_mae", 1.0)),
         "max_mean_overconfidence": float(thresholds_raw.get("max_mean_overconfidence", 1.0)),
+        "min_negative_specificity": float(thresholds_raw.get("min_negative_specificity", 0.0)),
     }
     return cases, thresholds
 
@@ -499,15 +524,23 @@ def _score(
         tp = len(expected & reported)
         fp = len(reported - expected)
         fn = len(expected - reported)
-        case_metrics_raw = _raw_metrics(tp, fp, fn)
-        case_metrics = _metrics(tp, fp, fn)
+        case_metrics_raw = _case_quality(expected, reported)
+        case_metrics = {name: _round3(value) for name, value in case_metrics_raw.items()}
         case_f1 = case_metrics_raw["f1"]
         confidence_error = abs(confidence - case_f1)
         overconfidence = max(confidence - case_f1, 0.0)
+        observation_counts = {
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+            "observations": 1,
+            "negatives": int(not expected),
+            "negatives_clean": int(not expected and not reported),
+        }
 
-        total_counts.update({"tp": tp, "fp": fp, "fn": fn, "observations": 1})
-        by_target_counts[target].update({"tp": tp, "fp": fp, "fn": fn, "observations": 1})
-        by_source_counts[source].update({"tp": tp, "fp": fp, "fn": fn, "observations": 1})
+        total_counts.update(observation_counts)
+        by_target_counts[target].update(observation_counts)
+        by_source_counts[source].update(observation_counts)
         total_conf_errors.append(confidence_error)
         total_overconfidence.append(overconfidence)
         by_target_conf_errors[target].append(confidence_error)
@@ -548,12 +581,12 @@ def _score(
         )
         for target, counts in sorted(by_target_counts.items())
     }
-    by_source = {
-        source: _round_summary(
-            _summarize_counts_raw(counts, by_source_conf_errors[source], by_source_overconfidence[source])
-        )
+    by_source_raw = {
+        source: _summarize_counts_raw(counts, by_source_conf_errors[source], by_source_overconfidence[source])
         for source, counts in sorted(by_source_counts.items())
     }
+    by_source = {source: _round_summary(summary) for source, summary in by_source_raw.items()}
+    specificity_failing_sources = _source_specificity_failures(by_source_raw, thresholds)
     fixture_observations = sum(count for source, count in sources.items() if _is_fixture_source(source))
     live_observations = sum(count for source, count in sources.items() if _is_live_source(source))
     freshness = _summarize_freshness(observed_timestamps, missing_observed_at, fixture_observations, live_observations)
@@ -561,6 +594,8 @@ def _score(
 
     missing_case_ids = sorted(set(cases) - observed_case_ids)
     checks_failed = _threshold_failures(overall_raw, thresholds)
+    if specificity_failing_sources:
+        checks_failed.append("behavioral-source-negative-specificity")
     if missing_case_ids:
         checks_failed.append("behavioral-case-coverage")
     if live_routes["status"] == "fail":
@@ -570,6 +605,9 @@ def _score(
     notes = [
         "The scorer measures supplied observations; live Codex behavior is measured only when observations come from live calibration runs.",
         "fixture-selftest observations validate the scoring contract but are not evidence of current live model quality.",
+        "A case that expects no findings scores 1.0 when nothing is reported, so a correct clean answer adds no overconfidence.",
+        "negative_specificity is the share of negative-control observations answered with no finding; it gates false alarms on clean cases, which the aggregate precision and overconfidence means dilute.",
+        "negative_specificity is also gated per observation source, so a source's false alarms cannot hide behind another source's clean negative controls.",
     ]
     if live_observations == 0:
         notes.append(
@@ -585,6 +623,7 @@ def _score(
         "gate_metrics_raw": overall_raw,
         "by_target": by_target,
         "by_source": by_source,
+        "negative_specificity_failing_sources": specificity_failing_sources,
         "case_results": case_results,
         "missing_case_ids": missing_case_ids,
         "observation_sources": dict(sorted(sources.items())),
@@ -612,7 +651,48 @@ def _summarize_counts_raw(
         "confidence_mae": confidence_mae,
         "confidence_accuracy": max(0.0, 1.0 - confidence_mae),
         "mean_overconfidence": mean_overconfidence,
+        "negative_observations": counts["negatives"],
+        "negative_specificity": _negative_specificity(counts["negatives"], counts["negatives_clean"]),
     }
+
+
+def _negative_specificity(negatives: int, clean: int) -> float:
+    """Return the share of negative-control observations answered with no reported finding.
+
+    A negative control expects no findings, so a spurious report on it is a false alarm. Aggregate precision and
+    mean overconfidence average those false alarms over every observation; with dozens of positive cases, even a
+    reporter that flags every clean case can stay inside both thresholds. This ratio isolates the negative class.
+    A bucket with no negative controls has nothing to falsely flag and reports 1.0.
+
+    Example:
+        >>> _negative_specificity(55, 55)
+        1.0
+        >>> _negative_specificity(55, 0)
+        0.0
+        >>> _negative_specificity(0, 0)
+        1.0
+    """
+    if negatives == 0:
+        return 1.0
+    return clean / negatives
+
+
+def _source_specificity_failures(by_source_raw: dict[str, dict[str, Any]], thresholds: dict[str, float]) -> list[str]:
+    """Return the observation sources whose own negative-control specificity falls below the shared threshold.
+
+    The aggregate ratio pools every source, so dozens of clean fixture negative controls let a new source that flags
+    every clean case it sees still pass the aggregate gate. Gating each source on the same unrounded threshold keeps
+    one source's false alarms visible; a source with no negative controls reports 1.0 and never fails here.
+
+    Example:
+        >>> _source_specificity_failures(
+        ...     {"fixture-selftest": {"negative_specificity": 1.0}, "partial-run": {"negative_specificity": 0.0}},
+        ...     {"min_negative_specificity": 0.9},
+        ... )
+        ['partial-run']
+    """
+    threshold = thresholds["min_negative_specificity"]
+    return sorted(source for source, summary in by_source_raw.items() if summary["negative_specificity"] < threshold)
 
 
 def _round_summary(summary: dict[str, Any]) -> dict[str, Any]:
@@ -801,6 +881,7 @@ def _threshold_failures(overall: dict[str, Any], thresholds: dict[str, float]) -
         ...         "precision": 1.0,
         ...         "confidence_mae": 0.0,
         ...         "mean_overconfidence": 0.0,
+        ...         "negative_specificity": 0.8,
         ...     },
         ...     {
         ...         "min_observations": 16.0,
@@ -808,9 +889,10 @@ def _threshold_failures(overall: dict[str, Any], thresholds: dict[str, float]) -
         ...         "min_precision": 0.75,
         ...         "max_confidence_mae": 0.2,
         ...         "max_mean_overconfidence": 0.15,
+        ...         "min_negative_specificity": 0.9,
         ...     },
         ... )
-        ['behavioral-recall']
+        ['behavioral-recall', 'behavioral-negative-specificity']
     """
     failures: list[str] = []
     if overall["observations"] < thresholds["min_observations"]:
@@ -823,6 +905,8 @@ def _threshold_failures(overall: dict[str, Any], thresholds: dict[str, float]) -
         failures.append("behavioral-confidence-mae")
     if overall["mean_overconfidence"] > thresholds["max_mean_overconfidence"]:
         failures.append("behavioral-overconfidence")
+    if overall["negative_specificity"] < thresholds["min_negative_specificity"]:
+        failures.append("behavioral-negative-specificity")
     return failures
 
 

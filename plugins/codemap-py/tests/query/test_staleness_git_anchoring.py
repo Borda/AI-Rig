@@ -264,6 +264,34 @@ class TestGitRootAnchoring:
         assert data["index"]["stale"] is True
 
 
+class TestNonAsciiPathParity:
+    """A committed non-ASCII module reads as fresh, because reader and writer both take git paths NUL-separated.
+
+    The scanner records ``file_shas`` from ``git ls-files -s -z``. The query side read the default listing, which
+    C-quotes a non-ASCII path, so the recorded key never matched: the file read as deleted plus added, every query self-
+    healed, and the index stayed stale on a clean tree however often it was rebuilt.
+    """
+
+    def test_clean_tree_with_non_ascii_module_is_not_stale(self, tmp_path: Path, scan_index: Path, scan_query: Path):
+        """A fresh index over a committed ``pkg/modé.py`` reports ``stale: false`` with self-heal disabled."""
+        root = tmp_path / "quoted"
+        (root / "pkg").mkdir(parents=True)
+        (root / "pkg" / "__init__.py").write_text("")
+        (root / "pkg" / "modé.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+        _git(root, "init", "-q")
+        _git(root, "config", "core.quotePath", "true")
+        _git(root, "config", "user.email", "t@t.t")
+        _git(root, "config", "user.name", "t")
+        _git(root, "add", "-A")
+        _git(root, "commit", "-q", "-m", "init")
+        _scan(scan_index, root)
+        index_path = root / ".cache" / "codemap" / f"{root.name}.json"
+
+        data = _query_from(scan_query, root, index_path, "deps", "pkg", frozen=True)
+
+        assert data["index"]["stale"] is False
+
+
 class TestFileShaMemoization:
     """The tracked-blob read costs one git subprocess per invocation, not one per consumer."""
 
@@ -284,7 +312,11 @@ class TestFileShaMemoization:
         assert len(calls) == 1
 
     def test_memoized_call_is_the_anchored_ls_files(self, reset_query_caches, monkeypatch) -> None:
-        """The single subprocess is the root-anchored ``git ls-files -s`` read."""
+        """The single subprocess is the root-anchored ``git ls-files -s -z`` read.
+
+        ``-z`` matches the scanner's writer: the default listing C-quotes a non-ASCII path, which then matched no key
+        the writer recorded and kept the index stale forever.
+        """
         seen: dict[str, object] = {}
 
         def _fake_check_output(cmd, **kwargs):
@@ -296,7 +328,7 @@ class TestFileShaMemoization:
         monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: Path("/repo"))
         monkeypatch.setattr(query.subprocess, "check_output", _fake_check_output)
         query._get_current_file_shas()
-        assert seen["cmd"][:4] == ["git", "ls-files", "-s", "--"]
+        assert seen["cmd"][:5] == ["git", "ls-files", "-s", "-z", "--"]
         assert seen["cwd"] == str(Path("/repo"))
 
 

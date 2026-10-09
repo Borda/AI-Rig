@@ -182,6 +182,155 @@ def test_bash_search_logged_with_command_target(tmp_path: Path, command: str) ->
     assert records[0]["target"] == command
 
 
+@pytest.fixture(name="search_tree")
+def _search_tree(tmp_path: Path) -> Path:
+    """Create ``a.py`` and ``src/mod.py`` under *tmp_path* so Bash operands have something to stat."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "mod.py").write_text("import pkg.mod\n")
+    (tmp_path / "a.py").write_text("x = 1\n")
+    return tmp_path
+
+
+def _bash_record(command: str, cwd: Path, payload_cwd: Path | None = None) -> dict:
+    """Run one Bash search through the hook and return its single record."""
+    payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(payload_cwd or cwd)}
+    result = _run(payload, cwd)
+    assert result.returncode == 0, result.stderr
+    (record,) = _read_records(cwd)
+    return record
+
+
+class TestBashSearchScope:
+    """Sessions without a Grep tool search through Bash, so the producer observes Bash search scope too.
+
+    Only a standalone grep/rg command with established operands gets a file or directory scope; pipelines, lists,
+    expansions and unknown options stay ``unknown`` rather than guessed.
+    """
+
+    @pytest.mark.parametrize(
+        ("command", "search_path", "scope"),
+        [
+            pytest.param("rg -n foo src/", "src/", "directory", id="rg-directory"),
+            pytest.param("grep -n x a.py", "a.py", "file", id="grep-file"),
+            pytest.param("grep -rn x src", "src", "directory", id="grep-recursive-directory"),
+            pytest.param("rg -n foo", "<cwd>", "directory", id="rg-defaults-to-cwd"),
+            pytest.param("rg -n foo src/ 2>/dev/null", "src/", "directory", id="discarded-stderr"),
+            pytest.param("rg -n 'a|b' a.py src", f"a.py{os.pathsep}src", "directory", id="quoted-pipe-two-operands"),
+            pytest.param("grep -n x a.py src/mod.py", f"a.py{os.pathsep}src/mod.py", "file", id="two-files"),
+            pytest.param("grep -n x src", "src", "unknown", id="grep-skips-directory-without-recursion"),
+            pytest.param("rg -n foo missing/", "missing/", "unknown", id="missing-operand"),
+            pytest.param("grep -rn '(' src", "src", "directory", id="quoted-operator-only-pattern"),
+            pytest.param("rg -n 'a;b' src", "src", "directory", id="quoted-semicolon-pattern"),
+            pytest.param(r"grep -n a\|b a.py", "a.py", "file", id="escaped-pipe-pattern"),
+            pytest.param("grep -hn x a.py", "a.py", "file", id="grep-h-is-no-filename"),
+        ],
+    )
+    def test_standalone_search_records_observed_scope(
+        self, search_tree: Path, command: str, search_path: str, scope: str
+    ) -> None:
+        """Operands are stat-ed at hook time: files are ``file``, a directory the tool descends into is
+        ``directory``."""
+        record = _bash_record(command, search_tree)
+
+        assert record["search_path"] == (str(search_tree) if search_path == "<cwd>" else search_path)
+        assert record["search_scope"] == scope
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("rg -n foo src | head", id="pipeline"),
+            pytest.param("git show HEAD:a.py | grep foo", id="search-reads-stdin"),
+            pytest.param("cd src && rg foo", id="command-list"),
+            pytest.param("grep foo", id="grep-reads-stdin"),
+            pytest.param("rg foo $DIR", id="variable-operand"),
+            pytest.param("rg foo src/*.py", id="glob-operand"),
+            pytest.param("rg --not-a-real-flag foo src", id="unknown-long-option"),
+            pytest.param("rg foo 'src", id="unbalanced-quote"),
+            pytest.param("rg foo src > out.txt", id="output-redirection"),
+            pytest.param("rg foo src\nrg bar a.py", id="two-lines"),
+            pytest.param("rg -h foo src", id="rg-short-help"),
+            pytest.param("rg -V", id="rg-version"),
+            pytest.param("grep -V", id="grep-version"),
+        ],
+    )
+    def test_ambiguous_command_stays_unknown(self, search_tree: Path, command: str) -> None:
+        """Anything that is not one simple search with literal operands records ``unknown`` and no path."""
+        record = _bash_record(command, search_tree)
+
+        assert record["search_scope"] == "unknown"
+        assert "search_path" not in record
+
+    def test_relative_operand_resolves_against_event_cwd(self, search_tree: Path) -> None:
+        """The host event's ``cwd`` (where the Bash tool ran) anchors relative operands, not the hook's own cwd."""
+        record = _bash_record("grep -n x mod.py", search_tree, payload_cwd=search_tree / "src")
+
+        assert record["search_scope"] == "file"
+
+    def test_quoted_native_absolute_path_is_observed(self, search_tree: Path) -> None:
+        """A double-quoted host-native absolute path, backslashes included on Windows, stays one stat-able operand."""
+        target = search_tree / "src" / "mod.py"
+
+        record = _bash_record(f'grep -n x "{target}"', search_tree)
+
+        assert record["search_path"] == str(target)
+        assert record["search_scope"] == "file"
+
+    @pytest.mark.parametrize(
+        ("command", "operands"),
+        [
+            pytest.param(r'grep -n x "C:\proj\a.py"', ("C:\\proj\\a.py",), id="double-quoted-windows-path"),
+            pytest.param(r"rg foo 'C:\proj\src'", ("C:\\proj\\src",), id="single-quoted-windows-path"),
+            pytest.param("rg foo C:/proj/src", ("C:/proj/src",), id="forward-slash-windows-path"),
+            pytest.param(r'"C:\tools\rg.exe" foo src', ("src",), id="windows-executable-path"),
+            pytest.param(r"rg foo C:\proj\src", ("C:projsrc",), id="unquoted-backslashes-follow-bash"),
+        ],
+    )
+    def test_windows_shaped_operands_follow_posix_shell_quoting(self, command: str, operands: tuple[str, ...]) -> None:
+        """The Bash tool is a POSIX shell on every host (Git Bash on Windows), so quoting decides what reaches grep/rg.
+
+        A quoted Windows path keeps its backslashes; an unquoted one loses them exactly as bash would remove them.
+        """
+        assert _MODULE.bash_search_operands(command).operands == operands
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("command", "kind"),
+    [
+        pytest.param("rg -n pkg.mod pkg", "structural_search", id="directory-search"),
+        pytest.param("grep -n pkg.mod pkg/mod.py", "source_read", id="single-file-search"),
+        pytest.param("rg -n pkg.mod pkg | head", "unknown", id="pipeline-stays-unknown"),
+    ],
+)
+def test_bash_search_scope_survives_hook_to_join(tmp_path: Path, command: str, kind: str) -> None:
+    """A real Bash hook record is classified by its observed scope, so tree searches finally reach the structural count.
+
+    The pipeline case keeps the target-spelling fallback: ``rg`` recurses, so its unverified scope stays ``unknown``.
+    """
+    source = tmp_path / "pkg" / "mod.py"
+    source.parent.mkdir()
+    source.write_text("import pkg.mod\n")
+    payload = {
+        "tool_name": "Bash",
+        "session_id": "bash-scope",
+        "tool_input": {"command": command},
+        "cwd": str(tmp_path),
+    }
+    assert _run(payload, tmp_path).returncode == 0
+    (record,) = _read_records(tmp_path)
+    answer = record | {
+        "layer": "cli",
+        "cmd": "rdeps",
+        "exit_code": 0,
+        "result": {"module": "pkg.mod", "index": {"query_complete": True}},
+    }
+
+    summary = json.loads(ja.render_json(ja.summarize(ja.parse_cli_records([answer]), ja.parse_tool_records([record]))))
+
+    assert summary["events"][0]["kind"] == kind
+    assert summary["structural_search_count"] == int(kind == "structural_search")
+
+
 def test_records_carry_plugin_version(tmp_path: Path) -> None:
     """Every record stamps the plugin version `v` for before/after release comparison."""
     _run({"tool_name": "Read", "tool_input": {"file_path": "/a/b.py"}}, tmp_path)

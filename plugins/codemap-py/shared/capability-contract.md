@@ -67,7 +67,7 @@ Consumers may skip re-querying **only** when completeness is exhaustive/`query_c
 
 Complete-query paths are caller-repo-relative, never Skill-relative; do not re-query/read/grep merely to re-derive the complete structural fact. An edit may still need source and its named test/oracle to establish runtime behavior.
 
-**Exit codes**: `0` success incl. valid empty result (e.g. `path` → null with `reason: "no-import-path"`); `1` index/runtime failure; `2` bad subcommand/flag; `3` requested module/symbol not indexed; a query requiring a newer index generation than what's on disk exits with a "requires vN+ index" message (upgrade path: re-run auto-build or `scan-codebase`).
+**Exit codes**: `0` success incl. valid empty result (e.g. `path` → null with `reason: "no-import-path"`); `1` index/runtime failure; `2` bad subcommand/flag; `3` requested module/symbol not indexed; a query requiring a newer index generation than what's on disk exits with a "requires vN+ index" message (upgrade path: re-run auto-build or `scan-codebase`). Every target-resolution failure (target not found or not indexed, module where a function is required, name resolving to `candidates`) carries `rejected_target` in its JSON error, so it is told apart from an exit-1 index/runtime failure by that key, not by message text.
 
 **Completeness metadata**: full shared vocabulary above applies; this is the primary skill where `query_complete`/`exhaustive`, `not_covered`, `degraded`, and `confidence` are consumed.
 
@@ -112,7 +112,7 @@ Complete-query paths are caller-repo-relative, never Skill-relative; do not re-q
 
 **Exit codes**: `0` rename applied and verified (or dry-run report written); `1` index missing/ staleness abort, symbol not found, or scan-index re-verify failure; `2` invalid subcommand/flag or conflicting flags (`--deprecate` + `--remove-if-no-callers`); `3` zero matches for the target symbol/module (distinct from a valid "renamed with zero callers" outcome, which is `0`).
 
-**Completeness metadata**: gates every mutating action on the index's `exhaustive`/`stale` state — `--remove-if-no-callers` refuses to fire unless the caller count is both `0` and exhaustive; a non-exhaustive rename proceeds but the summary must carry the non-exhaustive caveat.
+**Completeness metadata**: gates every mutating action on the index's `exhaustive`/`stale` state — `--remove-if-no-callers` refuses to fire unless the caller count is both `0` and exhaustive, and refuses a zero-caller answer carrying a method/constructor `hint` (instance calls, overrides, subclass constructors, and implicit protocol (dunder) calls are never resolved statically, so zero static callers is not evidence of none); a non-exhaustive rename proceeds but the summary must carry the non-exhaustive caveat.
 
 **Caveats** (static-analysis hard limits — not fixable by this skill, must be surfaced, never silently missed):
 
@@ -141,7 +141,7 @@ Complete-query paths are caller-repo-relative, never Skill-relative; do not re-q
 
 ## Skill: `debrief-coding`
 
-**Purpose**: read-only diagnostic/usage report over local codemap telemetry (`.cache/codemap/logs/` JSONL) — subcommand distribution, timing (queries and index refreshes separately), static blind-spot slugs, error patterns, skill-invocation counts, session timelines, and the module-overlap proxy with its `structural_search` subset (a shape match, not a guard-chain leak rate) across legacy flat and recursive runtime shards. Missing Grep/Glob scope remains `unknown`, never presumed recursive; new records retain search path and producer-observed file/directory scope. Recursive-looking Bash searches outside own-file inspection also stay `unknown`: truncated command spelling cannot establish directory scope.
+**Purpose**: read-only diagnostic/usage report over local codemap telemetry (`.cache/codemap/logs/` JSONL) — subcommand distribution, timing (queries and index refreshes separately), static blind-spot slugs, error patterns, skill-invocation counts, session timelines, and the module-overlap proxy with its `structural_search` subset (a shape match, not a guard-chain leak rate) across legacy flat and recursive runtime shards. Missing Grep/Glob scope remains `unknown`, never presumed recursive; new records retain search path and producer-observed file/directory scope. Standalone Bash `grep`/`rg` searches get the same producer-observed scope from the full command; pipelines and other ambiguous commands do not, and their recursive-looking searches outside own-file inspection stay `unknown`: truncated command spelling cannot establish directory scope.
 
 **Inputs**: `[--since <YYYY-MM-DD>] [--session <id>] [--anonymize] [--output <path>]`.
 

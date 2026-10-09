@@ -187,7 +187,7 @@ def test_pr_preparation_parallelism_stops_at_verified_merge_barrier() -> None:
 
 
 def test_scope_selection_question_keeps_options_with_visible_context() -> None:
-    """Require full visible context before one native control or a complete prose fallback."""
+    """Require the complete terminal table before one native control or a complete prose fallback."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     scope_contract = skill.split("### Terminal Scope Context Contract", maxsplit=1)[1].split(
         "Record in `<run-directory>/resolution-scope.md`", maxsplit=1
@@ -195,7 +195,7 @@ def test_scope_selection_question_keeps_options_with_visible_context() -> None:
 
     assert scope_contract.count("Which findings should I remediate?") == 1
     assert "Choose the delivery route before emitting the scope context" in scope_contract
-    assert "complete `resolution-scope.md` content" in scope_contract
+    assert "only the terminal scope context defined above" in scope_contract
     assert "let the control own the question and complete accepted syntax" in scope_contract
     assert "one final response containing the context, report link, and question" in scope_contract
     assert "Do not repeat the question/options in both prose and a native control" in scope_contract
@@ -274,3 +274,24 @@ def test_scope_validation_preserves_obligation_groups() -> None:
     assert "severity group selects every selectable matching severity" in validation
     assert "critical/high/medium" not in validation
     assert "selectable low items" not in validation
+
+
+def test_terminal_selection_omits_item_details_but_preserves_saved_evidence() -> None:
+    """Keep selection compact without dropping table rows, relevance counts or durable evidence."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    context = skill.split("### Terminal Scope Context Contract", 1)[1].split("### Upfront Decision Packet", 1)[0]
+    assert "Stop the terminal display after the table, then append `## PR Relevance Summary`" in context
+    assert "Do not print the `###` item groups" in context
+    assert "`Context`, `Done when`, `Evidence` or `Related mentions`" in context
+    assert "Keep these details in the saved scope document and full report" in context
+    assert "omit this section when the inventory has no PR relevance data" in context
+    assert "print only the terminal scope context defined above" in context
+    assert "immediately after the table and optional PR Relevance Summary" in context
+    assert "use the complete `resolution-scope.md` content" not in context
+    for field in (
+        "connected open items total",
+        "connected selectable items total",
+        "connected required followup total",
+        "connected items marked out of scope",
+    ):
+        assert field in context

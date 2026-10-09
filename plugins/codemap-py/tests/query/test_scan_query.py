@@ -18,6 +18,7 @@ import argparse
 import ast
 import json
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -805,6 +806,542 @@ class TestFunctionCallGraph:
         assert len(blast) >= 1
         callers = {e["caller"] for e in blast}
         assert any("func_beta" in t for t in callers)
+
+
+#: Project exercising constructor edges, qname normalization and instance-dispatch gaps.
+#: ``convert`` is defined twice (ambiguous bare name); ``unique_helper`` once (unique bare name).
+#: ``Meter.ratio`` is a property only ever read as ``meter.ratio``, never called.
+#: ``Bag.__len__``/``Bag.__eq__`` are reached only implicitly, through ``len(left)`` and ``left == right``.
+#: ``TestMeter.test_scale_is_kept`` and the unittest-style ``MeterChecks.test_ratio_is_read`` are reached only by the
+#: test runner; ``TestMeter.meter_scale`` is a never-called helper in that test module, and ``Link.test_connection`` a
+#: production method that merely carries a test-like name.
+_RESOLUTION_PROJECT_FILES = {
+    "shapes/__init__.py": "",
+    "shapes/bag.py": (
+        "class Bag:\n"
+        "    def __len__(self):\n"
+        "        return 0\n"
+        "\n"
+        "    def __eq__(self, other):\n"
+        "        return True\n"
+        "\n"
+        "\n"
+        "def size_and_match(left, right):\n"
+        "    return len(left), left == right\n"
+    ),
+    "shapes/core.py": (
+        "class Meter:\n"
+        "    def __init__(self, scale):\n"
+        "        self.scale = scale\n"
+        "\n"
+        "    def update(self, value):\n"
+        "        return value * self.scale\n"
+        "\n"
+        "    @property\n"
+        "    def ratio(self):\n"
+        "        return self.scale\n"
+        "\n"
+        "\n"
+        "class Wrapper:\n"
+        "    def __init__(self):\n"
+        "        self.meter = Meter(1)\n"
+        "\n"
+        "    def run(self):\n"
+        "        return self.meter\n"
+        "\n"
+        "\n"
+        "def convert(value):\n"
+        "    return value\n"
+        "\n"
+        "\n"
+        "def build():\n"
+        "    return Meter(2)\n"
+        "\n"
+        "\n"
+        "def make_wrapper():\n"
+        "    return Wrapper()\n"
+    ),
+    "shapes/other.py": "def convert(value):\n    return str(value)\n",
+    "app.py": (
+        "from shapes.core import Meter, convert\n"
+        "\n"
+        "\n"
+        "def run():\n"
+        "    meter = Meter(3)\n"
+        "    meter.update(1)\n"
+        "    return convert(meter), meter.ratio\n"
+        "\n"
+        "\n"
+        "def unique_helper():\n"
+        "    return run()\n"
+    ),
+    "tests/test_app.py": (
+        "from app import unique_helper\n"
+        "\n"
+        "\n"
+        "class Probe:\n"
+        "    def check(self):\n"
+        "        return True\n"
+        "\n"
+        "\n"
+        "def test_unique_helper():\n"
+        "    assert unique_helper() is not None\n"
+        "\n"
+        "\n"
+        "def test_probe():\n"
+        "    assert Probe.check(Probe())\n"
+        "\n"
+        "\n"
+        "class TestMeter:\n"
+        "    def test_scale_is_kept(self):\n"
+        "        assert True\n"
+        "\n"
+        "    def meter_scale(self):\n"
+        "        return 1\n"
+        "\n"
+        "\n"
+        "class MeterChecks:\n"
+        "    def test_ratio_is_read(self):\n"
+        "        assert True\n"
+    ),
+    "shapes/link.py": "class Link:\n    def test_connection(self):\n        return True\n",
+    # A module whose last segment equals the unique function ``build`` in shapes.core.
+    "tools/build.py": "def run_build():\n    return 1\n",
+}
+
+
+@pytest.fixture(name="resolution_project", scope="module")
+def _resolution_project(tmp_path_factory, scan_index) -> tuple[Path, Path]:
+    """Scan the constructor/normalization project once; return ``(root, index_path)``."""
+    root = tmp_path_factory.mktemp("resolution")
+    for rel, content in _RESOLUTION_PROJECT_FILES.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(content)
+    result = subprocess.run(
+        [sys.executable, str(scan_index), "--root", str(root)],
+        capture_output=True,
+        text=True,
+        cwd=str(root),
+    )
+    assert result.returncode == 0, result.stderr
+    return root, root / ".cache" / "codemap" / f"{root.name}.json"
+
+
+@pytest.fixture(name="resolve_query", scope="module")
+def _resolve_query(resolution_project, scan_query):
+    """Return a callable running scan-query on the resolution project as ``(exit_code, payload)``."""
+    root, index_path = resolution_project
+
+    def _run(*args: str) -> tuple[int, dict]:
+        """Run one query subprocess and decode its JSON stdout, success or error."""
+        result = subprocess.run(
+            [sys.executable, str(scan_query), "--index", str(index_path), *args],
+            capture_output=True,
+            text=True,
+            cwd=str(root),
+        )
+        return result.returncode, json.loads(result.stdout)
+
+    return _run
+
+
+class TestConstructorCallers:
+    """Callers of ``Class()`` count as callers of ``Class.__init__``.
+
+    The scanner records ``Meter(3)`` as an edge to ``shapes.core::Meter``, never to ``Meter.__init__``; without the
+    union every constructor query reported zero callers while claiming a complete answer.
+    """
+
+    def test_fn_rdeps_on_init_reports_class_constructor_callers(self, resolve_query):
+        """Fn-rdeps on ``Meter.__init__`` lists every function that instantiates ``Meter``.
+
+        Three call sites construct ``Meter``: ``build``, ``Wrapper.__init__`` and ``app.run``. All of them must appear,
+        and the payload flags that constructor edges were merged in.
+        """
+        _, data = resolve_query("fn-rdeps", "shapes.core::Meter.__init__")
+        assert sorted(e["caller"] for e in data["called_by"]) == [
+            "app::run",
+            "shapes.core::Wrapper.__init__",
+            "shapes.core::build",
+        ]
+        assert data["count"] == 3
+        assert data["constructor_callers_merged"] is True
+
+    def test_fn_rdeps_on_init_excludes_test_callers_after_merge(self, resolve_query):
+        """``--exclude-tests`` still applies to callers reached through the class edge."""
+        _, data = resolve_query("fn-rdeps", "shapes.core::Meter.__init__", "--exclude-tests")
+        assert data["count"] == 3
+        assert all(not e["path"].startswith("tests/") for e in data["called_by"])
+
+    def test_fn_blast_on_init_walks_past_the_constructor(self, resolve_query):
+        """Fn-blast on ``Meter.__init__`` reaches ``unique_helper`` through ``run`` at depth 2."""
+        _, data = resolve_query("fn-blast", "shapes.core::Meter.__init__")
+        depths = {e["caller"]: e["depth"] for e in data["blast_radius"]}
+        assert depths["app::run"] == 1
+        assert depths["app::unique_helper"] == 2
+        assert data["constructor_callers_merged"] is True
+
+    def test_fn_blast_crosses_an_intermediate_constructor(self, resolve_query):
+        """A caller reached through ``Wrapper.__init__`` continues to whoever constructs ``Wrapper``.
+
+        ``Meter`` is called from ``Wrapper.__init__``; the next hop must follow ``Wrapper()`` edges to ``make_wrapper``,
+        otherwise the transitive walk stops at every constructor.
+        """
+        _, data = resolve_query("fn-blast", "shapes.core::Meter")
+        depths = {e["caller"]: e["depth"] for e in data["blast_radius"]}
+        assert depths["shapes.core::make_wrapper"] == 2
+
+    def test_fn_blast_never_lists_the_class_itself(self, resolve_query):
+        """The class seed is a walk start, not a caller row."""
+        _, data = resolve_query("fn-blast", "shapes.core::Meter.__init__")
+        assert "shapes.core::Meter" not in {e["caller"] for e in data["blast_radius"]}
+
+    def test_test_impact_on_init_reaches_tests_through_the_class(self, resolve_query):
+        """Test-impact on ``Meter.__init__`` selects the test that transitively constructs ``Meter``."""
+        _, data = resolve_query("test-impact", "shapes.core::Meter.__init__")
+        assert data["test_files"] == ["tests/test_app.py"]
+        assert data["constructor_callers_merged"] is True
+
+    @pytest.mark.parametrize(
+        ("command", "target"),
+        [
+            pytest.param("fn-rdeps", "shapes.core::convert", id="fn-rdeps-plain-function"),
+            pytest.param("fn-blast", "shapes.core::convert", id="fn-blast-plain-function"),
+            pytest.param("test-impact", "app::run", id="test-impact-plain-function"),
+        ],
+    )
+    def test_plain_function_payload_carries_no_new_keys(self, resolve_query, command, target):
+        """Optional resolution keys stay absent when no merge, rewrite, or empty-method hint applied.
+
+        Frozen parity contracts compare the payload key set byte-for-byte for ordinary functions.
+        """
+        _, data = resolve_query(command, target)
+        assert not {"constructor_callers_merged", "normalized_from", "hint"} & set(data)
+        assert "inherited-constructors" not in data["index"]["not_covered"]
+
+    @pytest.mark.parametrize("command", ["fn-rdeps", "fn-blast", "test-impact"])
+    def test_constructor_merge_names_the_inherited_constructor_gap(self, resolve_query, command):
+        """A merged constructor answer says what it cannot see instead of reading as complete.
+
+        The index records no class bases and no ``super().__init__()`` edge, so ``Sub()`` running ``Meter.__init__`` is
+        never followed; ``not_covered`` names that limit beside the call-graph defaults.
+        """
+        _, data = resolve_query(command, "shapes.core::Meter.__init__")
+        assert data["index"]["not_covered"][-1] == "inherited-constructors"
+
+
+class TestQnameNormalization:
+    """``fn-*`` targets accept dotted and unique bare names besides ``module::symbol``."""
+
+    @pytest.mark.parametrize(
+        ("command", "target", "expected_qname"),
+        [
+            pytest.param("fn-rdeps", "shapes.core.convert", "shapes.core::convert", id="fn-rdeps-dotted"),
+            pytest.param("fn-rdeps", "shapes.core.Meter.update", "shapes.core::Meter.update", id="fn-rdeps-method"),
+            pytest.param("fn-rdeps", "unique_helper", "app::unique_helper", id="fn-rdeps-bare-unique"),
+            pytest.param("fn-rdeps", "Wrapper.__init__", "shapes.core::Wrapper.__init__", id="fn-rdeps-qualified"),
+            pytest.param("fn-rdeps", "run", "app::run", id="fn-rdeps-bare-function-outranks-method"),
+            pytest.param("fn-deps", "app.run", "app::run", id="fn-deps-dotted"),
+            pytest.param("fn-blast", "app.run", "app::run", id="fn-blast-dotted"),
+            pytest.param("test-impact", "app.run", "app::run", id="test-impact-dotted"),
+            pytest.param("test-impact", "unique_helper", "app::unique_helper", id="test-impact-bare-unique"),
+        ],
+    )
+    def test_resolves_to_module_symbol_and_reports_the_input(self, resolve_query, command, target, expected_qname):
+        """A non-``::`` target resolves to one symbol; ``normalized_from`` records the caller's spelling."""
+        code, data = resolve_query(command, target)
+        assert code == 0, data
+        assert data["qname"] == expected_qname
+        assert data["normalized_from"] == target
+
+    def test_dotted_target_returns_the_same_callers_as_module_symbol(self, resolve_query):
+        """The dotted spelling answers exactly what the ``module::symbol`` spelling answers."""
+        _, dotted = resolve_query("fn-rdeps", "shapes.core.convert")
+        _, canonical = resolve_query("fn-rdeps", "shapes.core::convert")
+        assert (
+            dotted["called_by"] == canonical["called_by"] == [{"caller": "app::run", "module": "app", "path": "app.py"}]
+        )
+
+    @pytest.mark.parametrize(
+        ("target", "expected_candidates"),
+        [
+            pytest.param("convert", ["shapes.core::convert", "shapes.other::convert"], id="function-in-two-modules"),
+            pytest.param(
+                "__init__",
+                ["shapes.core::Meter.__init__", "shapes.core::Wrapper.__init__"],
+                id="method-leaf-in-two-classes",
+            ),
+            pytest.param("build", ["shapes.core::build", "tools.build"], id="function-also-a-module-suffix"),
+        ],
+    )
+    @pytest.mark.parametrize("command", ["fn-rdeps", "test-impact"])
+    def test_ambiguous_bare_name_lists_every_candidate(self, resolve_query, command, target, expected_candidates):
+        """A bare name that could mean something else fails with every candidate instead of guessing.
+
+        Covers several symbols, a method leaf in two classes, and a function name that is also the last segment of an
+        indexed module: before, ``test-impact cli`` silently answered for an unrelated ``tools.cli::cli`` function. The
+        list lets the caller re-run with one target instead of a ``find-symbol`` call.
+        """
+        code, data = resolve_query(command, target)
+        assert code == 1
+        assert data["candidates"] == expected_candidates
+        assert data["candidate_count"] == len(expected_candidates)
+        assert "ambiguous" in data["error"]
+
+    @pytest.mark.parametrize("command", ["fn-rdeps", "test-impact"])
+    def test_lone_method_leaf_names_the_qname_instead_of_ambiguity(self, resolve_query, command):
+        """A bare method name matching one method is never auto-resolved, and never called "ambiguous: 1" either.
+
+        Nobody named the class, so even a single method leaf is a guess the resolver refuses; reporting it as a choice
+        among one told the caller to pick from a list of one instead of naming the qname to re-run with.
+        """
+        code, data = resolve_query(command, "update")
+        assert (code, data["candidates"], data["candidate_count"]) == (1, ["shapes.core::Meter.update"], 1)
+        assert data["error"].startswith(
+            "Symbol 'update' is a bare method name matching only 'shapes.core::Meter.update'"
+        )
+        assert "ambiguous" not in data["error"]
+
+    @pytest.mark.parametrize("command", ["fn-rdeps", "test-impact"])
+    def test_lone_module_suffix_names_the_module_instead_of_ambiguity(self, resolve_query, command):
+        """A bare name matching only one module's last segment names that module rather than "1 match" ambiguity.
+
+        ``other`` is no symbol, only the tail of ``shapes.other``: calling a single module candidate ambiguous told the
+        caller to choose from a list of one, while the module redirect says which command answers it.
+        """
+        code, data = resolve_query(command, "other")
+        assert (code, data["candidates"], data["candidate_count"]) == (1, ["shapes.other"], 1)
+        assert data["error"].startswith("Symbol 'other' is not an indexed symbol: it names module 'shapes.other'")
+        assert "ambiguous" not in data["error"]
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            pytest.param("does_not_exist", id="bare"),
+            pytest.param("shapes.core.does_not_exist", id="dotted"),
+        ],
+    )
+    def test_unknown_target_keeps_the_not_found_error(self, resolve_query, target):
+        """An unresolvable spelling still reports the historic not-found message."""
+        code, data = resolve_query("fn-rdeps", target)
+        assert code == 1
+        assert data["error"] == f"Symbol '{target}' not found. Use 'find-symbol <pattern>' to search."
+
+    def test_bare_module_name_keeps_the_rdeps_redirect(self, resolve_query):
+        """A module name passed to fn-rdeps is redirected to ``rdeps``, never searched as a symbol."""
+        code, data = resolve_query("fn-rdeps", "shapes.core")
+        assert code == 1
+        assert "is a module, not a function qname" in data["error"]
+
+    def test_test_impact_module_target_stays_module_mode(self, resolve_query):
+        """A dotted target naming a module keeps the import-graph mode and gains no ``normalized_from``."""
+        _, data = resolve_query("test-impact", "app")
+        assert data["test_files"] == ["tests/test_app.py"]
+        assert "normalized_from" not in data
+        assert data["index"]["method"] == "import-graph"
+
+    @pytest.mark.parametrize(
+        ("command", "target", "expected_code"),
+        [
+            pytest.param("fn-rdeps", "does_not_exist", 1, id="fn-rdeps-not-found"),
+            pytest.param("fn-blast", "shapes.core.does_not_exist", 1, id="fn-blast-dotted-not-found"),
+            pytest.param("fn-rdeps", "shapes.core", 1, id="fn-rdeps-module-redirect"),
+            pytest.param("fn-rdeps", "convert", 1, id="fn-rdeps-candidates"),
+            pytest.param("test-impact", "shapes.nothere", 1, id="test-impact-module-not-found"),
+            pytest.param("rdeps", "shapes.nothere", 3, id="rdeps-module-not-indexed"),
+        ],
+    )
+    def test_target_rejection_names_the_rejected_target(self, resolve_query, command, target, expected_code):
+        """Every target-resolution failure carries ``rejected_target`` beside its unchanged exit code.
+
+        Exit 1 also covers an invalid index or a disabled feature, so a consumer that must keep "this target does not
+        resolve" apart from "this provider cannot answer" — retry with a candidate, or stop querying — reads this key
+        instead of the message text. A structured-context consumer recorded every such rejection as an unusable provider
+        before the key existed.
+        """
+        code, data = resolve_query(command, target)
+        assert (code, data["rejected_target"]) == (expected_code, target)
+
+
+def _hint_search(hint: str) -> re.Pattern[str]:
+    """Return the regular expression a zero-caller hint tells the reader to search with."""
+    match = re.search(r'grep -rnE "(?P<pattern>[^"]+)"', hint)
+    assert match is not None, hint
+    return re.compile(match["pattern"])
+
+
+class TestEmptyMethodHint:
+    """A method with no static callers explains why instead of reading as dead code."""
+
+    @pytest.mark.parametrize(
+        ("command", "zero_key"),
+        [
+            pytest.param("fn-rdeps", "count", id="fn-rdeps"),
+            pytest.param("fn-blast", "total_callers", id="fn-blast"),
+            pytest.param("test-impact", "total", id="test-impact"),
+        ],
+    )
+    def test_method_without_static_callers_gets_dispatch_hint(self, resolve_query, command, zero_key):
+        """Every reverse-call answer for an instance-called method carries the hint, not only ``fn-rdeps``.
+
+        ``test_unique_helper`` reaches ``meter.update(1)`` through ``run``, but the scanner cannot type ``meter``, so
+        each command answers zero with ``query_complete`` true. A ``test-impact`` follow-up without the hint read as "no
+        test covers this method" and could skip the one test that does.
+        """
+        _, data = resolve_query(command, "shapes.core::Meter.update")
+        assert (data[zero_key], _hint_search(data["hint"]).pattern) == (0, r"\.update\b")
+        assert data["hint"].startswith('Find references with grep -rnE "\\.update\\b". 0 static callers for method ')
+
+    @pytest.mark.parametrize(
+        ("target", "action"),
+        [
+            pytest.param("shapes.core::Meter.update", 'Find references with grep -rnE "\\.update\\b".', id="method"),
+            pytest.param(
+                "shapes.bag::Bag.__len__", "Never delete protocol method Bag.__len__ on zero callers.", id="dunder"
+            ),
+        ],
+    )
+    def test_hint_opens_with_its_action(self, resolve_query, target, action):
+        """The search to run, or the instruction to keep a protocol method, comes first, the explanation after it.
+
+        A consumer that bounds strings cuts the tail: the Codex structural context keeps 300 characters, and with the
+        action last it lost the search of every method named longer than ``Report.render`` and the do-not-delete clause
+        of every protocol method.
+        """
+        _, data = resolve_query("fn-rdeps", target)
+        assert data["hint"][: len(action)] == action
+
+    def test_hint_search_finds_a_property_read_and_skips_the_definition(self, resolve_query, resolution_project):
+        """The hint's search is reference-shaped: it finds ``meter.ratio`` and not the ``def ratio(`` line.
+
+        A property is read without a call, so the former ``.ratio(`` search matched only the definition and reported a
+        property in active use as unreferenced.
+        """
+        root, _ = resolution_project
+        _, data = resolve_query("fn-rdeps", "shapes.core::Meter.ratio")
+        search = _hint_search(data["hint"])
+        lines = [
+            f"{rel}: {line.strip()}"
+            for rel in ("app.py", "shapes/core.py")
+            for line in (root / rel).read_text().splitlines()
+            if search.search(line)
+        ]
+        assert (data["count"], lines) == (0, ["app.py: return convert(meter), meter.ratio"])
+
+    @pytest.mark.parametrize(
+        ("command", "target"),
+        [
+            pytest.param("test-impact", "shapes.core::Wrapper.__init__", id="test-impact-callers-but-no-tests"),
+            pytest.param("fn-blast", "shapes.core::Meter.__init__", id="fn-blast-constructor-with-callers"),
+            pytest.param("test-impact", "shapes.other", id="test-impact-module-mode"),
+        ],
+    )
+    def test_reverse_walk_with_callers_or_module_mode_gets_no_hint(self, resolve_query, command, target):
+        """Zero tests is not zero callers, and a module target is not a method, so neither gets the hint.
+
+        ``Wrapper()`` is called from ``make_wrapper``, which no test reaches: ``test-impact`` reports no test file, yet
+        "0 static callers" would be false. Module-mode ``test-impact`` walks imports, never call edges.
+        """
+        _, data = resolve_query(command, target)
+        assert "hint" not in data
+
+    @pytest.mark.parametrize("method", ["__len__", "__eq__"])
+    def test_protocol_method_hint_names_implicit_calls_and_no_search(self, resolve_query, resolution_project, method):
+        """A dunder's hint says Python calls it implicitly and offers no reference search.
+
+        ``len(left)`` and ``left == right`` reach ``Bag.__len__``/``Bag.__eq__`` with no ``.__len__`` text anywhere, so
+        the former ``\\.__len__\\b`` search came back empty — the very result that licensed a manual delete.
+        """
+        root, _ = resolution_project
+        _, data = resolve_query("fn-rdeps", f"shapes.bag::Bag.{method}")
+        uses = [line for line in (root / "shapes" / "bag.py").read_text().splitlines() if f".{method}" in line]
+        assert (data["count"], uses) == (0, [])
+        assert f"Python calls {method} implicitly" in data["hint"]
+        assert "grep" not in data["hint"]
+
+    def test_empty_method_hint_keeps_completeness_semantics(self, resolve_query):
+        """The hint is advisory: ``query_complete`` is reported exactly as for any other query."""
+        _, with_hint = resolve_query("fn-rdeps", "shapes.core::Meter.update")
+        _, without_hint = resolve_query("fn-rdeps", "shapes.core::convert")
+        assert with_hint["index"]["query_complete"] == without_hint["index"]["query_complete"]
+
+    @pytest.mark.parametrize(
+        ("command", "target", "deferred"),
+        [
+            pytest.param("fn-rdeps", "shapes.core::Meter.update", True, id="fn-rdeps-hinted"),
+            pytest.param("fn-blast", "shapes.core::Meter.update", True, id="fn-blast-hinted"),
+            pytest.param("test-impact", "shapes.core::Meter.update", True, id="test-impact-hinted"),
+            pytest.param("fn-rdeps", "shapes.core::convert", False, id="fn-rdeps-plain"),
+        ],
+    )
+    def test_complete_note_never_contradicts_the_hint(self, resolve_query, command, target, deferred):
+        """A complete hinted answer defers to its hint; an unhinted one keeps "verification is not needed".
+
+        The note used to say grep was not needed right beside a hint telling the reader to grep.
+        """
+        _, data = resolve_query(command, target)
+        note = data["index"]["note"]
+        assert (data["index"]["query_complete"], "not needed" in note, "follow the answer's hint" in note) == (
+            True,
+            not deferred,
+            deferred,
+        )
+
+    @pytest.mark.parametrize(
+        ("command", "zero_key"),
+        [
+            pytest.param("fn-rdeps", "count", id="fn-rdeps"),
+            pytest.param("fn-blast", "total_callers", id="fn-blast"),
+            pytest.param("test-impact", "total", id="test-impact"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "target",
+        [
+            pytest.param("tests.test_app::TestMeter.test_scale_is_kept", id="pytest-class"),
+            pytest.param("tests.test_app::MeterChecks.test_ratio_is_read", id="unittest-style-class"),
+        ],
+    )
+    def test_collected_test_method_gets_no_hint(self, resolve_query, command, zero_key, target):
+        """A test method the runner collects has no static caller by design, so it gets no dispatch hint.
+
+        The hint's premise, "zero static callers is unresolved, never unused", is false for a test: no instance call is
+        missing, and its search finds nothing. Every changed test method in a review's diff carried it, and its blind
+        spots turned a test-only change into a ``degraded`` structural answer.
+        """
+        _, data = resolve_query(command, target)
+        assert (data[zero_key], "hint" in data) == (0, False)
+
+    @pytest.mark.parametrize(
+        ("target", "search"),
+        [
+            pytest.param("tests.test_app::TestMeter.meter_scale", r"\.meter_scale\b", id="helper-in-test-module"),
+            pytest.param(
+                "shapes.link::Link.test_connection", r"\.test_connection\b", id="test-named-production-method"
+            ),
+        ],
+    )
+    def test_uncollected_method_keeps_the_hint(self, resolve_query, target, search):
+        """Only a ``test*`` method in a test module is exempt: a test helper or a test-named production method keeps it.
+
+        Both are reached through an instance like any other method, so zero static callers there is still unresolved.
+        """
+        _, data = resolve_query("fn-rdeps", target)
+        assert (data["count"], _hint_search(data["hint"]).pattern) == (0, search)
+
+    def test_function_without_callers_gets_no_method_hint(self, resolve_query):
+        """A module-level function with zero callers is not a method and gets no dispatch hint."""
+        _, data = resolve_query("fn-rdeps", "shapes.core::make_wrapper")
+        assert data["count"] == 0
+        assert "hint" not in data
+
+    def test_method_called_only_from_tests_gets_no_dispatch_hint(self, resolve_query):
+        """Excluding test callers hides them; it does not make "0 static callers" true, so no hint is given."""
+        _, with_tests = resolve_query("fn-rdeps", "Probe.check")
+        _, without_tests = resolve_query("fn-rdeps", "Probe.check", "--exclude-tests")
+        assert with_tests["count"] == 1
+        assert without_tests["count"] == 0
+        assert "hint" not in without_tests
 
 
 def test_rdeps_unknown_module(project, scan_query):

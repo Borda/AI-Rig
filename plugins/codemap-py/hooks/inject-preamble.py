@@ -29,6 +29,7 @@ Used by:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -38,7 +39,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePath
 
 #: Directory holding this hook, put on ``sys.path`` so the shared ``_hookutil`` helper imports under any loader.
 _HOOKS_DIR = Path(__file__).resolve().parent
@@ -53,6 +54,7 @@ if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 from codemap_py import scanner  # noqa: E402  (resolve from the installed plugin)
+from codemap_py.schema import SCAN_VERSION  # noqa: E402  (resolve from the installed plugin)
 
 #: Largest index file, in bytes, the hook fully parses to count modules; a larger index reports a placeholder instead.
 MAX_PARSE_BYTES = 10 * 1024 * 1024
@@ -70,6 +72,10 @@ _INDEXED_PATHSPEC: tuple[str, ...] = ("*.py", "*.pyi", "*.rst", "docs/**/*.md")
 #: The only shape of index-header ``git_sha`` handed to git as a revision argument. The header is
 #: on-disk, unauthenticated input; a value that is not a hex object name never reaches a subprocess.
 _HEX_OBJECT_RE = re.compile(r"[0-9a-fA-F]{7,64}")
+#: Note for a stale index whose refresh inputs have not changed since the last completed refresh.
+UNCHANGED_NOTE = " - unchanged since last refresh (only staged files are indexed)"
+#: Note returned by :func:`start_refresh` when it actually spawned a background scan.
+STARTED_NOTE = " - refresh started"
 
 #: : Identity fields read out of the index header, compiled once at import. They used to be
 #: : matched by a pattern built — and an ``import re`` executed — inside a nested closure,
@@ -332,6 +338,91 @@ def changed_file_count(root: Path, git_sha: str) -> int | None:
     return sum(1 for entry in diff.split("\0") if entry and not scanner.is_excluded(entry, exclusions))
 
 
+def staged_fingerprint(root: Path, head: str) -> str | None:
+    """Fingerprint every input an incremental refresh reads: scanner version, HEAD, and staged indexed blobs.
+
+    The scanner keys solely on ``git ls-files -s`` blob SHAs (``scanner._git_file_hashes``) and stamps HEAD as
+    ``git_sha``; unstaged and untracked edits never reach the index. Two prompts with one fingerprint therefore cannot
+    get different results from a refresh, which is what lets a dirty tree stop spawning one no-op scan per prompt.
+
+    Read as bytes: a non-UTF-8 tracked path must not raise past ``main`` and silence the whole preamble.
+
+    Args:
+        root: repository root used as the git working directory.
+        head: current HEAD commit; empty when git could not resolve it.
+
+    Returns:
+        A hex digest, or ``None`` when git cannot answer — the caller then refreshes as before.
+    """
+    if not head:
+        return None
+    try:
+        staged = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
+            ["git", "ls-files", "-s", "-z", "--", *_INDEXED_PATHSPEC],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+            cwd=root,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=3,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    digest = hashlib.sha256(f"{SCAN_VERSION}\0{head}\0".encode())
+    digest.update(staged)
+    return digest.hexdigest()
+
+
+def refresh_record_path(project: str, index_path: PurePath) -> Path:
+    """Return the record of the last spawned refresh for one index.
+
+    Deliberately session- and runtime-independent, like the refresh lock: Claude and Codex prompts refresh one shared
+    index, so a refresh either of them started covers both. The index-path hash keeps two checkouts that share a
+    directory basename apart.
+
+    Examples:
+        >>> name = refresh_record_path("proj", PurePath("/repo/.cache/codemap/proj.json")).name
+        >>> name.startswith("codemap-refresh-fp-proj-") and len(name) == len("codemap-refresh-fp-proj-") + 12
+        True
+    """
+    key = hashlib.sha256(index_path.as_posix().encode("utf-8")).hexdigest()[:12]
+    return tmp_dir() / f"codemap-refresh-fp-{project}-{key}"  # tmpdir-exempt: shared by Claude and Codex, like the lock
+
+
+def refresh_settled(record: Path, fingerprint: str) -> bool:
+    """Return whether the refresh spawned for *fingerprint* itself published the index.
+
+    The record reads ``<fingerprint>\\n<ms>\\n<state>``. The hook writes ``spawned``; only the scan it spawned
+    rewrites it to ``published``, after its own publish (``graph._mark_refresh_published``). An index mtime could not
+    prove that: a refresh failing ``index_busy`` behind an older, slower scan would see that scan's publish land after
+    its spawn. A crashed, timed-out or still-running refresh, and a missing or corrupt record, read as "not settled",
+    so the next prompt after the lock expires may retry.
+
+    Args:
+        record: path from :func:`refresh_record_path`.
+        fingerprint: current :func:`staged_fingerprint`.
+
+    Examples:
+        >>> import tempfile
+        >>> path = Path(tempfile.mkdtemp()) / "record"
+        >>> _ = path.write_text("abc\\n1\\npublished", encoding="utf-8")
+        >>> refresh_settled(path, "abc"), refresh_settled(path, "xyz")
+        (True, False)
+    """
+    try:
+        lines = record.read_text(encoding="utf-8").split("\n")
+    except (OSError, ValueError):
+        return False
+    return len(lines) == 3 and lines[0] == fingerprint and lines[2] == "published"
+
+
+def write_refresh_record(record: Path, fingerprint: str) -> None:
+    """Best-effort ``spawned`` record of the fingerprint a refresh is about to index, with the spawn time."""
+    try:
+        record.write_text(f"{fingerprint}\n{now_ms()}\nspawned", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def acquire_refresh_lock(path: Path) -> int | None:
     """Atomically acquire a fresh or stale-taken-over refresh lock, else return ``None``."""
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -350,7 +441,12 @@ def acquire_refresh_lock(path: Path) -> int | None:
 
 
 def spawn_refresh(
-    scan_bin: Path, scan_root: Path, cwd: Path, session: str = "", changed_count: int | None = None
+    scan_bin: Path,
+    scan_root: Path,
+    cwd: Path,
+    session: str = "",
+    changed_count: int | None = None,
+    record: tuple[Path, str] | None = None,
 ) -> bool:
     """Spawn a detached scan with the event's runtime/session, refresh provenance, and platform isolation."""
     # The exclusive write lease is the child's, not this hook's: `bin/scan-index` is a thin
@@ -383,6 +479,10 @@ def spawn_refresh(
     if changed_count is not None:
         # The child never re-derives this; an absent key records the count as unknown.
         kwargs["env"]["CODEMAP_REFRESH_CHANGED_COUNT"] = str(changed_count)
+    if record is not None:
+        # The scan marks this record published after its own publish; see refresh_settled.
+        kwargs["env"]["CODEMAP_REFRESH_RECORD"] = str(record[0])
+        kwargs["env"]["CODEMAP_REFRESH_FINGERPRINT"] = record[1]
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
         command = [os.environ.get("CODEMAP_PYTHON", sys.executable), str(scan_bin), *scan_args]
@@ -402,6 +502,7 @@ def start_refresh(
     cwd: Path,
     session: str = "",
     changed_count: Callable[[], int | None] | None = None,
+    record: tuple[Path, str] | None = None,
 ) -> str:
     """Take the refresh lock and spawn one background scan; return the preamble's note.
 
@@ -409,6 +510,11 @@ def start_refresh(
     lock's 10-minute TTL returns "in progress" here, and the git calls behind the count must not run on those turns.
     The count is provenance only: a thunk that raises leaves the count unknown and the refresh still starts, so no
     exception can carry the held lock out of this function and silence refreshes for the lock's whole TTL.
+
+    ``record`` (record path, fingerprint) is written as ``spawned`` only once this call holds the lock, just before the
+    spawn, and handed to the scan, which alone marks it ``published``. Writing it while another refresh holds the
+    lock would let that older scan's publish settle a newer staged state; writing it after the spawn could overwrite
+    a fast scan's ``published`` line.
     """
     lock = tmp_dir() / f"codemap-refresh-{project}"
     descriptor = acquire_refresh_lock(lock)
@@ -427,13 +533,43 @@ def start_refresh(
                 count = changed_count()
             except Exception:
                 count = None
-        if spawn_refresh(scan_bin, scan_root, cwd, session, count):
-            return " - refresh started"
+        if record is not None:
+            write_refresh_record(*record)
+        if spawn_refresh(scan_bin, scan_root, cwd, session, count, record):
+            return STARTED_NOTE
     try:
         lock.unlink()
     except OSError:
         pass
     return ""
+
+
+def stale_refresh_note(
+    project: str,
+    root: Path,
+    head: str,
+    index_path: Path,
+    start: Callable[[tuple[Path, str] | None], str],
+) -> str:
+    """Skip the refresh when its inputs are unchanged since the last completed one; otherwise call *start*.
+
+    A dirty tree stays ``stale`` (unstaged and untracked edits are genuinely not indexed), but refreshing cannot fix
+    that: before this guard every prompt on such a tree spawned another no-op scan once the lock expired.
+
+    Args:
+        project: project basename keying the record beside the refresh lock.
+        root: repository root for the staged-blob fingerprint.
+        head: current HEAD commit.
+        index_path: index file the refresh would publish.
+        start: spawns the refresh given the record it hands the scan; returns the preamble note.
+    """
+    fingerprint = staged_fingerprint(root, head)
+    if fingerprint is None:
+        return start(None)
+    record = refresh_record_path(project, index_path)
+    if refresh_settled(record, fingerprint):
+        return UNCHANGED_NOTE
+    return start((record, fingerprint))
 
 
 def collapse_stale_notice(project: str, refresh_note: str) -> bool:
@@ -483,7 +619,15 @@ def main() -> int:
         currency = resolve_currency(head, git_sha, dirty)
         refresh_note = ""
         if currency == "stale":
-            refresh_note = start_refresh(project, scan_root, cwd, session, lambda: changed_file_count(root, git_sha))
+            refresh_note = stale_refresh_note(
+                project,
+                root,
+                head,
+                index_path,
+                lambda record: start_refresh(
+                    project, scan_root, cwd, session, lambda: changed_file_count(root, git_sha), record=record
+                ),
+            )
         session_flag = tmp_dir() / f"codemap-preamble-{project}-{_hookutil.runtime()}"
         if currency == "current" and within_ttl(session_flag):
             return 0
@@ -494,7 +638,11 @@ def main() -> int:
         emit_preamble(
             f"[codemap] {os.path.relpath(index_path, cwd)} - {module_count(index_path, index_stat.st_size)} modules"
             f" - {currency}{sha_label}{refresh_note} - scanned: {fields['scanned_at'][:10]}\n"
-            "Prefer `codemap-py query` over file reads: rdeps, fn-rdeps, fn-blast, xrefs, symbol."
+            "Prefer `codemap-py query` over file reads: rdeps, fn-rdeps, fn-blast, xrefs, symbol.\n"
+            # Telemetry: one session re-ran the same query 21 times. A full ranking piped into a filter (as the
+            # foundry agents' pre-flight does) never enters context, so only output read directly is bounded here.
+            "Reuse an earlier answer to the same query instead of re-running it; keep `--top` small when the output"
+            " enters context."
         )
     except (OSError, TypeError, ValueError):
         pass

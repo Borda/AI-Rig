@@ -21,7 +21,7 @@ if str(_BIN) not in sys.path:
 from codemap_py.schema import COVERAGE_MIN_VER, DOCSTRING_MIN_VER, UNCOVERED_MIN_VER  # noqa: E402
 
 from .coverage import _cmd_coverage  # noqa: E402
-from .errors import _die_module_not_indexed, _exit_error  # noqa: E402
+from .errors import _die_module_not_indexed, _exit_error, _exit_target_not_found  # noqa: E402
 from .index_io import _require_feature  # noqa: E402
 from .output import _print  # noqa: E402
 
@@ -357,7 +357,9 @@ def cmd_coverage(index: dict, qname: str) -> None:
             )
         )
         return
-    _exit_error(f"Symbol '{module_name}::{symbol_name}' not found in module.")
+    _exit_target_not_found(
+        f"Symbol '{module_name}::{symbol_name}' not found in module.", f"{module_name}::{symbol_name}"
+    )
 
 
 def _coverage_measurement(symbols: list[dict]) -> dict:

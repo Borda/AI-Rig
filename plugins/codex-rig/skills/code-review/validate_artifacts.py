@@ -40,7 +40,9 @@ prerequisite failed; any listed failure still exits nonzero, and the default fai
 
 untriaged specialist output, unsupported recommendation, inconsistent PR evidence, an invalid close disposition, or a
 non-accept decision without merge blocks exits non-zero. It also rejects artifacts that reference files outside the
-review output directory or claim a terminal result while retaining forbidden detailed-review artifacts.
+review output directory or claim a terminal result while retaining forbidden detailed-review artifacts. A fresh
+candidate for a Python diff also fails without a valid, non-skipped Codemap probe artifact or with a specialist
+follow-up query outside its documented routes and per-specialist limit.
 """
 
 from __future__ import annotations
@@ -65,6 +67,21 @@ SHARED_DIRECTORY = PLUGIN_ROOT / "shared"
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
+from codemap_adapter import ARTIFACT_SCHEMA_VERSION as CODEMAP_ARTIFACT_SCHEMA_VERSION  # noqa: E402
+from codemap_adapter import FOLLOW_UP_ELIGIBLE_STATUSES, FOLLOW_UP_QUERY_KINDS, FOLLOW_UP_QUERY_LIMIT  # noqa: E402
+from codemap_adapter import FOLLOW_UP_SUBCOMMANDS as CODEMAP_FOLLOW_UP_SUBCOMMANDS  # noqa: E402
+from codemap_adapter import PROTOCOL_VERSION as CODEMAP_PROTOCOL_VERSION  # noqa: E402
+from codemap_adapter import STATUS_AVAILABLE as CODEMAP_STATUS_AVAILABLE  # noqa: E402
+from codemap_adapter import STATUS_SKIPPED as CODEMAP_STATUS_SKIPPED  # noqa: E402
+from codemap_adapter import STATUSES as CODEMAP_STATUSES  # noqa: E402
+from codemap_adapter import QueryOutcome as CodemapQueryOutcome  # noqa: E402
+from codemap_adapter import change_set_gap as codemap_change_set_gap  # noqa: E402
+from codemap_adapter import gap_reasons as codemap_gap_reasons  # noqa: E402
+from codemap_adapter import provider_rejected_input as codemap_provider_rejected_input  # noqa: E402
+from codemap_adapter import read_diff_text as codemap_read_diff_text  # noqa: E402
+from codemap_adapter import reduce_status as codemap_reduce_status  # noqa: E402
+from codemap_adapter import unquote_git_path as codemap_unquote_git_path  # noqa: E402
+from collect_pr import dirty_path_record_is_consistent  # noqa: E402
 from local_reviewer_wave import ReviewRouteError as ReviewRouteError  # noqa: E402
 from parallel_execution import _SECRET_PATTERNS as _SECRET_PATTERNS  # noqa: E402
 from parallel_execution import validate_inspection_contexts as validate_inspection_contexts  # noqa: E402
@@ -254,6 +271,30 @@ CLOSED_REQUIRED_PR_ARTIFACTS = {
 }
 #: Artifacts that must not exist for a closed-PR review because detailed source review is skipped.
 CLOSED_FORBIDDEN_ARTIFACTS = {"codemap-context.json", "review-routing.json", "specialist-manifest.json", "specialists"}
+#: Changed-file suffix the provider maps from a diff file to modules; a diff touching one requires the probe artifact.
+CODEMAP_PYTHON_SUFFIX = ".py"
+#: Run artifact the required structural probe persists once for an assessed review.
+CODEMAP_CONTEXT_ARTIFACT = "codemap-context.json"
+#: Run directory holding each specialist's bounded follow-up query artifacts.
+CODEMAP_FOLLOW_UP_DIRECTORY = "codemap-followups"
+#: Follow-up artifact name: lowercase role id, then a two-digit sequence checked against the per-specialist limit.
+CODEMAP_FOLLOW_UP_NAME = re.compile(r"(?P<role>[a-z][a-z0-9-]*)-(?P<sequence>[0-9]{2})\.json\Z")
+#: Artifact schemas written before the review batch read a diff file; readable only for a recovered historical run.
+CODEMAP_RECOVERED_ARTIFACT_SCHEMAS = frozenset({3})
+#: Result metadata value that records a recovered pre-rule run as exempt from the required probe.
+CODEMAP_HISTORICAL_EXEMPTION = "not-required-historical"
+#: File only the native-provenance recovery helper writes; its inputs are manifests current preparation never emits.
+CODEMAP_RECOVERY_MARKER = Path("native-recovery") / "inspection-summary.json"
+#: Candidate manifest the recovery helper writes beside its marker, and the fixed identity fields it always carries.
+CODEMAP_RECOVERY_CANDIDATE = "specialist-manifest.native-recovery.candidate.json"
+CODEMAP_RECOVERY_IDENTITY = {
+    "manifest_kind": "native-wave",
+    "dispatch_protocol": "paged-context-v6",
+}
+#: Native-wave manifest schema versions the recovery candidate may carry. A reader of the existing native-wave family
+#: that ``review_prepare.py`` produces, never a producer, so it is expressed as a membership set like the other
+#: native-wave readers rather than as a new versioned literal.
+CODEMAP_RECOVERY_SCHEMA_VERSIONS = frozenset({8})
 #: Confidence gap text required when PR review-thread resolution status could not be retrieved.
 PR_THREAD_CONFIDENCE_GAP = "PR review-thread resolution status was unavailable; online review triage may be incomplete."
 #: Highest confidence score a review that fell back to public PR data may report.
@@ -1226,21 +1267,22 @@ def _unavailable_preflight_diagnostic(out_dir: Path) -> str | None:
     if not path.is_file():
         return None
     preflight = _load_json(path)
-    expected_keys = {
-        "status",
-        "current_head",
-        "expected_head",
+    path_keys = {
         "dirty_paths",
         "checkout_paths",
         "overlapping_paths",
         "pr_paths",
         "overlapping_pr_paths",
         "unmerged_paths",
-        "phase",
     }
+    expected_keys = path_keys | {"status", "current_head", "expected_head", "phase"}
+    if "schema_version" in preflight:
+        # Versioned records list only overlapping dirty paths plus a bounded sample and count the rest.
+        expected_keys |= {"schema_version", "dirty_paths_omitted", "dirty_path_counts"}
     head_pattern = re.compile(r"[0-9a-f]{7,64}\Z")
     if (
         set(preflight) != expected_keys
+        or not dirty_path_record_is_consistent(preflight)
         or preflight.get("status")
         not in {
             "already-at-pr-head",
@@ -1257,7 +1299,7 @@ def _unavailable_preflight_diagnostic(out_dir: Path) -> str | None:
         or not head_pattern.fullmatch(preflight["expected_head"])
         or any(
             not isinstance(preflight.get(key), list) or not all(isinstance(item, str) for item in preflight[key])
-            for key in expected_keys - {"status", "current_head", "expected_head", "phase"}
+            for key in path_keys
         )
     ):
         raise SystemExit("unavailable-review-worktree-preflight-invalid")
@@ -1360,6 +1402,7 @@ def _validate_verified_pr_source(
         or preflight["overlapping_pr_paths"]
         or (preflight.get("status") in {"clean", "already-at-pr-head"} and preflight.get("dirty_paths"))
         or (preflight.get("status") == "safe-unrelated-dirty-paths" and not preflight.get("dirty_paths"))
+        or not dirty_path_record_is_consistent(preflight)
     ):
         raise SystemExit("pr-source-worktree-preflight-invalid")
     if routing.get("checkout_method") == "git-detached-review-worktree":
@@ -3050,6 +3093,275 @@ def _validate_batch_source_findings(out_dir: Path, result: dict[str, Any], manif
         raise SystemExit("review-batch-duplicate-accounting-mismatch")
 
 
+def _python_diff_paths(out_dir: Path) -> list[str]:
+    """Return the collected changed paths the provider can map from the review's diff file to Python modules.
+
+    Only ``files.txt`` names paths that ``diff.patch`` contains: untracked files are listed separately and never reach
+    the provider. The provider maps only case-sensitive ``.py`` post-image paths, so stub-only or untracked-only Python
+    changes do not require a probe whose answer could only be empty. Git C-quotes a non-ASCII path in this listing
+    (``"pkg/mod\\303\\251.py"``), which would otherwise end in ``"`` and silently skip the required probe, so each line
+    is unquoted the way the adapter reads the diff before Windows separators are normalized.
+
+    Example:
+        >>> import tempfile
+        >>> listing = 'a.pyi\\nsrc\\\\pkg\\\\mod.py\\n"pkg/mod\\\\303\\\\251.py"\\n'
+        >>> with tempfile.TemporaryDirectory() as directory:
+        ...     _ = (Path(directory) / "files.txt").write_text(listing, encoding="utf-8")
+        ...     _python_diff_paths(Path(directory))
+        ['src/pkg/mod.py', 'pkg/modé.py']
+    """
+    listing = out_dir / "files.txt"
+    if not listing.is_file():
+        return []
+    paths = (
+        codemap_unquote_git_path(raw_path.strip()).replace("\\", "/")
+        for raw_path in listing.read_text(encoding="utf-8").splitlines()
+    )
+    return [path for path in paths if path.endswith(CODEMAP_PYTHON_SUFFIX)]
+
+
+def _load_codemap_artifact(path: Path, code: str, *, historical: bool = False) -> dict[str, Any]:
+    """Load one persisted Codemap artifact and require the fields that make its status auditable.
+
+    Every adapter artifact names its protocol, one status from the closed vocabulary, and a non-empty probe detail. The
+    detail is the recorded reason an ``absent`` or ``incompatible`` provider was accepted as a non-fatal fallback, so an
+    artifact without it cannot show why the review proceeded without structural evidence. The older schema, which kept
+    no answer and no gap reasons, is accepted only for a recovered historical run.
+    """
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        raise SystemExit(f"{code}:unreadable-json") from None
+    if not isinstance(payload, dict):
+        raise SystemExit(f"{code}:not-json-object")
+    if payload.get("protocol_version") != CODEMAP_PROTOCOL_VERSION:
+        raise SystemExit(f"{code}:protocol_version")
+    schema_version = payload.get("artifact_schema_version")
+    if schema_version != CODEMAP_ARTIFACT_SCHEMA_VERSION and not (
+        historical and schema_version in CODEMAP_RECOVERED_ARTIFACT_SCHEMAS
+    ):
+        raise SystemExit(f"{code}:artifact_schema_version")
+    if payload.get("status") not in CODEMAP_STATUSES:
+        raise SystemExit(f"{code}:status")
+    probe = payload.get("probe")
+    detail = probe.get("detail") if isinstance(probe, dict) else None
+    if not isinstance(detail, str) or not detail.strip():
+        raise SystemExit(f"{code}:probe.detail")
+    reasons = payload.get("status_reasons")
+    if schema_version == CODEMAP_ARTIFACT_SCHEMA_VERSION and (
+        not isinstance(reasons, list) or not all(isinstance(item, str) and item.strip() for item in reasons)
+    ):
+        raise SystemExit(f"{code}:status_reasons")
+    return payload
+
+
+def _recorded_codemap_outcomes(payload: dict[str, Any], code: str) -> list[Any]:
+    """Rebuild a current artifact's query records, failing closed on any malformed record."""
+    queries = payload.get("queries")
+    if not isinstance(queries, list):
+        raise SystemExit(f"{code}:queries")
+    try:
+        return [CodemapQueryOutcome.from_dict(record) for record in queries]
+    except ValueError:
+        raise SystemExit(f"{code}:queries") from None
+
+
+def _validate_codemap_recorded_status(payload: dict[str, Any], outcomes: list[Any], code: str, diff_text: str) -> None:
+    """Require the recorded gap, status, and reasons to be exactly what the recorded query outcomes imply.
+
+    The validator re-derives them with the adapter's own reduction rather than trusting the artifact, so a hand-written
+    ``available`` over a mismatched, all-unmapped, or deletion-only answer fails the same way a skipped probe does.
+    ``diff_text`` is the change set a ``diff-impact`` query read, from which deleted Python modules are recounted.
+
+    Each query's ``input_rejected`` flag is re-derived first, from its exit code and recorded answer: the status
+    reduction reads that flag to keep a batch with no successful query ``degraded`` instead of ``incompatible``, so a
+    flag set on a provider-side failure would otherwise pass as a typo and admit follow-ups after an unusable probe.
+    """
+    if any(
+        outcome.input_rejected != codemap_provider_rejected_input(outcome.exit_code, outcome.answer)
+        for outcome in outcomes
+    ):
+        raise SystemExit(f"{code}:input_rejected")
+    if any(
+        outcome.adapter_gap != codemap_change_set_gap(outcome.subcommand, outcome.answer, diff_text)
+        for outcome in outcomes
+    ):
+        raise SystemExit(f"{code}:answer")
+    if payload["status"] != codemap_reduce_status(payload["probe"].get("status"), outcomes):
+        raise SystemExit(f"{code}:status")
+    if payload["status_reasons"] != list(codemap_gap_reasons(outcomes)):
+        raise SystemExit(f"{code}:status_reasons")
+
+
+def _codemap_run_diff_text(diff_file: object, out_dir: Path) -> str | None:
+    """Return this run's ``diff.patch`` text when the recorded diff file is exactly that file, else ``None``.
+
+    Any other file inside the run, such as ``files.txt``, parses as a diff with no Python change, so binding the probe
+    to the run's own diff is what makes an empty answer mean an empty change set.
+    """
+    if not isinstance(diff_file, str) or not diff_file.strip() or not Path(diff_file).is_absolute():
+        return None
+    run_diff = out_dir / "diff.patch"
+    if Path(diff_file).resolve() != run_diff.resolve() or not run_diff.is_file():
+        return None
+    return codemap_read_diff_text(run_diff)
+
+
+def _validate_codemap_primary_review(context: dict[str, Any], out_dir: Path, python_paths: list[str]) -> None:
+    """Bind a current primary artifact to one standard ``diff-impact`` query over this run's own diff file.
+
+    A Python diff whose usable probe read zero changed Python files must also name why in ``status_reasons``: the
+    provider reads only post-images, so a deleted, renamed, or hunk-free Python change otherwise looks like an empty,
+    complete, low-risk answer.
+    """
+    code = "codemap-context-invalid"
+    if context.get("query_kind") != "standard":
+        raise SystemExit(f"{code}:query_kind")
+    outcomes = _recorded_codemap_outcomes(context, code)
+    provider_usable = context["probe"].get("status") == CODEMAP_STATUS_AVAILABLE
+    if [outcome.subcommand for outcome in outcomes] != (["diff-impact"] if provider_usable else []):
+        raise SystemExit(f"{code}:queries")
+    diff_text = _codemap_run_diff_text(context.get("diff_file"), out_dir) if outcomes else ""
+    if diff_text is None:
+        # A probe a non-Python review volunteered is not required, but once run it must still read this run's diff.
+        raise SystemExit(f"{code}:diff_file" if python_paths else f"{code}:diff_file:volunteered-probe")
+    _validate_codemap_recorded_status(context, outcomes, code, diff_text)
+    if python_paths and any(outcome.changed_files == 0 for outcome in outcomes) and not context["status_reasons"]:
+        raise SystemExit(f"{code}:changed_files")
+
+
+def _triggered_review_roles(out_dir: Path) -> set[str]:
+    """Return the specialist roles this review's routing triggered, or none when routing is unreadable."""
+    try:
+        routing = json.loads((out_dir / "review-routing.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return set()
+    roles = routing.get("triggered_roles") if isinstance(routing, dict) else None
+    return {role for role in roles if isinstance(role, str)} if isinstance(roles, list) else set()
+
+
+def _validate_codemap_follow_up(path: Path, name: str, context: dict[str, Any]) -> None:
+    """Check one follow-up artifact: its route, target, category, and a status its own query outcome implies."""
+    code = f"codemap-followup-invalid:{name}"
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit(f"{code}:not-a-file")
+    follow_up = _load_codemap_artifact(path, code)
+    kind = follow_up.get("query_kind")
+    if kind not in FOLLOW_UP_QUERY_KINDS:
+        raise SystemExit(f"{code}:query_kind")
+    if follow_up.get("category") != context.get("category"):
+        raise SystemExit(f"{code}:category")
+    target = follow_up.get("target")
+    if not isinstance(target, str) or not target.strip():
+        raise SystemExit(f"{code}:target")
+    outcomes = _recorded_codemap_outcomes(follow_up, code)
+    provider_usable = follow_up["probe"].get("status") == CODEMAP_STATUS_AVAILABLE
+    if [outcome.subcommand for outcome in outcomes] != (
+        [CODEMAP_FOLLOW_UP_SUBCOMMANDS[kind]] if provider_usable else []
+    ):
+        raise SystemExit(f"{code}:queries")
+    _validate_codemap_recorded_status(follow_up, outcomes, code, "")
+
+
+def _validate_codemap_follow_ups(directory: Path, context: dict[str, Any], out_dir: Path) -> None:
+    """Keep every specialist follow-up within a triggered role, its per-role limit, and the provider precondition.
+
+    A follow-up only answers a fact the persisted probe left open, so it needs a probe whose provider was usable: after
+    ``absent`` or ``incompatible`` the contract forbids retrying the adapter in the same run, and ``skipped`` recorded a
+    deliberate zero-query decision. Each name binds to one role this review's routing triggered, and its two-digit
+    sequence bounds that role's query count, so renaming cannot buy extra queries.
+    """
+    if not directory.exists() and not directory.is_symlink():
+        return
+    if directory.is_symlink() or not directory.is_dir():
+        raise SystemExit("codemap-followup-directory-invalid")
+    names = sorted(path.name for path in directory.iterdir())
+    if names and context["status"] not in FOLLOW_UP_ELIGIBLE_STATUSES:
+        raise SystemExit(f"codemap-followup-after-unusable-probe:{context['status']}")
+    roles = _triggered_review_roles(out_dir)
+    for name in names:
+        match = CODEMAP_FOLLOW_UP_NAME.match(name)
+        if match is None or not 1 <= int(match["sequence"]) <= FOLLOW_UP_QUERY_LIMIT:
+            raise SystemExit(f"codemap-followup-name-invalid:{name}")
+        if match["role"] not in roles:
+            raise SystemExit(f"codemap-followup-role-unknown:{name}")
+        _validate_codemap_follow_up(directory / name, name, context)
+
+
+def _recovered_historical_run(out_dir: Path) -> bool:
+    """Report whether this run carries the native-provenance recovery helper's marker and candidate manifest."""
+    try:
+        marker = json.loads((out_dir / CODEMAP_RECOVERY_MARKER).read_text(encoding="utf-8"))
+        candidate = json.loads((out_dir / CODEMAP_RECOVERY_CANDIDATE).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(marker, dict)
+        and isinstance(candidate, dict)
+        and candidate.get("schema_version") in CODEMAP_RECOVERY_SCHEMA_VERSIONS
+        and all(candidate.get(key) == value for key, value in CODEMAP_RECOVERY_IDENTITY.items())
+    )
+
+
+def _historical_codemap_exemption(out_dir: Path, metadata: dict[str, Any], artifact_present: bool) -> bool:
+    """Return whether the result validly records a recovered pre-rule run as exempt from the required probe.
+
+    The exemption is never inferred. The result must name it explicitly, the run must carry the recovery helper's marker
+    and candidate manifest, and no probe artifact may exist that the claim would contradict.
+    """
+    claim = metadata.get("codemap_context")
+    if claim is None:
+        return False
+    if claim != CODEMAP_HISTORICAL_EXEMPTION:
+        raise SystemExit("codemap-context-metadata-invalid")
+    if artifact_present:
+        raise SystemExit("codemap-context-historical-exemption-contradicted")
+    if not _recovered_historical_run(out_dir):
+        raise SystemExit("codemap-context-historical-exemption-unproven")
+    return True
+
+
+def _validate_codemap_context(out_dir: Path, metadata: dict[str, Any]) -> None:
+    """Require the persisted structural probe for a Python diff and bound every specialist follow-up.
+
+    The provider stays optional: an ``absent`` or pre-query ``incompatible`` artifact passes because it records why the
+    review fell back to bounded inspection. What fails closed is a Python diff with no artifact, a ``skipped`` one, or a
+    current artifact whose recorded status, reasons, query, or diff file disagree with what actually ran. A recovered
+    pre-rule run may instead record the explicit historical exemption.
+    """
+    python_paths = _python_diff_paths(out_dir)
+    artifact = out_dir / CODEMAP_CONTEXT_ARTIFACT
+    follow_ups = out_dir / CODEMAP_FOLLOW_UP_DIRECTORY
+    artifact_present = artifact.exists() or artifact.is_symlink()
+    if _historical_codemap_exemption(out_dir, metadata, artifact_present) or (
+        not python_paths and not artifact_present and not follow_ups.exists()
+    ):
+        if follow_ups.exists():
+            raise SystemExit("codemap-followup-without-context")
+        return
+    if artifact.is_symlink() or not artifact.is_file():
+        raise SystemExit(
+            "codemap-context-missing-for-python-diff" if python_paths else "codemap-followup-without-context"
+        )
+    context = _load_codemap_artifact(artifact, "codemap-context-invalid", historical=_recovered_historical_run(out_dir))
+    if context.get("category") != "review":
+        raise SystemExit("codemap-context-invalid:category")
+    if python_paths and context["status"] == CODEMAP_STATUS_SKIPPED:
+        raise SystemExit("codemap-context-skipped-for-python-diff")
+    if context["artifact_schema_version"] == CODEMAP_ARTIFACT_SCHEMA_VERSION:
+        _validate_codemap_primary_review(context, out_dir, python_paths)
+    _validate_codemap_follow_ups(follow_ups, context, out_dir)
+
+
+def _is_fresh_candidate(out_dir: Path, result_path: Path) -> bool:
+    """Report whether validation targets a fresh candidate rather than the run's promoted canonical result.
+
+    Requirements added after a result was promoted apply to fresh candidates only, so historical canonical results stay
+    readable while every new run must satisfy them before promotion.
+    """
+    return result_path.name != "result.json" or result_path.parent.resolve() != out_dir.resolve()
+
+
 class _ReviewStep(NamedTuple):
     """One named review check and the earlier steps whose success it needs."""
 
@@ -3102,8 +3414,7 @@ def _terminal_review_steps(out_dir: Path, result_path: Path, context: dict[str, 
                 result,
                 metadata,
                 scope,
-                require_deductions=result_path.name != "result.json"
-                or result_path.parent.resolve() != out_dir.resolve(),
+                require_deductions=_is_fresh_candidate(out_dir, result_path),
             )
         else:
             _validate_closed_result(out_dir, result, metadata, scope)
@@ -3152,6 +3463,9 @@ def _assessed_review_steps(
         steps.append(
             _ReviewStep("pr-scope", lambda: _validate_pr_review_scope(out_dir, result, metadata, notes_path), notes)
         )
+    if _is_fresh_candidate(out_dir, result_path):
+        # Promoted results predating the required probe stay readable; every new candidate must carry it.
+        steps.append(_ReviewStep("codemap-context", lambda: _validate_codemap_context(out_dir, metadata)))
     steps.extend(
         (
             _ReviewStep("specialist-manifest", manifest),

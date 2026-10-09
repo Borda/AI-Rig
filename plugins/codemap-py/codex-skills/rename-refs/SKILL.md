@@ -16,7 +16,7 @@ Atomically rename one Python symbol/module: definition, `__all__` exports, calle
 - `--dry-run`: list sites, no edit.
 - `--deprecate[=<decorator>]`: symbol only; old-name pyDeprecate `@deprecated` wrapper to new name; pyDeprecate required.
 - `--since <ver>` / `--removed-in <ver>`: decorator versions, default `"?"`.
-- `--remove-if-no-callers`: symbol only; delete only with exhaustive zero callers.
+- `--remove-if-no-callers`: symbol only; delete only with exhaustive zero callers and no zero-caller method `hint`.
 
 Reject `--deprecate` with `--remove-if-no-callers` before analysis. Static limits: report a `getattr(obj, "old_name")` search advisory; cross-repo callers require `--deprecate` plus a SemVer bump for public API.
 
@@ -46,7 +46,7 @@ For `symbol`, reuse `matches`; each has `{name, qualified_name, type, module, pa
 PLUGIN_ROOT/bin/codemap-py query fn-rdeps "<module>::<qualified_name>"
 ```
 
-It returns `{qname, called_by:[{caller, module, path}], count, index:{query_complete,...}}`; resolve caller line ranges via `query symbol <caller>` in Step 4. Read completeness forward-first: `index.query_complete`, then legacy `index.exhaustive` only if absent; not complete belongs in the report.
+It returns `{qname, called_by:[{caller, module, path}], count, index:{query_complete,...}}`, plus `hint` for a method or constructor with zero static callers; resolve caller line ranges via `query symbol <caller>` in Step 4. Read completeness forward-first: `index.query_complete`, then legacy `index.exhaustive` only if absent; not complete belongs in the report. A `hint` means zero static callers is not zero callers — instance calls (`obj.method()`), overrides, subclass constructors, and implicit protocol (dunder) calls such as `len(x)` or `x == y` are never resolved statically; print it in the report.
 
 For `module`, query:
 
@@ -62,7 +62,7 @@ Print old→new, type/definition (symbol), static caller count/files, Step 4 doc
 
 With >50 callers, write full list to `.reports/codex/codemap-py/rename-refs-blast-<branch>-<YYYY-MM-DD>.md`, print it, edit first 50 only, and call 51–N "skipped callers" in Step 6. `<branch>` is `git branch --show-current | tr '/' '-'` (`main` if empty/detached). Never overwrite: append `-2`, `-3`, … until free; this file is the manual-edit record.
 
-For `--remove-if-no-callers`, before edits: callers found → report count and stop (remove callers first or drop the flag); incomplete/missing completeness → report `$codemap-py:scan-codebase` required and stop; complete zero → ask delete/abort. Before deletion, verify `start_line` names the expected symbol; mismatch aborts. Delete definition plus preceding decorators, skip Step 4, and continue at Step 6.
+For `--remove-if-no-callers`, before edits: callers found → report count and stop (remove callers first or drop the flag); incomplete/missing completeness → report `$codemap-py:scan-codebase` required and stop; zero with a `hint` → report that zero static callers is not proof for a method or constructor, print the hint's search, and stop (delete manually only if it finds no reference); a protocol-method (dunder) hint names no search — Python calls it implicitly, so report it is never deleted on zero callers and stop; complete zero without a `hint` → ask delete/abort. Before deletion, verify `start_line` names the expected symbol; mismatch aborts. Delete definition plus preceding decorators, skip Step 4, and continue at Step 6.
 
 For `--dry-run`, write would-change sites to `.reports/codex/codemap-py/rename-refs-dry-<branch>-<YYYY-MM-DD>.md` using the same branch and never-overwrite rule; print path, ask for re-invocation without `--dry-run` or stop. Otherwise ask apply/abort and stop on abort.
 

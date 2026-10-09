@@ -53,14 +53,14 @@ def test_missing_findings_source_does_not_fail_bare_pr_route() -> None:
 
 
 def test_requested_review_does_not_replace_primary_remediation() -> None:
-    """Require the user's review decision before replacing requested PR evidence."""
+    """Keep incomplete report proof open without blocking authorized source-confirmed fixes."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     intake = skill.split("### 02: Normalize input", maxsplit=1)[1].split("### 03:", maxsplit=1)[0]
 
     assert "`+review` requests existing review evidence; it does not authorize a fresh code review" in intake
     assert "Missing requested PR review decision" in intake
-    assert "before online/user/preliminary finding intake, selection, or edits" in intake
-    assert "Do not silently continue remediation with the requested review obligation open" in intake
+    assert "continue available findings under existing remediation authorization" in intake
+    assert "Disclose the requested review obligation as open" in intake
     assert "Remediation resumes only after the producer completes" not in intake
     assert "or switch to online-only intake" not in intake
     assert "complete its ordered artifact closure before intake" not in intake
@@ -79,15 +79,16 @@ def test_preliminary_findings_keep_source_and_completion_boundaries() -> None:
     assert "Do not manufacture an assessed JSON report" in skill
 
 
-def test_missing_report_blocks_until_the_fresh_review_decision() -> None:
-    """Prevent available online comments from bypassing the requested-review decision."""
+def test_missing_report_only_blocks_an_explicit_completed_review_prerequisite() -> None:
+    """Preserve an explicit review prerequisite while allowing the ordinary available-finding route."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     fail_fast = skill.split("## Fail-fast Rules", maxsplit=1)[1].split("## Quality Gates", maxsplit=1)[0]
 
     assert "ask only for the missing finding evidence or selection" in skill
     assert "run `$code-review <target>` first or provide a report path" not in fail_fast
     assert "Missing requested PR review decision" in fail_fast
-    assert "before any available-finding continuation" in fail_fast
+    assert "available findings continue by default with proof open" in fail_fast
+    assert "explicit completed-review prerequisite requires its bound decision before edits" in fail_fast
 
 
 def test_missing_requested_pr_review_has_explicit_yes_no_and_pending_routes() -> None:
@@ -126,3 +127,16 @@ def test_requested_review_sibling_routes_cannot_bypass_decision() -> None:
     for route in (incomplete, missing, candidate):
         assert "Missing requested PR review decision" in route
     assert "then continue available current-online/user finding intake" not in missing
+
+
+@pytest.mark.installed_plugin
+def test_available_findings_default_preserves_explicit_review_first_choice() -> None:
+    """Keep artifact recovery autonomous without overriding a user's explicit review-before-edit condition."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    decision = skill.split("### Missing requested PR review decision", 1)[1].split("### Preliminary finding intake", 1)[
+        0
+    ]
+    assert "The default is available-finding continuation" in decision
+    assert "Ask the fresh-review question below only when no usable finding evidence exists" in decision
+    assert "previously selected fresh-review-first route is such a prerequisite" in decision
+    assert "Normal source verification and scope selection still precede edits" in decision

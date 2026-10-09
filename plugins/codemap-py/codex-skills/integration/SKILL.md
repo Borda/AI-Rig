@@ -35,7 +35,7 @@ Active Codex consumer contract (requires `codex-rig` plugin) is its shipped `sha
 
 ## Runtime note
 
-Codex has no `bin/` PATH entry or plugin-root variable. Resolve installed root once, substitute `PLUGIN_ROOT`, retain in reasoning. Print plan summary and SHA-256 before User Questions control; preserve exact confirmation syntax, wait for valid answer bound to that digest before `apply`/`sync`.
+Codex has no `bin/` PATH entry or plugin-root variable. Resolve installed root once, substitute `PLUGIN_ROOT`, retain in reasoning. Print plan summary, SHA-256 and the plan artifact path before User Questions control — the saved plan artifact stays the full copy when the summary is shortened; preserve exact confirmation syntax, wait for valid answer bound to that digest before `apply`/`sync`.
 
 When `--runtime` includes Codex (`codex`, `both`, or omitted), discover the active `codex-rig` via native CLI, never hand-edit config:
 

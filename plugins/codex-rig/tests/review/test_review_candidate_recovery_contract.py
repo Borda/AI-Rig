@@ -64,7 +64,7 @@ def test_review_and_remediation_routes_remain_distinct_during_incomplete_handoff
     assert "continue current-online/user findings" in incomplete_handoff
     assert "requested report obligation open" in incomplete_handoff
     assert "missing requested pr review decision" in incomplete_handoff
-    assert "only after an explicit continue choice" in incomplete_handoff
+    assert "when no explicit completed-review prerequisite applies" in incomplete_handoff
     assert "fresh review" in readme.lower()
     assert "requested report obligation open" in readme.lower()
     assert "silently switch to online-only remediation" not in readme.lower()
@@ -123,6 +123,81 @@ def test_native_protocol_repair_resumes_the_retained_wave_without_reassessment()
         assert invariant in recovery
     assert "do not require a fresh complete PR review" in recovery
     assert "No substantive reassessment" in recovery
+
+
+@pytest.mark.installed_plugin
+def test_dispatch_order_failure_uses_existing_fallback_without_recollection() -> None:
+    """Keep immutable scheduling failures out of reader repair and redundant PR collection."""
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    recovery = skill.split("### Reviewer validation recovery", 1)[1].split("\n### ", 1)[0]
+    schedule = recovery.split("For `review-inspection-dispatch-order-mismatch`", 1)[1].split(
+        "For `review-inspection-context-not-sent:<role>`", 1
+    )[0]
+
+    for invariant in (
+        "generated queue and actual first-spawn order",
+        "preserve the rejected wave",
+        "Historical launch order cannot be repaired",
+        "not a supported `prepare-repair` kind",
+        "revalidate the retained source receipts",
+        "do not recollect GitHub evidence solely for this failure",
+        "[Current parent fallback](#current-parent-fallback)",
+        "independence was not expressly required",
+        "complete its nonapproval report and normal closing gates",
+        "concrete unmet independent-route decision",
+        "source drift, denied capability and exhausted retry limits",
+    ):
+        assert invariant in schedule
+
+
+@pytest.mark.installed_plugin
+def test_approved_nested_review_recovers_before_returning_to_remediation() -> None:
+    """Prevent an approved nested review failure from becoming a generic resume request."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    decision = skill.split("### Missing requested PR review decision", 1)[1].split("### Preliminary finding intake", 1)[
+        0
+    ]
+    affirmative = decision.split("**Yes / Run fresh code review:**", 1)[1].split("\n- **No /", 1)[0]
+
+    assert "[Reviewer validation recovery](../code-review/SKILL.md#reviewer-validation-recovery)" in affirmative
+    assert "[GitHub Read Execution](../../shared/native-skill-contract.md#github-read-execution)" in affirmative
+    assert "Do not ask for a new message merely to resume already-authorized recovery" in affirmative
+    assert "does not reset retry limits or override a runtime denial" in affirmative
+    assert "only after an eligible completed result is admitted" in affirmative
+
+
+@pytest.mark.installed_plugin
+def test_approved_review_returns_exact_completed_report_to_waiting_remediation() -> None:
+    """Prevent successful nested review from ending the caller or selecting another report."""
+    remediation = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    review = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    handoff = (PLUGIN_ROOT / "shared/final-handoff-contract.md").read_text(encoding="utf-8")
+    helpers = (PLUGIN_ROOT / "shared/helper-cli-contract.md").read_text(encoding="utf-8")
+    nested = handoff.split("## Nested review delivery", 1)[1].split("\n## ", 1)[0]
+
+    for invariant in (
+        "normal full `code-review` workflow",
+        "`find-review-report.py --complete-run <review-run-directory>` succeeds",
+        "exact canonical `<review-run-directory>/result.json`",
+        "do not end the parent turn",
+        "`unavailable`, `closed`, failed or incomplete",
+        "Standalone review still emits",
+        "not a `caller-contract` schema override",
+    ):
+        assert invariant in nested
+    decision = remediation.split("### Missing requested PR review decision", 1)[1].split(
+        "### Preliminary finding intake", 1
+    )[0]
+    for invariant in (
+        "Set `FINDINGS_SOURCE` to that exact returned canonical result path",
+        "`find-review-report.py --result <path>`",
+        "Do not repeat latest-report discovery",
+        "fresh source collection",
+        "same remediation run",
+    ):
+        assert invariant in decision
+    for contract in (decision, review, helpers):
+        assert "final-handoff-contract.md#nested-review-delivery" in contract
 
 
 def test_code_review_preflights_specialist_manifest_before_candidate() -> None:
@@ -361,3 +436,25 @@ def test_broad_routing_and_fail_fast_admit_complete_fast_native_coverage(section
     assert "validated current native all-role evidence" in contract
     assert "naturally fast uninterrupted dispatch" in contract.casefold()
     assert "narrowly validated capacity-limited schema-eight" not in contract
+
+
+@pytest.mark.installed_plugin
+def test_finalization_failure_keeps_next_action_and_authorized_remediation() -> None:
+    """A failed artifact route cannot become a bare-code dead end for authorized source work."""
+    review = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    contract = (PLUGIN_ROOT / "shared/final-handoff-contract.md").read_text(encoding="utf-8")
+    assert "End with one recommended next action, its owner and exact resume condition" in review
+    assert "already-authorized source-confirmed remediation may proceed" in review
+    assert "including progress reports and unvalidated process failures" in contract
+    assert "Perform already-authorized next work instead of asking for permission again" in contract
+
+
+@pytest.mark.installed_plugin
+def test_review_completion_is_distinct_from_failed_quality_gates() -> None:
+    """A completed nonapproval review must not be reported as an unfinished workflow."""
+    contract = (PLUGIN_ROOT / "shared/final-handoff-contract.md").read_text(encoding="utf-8")
+    assert "review completed even when `result.status=fail`" in contract
+    assert "never infer it from `status=fail` alone" in contract
+    remediation = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    assert "A failed or incomplete review lifecycle checkpoint" in remediation
+    assert "An admitted report with `status=fail` from quality gates" in remediation

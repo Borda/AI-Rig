@@ -1122,7 +1122,11 @@ def check_workflow_outcomes(run: CalibrationRun) -> None:
 
 def check_workflow_prevention(run: CalibrationRun) -> None:
     """Compose active policy checks with executable workflow outcomes in ordinary calibration."""
-    policies = [run.paths.asset_root / "assets/AGENTS.md"] if run.paths.layout == "plugin" else []
+    policies = (
+        [run.paths.asset_root / "assets/AGENTS.md", run.paths.shared_dir / "global-baseline-details.md"]
+        if run.paths.layout == "plugin"
+        else []
+    )
     policies.extend(
         path
         for path in (run.paths.root / "AGENTS.md", run.paths.root / ".codex/global-session-policy.md")
@@ -3530,6 +3534,20 @@ def build_recommendations(
             "Reduce overconfidence: "
             f"mean overconfidence {rounded(mean_overconfidence)} exceeds threshold "
             f"{rounded(thresholds.get('max_mean_overconfidence', 0.15))}."
+        )
+    negative_specificity = float(raw.get("negative_specificity", 1.0))
+    if negative_specificity < float(thresholds.get("min_negative_specificity", 0.0)):
+        recommendations.append(
+            "Reduce false alarms on clean negative-control cases: specificity "
+            f"{rounded(negative_specificity)} is below threshold "
+            f"{rounded(thresholds.get('min_negative_specificity', 0.0))}."
+        )
+    failing_sources = behavioral_payload.get("negative_specificity_failing_sources", [])
+    if failing_sources:
+        recommendations.append(
+            "Reduce false alarms on clean negative-control cases from observation source(s) "
+            f"{', '.join(failing_sources)}: each source's own specificity is below threshold "
+            f"{rounded(thresholds.get('min_negative_specificity', 0.0))}."
         )
 
     freshness = behavioral_payload.get("observation_freshness", {})

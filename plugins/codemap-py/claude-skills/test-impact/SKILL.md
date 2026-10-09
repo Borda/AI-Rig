@@ -25,7 +25,7 @@ NOT for: finding all callers of a function (use `/codemap-py:query-code fn-rdeps
 <inputs>
 
 - **$ARGUMENTS**: `<qname> [--no-mocks]`
-  - `qname` — `module::symbol` (function-level) or bare dotted module (module-level)
+  - `qname` — `module::symbol` (function-level; a dotted `module.symbol` or a bare name defined once also resolves, while a module-name suffix or bare method name exits with candidates) or bare dotted module (module-level; an indexed module name always wins)
   - `--no-mocks` — exclude mock-only test files (no call/import path)
   - Omitted → AskUserQuestion in Step 1
 

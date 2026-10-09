@@ -102,6 +102,11 @@ def test_batch_counts_successful_logical_answers_only() -> None:
         pytest.param("Bash", "fgrep -r 'pkg.mod' src", "", "unknown", id="fgrep-r-tree"),
         pytest.param("Bash", "grep -n --include=*.py -r 'import pkg.mod' .", "", "unknown", id="grep-include-tree"),
         pytest.param("Bash", "rg -n 'from pkg.mod import' src", "", "unknown", id="rg-tree"),
+        pytest.param("Bash", "rg -n 'from pkg.mod import' src", "src", "structural_search", id="bash-directory-scope"),
+        pytest.param(
+            "Bash", "grep -rn 'pkg.mod' src/pkg/other.py", "src/pkg/other.py", "source_read", id="bash-file-scope"
+        ),
+        pytest.param("Bash", "grep -rn 'pkg.mod' src tests", "unscoped", "unknown", id="bash-unknown-scope"),
         pytest.param("Grep", "pkg.mod", "", "unknown", id="grep-tool-unscoped"),
         pytest.param("Grep", "pkg.mod", "src", "structural_search", id="grep-tool-tree-scope"),
         pytest.param("Grep", "pkg.mod", "src/pkg/mod.py", "source_read", id="grep-tool-own-file-scope"),
@@ -115,6 +120,7 @@ def test_overlap_kind_separates_source_reads_from_structural_searches(
 ) -> None:
     """Directory scope is structural; recursive-looking shell spelling alone leaves scope unknown."""
     scope = {
+        "unscoped": "unknown",
         "src": "directory",
         "src/pkg/mod.py": "file",
         "src/pkg/other.py": "file",

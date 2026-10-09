@@ -7,8 +7,11 @@ which is the drift that made the adoption gap look like an unfinished rollout in
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 from pathlib import Path
+from types import ModuleType
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = PLUGIN_ROOT / "shared" / "codemap-contract.md"
@@ -75,8 +78,13 @@ def test_standard_batch_skills_are_the_documented_majority_choice() -> None:
     assert adaptive == ["implement", "investigate", "optimize"]
 
 
-def test_codemap_contract_bounds_query_execution_without_cap_or_metadata_shortcut() -> None:
-    """Keep the consumer contract explicit about stable reads, reusable evidence, and metadata limits."""
+def test_codemap_contract_caps_only_specialist_follow_ups_and_keeps_metadata_limits() -> None:
+    """Keep workflow facts uncapped while bounding each specialist's follow-up queries at the adapter's limit.
+
+    The two limits answer different questions: a workflow must finish every structural fact it requires, while one
+    specialist re-querying beyond its axis is exactly the per-child fan-out the persisted artifact exists to prevent.
+    """
+    adapter = _load_adapter()
     contract = CONTRACT_PATH.read_text(encoding="utf-8").lower()
 
     for phrase in (
@@ -85,11 +93,57 @@ def test_codemap_contract_bounds_query_execution_without_cap_or_metadata_shortcu
         "prepared stable index",
         "dependent queries wait",
         "index writes are always serialized",
-        "no arbitrary total-call cap",
+        "no arbitrary total-call cap for workflow facts",
         "correction retries",
         "same correction failure recurs",
         "sibling queries answering distinct dimensions",
         "metadata-only",
+        f"at most {adapter.FOLLOW_UP_QUERY_LIMIT} targeted follow-up queries per workflow run",
+        "fourth open structural question becomes recorded coverage gap",
+        "--out <run-directory>/codemap-followups/<role>-<nn>.json",
     ):
         assert phrase in contract
-    assert "maximum three" not in contract
+    assert "they never re-run adapter" not in contract
+    for kind in adapter.FOLLOW_UP_QUERY_KINDS:
+        assert f"`{kind}`" in contract
+
+
+def test_python_scope_probe_is_required_in_change_producing_skills() -> None:
+    """Pin the required probe in the three skills it binds and drop every unconditional no-query rule."""
+    required = {
+        "code-review": "**Structural context (required for Python diffs)**",
+        "code-remediate": "**Structural context (required for Python scope)**",
+        "implement": "**Structural context (required for Python targets)**",
+    }
+    texts = {
+        skill: (SKILLS_ROOT / skill / "SKILL.md").read_text(encoding="utf-8") for skill in _skills_invoking_adapter()
+    }
+
+    assert {skill: heading in texts[skill] for skill, heading in required.items()} == dict.fromkeys(required, True)
+    assert sorted(skill for skill, text in texts.items() if "never fresh" in text) == []
+    review_invocations = {skill: _skills_invoking_adapter()[skill] for skill in ("code-review", "code-remediate")}
+    assert {skill: "--diff-file" in line and "--root" in line for skill, line in review_invocations.items()} == {
+        "code-review": True,
+        "code-remediate": True,
+    }
+    contract = CONTRACT_PATH.read_text(encoding="utf-8")
+    for code in (
+        "codemap-context-missing-for-python-diff",
+        "codemap-context-invalid:<field>",
+        "codemap-context-skipped-for-python-diff",
+    ):
+        assert code in contract
+
+
+def _load_adapter() -> ModuleType:
+    """Load the shipped adapter by file path to read its public follow-up limits."""
+    spec = importlib.util.spec_from_file_location(
+        "codemap_routing_contract_adapter", PLUGIN_ROOT / "shared" / "codemap_adapter.py"
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Dataclass creation resolves string annotations through the defining module's sys.modules entry.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module

@@ -45,14 +45,6 @@ def completed_report(tmp_path: Path) -> tuple[dict, Path, Path]:
     (consumer / "findings-input.txt").write_bytes(report_path.read_bytes())
     (consumer / "action-items.md").write_text("## Review Report Intake\n", encoding="utf-8")
     (consumer / "resolution-scope.md").write_text("Retain review obligations.\n", encoding="utf-8")
-    original = report["metadata"]
-    obligations = [
-        *report.get("checks_failed", []),
-        *report.get("follow_up", []),
-        *original["confidence_gaps"],
-        *original["review_decision"].get("required_next_work", []),
-        *original["confidence_recovery"]["remaining_limits"],
-    ]
     metadata = {
         "mode": "report",
         "resolution_scope": {"presentation_version": 4},
@@ -62,11 +54,12 @@ def completed_report(tmp_path: Path) -> tuple[dict, Path, Path]:
                     "input_item_id": "G1",
                     "item_type": "confidence-gap",
                     "selectable": True,
-                    "sources": [{"kind": "report", "source_id": "result.json#limits", "body": "\n".join(obligations)}],
+                    "sources": VALIDATOR.report_obligation_sources(report),
                 }
             ]
         },
         "review_report_intake": {
+            "obligation_records_version": 1,
             "schema_version": 1,
             "admission_status": "completed",
             "requested_report": True,
@@ -168,17 +161,12 @@ def native_report(tmp_path: Path) -> tuple[dict, Path, Path, Path]:
                     "input_item_id": "G1",
                     "item_type": "confidence-gap",
                     "selectable": True,
-                    "sources": [
-                        {
-                            "kind": "report",
-                            "source_id": "result.json#limits",
-                            "body": "\n".join(report["metadata"]["confidence_gaps"]),
-                        }
-                    ],
+                    "sources": VALIDATOR.report_obligation_sources(report),
                 }
             ]
         },
         "review_report_intake": {
+            "obligation_records_version": 1,
             "schema_version": 1,
             "admission_status": "completed",
             "requested_report": True,

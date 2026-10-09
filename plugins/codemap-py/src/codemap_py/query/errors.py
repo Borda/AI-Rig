@@ -41,6 +41,15 @@ _EXIT_BAD_INPUT = 2  # caller-supplied argument is malformed or rejected (bad re
 _EXIT_NOT_INDEXED = 3  # queried module is absent from the index (distinct from "no results")
 
 
+#: Payload key every target-resolution failure carries, holding the caller's target exactly as supplied.
+#:
+#: Exit codes alone cannot tell a target the index does not resolve from a provider that cannot answer: a missing or
+#: ambiguous symbol exits 1, the same code as an invalid index or a disabled feature. A consumer that must keep those
+#: apart — retry with one listed candidate, or stop querying an unusable provider — reads this key instead of the
+#: message wording. It is additive, so every historic key and exit code stays as it was.
+REJECTED_TARGET_KEY = "rejected_target"
+
+
 def _die_json(payload: dict, exit_code: int = _EXIT_GENERIC) -> None:
     """Print a JSON error object to stdout and exit with *exit_code*.
 
@@ -81,6 +90,19 @@ def _exit_error(message: str) -> None:
     _die_json({"error": message}, _EXIT_GENERIC)
 
 
+def _exit_target_not_found(message: str, target: str) -> None:
+    """Print a ``{"error": message}`` object naming the unresolved *target* and exit with code 1.
+
+    Same shape and exit code as :func:`_exit_error`, plus :data:`REJECTED_TARGET_KEY`, so a caller can tell "this
+    target does not resolve" from a provider-side failure that shares exit 1.
+
+    Args:
+        message: human-readable error description.
+        target: the caller-supplied target that resolved to nothing usable.
+    """
+    _die_json({"error": message, REJECTED_TARGET_KEY: target}, _EXIT_GENERIC)
+
+
 def _die_module_not_indexed(index: dict, module: str) -> None:
     """Exit 3 with a structured "module not indexed" error plus close suggestions.
 
@@ -98,25 +120,81 @@ def _die_module_not_indexed(index: dict, module: str) -> None:
     known = [m["name"] for m in index.get("modules", []) if "name" in m]
     suggestions = difflib.get_close_matches(module, known, n=3, cutoff=0.6)
     _die_json(
-        {"error": "module not indexed", "module": module, "suggestions": suggestions},
+        {"error": "module not indexed", "module": module, "suggestions": suggestions, REJECTED_TARGET_KEY: module},
         _EXIT_NOT_INDEXED,
     )
 
 
-def _exit_symbol_not_found(index: dict, qname: str) -> None:
-    """Exit with the fn-* not-found error, hinting when *qname* is really a module.
+#: Most candidate qnames an ambiguous-symbol error lists; ``candidate_count`` still reports the full total.
+_MAX_SYMBOL_CANDIDATES = 20
+
+
+def _candidates_message(qname: str, candidates: tuple[str, ...]) -> str:
+    """Word the error for a target that resolved to candidates instead of one symbol.
+
+    A lone candidate is not ambiguity, so it is never reported as "1 match" to choose from. A lone module candidate
+    means the target is the last segment of exactly one indexed module: the message names that module and the two ways
+    to query it. A lone ``module::Class.method`` candidate means the target is a bare method name: the resolver never
+    auto-resolves one because nobody named the class, so the message names the one qname to re-run with.
+
+    Examples:
+        >>> _candidates_message("graph", ("codemap_py.graph",)).split(";")[0]
+        "Symbol 'graph' is not an indexed symbol: it names module 'codemap_py.graph'"
+        >>> _candidates_message("render", ("pkg.util::Report.render",)).split(";")[0]
+        "Symbol 'render' is a bare method name matching only 'pkg.util::Report.render'"
+        >>> "ambiguous: 2" in _candidates_message("build", ("shapes.core::build", "tools.build"))
+        True
+    """
+    if len(candidates) == 1 and "::" not in candidates[0]:
+        module = candidates[0]
+        return (
+            f"Symbol '{qname}' is not an indexed symbol: it names module '{module}'; use 'rdeps {module}' or "
+            f"module-level 'test-impact {module}' for the module, or '{module}::<symbol>' for a function query."
+        )
+    if len(candidates) == 1:
+        method = candidates[0]
+        return (
+            f"Symbol '{qname}' is a bare method name matching only '{method}'; a method is never resolved without "
+            f"its class, so re-run with '{method}'."
+        )
+    return (
+        f"Symbol '{qname}' is ambiguous: {len(candidates)} indexed symbols or modules match that name. "
+        "Re-run with one candidate: a 'module::symbol' for function queries, a module name for "
+        "rdeps or module-level test-impact."
+    )
+
+
+def _exit_symbol_not_found(index: dict, qname: str, candidates: tuple[str, ...] = ()) -> None:
+    """Exit with the fn-* not-found error, hinting when *qname* is really a module or is ambiguous.
 
     The 2026-07 usage audit found every bare-module ``fn-rdeps``/``fn-blast`` call
     failing with the generic "Symbol not found" — callers then retried other
     wrong shapes. Detecting the module case turns a dead end into a redirect.
+    A bare or class-qualified name matching several symbols, a method leaf, or the
+    last segment of an indexed module lists every candidate (``module::symbol`` or
+    module name) instead, so the caller picks one in the next call rather than
+    searching with ``find-symbol``. Every branch carries :data:`REJECTED_TARGET_KEY`.
 
     Args:
         index: parsed codemap index dict.
         qname: the symbol argument that failed to resolve.
+        candidates: sorted ``module::symbol`` or module-name matches when *qname* is ambiguous; empty when nothing
+            matched.
     """
     if "::" not in qname and any(m.get("name") == qname for m in index.get("modules", [])):
-        _exit_error(
+        _exit_target_not_found(
             f"'{qname}' is a module, not a function qname — fn-* commands need 'module::function' "
-            f"(see 'symbols {qname}' for its functions). For module-level callers use: rdeps {qname}"
+            f"(see 'symbols {qname}' for its functions). For module-level callers use: rdeps {qname}",
+            qname,
         )
-    _exit_error(f"Symbol '{qname}' not found. Use 'find-symbol <pattern>' to search.")
+    if candidates:
+        _die_json(
+            {
+                "error": _candidates_message(qname, candidates),
+                "candidates": list(candidates[:_MAX_SYMBOL_CANDIDATES]),
+                "candidate_count": len(candidates),
+                REJECTED_TARGET_KEY: qname,
+            },
+            _EXIT_GENERIC,
+        )
+    _exit_target_not_found(f"Symbol '{qname}' not found. Use 'find-symbol <pattern>' to search.", qname)

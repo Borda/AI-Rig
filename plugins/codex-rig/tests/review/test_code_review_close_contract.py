@@ -425,7 +425,7 @@ def test_close_gate_precedes_detailed_review_and_documents_blocking_defaults() -
     skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
 
     close_gate = skill.index("Terminal close gate")
-    assert close_gate < skill.index("Structural context (optional)")
+    assert close_gate < skill.index("Structural context (required for Python diffs)")
     assert close_gate < skill.index("### 03: T1 primary diff review")
     assert "If evidence is inconclusive, continue to T1/T2" in skill
     assert "Missing CHANGELOG entry alone" in skill

@@ -8,6 +8,9 @@ import os
 import subprocess
 import sys
 import time
+from collections import ChainMap
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
@@ -500,23 +503,30 @@ _file_shas_cache: _FileShas | None = None
 
 
 def _parse_ls_files_stage(output: str) -> dict[str, str]:
-    """Return ``{path: blob_sha}`` parsed from ``git ls-files -s`` output.
+    """Return ``{path: blob_sha}`` parsed from ``git ls-files -s -z`` output.
 
     Drops user-excluded paths so the result matches the ``file_shas`` written by
     scan-index. Uses ``_match_exclusion`` only (NOT SKIP_DIRS): scan-index's git-blob
     ``file_shas`` path (``_git_file_hashes``) filters solely by user exclusions and
     keeps SKIP_DIR files that git tracks. Applying SKIP_DIRS here would drop those,
     making them show as "deleted" and re-introducing a false stale. Matching the
-    writer exactly is the point.
+    writer exactly is the point — including its NUL-separated records: without ``-z``,
+    git C-quotes a non-ASCII path (``"pkg/mod\\303\\251.py"``), which matched no key the
+    writer recorded, so every such file read as deleted and the index never turned
+    fresh however often it self-healed.
 
     Args:
-        output: raw stdout of ``git ls-files -s``, one ``<mode> <sha> <stage>\\t<path>``
-            record per line.
+        output: decoded stdout of ``git ls-files -s -z``, one
+            ``<mode> <sha> <stage>\\t<path>`` record per NUL-terminated entry.
+
+    Examples:
+        >>> _parse_ls_files_stage("100644 abc 0\\tpkg/modé.py\\x00100644 def 0\\tpkg/a.py\\x00")
+        {'pkg/modé.py': 'abc', 'pkg/a.py': 'def'}
     """
     exclusions = _get_exclusions_cached()
     shas: dict[str, str] = {}
-    for line in output.strip().splitlines():
-        meta, tab, path = line.partition("\t")
+    for entry in output.split("\0"):
+        meta, tab, path = entry.strip().partition("\t")
         fields = meta.split()
         # A record with no tab or fewer than two metadata fields is not a stage line;
         # skip it rather than raise — a malformed line must not abort the whole query.
@@ -557,9 +567,12 @@ def _resolve_current_file_shas() -> _FileShas:
     if git_root is None:
         return _FileShas({}, _SHAS_NO_REPO)
     try:
+        # UTF-8 with replacement, never the locale codec: the writer decodes the same bytes that way, so a path
+        # decoded differently here would match no recorded key.
         output = subprocess.check_output(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
-            ["git", "ls-files", "-s", "--", *_INDEXED_PATHSPEC],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
-            text=True,
+            ["git", "ls-files", "-s", "-z", "--", *_INDEXED_PATHSPEC],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+            encoding="utf-8",
+            errors="replace",
             stderr=subprocess.DEVNULL,
             timeout=_GIT_TIMEOUT_S,
             cwd=str(git_root),
@@ -826,6 +839,123 @@ def _resolve_symbol_alias(index: dict, qname: str) -> str | None:
     return current
 
 
+@dataclass(frozen=True)
+class _SymbolTarget:
+    """Outcome of resolving a caller-supplied ``fn-*`` target to one indexed ``module::symbol``.
+
+    Attributes:
+        qname: the ``module::symbol`` to query when ``found``; otherwise the caller's input unchanged.
+        found: whether the target names exactly one indexed symbol (or, where accepted, a persisted alias).
+        normalized_from: the caller's original spelling when it was rewritten into ``qname``, else ``None``.
+        candidates: every matching ``module::symbol`` when a bare or class-qualified name is ambiguous, sorted.
+    """
+
+    qname: str
+    found: bool = False
+    normalized_from: str | None = None
+    candidates: tuple[str, ...] = ()
+
+
+def _split_at_module_prefix(module_names: set[str], known: Mapping[str, object], dotted: str) -> str | None:
+    """Rewrite ``pkg.mod.func`` to ``pkg.mod::func`` at the longest module prefix naming a known symbol.
+
+    Every split point whose left side is an indexed module is tried, longest module first, and the first rewrite that
+    names a key of *known* wins. A longest-prefix split whose remainder is not a symbol falls back to a shorter
+    module rather than failing, so ``pkg.mod.Class.method`` still resolves when ``pkg.mod.Class`` is not a module.
+
+    Args:
+        module_names: every indexed module name.
+        known: qnames that count as a resolved target (symbol map, optionally plus alias keys).
+        dotted: caller-supplied target without ``::``.
+
+    Returns:
+        The rewritten ``module::symbol``, or ``None`` when no split names a known symbol.
+
+    Examples:
+        >>> names = {"pkg", "pkg.mod"}
+        >>> _split_at_module_prefix(names, {"pkg.mod::Klass.run": None}, "pkg.mod.Klass.run")
+        'pkg.mod::Klass.run'
+        >>> _split_at_module_prefix(names, {"pkg::helper": None}, "pkg.helper")
+        'pkg::helper'
+        >>> _split_at_module_prefix(names, {}, "pkg.mod.missing") is None
+        True
+    """
+    parts = dotted.split(".")
+    for cut in range(len(parts) - 1, 0, -1):
+        module = ".".join(parts[:cut])
+        if module not in module_names:
+            continue
+        candidate = f"{module}::{'.'.join(parts[cut:])}"
+        if candidate in known:
+            return candidate
+    return None
+
+
+def _normalize_symbol_target(index: dict, sym_map: dict, target: str, *, accept_aliases: bool = False) -> _SymbolTarget:
+    """Resolve a ``module::symbol``, dotted ``module.symbol``, or bare/class-qualified name to one symbol.
+
+    The 2026-10 telemetry showed agents passing ``pkg.mod.func`` and bare ``func`` to ``fn-*`` commands and getting
+    "not found", then spending extra calls on ``find-symbol``. A rewrite is accepted only when nothing else the caller
+    could have meant matches; otherwise the caller gets the alternatives instead of a confident answer to a different
+    question. Resolution order:
+
+    1. Exact ``module::symbol`` hit (or a persisted alias key when *accept_aliases*) — returned unchanged. This is the
+       hot path ``diff-impact`` takes once per changed symbol, so it stays a dict lookup.
+    2. Any other target containing ``::``, or an exact indexed module name — not found, with no candidates. An explicit
+       separator is never second-guessed, and a module name keeps the caller's module redirect or module mode.
+    3. Dotted target — split at the longest indexed module prefix whose remainder is a known symbol; otherwise every
+       symbol whose ``qualified_name`` (``func`` or ``Class.method``) equals the target.
+    4. Exactly one such symbol, and no indexed module whose name ends in ``.<target>``, resolves. A short module name
+       such as ``cli`` therefore never turns into some unrelated ``tools.cli::cli`` function.
+    5. Several symbols, or any module-name suffix match, return all of them as ``candidates``.
+    6. A name matching only method leaves (``open`` against ``Box.open``) returns those methods as ``candidates`` and
+       never auto-resolves: nobody named the class, so even a single leaf is a guess.
+
+    Args:
+        index: parsed codemap index dict.
+        sym_map: flat ``module::symbol`` lookup from :func:`build_symbol_map`.
+        target: the caller-supplied symbol argument.
+        accept_aliases: also accept persisted ``symbol_aliases`` keys as exact/dotted hits (``fn-rdeps`` resolves
+            them itself; commands reading ``sym_map[qname]`` directly must leave this off).
+
+    Returns:
+        The resolution outcome; ``normalized_from`` is set only when the input was rewritten.
+
+    Examples:
+        >>> idx = {"modules": [{"name": "a"}, {"name": "b"}, {"name": "tools.solo"}]}
+        >>> syms = {"a::run": None, "a::Box.open": None, "b::run": None, "b::solo": None, "b::only": None}
+        >>> _normalize_symbol_target(idx, syms, "a::run")
+        _SymbolTarget(qname='a::run', found=True, normalized_from=None, candidates=())
+        >>> _normalize_symbol_target(idx, syms, "a.Box.open").qname
+        'a::Box.open'
+        >>> _normalize_symbol_target(idx, syms, "only").qname
+        'b::only'
+        >>> _normalize_symbol_target(idx, syms, "run").candidates
+        ('a::run', 'b::run')
+        >>> _normalize_symbol_target(idx, syms, "solo").candidates
+        ('b::solo', 'tools.solo')
+        >>> _normalize_symbol_target(idx, syms, "open").candidates
+        ('a::Box.open',)
+    """
+    aliases = index.get("symbol_aliases") if accept_aliases else None
+    # ChainMap answers membership across both maps without copying the symbol map: diff-impact calls this once per
+    # changed symbol, and a merged dict would rebuild the whole map each time.
+    known: Mapping[str, object] = ChainMap(sym_map, aliases) if isinstance(aliases, dict) and aliases else sym_map
+    if target in known:
+        return _SymbolTarget(target, found=True)
+    module_names = {m["name"] for m in index.get("modules", []) if isinstance(m.get("name"), str)}
+    if "::" in target or target in module_names:
+        return _SymbolTarget(target)
+    rewritten = _split_at_module_prefix(module_names, known, target) if "." in target else None
+    exact = (rewritten,) if rewritten else tuple(sorted(qname for qname in sym_map if qname.endswith(f"::{target}")))
+    module_suffixes = {name for name in module_names if name.endswith(f".{target}")}
+    if len(exact) == 1 and not module_suffixes:
+        return _SymbolTarget(exact[0], found=True, normalized_from=target)
+    if exact or module_suffixes:
+        return _SymbolTarget(target, candidates=tuple(sorted({*exact, *module_suffixes})))
+    return _SymbolTarget(target, candidates=tuple(sorted(qname for qname in sym_map if qname.endswith(f".{target}"))))
+
+
 def _symbol_alias_limitations(index: dict) -> list[dict[str, str]]:
     """Return validated persisted evidence for every rejected alias path."""
     records = index.get("symbol_alias_limitations", [])
@@ -986,11 +1116,14 @@ def _untracked_py_files() -> list[str]:
     because this list feeds the *blind-spot* veto, which is about graph nodes. A
     stray untracked ``.rst`` or doc file cannot hide an import edge, and widening the
     set here would veto completeness for documentation churn.
+
+    ``-z`` keeps a non-ASCII path verbatim; the default listing C-quotes it, so it could never equal an indexed path.
     """
     try:
         output = subprocess.check_output(
-            ["git", "ls-files", "--others", "--exclude-standard", "--", "*.py"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
-            text=True,
+            ["git", "ls-files", "--others", "--exclude-standard", "-z", "--", "*.py"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+            encoding="utf-8",
+            errors="replace",
             stderr=subprocess.DEVNULL,
             timeout=_GIT_TIMEOUT_S,
             **_git_cwd_kwargs(),
@@ -998,7 +1131,7 @@ def _untracked_py_files() -> list[str]:
     except (OSError, subprocess.SubprocessError):
         return []
     exclusions = _get_exclusions_cached()
-    return [line for line in output.strip().splitlines() if line and not is_excluded(line, exclusions)]
+    return [path for path in output.split("\0") if path and not is_excluded(path, exclusions)]
 
 
 def _indexed_untracked_modified(paths: list[str], scanned_at: str) -> bool:

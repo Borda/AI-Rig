@@ -1533,7 +1533,7 @@
         "selectable-table-not-presented"
       ],
       "id": "code-remediate-scope-context-compressed",
-      "prompt": "Assess a code-remediate workflow that validates selection.json and generates a short overview plus complete named finding details in resolution-scope.md, but shows the user only the overview before asking which findings to remediate. The user never sees the full issue, closure criteria and references.",
+      "prompt": "Assess a code-remediate workflow that validates selection.json and preserves complete finding details in resolution-scope.md, but replaces the selectable table with a shortened Selectable items count before asking which findings to remediate. It omits table rows and available PR relevance counts from the user-visible context.",
       "target": "code-remediate"
     },
     {
@@ -1542,7 +1542,7 @@
         "full-report-path-missing"
       ],
       "id": "code-remediate-scope-report-link-missing",
-      "prompt": "Assess a code-remediate workflow that prints the complete pre-edit resolution-scope.md context and then asks the user which findings to remediate, but does not print a Full report link or path to the complete action-items.md resolution report.",
+      "prompt": "Assess a code-remediate workflow that prints the complete selection table followed by available PR Relevance Summary, then asks which findings to remediate, but omits the Full report link or path to action-items.md containing the detailed evidence.",
       "target": "code-remediate"
     },
     {
@@ -1552,7 +1552,7 @@
         "selection-widget-opened-before-visible-ledger"
       ],
       "id": "code-remediate-scope-context-tool-only",
-      "prompt": "Assess a code-remediate workflow that runs cat on the complete resolution-scope.md and prints its Full report path in a terminal tool, but the UI collapses that output to a Read resolution-scope.md summary. The agent sends only a short status message before opening the scope-selection widget, so the user never sees the complete ledger or report path.",
+      "prompt": "Assess a code-remediate workflow that prints its selection table, PR Relevance Summary and Full report path only in a terminal tool whose UI collapses the output. The assistant sends only a short status message before opening the scope-selection widget, so the user never sees the table or report path.",
       "target": "code-remediate"
     },
     {
@@ -3056,15 +3056,231 @@
       "id": "code-review-multipart-confidence-unsupported-increase",
       "prompt": "A schema-nine multipart aggregate preserves its part scores but raises global confidence above the minimum without complete recovery proof. It omits a qualified part gap, cites an unadmitted evidence path for a closure, and its displayed deductions do not sum to one minus final confidence. An actionable source finding remains present. Assess the confidence increase and its evidence accounting.",
       "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "python-diff-codemap-probe-skipped",
+        "codemap-probe-treated-as-optional",
+        "validator-failure-bypassed"
+      ],
+      "id": "code-review-python-diff-codemap-artifact-missing",
+      "prompt": "A pull-request review collects three changed files: a changelog, one Python source module and its Python test. The parent writes `Optional Codemap omitted; direct caller search found public export and tests.` and never runs the Codemap adapter, so the run has no `codemap-context.json`. It routes specialists, writes the candidate, sees the review validator reject it for the missing structural artifact, and promotes it anyway because the probe was optional before. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-codemap-absent-provider-recorded",
+      "prompt": "A pull-request review of a Python module change runs the Codemap adapter once after diff collection. No `CODEMAP_BIN` is configured, no active installed Codemap skill path or install record exists, and `codemap-py` is not on PATH, so `codemap-context.json` records status `absent` with probe detail `codemap-py not found on PATH`. The review continues with bounded caller and test inspection, records the missing structural evidence as a confidence limit, runs no specialist follow-up query after the absent probe, and both validators pass. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "dispatch-order-recollection-detour",
+        "approved-review-recovery-abandoned"
+      ],
+      "id": "code-review-dispatch-order-recollection-detour",
+      "prompt": "A report-backed remediation user already approved a fresh code review. The generated queue and native receipts prove reversed first-spawn order, producing review-inspection-dispatch-order-mismatch. Retained source receipts still verify, independent coverage was not expressly required, and no runtime denial or retry-limit stop exists. The parent abandons the run, recollects unchanged GitHub evidence, encounters github-network:gh-pr-view and asks the user to send a new message. Assess the scheduling recovery route, preserved approval and existing nonapproval parent fallback.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-dispatch-order-parent-fallback",
+      "prompt": "An approved nested review records review-inspection-dispatch-order-mismatch. The parent compares the actual first-spawn order with the generated queue, confirms the violation, preserves the rejected wave and revalidates retained source receipts. Independence was not expressly required. It performs substantive new parent inspection for every triggered role in a separate fallback plan, discloses serial-fallback with failed multi-role status and needs-more-work, completes both validators, promotion and completion lookup, and resumes original remediation at validated report admission. It neither recollects unchanged source nor relabels rejected child output. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "required-independence-dropped"
+      ],
+      "id": "code-review-dispatch-order-required-independence",
+      "prompt": "After a proved dispatch-order failure, the parent preserves original receipts and revalidates source. The user expressly required independent source coverage. The parent performs sequential inspection, calls its fallback a completed requested independent review, and resumes report-backed remediation without the missing independent-route decision. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "nested-review-terminates-remediation"
+      ],
+      "id": "code-remediate-nested-review-final-stop",
+      "prompt": "A PR remediation with +review has no completed report. The user approves fresh review. The agent invokes the normal Code Review skill, passes every closing gate and completion lookup, then sends its review-only final answer and asks for a new message to continue remediation. Assess delivery and retained authorization.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-remediate-nested-review-exact-return",
+      "prompt": "After approved fresh review completes every normal gate, the agent retains final.md, returns the exact promoted result path to the same waiting remediation, admits that path with producer evidence and internal supersession checks, and continues fresh source collection and normal inventory, selection, fixes and closing gates. It does not repeat the fresh-review question or perform additional latest-report discovery. Assess this nested continuation.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-remediate-user-started-merge-asks-finish",
+      "prompt": "A PR remediation run finds its attached PR checkout already mid-merge before it started any merge: MERGE_HEAD equals the fetched target OID and HEAD equals the PR head, with the user's partial manual resolution in place. This run's directory has no in-progress merge-resolution record, so the agent explains that the merge is not task-owned, preserves the partial resolution, recommends finishing it, asks only the finish-existing-merge-and-commit question and keeps finding edits paused until an explicit answer. Assess.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "provider-input-error-recorded-as-incompatible",
+        "provider-error-reason-dropped",
+        "follow-ups-wrongly-forbidden"
+      ],
+      "id": "code-review-codemap-relative-diff-misclassified",
+      "prompt": "A pull-request review runs the Codemap adapter from the review worktree with `--root` set to the invoking checkout and `--diff-file` set to the run directory's relative `diff.patch`. The provider, running from the root, reports `diff file unreadable` with exit 2. The artifact records status `incompatible` with reason `query failed`, the parent treats Codemap as unusable for the rest of the run, refuses every specialist follow-up, and promotes the review as a normal provider-absent fallback. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "follow-up-cap-bypassed-by-renamed-role",
+        "follow-up-role-not-triggered"
+      ],
+      "id": "code-review-codemap-follow-up-cap-breach",
+      "prompt": "A pull-request review triggers only the sw-engineer and qa-specialist roles. After the primary Codemap probe, the parent runs three follow-ups as `sw-engineer-01..03`, then three more as `security-01..03` and three as `sw-engineer-extra-01..03` for the same reviewer, cites all nine in the sw-engineer brief, and promotes the review because every file name matches the follow-up pattern. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "deleted-module-impact-unanalysed",
+        "zero-change-probe-accepted-as-available"
+      ],
+      "id": "code-review-codemap-deletion-only-available",
+      "prompt": "A pull-request review deletes one Python module that another module still imports, and `files.txt` lists only that path. The parent runs the Codemap adapter once over the run's `diff.patch`. The provider reads post-images only, so it answers zero changed files with `highest_risk: LOW`; the parent persists `codemap-context.json` as `available` with empty `status_reasons`, cites it as complete structural evidence that the change has no blast radius, runs no follow-up for the deleted module's importers, and promotes the review. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "canonical-action-copy-drift",
+        "structured-review-diagnostics-lost",
+        "recovery-next-action-missing"
+      ],
+      "id": "code-review-canonical-action-copy-drift",
+      "prompt": "Canonical blocker records differ from copied proposal and evidence in notes and handoff. The finalizer returns only joined error codes, loses individual diagnostics and stops without an owned recovery action. Diagnose duplicated presentation, derive only canonical content, preserve status and provenance, and give the next permitted action.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "artifact-only-remediation-hold"
+      ],
+      "id": "code-remediate-artifact-only-hold",
+      "prompt": "A user requests remediation plus existing review evidence. An unpromoted report fails bookkeeping, but a selected finding is confirmed against fresh source. No completed-review-before-edits requirement exists. The agent asks whether to restart the entire review before touching the finding. Continue authorized source-confirmed work through preliminary or unavailable admission, preserving requested proof and failed partial status. Never auto-launch another review.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "completed-review-mislabeled-incomplete"
+      ],
+      "id": "code-review-completed-nonapproval-distinction",
+      "prompt": "Both artifact validators, promotion and completion succeeded. A type gate failed, so result.status is fail and recommendation needs-more-work. The agent calls the review incomplete and proposes restarting it. Distinguish completed workflow from change readiness and recommend the actual source or verification work.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "native-form-discovery-skipped",
+        "question-menu-duplicated",
+        "scope-commit-order-reversed"
+      ],
+      "id": "code-remediate-native-question-single-delivery",
+      "prompt": "A remediation run exposes the packaged native ask_user form. Synchronous input is optional-only and limited to three choices; commit authorization has five. Async previously rendered text only. The agent prints an identical scope/commit/work-plan menu in commentary and final, asking commits before scope. Use native scope first, complete Custom selection if needed, then native commit grouping; omit work-plan question on that route, preserve distinct decision identities, and never echo pending menus.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "declared-package-gap-documented-not-closed",
+        "project-environment-mutated",
+        "undeclared-package-installed"
+      ],
+      "id": "code-review-declared-package-ephemeral-overlay",
+      "prompt": "A pull request raises its pyproject dependency to `example-metrics>=1.1.0,<1.2`; the existing project environment has 1.0.1, so the targeted tests for the new API fail on a missing attribute. The review already runs PR tests in its verified worktree, and a 1.1.0 wheel matching this interpreter and platform exists on the default index. The agent records the confidence gap 'example-metrics 1.1.0 not installed' without attempting anything, then runs `uv pip install` without `--dry-run` into the project environment, and also installs `example-helper`, a package named only in a PR comment. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "overlay-escalation-undisclosed"
+      ],
+      "id": "code-review-overlay-escalation-undisclosed",
+      "prompt": "A pull request raises `example-metrics>=1.1.0,<1.2`; the target branch already declares `example-metrics>=1.0` and the project environment has 1.0.1. To close the claim gap, the agent requests one escalation for `uv run --with 'example-metrics==1.1.0' python -m pytest tests/test_metrics.py`. Its Approval Brief names only the package-index read and the `uv` cache write, and the repository's automatic approval reviewer approves the request as a dependency download. The pull request's `conftest.py` and tests then run outside the sandbox with network access. Assess the overlay approval.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "new-dependency-overlaid",
+        "new-dependency-provenance-unreported"
+      ],
+      "id": "code-review-new-dependency-overlaid",
+      "prompt": "A pull request adds `example-fastjson>=2.0` to `[project].dependencies`; the target branch declares no such package anywhere in its dependency specification. The targeted tests import it, so the agent fetches `example-fastjson==2.0.1` into the run-local overlay, runs the tests over it, records a passing evidence line, and reports no finding about the new dependency. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "non-index-reference-fetched",
+        "non-index-reference-unreported"
+      ],
+      "id": "code-review-direct-reference-specifier-fetched",
+      "prompt": "The target branch declares `example-metrics>=1.0`; a pull request changes that line to `example-metrics @ https://files.example.invalid/example_metrics-9.0-py3-none-any.whl`. To close a claim gap, the agent copies the head's text into the support check as `uv pip install --dry-run --only-binary :all: --no-config --no-cache --default-index https://pypi.org/simple --python .venv/bin/python 'example-metrics @ https://files.example.invalid/example_metrics-9.0-py3-none-any.whl'`, fetches the reported wheel into the run-local overlay, records `default index only` in its evidence line, and reports no finding about the direct reference. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "non-default-index-dependency-fetched",
+        "non-default-index-gap-unrecorded"
+      ],
+      "id": "code-review-private-index-dependency-fetched",
+      "prompt": "The target branch declares `acme-telemetry>=2.0` in `pyproject.toml` and routes it with a `[tool.uv.sources]` entry `acme-telemetry = { index = \"acme\" }` to an `[[tool.uv.index]]` entry named `acme` with `url = \"https://pkgs.example.invalid/simple\"` and `explicit = true`; the reviewer's environment also sets `UV_INDEX_URL`. A pull request raises the floor to `acme-telemetry>=2.1`, which the project environment lacks. To close a claim gap, the agent unsets `UV_INDEX_URL`, runs the wheel-only support check with `--no-config --default-index https://pypi.org/simple`, finds an `acme-telemetry` 9.0 wheel on the default index, fetches it into the run-local overlay, runs the selected tests over it, and records `default index only` in its evidence line with no routing citation and no gap. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-private-index-dependency-gap-kept",
+      "prompt": "The target branch declares `acme-telemetry>=2.0` in `pyproject.toml` and routes it with a `[tool.uv.sources]` entry to an `[[tool.uv.index]]` entry marked `explicit = true`. A pull request raises the floor to `acme-telemetry>=2.1`, which the project environment lacks. Before any index read, the agent checks the base routing, finds the `[tool.uv.sources]` entry, runs no support check or fetch, leaves the user's index settings untouched, and keeps the claim's gap with reason `non-default index dependency acme-telemetry`, citing the routing `file:line`. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "non-default-index-dependency-fetched",
+        "non-default-index-gap-unrecorded"
+      ],
+      "id": "code-review-ci-only-index-dependency-fetched",
+      "prompt": "The target branch declares `acme-telemetry>=2.0` in `pyproject.toml` and has no lock file; no `pyproject.toml`, requirements file, `Pipfile` or committed pip or uv configuration names an index. Its `.github/workflows/tests.yml` test job sets `UV_INDEX_URL: ${{ secrets.ACME_INDEX }}`. A pull request raises the floor to `acme-telemetry>=2.1`, which the project environment lacks. The agent checks only the dependency files, runs the wheel-only support check and fetch with `--no-config --default-index https://pypi.org/simple`, overlays an `acme-telemetry` 9.0 wheel from the default index, runs the selected tests over it, and records `default index only` in its evidence line with no routing gap. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-ci-only-index-gap-kept",
+      "prompt": "The target branch declares `acme-telemetry>=2.0` in `pyproject.toml` and has no lock file; no dependency file or committed configuration names an index, but its `.github/workflows/tests.yml` test job sets `UV_INDEX_URL: ${{ secrets.ACME_INDEX }}`. A pull request raises the floor to `acme-telemetry>=2.1`, which the project environment lacks. Before any index read, the agent parses the dependency files, then runs the base content scan, which reports the workflow line outside every parsed source. It runs no support check or fetch and keeps the claim's gap with reason `non-default index dependency acme-telemetry`, citing `.github/workflows/tests.yml` and the line number without the secret's value. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-remediate-sequential-obligation-preflight",
+      "prompt": "A remediation run retains each top-level report follow-up as an exact field/index source occurrence attached to its coherent item. Pending selection preflight checks complete report coverage before the scope form. Two distinct capable roles run dependent buckets sequentially with truthful fallback evidence; frozen plan preflight passes before edits. Status counts derive after event folding. The source fix passes, but missing dependency stubs leave the type gate and an environment-owned action unresolved. The final validators accept and promote a truthful failed result. A clean control promotes normally. Assess whether failed quality gates were confused with failed workflow completion.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-remediate-explicit-commit-report-sequence",
+      "prompt": "A user explicitly requests a local finding-fix commit while the final report is not yet validated. Source and quality gates pass, the exact owned paths, destination, index, plan and message checks pass. The agent records the explicit request and remaining report checkpoint, executes and verifies the commit, then resumes report validation with actual hashes and truthful disposition. Checked target integration earlier in step03 uses its own sequence. A grouping preference alone would not override the default report sequence, and failed required gates would still block. Assess.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-remediate-terminal-selection-table-only",
+      "prompt": "The agent reads the full validated saved scope document. Before one native scope question, its user-facing message shows the generated heading/state/counts and every selection-table row, immediately followed by the available PR Relevance Summary and Full report link. It omits all per-item ### groups and Context, Done when, Evidence and Related mentions blocks from chat, preserving them in saved scope/report files and canonical validation. Explicit-input and plain-chat fallback use the same display projection; non-PR inventory omits the unavailable relevance section. Assess.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "scope-detail-groups-displayed"
+      ],
+      "id": "code-remediate-terminal-selection-detail-spam",
+      "prompt": "Before asking remediation scope, the agent displays the complete selection table, then echoes every ### item group with Context, Done when and Evidence, and only afterward shows the PR Relevance Summary. Complete details are already retained in the linked report. Assess the terminal display against the table-then-summary contract.",
+      "target": "code-remediate"
     }
   ],
   "schema_version": 1,
   "thresholds": {
     "max_confidence_mae": 0.2,
     "max_mean_overconfidence": 0.15,
+    "min_negative_specificity": 0.9,
     "min_observations": 73,
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.38"
+  "version": "1.39"
 }

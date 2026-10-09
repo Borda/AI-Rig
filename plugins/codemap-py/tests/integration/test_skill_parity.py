@@ -279,6 +279,21 @@ def test_integration_mode_table_matches_across_runtimes() -> None:
     assert _extract_mode_table(claude_text) == _extract_mode_table(codex_text)
 
 
+@pytest.mark.parametrize(
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
+)
+def test_integration_approval_names_the_plan_artifact(runtime_dir: Path) -> None:
+    """Both runtimes show the plan artifact path beside the SHA-256 at the apply/sync approval gate.
+
+    The saved artifact is the full copy of the plan. A summary shortened to fit the approval control — Claude Code
+    withholds an option preview over 2000 chars and clips one past about 12 lines — must still point at it.
+    """
+    skill_text = (runtime_dir / "integration" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "SHA-256" in skill_text
+    assert "plan artifact" in skill_text
+
+
 def test_integration_mode_table_matches_shared_contract() -> None:
     """Both runtime skills' mode table matches the shared ``integration-contract.md`` source of truth."""
     contract_text = _INTEGRATION_CONTRACT.read_text()

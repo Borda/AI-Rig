@@ -49,7 +49,8 @@ Use `--require-live-routes` only for strict-live gate. Default offline scoring r
 - `recall`: expected IDs recovered from known cases.
 - `precision`: reported IDs matching expected IDs.
 - `confidence_accuracy`: `1 - mean(abs(confidence - per-case F1))`.
-- `mean_overconfidence`: mean positive confidence bias over per-case F1.
+- `mean_overconfidence`: mean positive confidence bias over per-case F1. A case expecting no findings scores F1 1.0 when nothing is reported, so a correct clean answer adds no overconfidence.
+- `negative_specificity`: share of negative-control observations answered with no finding, gated by `min_negative_specificity`; false alarms on clean cases fail it even when aggregate precision and overconfidence stay inside their thresholds. The same threshold also gates each observation source on its own (`behavioral-source-negative-specificity`, sources listed in `negative_specificity_failing_sources`), so clean fixture negative controls cannot dilute a new source's false alarms.
 - `gate_metrics_raw`: unrounded pass/fail values.
 - `by_source`: recall, precision, confidence calibration by source.
 - `observation_freshness`: latest `observed_at`, missing timestamps, live/fixture counts.

@@ -131,7 +131,7 @@ printf 'STALE=%s\n' "$STALE"
 ```
 
 - `STALE=true` → `AskUserQuestion`: (a) Proceed anyway (callers may be incomplete); (b) Abort (first re-run /codemap-py:scan-codebase). Abort → print "Run `/codemap-py:scan-codebase` then re-invoke"; stop.
-- `STALE=unknown` (JSON parse failed, or `stale` absent/null) → print `⚠ Could not determine index freshness — proceeding but callers may be incomplete`; continue cautiously, never treat fresh.
+- `STALE=unknown` (JSON parse failed, or `stale` absent/null) → print `⚠ Could not determine index freshness — proceeding but callers may be incomplete` and repeat it in Step 7's summary (a mid-run print can arrive as an empty progress update); continue cautiously, never treat fresh.
 
 ## Step 2: Resolve targets
 
@@ -180,14 +180,18 @@ RDEPS_JSON=$(codemap-py query --timeout 20 fn-rdeps "${SYM_MODULE}::${SYM_QNAME}
 RDEP_COUNT=$(printf '%s' "$RDEPS_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('count',0))" 2>/dev/null || echo "0")
 # forward-first, fail-closed — query_complete wins even when false. jq `//` falls through on false too: false query_complete got overridden by true legacy exhaustive, arming destructive gate on incomplete graph.
 EXHAUSTIVE=$(printf '%s' "$RDEPS_JSON" | python3 -c "import sys,json; i=json.load(sys.stdin).get('index',{}); v=i.get('query_complete', i.get('exhaustive', False)); print('true' if v is True else 'false')" 2>/dev/null || echo "false")
+# zero-caller method → `hint`: obj.method()/dynamic dispatch unresolved statically; query_complete stays true, so hint alone blocks delete
+RDEP_HINT=$(printf '%s' "$RDEPS_JSON" | python3 -c "import sys,json; print(' '.join(str(json.load(sys.stdin).get('hint') or '').split()))" 2>/dev/null || echo "")
 printf '%s\n' "$RDEP_COUNT"  > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rdep-count-${CSID}"
 printf '%s\n' "$EXHAUSTIVE"  > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-EXHAUSTIVE-${CSID}"
+printf '%s\n' "$RDEP_HINT"   > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-RDEP_HINT-${CSID}"
 ```
 
-`fn-rdeps` returns `{qname, called_by:[{caller, module, path}], count, index:{query_complete,...}}`.
+`fn-rdeps` returns `{qname, called_by:[{caller, module, path}], count, index:{query_complete,...}}`, plus `hint` for a method or constructor with zero static callers.
 
 - `called_by` has **no line numbers**; Step 4c runs `codemap-py query symbol <caller>` per entry.
 - `EXHAUSTIVE` first reads `result["index"]["query_complete"]`; only if absent, use legacy `result["index"]["exhaustive"]`; neither → `false`. Incomplete → note in blast report.
+- `RDEP_HINT` non-empty → zero static callers is not zero callers: instance calls (`obj.method()`), overrides, subclass constructors, and implicit protocol (dunder) calls such as `len(x)` or `x == y` are never resolved statically. Print it in the blast report.
 
 **Module subcommand**:
 
@@ -204,6 +208,8 @@ RDEP_COUNT=$(printf '%s' "$RDEPS_JSON" | python3 -c "import sys,json; print(len(
 EXHAUSTIVE=$(printf '%s' "$RDEPS_JSON" | python3 -c "import sys,json; i=json.load(sys.stdin).get('index',{}); v=i.get('query_complete', i.get('exhaustive', False)); print('true' if v is True else 'false')" 2>/dev/null || echo "false")
 printf '%s\n' "$RDEP_COUNT"  > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rdep-count-${CSID}"
 printf '%s\n' "$EXHAUSTIVE"  > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-EXHAUSTIVE-${CSID}"
+# rdeps carries no method hint; overwrite so an earlier symbol run's hint never reaches this gate
+printf '\n' > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-RDEP_HINT-${CSID}"
 # --remove-if-no-callers needs explicit pass AND exhaustive
 IFS= read -r REMOVE_IF_ZERO_ARG < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-REMOVE_IF_ZERO-${CSID}" 2>/dev/null || REMOVE_IF_ZERO_ARG="false"
 [ "$REMOVE_IF_ZERO_ARG" = "true" ] && [ "$EXHAUSTIVE" != "true" ] && printf '%s\n' "false" > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-REMOVE_IF_ZERO-${CSID}"
@@ -235,6 +241,8 @@ Deprecation wrapper: <OLD_REF> kept as @deprecated alias → <NEW_REF>
   - Cross-repo consumers
 [if not EXHAUSTIVE]
 ⚠ Index non-exhaustive — some callers may not appear above
+[if RDEP_HINT]
+⚠ <RDEP_HINT>
 ```
 
 **Budget gate**: caller count > 50 → derive BRANCH and a free (non-colliding) output path first:
@@ -276,14 +284,16 @@ IFS= read -r REMOVE_IF_ZERO < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-REMOVE
 IFS= read -r DRY_RUN < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-DRY_RUN-${CSID}" 2>/dev/null || DRY_RUN="false"
 IFS= read -r RDEP_COUNT < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rdep-count-${CSID}" 2>/dev/null || RDEP_COUNT="0"
 IFS= read -r EXHAUSTIVE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-EXHAUSTIVE-${CSID}" 2>/dev/null || EXHAUSTIVE="false"
+IFS= read -r RDEP_HINT < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-RDEP_HINT-${CSID}" 2>/dev/null || RDEP_HINT=""
 # emit — the gate below decides on a printed value, not an invisible sentinel read
-printf 'REMOVE_IF_ZERO=%s DRY_RUN=%s RDEP_COUNT=%s EXHAUSTIVE=%s\n' "$REMOVE_IF_ZERO" "$DRY_RUN" "$RDEP_COUNT" "$EXHAUSTIVE"
+printf 'REMOVE_IF_ZERO=%s DRY_RUN=%s RDEP_COUNT=%s EXHAUSTIVE=%s\nRDEP_HINT=%s\n' "$REMOVE_IF_ZERO" "$DRY_RUN" "$RDEP_COUNT" "$EXHAUSTIVE" "$RDEP_HINT"
 ```
 
 - `REMOVE_IF_ZERO=true` AND `RDEP_COUNT > 0` → print `! --remove-if-no-callers: N callers found. Remove all callers first or omit flag.`; stop **entire rename operation**.
 - `REMOVE_IF_ZERO=true` AND `EXHAUSTIVE=false` → print `! --remove-if-no-callers requires exhaustive=true. Run /codemap-py:scan-codebase to ensure full coverage.`; stop **entire rename operation**.
-- `REMOVE_IF_ZERO=true` AND `RDEP_COUNT == 0` AND `EXHAUSTIVE=true` AND `DRY_RUN=false` → `AskUserQuestion`: (a) Delete `$OLD_REF` — confirmed no callers; (b) Abort — keep file. Abort: stop. Delete: find-symbol line range, then `Read` block bounds. Verify `start_line` contains expected bare `OLD_NAME` or qualified `OLD_REF`; mismatch → print `! Symbol name mismatch at line <start_line>: expected <OLD_NAME>, index may be stale — run /codemap-py:scan-codebase first`; abort without delete. Only then `Edit`: remove definition from `def`/`class` through final body, including immediately preceding `@decorator` lines. Skip Steps 4a–4d. Print `ℹ Symbol had no callers — removed $OLD_REF without rename`; go Step 6.
-- `REMOVE_IF_ZERO=true` AND `RDEP_COUNT == 0` AND `EXHAUSTIVE=true` AND `DRY_RUN=true` → record "would delete `$OLD_REF` — no callers, exhaustive" as a line in the dry-run report below; fall through to the `--dry-run` block. No `AskUserQuestion`, no `Edit` — dry-run means no edits, including the delete.
+- `REMOVE_IF_ZERO=true` AND `RDEP_HINT` non-empty → print `! --remove-if-no-callers: 0 static callers is not proof for a method or constructor — <RDEP_HINT>`; stop **entire rename operation**. Hint names a search → append `Run that search; delete manually only if it finds no reference.` Protocol-method hint (a dunder such as `__len__`/`__eq__`, no search) → append `Python calls it implicitly; never delete it on zero callers.` — an empty search is expected there, never a licence to delete. Zero static callers of a method is the hint's case, not evidence of none; never delete on it.
+- `REMOVE_IF_ZERO=true` AND `RDEP_COUNT == 0` AND `EXHAUSTIVE=true` AND `RDEP_HINT` empty AND `DRY_RUN=false` → `AskUserQuestion`: (a) Delete `$OLD_REF` — confirmed no callers; (b) Abort — keep file. Abort: stop. Delete: find-symbol line range, then `Read` block bounds. Verify `start_line` contains expected bare `OLD_NAME` or qualified `OLD_REF`; mismatch → print `! Symbol name mismatch at line <start_line>: expected <OLD_NAME>, index may be stale — run /codemap-py:scan-codebase first`; abort without delete. Only then `Edit`: remove definition from `def`/`class` through final body, including immediately preceding `@decorator` lines. Skip Steps 4a–4d. Print `ℹ Symbol had no callers — removed $OLD_REF without rename`; go Step 6.
+- `REMOVE_IF_ZERO=true` AND `RDEP_COUNT == 0` AND `EXHAUSTIVE=true` AND `RDEP_HINT` empty AND `DRY_RUN=true` → record "would delete `$OLD_REF` — no callers, exhaustive" as a line in the dry-run report below; fall through to the `--dry-run` block. No `AskUserQuestion`, no `Edit` — dry-run means no edits, including the delete.
 - Otherwise (`REMOVE_IF_ZERO=false`): proceed with normal rename flow.
 
 **`--dry-run`**: derive branch and a free output path first, then write the report:
@@ -314,7 +324,7 @@ Path:       → <the resolved $DRY_OUT path>
 
 [if reached via the zero-callers delete path above] `Title` → `rename-refs dry-run — would delete <OLD_REF>`; `Outcome` → `DRY_RUN — no edits applied; would delete <OLD_REF> — zero callers, exhaustive`; body records only that one line, no caller/import/docstring counts.
 
-Print path; `AskUserQuestion`: (a) Apply for real (re-invoke without --dry-run); (b) Done. Stop.
+`AskUserQuestion` with the report path in its question text (not printed before the call): (a) Apply for real (re-invoke without --dry-run); (b) Done. Stop.
 
 Otherwise `AskUserQuestion`: (a) Apply edits; (b) Abort. Abort → stop.
 

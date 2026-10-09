@@ -7,6 +7,7 @@ import json
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from codemap_py import query_state as state
@@ -56,6 +57,43 @@ def _risk_tier(rdep_count: int) -> str:
     return "LOW"
 
 
+#: One escape inside a git C-quoted path: three octal digits for a raw byte, or one of git's single-character escapes.
+_GIT_QUOTED_ESCAPE = re.compile(r'\\([0-7]{3}|[abtnvfr"\\])')
+#: Byte each single-character escape in a git C-quoted path stands for.
+_GIT_QUOTE_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+
+
+def _unquote_git_path(token: str) -> str:
+    """Return a diff-header path with git's C-style quoting removed, or *token* unchanged when it is not quoted.
+
+    Under git's default ``core.quotePath`` a path holding a non-ASCII byte is written double-quoted with each such
+    byte as an octal escape (``"b/pkg/mod\\303\\251.py"``); a ``"``, ``\\`` or control character is quoted under any
+    setting. Read verbatim, that token ends in ``"`` rather than ``.py``, so the changed module silently vanished from
+    the change set. The escapes are decoded back to bytes and the bytes to UTF-8, the encoding git's own path output
+    uses on every platform.
+
+    Examples:
+        >>> _unquote_git_path('"b/pkg/mod\\\\303\\\\251.py"')
+        'b/pkg/modé.py'
+        >>> _unquote_git_path('"b/a \\\\"q\\\\".py"')
+        'b/a "q".py'
+        >>> _unquote_git_path("b/pkg/plain.py")
+        'b/pkg/plain.py'
+    """
+    if len(token) < 2 or not (token.startswith('"') and token.endswith('"')):
+        return token
+    body = token[1:-1]
+    decoded = bytearray()
+    cursor = 0
+    for match in _GIT_QUOTED_ESCAPE.finditer(body):
+        decoded += body[cursor : match.start()].encode("utf-8")
+        code = match.group(1)
+        decoded.append(int(code, 8) if len(code) == 3 else _GIT_QUOTE_ESCAPES[code])
+        cursor = match.end()
+    decoded += body[cursor:].encode("utf-8")
+    return decoded.decode("utf-8", errors="replace")
+
+
 def _git_diff_paths(base: str) -> list[str] | dict:
     """Return changed ``.py`` paths for *base*, or an error dict when git fails.
 
@@ -64,17 +102,22 @@ def _git_diff_paths(base: str) -> list[str] | dict:
     commit. Any other *base* is passed straight to ``git diff <base>`` so a caller can
     scope to a range (``main...HEAD``) or a single ref.
 
+    ``-z`` keeps every path verbatim: the default newline listing C-quotes a non-ASCII path, which then names no
+    indexed module.
+
     Args:
         base: git ref or range to diff against; ``"HEAD"`` for the working tree.
     """
-    cmd = ["git", "diff", "--name-only", base, "--", "*.py"]
+    cmd = ["git", "diff", "--name-only", "-z", base, "--", "*.py"]
     try:
-        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=_GIT_TIMEOUT_S)  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
+        out = subprocess.check_output(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
+            cmd, stderr=subprocess.DEVNULL, timeout=_GIT_TIMEOUT_S
+        )
     except subprocess.CalledProcessError as exc:
         return {"error": "git diff failed", "base": base, "detail": f"exit {exc.returncode}"}
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         return {"error": "git unavailable", "base": base, "detail": str(exc)}
-    return [line for line in out.strip().splitlines() if line]
+    return [path for path in out.decode("utf-8", errors="replace").split("\0") if path]
 
 
 def _git_diff_line_ranges(base: str, path: str) -> list[tuple[int, int]]:
@@ -176,51 +219,181 @@ def _map_changed_files(
     return modules, unmapped
 
 
-def _parse_unified_diff(text: str) -> dict[str, list[tuple[int, int]]]:
-    """Map each ``.py`` file in a unified diff to its changed post-image line ranges.
+#: Hunk header ``@@ -a[,b] +c[,d] @@``: pre-image count, post-image start, post-image count (a count defaults to 1).
+_HUNK_HEADER = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+#: First character of a hunk body line: context, added, removed, or git's ``\ No newline at end of file`` marker.
+_HUNK_BODY_MARKS = frozenset(" +-\\")
 
-    Feeds ``--diff-file`` mode: a PR reviewed from a fetched diff (``gh pr diff``)
-    has no local git objects, so ranges must come from the diff text itself. Paths
-    are taken from ``+++ b/<path>`` lines (post-image side — the numbering the
-    index's symbol coordinates use); ranges from ``@@ -a,b +c,d @@`` headers. Pure
-    deletions (``+c,0``) contribute no post-image lines and are skipped; a deleted
-    file (``+++ /dev/null``) is dropped entirely. A file that appears with no
-    parsable ranges keeps an empty list — downstream treats that as "all symbols
-    potentially changed" (same conservative fallback as the git path).
+
+@dataclass
+class _HunkCursor:
+    """Position inside one unified-diff hunk body, advanced one body line at a time.
+
+    The header's two line counts say how many body lines follow, which is what tells an added line whose text starts
+    with ``++ `` apart from the next file's ``+++ `` header.
+    """
+
+    #: Pre-image (context or removed) lines still expected.
+    old_left: int
+    #: Post-image (context or added) lines still expected.
+    new_left: int
+    #: Post-image line number the next context or added line occupies.
+    next_new: int
+
+    @classmethod
+    def from_header(cls, line: str) -> _HunkCursor | None:
+        """Return a cursor at the start of the hunk *line* opens, or ``None`` when it is no hunk header.
+
+        Examples:
+            >>> _HunkCursor.from_header("@@ -3,7 +3,8 @@ def f():")
+            _HunkCursor(old_left=7, new_left=8, next_new=3)
+            >>> _HunkCursor.from_header("@@ -1 +1 @@")
+            _HunkCursor(old_left=1, new_left=1, next_new=1)
+            >>> _HunkCursor.from_header("@@@ -1 -1 +1 @@@") is None
+            True
+        """
+        match = _HUNK_HEADER.match(line)
+        if match is None:
+            return None
+        old_count, new_start, new_count = match.groups()
+        return cls(
+            old_left=int(old_count) if old_count is not None else 1,
+            new_left=int(new_count) if new_count is not None else 1,
+            next_new=int(new_start),
+        )
+
+    def expects(self, line: str) -> bool:
+        """Return whether *line* is still part of this hunk's body.
+
+        An empty line counts as context: tools that strip trailing whitespace turn a blank context line ``" "`` into
+        ``""``.
+        """
+        return (self.old_left > 0 or self.new_left > 0) and (not line or line[0] in _HUNK_BODY_MARKS)
+
+    def advance(self, line: str) -> int | None:
+        """Consume one body *line*; return its post-image line number when it is an added line, else ``None``."""
+        mark = line[:1]
+        if mark == "\\":
+            return None
+        if mark == "+":
+            added = self.next_new
+            self.next_new += 1
+            self.new_left -= 1
+            return added
+        self.old_left -= 1
+        if mark != "-":
+            self.next_new += 1
+            self.new_left -= 1
+        return None
+
+
+def _add_changed_line(ranges: list[tuple[int, int]], line_no: int) -> None:
+    """Record *line_no* as changed, extending the last range when it continues it.
+
+    Examples:
+        >>> ranges = []
+        >>> for line_no in (4, 5, 9):
+        ...     _add_changed_line(ranges, line_no)
+        >>> ranges
+        [(4, 5), (9, 9)]
+    """
+    if ranges and ranges[-1][1] == line_no - 1:
+        ranges[-1] = (ranges[-1][0], line_no)
+    else:
+        ranges.append((line_no, line_no))
+
+
+def _diff_target_path(header: str) -> str | None:
+    """Return the repo-relative ``.py`` path a ``+++`` header names, or ``None`` for a deletion or a non-Python file.
+
+    Examples:
+        >>> _diff_target_path('+++ "b/pkg/mod\\\\303\\\\251.py"')
+        'pkg/modé.py'
+        >>> _diff_target_path("+++ /dev/null") is None
+        True
+        >>> _diff_target_path("+++ b/doc/x.md") is None
+        True
+    """
+    target = _unquote_git_path(header[4:].split("\t")[0].strip())
+    if target == "/dev/null":
+        return None
+    path = target[2:] if target.startswith(("a/", "b/")) else target
+    return path if path.endswith(".py") else None
+
+
+def _parse_unified_diff(text: str) -> dict[str, list[tuple[int, int]]]:
+    """Map each ``.py`` file in a unified diff to the post-image line ranges its added lines occupy.
+
+    Feeds ``--diff-file`` mode: a PR reviewed from a fetched diff (``gh pr diff``) has no local git objects, so ranges
+    must come from the diff text itself. Paths are taken from ``+++ b/<path>`` lines (post-image side — the numbering
+    the index's symbol coordinates use). Ranges come from the hunk bodies, never the ``@@ -a,b +c,d @@`` header alone:
+    a reviewer's diff carries three context lines around each change, and the header's post-image range covers them, so
+    an untouched neighbouring method was reported as changed. Only added (``+``) lines count, which is exactly what the
+    git path reads from its zero-context diff; a removed line has no post-image position.
+
+    A pure deletion contributes no post-image lines; a deleted file (``+++ /dev/null``) is dropped entirely. A file
+    that appears with no added line keeps an empty list — downstream treats that as "all symbols potentially changed",
+    the same conservative fallback the git path applies. A C-quoted path (git's default for non-ASCII names) is unquoted
+    first.
+
+    Lines are split on ``\\n`` alone, one trailing ``\\r`` dropped, never with :meth:`str.splitlines`: that also breaks
+    at a form feed, a Unicode line separator and other characters git leaves inside a line, and every extra fragment
+    the header-count walk consumed shifted later post-image numbers or ended the hunk before its last added line.
 
     Args:
         text: full unified-diff text (``git diff`` / ``gh pr diff`` format).
 
     Examples:
-        >>> d = "diff --git a/pkg/m.py b/pkg/m.py\\n--- a/pkg/m.py\\n+++ b/pkg/m.py\\n@@ -1,2 +3,4 @@ def f():\\n"
+        One changed line amid three context lines on each side maps to that line alone:
+
+        >>> d = (
+        ...     "diff --git a/pkg/m.py b/pkg/m.py\\n--- a/pkg/m.py\\n+++ b/pkg/m.py\\n"
+        ...     "@@ -3,7 +3,7 @@ def f():\\n a\\n b\\n c\\n-d\\n+D\\n e\\n f\\n g\\n"
+        ... )
         >>> _parse_unified_diff(d)
-        {'pkg/m.py': [(3, 6)]}
+        {'pkg/m.py': [(6, 6)]}
+
+        The header's counts, not the line's text, decide where a hunk ends, so an added ``++ x`` line stays content:
+
+        >>> _parse_unified_diff("+++ b/m.py\\n@@ -0,0 +1,2 @@\\n+++ x\\n+y\\n")
+        {'m.py': [(1, 2)]}
+        >>> _parse_unified_diff('+++ "b/pkg/mod\\\\303\\\\251.py"\\n@@ -1 +1 @@\\n-a\\n+b\\n')
+        {'pkg/modé.py': [(1, 1)]}
+        >>> _parse_unified_diff("+++ b/pkg/m.py\\n@@ -4,2 +3,0 @@\\n-a\\n-b\\n")
+        {'pkg/m.py': []}
         >>> _parse_unified_diff("+++ /dev/null\\n@@ -1,5 +0,0 @@\\n")
         {}
-        >>> _parse_unified_diff("+++ b/doc/x.md\\n@@ -1 +1 @@\\n")
+        >>> _parse_unified_diff("+++ b/doc/x.md\\n@@ -1 +1 @@\\n-a\\n+b\\n")
         {}
+
+        A form feed or line separator inside a line stays in that line, wherever it sits:
+
+        >>> _parse_unified_diff("+++ b/m.py\\n@@ -1,6 +1,7 @@\\n a\\n b\\n \\x0c\\n c\\n+X\\n d\\n e\\n")
+        {'m.py': [(5, 5)]}
+        >>> _parse_unified_diff('+++ b/m.py\\n@@ -1,3 +1,4 @@\\n x\\n a = "x\\u2028y"\\n+X\\n z\\n')
+        {'m.py': [(3, 3)]}
+        >>> _parse_unified_diff('+++ b/m.py\\n@@ -0,0 +1,3 @@\\n+s = "p\\x0cq"\\n+X\\n+Y\\n')
+        {'m.py': [(1, 3)]}
+        >>> _parse_unified_diff("+++ b/m.py\\r\\n@@ -1 +1 @@\\r\\n-a\\r\\n+b\\r\\n")
+        {'m.py': [(1, 1)]}
     """
     ranges_by_path: dict[str, list[tuple[int, int]]] = {}
     current: str | None = None
-    for line in text.splitlines():
+    hunk: _HunkCursor | None = None
+    for raw_line in text.removesuffix("\n").split("\n"):
+        line = raw_line.removesuffix("\r")
+        if hunk is not None and hunk.expects(line):
+            added = hunk.advance(line)
+            if added is not None and current is not None:
+                _add_changed_line(ranges_by_path[current], added)
+            continue
+        hunk = None
         if line.startswith("+++ "):
-            target = line[4:].split("\t")[0].strip()
-            if target == "/dev/null":
-                current = None
-                continue
-            path = target[2:] if target.startswith(("a/", "b/")) else target
-            current = path if path.endswith(".py") else None
+            current = _diff_target_path(line)
             if current is not None:
                 ranges_by_path.setdefault(current, [])
-        elif line.startswith("@@") and current is not None:
-            match = re.search(r"\+(\d+)(?:,(\d+))?", line)
-            if not match:
-                continue
-            start = int(match.group(1))
-            count = int(match.group(2)) if match.group(2) is not None else 1
-            if count == 0:
-                continue
-            ranges_by_path[current].append((start, start + count - 1))
+        elif line.startswith("@@"):
+            hunk = _HunkCursor.from_header(line)
     return ranges_by_path
 
 
@@ -229,7 +402,7 @@ def _diff_impact_for_module(
     parser: argparse.ArgumentParser,
     project_root: Path,
     changed: dict,
-) -> dict:
+) -> tuple[dict, list[str]]:
     """Compute the blast radius for one changed module via reused sub-queries.
 
     Runs ``rdeps`` and ``coupled`` for the module and ``fn-rdeps`` for each of its
@@ -238,12 +411,20 @@ def _diff_impact_for_module(
     errors is folded into a per-module ``errors`` list (never fatal): one unresolvable
     module must not abort the whole diff-impact run.
 
+    A changed method or constructor whose ``fn-rdeps`` answer carries the zero-caller ``hint`` keeps that hint on its
+    ``fn_rdeps`` entry, and that sub-query's ``not_covered`` slugs are returned so the one diff-impact coverage block
+    can disclose them: without both, ``caller_count: 0`` read as "unused" on the route every review relies on.
+
     Args:
         index: parsed codemap index dict.
         parser: top-level argparse parser, reused to run sub-queries.
         project_root: resolved project root for file-path lookups.
         changed: one ``{"module", "path", "changed_symbols"}`` entry from
             :func:`_map_changed_files`.
+
+    Returns:
+        ``(result, not_covered)``: the module's impact entry, and the ``not_covered`` slugs of every hinted
+        ``fn-rdeps`` sub-query in first-seen order (empty when no changed symbol was hinted).
     """
     module = changed["module"]
     errors: list[dict] = []
@@ -262,12 +443,19 @@ def _diff_impact_for_module(
                 break
 
     fn_rdeps: list[dict] = []
+    not_covered: list[str] = []
     for qname in changed["changed_symbols"]:
-        payload, _ = _run_subquery(index, parser, project_root, ["fn-rdeps", qname])
+        payload, coverage = _run_subquery(index, parser, project_root, ["fn-rdeps", qname])
         if "error" in payload:
             errors.append({"query": "fn-rdeps", "qname": qname, "error": payload["error"]})
             continue
-        fn_rdeps.append({"qname": qname, "caller_count": payload.get("count", 0)})
+        entry = {"qname": qname, "caller_count": payload.get("count", 0)}
+        if payload.get("hint"):
+            entry["hint"] = payload["hint"]
+            for slug in (coverage or {}).get("not_covered", []):
+                if slug not in not_covered:
+                    not_covered.append(slug)
+        fn_rdeps.append(entry)
 
     result = {
         "module": module,
@@ -281,7 +469,41 @@ def _diff_impact_for_module(
     }
     if errors:
         result["errors"] = errors
-    return result
+    return result, not_covered
+
+
+#: Most symbol names the top-level diff-impact ``hint`` lists; the count it states always covers every hinted entry.
+_HINT_NAME_LIMIT = 5
+
+
+def _unresolved_callers_hint(impacts: list[dict]) -> str | None:
+    """Return the diff-impact ``hint`` naming the changed symbols whose zero caller count is unresolved, else ``None``.
+
+    One top-level line, guidance first and names last, so a consumer that bounds strings keeps the meaning and a
+    consumer that reads only top-level keys still sees it. Each named entry carries its own detailed ``hint``, so this
+    line names at most :data:`_HINT_NAME_LIMIT` of them: listing all of a wide change's entries cost 22 KB on one
+    75-module diff.
+
+    Examples:
+        >>> impacts = [{"fn_rdeps": [{"qname": "m::A.f", "caller_count": 0, "hint": "..."}, {"qname": "m::g"}]}]
+        >>> _unresolved_callers_hint(impacts).rpartition(" Unresolved ")[2]
+        '(1): m::A.f'
+        >>> wide = [{"fn_rdeps": [{"qname": f"m::A.f{i}", "hint": "..."} for i in range(7)]}]
+        >>> _unresolved_callers_hint(wide).rpartition(" Unresolved ")[2]
+        '(7): m::A.f0, m::A.f1, m::A.f2, m::A.f3, m::A.f4, and 2 more'
+        >>> _unresolved_callers_hint([{"fn_rdeps": [{"qname": "m::g", "caller_count": 2}]}]) is None
+        True
+    """
+    hinted = [entry["qname"] for impact in impacts for entry in impact["fn_rdeps"] if entry.get("hint")]
+    if not hinted:
+        return None
+    names = ", ".join(hinted[:_HINT_NAME_LIMIT])
+    if len(hinted) > _HINT_NAME_LIMIT:
+        names += f", and {len(hinted) - _HINT_NAME_LIMIT} more"
+    return (
+        "caller_count 0 on a changed method or constructor is unresolved statically, never proof it is unused or "
+        f"untested; read that fn_rdeps entry's hint before relying on it. Unresolved ({len(hinted)}): {names}"
+    )
 
 
 def _diff_impact_tests(
@@ -330,6 +552,10 @@ def cmd_diff_impact(index: dict, args: argparse.Namespace, parser: argparse.Argu
     ``LOW`` 0). One coverage block is emitted for the whole result; a per-module
     sub-query failure is recorded in that module's ``errors`` list without aborting.
 
+    A changed method or constructor with zero static callers keeps the ``fn-rdeps`` zero-caller ``hint`` on its
+    ``fn_rdeps`` entry; the payload then adds a top-level ``hint`` naming every such symbol, and the coverage block
+    lists the call graph's ``not_covered`` slugs. An answer with no such symbol keeps its historic shape.
+
     Args:
         index: parsed codemap index dict.
         args: the diff-impact namespace; ``args.base`` is the ref to diff against,
@@ -355,24 +581,34 @@ def cmd_diff_impact(index: dict, args: argparse.Namespace, parser: argparse.Argu
         _die_json(paths, _EXIT_GENERIC)
     changed_modules, unmapped = _map_changed_files(index, args.base, paths, ranges_by_path)
 
-    impacts = [_diff_impact_for_module(index, parser, project_root, cm) for cm in changed_modules]
+    impacts: list[dict] = []
+    not_covered: list[str] = []
+    for cm in changed_modules:
+        impact, module_not_covered = _diff_impact_for_module(index, parser, project_root, cm)
+        impacts.append(impact)
+        not_covered.extend(slug for slug in module_not_covered if slug not in not_covered)
     targets = [cm["module"] for cm in changed_modules] + [q for cm in changed_modules for q in cm["changed_symbols"]]
     tests = _diff_impact_tests(index, parser, project_root, targets)
     highest = max((i["risk"] for i in impacts), key=("LOW", "MODERATE", "HIGH").index, default="LOW")
+    hint = _unresolved_callers_hint(impacts)
 
-    _print(
-        json.dumps(
-            {
-                "base": base_label,
-                "changed_files": len(paths),
-                "changed_modules": impacts,
-                "unmapped_files": unmapped,
-                "test_impact": tests,
-                "highest_risk": highest,
-                "index": _cmd_coverage(index, method="static-ast", scope="diff-impact"),
-            }
-        )
+    payload: dict = {
+        "base": base_label,
+        "changed_files": len(paths),
+        "changed_modules": impacts,
+        "unmapped_files": unmapped,
+        "test_impact": tests,
+        "highest_risk": highest,
+    }
+    if hint:
+        payload["hint"] = hint
+    # Disclosed only for a hinted (zero-caller) symbol, where the call graph's blind spots decide the answer; an
+    # answer without one keeps the coverage block it always had.
+    coverage_extra: dict = {"not_covered": not_covered} if not_covered else {}
+    payload["index"] = _cmd_coverage(
+        index, method="static-ast", scope="diff-impact", answer_hint=hint is not None, **coverage_extra
     )
+    _print(json.dumps(payload))
 
 
 def _load_batch_items(source: str) -> list[dict]:

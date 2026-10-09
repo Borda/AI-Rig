@@ -13,7 +13,7 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 
 ## Usage
 
-New remediation handoffs set ``presentation_version=4``; other workflows set ``presentation_version=3`` before
+New remediation handoffs set ``presentation_version=5``; other workflows set ``presentation_version=3`` before
 ``render``. Earlier presentation versions remain available
 for validating historical artifacts. Run ``render`` after gates and handoff creation, then run ``check``
 directly or through the shared artifact validator
@@ -263,10 +263,12 @@ def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[
             raise HandoffError(f"table-overview-only-invalid:{heading}")
         if (
             skill == "code-remediate"
-            and payload.get("presentation_version") in {3, 4}
+            and payload.get("presentation_version") in {3, 4, 5}
             and table.get("overview_only") is not True
         ):
             raise HandoffError("remediation-overview-only-required")
+        if skill == "code-remediate" and payload.get("presentation_version") == 5 and layout != "concise":
+            raise HandoffError("remediation-concise-layout-required")
         expected = REVIEW_TABLE_COLUMNS.get(heading) if skill == "code-review" else STANDARD_COLUMNS[skill]
         if skill == "release" and heading == "Readiness":
             expected = ("Check", "Status", "Evidence", "Blocker / next action")
@@ -284,6 +286,9 @@ def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[
             if row_id in row_ids:
                 raise HandoffError(f"table-row-id-duplicate:{row_id}")
             row_ids.add(row_id)
+            if skill == "code-remediate" and payload.get("presentation_version") == 5:
+                if type(row.get("selected")) is not bool:
+                    raise HandoffError(f"remediation-row-selected-invalid:{row_id}")
             cells = _require_string_list(row.get("cells"), f"table-row-cells:{row_id}", allow_empty=False)
             if len(cells) != len(columns):
                 raise HandoffError(f"table-row-width-mismatch:{row_id}")
@@ -523,7 +528,7 @@ def validate_handoff(payload: object) -> dict[str, Any]:
     if presentation_version is not None and (
         type(presentation_version) is not int
         or presentation_version
-        not in ({2, 3, 4} if handoff.get("skill") == "code-remediate" else {2, PRESENTATION_VERSION})
+        not in ({2, 3, 4, 5} if handoff.get("skill") == "code-remediate" else {2, PRESENTATION_VERSION})
     ):
         raise HandoffError("handoff-presentation-version-invalid")
     if handoff.get("schema_version") != SCHEMA_VERSION:
@@ -581,10 +586,10 @@ def _table_cell(value: str) -> str:
     return value.replace("\\", "\\\\").replace("|", "\\|").replace("\r\n", "<br>").replace("\n", "<br>")
 
 
-def _render_table(table: dict[str, Any], *, suppress_heading: bool = False) -> list[str]:
+def _render_table(table: dict[str, Any], *, suppress_heading: bool = False, show_selection: bool = False) -> list[str]:
     """Render one validated table and its symbol details deterministically."""
     if table.get("layout") in {"grouped", "concise"}:
-        return _render_grouped_table(table, suppress_heading=suppress_heading)
+        return _render_grouped_table(table, suppress_heading=suppress_heading, show_selection=show_selection)
     columns = list(table["columns"])
     attributed = any("authors" in row for row in table["rows"])
     if attributed:
@@ -611,13 +616,15 @@ def _render_table(table: dict[str, Any], *, suppress_heading: bool = False) -> l
     return lines
 
 
-def _render_grouped_table(table: dict[str, Any], *, suppress_heading: bool = False) -> list[str]:
+def _render_grouped_table(
+    table: dict[str, Any], *, suppress_heading: bool = False, show_selection: bool = False
+) -> list[str]:
     """Render bound rows, retaining historical bytes and separating concise facts from evidence."""
     remediation = tuple(table["columns"]) == STANDARD_COLUMNS["code-remediate"]
     concise = table.get("layout") == "concise"
     columns = ["ID", "Severity", "Finding", "Outcome"] if remediation else ["ID", "Finding", "Status"]
     if concise:
-        columns.insert(-1, "Resolution" if remediation else "Resolution proposal")
+        columns.insert(-1, "Selected" if show_selection else "Resolution" if remediation else "Resolution proposal")
     attributed = not remediation and any("authors" in row for row in table["rows"])
     if attributed:
         columns.insert(1, "Author")
@@ -644,7 +651,7 @@ def _render_grouped_table(table: dict[str, Any], *, suppress_heading: bool = Fal
                 if separator:
                     resolution = reason
                     overview[-1] = disposition
-            overview.insert(-1, resolution)
+            overview.insert(-1, ("Yes" if row["selected"] else "No") if show_selection else resolution)
         if attributed:
             overview.insert(1, ", ".join(row["authors"]))
         lines.append("| " + " | ".join(_table_cell(value) for value in overview) + " |")
@@ -885,7 +892,7 @@ def render_handoff(payload: object) -> str:
     if handoff["branch"] == "caller-contract":
         return handoff["caller_contract"]["output"]
 
-    if handoff.get("presentation_version") in {2, 3, 4}:
+    if handoff.get("presentation_version") in {2, 3, 4, 5}:
         return _render_v2_handoff(handoff)
 
     lines = ["**Outcome**", "", f"{handoff['outcome']['title']}: {handoff['outcome']['summary']}"]
@@ -950,7 +957,16 @@ def _render_v2_handoff(handoff: dict[str, Any]) -> str:
     if handoff["tables"]:
         lines.extend(("", "**Results**"))
         for table in handoff["tables"]:
-            lines.extend(("", *_render_table(table, suppress_heading=table["heading"] == "Results")))
+            lines.extend(
+                (
+                    "",
+                    *_render_table(
+                        table,
+                        suppress_heading=table["heading"] == "Results",
+                        show_selection=handoff["presentation_version"] == 5,
+                    ),
+                )
+            )
     if runs := handoff.get("child_runs"):
         lines.extend(("", "Validated child and interaction scores:"))
         lines.extend(
@@ -975,7 +991,7 @@ def _render_v2_handoff(handoff: dict[str, Any]) -> str:
         lines.extend(("", "**Next steps**", ""))
         lines.extend(
             f"- {row_id} — {item['item']} — owner: {item['owner']} — next: {item['next_action']}"
-            if handoff["presentation_version"] in {3, 4}
+            if handoff["presentation_version"] in {3, 4, 5}
             else f"- {item['item']} — owner: {item['owner']} — next: {item['next_action']}"
             for row_id, item in remaining_by_id.items()
         )
@@ -989,7 +1005,12 @@ def _render_v2_handoff(handoff: dict[str, Any]) -> str:
         lines.append(f"Gap [{gap['status']}]: {gap['gap']} — {detail}")
 
     lines.extend(("", "**Artifact**", ""))
-    lines.extend(f"{artifact['label']}: {artifact['path']}" for artifact in handoff["artifacts"])
+    lines.extend(
+        f"- [{artifact['label']}](<{artifact['path']}>)"
+        if handoff["presentation_version"] == 5
+        else f"{artifact['label']}: {artifact['path']}"
+        for artifact in handoff["artifacts"]
+    )
     return "\n".join(lines) + "\n"
 
 

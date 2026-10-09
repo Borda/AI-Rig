@@ -953,6 +953,13 @@ def _write_remediation_candidate(
     producer_root.mkdir()
     producer = _write_remediation_producer(producer_root, table["items"])
     (tmp_path / "findings-input.txt").write_bytes(producer.read_bytes())
+    table["items"][0]["sources"].extend(VALIDATOR.report_obligation_sources(json.loads(producer.read_bytes())))
+    source_total = sum(len(item["sources"]) for item in table["items"])
+    table.update(
+        source_records_total=source_total,
+        represented_source_records_total=source_total,
+        grouped_items_total=sum(len(item["sources"]) > 1 for item in table["items"]),
+    )
     if selected_resolution is not None:
         table["items"][0].update(
             selectable=True,
@@ -1002,6 +1009,7 @@ def _write_remediation_candidate(
             "bucket_plan_sha256": "0" * 64,
         },
         review_report_intake={
+            "obligation_records_version": 1,
             "admission_evidence": {"producer_result_path": str(producer)},
             "requested_report": True,
             "report_items_total": 2,
@@ -1104,8 +1112,8 @@ def _write_remediation_candidate(
         ],
         source_records=sources,
         source_coverage={
-            "source_records_total": 3,
-            "represented_source_records_total": 3,
+            "source_records_total": source_total,
+            "represented_source_records_total": source_total,
             "omitted_source_records_total": 0,
         },
     )

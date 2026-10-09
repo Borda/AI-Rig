@@ -27,7 +27,13 @@ from codemap_py.schema import Symbol  # noqa: E402
 # binding here would not see.
 from . import index_io  # noqa: E402
 from .coverage import _cmd_coverage  # noqa: E402
-from .errors import _EXIT_BAD_INPUT, _die_json, _die_module_not_indexed, _exit_error  # noqa: E402
+from .errors import (  # noqa: E402
+    _EXIT_BAD_INPUT,
+    _die_json,
+    _die_module_not_indexed,
+    _exit_error,
+    _exit_target_not_found,
+)
 from .index_io import build_module_map  # noqa: E402
 from .output import _print  # noqa: E402
 
@@ -205,7 +211,9 @@ def cmd_symbol(
     """
     matches = _find_symbol_matches(index, name, exclude_tests)
     if not matches:
-        _exit_error(f"Symbol '{name}' not found. Try /codemap-py:query-code find-symbol <pattern> to search.")
+        _exit_target_not_found(
+            f"Symbol '{name}' not found. Try /codemap-py:query-code find-symbol <pattern> to search.", name
+        )
 
     total_matches = len(matches)
     truncated = limit > 0 and total_matches > limit

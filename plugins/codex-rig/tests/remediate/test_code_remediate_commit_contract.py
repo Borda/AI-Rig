@@ -121,3 +121,17 @@ def test_legacy_resume_recovers_before_committing_without_repeating_mode_choice(
     assert "without asking the user to select a mode again" in skill
     assert "complete the legacy recovery procedure before staging" in commit
     assert "legacy generated-branch receipt is terminal" not in skill
+
+
+def test_explicit_commit_sequence_override_reaches_handoff_consumer() -> None:
+    """Allow a verified requested commit before report validation without bypassing source or ownership gates."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    handoff = (PLUGIN_ROOT / "shared/final-handoff-code-remediate.md").read_text(encoding="utf-8")
+    commit = skill.split("### 12:", 1)[1].split("## Fail-fast Rules", 1)[0]
+    assert "Do not wait solely for final report validation" in commit
+    assert "failed-gate and external-obligation rules in step 11 still apply" in commit
+    assert "## Remaining Report Checkpoint" in commit
+    assert "preserve its hashes and `committed` disposition" in skill
+    assert "before final report validation" in handoff
+    assert "then return with actual hashes/disposition to complete validation and promotion" in handoff
+    assert "Grouping alone does not invoke this sequencing override" in handoff

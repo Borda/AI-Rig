@@ -21,8 +21,11 @@ names the module over other paths). ``structural_search_count`` is the subset sh
 like re-deriving importers or callers the index already returned; it is still a shape
 match, not confirmed misuse. A Grep/Glob record carries ``search_path`` and producer-observed
 ``search_scope``; missing or unrecognized scope produces ``unknown``, never an inferred
-structural search. A Bash target is truncated to 200 characters at log time, so a
-recursive flag or an own-file path past the cut is invisible to the classifier.
+structural search. A Bash record carries the same fields when the producer parsed a
+standalone grep/rg command from the full command line; without them (legacy records,
+pipelines, ambiguous commands) the classifier falls back to the target, which is truncated
+to 200 characters at log time, so a recursive flag or an own-file path past the cut is
+invisible to it.
 
 Usage:
     python join_avoidance.py --logs .cache/codemap/logs
@@ -65,7 +68,7 @@ class OverlapKind(str, Enum):
     """Shape of one flagged overlap; serialized by value in JSON output.
 
     ``SOURCE_READ`` is source inspection; ``STRUCTURAL_SEARCH`` requires producer-observed directory scope. ``UNKNOWN``
-    retains overlaps whose scope the record cannot establish, including recursive-looking Bash commands.
+    retains overlaps whose scope the record cannot establish, including unscoped recursive-looking Bash commands.
     """
 
     SOURCE_READ = "source_read"
@@ -75,6 +78,8 @@ class OverlapKind(str, Enum):
 
 #: Native search tools whose calls may walk a directory tree, so they are examined as structural-search overlaps.
 _RECURSIVE_TOOLS = frozenset({"Grep", "Glob"})
+#: Tools whose records may carry a producer-observed ``search_scope``; Bash gained it for standalone grep/rg commands.
+_SCOPED_TOOLS = _RECURSIVE_TOOLS | {"Bash"}
 #: Shell-search shapes that may walk a tree; command spelling cannot establish operand scope.
 #: ``grep``/``egrep``/``fgrep`` need an explicit
 #: recursive flag; ``rg`` recurses by default. Flags are matched as whole tokens so
@@ -105,14 +110,14 @@ class CliAnswer:
 
 @dataclass(frozen=True)
 class ToolEvent:
-    """One Grep/Read/Glob tool call recorded by log-tool-use.py.
+    """One Grep/Read/Glob/Bash tool call recorded by log-tool-use.py.
 
     Attributes:
         session: session id joining the cli and tool layers.
         ts: event time (UTC) parsed from the record's ``ts`` field.
-        tool: ``"Grep"`` | ``"Read"`` | ``"Glob"``.
-        target: the tool's target string (pattern, path, or file_path).
-        search_path: the Grep/Glob path when the record carries one, else ``""``.
+        tool: ``"Grep"`` | ``"Read"`` | ``"Glob"`` | ``"Bash"``.
+        target: the tool's target string (pattern, path, file_path, or truncated command).
+        search_path: the Grep/Glob path or parsed Bash search operand(s) when the record carries one, else ``""``.
         search_scope: producer-observed file/directory scope; absent or unknown cannot prove a tree search.
     """
 
@@ -405,13 +410,14 @@ def classify_overlap(module: str, tool: str, target: str, search_path: str = "",
 
     ``structural_search`` requires producer-observed directory scope. Read and
     searches aimed at the module's own body are ``source_read``: the index answers
-    who depends on the module, never what is in it. Other recursive-looking Bash
-    searches are ``unknown`` because their bounded command string cannot establish operand scope.
-    For Grep/Glob the scope lives in ``search_path`` (the ``target`` is the pattern);
-    the producer's ``search_scope`` distinguishes files and directories: a file scope is
-    ``source_read`` whichever file it names, a directory scope is ``structural_search``. Missing
-    or unrecognized scope is ``unknown``, never inferred from a pattern or by inspecting the
-    analysis host's filesystem.
+    who depends on the module, never what is in it. For Grep/Glob, and for Bash records whose
+    producer parsed a standalone grep/rg command, the producer's ``search_scope`` decides: a file
+    scope is ``source_read`` whichever file it names, a directory scope is ``structural_search``.
+    Grep/Glob without a file or directory scope are ``unknown``, never inferred from a pattern or by
+    inspecting the analysis host's filesystem. A Bash record without one (a legacy record, a
+    pipeline, an ambiguous command) keeps the spelling rules: own-file inspection is
+    ``source_read``, a recursive-looking search is ``unknown`` because a bounded command string
+    cannot establish operand scope.
 
     Examples:
         >>> classify_overlap("pkg.mod", "Read", "src/pkg/mod.py").value
@@ -432,14 +438,18 @@ def classify_overlap(module: str, tool: str, target: str, search_path: str = "",
         'structural_search'
         >>> classify_overlap("pkg.mod", "Bash", "rg -n 'x' src/pkg/mod.py").value
         'source_read'
+        >>> classify_overlap("pkg.mod", "Bash", "rg -n 'import pkg.mod' src", "src", "directory").value
+        'structural_search'
+        >>> classify_overlap("pkg.mod", "Bash", "grep -rn 'pkg.mod' src/pkg/other.py", "src/pkg/other.py", "file").value
+        'source_read'
     """
-    if tool in _RECURSIVE_TOOLS:
-        # A single-file search is inspection whichever file it reads, the same rule the shell branch applies to
-        # `grep -n … one/file.py`; only a directory scope is a tree walk. Anything else is unknown.
+    if tool in _SCOPED_TOOLS:
+        # A single-file search is inspection whichever file it reads; only a directory scope is a tree walk.
         if search_scope == "file":
             return OverlapKind.SOURCE_READ
         if search_scope == "directory":
             return OverlapKind.STRUCTURAL_SEARCH
+    if tool in _RECURSIVE_TOOLS:
         return OverlapKind.UNKNOWN
     if targets_own_file(module, target):
         return OverlapKind.SOURCE_READ

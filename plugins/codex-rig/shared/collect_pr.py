@@ -33,7 +33,9 @@ discussion reader. Its review-thread GraphQL query is intentionally limited to t
 
 It writes PR metadata, threads, diff/stat files, routing, target/head checks, optional checkout evidence, and classified
 terminal failure markers. A successful bundle includes files such as ``pr.json``, ``review-threads.json``,
-``diff.patch``, ``pr-routing.json``, and checkout identity records when checkout was requested.
+``diff.patch``, ``pr-routing.json``, and checkout identity records when checkout was requested. Worktree preflight
+records compare every local dirty path, including ignored files, with the incoming paths, but list only the overlapping
+paths plus a bounded sample; the remaining paths are counted by class instead of listed.
 
 ## Failure
 
@@ -73,6 +75,13 @@ MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 VALID_PR_STATES = frozenset({"OPEN", "MERGED", "CLOSED"})
 #: Accepted values for the checkout mode argument: review or remediate.
 CHECKOUT_MODES = frozenset({"review", "remediate"})
+#: Shape revision of worktree preflight records. Revision 1 lists only overlapping dirty paths plus a bounded sample and
+#: counts the rest; unversioned historical records listed every dirty path, including whole ignored trees.
+WORKTREE_PREFLIGHT_SCHEMA_VERSION = 1
+#: Most non-overlapping dirty paths one preflight record lists; every other one is counted, never listed.
+DIRTY_PATH_SAMPLE_LIMIT = 50
+#: Keys of a preflight record's per-class dirty-path counts; classes may overlap, `total` counts distinct paths.
+DIRTY_PATH_CLASSES = ("tracked", "staged", "untracked_unignored", "ignored", "total")
 #: Only host whose repositories and pull-request URLs the collector will target.
 GITHUB_HOST = "github.com"
 #: Pattern for a valid pull-request number: decimal digits with no leading zero.
@@ -820,6 +829,75 @@ def _overlapping_dirty_paths(
     return sorted(overlaps)
 
 
+def _dirty_path_record(
+    classes: tuple[list[str], list[str], set[str], set[str]], overlapping: set[str]
+) -> tuple[list[str], int, dict[str, int]]:
+    """Return the dirty paths a preflight record lists, how many it omits, and per-class counts.
+
+    Every overlapping path is listed because it is the evidence for a block. Non-overlapping paths are sampled up to
+    ``DIRTY_PATH_SAMPLE_LIMIT``, user edits first, then unignored untracked files, then ignored files, so a local
+    environment tree of tens of thousands of ignored files cannot crowd out the paths a reader needs. The overlap check
+    itself always ran over every dirty path before this reduction.
+
+    Example:
+        >>> listed, omitted, counts = _dirty_path_record((["a.py"], [], {"n.txt"}, {".venv/x", ".venv/y"}), {"a.py"})
+        >>> listed, omitted, counts["ignored"], counts["total"]
+        (['.venv/x', '.venv/y', 'a.py', 'n.txt'], 0, 2, 4)
+    """
+    tracked, staged, unignored, ignored = classes
+    every = set(tracked).union(staged, unignored, ignored)
+    edits = sorted(set(tracked).union(staged) - overlapping)
+    others = edits + sorted(unignored - overlapping - set(edits)) + sorted(ignored - overlapping - set(edits))
+    sample = others[:DIRTY_PATH_SAMPLE_LIMIT]
+    sizes = (len(set(tracked)), len(set(staged)), len(unignored), len(ignored), len(every))
+    counts = dict(zip(DIRTY_PATH_CLASSES, sizes, strict=True))
+    return sorted(overlapping.intersection(every).union(sample)), len(others) - len(sample), counts
+
+
+def dirty_path_record_is_consistent(preflight: dict[str, Any]) -> bool:
+    """Report whether a preflight record's listed dirty paths agree with its omitted count and class counts.
+
+    Unversioned historical records listed every dirty path and carry no counts, so they are consistent by definition.
+    A versioned record must account for every distinct dirty path exactly once, listed or omitted, and may omit paths
+    only after listing a full sample.
+
+    Example:
+        >>> dirty_path_record_is_consistent({"dirty_paths": ["a.py"]})
+        True
+        >>> counts = {"tracked": 1, "staged": 0, "untracked_unignored": 0, "ignored": 1, "total": 2}
+        >>> record = {"schema_version": 1, "dirty_paths": ["a.py", ".venv/x"], "dirty_paths_omitted": 0}
+        >>> dirty_path_record_is_consistent({**record, "dirty_path_counts": counts})
+        True
+        >>> early = {**record, "dirty_paths_omitted": 3, "dirty_path_counts": {**counts, "total": 5}}
+        >>> dirty_path_record_is_consistent(early)
+        False
+    """
+    if "schema_version" not in preflight:
+        return True
+    counts = preflight.get("dirty_path_counts")
+    omitted = preflight.get("dirty_paths_omitted")
+    listed = preflight.get("dirty_paths")
+    if not (
+        preflight["schema_version"] == WORKTREE_PREFLIGHT_SCHEMA_VERSION
+        and isinstance(counts, dict)
+        and set(counts) == set(DIRTY_PATH_CLASSES)
+        and all(type(value) is int and value >= 0 for value in counts.values())
+        and type(omitted) is int
+        and omitted >= 0
+        and isinstance(listed, list)
+    ):
+        return False
+    overlapping = set(preflight.get("overlapping_paths") or ()).union(preflight.get("overlapping_pr_paths") or ())
+    sampled = len(set(listed) - overlapping)
+    # Omitting any path is only legitimate once the sample is full; a duplicate would count one path twice.
+    return (
+        len(set(listed)) == len(listed)
+        and counts["total"] == len(listed) + omitted
+        and sampled <= DIRTY_PATH_SAMPLE_LIMIT
+        and (omitted == 0 or sampled == DIRTY_PATH_SAMPLE_LIMIT)
+    )
+
+
 def _worktree_preflight(
     run: RunCommand,
     timeout: int,
@@ -851,6 +929,17 @@ def _worktree_preflight(
             ["git", "ls-files", "--others", "-z"],
             timeout,
             f"{phase}-untracked-worktree-paths",
+        )
+    )
+    # Classification only: the overlap check below still compares every untracked path, ignored or not.
+    unignored_paths = set(untracked_paths).intersection(
+        _git_path_list(
+            _run(
+                run,
+                ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+                timeout,
+                f"{phase}-unignored-untracked-paths",
+            )
         )
     )
     dirty_paths = sorted(set(tracked_paths).union(staged_paths, untracked_paths))
@@ -902,14 +991,21 @@ def _worktree_preflight(
         status = "safe-unrelated-dirty-paths"
     elif current_head == head_oid:
         status = "already-at-pr-head"
+    listed_dirty_paths, omitted_dirty_paths, dirty_path_counts = _dirty_path_record(
+        (tracked_paths, staged_paths, unignored_paths, set(untracked_paths) - unignored_paths),
+        set(overlapping_paths).union(overlapping_pr_paths),
+    )
     _write_json(
         output / artifact_name,
         {
+            "schema_version": WORKTREE_PREFLIGHT_SCHEMA_VERSION,
             "phase": phase,
             "status": status,
             "current_head": current_head,
             "expected_head": head_oid,
-            "dirty_paths": dirty_paths,
+            "dirty_paths": listed_dirty_paths,
+            "dirty_paths_omitted": omitted_dirty_paths,
+            "dirty_path_counts": dirty_path_counts,
             "unmerged_paths": unmerged_paths,
             "pr_paths": pr_paths,
             "checkout_paths": checkout_paths,
@@ -1040,12 +1136,15 @@ def _review_worktree_checkout(
     _write_json(
         output / "worktree-preflight.json",
         {
+            "schema_version": WORKTREE_PREFLIGHT_SCHEMA_VERSION,
             "phase": "after-checkout",
             "status": "already-at-pr-head",
             "worktree": review.as_posix(),
             "current_head": local_head,
             "expected_head": head_oid,
             "dirty_paths": [],
+            "dirty_paths_omitted": 0,
+            "dirty_path_counts": dict.fromkeys(DIRTY_PATH_CLASSES, 0),
             "unmerged_paths": [],
             "pr_paths": _git_path_list(
                 _run(

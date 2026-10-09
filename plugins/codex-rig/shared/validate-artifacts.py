@@ -62,7 +62,7 @@ if str(SHARED_DIRECTORY) not in sys.path:
 
 from adversarial_loop import SCHEMA_VERSION as LOOP_LEDGER_SCHEMA_VERSION  # noqa: E402
 from adversarial_loop import load_ledger  # noqa: E402
-from collect_pr import _github_remote_identity, _head_repository  # noqa: E402
+from collect_pr import _github_remote_identity, _head_repository, dirty_path_record_is_consistent  # noqa: E402
 from release_evidence import validate_release_evidence  # noqa: E402
 
 #: Fields every result.json must contain regardless of skill.
@@ -463,7 +463,9 @@ def _validate_final_handoff_gates(handoff: dict[str, Any], gates: dict[str, Any]
         raise SystemExit(f"{skill}-final-handoff-verification-mismatch")
 
 
-def _validate_code_remediate_final_handoff(result: dict[str, Any], handoff: dict[str, Any]) -> None:
+def _validate_code_remediate_final_handoff(
+    result: dict[str, Any], handoff: dict[str, Any], *, candidate: bool = False
+) -> None:
     """Bind remediation presentation rows and sources to the canonical resolution table."""
     if handoff.get("branch") == "caller-contract":
         return
@@ -481,6 +483,8 @@ def _validate_code_remediate_final_handoff(result: dict[str, Any], handoff: dict
         raise SystemExit("code-remediate-final-handoff-table-invalid")
     expected_items = resolution_table["items"]
     presentation = metadata.get("resolution_scope", {}).get("presentation_version")
+    if candidate and presentation == 4 and handoff.get("presentation_version") != 5:
+        raise SystemExit("remediation-current-handoff-presentation-v5-required")
     if (
         presentation in {2, 3, 4}
         and tables[0].get("layout") != {2: "grouped", 3: "concise", 4: "concise"}[presentation]
@@ -491,6 +495,7 @@ def _validate_code_remediate_final_handoff(result: dict[str, Any], handoff: dict
     expected_rows = []
     expected_details = []
     expected_source_records = []
+    selectable_index = 0
     for position, item in enumerate(expected_items, start=1):
         if not isinstance(item, dict):
             raise SystemExit("code-remediate-final-handoff-resolution-item-invalid")
@@ -520,6 +525,11 @@ def _validate_code_remediate_final_handoff(result: dict[str, Any], handoff: dict
                 "source_ids": source_ids,
             }
         )
+        if item.get("selectable"):
+            selectable_index += 1
+        if handoff.get("presentation_version") == 5:
+            selected = metadata.get("resolution_scope", {}).get("selected_indexes", [])
+            expected_rows[-1]["selected"] = bool(item.get("selectable")) and selectable_index in selected
         expected_details.extend(
             (
                 {"id": f"O{position}", "text": item.get("resolved_how")},
@@ -809,9 +819,17 @@ def _explicit_commit_with_external_limit(
 
 
 def _validate_final_handoff(
-    result: dict[str, Any], skill: str, out_dir: Path, gates: dict[str, Any], *, candidate: bool = False
+    result: dict[str, Any],
+    skill: str,
+    out_dir: Path,
+    gates: dict[str, Any],
+    *,
+    candidate: bool = False,
+    current_contract: bool | None = None,
 ) -> None:
     """Validate final-response evidence and current candidates without rewriting historical results."""
+    if current_contract is None:
+        current_contract = candidate
     schema_version = result.get("schema_version", 1)
     if schema_version == 1:
         return
@@ -864,7 +882,7 @@ def _validate_final_handoff(
         raise SystemExit(f"{skill}-final-handoff-result-artifact-missing")
     if skill == "code-remediate":
         disposition = handoff.get("commit_disposition")
-        if candidate and disposition is None:
+        if current_contract and disposition is None:
             raise SystemExit("remediation-commit-disposition-missing")
         if disposition is not None:
             if disposition["status"] in {"pending", "committed"}:
@@ -929,9 +947,9 @@ def _validate_final_handoff(
                 )
                 if not evidence.is_file():
                     raise SystemExit("remediation-commit-evidence-invalid")
-        _validate_code_remediate_final_handoff(result, handoff)
+        _validate_code_remediate_final_handoff(result, handoff, candidate=candidate)
     elif skill == "code-review":
-        _validate_code_review_final_handoff(result, handoff, candidate=candidate, out_dir=out_dir)
+        _validate_code_review_final_handoff(result, handoff, candidate=current_contract, out_dir=out_dir)
 
 
 def _require_file_sections(path: Path, sections: list[str]) -> None:
@@ -1226,7 +1244,7 @@ def _validate_confidence_recovery(result: dict[str, Any], skill: str) -> None:
 
 
 def _validate_code_remediate_report_intake(
-    result: dict[str, Any], out_dir: Path, *, current_contract: bool = False
+    result: dict[str, Any], out_dir: Path, *, current_contract: bool = False, candidate: bool = False
 ) -> None:
     """Validate source-aware review report intake metadata for code-remediation artifacts."""
     metadata = result.get("metadata", {})
@@ -1279,11 +1297,18 @@ def _validate_code_remediate_report_intake(
             raise SystemExit("code-remediate-review-intake-inventory-mismatch")
     if not requested_report:
         return
+    occurrence_version = intake.get("obligation_records_version")
+    if occurrence_version is not None and (type(occurrence_version) is not int or occurrence_version != 1):
+        raise SystemExit("code-remediate-report-obligation-version-invalid")
+    if candidate and admission_status != "unavailable" and occurrence_version != 1:
+        raise SystemExit("code-remediate-report-obligation-version-required")
     if admission_status != "completed":
-        _validate_code_remediate_incomplete_report_admission(result, out_dir, admission_status)
+        _validate_code_remediate_incomplete_report_admission(
+            result, out_dir, admission_status, occurrence_contract=occurrence_version == 1
+        )
         return
-    if current_contract:
-        _validate_code_remediate_report_coverage(metadata, out_dir)
+    if current_contract or candidate or occurrence_version == 1:
+        _validate_code_remediate_report_coverage(metadata, out_dir, occurrence_contract=occurrence_version == 1)
         _validate_code_remediate_completed_report_producer(intake, out_dir)
 
     report_items_total = intake["report_items_total"]
@@ -1327,6 +1352,8 @@ def _validate_code_remediate_user_source(source: dict[str, Any], out_dir: Path) 
 def _validate_code_remediate_completed_report_producer(intake: dict[str, Any], out_dir: Path) -> None:
     """Revalidate the admitted producer and bind its promoted result to the exact copied bytes."""
     copied = out_dir / "findings-input.txt"
+    if copied.is_symlink() or not copied.is_file():
+        raise SystemExit("code-remediate-report-input-missing")
     original_bytes = copied.read_bytes()
     report = _load_json(copied)
     evidence = intake.get("admission_evidence", {})
@@ -1370,7 +1397,7 @@ def _validate_code_remediate_completed_report_producer(intake: dict[str, Any], o
 
 
 def _validate_code_remediate_incomplete_report_admission(
-    result: dict[str, Any], out_dir: Path, admission_status: str
+    result: dict[str, Any], out_dir: Path, admission_status: str, *, occurrence_contract: bool = False
 ) -> None:
     """Bind an open report obligation to selected source, selection, and retained diagnostic."""
     if result.get("status") != "fail":
@@ -1421,7 +1448,7 @@ def _validate_code_remediate_incomplete_report_admission(
     if routing is None:
         raise RuntimeError("routing must not be None")
     _validate_code_remediate_preliminary_report_source(out_dir, evidence, routing)
-    _validate_code_remediate_report_coverage(metadata, out_dir)
+    _validate_code_remediate_report_coverage(metadata, out_dir, occurrence_contract=occurrence_contract)
 
 
 def _validate_code_remediate_local_report_admission(out_dir: Path, evidence: dict[str, Any]) -> None:
@@ -1519,7 +1546,48 @@ def _validate_code_remediate_preliminary_report_source(
         raise SystemExit("code-remediate-report-admission-canonical-records-required")
 
 
-def _validate_code_remediate_report_coverage(metadata: dict[str, Any], out_dir: Path) -> None:
+def report_obligation_sources(report: dict[str, Any], report_path: str | None = None) -> list[dict[str, str]]:
+    """Derive each report obligation occurrence with its exact producer pointer and text."""
+    original = report.get("metadata", {})
+    path = report_path or report.get("artifact_path")
+    if not isinstance(original, dict):
+        raise SystemExit("code-remediate-report-input-invalid")
+    decision = original.get("review_decision", {})
+    recovery = original.get("confidence_recovery", {})
+    if not isinstance(decision, dict) or not isinstance(recovery, dict):
+        raise SystemExit("code-remediate-report-input-invalid")
+    fields = {
+        "/checks_failed": report.get("checks_failed", []),
+        "/follow_up": report.get("follow_up", []),
+        "/metadata/confidence_gaps": original.get("confidence_gaps", []),
+        "/metadata/review_decision/required_next_work": decision.get("required_next_work", []),
+        "/metadata/confidence_recovery/remaining_limits": recovery.get("remaining_limits", []),
+    }
+    sources = []
+    for field, values in fields.items():
+        if not isinstance(values, list) or any(not isinstance(text, str) or not text.strip() for text in values):
+            raise SystemExit(f"code-remediate-report-input-invalid:{field}")
+        for index, text in enumerate(values):
+            if not isinstance(path, str) or not path.endswith(".json"):
+                raise SystemExit("code-remediate-report-input-invalid")
+            if "/" not in path and "\\" not in path:
+                raise SystemExit("code-remediate-report-producer-origin-missing")
+            pointer = f"{field}/{index}"
+            sources.append(
+                {
+                    "kind": "report",
+                    "source_id": f"{path}#{pointer}",
+                    "location": f"{path}#{pointer}",
+                    "body": text,
+                    "evidence": f"findings-input.txt#{pointer}",
+                }
+            )
+    return sources
+
+
+def _validate_code_remediate_report_coverage(
+    metadata: dict[str, Any], out_dir: Path, *, occurrence_contract: bool = False
+) -> None:
     """Bind report intake to the retained original findings and evidence obligations."""
     path = out_dir / "findings-input.txt"
     if path.is_symlink() or not path.is_file():
@@ -1537,6 +1605,13 @@ def _validate_code_remediate_report_coverage(metadata: dict[str, Any], out_dir: 
         raise SystemExit("code-remediate-report-input-not-assessed")
     items = metadata["final_resolution_table"]["items"]
     report_sources = [source for item in items for source in item["sources"] if source["kind"] == "report"]
+    if occurrence_contract:
+        for expected in report_obligation_sources(
+            report, metadata.get("review_report_intake", {}).get("admission_evidence", {}).get("producer_result_path")
+        ):
+            matches = [source for source in report_sources if source.get("source_id") == expected["source_id"]]
+            if len(matches) != 1 or any(matches[0].get(key) != value for key, value in expected.items()):
+                raise SystemExit(f"code-remediate-report-obligation-omitted:{expected['source_id']}")
     for field in ("review_findings", "operational_blockers"):
         records = original.get(field, [])
         if not isinstance(records, list):
@@ -2267,7 +2342,22 @@ def _validate_workplan_coverage_counts(
     if sorted(observed.indexes) != sorted(selected_indexes) or len(observed.indexes) != len(set(observed.indexes)):
         raise SystemExit("code-remediate-work-bucket-coverage-mismatch")
     if len(selected_indexes) <= 5 and len(work_buckets) != 1 and workplan["execution_mode"] != "parallel-specialists":
-        raise SystemExit("code-remediate-low-volume-fanout")
+        if workplan["execution_mode"] != "sequential-specialists" or len({b["owner"] for b in work_buckets}) < 2:
+            raise SystemExit("code-remediate-low-volume-fanout")
+        prior_ids: set[str] = set()
+        for bucket in work_buckets:
+            dependencies = bucket.get("dependencies")
+            if (
+                not isinstance(dependencies, list)
+                or any(not isinstance(value, str) or value not in prior_ids for value in dependencies)
+                or len(dependencies) != len(set(dependencies))
+                or any(
+                    not isinstance(bucket.get(key), str) or not bucket[key].strip()
+                    for key in ("grouping_rationale", "expected_closure")
+                )
+            ):
+                raise SystemExit("code-remediate-sequential-bucket-contract-invalid")
+            prior_ids.add(bucket["bucket_id"])
     if (
         len(selected_indexes) > 1
         and len(work_buckets) == len(selected_indexes)
@@ -2369,6 +2459,8 @@ def _validate_workplan_document(
     approval: _WorkplanApproval,
     observed: _WorkBucketObservations,
     bucket_plan: dict[str, Any],
+    *,
+    pre_edit: bool = False,
 ) -> None:
     """Check the rendered resolution workplan document against the validated plan metadata."""
     workplan_path = out_dir / "resolution-workplan.md"
@@ -2404,11 +2496,12 @@ def _validate_workplan_document(
     if workplan["execution_mode"] == "parallel-specialists":
         if bucket_plan.get("schema_version") != 2 or bucket_plan.get("consumer") != "code-remediate":
             raise SystemExit("code-remediate-production-lifecycle-required")
-        _validate_code_remediate_production_lifecycle(workplan, bucket_plan, out_dir, approval.bucket_plan_sha256)
+        if not pre_edit:
+            _validate_code_remediate_production_lifecycle(workplan, bucket_plan, out_dir, approval.bucket_plan_sha256)
 
 
 def _validate_code_remediate_workplan(
-    metadata: dict[str, Any], out_dir: Path, *, current_contract: bool = True
+    metadata: dict[str, Any], out_dir: Path, *, current_contract: bool = True, pre_edit: bool = False
 ) -> None:
     """Validate bounded work buckets, ownership, and parallel approval metadata."""
     workplan, selected_indexes, approval = _validate_workplan_shape(metadata)
@@ -2424,7 +2517,7 @@ def _validate_code_remediate_workplan(
     observed = _validate_work_buckets(work_buckets, out_dir)
     _validate_workplan_coverage_counts(workplan, work_buckets, selected_indexes, observed)
     _validate_workplan_execution_mode_approval(workplan, approval, observed)
-    _validate_workplan_document(out_dir, workplan, approval, observed, bucket_plan)
+    _validate_workplan_document(out_dir, workplan, approval, observed, bucket_plan, pre_edit=pre_edit)
     if current_contract and approval.source == "not-required":
         raise SystemExit("code-remediate-current-fallback-dispatch-required")
 
@@ -3068,6 +3161,7 @@ def _validate_code_remediate_pr_source(
         or preflight["overlapping_pr_paths"]
         or (preflight.get("status") in {"clean", "already-at-pr-head"} and preflight.get("dirty_paths"))
         or (preflight.get("status") == "safe-unrelated-dirty-paths" and not preflight.get("dirty_paths"))
+        or not dirty_path_record_is_consistent(preflight)
     ):
         raise SystemExit("code-remediate-pr-source-worktree-preflight-invalid")
 
@@ -3793,7 +3887,7 @@ def _code_remediate_metadata(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _code_remediate_steps(
-    result: dict[str, Any], out_dir: Path, *, current_contract: bool = True
+    result: dict[str, Any], out_dir: Path, *, current_contract: bool = True, candidate: bool = False
 ) -> list[_ValidationStep]:
     """List remediation checks in fail-fast order; each later step depends on the metadata shape step."""
 
@@ -3820,7 +3914,9 @@ def _code_remediate_steps(
         ),
         _ValidationStep(
             "code-remediate-report-intake",
-            lambda: _validate_code_remediate_report_intake(result, out_dir, current_contract=current_contract),
+            lambda: _validate_code_remediate_report_intake(
+                result, out_dir, current_contract=current_contract, candidate=candidate
+            ),
             shape,
         ),
         _ValidationStep(
@@ -4103,6 +4199,12 @@ class _ValidationStep(NamedTuple):
 
 #: Repair hints for frequent failure codes, matched by longest code prefix. Each hint restates the failed condition.
 VALIDATION_HINTS = {
+    "review-findings-action-table-": "Reconcile the canonical finding/blocker records and authored row identities "
+    "and statuses, then derive their presentation with remediation_finalize.py finalize --skill code-review.",
+    "manifest-": "Compare the manifest with retained producer outputs and runtime receipts. Correct only proven "
+    "bookkeeping drift; missing provenance remains open and must not be fabricated or relabeled independent.",
+    "routing-": "Compare routing declarations with observed execution and retained source scope; preserve actual "
+    "independence requirements and use only the documented recovery route supported by the evidence.",
     "missing-gates-json": "Run run_gates.py into this run directory before writing or validating the result.",
     "final-handoff-validation-failed": "Re-render final-handoff.json with final_handoff.py render, then rewrite the "
     "result so its final_handoff digests match.",
@@ -4179,6 +4281,7 @@ def _validation_steps(skill: str, out_dir: Path, result_path: Path) -> list[_Val
         state["result"] = _load_json(result_path)
         _require_result_shape(state["result"])
         state["current"] = _current_contract(skill, state["result"], result_path)
+        state["candidate"] = result_path.name != "result.json"
 
     def gates() -> None:
         state["gates"] = _validate_gates(out_dir)
@@ -4206,7 +4309,12 @@ def _validation_steps(skill: str, out_dir: Path, result_path: Path) -> list[_Val
             _ValidationStep(
                 "final-handoff",
                 lambda: _validate_final_handoff(
-                    state["result"], skill, out_dir, state["gates"], candidate=state["current"]
+                    state["result"],
+                    skill,
+                    out_dir,
+                    state["gates"],
+                    candidate=state["candidate"],
+                    current_contract=state["current"],
                 ),
                 gated,
             ),
@@ -4247,7 +4355,9 @@ def _deferred_code_remediate_steps(state: dict[str, Any], out_dir: Path) -> list
     requires = {step.name: step.requires for step in _code_remediate_steps({}, out_dir)}
 
     def run(position: int) -> None:
-        _code_remediate_steps(state["result"], out_dir, current_contract=state["current"])[position].check()
+        _code_remediate_steps(
+            state["result"], out_dir, current_contract=state["current"], candidate=state["candidate"]
+        )[position].check()
 
     return [
         _ValidationStep(name, lambda position=position: run(position), ("result", *requires[name]))

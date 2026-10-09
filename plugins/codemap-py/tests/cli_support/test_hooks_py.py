@@ -35,11 +35,12 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
 import time
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from typing import ClassVar
 
 import pytest
@@ -212,6 +213,16 @@ def _await_marker(marker: Path, timeout_s: float = 8.0) -> bool:
             return True
         time.sleep(0.05)
     return marker.exists()
+
+
+def _await_marker_content(path: Path, needle: str, timeout_s: float = 8.0) -> bool:
+    """Poll until *path* exists and contains *needle*; the detached stub may still be running."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if path.exists() and needle in path.read_text(encoding="utf-8"):
+            return True
+        time.sleep(0.05)
+    return False
 
 
 def _run_inject_with_event(
@@ -490,6 +501,17 @@ class TestInjectPreambleCurrency:
 
         assert _INJECT_MODULE._INDEXED_PATHSPEC == _SCANNER_MODULE.INDEXED_PATHSPEC == query._INDEXED_PATHSPEC
 
+    def test_refresh_record_name_matches_scanner_contract(self) -> None:
+        """The scan marks only records whose name carries the hook's prefix, so the two literals must agree.
+
+        If they drift, the scan silently stops marking records published and every stale prompt refreshes again.
+        """
+        from codemap_py import graph
+
+        name = _INJECT_MODULE.refresh_record_path("proj", PurePath("/x/proj.json")).name
+
+        assert name.startswith(graph._REFRESH_RECORD_PREFIX)
+
 
 # ── inject-preamble: bounded index-header read ────────────────────────────────────
 
@@ -703,6 +725,197 @@ class TestInjectPreambleRefreshLock:
         assert _INJECT_MODULE.spawn_refresh(tmp_path / "scan-index", tmp_path, tmp_path)
         assert calls[0]["env"]["CODEMAP_RUNTIME"] == "codex"
         assert calls[0]["env"]["CODEMAP_REFRESH_TRIGGER"] == "codex_prompt_background"
+
+
+class TestInjectPreambleRefreshFingerprint:
+    """A stale index refreshes once per distinct scanner input, not once per prompt.
+
+    The scanner keys on staged blobs and HEAD only (``TestIncrementalScanInputs`` in the scanner suite), so a dirty tree
+    with unstaged or untracked edits stays stale after any refresh. Telemetry showed every prompt on such a tree
+    spawning another no-op scan once the 10-minute lock expired. The stub ``scan-index`` never publishes, so each test
+    simulates the publish by advancing the index mtime and ages the lock past its TTL before the next prompt.
+    """
+
+    @staticmethod
+    def _dirty_current_repo(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
+        """Return ``(repo, idx_dir, index_path, plugin_root, tmpdir)`` for an index on HEAD with an unstaged edit.
+
+        The stub ``scan-index`` does what the real scan does after a successful publish: it marks the record it was
+        handed through ``CODEMAP_REFRESH_RECORD``/``CODEMAP_REFRESH_FINGERPRINT`` as ``published``.
+        """
+        repo = tmp_path / "proj"
+        head = _init_repo(repo)
+        idx_dir = tmp_path / "idx"
+        index_path = _write_index(idx_dir, repo.name, git_sha=head)
+        (repo / "a.py").write_text("def f():\n    return 2\n")
+        plugin_root = _fake_plugin_root(tmp_path, with_scan_bin=True, marker=tmp_path / "spawned.marker")
+        (plugin_root / "bin" / "scan-index").write_text(
+            "#!/usr/bin/env python3\nimport os\nfrom pathlib import Path\n"
+            "Path(os.environ['CODEMAP_REFRESH_RECORD']).write_text("
+            "os.environ['CODEMAP_REFRESH_FINGERPRINT'] + '\\n1\\npublished', encoding='utf-8')\n"
+        )
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+        return repo, idx_dir, index_path, plugin_root, tmpdir
+
+    @staticmethod
+    def _complete_refresh(index_path: Path, tmpdir: Path, proj: str) -> None:
+        """Wait for the spawned stub to mark its record published, then let the refresh lock expire."""
+        (record,) = tmpdir.glob(f"codemap-refresh-fp-{proj}-*")
+        assert _await_marker_content(record, "published")
+        _lock_file(tmpdir, proj).write_text(str(int(time.time() * 1000) - _LOCK_TTL_MS - 60_000))
+
+    def test_unchanged_dirty_tree_spawns_one_refresh(self, tmp_path: Path) -> None:
+        """A second prompt on the same dirty tree reports the skip and never takes the lock again.
+
+        The lock keeps its aged timestamp, which proves no spawn was attempted: every spawn path rewrites it.
+        """
+        repo, idx_dir, index_path, plugin_root, tmpdir = self._dirty_current_repo(tmp_path)
+        first = _run_inject(repo, idx_dir, plugin_root, tmpdir)
+        assert "refresh started" in first.stdout, first.stderr
+        self._complete_refresh(index_path, tmpdir, repo.name)
+        aged_lock = _lock_file(tmpdir, repo.name).read_text()
+
+        second = _run_inject(repo, idx_dir, plugin_root, tmpdir)
+
+        assert second.returncode == 0, second.stderr
+        assert "stale - unchanged since last refresh" in second.stdout
+        assert _lock_file(tmpdir, repo.name).read_text() == aged_lock
+
+    @pytest.mark.parametrize(
+        ("change", "expected_note"),
+        [
+            pytest.param("unstaged-edit", "unchanged since last refresh", id="unstaged-edit-stays-settled"),
+            pytest.param("untracked-file", "unchanged since last refresh", id="untracked-file-stays-settled"),
+            pytest.param("staged-edit", "refresh started", id="staged-edit-refreshes"),
+            pytest.param("head-moved", "refresh started", id="head-move-refreshes"),
+        ],
+    )
+    def test_only_scanner_visible_changes_refresh_again(self, tmp_path: Path, change: str, expected_note: str) -> None:
+        """After a completed refresh, only a staged edit or a HEAD move can change the index, so only they spawn."""
+        repo, idx_dir, index_path, plugin_root, tmpdir = self._dirty_current_repo(tmp_path)
+        _run_inject(repo, idx_dir, plugin_root, tmpdir)
+        self._complete_refresh(index_path, tmpdir, repo.name)
+        edits = {
+            "unstaged-edit": lambda: (repo / "a.py").write_text("def f():\n    return 3\n"),
+            "untracked-file": lambda: (repo / "b.py").write_text("def g():\n    return 4\n"),
+            "staged-edit": lambda: _git(repo, "add", "a.py"),
+            "head-moved": lambda: _git(repo, "commit", "-q", "--allow-empty", "-m", "move head"),
+        }
+        edits[change]()
+
+        result = _run_inject(repo, idx_dir, plugin_root, tmpdir)
+
+        assert result.returncode == 0, result.stderr
+        assert expected_note in result.stdout
+
+    def test_refresh_that_never_published_is_retried_even_after_another_publish(self, tmp_path: Path) -> None:
+        """A spawned refresh that never marked its record published is retried, whoever else wrote the index.
+
+        Reproduces the lock-takeover race: refresh B fails ``index_busy`` behind an older, slower scan A, and A's
+        publish lands after B's spawn. An index mtime newer than the spawn used to settle B's fingerprint with A's
+        older content; only B's own ``published`` mark may.
+        """
+        repo, idx_dir, index_path, plugin_root, tmpdir = self._dirty_current_repo(tmp_path)
+        (plugin_root / "bin" / "scan-index").write_text("#!/usr/bin/env python3\nraise SystemExit(1)\n")
+        _run_inject(repo, idx_dir, plugin_root, tmpdir)
+        later_ns = time.time_ns() + 5_000_000_000
+        os.utime(index_path, ns=(later_ns, later_ns))
+        _lock_file(tmpdir, repo.name).write_text(str(int(time.time() * 1000) - _LOCK_TTL_MS - 60_000))
+
+        result = _run_inject(repo, idx_dir, plugin_root, tmpdir)
+
+        assert "refresh started" in result.stdout
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param("", id="empty"),
+            pytest.param("not-a-record", id="garbled"),
+            pytest.param("abc\n1\nspawned", id="spawned-not-published"),
+            pytest.param("abc\n1", id="legacy-two-line-record"),
+            pytest.param("xyz\n1\npublished", id="other-fingerprint"),
+        ],
+    )
+    def test_unpublished_or_corrupt_record_reads_as_no_refresh(self, tmp_path: Path, content: str) -> None:
+        """Only this fingerprint's ``published`` line settles a refresh; anything else lets the next prompt retry."""
+        record = tmp_path / "record"
+        record.write_text(content, encoding="utf-8")
+
+        assert _INJECT_MODULE.refresh_settled(record, "abc") is False
+
+    def test_spawn_hands_the_record_to_the_scan(self, monkeypatch, tmp_path: Path) -> None:
+        """The record is written ``spawned`` before the child starts, and its path and fingerprint reach the child."""
+        calls: list[dict] = []
+        record = tmp_path / "codemap-refresh-fp-proj-0123456789ab"
+
+        def _fake_popen(command: list[str], **kwargs: object) -> object:
+            """Capture the spawn environment and the record state at spawn time."""
+            calls.append({"env": kwargs["env"], "record": record.read_text(encoding="utf-8")})
+            return object()
+
+        monkeypatch.setenv("TMPDIR", str(tmp_path))
+        monkeypatch.setenv("PLUGIN_ROOT", str(_fake_plugin_root(tmp_path, with_scan_bin=True, marker=tmp_path / "m")))
+        monkeypatch.setattr(_INJECT_MODULE.subprocess, "Popen", _fake_popen)
+
+        note = _INJECT_MODULE.start_refresh("proj", tmp_path, tmp_path, "", None, record=(record, "abc"))
+
+        assert note == _INJECT_MODULE.STARTED_NOTE
+        assert calls[0]["record"].split("\n")[::2] == ["abc", "spawned"]
+        assert calls[0]["env"]["CODEMAP_REFRESH_RECORD"] == str(record)
+        assert calls[0]["env"]["CODEMAP_REFRESH_FINGERPRINT"] == "abc"
+
+    @pytest.mark.parametrize(
+        "index_path",
+        [
+            pytest.param(PurePosixPath("/home/me/proj/.cache/codemap/proj.json"), id="posix"),
+            pytest.param(PureWindowsPath(r"C:\Users\me\proj\.cache\codemap\proj.json"), id="windows"),
+        ],
+    )
+    def test_record_name_is_a_portable_filename(self, monkeypatch, tmp_path: Path, index_path: PurePath) -> None:
+        """Any host's index path hashes to a plain ``codemap-refresh-fp-<project>-<hex>`` name inside the temp dir."""
+        monkeypatch.setenv("TMPDIR", str(tmp_path))
+
+        record = _INJECT_MODULE.refresh_record_path("proj", index_path)
+
+        assert record.parent == tmp_path
+        assert re.fullmatch(r"codemap-refresh-fp-proj-[0-9a-f]{12}", record.name)
+
+
+class TestStagedFingerprint:
+    """The refresh fingerprint moves exactly when the scanner's inputs move."""
+
+    @pytest.mark.parametrize(
+        ("change", "moves"),
+        [
+            pytest.param("unstaged-edit", False, id="unstaged-edit"),
+            pytest.param("untracked-file", False, id="untracked-file"),
+            pytest.param("staged-edit", True, id="staged-edit"),
+            pytest.param("head-moved", True, id="head-moved"),
+        ],
+    )
+    def test_moves_only_for_scanner_inputs(self, tmp_path: Path, change: str, moves: bool) -> None:
+        """Staged blobs and HEAD change the fingerprint; working-tree-only edits do not."""
+        repo = tmp_path / "proj"
+        head = _init_repo(repo)
+        before = _INJECT_MODULE.staged_fingerprint(repo, head)
+        (repo / "a.py").write_text("def f():\n    return 2\n")
+        (repo / "b.py").write_text("def g():\n    return 3\n")
+        if change == "staged-edit":
+            _git(repo, "add", "a.py")
+        if change == "head-moved":
+            _git(repo, "commit", "-q", "--allow-empty", "-m", "move head")
+        after_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=str(repo), capture_output=True, text=True
+        ).stdout.strip()
+
+        after = _INJECT_MODULE.staged_fingerprint(repo, after_head)
+
+        assert (after != before) is moves
+
+    def test_no_head_means_no_fingerprint(self, tmp_path: Path) -> None:
+        """Without a resolvable HEAD there is nothing to compare, so the caller refreshes as before."""
+        assert _INJECT_MODULE.staged_fingerprint(tmp_path, "") is None
 
 
 # ── inject-preamble: session marker (cross-agent scan-query contract) ─────────────

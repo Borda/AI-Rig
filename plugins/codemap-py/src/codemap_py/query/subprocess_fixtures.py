@@ -19,7 +19,7 @@ if str(_BIN) not in sys.path:
 from codemap_py.schema import FIXTURE_GRAPH_MIN_VER, SUBPROCESS_CALLS_MIN_VER  # noqa: E402
 
 from .coverage import _cmd_coverage  # noqa: E402
-from .errors import _die_module_not_indexed, _exit_error  # noqa: E402
+from .errors import _die_module_not_indexed, _exit_target_not_found  # noqa: E402
 from .index_io import _require_feature, _require_subprocess_rdep_count, build_module_map  # noqa: E402
 from .output import _print  # noqa: E402
 
@@ -274,7 +274,7 @@ def cmd_fixture_graph(index: dict, test_file: str) -> None:
     _require_feature(index, FIXTURE_GRAPH_MIN_VER, "fixture-graph")
     module_entry = _find_test_module(index, test_file)
     if module_entry is None:
-        _exit_error(f"Test module '{test_file}' not found in index.")
+        _exit_target_not_found(f"Test module '{test_file}' not found in index.", test_file)
     fixture_defs = _collect_fixture_definitions(index)
     roots: list[dict] = []
     for fix in module_entry.get("fixture_uses", []) or []:

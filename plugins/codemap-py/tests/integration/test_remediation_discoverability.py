@@ -55,7 +55,10 @@ def test_top_level_no_arguments_remain_a_syntax_error(capsys: pytest.CaptureFixt
 # `undocumented`, `packages`, `list`). Five days of telemetry on two active repositories
 # showed these four at 1-8 calls against 379 total while agents answered the same
 # questions by hand; the Claude table already carried the row, the Codex one did not.
-_CODEX_QUERY_SKILL_MAX_BYTES = 5200
+# 5200 -> 5250: a protocol (dunder) method's zero-caller `hint` names no search, because Python
+# calls it implicitly; read as "the method hint's grep came back empty", that licensed deleting a
+# method in active use. The clause was compressed to 42 bytes against 5 bytes of headroom.
+_CODEX_QUERY_SKILL_MAX_BYTES = 5250
 
 
 def test_codex_query_skill_is_compact_required_and_oriented_to_the_smallest_complete_query_set() -> None:

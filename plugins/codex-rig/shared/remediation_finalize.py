@@ -21,6 +21,7 @@ Derived, never authored by hand:
 - Each item's latest outcome fields and each bucket's latest status from the append-only ``resolution-events.jsonl``.
   Growing ledgers (that event file, ``closure-log.md``, and the review run's ``resolution.jsonl``) are only appended,
   never rewritten; rendered tables are rebuilt from them.
+- Final triage and resolution counts from those folded item rows, including zero-count historical statuses.
 
 Judgement fields stay with the agent: parallel eligibility and approval requirement, item outcomes, closure evidence,
 confidence gaps and closures, unresolved summaries, and the handoff outcome, remaining work, next steps, and commit
@@ -40,11 +41,18 @@ derives metadata and handoff, renders ``final.md``, writes ``result.candidate.js
 through the shared result writer, and runs the shared validator in all-errors mode; ``--promote`` renames a passing
 candidate to ``result.json``.
 
+``obligations --run <run>`` derives inspectable report source occurrences from retained ``findings-input.txt``.
+Attach those sources to the appropriate inventory items; the generated list grants no admission or selection.
+``preflight --run <run> --stage selection [--report]`` validates pending inventory and exact report coverage before
+prompting. ``preflight --run <run> --stage plan --metadata <draft.json>`` validates frozen ownership, selection,
+dependencies and dispatch evidence before edits; completed parallel runtime evidence remains a final gate.
+
 ## Used by
 
 The code-remediate skill uses it at work-bucket planning and at result finalization. Code Review uses
-``finalize --skill code-review``, which derives only the shared handoff fields (verification, confidence, result
-artifact), runs the review-specific validator before the shared one, and leaves completion to
+``finalize --skill code-review``, which also synchronizes canonical finding and blocker content in existing notes and
+handoff action tables, preserving authored statuses and source bindings. It runs the review-specific validator before
+the shared one and leaves completion to
 ``find-review-report.py``. Remediation finalization tests compare its derived fields with hand-built valid fixtures.
 
 ## Outputs
@@ -446,8 +454,21 @@ def derive_metadata(run: Path, metadata: dict[str, Any]) -> dict[str, Any]:
     """Merge every derivable metadata field into an agent draft, overwriting stale copies."""
     derive_selection(run, metadata)
     derive_events(run, metadata)
+    table = metadata["final_resolution_table"]
+    for field in ("triage_status", "resolution_status"):
+        counts = dict.fromkeys(sorted(ITEM_EVENT_ENUMS[field] | {"stale"}), 0)
+        for item in table["items"]:
+            value = item.get(field)
+            status = value.strip().casefold() if isinstance(value, str) else None
+            if status not in counts:
+                raise DeriveError(f"item-{field}-invalid:{item.get('input_item_id')}")
+            counts[status] += 1
+        table[f"{field}_counts"] = counts
     derive_workplan(run, metadata)
     derive_merge(run, metadata)
+    intake = metadata.get("review_report_intake", {})
+    if intake.get("requested_report") and intake.get("admission_status", "completed") != "unavailable":
+        intake["obligation_records_version"] = 1
     return metadata
 
 
@@ -519,7 +540,8 @@ def render_workplan(run: Path, metadata: dict[str, Any], reason: str | None) -> 
     Bucket status comes from the latest ``bucket`` event in ``resolution-events.jsonl``; it lives only in this rendered
     table, never in the digest-bound plan JSON or its metadata copy.
     """
-    derive_metadata(run, metadata)
+    derive_selection(run, metadata)
+    derive_workplan(run, metadata)
     workplan = metadata.get("resolution_workplan")
     if not isinstance(workplan, dict) or "work_buckets" not in workplan:
         raise DeriveError("work-bucket-plan-missing")
@@ -647,6 +669,8 @@ def _report_finding_ids(item: dict[str, Any]) -> list[str]:
             continue
         source_id = str(source.get("source_id", ""))
         identity = source.get("finding_id") or (source_id.rpartition("#")[2] if "#" in source_id else "")
+        if identity.startswith("/"):
+            continue  # JSON pointers identify report obligations, not canonical code findings.
         if identity and identity not in identities:
             identities.append(identity)
     return identities
@@ -804,6 +828,8 @@ def _result_artifact(existing: list[Any], artifact_path: str) -> list[dict[str, 
 def _resolution_table(metadata: dict[str, Any], draft: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Generate remediation rows, detail notes, and source records from the resolution items."""
     rows, details, records = [], [], []
+    scope = metadata.get("resolution_scope", {})
+    selectable_index = 0
     for position, item in enumerate(metadata["final_resolution_table"]["items"], start=1):
         sources = item.get("sources") or []
         source_ids = [f"{source.get('kind')}:{source.get('source_id')}" for source in sources]
@@ -821,6 +847,10 @@ def _resolution_table(metadata: dict[str, Any], draft: dict[str, Any]) -> tuple[
                 "source_ids": source_ids,
             }
         )
+        if item.get("selectable"):
+            selectable_index += 1
+        if scope.get("presentation_version") == 4:
+            rows[-1]["selected"] = bool(item.get("selectable")) and selectable_index in scope["selected_indexes"]
         details.extend(
             (
                 {"id": f"O{position}", "text": item.get("resolved_how")},
@@ -859,13 +889,15 @@ def derive_handoff(
     handoff["confidence"] = _confidence_block(metadata, score)
     if handoff.get("skill") != "code-remediate":
         handoff["artifacts"] = _result_artifact(handoff.get("artifacts") or [], artifact_path)
+        if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed":
+            _derive_review_actions(run, metadata, handoff)
         return handoff
     handoff["artifacts"] = _artifacts(handoff.get("artifacts") or [], artifact_path)
     if handoff.get("branch") == "caller-contract":
         return handoff
     presentation = metadata.get("resolution_scope", {}).get("presentation_version")
     if presentation in {3, 4}:
-        handoff["presentation_version"] = presentation
+        handoff["presentation_version"] = 5 if presentation == 4 else presentation
     draft_tables = handoff.get("tables") or [{}]
     table, records = _resolution_table(metadata, draft_tables[0] if isinstance(draft_tables[0], dict) else {})
     handoff["tables"] = [table]
@@ -876,6 +908,107 @@ def derive_handoff(
         "omitted_source_records_total": 0,
     }
     return handoff
+
+
+def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[str, Any]) -> None:
+    """Synchronize canonical action content without inventing status, identity, or source bindings.
+
+    Only an unambiguous existing notes table is rewritten. Historical incomplete records remain with their reader;
+    ambiguous identities or contradictory authored statuses need a decision before any presentation is changed.
+    """
+    records = metadata.get("review_findings", []) + metadata.get("operational_blockers", [])
+    if metadata.get("finding_records_version") != 1 or not records:
+        return
+    if any(not isinstance(record, dict) or "required_change" not in record for record in records):
+        return
+    by_id = {}
+    for record in records:
+        identity = record.get("id")
+        if not isinstance(identity, str) or not identity or identity in by_id:
+            raise DeriveError("review-action-record-identity-invalid")
+        for field in ("title", "required_change"):
+            if not isinstance(record.get(field), str) or not record[field].strip():
+                raise DeriveError(f"review-action-record-invalid:{identity}:{field}")
+        evidence = record.get("evidence")
+        if (
+            not isinstance(evidence, list)
+            or not evidence
+            or not all(isinstance(v, str) and v.strip() for v in evidence)
+        ):
+            raise DeriveError(f"review-action-record-invalid:{identity}:evidence")
+        by_id[identity] = record
+    heading = "Review Findings and Merge Blocks"
+    tables = [table for table in handoff.get("tables", []) if table.get("heading") == heading]
+    if len(tables) != 1:
+        raise DeriveError("review-action-table-required")
+    rows = tables[0].get("rows", [])
+    identities = []
+    for row in rows:
+        cells = row.get("cells") if isinstance(row, dict) else None
+        if not isinstance(cells, list) or len(cells) != 4 or not all(isinstance(cell, str) for cell in cells):
+            raise DeriveError("review-action-row-invalid")
+        identities.append(cells[0])
+    if len(identities) != len(by_id) or set(identities) != set(by_id):
+        raise DeriveError("review-action-identity-coverage-mismatch")
+    notes_path = run / "review-notes.md"
+    try:
+        notes = notes_path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeError) as error:
+        raise DeriveError("review-action-notes-unreadable") from error
+    sections = list(re.finditer(rf"^## {heading}[^\S\r\n]*\r?$\n(?P<body>.*?)(?=^## |\Z)", notes, re.M | re.S))
+    if len(sections) != 1:
+        raise DeriveError("review-action-notes-section-ambiguous")
+    section = sections[0]
+    blocks = list(re.finditer(r"(?:^[ \t]*\|[^\r\n]*\|[ \t]*(?:\r?\n|$))+", section["body"], re.M))
+    if len(blocks) != 1:
+        raise DeriveError("review-action-notes-table-ambiguous")
+    block = blocks[0]
+    parsed = [
+        [cell.replace(r"\|", "|").strip() for cell in re.split(r"(?<!\\)\|", line.strip()[1:-1])]
+        for line in block[0].splitlines()
+    ]
+    authored_status = {cells[0]: cells[3] for cells in (row["cells"] for row in rows)}
+    if len(parsed) != len(rows) + 2 or len({cells[0] for cells in parsed[2:]}) != len(rows):
+        raise DeriveError("review-action-notes-identity-mismatch")
+    if any(len(cells) not in {4, 5} or authored_status.get(cells[0]) != cells[-1] for cells in parsed[2:]):
+        raise DeriveError("review-action-notes-status-mismatch")
+    _write_review_action_views(
+        notes_path,
+        notes,
+        section.start("body") + block.start(),
+        section.start("body") + block.end(),
+        rows,
+        by_id,
+        metadata.get("reviewer_assessments") is not None,
+    )
+
+
+def _write_review_action_views(
+    path: Path, notes: str, start: int, end: int, rows: list[dict[str, Any]], records: dict[str, Any], attributed: bool
+) -> None:
+    """Render both action views from checked identities while preserving surrounding notes bytes."""
+    columns = ["Finding / area", *(["Author"] if attributed else []), "Required change", "Evidence", "Status"]
+    rendered = ["| " + " | ".join(columns) + " |", "| " + " | ".join("---" for _ in columns) + " |"]
+    for row in rows:
+        record = records[row["cells"][0]]
+        row["cells"][1:3] = [record["required_change"], "; ".join(record["evidence"])]
+        for field in ("title", "summary", "closure_evidence", "authors"):
+            if field in record:
+                row[field] = record[field]
+            else:
+                row.pop(field, None)
+        cells = row["cells"].copy()
+        if attributed:
+            authors = record.get("authors")
+            if not isinstance(authors, list) or not authors or not all(isinstance(author, str) for author in authors):
+                raise DeriveError(f"review-action-record-invalid:{record['id']}:authors")
+            cells.insert(1, ", ".join(authors))
+        rendered.append(
+            "| "
+            + " | ".join(cell.replace("\r\n", "\n").replace("\n", "<br>").replace("|", r"\|") for cell in cells)
+            + " |"
+        )
+    path.write_bytes((notes[:start] + "\n".join(rendered) + "\n" + notes[end:]).encode("utf-8"))
 
 
 def _result_arguments(
@@ -930,6 +1063,11 @@ def _step(summary: dict[str, Any], name: str, action: Any) -> bool:
         code = str(error.code) if isinstance(error, SystemExit) else str(error)
         summary["steps"].append({"step": name, "status": "fail", "code": code})
         summary["status"] = "fail"
+        summary["next_action"]["action"] = (
+            f"Inspect the retained {name} diagnostic and canonical inputs; repair only evidenced bookkeeping drift. "
+            "Keep source/provenance failures open, preserve rejected evidence, and continue independently authorized "
+            "source-verified work. Do not retry unchanged or invent missing evidence."
+        )
         return False
     summary["steps"].append({"step": name, "status": "pass", **({"detail": detail} if detail else {})})
     return True
@@ -939,6 +1077,11 @@ def finalize(arguments: argparse.Namespace) -> dict[str, Any]:
     """Derive, render, write, validate, and optionally promote one remediation result candidate."""
     run = arguments.run.resolve()
     summary: dict[str, Any] = {"status": "pass", "steps": [], "errors": [], "not_run": [], "promoted": False}
+    summary["next_action"] = {
+        "owner": arguments.skill,
+        "action": "Inspect validation results before delivering the result.",
+        "resume_condition": "Both artifact validators pass before promotion; review also requires --complete-run.",
+    }
     state: dict[str, Any] = {}
 
     def derive() -> dict[str, str]:
@@ -966,7 +1109,7 @@ def finalize(arguments: argparse.Namespace) -> dict[str, Any]:
         return summary
     summary["candidate"] = str(run / "result.candidate.json")
     if arguments.skill == "code-review" and not _step(
-        summary, "review-validate", lambda: _review_validate(arguments, run)
+        summary, "review-validate", lambda: _review_validate(arguments, run, summary)
     ):
         return summary
     validator = _load_module("codex_rig_validate_artifacts", "validate-artifacts.py")
@@ -979,6 +1122,15 @@ def finalize(arguments: argparse.Namespace) -> dict[str, Any]:
             "detail": {"errors": len(report["errors"]), "not_run": len(report["not_run"])},
         }
     )
+    summary["next_action"]["action"] = (
+        "Inspect every reported check and repair its evidenced cause before revalidation; preserve retry limits."
+        if report["status"] != "pass"
+        else "Run find-review-report.py --complete-run for this run, then resume its waiting remediation if any."
+        if arguments.skill == "code-review" and arguments.promote
+        else "Deliver the validated final.md."
+        if arguments.promote
+        else "Promote the validated candidate before delivery."
+    )
     if report["status"] == "pass" and arguments.promote:
         os.replace(run / "result.candidate.json", run / "result.json")
         summary["promoted"] = True
@@ -986,8 +1138,8 @@ def finalize(arguments: argparse.Namespace) -> dict[str, Any]:
     return summary
 
 
-def _review_validate(arguments: argparse.Namespace, run: Path) -> dict[str, Any]:
-    """Run the review-specific validator against the candidate with this run's parent-thread provenance."""
+def _review_validate(arguments: argparse.Namespace, run: Path, summary: dict[str, Any]) -> dict[str, Any]:
+    """Retain all review diagnostics and require valid parent-thread provenance before promotion."""
     command = [
         sys.executable,
         str(SHARED_DIRECTORY.parent / "skills" / "code-review" / "validate_artifacts.py"),
@@ -1008,6 +1160,11 @@ def _review_validate(arguments: argparse.Namespace, run: Path) -> dict[str, Any]
         lines = (completed.stderr or completed.stdout).strip().splitlines()
         raise DeriveError("review-validator:" + (lines[-1] if lines else str(completed.returncode))) from None
     if completed.returncode != 0 or report.get("status") != "pass":
+        validator = _load_module("codex_rig_validate_artifacts", "validate-artifacts.py")
+        summary["errors"] = [
+            {**error, "hint": validator.validation_hint(error["code"])} for error in report.get("errors", [])
+        ]
+        summary["not_run"] = report.get("not_run", [])
         failures = [error["code"] for error in report.get("errors", [])]
         failures += [f"not-run:{entry['step']}" for entry in report.get("not_run", [])]
         raise DeriveError("review-validator:" + ",".join(failures))
@@ -1032,8 +1189,54 @@ def _ledger_action(arguments: argparse.Namespace) -> dict[str, Any]:
     return {"status": "pass", "action_items": str(path)}
 
 
+def _obligations_action(arguments: argparse.Namespace) -> dict[str, Any]:
+    """Expose exact report occurrences for attaching to coherent inventory items without choosing scope."""
+    run = arguments.run.resolve()
+    validator = _load_module("codex_rig_validate_artifacts", "validate-artifacts.py")
+    report = _load(run / "findings-input.txt")
+    if report.get("schema_version") != 3 or report.get("metadata", {}).get("review_status", "assessed") != "assessed":
+        raise DeriveError("code-remediate-report-input-not-assessed")
+    payload = {
+        "schema_version": 1,
+        "sources": validator.report_obligation_sources(report, arguments.producer_result_path),
+    }
+    path = run / "report-obligations.json"
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8", newline="\n")
+    return {"status": "pass", "obligations": str(path), "occurrences": len(payload["sources"])}
+
+
+def _preflight_action(arguments: argparse.Namespace) -> dict[str, Any]:
+    """Check the next consumer's structural prerequisites without requiring finished remediation."""
+    run = arguments.run.resolve()
+    validator = _load_module("codex_rig_validate_artifacts", "validate-artifacts.py")
+    inventory = _load(run / "selection.json")
+    final_handoff._validate_selection(inventory)
+    if arguments.stage == "selection":
+        if arguments.report:
+            validator._validate_code_remediate_report_coverage(
+                {
+                    "final_resolution_table": {"items": inventory["items"]},
+                    "review_report_intake": {
+                        "admission_evidence": {"producer_result_path": arguments.producer_result_path}
+                    },
+                },
+                run,
+                occurrence_contract=True,
+            )
+    else:
+        if arguments.metadata is None:
+            raise DeriveError("preflight-plan-metadata-required")
+        metadata = _load(arguments.metadata)
+        derive_selection(run, metadata)
+        derive_workplan(run, metadata)
+        validator._validate_code_remediate_workplan(metadata, run, pre_edit=True)
+    return {"status": "pass", "stage": arguments.stage}
+
+
 #: Dispatch table from command-line action name to the function that performs it.
 ACTIONS = {
+    "obligations": _obligations_action,
+    "preflight": _preflight_action,
     "metadata": _metadata_action,
     "workplan": _workplan_action,
     "ledger": _ledger_action,
@@ -1048,6 +1251,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse one helper action and its options."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     actions = parser.add_subparsers(dest="action", required=True)
+    obligations = actions.add_parser("obligations", help="Derive exact report obligation source records.")
+    preflight = actions.add_parser("preflight", help="Validate selection or frozen planning before source edits.")
+    preflight.add_argument("--stage", choices=("selection", "plan"), required=True)
+    preflight.add_argument("--report", action="store_true", help="Require retained assessed report coverage.")
+    for action in (obligations, preflight):
+        action.add_argument(
+            "--producer-result-path", help="Admitted producer coordinate when artifact_path is relative."
+        )
+    preflight.add_argument("--metadata", type=Path, help="Plan-stage metadata draft; outcomes are not required.")
     metadata = actions.add_parser("metadata", help="Merge derived fields into a metadata draft.")
     workplan = actions.add_parser("workplan", help="Rewrite the managed resolution-workplan.md sections.")
     ledger = actions.add_parser("ledger", help="Rewrite the action-items.md resolution table from items and events.")
@@ -1056,7 +1268,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     feedback = actions.add_parser(
         "resolutions", help="Append per-finding outcomes to the admitted review run's resolution.jsonl."
     )
-    for action in (metadata, workplan, ledger, final, append, feedback):
+    for action in (metadata, workplan, ledger, final, append, feedback, obligations, preflight):
         action.add_argument("--run", type=Path, required=True, help="Remediation run directory.")
     for action in (metadata, workplan, ledger, final):
         action.add_argument("--metadata", type=Path, required=True, help="Agent-authored metadata draft JSON.")
@@ -1095,7 +1307,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parse_args(argv)
     try:
         summary = finalize(arguments) if arguments.action == "finalize" else ACTIONS[arguments.action](arguments)
-    except DeriveError as error:
+    except (DeriveError, final_handoff.HandoffError, SystemExit) as error:
         summary = {"status": "fail", "code": str(error)}
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0 if summary["status"] == "pass" else 1

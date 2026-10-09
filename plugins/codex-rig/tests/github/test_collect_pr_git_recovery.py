@@ -585,6 +585,98 @@ def test_collect_pr_preserves_unrelated_untracked_files_at_matching_head(
     assert (worktree / "scratch.txt").read_text(encoding="utf-8") == "keep local scratch\n"
 
 
+_IGNORED_TREE_FILES = 400
+
+
+def _write_ignored_tree(worktree: Path, pattern: str) -> None:
+    """Create a large ignored environment tree, the shape that once filled preflight records with ~20K paths."""
+    (worktree / ".git" / "info" / "exclude").write_text(pattern, encoding="utf-8")
+    package = worktree / ".venv" / "lib" / "site-packages"
+    package.mkdir(parents=True)
+    for index in range(_IGNORED_TREE_FILES):
+        (package / f"module_{index:04d}.py").write_text("x = 1\n", encoding="utf-8")
+
+
+def test_collect_pr_lists_bounded_sample_for_large_ignored_tree(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
+    """Count a large ignored tree instead of listing it, while still comparing every path for overlap.
+
+    The record keeps the unrelated user scratch file ahead of ignored environment files, lists at most the sample limit,
+    and accounts for every other dirty path in its counts.
+    """
+    module = _load_collector()
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
+    _write_ignored_tree(worktree, ".venv/\n")
+    (worktree / "scratch.txt").write_text("keep local scratch\n", encoding="utf-8")
+
+    code, _calls = _collect(module, source, worktree, tmp_path / "collected", base, head)
+
+    record_path = tmp_path / "collected" / "source-worktree-context.json"
+    preflight = json.loads(record_path.read_text(encoding="utf-8"))
+    assert code == 0
+    assert (preflight["schema_version"], preflight["status"]) == (1, "safe-unrelated-dirty-paths")
+    assert preflight["dirty_path_counts"] == {
+        "tracked": 0,
+        "staged": 0,
+        "untracked_unignored": 1,
+        "ignored": _IGNORED_TREE_FILES,
+        "total": _IGNORED_TREE_FILES + 1,
+    }
+    assert len(preflight["dirty_paths"]) == module.DIRTY_PATH_SAMPLE_LIMIT
+    assert "scratch.txt" in preflight["dirty_paths"]
+    assert preflight["dirty_paths_omitted"] == _IGNORED_TREE_FILES + 1 - module.DIRTY_PATH_SAMPLE_LIMIT
+    assert module.dirty_path_record_is_consistent(preflight)
+    assert record_path.stat().st_size < 8 * 1024
+
+
+def test_collect_pr_remediation_blocks_ignored_collision_inside_large_ignored_tree(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
+    """Block an attached checkout over one ignored file even when it hides among hundreds of sampled-out paths.
+
+    Sampling only shapes the record; the overlap check still compares every ignored path, and the colliding one is
+    always listed because it is the evidence for the block.
+    """
+    module = _load_collector()
+    source, worktree, base, _old, _head = _setup_repositories(tmp_path, repository_template)
+    colliding = ".venv/lib/site-packages/module_0399.py"
+    incoming = source / colliding
+    incoming.parent.mkdir(parents=True, exist_ok=True)
+    incoming.write_bytes(b"PR BYTES\n")
+    _git(source, "add", "--force", "--", colliding)
+    _git(source, "commit", "-m", "add PR path inside ignored tree")
+    head = _git(source, "rev-parse", "HEAD")
+    _git(source, "update-ref", "refs/pull/17/head", head)
+    _git(worktree, "checkout", "-b", "local-diverged", base)
+    _git(worktree, "fetch", "--no-tags", str(source), "refs/heads/topic:refs/heads/topic")
+    _write_ignored_tree(worktree, ".venv/\n")
+    output = tmp_path / "collected"
+
+    code, calls = _collect(
+        module,
+        source,
+        worktree,
+        output,
+        base,
+        head,
+        cross_repository=False,
+        checkout_mode="remediate",
+        gh_checkout_fails=False,
+    )
+
+    preflight = json.loads((output / "worktree-preflight.json").read_text(encoding="utf-8"))
+    assert code == 2
+    assert not any(call[:3] == ["gh", "pr", "checkout"] for call in calls)
+    assert (worktree / colliding).read_text(encoding="utf-8") == "x = 1\n"
+    assert preflight["status"] == "blocked-pr-dirty-paths"
+    assert preflight["overlapping_pr_paths"] == [colliding]
+    assert colliding in preflight["dirty_paths"]
+    assert preflight["dirty_path_counts"]["ignored"] == _IGNORED_TREE_FILES
+    assert len(preflight["dirty_paths"]) <= module.DIRTY_PATH_SAMPLE_LIMIT + 1
+    assert module.dirty_path_record_is_consistent(preflight)
+
+
 @pytest.mark.parametrize("path", ["notes.txt", "removed/nested.py"])
 def test_collect_pr_isolates_untracked_recreation_of_a_deleted_pr_path(
     tmp_path: Path, repository_template: RepositoryTemplate, path: str

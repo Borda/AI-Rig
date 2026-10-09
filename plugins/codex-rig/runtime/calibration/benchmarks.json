@@ -382,7 +382,7 @@
       "remediation_finalize\\.py resolutions",
       "Never consume `result.candidate.json` as a completed review",
       "only its eligible finding records may be considered under preliminary finding intake",
-      "After the explicit continue choice, do not ask the user again to select reviewer bookkeeping or start a review merely to represent the partial result",
+      "On authorized available-finding continuation, do not ask the user again to select reviewer bookkeeping or start a review merely to represent the partial result",
       "Run a fresh code review now before remediation\\?",
       "Acknowledge that fresh review was declined and requested completed-review proof remains unresolved",
       "Do not run review, advance intake or edit source while pending",

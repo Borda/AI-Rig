@@ -1142,6 +1142,30 @@ def test_code_remediate_rejects_conflicts_without_merge_authorization(tmp_path: 
         validator._validate_code_remediate_merge_resolution(metadata, pr_dir, {"local_head": "base-oid"})
 
 
+def test_code_remediate_rejects_in_progress_merge_at_result_time(tmp_path: Path) -> None:
+    """Treat the run's in-progress merge record as unfinished integration, never as a completed merge.
+
+    The record written before ``git merge`` only marks the merge as task-owned; a result that still carries it must fail
+    closed instead of admitting finding work on top of an unfinished merge.
+    """
+    validator = _load_shared_artifact_validator()
+    pr_dir = tmp_path / "pr"
+    pr_dir.mkdir()
+    path = pr_dir / "merge-resolution.json"
+    _write_merge_resolution(path, conflicts_detected=True, status="in-progress", authorization="user-confirmed")
+    metadata = {
+        "merge_resolution": {
+            "artifact_path": str(path),
+            "authorization": "user-confirmed",
+            "conflicts_detected": True,
+            "status": "in-progress",
+        }
+    }
+
+    with pytest.raises(SystemExit, match="code-remediate-target-merge-not-completed"):
+        validator._validate_code_remediate_merge_resolution(metadata, pr_dir, {"local_head": "base-oid"})
+
+
 def test_v2_merge_resolution_binds_execution_pre_head_to_collected_pr_head(tmp_path: Path) -> None:
     """Reject merge execution evidence that starts from a different PR source revision."""
     validator = _load_shared_artifact_validator()

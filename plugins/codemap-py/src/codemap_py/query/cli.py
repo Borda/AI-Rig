@@ -184,16 +184,25 @@ def _add_symbol_subparsers(sub: argparse._SubParsersAction) -> None:
     p_find.add_argument("--exclude-tests", action="store_true", default=False, help="Exclude test files from results")
 
 
+#: Help text shared by every ``fn-*`` target argument; non-``::`` spellings are resolved by
+#: :func:`codemap_py.query.index_io._normalize_symbol_target`.
+_FN_TARGET_HELP = (
+    "module::symbol (e.g. 'mypackage.auth::validate_token'), dotted module.symbol "
+    "('mypackage.auth.validate_token'), or a bare/Class.method name defined once in the index; "
+    "an ambiguous name, a bare method name, or a module-name suffix exits with its candidates."
+)
+
+
 def _add_callgraph_subparsers(sub: argparse._SubParsersAction) -> None:
     """Register call-graph subcommands that require a version 3 or newer index.
 
     Registers ``fn-deps``, ``fn-rdeps``, ``fn-central``, ``fn-blast``, ``test-impact``, and ``mock-rdeps``.
     """
     p_fn_deps = sub.add_parser("fn-deps", help="What does a function call? (requires v3 index)")
-    p_fn_deps.add_argument("qname", help="Full qname: module::symbol, e.g. 'mypackage.auth::validate_token'")
+    p_fn_deps.add_argument("qname", help=_FN_TARGET_HELP)
 
     p_fn_rdeps = sub.add_parser("fn-rdeps", help="What calls a function? (requires v3 index)")
-    p_fn_rdeps.add_argument("qname", help="Full qname: module::symbol")
+    p_fn_rdeps.add_argument("qname", help=_FN_TARGET_HELP)
     p_fn_rdeps.add_argument(
         "--exclude-tests", action="store_true", default=False, help="Exclude test files from results"
     )
@@ -205,7 +214,7 @@ def _add_callgraph_subparsers(sub: argparse._SubParsersAction) -> None:
     )
 
     p_fn_blast = sub.add_parser("fn-blast", help="Transitive reverse-call blast radius (requires v3 index)")
-    p_fn_blast.add_argument("qname", help="Full qname: module::symbol")
+    p_fn_blast.add_argument("qname", help=_FN_TARGET_HELP)
 
     p_test_impact = sub.add_parser(
         "test-impact",
@@ -213,7 +222,10 @@ def _add_callgraph_subparsers(sub: argparse._SubParsersAction) -> None:
     )
     p_test_impact.add_argument(
         "qname",
-        help="module::symbol for function-level impact, or bare module name for module-level impact.",
+        help=(
+            "module::symbol (or dotted module.symbol / unique bare name) for function-level impact, "
+            "or bare module name for module-level impact."
+        ),
     )
     p_test_impact.add_argument(
         "--no-mocks",

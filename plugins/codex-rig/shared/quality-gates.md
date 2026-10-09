@@ -105,7 +105,7 @@ Configured agents require:
 - Apply `native-skill-contract.md` Networked CLI Approval to each intentional shell-network path: keep persistent workspace networking disabled and approve complete owning command, not only nested executable.
 - PR checkout/update artifacts never record `git`/`gh` `--force`; force needs stop-and-ask confirmation with overwrite-risk rationale first.
 - Use `PLUGIN_ROOT/shared/validate-artifacts.py` to validate common report, ledger, gate-log, and result JSON artifacts.
-- Schema-v2 results must bind `final-handoff.json`, `final.md`, and `final-handoff.validation.json`; after validation and promotion, emit `final.md` verbatim. Historical schema-v1 results remain readable without this binding.
+- Schema-v2 results must bind `final-handoff.json`, `final.md`, and `final-handoff.validation.json`; after validation and promotion, emit `final.md` verbatim. Historical schema-v1 results remain readable without this binding. Approved nested review uses [Nested review delivery](final-handoff-contract.md#nested-review-delivery); all artifact and completion gates remain mandatory.
 - Use `PLUGIN_ROOT/shared/severity-map.md` to map findings to severity levels.
 
 ## Behavior-Change Guardrails

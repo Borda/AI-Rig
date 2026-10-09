@@ -38,10 +38,9 @@ def test_packet_is_part_of_scope_checkpoint_and_keeps_rendered_scope() -> None:
     assert all(value in packet for value in COMMIT_VALUES)
     assert "`proceed automatically`, `show the plan and wait for my approval`" in packet
     assert "The packet adds no line to that file and does not change `presentation_version`" in packet
-    assert "ask the commit preference first" in packet
-    assert "the scope question last, so the final answer the user gives releases the run" in packet
+    assert "ask the scope question first and complete any Custom follow-up" in packet
     assert "Never hide a feasible commit value behind Other" in packet
-    assert "Explicit `remediation_scope` input asks no packet question" in packet
+    assert "Explicit `remediation_scope` input skips the scope question" in packet
     assert "`## Upfront Decisions`" in packet
     assert "An unanswered packet question grants nothing" in packet
     assert "Never combine scope, commit, and work-plan decisions in one question or answer field" in packet
@@ -85,3 +84,41 @@ def test_commit_step_reuses_packet_answer_and_names_material_changes() -> None:
     assert "`decide after verification`, or a preference left unanswered or dismissed, asks here" in commit
     assert "A new exclusion, destination change, infeasible grouping, or external-obligation commit" in commit
     assert "`remediation-foldable-question-after-scope`" in fail_fast
+
+
+def test_packet_owns_native_discovery_and_single_delivery_before_scope_prompt() -> None:
+    """Prevent the earlier scope template from being asked again as part of the packet."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    context = skill.split("### Terminal Scope Context Contract", 1)[1].split("### Upfront Decision Packet", 1)[0]
+    packet = _span("### Upfront Decision Packet", "### 06:")
+    assert "resolve the Upfront Decision Packet route before emitting context or opening any question" in context
+    assert "not a separate prompt to execute before the packet" in context
+    assert "Inspect directly exposed tools and discover the current plugin's `ask_user` in `ALL_TOOLS`" in packet
+    assert "Record one delivery owner and state per decision" in packet
+    assert "Never print the packet's live questions or options in commentary or final" in packet
+    assert "one distinct decision ID for scope and another for commit preference" in packet
+    assert "Do not submit the same pending question again to improve its appearance" in packet
+
+
+def test_packet_chooses_native_sequential_form_when_bundled_control_cannot_fit() -> None:
+    """Keep optional-only sync and text-only async from replacing the available native form."""
+    packet = _span("### Upfront Decision Packet", "### 06:")
+    assert "optional-only synchronous tool cannot carry commit authorization" in packet
+    assert "five commit choices cannot fit a three-choice limit" in packet
+    assert "Text-only async delivery is unsuitable for later required questions" in packet
+    assert "omit the work-plan question" in packet
+    assert "native `ask_user` scope form, then the native commit form" in packet
+
+
+def test_scope_precedes_commit_grouping_and_has_no_workplan_question() -> None:
+    """Honor the user's scope-first order, including custom scope and already-supplied answers."""
+    packet = _span("### Upfront Decision Packet", "### 06:")
+    assert "scope first, then commit grouping" in packet
+    assert "Finish a Custom selection follow-up before asking about commits" in packet
+    assert packet.index("| Findings scope |") < packet.index("| Commit preference |")
+    assert "never add it to the scope/commit packet" in packet
+    assert (
+        "A cancelled or unanswered required scope leaves scope pending and does not advance to commit grouping"
+        in packet
+    )
+    assert "ask only the still-missing commit preference afterward" in packet

@@ -323,12 +323,17 @@ def _coverage_note(
     reason: str,
     alias_limitations_total: int = 0,
     alias_limitations_truncated: bool = False,
+    answer_hint: bool = False,
 ) -> str:
-    """Build a human note that never contradicts the emitted ``query_complete``.
+    """Build a human note that never contradicts the emitted ``query_complete`` or the answer's own ``hint``.
 
     F1: the note must track the direction-scoped flag, not the direction-agnostic
     stale/degraded facts alone — otherwise an untracked/collision veto could ship
     "This result is complete" next to ``query_complete: false``.
+
+    A zero-caller answer stays complete for the static graph while its ``hint`` says the real callers are unresolved
+    and, for most methods, names a reference search. Telling that reader "grep/bash verification is not needed" in the
+    same payload contradicted the hint, so a hinted complete answer defers to the hint instead.
 
     Args:
         base: the shared coverage dict from :func:`_coverage`.
@@ -336,8 +341,20 @@ def _coverage_note(
         reason: the veto slug from :func:`_query_complete` (``"ok"`` when complete).
         alias_limitations_total: number of relevant rejected alias paths.
         alias_limitations_truncated: whether compact output emits only the bounded sample.
+        answer_hint: whether the command's payload carries a zero-caller ``hint`` beside this coverage block.
+
+    Examples:
+        >>> _coverage_note({"total_modules": 3}, complete=True, reason="ok").endswith("verification is not needed.")
+        True
+        >>> "not needed" in _coverage_note({"total_modules": 3}, complete=True, reason="ok", answer_hint=True)
+        False
     """
     total = base["total_modules"]
+    if complete and answer_hint:
+        return (
+            f"All {total} indexed modules were searched. This result is complete for static call edges only — zero "
+            "callers here is unresolved, not absent; follow the answer's hint before treating the symbol as unused."
+        )
     if complete:
         return f"All {total} indexed modules were searched. This result is complete — grep/bash verification is not needed."
     prefix = f"All {total} indexed modules were searched. ⚠ This result may be incomplete — "
@@ -510,6 +527,7 @@ def _cmd_coverage(
     module_status: str | None = None,
     module_name: str | None = None,
     query_target: str | None = None,
+    answer_hint: bool = False,
     **extra: object,
 ) -> dict:
     """Merge shared coverage with direction-scoped completeness and per-command metadata.
@@ -541,6 +559,8 @@ def _cmd_coverage(
         module_name: queried module's dotted name for local-direction commands.
         query_target: module or ``module::symbol`` this command queried, for
             degraded-file relevance; defaults to ``module_name`` when omitted.
+        answer_hint: the payload carries a zero-caller ``hint`` beside this block; only rewords the
+            complete-answer ``note`` (see :func:`_coverage_note`) and is never emitted itself.
         **extra: per-command fields (method, not_covered, hint, scope, etc.).
     """
     base = _coverage(index)
@@ -563,6 +583,7 @@ def _cmd_coverage(
         reason=reason,
         alias_limitations_total=len(alias_limitations),
         alias_limitations_truncated=bool(alias_payload.get("symbol_alias_limitations_truncated")),
+        answer_hint=answer_hint,
     )
     # Drop the internal collision-names set from the emitted block; keep it out of JSON.
     emitted = {k: v for k, v in base.items() if k != "_collision_names"}
