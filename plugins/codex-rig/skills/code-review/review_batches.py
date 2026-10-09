@@ -37,6 +37,7 @@ grants runtime permissions.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import itertools
 import json
@@ -281,6 +282,8 @@ def prepare_source_batches(
 ) -> dict[str, Any]:
     """Split complete role contexts into exact UTF-8 intervals and freeze serial bounded waves."""
     producer, _ = _helpers()
+    # The caller verified this source moments ago; keep that exact state for the final inventory check.
+    verified_source = (copy.deepcopy(snapshot), set(changed))
     sections = producer._diff_sections((out / "diff.patch").read_bytes())
     routing = json.loads(routing_bytes)
     topology = plan.get("review_topology")
@@ -401,12 +404,16 @@ def prepare_source_batches(
         "dispatch_bytes": sum(len(call["arguments"]["message"].encode()) for wave in waves for call in wave["calls"]),
     }
     producer._freeze({out / "batch-dispatch.json": producer._json_bytes(schedule)})
-    validate_inventory(out)
+    validate_inventory(out, verified_source=verified_source)
     return schedule
 
 
-def validate_inventory(out: Path) -> dict[str, Any]:
-    """Reconstruct every complete role context and reverify all admitted source against its checkout."""
+def validate_inventory(out: Path, *, verified_source: tuple[dict[str, Any], set[str]] | None = None) -> dict[str, Any]:
+    """Reconstruct every complete role context and reverify all admitted source against its checkout.
+
+    Only the freshly frozen preparation passes ``verified_source``, the snapshot and changed paths it just verified;
+    every other caller leaves it unset and reverifies the checkout in full.
+    """
     producer, validator = _helpers()
     inventory = validator._load_json(out / "batch-inventory.json")
     if type(inventory.get("schema_version")) is not int or inventory["schema_version"] not in {1, 2}:
@@ -419,13 +426,17 @@ def validate_inventory(out: Path) -> dict[str, Any]:
             raise ValueError(f"review-batch-{name}-changed")
     selected = sorted({path for paths in inventory["selections"].values() for path in paths})
     arguments = inventory["source_arguments"]
-    snapshot, changed = producer._source_snapshot(
-        out,
-        Path(arguments["source_root"]),
-        arguments["expected_head"],
-        selected,
-        arguments["expected_diff_base"],
-        arguments["scope_path"],
+    snapshot, changed = (
+        producer._source_snapshot(
+            out,
+            Path(arguments["source_root"]),
+            arguments["expected_head"],
+            selected,
+            arguments["expected_diff_base"],
+            arguments["scope_path"],
+        )
+        if verified_source is None
+        else verified_source
     )
     if snapshot != inventory["source_snapshot"] or sorted(changed) != inventory["changed_paths"]:
         raise ValueError("review-batch-source-changed")

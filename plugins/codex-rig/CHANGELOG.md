@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.34.1
+
+- Read the review checkout once, not twice, when Code Review prepares source batches: `review_batches.validate_inventory` takes an optional `verified_source`, and only `prepare_source_batches` passes the snapshot it verified moments earlier (about 84 → 42 Git calls per `prepare --batches`). Every other caller, including later phases and the independent validator, still re-reads the checkout in full, so a change made after preparation is still rejected there; a change made during preparation's own context build is now caught by the next phase instead of by preparation itself.
+
 ## 0.34.0
 
 - Ship generic engineering policy in the global `assets/AGENTS.md` template instead of leaving it in a repository-only root file: internal record types, docstring opening line, Markdown authoring, multi-OS executables, notebook authoring (pointer to `shared/notebook-style.md`), pytest parametrization, marker and xdist isolation rules, pre-commit-over-bare-tool, benchmark and plan isolation, the lossless instruction-compression gate, and a pointer to `shared/adversarial-loop.md` for review → fix cycles. Plugin-only installs previously never received these rules.

@@ -606,6 +606,45 @@ def _build_source_only(
     return run, home
 
 
+def _prepare_batches_in_process(run: Path) -> None:
+    """Freeze source batches through the producer function, leaving source verification unmemoized."""
+    producer, _ = _batch_producer()
+    root = json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
+    producer.prepare(run, "bounded-review", "parent", Path(root), batches=True)
+
+
+def test_batch_preparation_verifies_source_once(tmp_path: Path) -> None:
+    """Preparing source batches reads the checkout once, not again for the inventory it just wrote.
+
+    The final inventory check receives the snapshot preparation verified moments earlier. Repeating the dozens of Git
+    reads over the same arguments only slowed hosts with costly process creation; every later phase and the independent
+    validator still verify the checkout in full.
+    """
+    run = _batch_inputs(tmp_path)
+    producer, _ = _batch_producer()
+
+    with mock.patch.object(producer, "_source_snapshot", wraps=producer._source_snapshot) as verification:
+        _prepare_batches_in_process(run)
+
+    assert verification.call_count == 1
+
+
+def test_inventory_validation_detects_source_drift_after_preparation(tmp_path: Path) -> None:
+    """A prepared run's inventory check still verifies the checkout in full when called on its own.
+
+    Only preparation hands over an already verified snapshot. Every later phase calls the inventory check without one,
+    so a change made after preparation must still be rejected there.
+    """
+    run = _batch_inputs(tmp_path)
+    _prepare_batches_in_process(run)
+    _, batches = _batch_producer()
+    root = Path(json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"])
+    (root / "widget.py").write_text("changed after preparation\n", encoding="utf-8", newline="\n")
+
+    with pytest.raises(RuntimeError, match="source changed after collection"):
+        batches.validate_inventory(run)
+
+
 def test_source_only_review_reaches_ordinary_intake_without_report_review(tmp_path: Path) -> None:
     """Complete all source parts, preserving judgments at the next ordinary report consumer.
 
