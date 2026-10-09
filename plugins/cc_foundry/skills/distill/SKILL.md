@@ -76,7 +76,7 @@ For each agent/skill found, extract: name, description, tools, purpose. Tag each
 
 > **Mode-token normalization** — all mode dispatches below compare against the **first whitespace-delimited token** of stripped `ARGUMENTS` (after `--eager` removal). Use this single rule consistently; don't rely on exact equality of the full `$ARGUMENTS` string — trailing flags/spaces from prior parsing may differ.
 
-**`--project` scope check** (run before the mode checks below): if `PROJECT_FLAG` (read from stdout above) is `true` and the first token is not `prune` or `memory`, print `` ⚠ `--project` ignored — it applies only to `prune` and `memory` modes. `` once, then continue with normal dispatch below.
+**`--project` scope check** (run before the mode checks below): if `PROJECT_FLAG` (read from stdout above) is `true` and the first token is not `prune` or `memory`, print `` ⚠ `--project` ignored — it applies only to `prune` and `memory` modes. `` once and repeat it in the final reply (a mid-run print can arrive as an empty progress update), then continue with normal dispatch below.
 
 **If first token equals `executables`** (i.e. `executables` alone or `executables <path>`, NOT a path or word that merely starts with the string `executables`): skip Steps 2–5 entirely and go to "Mode: Executables Extraction" below.
 

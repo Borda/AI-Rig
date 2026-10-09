@@ -332,7 +332,7 @@ echo "[analyse] report → $REPORT_FILE"
 
 Write full report to `$REPORT_FILE` (echoed above) using Write tool — **do not print full analysis to terminal**.
 
-**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md Step 6a's follow-up question while `$REPORT_FILE` missing/empty. Denial `oss:analyse report gate` = write never happened — write report, print `---` header, re-issue question. Hook checks report exists only, not header printed; print step below is that check.
+**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md Step 6a's follow-up question while `$REPORT_FILE` missing/empty. Denial `oss:analyse report gate` = write never happened — write report, render `---` header into the Step 6a option previews, re-issue question. Hook also checks matching header table in those previews within the preview cap (≤2000 chars, ≤12 lines) — over it, SKILL.md Step 6a's compact summary naming `$REPORT_FILE`, the question text naming it too; step below builds it.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -341,7 +341,7 @@ IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/analyse-oss-shared-${CSID}" 2>/dev/n
 cat "$_OSS_SHARED/terminal-summaries.md"  # timeout: 5000
 ```
 
-Compact terminal summary template (loaded above). File absent → warn: "run /foundry:setup — printing plain terminal output instead." Use **Issue Summary** template. Replace `[skill-specific path]` with `$REPORT_FILE`; block opens `---` own line, entity line next, `→ saved to <path>` at end, closes `---`. Print: read '---' header from report file (lines 1–7 incl. closing '---'), append '→ saved to <path>'. Report already has block — no separate prepend
+Compact terminal summary template (loaded above). File absent → warn: "run /foundry:setup — printing plain terminal output instead." Use **Issue Summary** template. Replace `[skill-specific path]` with `$REPORT_FILE`; block opens `---` own line, entity line next, `→ saved to <path>` at end, closes `---`. Build delivery block: read '---' header from report file (lines 1–7 incl. closing '---'), render as `Field | Value` table, append '→ saved to <path>'. Report already has block — no separate prepend. Not printed here — delivered once per SKILL.md Step 6a (option previews; `REPLY_MODE=true` → final reply).
 
 **⛔ DO NOT STOP — `REPLY_MODE=true`**: Skip Confidence block here — emitted in SKILL.md Step 6 after reply, or as last step of SKILL.md if not in reply mode. Proceed **immediately** to "Draft contributor reply" section in SKILL.md (Step 7). Response not complete until shepherd spawned and reply file written.
 

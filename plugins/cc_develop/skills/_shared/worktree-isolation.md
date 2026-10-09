@@ -42,7 +42,7 @@ echo "$WT" > "${TMPDIR:-/tmp}/dev-<skill>-wt-${CSID}"   # final path, read by En
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/heal_git_artifacts.py" worktrees
 ```
 
-> Exit 0 (nothing reclaimable) or exit 2 (environment error) → leftovers aren't the cause; print the `git worktree add` error, stop. Exit 1 but the `add` error names none of the listed paths or branches → leftovers aren't the cause; print the error, stop. Exit 1 and the error names a listed path or branch → print the list and the `add` error, then `AskUserQuestion`: (a) **Stop** — keep everything, end the run · (b) **Remove them and retry** — run the block below in this turn, retry the create once. That retry fails too → print the error, stop; never loop back to the report. Removing a worktree deletes a directory tree, so never run the `--apply` form without that answer.
+> Exit 0 (nothing reclaimable) or exit 2 (environment error) → leftovers aren't the cause; print the `git worktree add` error, stop. Exit 1 but the `add` error names none of the listed paths or branches → leftovers aren't the cause; print the error, stop. Exit 1 and the error names a listed path or branch → `AskUserQuestion` with the list and the `add` error as the `preview` of both options, not as reply text before the call (it can arrive as an empty progress update); preview cap ≤2000 chars and ≤12 lines (Claude Code withholds or clips a larger preview, no scroll) — over it, Write both to `.temp/worktree-leftovers.md` first, preview the count, the `add` error and the first entries that fit, ending `→ full list: .temp/worktree-leftovers.md`, and name that path in the question text — never offer removal of an unseen list: (a) **Stop** — keep everything, end the run · (b) **Remove them and retry** — run the block below in this turn, retry the create once. That retry fails too → print the error, stop; never loop back to the report. Removing a worktree deletes a directory tree, so never run the `--apply` form without that answer.
 
 ```bash
 # timeout: 30000
@@ -99,4 +99,8 @@ Worktree — isolated run (base: HEAD)
 
 ## §Team interaction
 
-`--worktree` + `--team` compose. Orchestrator worktree = integration point. `--team` teammates keep own `isolation:worktree`; branches merge into orchestrator worktree branch as today. No change to team flow — runs one level deeper.
+`--worktree` + `--team` compose. Orchestrator worktree = integration point. `--team` teammates spawn without `isolation`, so they run in the orchestrator worktree: edits and `$RUN_DIR` handoffs land there directly — no per-teammate branch, no merge step. Team flow otherwise unchanged — runs one level deeper.
+
+## §Isolated spawns
+
+A spawn that itself passes `isolation="worktree"` gets its own worktree and **cannot write into the session worktree** ("This path is in a different worktree"), nor into the main checkout ("Edit the worktree copy of this file instead of the shared-checkout path"). Never give such an agent a deliverable path inside the session worktree. Hand it a path outside every checkout (`mktemp -d`), or take its result from its return envelope or its worktree branch.

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.33.3
+## 0.34.0
 
 - Ship generic engineering policy in the global `assets/AGENTS.md` template instead of leaving it in a repository-only root file: internal record types, docstring opening line, Markdown authoring, multi-OS executables, notebook authoring (pointer to `shared/notebook-style.md`), pytest parametrization, marker and xdist isolation rules, pre-commit-over-bare-tool, benchmark and plan isolation, the lossless instruction-compression gate, and a pointer to `shared/adversarial-loop.md` for review → fix cycles. Plugin-only installs previously never received these rules.
 - Cut the always-loaded global `assets/AGENTS.md` from 58,078 to 38,818 bytes by moving activity-specific detail verbatim into the new on-demand `shared/global-baseline-details.md` (instruction-compression gate, reasoning-progress escalation, runtime effort assignments, Markdown authoring, multi-OS executables, module documentation, test authoring, networked CLI and GitHub read routing, pytest sandbox rules, docstring resolution, delegation criteria, team patterns, patch handovers). Each moved section keeps a trigger line in the template naming the section to read first; approval, remote-mutation, commit, untrusted-content, confidence and human-in-the-loop rules stay inline. A packaging test pins the template byte budget and that every pointer target ships and every details section is referenced.

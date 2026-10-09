@@ -163,7 +163,7 @@ cat "$_DEV_SHARED/codemap-gates.md"
 
 Follow Gate A and Gate B.
 
-**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. Found → print `` ! Unknown flag(s): `--<token>`. Supported: `--plan`, `--team`, `--worktree`, `--diagnosis`, `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--accept-no-plan`, `--repo`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. Found → invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--plan`, `--team`, `--worktree`, `--diagnosis`, `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--accept-no-plan`, `--repo`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 **Preflight** — if `CODEMAP_ENABLED=true`:
 
@@ -288,7 +288,7 @@ fi
 - (b) Provide additional context — user pastes traceback, logs, or minimal reproduction; after reply, re-run Step 1 analysis with new context same session (DMI: can't wait for next invocation; apply additional context inline)
 - (c) Use `/foundry:investigate` (requires foundry plugin) — for production incidents with no CI trace Stop until user provides option (b) context or selects a redirect.
 
-If root cause not definitively established after analysis, surface assumptions before proceeding:
+If root cause not definitively established after analysis, surface assumptions before proceeding — and repeat the block in the Final Report's Follow-up, since text written before a tool call can arrive as an empty progress update:
 
 > ASSUMPTIONS I'M MAKING:
 >
@@ -332,7 +332,7 @@ Arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits
 
 Parse result:
 
-- **Blockers found** → STOP. Present findings, then invoke `AskUserQuestion` — "Challenger raised N blocker(s) on the fix approach. How to proceed?" · (a) **Revise approach** — return to Step 1 analysis with the blockers as input · (b) **Accept risk** — proceed to Step 2 with each blocker documented in the Final Report Follow-up · (c) **Abort**. On Abort: stop. Never proceed to Step 2 on prose alone.
+- **Blockers found** → STOP. Invoke `AskUserQuestion` with the blocker findings (one line each: claim · file:line · evidence) as the `preview` of every option, not as reply text before the call (over the preview cap — ≤2000 chars, ≤12 lines — Write them to `$DEV_DIR/blockers.md` first, preview a compact summary ending `→ full list: $DEV_DIR/blockers.md`, and name that path in the question text) — "Challenger raised N blocker(s) on the fix approach. How to proceed?" · (a) **Revise approach** — return to Step 1 analysis with the blockers as input · (b) **Accept risk** — proceed to Step 2 with each blocker documented in the Final Report Follow-up · (c) **Abort**. On Abort: stop. Never proceed to Step 2 on prose alone.
 - **Concerns only** → surface as advisory; continue.
 - **No findings / all refuted** → proceed.
 
@@ -584,7 +584,7 @@ Use scan to prioritize which criteria below get deepest scrutiny.
 
 7. **Substantive gaps remain**: start next cycle (max 3 total).
 
-**After 3 cycles**: if substantive issues remain, stop — surface to user before proceeding.
+**After 3 cycles**: if substantive issues remain, stop — list them in the Final Report's Follow-up (opening it with `⚠ Unresolved after 3 review cycles`) rather than as reply text before the next tool call (text written before a tool call can arrive as an empty progress update).
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"

@@ -67,7 +67,7 @@ From $ARGUMENTS extract:
 - **Where**: local / CI / both; which tool or command; which skill or hook if applicable
 - **When**: started recently (after change) or always broken; intermittent or consistent
 
-**Unsupported flag check** — after all supported flags extracted (`--fast`, `--keep`), every `UNKNOWN_FLAG=--<token>` line printed by the Step 1 block is a remaining `--<token>`. Found: print `` ! Unknown flag(s): `--<token>`. Supported: `--fast`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted (`--fast`, `--keep`), every `UNKNOWN_FLAG=--<token>` line printed by the Step 1 block is a remaining `--<token>`. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--fast`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Step 2: Gather signals
 

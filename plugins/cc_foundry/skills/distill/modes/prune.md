@@ -147,7 +147,7 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 
 **P1**: Read all memory files (parallel for 2+ files). Analyse each for stale, redundant, and verbose entries.
 
-**P2**: Print consolidated proposed prune report across all projects:
+**P2**: Build consolidated proposed prune report across all projects — the `preview` of every P3 option, not reply text before the call (text written before a tool call can arrive as an empty progress update). Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full report to `.temp/distill/prune/proposals.md` first, make every option's `preview` a compact summary ending `→ full report: .temp/distill/prune/proposals.md`, and name that path in the question text:
 
 ```text
 Prune proposals (apply manually unless explicitly approved below):
@@ -160,7 +160,7 @@ Prune proposals (apply manually unless explicitly approved below):
   ...
 ```
 
-**P3**: Call `AskUserQuestion` — do NOT write question as plain text. Map options directly into tool call:
+**P3**: Call `AskUserQuestion`, the P2 prune report as every option's `preview` — do NOT write question as plain text. Map options directly into tool call:
 
 - question: "Apply prune edits across all N project memory files?"
 - (a) label: `Apply now` — description: apply all proposals to all memory files in parallel

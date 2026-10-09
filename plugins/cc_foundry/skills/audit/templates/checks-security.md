@@ -83,12 +83,12 @@ grep -rn 'print(f"[A-Z_]*=' plugins/*/bin/*.py 2>/dev/null \
 
 ## Check 37 — Hardcoded secrets in config security
 
-Any hardcoded API key, token, password, or bearer credential in plugin `.md` files, `settings.json`, or hook `.js` files.
+Any hardcoded API key, token, password, or bearer credential in plugin `.md` files, `settings.json`, or files under `.claude/hooks/`.
 
 ```bash
 printf "=== Check 37: Hardcoded secrets in config ===\n"
 grep -rniE '(api[-_]?key|token|secret|password|bearer)\s*[=:]\s*["'"'"'][a-zA-Z0-9+/=_-]{16,}["'"'"']' \
-    plugins/ .claude/settings.json .claude/hooks/*.js 2>/dev/null \
+    plugins/ .claude/settings.json .claude/hooks 2>/dev/null \
     | grep -v '# example\|# placeholder\|YOUR_\|<your\|XXXXXX\|example.com'  # timeout: 5000
 ```
 

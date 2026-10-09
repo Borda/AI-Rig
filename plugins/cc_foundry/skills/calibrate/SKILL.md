@@ -36,7 +36,7 @@ NOT for: static routing overlap analysis (use /foundry:audit); manually reviewin
   - `--fast` + `--full` together: hard error: "Pass `--fast` or `--full`, not both."
   - `--ab-test` without pace flag: default `--fast` silently (no error)
 
-  **Unsupported flag check** — after all supported flags extracted (`--fast`, `--full`, `--ab-test`, `--apply`, `--skip-gate`, `--local`, `--keep`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: print `` ! Unknown flag(s): `--<token>`. Supported: `--fast`, `--full`, `--ab-test`, `--apply`, `--skip-gate`, `--local`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+  **Unsupported flag check** — after all supported flags extracted (`--fast`, `--full`, `--ab-test`, `--apply`, `--skip-gate`, `--local`, `--keep`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--fast`, `--full`, `--ab-test`, `--apply`, `--skip-gate`, `--local`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
   **Legacy positional tokens** (`ab`, `apply`, `fast`, `full`) — **hard error**: print migration hint, stop. Example: "`ab` removed — use `--ab-test` flag: `/calibrate curator --ab-test`."
 
@@ -290,7 +290,7 @@ After all pipeline subagents complete or time out: mark "Analyse and report" in_
 
 For any pipeline that returned without a compact JSON, use Glob (pattern `*/result.jsonl`, base `.reports/calibrate/<TIMESTAMP>/`) to check whether a result file was written. `result.jsonl` exists: parse it as compact JSON for that target. Neither compact JSON nor `result.jsonl` exists: synthesize: `{"target":"<TARGET>","verdict":"incomplete","mean_recall":null,"calibration_bias":null,"gaps":["pipeline returned no output — re-run: /calibrate <TARGET> --fast"]}`, mark that target with ⏱ in report table.
 
-Print combined benchmark report:
+Build combined benchmark report — delivered once: as the `preview` of every option of the Follow-up gate below when it fires, otherwise as the opening of the turn's final reply, after the last tool call (text written before a tool call can arrive as an empty progress update). Gate path: Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full report to `.reports/calibrate/<TIMESTAMP>/benchmark-summary.md` first, make every option's `preview` a compact summary ending `→ full report: .reports/calibrate/<TIMESTAMP>/benchmark-summary.md`, and name that path in the question text:
 
 ```markdown
 ## Calibrate — <date> — <MODE>
@@ -326,9 +326,9 @@ Use "Report format" section loaded above instead of table above. Mark "Calibrate
 
 Flag targets where recall < 0.70 or |bias| > 0.15 with ⚠.
 
-After table, print full content of each `proposal.md` for targets where `proposed_changes > 0`.
+After the table, add the full content of each `proposal.md` for targets where `proposed_changes > 0` (same placement).
 
-`--apply` **not** set: after printing proposals, print two genuine re-run commands as plain copy-pasteable text, then fire **Follow-up gate** (unless `--skip-gate` passed):
+`--apply` **not** set: put the two genuine re-run commands below in the gate's question text and repeat them as plain copy-pasteable text in the final reply, then fire **Follow-up gate** (`--skip-gate` passed → no gate; report, proposals and commands open the final reply):
 
 ```text
 Re-run full depth   /calibrate <targets> --full

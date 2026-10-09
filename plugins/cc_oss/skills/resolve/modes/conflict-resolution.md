@@ -97,7 +97,7 @@ Report clean merge. Steps 6–7 and the Step 7b join become no-ops — return to
 git merge --abort
 ```
 
-Report count + file list; `AskUserQuestion` with options:
+`AskUserQuestion` whose question text itself carries the count and every conflicted path the Step 5 block listed, one per line (`<N> files conflict — merge aborted:` then the paths) — never as reply text before the call: 5.5-family models may return reply text written before a tool call as an empty progress update. Options:
 
 - (a) "Retry with base only — merge origin/$BASE_REF in batches (manual)" — re-attempt merge in chunks outside this workflow
 - (b) "Open PR in browser for manual resolution" — `gh pr view <PR#> --web`

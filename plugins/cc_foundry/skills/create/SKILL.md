@@ -57,7 +57,7 @@ Propose four-beat arc from topic + audience:
 
 > "Your brief suggests [X] but audience profile is [Y] — recommend adjusting [Z]. Proceed as-is or adjust?"
 
-**Arc approval + voice** (single AskUserQuestion call): show proposed arc, then ask voice choice — option (d) redirects to arc adjustment.
+**Arc approval + voice** (single AskUserQuestion call): the proposed arc (Hook · Journey · Insight · Action) is the `preview` of every option, never reply text before the call — within the preview cap (≤2000 chars, ≤12 lines; Claude Code withholds or clips a larger preview), so keep each beat to one or two lines; the question text asks the voice choice — option (d) redirects to arc adjustment.
 
 Options:
 
@@ -66,7 +66,7 @@ Options:
 - (c) Approve arc — conversational / approachable, informal
 - (d) Adjust the arc first (free text — describe what to change)
 
-On (d): revise arc, re-present, re-invoke this question. After (a)/(b)/(c): restate confirmed arc and voice in two sentences.
+On (d): revise arc, re-invoke this question with the revised arc as every option's `preview`. After (a)/(b)/(c): restate confirmed arc and voice in two sentences.
 
 ## Step 4 — Write outline file
 

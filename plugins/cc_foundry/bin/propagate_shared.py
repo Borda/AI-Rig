@@ -162,6 +162,20 @@ MANIFEST: list[dict[str, object]] = [
         ],
     },
     {
+        # SessionStart warning for a session still running a replaced plugin
+        # version. Each copy checks only its own CLAUDE_PLUGIN_ROOT and names its
+        # own plugin: plugins update independently, so one plugin's freshness
+        # says nothing about another's. codemap-py intentionally ships no copy
+        # (its hooks are Python-only by contract; a stale codemap-py stays
+        # unreported until it gets a Python port), and bridge has no hook surface.
+        "canonical": "plugins/cc_foundry/hooks/stale-plugin-check.js",
+        "copies": [
+            "plugins/cc_oss/hooks/stale-plugin-check.js",
+            "plugins/cc_develop/hooks/stale-plugin-check.js",
+            "plugins/cc_research/hooks/stale-plugin-check.js",
+        ],
+    },
+    {
         # Stale-artifact healer. Every plugin whose skills create advisory
         # locks or git worktrees ships its own copy, because a skill may never
         # reach into a sibling plugin's bin/ (§Self-Contained _shared) and a

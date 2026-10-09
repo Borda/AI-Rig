@@ -13,7 +13,7 @@ Read file at given path. Check `**Status**:` field:
 
 #### Step D1: Present tree summary
 
-Read all open branches from file. Show compact tree summary (same format as Step 3) and one-sentence description of each open branch. State count of open and closed branches.
+Read all open branches from file. Build compact tree summary (same format as Step 3) and one-sentence description of each open branch, with count of open and closed branches — shown only as every option's `preview` on D2's single-select questions, never also as reply text (SKILL.md §Tree summary format).
 
 #### Step D2: Distillation questions
 
@@ -29,15 +29,15 @@ After questions, briefly restate distilled direction in 2–3 sentences — synt
 
 #### Step D3: Write spec
 
-Build spec section by section, showing each section inline. Write nothing to disk until full draft assembled.
+Build spec section by section into one assembled draft — it reaches the user only as the `preview` of the D3 question below, never as reply text (text before a tool call can arrive as an empty progress update). Write nothing to disk until full draft assembled. **Preview cap**: ≤2000 chars and ≤12 lines per preview, every line counted — Claude Code withholds a longer preview and clips a taller one, no scroll; a 6-section spec nearly always breaks it. Over the cap: Write the assembled draft to `.reports/brainstorm/<slug>-spec-draft.md` first — a scratch copy for reading, not the spec — every D3 option's `preview` is a compact summary (the Goal sentence, then one line per section) ending `→ full draft: <path>`, and the D3 question text names that same path.
 
-Write all 6 sections inline, then invoke a single `AskUserQuestion` for the full spec:
+Once all 6 sections are assembled, invoke a single single-select `AskUserQuestion` for the full spec, the assembled draft (all 6 sections) as the `preview` of every option — or, over the preview cap, the compact summary naming the draft file:
 
 - a) Spec looks good — write to disk ★ recommended
 - b) Revise [section name(s)] — [describe what to change]
 - c) A section sparks a new thought — [add context]
 
-On **(b)**: revise named sections inline, re-present those sections, re-offer. Max 2 revisions per section. On **(c)**: incorporate context, revise if needed, re-offer.
+On **(b)**: revise named sections, re-offer with the revised draft as the `preview` of every option (over the cap: rewrite the draft file, refresh the summary). Max 2 revisions per section. On **(c)**: incorporate context, revise if needed, re-offer the same way.
 
 **Sections**:
 
@@ -53,7 +53,7 @@ On **(b)**: revise named sections inline, re-present those sections, re-offer. M
 
 **Section 6 — Exploration notes** (summary of closed branches and why) Draw from Pruning log in tree. Context for future readers — what was considered and rejected.
 
-**Gate**: do not write to disk until all 6 sections drafted and individually approved.
+**Gate**: do not write the spec to `.plans/blueprint/` until all 6 sections drafted and individually approved — the over-cap `.reports/` draft copy is only the preview's full text, never the spec.
 
 **Graduation checklist** — verify before writing to disk:
 
@@ -62,7 +62,7 @@ On **(b)**: revise named sections inline, re-present those sections, re-offer. M
 - [ ] Success criteria (Section 5) are observable/testable — not vague ("it works") but checkable ("running X produces Y")
 - [ ] At least one non-goal stated (Section 2 not empty)
 
-If any item fails, call `AskUserQuestion` with:
+If any item fails, call `AskUserQuestion`, its question text naming each failing item, with:
 
 - a) Revise failing section(s) now — return to that section in D3 ★ recommended
 - b) Proceed anyway — I accept spec may be underspecified
@@ -113,7 +113,7 @@ For each blocking question: call `AskUserQuestion` — one at a time, in order. 
 
 #### Step B2: Generate the action plan
 
-**Idempotency pre-check**: before generating plan, call `TaskList` and scan for active `/develop:feature` tasks naming this spec's slug. Found → surface existing task to user, ask whether to re-generate plan (will not re-dispatch — see Step B3) or skip; do not silently double-dispatch.
+**Idempotency pre-check**: before generating plan, call `TaskList` and scan for active `/develop:feature` tasks naming this spec's slug. Found → `AskUserQuestion`, its question text naming the existing task (subject + status): re-generate plan (will not re-dispatch — see Step B3) or skip; do not silently double-dispatch.
 
 1. Parse spec into discrete action items from "Proposed design" and "Success criteria"
 2. For each item, write ready-to-run invocation:
@@ -122,7 +122,7 @@ For each blocking question: call `AskUserQuestion` — one at a time, in order. 
    - Application code change → `/develop:feature "<goal>"` or `/develop:fix "<symptom>"` (requires `develop` plugin)
    - Documentation → `/develop:feature "<doc goal>"` (requires `develop` plugin)
    - Verification/testing → `/develop:feature "<test goal>"` (requires `develop` plugin) or manual check command
-3. Output ordered task table:
+3. Build ordered task table — shown only as the `preview` of every option of Step B3's question, never also as reply text before the call (it can arrive as an empty progress update). Over the preview cap (≤2000 chars, ≤12 lines; a plan past ~6 tasks breaks it): Write it to `.reports/brainstorm/<slug>-plan.md` first and make every B3 preview a compact summary — task count, task 1's invocation — ending `→ full plan: <path>`, the B3 question text naming that same path:
 
 > *Note: `/develop:feature` and `/develop:fix` require the `develop` plugin. If not installed, replace those commands with appropriate manual workflow.*
 
@@ -141,9 +141,11 @@ Spec: <file path>
 
 #### Step B3: Post-plan prompt
 
-**Model-invocability check**: inspect task 1's invocation from the action plan table (Step B2). If it resolves to `/foundry:manage create ...` / `/foundry:manage update ...` (or any other skill with `disable-model-invocation: true`), task 1 is **not** model-invocable — print task 1's invocation as a copy-pasteable plain-text command above the question, and omit the "Start task 1 now" option below. Otherwise task 1 is model-invocable — offer it normally.
+**Model-invocability check**: inspect task 1's invocation from the action plan table (Step B2). If it resolves to `/foundry:manage create ...` / `/foundry:manage update ...` (or any other skill with `disable-model-invocation: true`), task 1 is **not** model-invocable — carry task 1's invocation in the question text, and omit the "Start task 1 now" option below. Otherwise task 1 is model-invocable — offer it normally.
 
-**When task 1 is model-invocable**, call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments:
+Both variants below are single-select, and the action plan from Step B2 is the `preview` of every option — or, over the preview cap, B2's compact summary naming the plan file, which the question text then names too.
+
+**When task 1 is model-invocable**, call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments, the action plan table as the `preview` of every option:
 
 - question: "Plan ready. What next?"
 - (a) label: `Start task 1 now` — description: proceed immediately with task 1 invocation (★ recommended)
@@ -152,12 +154,12 @@ Spec: <file path>
 
 On **(a)** (requires `develop` plugin): before dispatching, verify no active `/develop:feature` task for this spec exists in TaskList — call `TaskList` and scan for tasks naming the spec slug or referencing `/develop:feature` against same spec file; if found, surface existing task to user and skip dispatch (prevents double-dispatch on re-entry). Otherwise proceed immediately with invocation from task 1. On **(b)**: output plan table as clean markdown block, then stop. On **(c)**: stop and tell user to revise spec and re-run `/brainstorm breakdown <spec>`.
 
-**When task 1 is NOT model-invocable**, print task 1's invocation as a copy-pasteable command, then call `AskUserQuestion`:
+**When task 1 is NOT model-invocable**, call `AskUserQuestion` with task 1's invocation in the question text and the action plan table as the `preview` of every option — neither printed as reply text before the call, which can arrive as an empty progress update:
 
-- question: "Plan ready. Task 1 requires manual invocation (shown above). What next?"
+- question: "Plan ready. Task 1 requires manual invocation: `<task 1 invocation>`. What next?"
 - (a) label: `Copy plan` — description: output plan table as clean markdown block, then stop (★ recommended)
 - (b) label: `Revise spec first` — description: stop; revise spec and re-run `/brainstorm breakdown <spec>`
 
-On **(a)**: output plan table as clean markdown block, then stop. On **(b)**: stop and tell user to revise spec and re-run `/brainstorm breakdown <spec>`.
+On **(a)**: output plan table as clean markdown block, then stop. On **(b)**: stop and tell user to revise spec and re-run `/brainstorm breakdown <spec>`. Either way, end the final reply (after the last tool call) with task 1's invocation as a copy-pasteable command.
 
 End with `## Confidence` block per CLAUDE.md output standards.

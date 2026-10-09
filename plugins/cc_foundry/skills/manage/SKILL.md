@@ -106,7 +106,7 @@ echo "$SKIP_AUDIT" > "${TMPDIR:-/tmp}/manage-skip-audit-${CSID}"  # persist (Che
 echo "${TMPDIR:-/tmp}/manage-skip-audit-${CSID}" > "${TMPDIR:-/tmp}/manage-skip-audit-path-${CSID}"
 ```
 
-**Unsupported flag check** — after all supported flags extracted (`--skip-audit`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: print `` ! Unknown flag(s): `--<token>`. Supported: `--skip-audit`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted (`--skip-audit`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--skip-audit`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 **Validation rules:**
 
@@ -192,7 +192,7 @@ Before creating, check whether existing agents/skills already cover requested fu
 2. Compare new description against each existing — look for domain overlap, similar workflows, redundant scope
 3. Present findings:
    - **No overlap**: proceed to Step 3
-   - **Partial overlap**: name overlapping agent/skill, explain coverage vs what new one adds, use `AskUserQuestion`: "Extend existing (Recommended)" / "Proceed" / "Abort"
+   - **Partial overlap**: use `AskUserQuestion` with the findings in its question text (not reply text before the call) — the overlapping agent/skill and the coverage vs what new one adds: "Extend existing (Recommended)" / "Proceed" / "Abort"
    - **Strong overlap**: recommend against creation — suggest using or extending existing agent/skill
 
 Skip for `update`, `delete`, perm operations.
@@ -232,10 +232,10 @@ Extract names inline from Glob results — strip `.claude/agents/` prefix and `.
 
 3. Choose model based on role complexity:
 
-   - `opusplan` — plan-gated roles (solution-architect, oss:shepherd, foundry:curator)
-   - `opus` — complex implementation roles (foundry:sw-engineer, research:scientist, foundry:perf-optimizer)
-   - `sonnet` — focused execution roles (research:data-steward (requires `research` plugin), foundry:web-explorer, foundry:doc-scribe, foundry:creator, foundry:qa-specialist, oss:cicd-steward)
-   - `haiku` — high-frequency diagnostics ONLY (e.g. linting-expert); NOT for analysis/auditing roles that require substantive reasoning
+   - `opus` — high-stakes design/config and complex implementation roles (foundry:solution-architect, foundry:curator, foundry:sw-engineer, research:scientist, foundry:perf-optimizer)
+   - `sonnet` — focused execution roles (research:data-steward (requires `research` plugin), foundry:web-explorer, foundry:doc-scribe, foundry:creator, foundry:qa-specialist, oss:cicd-steward, oss:shepherd)
+   - `haiku` — mechanical high-frequency work ONLY, with every judgement-free step scripted (e.g. foundry:humanizer prose pass; oss:gh-scraper and oss:repo-warden, whose fetch, assembly and metric extraction run as `bin/` scripts); NOT for analysis/auditing roles that require substantive reasoning
+   - Aliases only, never a pinned model ID. `opusplan` as subagent frontmatter runs `sonnet` (subagents never enter plan mode) — use `opus` or `sonnet` explicitly.
 
 4. Resolve template path (cascade primary → project-local → cache scan; only the cache scan runs if neither cheaper path exists, since each candidate must satisfy `-d` before being assigned):
 
@@ -257,9 +257,9 @@ Write the file using the Write tool.
 Return ONLY: {"status":"done","file":".claude/agents/<name>.md","lines":N,"confidence":0.N}
 ```
 
-Deadline (§Deadlines, constants): in this spawn response Write `.temp/manage/agent-watch-manage.tsv` = `sw-engineer-agent\t-\t900` (envelope-only — the file lands in a worktree).
+Deadline (§Deadlines, constants): in this spawn response Write `.temp/manage/agent-watch-manage.tsv` = `sw-engineer-agent\t-\t900` (envelope-only).
 
-**CRITICAL — worktree isolation copy**: `foundry:sw-engineer` runs with `isolation: worktree` — scaffolded file lands in a temporary worktree, not the main tree. After agent completes: (1) read worktree path from agent result (returned in `worktree` field or as part of result message); (2) run: `cp <worktree-path>/.claude/agents/<name>.md .claude/agents/<name>.md` (substitute actual paths); (3) proceed with Steps 5–9 on main-tree copy; (4) remove the worktree once the copy is verified: read the `worktree` path and `branch` from the agent result, assert the path starts with `.claude/worktrees/` (`agents/sw-engineer.md` §Worktree isolation), then `git worktree remove --force <worktree-path>` followed by `git branch -D <branch>`. Assertion fails, removal errors, or the result carried no worktree path: change nothing — print the path and `→ leftover worktree; clean up with git worktree remove then git worktree prune` in the Step 10 report. Never run the removal on a path outside `.claude/worktrees/`. Without this step, Steps 5–9 Globs find nothing.
+Spawn passes no `isolation` (`agents/sw-engineer.md` §Worktree isolation), so the scaffolded file lands in the caller's tree and later steps Glob it in place.
 
 ### Mode: Create Skill
 

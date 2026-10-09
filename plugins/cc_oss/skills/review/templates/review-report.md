@@ -137,4 +137,6 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insuffic
 | Agent | Score | Label | Gaps |
 | -- | -- | -- | -- |
 
+**Ephemeral dependency evidence**: `<pkg>==<ver> · wheel <filename> · spec base <file:line> head <file:line> '<spec>' · fetch <full command> · run <full command> · result <N passed, M failed> · env unchanged · routing default index (<sources checked>)` — one line per overlay run, or the failed step + concrete reason; omit when no claim needed a missing package.
+
 **Aggregate**: min 0.65 / median 0.N [⚠ LOW CONFIDENCE: qa-specialist could not verify test execution — treat coverage findings as indicative, not conclusive]

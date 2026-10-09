@@ -148,13 +148,14 @@ Skill uses `eval "$(...)"` or `eval "$(python ...)"` to capture data values from
 ```bash
 # timeout: 10000
 printf "=== Check 23c: eval for data output ===\n"
-grep -rn 'eval.*"\$.*python\|eval.*"\$.*bin/' \
-    plugins/*/skills/*/SKILL.md .claude/skills/*/SKILL.md 2>/dev/null |
-  grep -v 'ssh-agent\|direnv\|rbenv\|pyenv\|nvm\|# shell-setup\|parse-skill-flags\|derive_codemap_target\|git_slugs' |
+{ find plugins -mindepth 4 -maxdepth 4 -path 'plugins/*/skills/*/SKILL.md' -type f -print0
+  find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f -print0; } 2>/dev/null |
+  xargs -0 -r grep -Hn 'eval.*"\$.*python\|eval.*"\$.*bin/' |
+  grep -v 'ssh-agent\|direnv\|rbenv\|pyenv\|nvm\|# shell-setup\|parse-skill-flags\|derive_codemap_target' |
   grep -v '^\s*#' | head -20
 ```
 
-False-positive exemption: eval whose stdout is `VAR=val` shell assignments for the calling shell — argument parsing (`parse-skill-flags.py`), target derivation (`derive_codemap_target.py`), slug helpers (`git_slugs.sh`). Finding = eval used to capture a script's **data output** into variables, where a TMPDIR file is the correct channel. Cross-block persistence is Sub-check 23d, not this one.
+False-positive exemption: eval whose stdout is `VAR=val` shell assignments for the calling shell — argument parsing (`parse-skill-flags.py`), target derivation (`derive_codemap_target.py`). Finding = eval used to capture a script's **data output** into variables, where a TMPDIR file is the correct channel. Cross-block persistence is Sub-check 23d, not this one.
 
 **Sub-check 23d** — shell variable used for state across separate Bash tool calls. **Not grep-detectable** (requires cross-block analysis of Bash call boundaries, which are runtime not lexical). Flag during curator per-file review only: when auditing a skill, scan for `VAR=$(...)` pattern in one fenced block and `"$VAR"` or `[ -z "$VAR" ]` in a later fenced block with no `cat "${TMPDIR:-/tmp}/...-${CSID}"` supplying `VAR` between them.
 

@@ -4,7 +4,13 @@
 // gated. Diagnostic/recovery questions remain available. The existing
 // session sentinel, path checks, and TTL define whether this run is active.
 // Require aggregate.md, valid summary.jsonl, and current-turn delivery of the
-// audit heading, exact finding total, and every finding before the fix question.
+// audit heading, exact finding total, and every finding before the fix question,
+// in the call's first question (every option preview within the preview cap, or
+// its question text — never an option description) or, over the cap, a rendered Audit
+// Report file named in the question text with a compact summary naming it in
+// every option preview (report-header-table.js); a reply-text copy before the
+// call does not count, since it can come back as an empty progress update. Stop
+// still accepts the final reply.
 // Missing/unreadable delivery evidence denies the transition with a recovery
 // reason. No active sentinel, expired/implausible state, or malformed hook
 // payload passes through. Unexpected hook failures retain the legacy fail-open
@@ -175,7 +181,10 @@ function denyReason(sentinelPath, toolInput, cwd, now) {
     `foundry:audit report gate — ${aggregateFile} does not exist, so Step 5 (aggregate and classify ` +
     "findings) has not completed and the follow-up gate's severity counts have no source. Go back: spawn " +
     `the foundry:curator consolidator and let it write aggregate.md and ${AGGREGATE_FILENAME}, then read ` +
-    "that summary and emit the Step 7 report. Call AskUserQuestion only after those exist. If the " +
+    "that summary and build the Step 7 report. Call AskUserQuestion only after those exist, with that report as " +
+    "the `preview` of every option of the follow-up question when it fits the preview cap (2000 chars, 12 lines), " +
+    `otherwise written to ${path.join(runDir, "audit-report.md")}, named in the question text, with a compact ` +
+    "summary naming it as every option's preview — not as reply text. If the " +
     "consolidator genuinely cannot run, keep this fix transition blocked; diagnostic/recovery questions remain available."
   );
 }
@@ -215,9 +224,19 @@ if (require.main === module) {
         if (reason) process.stdout.write(JSON.stringify({ decision: "block", reason }));
         process.exit(0);
       }
+      if (data.hook_event_name === "PostToolUse") {
+        // The follow-up was shown: settle Stop's check for this report version. No stdout, never blocks.
+        const { isWorkflowFollowUp, recordFollowUpShown } = require("./report-header-table.js");
+        if (data.tool_name !== "AskUserQuestion" || !isWorkflowFollowUp(data.tool_input, "foundry:audit"))
+          process.exit(0);
+        const sentinel = findSentinel(sentinelDir(), csidCandidates(process.env, data, process.ppid));
+        const active = sentinel ? activeRunDir(sentinel, data.cwd, Date.now()) : null;
+        if (active) recordFollowUpShown(sentinel, path.join(active, AGGREGATE_FILENAME), data);
+        process.exit(0);
+      }
       if (data.hook_event_name && data.hook_event_name !== "PreToolUse") process.exit(0);
       if (data.tool_name !== "AskUserQuestion") process.exit(0);
-      const { isWorkflowFollowUp, deliveryProblem } = require("./report-header-table.js");
+      const { isWorkflowFollowUp, followUpProblem } = require("./report-header-table.js");
       if (!isWorkflowFollowUp(data.tool_input, "foundry:audit")) process.exit(0);
 
       const sentinel = findSentinel(sentinelDir(), csidCandidates(process.env, data, process.ppid));
@@ -226,7 +245,7 @@ if (require.main === module) {
       let reason = denyReason(sentinel, data.tool_input, data.cwd, Date.now());
       const active = activeRunDir(sentinel, data.cwd, Date.now());
       if (!reason && active) {
-        const problem = deliveryProblem(path.join(active, AGGREGATE_FILENAME), data.transcript_path);
+        const problem = followUpProblem(sentinel, path.join(active, AGGREGATE_FILENAME), data);
         if (problem)
           reason = "foundry:audit report gate — " + problem + ". Diagnostic/recovery questions remain available.";
       }

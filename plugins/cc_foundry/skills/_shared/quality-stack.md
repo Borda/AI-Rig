@@ -222,8 +222,7 @@ Deviation from the plan's stated `--junitxml` mechanism, noted explicitly: `--ju
 
 `FLAKY_DETECTED=true` (failed run 1, passed isolated re-run, passed full-dir serial re-run, run 1 was already serial — not `-n` — and no doctest id was among the failures):
 
-- Print `⚠ FLAKY: test(s) failed initial run, passed both isolated and full-dir serial re-runs`
-- **Do NOT fall through** — invoke `AskUserQuestion`:
+- **Do NOT fall through** — invoke `AskUserQuestion` with question text `⚠ FLAKY: test(s) failed initial run, passed both isolated and full-dir serial re-runs` naming the tests (not printed as reply text before the call — text written before a tool call can arrive as an empty progress update):
   - (a) **Mark and continue** — add `@pytest.mark.flaky(reruns=3)` marker and `# TODO: flaky — investigate <date>` comment to failing test(s); then continue quality stack
   - (b) **Fix now** — stop quality stack here; investigate and fix flaky test before proceeding
   - (c) **Abort** — cancel skill run

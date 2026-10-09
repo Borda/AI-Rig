@@ -40,6 +40,7 @@ MARKETPLACE_REMOTE := $(shell git -C $(PROJECT_DIR) remote get-url origin 2>/dev
 CODEX_SYNC_SCRIPT := $(PROJECT_DIR)/plugins/codex-rig/scripts/sync_codex.py
 CODEX_HOME_SYNC_SCRIPT := $(PROJECT_DIR)/scripts/sync_codex_session_policy.py
 TIMEOUT_RUNNER := $(PROJECT_DIR)/scripts/run_with_timeout.py
+VERIFY_PLUGINS_SCRIPT := $(PROJECT_DIR)/scripts/verify_claude_plugins.py
 EXTERNAL_PLUGIN_TIMEOUT_SECONDS ?= 120
 
 # Header hierarchy: double-line workflow, heavy section, thin stage.
@@ -66,6 +67,7 @@ endef
 .PHONY: sync-all sync-claude sync-codex clear-all clear-claude clear-codex \
         migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace \
         update-ext-plugins register-marketplace install-claude-plugins prune-claude-cache \
+        verify-claude-plugins warn-stale-claude-sessions \
         install-codex-plugins sync-codex-home-policy \
         banner-claude banner-codex \
         prune-benchmarks prune-benchmarks-apply
@@ -101,7 +103,7 @@ sync-all:
 	fi; \
 	exit $$status
 
-sync-claude: banner-claude migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace update-ext-plugins register-marketplace install-claude-plugins prune-claude-cache
+sync-claude: banner-claude migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace update-ext-plugins register-marketplace install-claude-plugins verify-claude-plugins prune-claude-cache warn-stale-claude-sessions
 	@echo "✓ Claude sync complete"
 
 sync-codex: banner-codex install-codex-plugins sync-codex-home-policy
@@ -223,7 +225,10 @@ prune-claude-cache:
 	@$(call stage,Prune orphaned plugin cache versions); \
 	now_ms=$$(( $$(date +%s) * 1000 )); \
 	min_age_ms=$$(( $(ORPHAN_MIN_AGE_HOURS) * 3600 * 1000 )); \
-	installed=$$(jq -r '.plugins // {} | to_entries[] | .value[]? | .installPath // empty' "$(INSTALLED_PLUGINS)" 2>/dev/null || true); \
+	if ! installed=$$(jq -r '.plugins // {} | to_entries[] | .value[]? | .installPath // empty' "$(INSTALLED_PLUGINS)" 2>/dev/null); then \
+		echo "  ⚠ cannot read $(INSTALLED_PLUGINS); pruning skipped so no installed version dir is removed"; \
+		exit 0; \
+	fi; \
 	pruned=0; \
 	for marker in "$(CACHE_DIR)/$(MARKETPLACE)"/*/*/.orphaned_at; do \
 		[[ -f "$$marker" ]] || continue; \
@@ -337,6 +342,27 @@ install-claude-plugins:
 		exit 1; \
 	fi; \
 	echo "✓ Done"
+
+# Several steps above tolerate failure on purpose (an uninstall reported as "not installed", an external refresh that
+# may be offline), so a plugin could end on an older version while every step printed success. This compares every
+# install record (user scope and any project/local scope) with the version the freshly registered marketplace clone
+# declares, and that clone's HEAD with the remote's, and fails the sync on any mismatch. External plugins are
+# report-only, keeping update-ext-plugins non-fatal for offline runs.
+verify-claude-plugins:
+	@$(call stage,Verify installed versions match the marketplace); \
+	python3 "$(VERIFY_PLUGINS_SCRIPT)" verify \
+		--installed "$(INSTALLED_PLUGINS)" \
+		--known-marketplaces "$(KNOWN_MARKETPLACES)" \
+		--marketplace "$(MARKETPLACE)" \
+		--plugins $(PLUGINS) \
+		--report-only $(EXTERNAL_PLUGINS) \
+		--expect-remote "$(MARKETPLACE_REMOTE)"
+
+# A Claude Code process keeps the plugin versions it loaded at start, so every session started before this install
+# still runs the old copies until restarted. Warning only: the install itself succeeded, and only the user can restart
+# those sessions. Hosts without `ps` (native Windows) print nothing.
+warn-stale-claude-sessions:
+	@python3 "$(VERIFY_PLUGINS_SCRIPT)" sessions --installed "$(INSTALLED_PLUGINS)"
 
 ## Codex-side targets ----------------------------------------------------------
 

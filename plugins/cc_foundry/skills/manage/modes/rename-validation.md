@@ -60,4 +60,4 @@ rg --fixed-strings -n '\b<old-name>\b' plugins/ .claude/ README.md docs/ 2>/dev/
 
 Remaining hits must exactly equal documented false-positive set (by file+line). Any remaining hit not in false-positive list is unresolved genuine reference — loop classification once more for those, or flag in Step 10 as requiring manual review.
 
-Collect ambiguous hits, invoke `AskUserQuestion` — show file + 5-line context per hit, ask: "Is this a real reference to `<old-name>` that should be updated, or a false positive?" Batch max 4 per call; loop if more. Apply user-confirmed fixes before final grep.
+Collect ambiguous hits, invoke `AskUserQuestion` — one question per hit, its file:line + 5-line context as the `preview` of both options (real reference · false positive), question text: "Is this a real reference to `<old-name>` that should be updated, or a false positive?" Batch max 4 per call; loop if more. Apply user-confirmed fixes before final grep.

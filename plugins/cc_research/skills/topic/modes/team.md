@@ -63,10 +63,10 @@ TaskUpdate "Print report header" → `in_progress`.
 **MANDATORY, not optional narration** — the consolidator's returned JSON is a routing signal only; it is never printed to the user and never satisfies this step. Consolidator wrote full report to `<file>` (from its envelope) but printed nothing itself. Before returning control to SKILL.md's `## Follow-up gate`:
 
 - (1) Read `<file>` (Read tool).
-- (2) Render its `---` header fields as a two-column Markdown table (`Field | Value`, one row per key, file order) per quality-gates.md §Report File Format's Universal terminal-print rule — never print the raw `---`-delimited block.
-- (3) Append `→ saved to <file>`.
-- (4) TaskUpdate "Print report header" → `completed` — only after the table has actually appeared in this response, never before.
+- (2) Render its `---` header fields as a two-column Markdown table (`Field | Value`, one row per key, file order) per quality-gates.md §Report File Format — never the raw `---`-delimited block.
+- (3) Append `→ saved to <file>`. This delivery block is not printed — SKILL.md's Follow-up gate shows it only as every option's `preview`, never also as reply text; over the preview cap (≤2000 chars, ≤12 lines) its compact summary naming `<file>` takes that place (SKILL.md Step 3).
+- (4) TaskUpdate "Print report header" → `completed` once the block is built, never before.
 
 SKILL.md's Follow-up gate must not fire while this task is `pending`/`in_progress`.
 
-**Hook-enforced**: `hooks/enforce-topic-header.js` (PreToolUse on `AskUserQuestion`) denies the Follow-up gate call while `$REPORT_OUT` (sentinel path above) is missing or empty — a consolidator that never wrote its report cannot be papered over with an ad-hoc summary. The hook sees only whether the report exists, not whether the print happened; steps (1)–(4) above remain the check for the print itself.
+**Hook-enforced**: `hooks/enforce-topic-header.js` (PreToolUse on `AskUserQuestion`) denies the Follow-up gate call while `$REPORT_OUT` (sentinel path above) is missing or empty — a consolidator that never wrote its report cannot be papered over with an ad-hoc summary. The hook also checks the matching header table in the Follow-up gate's option previews within the preview cap — over it, the compact summary naming `$REPORT_OUT`, the question text naming it too; steps (1)–(4) above build it.

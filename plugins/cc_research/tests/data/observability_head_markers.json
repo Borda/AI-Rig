@@ -76,8 +76,8 @@
     "**Unsupported flag check** \u2014 scan `$ARGUMENTS` for remaining `--<token>` tokens after supported",
     "echo \"$KAGGLE_CLI\" > \"${TMPDIR:-/tmp}/kaggle-cli-state-${CSID}\"",
     "echo \"kaggle CLI: $KAGGLE_CLI \u00b7 slug: ${COMPETITION_NAME:-<unset>}\"  # timeout: 30000",
-    "| `unauthorized` | Print the credential instructions below, `AskUserQuestion`: (a) skip \u00b7 (b) user",
-    "**Credential instructions** (print verbatim; the user does this, the skill never fabricates, reads,",
+    "| `unauthorized` | `AskUserQuestion` with the credential instructions below as the `preview` of",
+    "**Credential instructions** (verbatim as both options' `preview`, never reply text before the",
     "echo \"=== files ===\"; kaggle competitions files \"$KAGGLE_SLUG\" -v --page-size 200",
     "echo \"=== leaderboard head ===\"; kaggle competitions leaderboard \"$KAGGLE_SLUG\" -s -v 2>/dev/null |",
     "head -3 \"$KAGGLE_DATA\"/sample_submission.csv 2>/dev/null || echo \"no sample_submission.csv in this",
@@ -92,7 +92,7 @@
     "echo \"=== Sections ===\";   grep \"^# %% \\[markdown\\]\" \"$OUTFILE\"  # timeout: 5000",
     "echo \"=== File size ===\";  wc -l \"$OUTFILE\"  # timeout: 5000",
     "echo \"=== Bare '#' heading-spacer check (notebook-style.md) ===\"",
-    "Print to terminal:"
+    "Build this summary \u2014 the `preview` of every option of the follow-up gate below, not reply text"
   ],
   "skills/plan/SKILL.md": [
     "allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdate, AskUserQuestion",
@@ -204,7 +204,7 @@
     "- Print: `sweep: applied N_FIXES fix(es) to <program path> \u2014 re-judging`",
     "| `approved` | Print `sweep: plan approved (REFINE_ITER/MAX_REFINE iteration(s)) \u2713` \u2192 proceed to S5",
     "| `blocked` | Print `sweep: judge \u2192 BLOCKED \u2717`; show all critical findings from report; print",
-    "| `unresolved` | Print `sweep: judge unresolved after MAX_REFINE iterations \u2717`; show remaining",
+    "| `unresolved` | Print `sweep: judge unresolved after MAX_REFINE iterations \u2717`; call",
     "Load fails \u2192 stop with `! sweep: cannot load run/SKILL.md \u2014 research plugin path unresolved.` Never",
     "On completion, standard R6 terminal summary printed. Also prepend:",
     "sweep: complete \u2014 plan \u2192 judge \u2192 run pipeline finished"
@@ -232,7 +232,7 @@
     "echo \"$PWD/$REPORT_OUT\" > \"${TMPDIR:-/tmp}/research-topic-report-file-${CSID}\"",
     "Write full report to `$REPORT_OUT` via Write tool (resolved by counter-suffix loop above) \u2014 **do",
     "TaskUpdate \"Print report header\" \u2192 `in_progress`.",
-    "Read the saved report and render every `---` header field as a two-column `Field | Value` table in",
+    "Read the saved report and build the delivery block in this same turn: every `---` header field as a",
     "[ -f \"$_TEAM_MODE\" ] || { echo \"! MISSING \u2014 modes/team.md not found at $_TEAM_MODE. Plugin may not",
     "[ -f \"$HOME/.claude/TEAM_PROTOCOL.md\" ] || { echo \"! MISSING \u2014 ~/.claude/TEAM_PROTOCOL.md not",
     "**Mandatory termination gate**: after `modes/team.md` returns (consolidation complete, report",
@@ -272,14 +272,14 @@
     "[ -z \"$RUN_DIR\" ] && { echo \"verify V4: run dir unresolved \u2014 V1 state missing; partial report has",
     "echo \"$RUN_DIR\"",
     "Trailing `echo \"$RUN_DIR\"` is load-bearing: Write tool takes literal path, performs no shell",
-    "In the same reply that calls `AskUserQuestion` below, print (reply prose, not inside a bash",
+    "The `/compact` hint rides in the question text, never as reply prose before the call",
     "[ -z \"$OUT\" ] && { echo \"verify V4: report path unresolved \u2014 V1 state missing; partial report has",
     "cp \"$RUN_DIR/partial-report.md\" \"$OUT\"",
     "echo \"$OUT\"",
     "Surface file path, exit. Full audit remains at `$RUN_DIR/audit-raw.md`. Do NOT also dump mismatch",
     "rm -f \"$RUN_DIR/partial-report.md\"",
     "echo \"DEVELOP_FIX_AVAILABLE=$DEVELOP_FIX_AVAILABLE\"  # `|| ...=false` fallback makes block exit 0",
-    "**Only when the block above printed `DEVELOP_FIX_AVAILABLE=true`**, print as plain text before the",
+    "**Only when the block above printed `DEVELOP_FIX_AVAILABLE=true`**, append to the question text",
     "- **Timeout advisory**: 900s HARD_CUTOFF is advisory only \u2014 a background `Agent()` cannot be"
   ]
 }

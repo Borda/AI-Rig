@@ -147,7 +147,7 @@ If `$UNCONFIRMED_BREAKING` is nonzero, require review before any release artifac
 - Do not describe the automatic reclassification as already user-confirmed.
 - Apply this gate in both delegated `prepare`/`audit` runs before Phase 2b; inline `notes`/`demo`/`--append` runs use the same rule immediately after Truth check.
 
-When `unconfirmed > 0`, surface removed/reclassified items as notification (not a gate — already resolved). Read the waived-changes ledger, not `$GATHER_FILE`:
+When `unconfirmed > 0`, surface removed/reclassified items as notification (not a gate — already resolved) in the run's final reply — the Bash output below is not reply text the user reads, and text written before a tool call can arrive as an empty progress update. Read the waived-changes ledger, not `$GATHER_FILE`:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -247,7 +247,7 @@ printf '%s\n' "$RELEASE_MODE" > "${TMPDIR:-/tmp}/release-mode-${CSID}"
 
 <!-- branch: unsupported-flags — isolated; ≤1 call; fires only when unknown flags present -->
 
-**Unknown flags**: if any `⚠ unknown flag:` lines printed above, invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke) · (b) **Continue ignoring**. On Abort: stop.
+**Unknown flags**: if any `⚠ unknown flag:` lines printed above, invoke `AskUserQuestion` naming those flags in its question text (tool output is not reply text the user reads) — (a) **Abort** (stop, re-invoke) · (b) **Continue ignoring**. On Abort: stop.
 
 ## Shared setup
 
@@ -533,7 +533,7 @@ grep -i "<symbol_or_key>" "$MIGRATION_DOC" 2>/dev/null  # timeout: 3000
 - Found but no upgrade path → `[SHALLOW] <symbol> in <doc> — present but missing upgrade instructions`
 - Not found → `[MISSING-MIGRATION] <symbol> — ⚠ Breaking/🗑️ Deprecated but absent from <doc>`
 
-Collect all findings as `migration_gaps` list. Zero findings → migration doc complete. Report before proceeding.
+Collect all findings as `migration_gaps` list. Zero findings → migration doc complete. Report them in the run's final reply, not before the next tool call (text written before a tool call can arrive as an empty progress update).
 
 **Do not block** on `[SHALLOW]` findings — flag and continue. `[MISSING-MIGRATION]` findings surface as warnings; Draft migration guide phase must fill the gaps.
 

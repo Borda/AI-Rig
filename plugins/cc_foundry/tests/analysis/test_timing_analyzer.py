@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -362,6 +363,22 @@ def test_main_writes_report(tmp_path: Path, synthetic_logs, capsys):
     body = out.read_text(encoding="utf-8")
     assert "Headline split" in body
     assert "foundry:audit" in body
+
+
+def test_main_report_header_is_a_complete_key_value_block(tmp_path: Path, synthetic_logs):
+    """The written report opens with a `---` header of `Key: value` lines, `Title` first.
+
+    The profile follow-up gate (enforce-profile-header.js) reads any other header line, or a missing `Title`, as an
+    unfinished report and denies the follow-up question; the former `[Profile] —` title line did that for every report.
+    """
+    timings, inv = synthetic_logs
+    out = tmp_path / "report.md"
+
+    ta.main(["--timings", str(timings), "--invocations", str(inv), "--since", "30d", "--output", str(out)])
+
+    header = out.read_text(encoding="utf-8").split("---\n", 2)[1].splitlines()
+    assert header[0].startswith("Title:")
+    assert [line for line in header if not re.match(r"^[^:\n]+:[ \t]*\S", line)] == []
 
 
 def test_main_returns_1_when_empty_window(tmp_path: Path, synthetic_logs, capsys):

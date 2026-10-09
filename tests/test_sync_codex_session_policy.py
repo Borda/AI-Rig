@@ -375,6 +375,31 @@ def test_repository_preapproval_names_only_project_plugin_family() -> None:
     assert "Never approve git push" in policy
 
 
+@pytest.mark.parametrize(
+    "marker",
+    [
+        pytest.param("ephemeral dependency overlay", id="names-the-overlay"),
+        pytest.param("is excluded from this preapproval by name", id="excluded-by-name"),
+        pytest.param(
+            "any escalated test run over that overlay are not recipe or dependency-download work",
+            id="fetch-and-run-not-recipe-work",
+        ),
+        pytest.param(
+            "Never approve a single command that both downloads a dependency and runs reviewed code",
+            id="no-combined-command",
+        ),
+    ],
+)
+def test_repository_preapproval_excludes_ephemeral_dependency_overlay(marker: str) -> None:
+    """Keep the review overlay's download and reviewed-code run out of automatic recipe approval.
+
+    The policy also approves configured checks "including necessary dependency downloads"; without a named exclusion the
+    automatic reviewer could approve an escalation that runs a pull request's tests outside the sandbox.
+    """
+    policy = tomllib.loads(SOURCE_CONFIG.read_text(encoding="utf-8"))["auto_review"]["extra_policy"]
+    assert marker in policy
+
+
 def test_repository_bridge_preapproval_preserves_conditional_scope() -> None:
     """Pin the Bridge policy boundary without claiming a live auto-review approval decision."""
     policy = tomllib.loads(SOURCE_CONFIG.read_text(encoding="utf-8"))["auto_review"]["extra_policy"]

@@ -44,7 +44,7 @@ ROUTE  (step 2 — mode-token checks)
 | READ LOCAL ROSTER ‖ READ INSTALLED PLUGINS | external | 2 | fixed | CAPABILITY MAP |
 | REVIEW .md ‖ REVIEW code | external | ≤2 | non-empty file-type group from APPLY's changed-file list | Confidence block |
 | SCAN (inside LOCATE) | executables | plugin-dir count | only fires when no prior Check 33 report exists | CHECK33_FILES update, then PARSE CANDIDATES |
-| EXTRACT | executables | selected-cluster count | one worktree per agent (`isolation: worktree`); no explicit width cap in skill text | RE-AUDIT |
+| EXTRACT | executables | selected-cluster count | one worktree per agent (explicit per-spawn worktree isolation); no explicit width cap in skill text | TRANSPLANT, then RE-AUDIT |
 | RE-AUDIT | executables | modified-file count | none stated in skill text | MEASURE + CONVERGE |
 
 No mode states an explicit concurrency ceiling on its own fan-out (e.g. no `DISPATCH_MODE`-style wave batching) — every width above is bounded only by the size of the underlying dataset (projects, clusters, or files).
@@ -227,7 +227,12 @@ CANDIDATE TABLE  (step E3)
 ◆ EXTRACT CANDIDATES TO bin/?  (step E3)
   |
 EXTRACT  (step E4)  ▣ foundry:sw-engineer per selected cluster
-  isolation: worktree, surgical-edit constraint
+  per-spawn worktree isolation, base pinned to main HEAD, surgical-edit constraint
+  summary returned in envelope (isolated agent cannot write main tree)
+  |
+TRANSPLANT  (step E4)
+  one cluster at a time: worktree diff → git apply in main tree
+  apply fails / stale base → keep worktree, ⚠, cluster skips RE-AUDIT
   |
 RE-AUDIT  (step E5)  ▣ foundry:curator per modified file
   |

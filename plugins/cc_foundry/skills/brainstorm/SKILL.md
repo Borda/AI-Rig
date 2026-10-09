@@ -54,7 +54,7 @@ ARGUMENTS="$CLEAN_ARGS"
 
 ## Step 1: Context scan
 
-**Unsupported flag check** — after all supported flags extracted (`--tight`, `--deep`, `--type`, `--keep`), scan `$ARGUMENTS` for remaining `--<token>` tokens. If found: print `` ! Unknown flag(s): `--<token>`. Supported: `--tight`, `--deep`, `--type`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted (`--tight`, `--deep`, `--type`, `--keep`), scan `$ARGUMENTS` for remaining `--<token>` tokens. If found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--tight`, `--deep`, `--type`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 Gather project context before asking anything:
 
@@ -165,8 +165,8 @@ Full creative session — grow, deepen, and prune tree of directions. Tree is ou
 Before presenting formal branches, run brief free-form idea exchange — 2–3 rapid rounds. Goal: surface intuitions about direction before committing to structure. Like tennis rally — Claude serves first, user returns, branches emerge from what lands.
 
 1. State skill's opening hypothesis: 1–2 sentences on where problem looks most interesting or tricky. Not a branch — just a read.
-2. Immediately present **3–5 initial branches** (see Seeding the tree below) in the same message — no separate round-trip. Each branch is numbered (1, 2, 3, …) and ★ on the most promising one.
-3. Call a single `AskUserQuestion` for the **reaction choice** (≤4 options per call per AQQ cap): "How does this look?" with exactly four options: (a) ★ recommended — pick branches to focus on (reply naming 1–3 branch numbers in free text) · (b) Not quite — let me redirect (reply describing the redirect) · (c) add more branches first · (d) skip focus selection — start tree ops with all branches open. The branch list is in the message body for reference; users name branches by number rather than by sub-option letter so the AQQ stays at 4 options regardless of branch count.
+2. Immediately build **3–5 initial branches** (see Seeding the tree below) for the same call — no separate round-trip. Each branch is numbered (1, 2, 3, …) and ★ on the most promising one.
+3. Call a single `AskUserQuestion` for the **reaction choice** (≤4 options per call per AQQ cap): "How does this look?" with exactly four options: (a) ★ recommended — pick branches to focus on (reply naming 1–3 branch numbers in free text) · (b) Not quite — let me redirect (reply describing the redirect) · (c) add more branches first · (d) skip focus selection — start tree ops with all branches open. The opening hypothesis and the full branch list (Seeding the tree format) are the `preview` of every option — not the message body, which can arrive as an empty progress update before the call; over the preview cap they go to a file first (§Tree summary format); users name branches by number rather than by sub-option letter so the AQQ stays at 4 options regardless of branch count.
 4. Proceed to **Tree operations loop**:
    - (a) picked: user's free-text reply names 1–3 branches → set those as `▶️` focus; others remain `💭` open. If the reply doesn't parse into 1–3 valid branch numbers from the branches just shown (non-numeric, out of range, or none named), re-ask the same reaction question once, restating the valid branch number range; a second unparsable reply falls back to (d) — all branches `💭` open, no initial focus.
    - (b) picked: regenerate 2–3 fresh branches reflecting the redirect and re-enter step 3 (one re-entry allowed; second redirect proceeds with whatever branches exist)
@@ -177,7 +177,7 @@ Before presenting formal branches, run brief free-form idea exchange — 2–3 r
 
 ### Seeding the tree
 
-Present **3–5 initial branches** (top-level directions) in the same message as the opening hypothesis (see pre-seeding exchange step 2 above). For each include:
+Build **3–5 initial branches** (top-level directions) for the same reaction question as the opening hypothesis, carried in its option previews (see pre-seeding exchange steps 2–3 above). For each include:
 
 - **Name**: short label
 - **Core idea**: 2–3 sentences — what makes this branch distinct
@@ -187,7 +187,7 @@ Present **3–5 initial branches** (top-level directions) in the same message as
 
 **YAGNI filter**: when generating branches, actively prune speculative "we might need this later" directions — include only branches that directly address stated problem. Flag any branch requiring features or scale not mentioned in clarifying questions as "speculative" in its **What it trades away** line.
 
-Write **Opening framing** paragraph (2–3 sentences): skill's initial read on problem space — core tension, which branch(es) most promising and why, one thing it's uncertain about. Not recommendation to converge — divergence still goal — but honest perspective to spark reaction.
+Write **Opening framing** paragraph (2–3 sentences, in the same previews): skill's initial read on problem space — core tension, which branch(es) most promising and why, one thing it's uncertain about. Not recommendation to converge — divergence still goal — but honest perspective to spark reaction.
 
 The reaction AskUserQuestion is defined in pre-seeding exchange above (4 options: focus / redirect / more branches / skip). When the reaction is (b) redirect: generate 2–3 new branches incorporating the described direction. When (c) add more: generate 2–3 fresh branches with genuinely different framing.
 
@@ -199,7 +199,7 @@ After user selects initial focus, write sidecar immediately with all branch deta
 
 After seeding, enter operations loop. Each iteration:
 
-1. Show current **tree summary** (see format below)
+1. Build current **tree summary** (see format below) — shown only as the step 3 question's option previews
 
 2. Write **Skill's moment** — 2–3 sentences of skill's current read: which open branches look most interesting and why, what closed branches revealed about problem, and what skill would explore next if it had a vote. Make specific to current tree state (refer to actual branch names by their labels). Gives user something to react to before choosing operation.
 
@@ -239,7 +239,7 @@ After seeding, enter operations loop. Each iteration:
 
 ### Tree summary format
 
-Always show tree summary **before** calling `AskUserQuestion`:
+Every `AskUserQuestion` that follows a tree summary shows it only as every option's `preview` — never also as reply text before the call (on 5.5 models text before a tool call may come back as an empty progress update); pre-seeding reaction question: the opening hypothesis plus the numbered branches in Seeding-the-tree format instead. **Preview cap**: ≤2000 chars and ≤12 lines per preview, every line counted — Claude Code withholds a longer preview and clips a taller one, no scroll. Over the cap (a seeded branch list nearly always is; a tree past ~9 branches is): Write the full text to `.reports/brainstorm/<slug>-tree.md` (seeding: `<slug>-branches.md`; slug per Step 4) first, replacing the previous round's copy; every option's `preview` is then a compact summary — branch numbers and names with status emoji, the counts line — ending `→ full tree: <path>`, and the question text names that same path:
 
 ```text
 Tree: <title>
@@ -262,7 +262,7 @@ Use `├─`, `│  ├─`, `└─` for tree rendering. Show sub-branches inde
 ### Loop bounds
 
 - Maximum **10 operations** (5 in `--tight` mode, 15 in `--deep` mode) (round = one operation; idea stacking (g) does not count)
-- After limit: show tree state, call `AskUserQuestion` with: a) Save tree as-is ★ recommended / b) Do 2 more operations then save
+- After limit: call `AskUserQuestion` with the tree summary as every option's `preview`: a) Save tree as-is ★ recommended / b) Do 2 more operations then save
 - **Gate**: do not proceed to Step 4 until user selects "Ready" or max reached with at least 2 rejected branches (1 in `--tight`, 3 in `--deep`); resolved/accepted branches do not count toward this minimum (they are the goal, not waste); if fewer than required rejected branches exist, prompt: "The tree has few rejected branches — consider rejecting 1–2 that are clearly not the right direction before saving."
 
 ## Step 4: Save tree
@@ -376,7 +376,7 @@ If `findings > 0`: add missing details, improve closure reasons, or add open thr
 
 ## Step 6: Present and gate
 
-Show tree file path and compact tree summary (same format as Step 3). Then call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments:
+Put tree file path and compact tree summary (same format as Step 3) in every option's `preview` — not as reply text; summary within the preview cap (§Tree summary format), the question text naming the tree file. Then call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments:
 
 - question: "How does the exploration tree look?"
 - (a) label: `Tree looks good — ready to distill` — description: proceed to distillation (★ recommended)

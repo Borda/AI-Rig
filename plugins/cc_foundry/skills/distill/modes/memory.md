@@ -166,7 +166,7 @@ echo "RUN_DIR=$RUN_DIR"  # bash vars don't persist; read from stdout
 1. **Existing content grep**: use Grep to search target file (if already exists) for section heading or key phrase delta would insert near. Hit = potential collision with existing content.
 2. **Cross-proposal collision**: two proposals both target same file and same section heading: mark both ⚠ CONFLICT.
 
-Annotate each conflicting proposal row with ⚠. If conflicts found, print above question:
+Annotate each conflicting proposal row with ⚠. If conflicts found, append this block below the table in the question's previews:
 
 ```text
 ⚠ Conflicts detected:
@@ -175,7 +175,7 @@ Annotate each conflicting proposal row with ⚠. If conflicts found, print above
 Review conflicts manually or select (b) to inspect each change before writing.
 ```
 
-Print (annotated) proposal table. Then call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments:
+Call `AskUserQuestion` tool with the (annotated) proposal table as the `preview` of every option, not as reply text before the call (text written before a tool call can arrive as an empty progress update) — do NOT write options as plain text first. Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full table and any conflicts block to `$RUN_DIR/proposals.md` first, make every option's `preview` a compact summary ending `→ full proposals: $RUN_DIR/proposals.md`, and name that path in the question text. Map options directly into tool call arguments:
 
 - question: "Apply proposals?"
 - (a) label: `Apply non-conflicting` — description: write all `→ rule` and `→ agent/skill update` changes except ⚠ flagged proposals

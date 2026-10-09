@@ -160,7 +160,7 @@ _ASKS = [
     ),
     pytest.param(
         "distill/modes/memory.md",
-        "Print (annotated) proposal table.",
+        "Call `AskUserQuestion` tool with the (annotated) proposal table",
         "label: `Skip`",
         '"Apply proposals?"',
         id="distill-memory-gate",

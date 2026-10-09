@@ -22,7 +22,7 @@ echo "range: $RANGE"
 
 ### Phase 1: Readiness audit
 
-Run all checks from **Mode: audit** with `$VERSION` as target. `| Check | Status | Detail |` readiness table must appear inline in terminal before proceeding — audit-checks.md requires this even in sub-phase context. If table absent from response after running audit, re-execute terminal output step from audit-checks.md before continuing.
+Run all checks from **Mode: audit** with `$VERSION` as target. `| Check | Status | Detail |` readiness table must appear in prepare's final reply, after the last tool call — audit-checks.md requires this even in sub-phase context, and a copy printed before further tool calls can arrive as an empty progress update. If table absent from the final reply, re-execute terminal output step from audit-checks.md before ending.
 
 **If verdict is BLOCKED**: stop. List blockers, tell user to resolve before re-running `/release prepare $VERSION`. Write no artifacts.
 

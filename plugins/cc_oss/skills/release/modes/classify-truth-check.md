@@ -116,7 +116,7 @@ echo "NET-STATE-ADD: ⚠️ Breaking Changes: <item> — <old_name> absent at <L
 
 — never keep as Breaking without review. This started life as a ⚠️ Breaking Changes claim: in delegated (`prepare`/`audit`) mode it must still count into the returned envelope's `unconfirmed_breaking` and pass the Delegation strategy's item-evidence `AskUserQuestion` gate. Inline modes apply that same gate after Truth check. If no final name exists, omit the unsupported claim and record `REMOVED: ⚠️ Breaking Changes: <item> — no final name exists in HEAD` instead.
 
-Gate loop (max 3 iterations): truth-check → remove unverified → re-run on updated set → after 3 iterations surface remaining unverified claims and proceed.
+Gate loop (max 3 iterations): truth-check → remove unverified → re-run on updated set → after 3 iterations record remaining unverified claims for the run's final reply and proceed (text written before a tool call can arrive as an empty progress update).
 
 Runs before Identify highlights — highlights and demo must never reference unverified items.
 

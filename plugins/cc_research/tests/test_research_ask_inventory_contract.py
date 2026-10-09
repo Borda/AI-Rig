@@ -40,7 +40,7 @@ _ASKS = [
     ),
     pytest.param(
         "skills/plan/SKILL.md",
-        "Any agent returns `ok: false` → surface suggestions, then invoke `AskUserQuestion`",
+        "Any agent returns `ok: false` → invoke `AskUserQuestion` with the advisor suggestions",
         id="plan-5",
     ),
     pytest.param(
@@ -90,11 +90,11 @@ _ASKS = [
     ),
     pytest.param(
         "skills/verify/SKILL.md",
-        "In the same reply that calls `AskUserQuestion` below, print (reply prose, not inside a",
+        "The `/compact` hint rides in the question text, never as reply prose before the call",
         id="verify-3",
     ),
     pytest.param(
-        "skills/verify/SKILL.md", "Invoke `AskUserQuestion` — do NOT write options as plain text:", id="verify-4"
+        "skills/verify/SKILL.md", "Invoke `AskUserQuestion` — do NOT write options as plain text.", id="verify-4"
     ),
     pytest.param(
         "skills/verify/SKILL.md",
@@ -123,7 +123,7 @@ _ASKS = [
     ),
     pytest.param(
         "skills/kaggle/SKILL.md",
-        "| `unauthorized` | Print the credential instructions below, `AskUserQuestion`: (a) skip ·",
+        "| `unauthorized` | `AskUserQuestion` with the credential instructions below as the",
         id="kaggle-4",
     ),
     pytest.param(

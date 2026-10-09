@@ -551,16 +551,39 @@ def _render_yaml(
     since_spec: str,
     output_hint: str,
 ) -> str:
+    """Render the report's ``---`` metadata header, one ``Key: value`` line per field.
+
+    Every line must be a ``Key: value`` pair and ``Title`` must be present: the
+    ``enforce-profile-header.js`` follow-up gate (via ``report-header-table.js``)
+    treats a header with any other line, or without ``Title``, as incomplete and
+    denies the profile follow-up question for that report.
+
+    Args:
+        sessions: Aggregated per-session stats; only their count is reported.
+        total_wall: Summed wall time in milliseconds across the sessions.
+        since_spec: The ``--since`` window as given, e.g. ``24h``.
+        output_hint: Report path shown in the ``Path:`` field.
+
+    Returns:
+        The header block, opening and closing ``---`` lines included.
+
+    Examples:
+        >>> header = _render_yaml({}, 0, "24h", "report.md")
+        >>> header.splitlines()[1].split(":", 1)[0]
+        'Title'
+        >>> all(":" in line for line in header.splitlines()[1:-1])
+        True
+    """
     today = time.strftime("%Y-%m-%d", time.gmtime())
     return (
         "---\n"
-        "[Profile] — session clock-time breakdown\n"
+        "Title:      foundry:profile — session clock-time breakdown\n"
         f"Date:       {today}\n"
         f"Scope:      window={since_spec}, sessions={len(sessions)}, total_wall={_fmt_hms(total_wall)}\n"
         "Focus:      local-tool / agent-spawn / skill / askuser / main-loop reasoning split\n"
         "Agents:     timing_analyzer.py (no LLM agents — pure log read)\n"
         "Outcome:    INFORMATIONAL — data-only report\n"
-        "Confidence: 0.85 — residual reasoning bucket underestimated when subagents dominate\n"
+        "Confidence: 0.85 — reasoning bucket underestimated when subagents dominate\n"
         "Next steps: re-run with --session-id <slowest> for drill-down\n"
         f"Path:       → {output_hint}\n"
         "---\n"

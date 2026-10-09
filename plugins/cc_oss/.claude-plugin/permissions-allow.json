@@ -90,7 +90,6 @@
   "Bash(tr:*)",
   "Bash(uniq:*)",
   "Bash(uv pip check:*)",
-  "Bash(uv pip install:*)",
   "Bash(uv pip list:*)",
   "Bash(uv pip show:*)",
   "Bash(uv run mypy:*)",

@@ -4,13 +4,13 @@
 
 After supported flags extracted from `$ARGUMENTS`, scan remaining tokens for any `--<token>`.
 
-Found → print:
+Found → invoke `AskUserQuestion` with this question text (not printed as reply text before the call, which can arrive as an empty progress update):
 
 ```text
 ! Unknown flag(s): `--<token>`. Supported: <SKILL_SUPPORTED_FLAGS>.
 ```
 
-Then invoke `AskUserQuestion`:
+Options:
 
 - (a) **Abort** — stop, re-invoke with correct flags
 - (b) **Continue ignoring** — skip unknown flags, proceed

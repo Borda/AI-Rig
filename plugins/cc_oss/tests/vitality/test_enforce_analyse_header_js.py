@@ -177,16 +177,24 @@ def _write_transcript(tmp_path: Path, assistant_text: str) -> Path:
 
 
 @_skip_node_unavailable
-def test_report_written_with_table_in_reply_has_no_reminder(tmp_path: Path, repo: Path, analyse_run: Path) -> None:
-    """Table already printed this turn → allow with no additionalContext nudge."""
+def test_table_only_in_reply_text_is_denied_and_preview_passes(tmp_path: Path, repo: Path, analyse_run: Path) -> None:
+    """A table printed as reply text before the question is denied; the same table as every preview passes.
+
+    Reply text written before a tool call can come back as an empty progress update the user never sees, so only the
+    call's own fields count at question time; the denial says so and the call corrected to it passes.
+    """
     report = repo / MODE_REPORTS["thread"]
     report.parent.mkdir(parents=True)
     report.write_text("---\nTitle: x\nDate: y\nScope: z\n---\n", encoding="utf-8")
-    transcript = _write_transcript(
-        tmp_path, "| Field | Value |\n| --- | --- |\n| Title | x |\n| Date | y |\n| Scope | z |\n"
-    )
+    table = "| Field | Value |\n| --- | --- |\n| Title | x |\n| Date | y |\n| Scope | z |\n"
+    transcript = _write_transcript(tmp_path, table)
 
-    assert _run(tmp_path, _ask_payload(cwd=str(repo), transcript_path=str(transcript))) == {}
+    reason = _denial_reason(_run(tmp_path, _ask_payload(cwd=str(repo), transcript_path=str(transcript))))
+    retried = _run(tmp_path, _preview_payload(repo, table))
+
+    assert reason is not None
+    assert "reply text before the call does not count" in reason
+    assert retried == {}
 
 
 @_skip_node_unavailable
@@ -371,3 +379,59 @@ def test_stop_passes_delivery_in_final_message(tmp_path: Path, repo: Path, analy
 
 
 DELIVERED = "| Field | Value |\n| --- | --- |\n| Title | x |\n| PR | #1 |\n| Date | y |\n"
+
+
+# ── Delivery via the follow-up question's option previews ────────────────────
+
+
+def _preview_payload(cwd: Path, preview: str | None) -> dict:
+    """Build the follow-up payload, `preview` on every option (none when None), with no transcript text at all."""
+    options = [{"label": label, "description": "next step"} for label in ("/develop:fix", "skip")]
+    if preview is not None:
+        for option in options:
+            option["preview"] = preview
+    questions = [{"question": "What next?", "header": "oss-analyse", "options": options}]
+    return _ask_payload(cwd=str(cwd), tool_input={"questions": questions}, transcript_path=None)
+
+
+@pytest.fixture(name="written_run")
+def _written_run(repo: Path, analyse_run: Path) -> None:
+    """Stage a thread-mode run whose report DELIVERED renders is written."""
+    report = repo / MODE_REPORTS["thread"]
+    report.parent.mkdir(parents=True)
+    report.write_text("---\nTitle: x\nPR: #1\nDate: y\n---\n", encoding="utf-8")
+
+
+@pytest.mark.usefixtures("written_run")
+class TestPreviewDelivery:
+    """The header table carried as option previews delivers it when text before the call came back empty."""
+
+    @_skip_node_unavailable
+    def test_preview_table_allows_follow_up(self, tmp_path: Path, repo: Path) -> None:
+        """The matching table in the previews allows the follow-up with no reply text in the transcript."""
+        assert _run(tmp_path, _preview_payload(repo, DELIVERED)) == {}
+
+    @_skip_node_unavailable
+    def test_missing_preview_denial_names_preview_fix(self, tmp_path: Path, repo: Path) -> None:
+        """No table anywhere is denied, and the reason directs the table into the option previews."""
+        reason = _denial_reason(_run(tmp_path, _preview_payload(repo, None)))
+
+        assert reason is not None
+        assert "`preview` of every option" in reason
+        assert "Re-issue" not in reason
+
+    @_skip_node_unavailable
+    def test_preview_pass_settles_the_stop_check(self, tmp_path: Path, repo: Path) -> None:
+        """Once the question carrying the previews was shown (PostToolUse), the turn may end without the table."""
+        payload = _preview_payload(repo, DELIVERED)
+        assert _run(tmp_path, payload) == {}
+        assert _run(tmp_path, {**payload, "hook_event_name": "PostToolUse"}) == {}
+
+        assert _run(tmp_path, _stop_payload(cwd=str(repo))) == {}
+
+    @_skip_node_unavailable
+    def test_allowed_but_unshown_follow_up_leaves_stop_armed(self, tmp_path: Path, repo: Path) -> None:
+        """A PreToolUse pass alone records nothing: another hook or a permission rule may still deny the question."""
+        assert _run(tmp_path, _preview_payload(repo, DELIVERED)) == {}
+
+        assert _run(tmp_path, _stop_payload(cwd=str(repo))).get("decision") == "block"

@@ -7,8 +7,10 @@ plugin state.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import runpy
 import shlex
 import shutil
 import subprocess
@@ -385,6 +387,8 @@ class TestSyncCodexHomePolicy:
         "update-ext-plugins",
         "register-marketplace",
         "prune-claude-cache",
+        "verify-claude-plugins",
+        "warn-stale-claude-sessions",
         "clear-claude",
         "clear-codex",
     ],
@@ -465,3 +469,316 @@ def test_prune_claude_cache_removes_only_aged_uninstalled_orphans(tmp_path: Path
     assert unreadable.is_dir()
     assert current.is_dir()
     assert "2 orphaned version dir(s) removed" in result.stdout
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(GNU_MAKE is None or JQ is None, reason="GNU make and jq are required on this host")
+def test_prune_claude_cache_skips_when_registry_is_unreadable(tmp_path: Path) -> None:
+    """An unreadable install record must stop pruning instead of reading as "nothing installed".
+
+    The registry is the only guard keeping a still-installed version dir that carries an old marker; treating a corrupt
+    file as empty would let the prune delete the copy a plugin currently loads from.
+    """
+    cache = tmp_path / "cache"
+    aged = _orphan(cache, "oss", "0.40.3", str(int((time.time() - 2 * 86400) * 1000)))
+    installed_plugins = tmp_path / "installed_plugins.json"
+    installed_plugins.write_text("{not json", encoding="utf-8")
+
+    result = _run_make(
+        "prune-claude-cache",
+        env=os.environ.copy(),
+        extra_vars={
+            "CACHE_DIR": cache.as_posix(),
+            "INSTALLED_PLUGINS": installed_plugins.as_posix(),
+            "MARKETPLACE": "borda-ai-rig",
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert aged.is_dir()
+    assert "pruning skipped" in result.stdout
+
+
+VERIFY_SCRIPT = ROOT / "scripts" / "verify_claude_plugins.py"
+GIT = shutil.which("git")
+#: Version the scratch marketplace declares for each plugin: alpha from its manifest, beta from its catalog entry.
+DECLARED = {"alpha": "1.2.0", "beta": "2.0.0"}
+
+
+class ScratchRegistry(NamedTuple):
+    """A scratch marketplace clone plus the registries and cache that point at it."""
+
+    clone: Path
+    cache: Path
+    known: Path
+    installed: Path
+
+
+def _write_json(path: Path, data: object) -> None:
+    """Write one JSON file, creating its parent directories."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _record(registry: ScratchRegistry, plugin: str, version: str, **extra: object) -> dict:
+    """Return one install record for ``plugin`` at ``version``, creating its cache dir unless told it is missing."""
+    install_dir = registry.cache / "demo" / plugin / version
+    if not extra.pop("missing_dir", False):
+        install_dir.mkdir(parents=True, exist_ok=True)
+    if extra.pop("orphaned", False):
+        (install_dir / ".orphaned_at").write_text("1", encoding="utf-8")
+    return {"scope": "user", "version": version, "installPath": install_dir.as_posix(), **extra}
+
+
+def _install(registry: ScratchRegistry, alpha: list[dict]) -> None:
+    """Write installed_plugins.json with one alpha record per spec (``_record`` keywords) and a current beta install."""
+    alpha_records = [_record(registry, "alpha", **spec) for spec in alpha]
+    records = {"alpha@demo": alpha_records, "beta@demo": [_record(registry, "beta", DECLARED["beta"])]}
+    _write_json(registry.installed, {"version": 2, "plugins": {key: value for key, value in records.items() if value}})
+
+
+def _verify(registry: ScratchRegistry, **extra_vars: str) -> subprocess.CompletedProcess[str]:
+    """Run the verify-claude-plugins target against the scratch registry."""
+    variables = {
+        "INSTALLED_PLUGINS": registry.installed.as_posix(),
+        "KNOWN_MARKETPLACES": registry.known.as_posix(),
+        "MARKETPLACE": "demo",
+        "PLUGINS": "alpha beta",
+        "EXTERNAL_PLUGINS": "",
+        "MARKETPLACE_REMOTE": "",
+        **extra_vars,
+    }
+    return _run_make("verify-claude-plugins", env=os.environ.copy(), extra_vars=variables)
+
+
+def _git_commit(repo: Path, message: str) -> None:
+    """Commit everything in ``repo`` with a config isolated from the host's global and system git settings.
+
+    The global config points at an empty file beside the repository rather than ``os.devnull``, whose ``nul`` spelling
+    Git for Windows does not reliably accept as a config path.
+    """
+    isolated = repo.parent / "isolated.gitconfig"
+    isolated.write_text("", encoding="utf-8")
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": str(isolated), "GIT_CONFIG_NOSYSTEM": "1"}
+    identity = ["-c", "user.name=test", "-c", "user.email=test@example.invalid"]
+    for args in (["init", "-q"], ["add", "-A"], [*identity, "commit", "-q", "-m", message]):
+        subprocess.run([GIT, "-C", str(repo), *args], env=env, check=True, capture_output=True)
+
+
+@pytest.fixture(name="registry")
+def _registry(tmp_path: Path) -> ScratchRegistry:
+    """Build a marketplace clone declaring alpha 1.2.0 (manifest) and beta 2.0.0 (catalog entry), with no installs."""
+    clone = tmp_path / "marketplaces" / "demo"
+    catalog = {
+        "name": "demo",
+        "plugins": [
+            {"name": "alpha", "source": "./plugins/alpha", "version": "0.0.1"},
+            {"name": "beta", "source": "./plugins/beta", "version": DECLARED["beta"]},
+        ],
+    }
+    _write_json(clone / ".claude-plugin" / "marketplace.json", catalog)
+    _write_json(clone / "plugins" / "alpha" / ".claude-plugin" / "plugin.json", {"name": "alpha", "version": "1.2.0"})
+    _write_json(clone / "plugins" / "beta" / ".claude-plugin" / "plugin.json", {"name": "beta"})
+    known = tmp_path / "known_marketplaces.json"
+    _write_json(known, {"demo": {"installLocation": clone.as_posix()}})
+    return ScratchRegistry(clone, tmp_path / "cache", known, tmp_path / "installed_plugins.json")
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
+class TestVerifyClaudePlugins:
+    """The post-install check fails the sync whenever a plugin could load an older version than its marketplace."""
+
+    def test_passes_when_every_install_matches_the_marketplace(self, registry: ScratchRegistry) -> None:
+        """Current user-scope installs pass, with the manifest version taking precedence over the catalog entry."""
+        _install(registry, [{"version": "1.2.0"}])
+
+        result = _verify(registry)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "✓ alpha@demo [user]: 1.2.0" in result.stdout
+        assert "✓ beta@demo [user]: 2.0.0" in result.stdout
+
+    @pytest.mark.parametrize(
+        ("alpha", "expected"),
+        [
+            pytest.param(
+                [{"version": "1.1.0"}],
+                "✗ alpha@demo [user]: installed 1.1.0, marketplace has 1.2.0 → claude plugin update alpha@demo",
+                id="older-user-install",
+            ),
+            pytest.param([], "✗ alpha@demo: not installed → claude plugin install alpha@demo", id="missing-install"),
+            pytest.param([{"version": "1.2.0", "orphaned": True}], "install dir is marked orphaned", id="orphaned-dir"),
+            pytest.param([{"version": "1.2.0", "missing_dir": True}], "install dir missing", id="missing-dir"),
+            pytest.param(
+                [{"version": "1.2.0"}, {"version": "1.1.0", "scope": "project", "projectPath": "/work/app"}],
+                "✗ alpha@demo [project /work/app]: installed 1.1.0, marketplace has 1.2.0 → in /work/app: "
+                "claude plugin update alpha@demo --scope project",
+                id="older-project-install",
+            ),
+            pytest.param(
+                [{"version": "1.2.0", "scope": "project", "projectPath": "/work/app"}],
+                "✗ alpha@demo: no user-scope install",
+                id="project-scope-only",
+            ),
+        ],
+    )
+    def test_fails_when_a_plugin_could_load_an_older_copy(
+        self, registry: ScratchRegistry, alpha: list[dict], expected: str
+    ) -> None:
+        """Each way a sync can leave a plugin behind its marketplace exits nonzero and names the plugin and the fix.
+
+        These are the silent paths: an uninstall failure reported as "not installed", an install that kept the old
+        record, a project-scope install the sync never touches, or a record pointing at a replaced directory.
+        """
+        _install(registry, alpha)
+
+        result = _verify(registry)
+
+        assert result.returncode != 0
+        assert expected in result.stdout
+        assert "install problem(s)" in result.stdout
+
+    def test_report_only_plugin_warns_without_failing(self, registry: ScratchRegistry) -> None:
+        """An external plugin missing after an offline run is reported as a warning, never as a sync failure."""
+        _install(registry, [{"version": "1.2.0"}])
+
+        result = _verify(registry, EXTERNAL_PLUGINS="gamma@demo")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "⚠ gamma@demo: not installed" in result.stdout
+
+    def test_fails_when_marketplace_is_not_registered(self, registry: ScratchRegistry) -> None:
+        """Without the registered clone there is nothing to compare against, so the check fails rather than passes."""
+        _install(registry, [{"version": "1.2.0"}])
+        _write_json(registry.known, {})
+
+        result = _verify(registry)
+
+        assert result.returncode != 0
+        assert "marketplace demo is not registered" in result.stdout
+
+    @pytest.mark.skipif(GIT is None, reason="git is not available on this host")
+    def test_passes_when_clone_is_at_remote_head(self, registry: ScratchRegistry) -> None:
+        """A clone whose HEAD equals the remote's confirms the versions were read from the current catalog."""
+        _git_commit(registry.clone, "catalog")
+        _install(registry, [{"version": "1.2.0"}])
+
+        result = _verify(registry, MARKETPLACE_REMOTE=registry.clone.as_posix())
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "✓ marketplace clone matches" in result.stdout
+
+    @pytest.mark.skipif(GIT is None, reason="git is not available on this host")
+    def test_fails_when_clone_is_behind_remote(self, registry: ScratchRegistry, tmp_path: Path) -> None:
+        """A stale clone would vouch for stale installs, so a clone HEAD different from the remote's fails the sync.
+
+        Version equality alone passes when the clone itself is old; comparing it with the remote catches that.
+        """
+        _git_commit(registry.clone, "catalog")
+        remote = tmp_path / "remote"
+        remote.mkdir()
+        (remote / "change.txt").write_text("newer", encoding="utf-8")
+        _git_commit(remote, "newer catalog")
+        _install(registry, [{"version": "1.2.0"}])
+
+        result = _verify(registry, MARKETPLACE_REMOTE=remote.as_posix())
+
+        assert result.returncode != 0
+        assert "✗ marketplace clone is at" in result.stdout
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
+def test_warn_stale_claude_sessions_passes_installed_registry(tmp_path: Path) -> None:
+    """The session warning reads the registry the sync just wrote, via the shared helper's ``sessions`` subcommand."""
+    log = tmp_path / "argv.log"
+    script = tmp_path / "fake_verify.py"
+    script.write_text(
+        f"import sys\nfrom pathlib import Path\nPath({str(log)!r}).write_text(' '.join(sys.argv[1:]), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    installed = tmp_path / "installed_plugins.json"
+
+    result = _run_make(
+        "warn-stale-claude-sessions",
+        env=os.environ.copy(),
+        extra_vars={"VERIFY_PLUGINS_SCRIPT": script.as_posix(), "INSTALLED_PLUGINS": installed.as_posix()},
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert log.read_text(encoding="utf-8") == f"sessions --installed {installed.as_posix()}"
+
+
+def _verify_namespace() -> dict[str, object]:
+    """Load the verification helper's definitions without running its command line."""
+    return runpy.run_path(str(VERIFY_SCRIPT))
+
+
+def _lstart(epoch: float) -> str:
+    """Format ``epoch`` the way ``ps -o lstart=`` prints a start time in the C locale."""
+    return time.strftime("%a %b %d %H:%M:%S %Y", time.localtime(epoch))
+
+
+class TestStaleSessionListing:
+    """Claude Code processes older than the last install are listed; everything else is ignored."""
+
+    def test_parse_ps_keeps_only_claude_code_processes(self) -> None:
+        """The native CLI and the Node entry point count; the desktop app and unrelated tools do not."""
+        stamp = _lstart(1_700_000_000)
+        ps_output = "\n".join(
+            [
+                f"  101 {stamp} /Users/me/.local/bin/claude --resume",
+                f"  102 {stamp} node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+                f"  103 {stamp} /Applications/Claude.app/Contents/MacOS/Claude",
+                f"  104 {stamp} /usr/bin/vim notes.md",
+                "  garbage line",
+            ]
+        )
+
+        rows = _verify_namespace()["parse_ps"](ps_output)
+
+        assert [pid for pid, _ in rows] == [101, 102]
+        assert rows[0][1] == pytest.approx(1_700_000_000)
+
+    def test_lists_only_processes_started_before_the_install(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A process started before installed_plugins.json was written is named with its cwd and a restart step."""
+        namespace = _verify_namespace()
+        installed = tmp_path / "installed_plugins.json"
+        installed.write_text("{}", encoding="utf-8")
+        os.utime(installed, (1_700_000_000, 1_700_000_000))
+        ps_output = f"  201 {_lstart(1_699_990_000)} claude\n  202 {_lstart(1_700_010_000)} claude\n"
+        outputs = {"ps": ps_output, "lsof": "p201\nfcwd\nn/work/old-session\n"}
+
+        def fake_run(argv: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            """Answer ps and lsof with canned output instead of inspecting real processes."""
+            return subprocess.CompletedProcess(argv, 0, stdout=outputs[argv[0]], stderr="")
+
+        probe = namespace["ProcessProbe"](run=fake_run, platform="darwin", which=lambda name: f"/usr/bin/{name}")
+
+        status = namespace["run_sessions"](argparse.Namespace(installed=installed), probe)
+
+        out = capsys.readouterr().out
+        assert status == 0
+        assert "pid 201" in out
+        assert "/work/old-session" in out
+        assert "pid 202" not in out
+        assert "claude --resume <session-id>" in out
+
+    def test_unsupported_host_is_skipped_quietly(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Native Windows has no ``ps``; the warning step prints nothing and still succeeds."""
+        namespace = _verify_namespace()
+        installed = tmp_path / "installed_plugins.json"
+        installed.write_text("{}", encoding="utf-8")
+
+        def refuse_run(argv: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            """Fail the test if the unsupported-host path tries to run a process listing."""
+            raise AssertionError(f"unexpected process probe: {argv}")
+
+        probe = namespace["ProcessProbe"](run=refuse_run, platform="win32", which=lambda name: None)
+
+        status = namespace["run_sessions"](argparse.Namespace(installed=installed), probe)
+
+        assert (status, capsys.readouterr().out) == (0, "")

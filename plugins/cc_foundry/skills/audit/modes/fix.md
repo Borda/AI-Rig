@@ -85,7 +85,7 @@ After gate fires (Step 7): finding count > 10 or user picked option (a) "Fix aut
 
 **Gate authority**: sub-agent path → orchestrator Step 7 gate **skipped** — sub-agent runs own gate internally, authoritative. Inline batched path (≤10 findings) → orchestrator Step 7 gate authoritative, no sub-agent gate. Never double-gate.
 
-**Gate failure fallback**: if sub-agent returns `blocked_findings: []` with `fixed > 0` and `failed == 0` but no `gate-<file>.md` files appear in `<RUN_DIR>`, surface: `⚠ GATE-SKIPPED — sub-agent did not perform adversarial gate; review fixes manually before merging.` Missing `gate-<file>.md` expected — not a failure — for any file the sub-agent recorded under `fast_path` in `fix-summary.md` (mechanical, single-file, no CRITICAL/HIGH — see `audit-fix-prompt.md` §Gate fast path). Fire the warning only when a fixed file is absent from BOTH the gate files and `fast_path`.
+**Gate failure fallback**: if sub-agent returns `blocked_findings: []` with `fixed > 0` and `failed == 0` but no `gate-<file>.md` files appear in `<RUN_DIR>`, surface `⚠ GATE-SKIPPED — sub-agent did not perform adversarial gate; review fixes manually before merging.` in the Step 11 final report, not only as reply text before further tool calls. Missing `gate-<file>.md` expected — not a failure — for any file the sub-agent recorded under `fast_path` in `fix-summary.md` (mechanical, single-file, no CRITICAL/HIGH — see `audit-fix-prompt.md` §Gate fast path). Fire the warning only when a fixed file is absent from BOTH the gate files and `fast_path`.
 
 ```bash
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"

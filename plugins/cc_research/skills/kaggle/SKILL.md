@@ -82,9 +82,9 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse_kaggle_args.py" -- "$ARGUMENTS"  # timeout: 5000 — mode flags + keep-items; persists sentinels for Steps 3+4, clears a stale contract
 ```
 
-**Flag mutual-exclusion check** — if `EDA_ONLY` and `INFERENCE_ONLY` are both `true` (both `--eda-only` and `--inference-only` passed): print `` ! Conflicting flags: `--eda-only` and `--inference-only` are mutually exclusive (`--eda-only` is always-online with no training; `--inference-only` is always-offline/frozen-package with no EDA — see `foundation.md`). Pick one. `` then invoke `AskUserQuestion` — (a) **Abort** · (b) **Continue ignoring both** (falls back to full mode: neither eda-only nor inference-only applied). On Abort: stop.
+**Flag mutual-exclusion check** — if `EDA_ONLY` and `INFERENCE_ONLY` are both `true` (both `--eda-only` and `--inference-only` passed): invoke `AskUserQuestion` with question text `` ! Conflicting flags: `--eda-only` and `--inference-only` are mutually exclusive (`--eda-only` is always-online with no training; `--inference-only` is always-offline/frozen-package with no EDA — see `foundation.md`). Pick one. `` — (a) **Abort** · (b) **Continue ignoring both** (falls back to full mode: neither eda-only nor inference-only applied). On Abort: stop.
 
-**Unsupported flag check** — scan `$ARGUMENTS` for remaining `--<token>` tokens after supported flags extracted (`--eda-only`, `--inference-only`, `--offline-setup`, `--type`, `--resume`, `--keep`). Found: print `` ! Unknown flag(s): `--<token>`. Supported: `--eda-only`, `--inference-only`, `--offline-setup`, `--type <type>`, `--resume <path>`, `--keep "<items>"`. `` then invoke `AskUserQuestion` — (a) **Abort** · (b) **Continue ignoring**. On Abort: stop.
+**Unsupported flag check** — scan `$ARGUMENTS` for remaining `--<token>` tokens after supported flags extracted (`--eda-only`, `--inference-only`, `--offline-setup`, `--type`, `--resume`, `--keep`). Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--eda-only`, `--inference-only`, `--offline-setup`, `--type <type>`, `--resume <path>`, `--keep "<items>"`. `` — (a) **Abort** · (b) **Continue ignoring**. On Abort: stop.
 
 **Context collection** — run in parallel:
 
@@ -118,7 +118,7 @@ Branch on `$KAGGLE_CLI`:
 | -- | -- |
 | `ready` | Run the grounding queries below |
 | `absent` | Offer install — `AskUserQuestion`: (a) skip, ground from URL/user facts · (b) `pip install kaggle` then re-probe. Never install without asking |
-| `unauthorized` | Print the credential instructions below, `AskUserQuestion`: (a) skip · (b) user sets up token, then re-probe |
+| `unauthorized` | `AskUserQuestion` with the credential instructions below as the `preview` of both options: (a) skip · (b) user sets up token, then re-probe |
 
 **Credential secrecy — hard constraint.** The token never enters this session's context, and never a subagent's or Codex's.
 
@@ -128,7 +128,7 @@ Branch on `$KAGGLE_CLI`:
 - If a user pastes a token into chat, do not repeat it and tell them to rotate it at kaggle.com/settings.
 - `.claude/settings.json` deny-lists the common read paths, but the deny list is a backstop, not the rule — no alternate command form is permitted either.
 
-**Credential instructions** (print verbatim; the user does this, the skill never fabricates, reads, or echoes a token):
+**Credential instructions** (verbatim as both options' `preview`, never reply text before the question; the user does this, the skill never fabricates, reads, or echoes a token):
 
 > 1. Open <https://www.kaggle.com/settings> → **API** → **Create New Token** — downloads `kaggle.json`.
 > 2. `mkdir -p ~/.kaggle && mv ~/Downloads/kaggle.json ~/.kaggle/ && chmod 600 ~/.kaggle/kaggle.json`
@@ -162,7 +162,7 @@ head -3 "$KAGGLE_DATA"/sample_submission.csv 2>/dev/null || echo "no sample_subm
 
 Single-file downloads may arrive zipped — unzip into `$KAGGLE_DATA` before reading the header.
 
-**Full-data gate** — never pull the whole archive unprompted; competition data reaches hundreds of GB and the user may want only the notebook. Show the listing with sizes, then `AskUserQuestion`: (a) skip — notebook targets Kaggle-runtime paths (`/kaggle/input/<slug>/`) · (b) download all (state total size from the listing in the option description). On (b): `kaggle competitions download "$KAGGLE_SLUG" -p "$KAGGLE_DATA"`; `-f <name>` fetches one large file instead.
+**Full-data gate** — never pull the whole archive unprompted; competition data reaches hundreds of GB and the user may want only the notebook. `AskUserQuestion` with the listing (file · size, total last) as the `preview` of every option, not as reply text before the call (it can arrive as an empty progress update); Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full listing to `.temp/kaggle/<slug>-files.md` first, make every option's `preview` a compact summary ending `→ full listing: .temp/kaggle/<slug>-files.md`, and name that path in the question text, the total size always in the summary: (a) skip — notebook targets Kaggle-runtime paths (`/kaggle/input/<slug>/`) · (b) download all (state total size from the listing in the option description). On (b): `kaggle competitions download "$KAGGLE_SLUG" -p "$KAGGLE_DATA"`; `-f <name>` fetches one large file instead.
 
 Data downloaded locally does not change the notebook's path constants: `PATH_DATASET` stays the Kaggle-runtime path unless the user says the notebook runs locally.
 
@@ -349,7 +349,7 @@ echo "=== Bare '#' heading-spacer check (notebook-style.md) ==="
 python3 "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/fix_jupytext_blank_md.py" "$OUTFILE"  # timeout: 5000
 ```
 
-Print to terminal:
+Build this summary — the `preview` of every option of the follow-up gate below, not reply text before it (text written before a tool call can arrive as an empty progress update) — one line per item, within the preview cap (≤2000 chars, ≤12 lines; Claude Code withholds or clips a larger preview):
 
 - Output path (`$OUTFILE`)
 - Mode + resolved composition contracts
@@ -369,7 +369,7 @@ On (a): run `code "$OUTFILE"` via Bash. On (b): re-enter Step 3 with extension d
 
 **Package distillation gate** — invoke after follow-up gate resolves to Done:
 
-Benefits to state before asking: shared helpers tested once, used everywhere; wheel attachment on Kaggle faster than re-inlining; subsequent notebooks shorter; package tests catch regressions before submission.
+Benefits to state in the question text (not as reply text before the call — text written before a tool call can arrive as an empty progress update): shared helpers tested once, used everywhere; wheel attachment on Kaggle faster than re-inlining; subsequent notebooks shorter; package tests catch regressions before submission.
 
 Invoke `AskUserQuestion`:
 

@@ -4,7 +4,13 @@
 // gated. Diagnostic/recovery questions remain available. The existing
 // session sentinel, path checks, and TTL define whether this run is active.
 // Require a nonempty report and delivery of its complete matching header table
-// in the parent's transcript before the follow-up; a mere file is insufficient.
+// in the follow-up call's first question (every option preview within the
+// preview cap, or its question text — never an option description) or, over the
+// cap, the report file named in the question text with a compact summary
+// naming it in every option preview (report-header-table.js); a reply-text
+// table before the call does not count, since it can come back as an empty
+// progress update, and an unnamed file is insufficient. Stop still accepts the
+// turn's final reply text.
 // Missing/unreadable delivery evidence denies the transition with a recovery
 // reason. No active sentinel, expired/implausible state, or malformed hook
 // payload passes through. Unexpected hook failures retain the legacy fail-open
@@ -128,8 +134,11 @@ function denyReason(sentinelPath, now) {
     `research:topic report gate — ${reportFile} does not exist, so the report has not been written and its ` +
     "`---` header cannot have been printed. Go back to the report step of whichever path is running (Step 3 " +
     "single-agent, modes/team.md consolidation, or modes/plan.md Step P3), write the report to that exact " +
-    'path, then print its `---` header block to the terminal and mark the "Print report header" task ' +
-    "completed. Call AskUserQuestion only after that header has actually appeared in your response. If the " +
+    "path, then render its `---` header block as a Field | Value table. Call AskUserQuestion only after " +
+    "that, with the table as the `preview` of every option when it fits the preview cap (2000 chars, 12 lines), " +
+    `otherwise with ${reportFile} named in the question text and a compact summary naming it as every option's ` +
+    "preview — not as reply text — and mark the " +
+    '"Print report header" task completed in that same response. If the ' +
     "report genuinely cannot be produced, report that failure and block this follow-up; diagnostic/recovery questions remain available."
   );
 }
@@ -167,9 +176,19 @@ if (require.main === module) {
         if (reason) process.stdout.write(JSON.stringify({ decision: "block", reason }));
         process.exit(0);
       }
+      if (data.hook_event_name === "PostToolUse") {
+        // The follow-up was shown: settle Stop's check for this report version. No stdout, never blocks.
+        const { isWorkflowFollowUp, recordFollowUpShown } = require("./report-header-table.js");
+        if (data.tool_name !== "AskUserQuestion" || !isWorkflowFollowUp(data.tool_input, "research:topic"))
+          process.exit(0);
+        const sentinel = findSentinel(sentinelDir(), csidCandidates(process.env, data, process.ppid));
+        const active = sentinel ? activeReportFile(sentinel, Date.now()) : null;
+        if (active) recordFollowUpShown(sentinel, active, data);
+        process.exit(0);
+      }
       if (data.hook_event_name && data.hook_event_name !== "PreToolUse") process.exit(0);
       if (data.tool_name !== "AskUserQuestion") process.exit(0);
-      const { isWorkflowFollowUp, deliveryProblem } = require("./report-header-table.js");
+      const { isWorkflowFollowUp, followUpProblem } = require("./report-header-table.js");
       if (!isWorkflowFollowUp(data.tool_input, "research:topic")) process.exit(0);
 
       const sentinel = findSentinel(sentinelDir(), csidCandidates(process.env, data, process.ppid));
@@ -178,7 +197,7 @@ if (require.main === module) {
       let reason = denyReason(sentinel, Date.now());
       const active = activeReportFile(sentinel, Date.now());
       if (!reason && active) {
-        const problem = deliveryProblem(active, data.transcript_path);
+        const problem = followUpProblem(sentinel, active, data);
         if (problem)
           reason = "research:topic report gate — " + problem + ". Diagnostic/recovery questions remain available.";
       }

@@ -4,7 +4,7 @@
 
 Shared compact templates for `/analyse` and `/oss:review` **report files** (on-disk content only). All templates: `---` delimiters, entity identifier line, key-value fields, `→ saved to [skill-specific path]`.
 
-**Terminal-print note**: these ```` ```text ```` fences show the report file's raw on-disk format — write the file exactly as shown. Printing a report's header to terminal (consuming skill's "print report header" step): do NOT print this raw `---`-delimited block verbatim. Per quality-gates.md §Report File Format's Universal terminal-print rule, render as a two-column Markdown table instead (`Field | Value`, one row per key-value line above, `→ saved to ...` as its own trailing line after the table, not a table row).
+**Terminal-print note**: these ```` ```text ```` fences show the report file's raw on-disk format — write the file exactly as shown. Rendering a report's header for delivery (consuming skill's "print report header" step — follow-up option preview or final reply, as that skill directs; never both): do NOT show this raw `---`-delimited block verbatim. Per quality-gates.md §Report File Format's Universal terminal-print rule, render as a two-column Markdown table instead (`Field | Value`, one row per key-value line above, `→ saved to ...` as its own trailing line after the table, not a table row).
 
 ## PR Summary
 

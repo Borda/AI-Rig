@@ -119,14 +119,14 @@ After challenger returns: read `$EXT_RUN_DIR/challenger-review.md`. Annotate eac
 
 **Fallback when challenger is unavailable or fails** — `$EXT_RUN_DIR/challenger-review.md` doesn't exist after spawn returns, OR returned JSON envelope has `status != "done"`, OR agent itself missing (`foundry:challenger` not installed):
 
-- Print: `⚠ Challenger review unavailable — proceeding without adversarial annotation. Manual review of adoption table recommended before E13 apply.`
+- Add `⚠ Challenger review unavailable — proceeding without adversarial annotation. Manual review of adoption table recommended before E13 apply.` above the adoption table in E13's previews (not reply text before a tool call)
 - Skip per-row Verdict column and **Discarded by challenger** section
 - Continue to E13 with unannotated adoption table
 - Do NOT block workflow — challenger is advisory, not gating
 
 **E13: Gate — AskUserQuestion**
 
-Present source report + adoption table + install-as-is recommendation (when applicable). Then call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments:
+Call `AskUserQuestion` tool with the source report summary + adoption table + install-as-is recommendation (when applicable) as the `preview` of every option, not as reply text before the call (text written before a tool call can arrive as an empty progress update) — do NOT write options as plain text first. Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full summary, table and recommendation to `$EXT_RUN_DIR/adoption.md` first, make every option's `preview` a compact summary ending `→ full adoption table: $EXT_RUN_DIR/adoption.md`, and name that path in the question text. Map options directly into tool call arguments:
 
 - question: "Apply external source candidates?" When install-as-is IS recommended, include all four options:
 - (a) label: `Apply Group A candidates` — description: adopt-as-is and tweak items only

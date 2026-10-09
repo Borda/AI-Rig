@@ -116,7 +116,7 @@ Downstream blocks read back, e.g. `IFS= read -r TEAM_MODE < "${TMPDIR:-/tmp}/dev
 
 **Codemap flag parsing** — no separate step: `dev_parse_args.py` above already resolves `--codemap`/`--no-codemap` into `dev-refactor-codemap-${CSID}`, the skill-specific file `dev_codemap_gate.py` reads (same as feature/fix/debug) — stale values from a prior run of another skill can't leak in.
 
-**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. Found → print `` ! Unknown flag(s): `--<token>`. Supported: `--plan`, `--team`, `--worktree`, `--no-batch`, `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--accept-no-plan`, `--repo`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. Found → invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--plan`, `--team`, `--worktree`, `--no-batch`, `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--accept-no-plan`, `--repo`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Worktree isolation
 
@@ -264,7 +264,7 @@ Arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits
 
 Parse result:
 
-- **Blockers found** → STOP. Present findings, then invoke `AskUserQuestion` — "Challenger raised N blocker(s) on the refactoring approach. How to proceed?" · (a) **Revise scope** — return to Step 1 with the blocker as a constraint · (b) **Accept risk** — proceed, record acceptance in `$DEV_DIR/checkpoint.md` · (c) **Abort**. On Abort: stop. Never proceed on prose alone.
+- **Blockers found** → STOP. Invoke `AskUserQuestion` with the blocker findings (one line each: claim · file:line · evidence) as the `preview` of every option, not as reply text before the call (over the preview cap — ≤2000 chars, ≤12 lines — Write them to `$DEV_DIR/blockers.md` first, preview a compact summary ending `→ full list: $DEV_DIR/blockers.md`, and name that path in the question text) — "Challenger raised N blocker(s) on the refactoring approach. How to proceed?" · (a) **Revise scope** — return to Step 1 with the blocker as a constraint · (b) **Accept risk** — proceed, record acceptance in `$DEV_DIR/checkpoint.md` · (c) **Abort**. On Abort: stop. Never proceed on prose alone.
 - **Concerns only** → surface as advisory before coverage audit; continue.
 - **No findings / all refuted** → proceed.
 

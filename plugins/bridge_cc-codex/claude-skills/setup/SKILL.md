@@ -28,7 +28,7 @@ Deterministic planner performs credential-free inspection, returns setup result 
 For `check`, report the result and stop. For `all`, `configure`, or `repair`:
 
 1. If the planned `operations` list is empty, report nothing to configure and stop under `configure` or `repair`; under `all`, continue to the stages below without requesting approval.
-2. Show every planned `operations` entry and the approval digest before mutation.
+2. Carry every planned `operations` entry and the approval digest in the step-3 question (every option's `preview`) before mutation — never only as reply text before it, which can arrive as an empty progress update. Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll). Over it: Write every `operations` entry and the digest to `.temp/bridge-setup/operations-<first 12 digest chars>.md` first, make every option's `preview` the operation count, the approval digest and `→ full operations: <path>`, and name that path in the step-3 question text — never ask approval for operations the user could not see.
 3. Obtain explicit approval for exactly that digest via the `AskUserQuestion` tool — never a plain-text question. State:
    - action and purpose;
    - exact native argv and resolved target/scope;
@@ -68,7 +68,7 @@ When `live=prompt` or `live=required` and `remaining` still lists `live-verifica
 - Setup always owns one resolved peer target.
 - To prepare both integrations, finish peer lifecycle from Claude, start any required fresh session, then run `$bridge:setup` from Codex for its peer; no digest, state claim, or readiness result is shared between hosts.
 - Loaded-host branch is check/bootstrap-only, never mutates its current invocation surface.
-- `bridge_status` evidence belongs to a fresh Codex session. An unbound reverse backend is loaded but has no selected project; use `bridge_bind_workspace` there with empty arguments and native human folder selection plus exact canonical confirmation. Require its current `binding_id` and intended workspace before claiming reverse MCP session/workspace ready or passing executable calls; binding grants no runtime permission or paid-call consent.
+- `bridge_status` evidence belongs to a fresh Codex session. An unbound reverse backend is loaded but has no selected project; use `bridge_bind_workspace` there with the known absolute folder as untrusted `proposed_workspace` and exact canonical native confirmation; empty arguments retain manual selection plus confirmation. Require its current `binding_id` and intended workspace before claiming reverse MCP session/workspace ready or passing executable calls; binding grants no runtime permission or paid-call consent.
 - Report strongest verified level, exact remaining action, confidence, and limits.
 
 > Never equate static readiness, process exit, host authentication, session readiness, workspace readiness, or live verification.

@@ -55,6 +55,8 @@ Do NOT encode head as HTML comments (`<!-- ... -->`) or any other form — orche
 
 **Confidence parsing:** Parse each agent's `confidence` from JSON envelope. Assign `codex` fixed confidence 0.75 (moderate — static analysis, no runtime context).
 
+**Missing-package gaps:** copy every agent's `### Ephemeral dependency evidence` line verbatim into `Review Confidence`. Such a line closes the same package gap raised by any other reviewer (Codex "not installed", perf "nothing measured") — cite it as the closure, never carry that gap into the aggregate score or `Confidence:` header. A gap naming only "<pkg> not installed / not importable", with neither an evidence line nor a failed-step reason, stays open: append `ephemeral-install procedure not attempted` and add the overlay run to `Next steps`.
+
 **Findings sidecar — write it BEFORE the report.** `oss:resolve` and later re-reviews read this file instead of re-parsing the report, so it carries every actionable finding the report will show, with nothing dropped and nothing extra:
 
 1. Write `<REPORT_DIR>/findings.jsonl` with the Write tool, one compact JSON object per finding in report order. Fields:

@@ -319,14 +319,18 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:
 
 ### 6a — Follow-up gate
 
-**Hook-enforced**: on `Stop`, `hooks/enforce-analyse-header.js` keeps a turn going once per report when it ends without the matching header table — skipping the follow-up question does not skip delivery. It also blocks only this workflow's follow-up question until the current report exists and every `---` header field appears in one matching two-column table in the parent reply since the last human turn. Missing/unreadable transcript evidence blocks this transition; reprint the header, then retry. Diagnostic/recovery questions remain available; use their own question header, not `oss-analyse`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
+**Hook-enforced**: on `Stop`, `hooks/enforce-analyse-header.js` keeps a turn going once per report when it ends without the matching header table — skipping the follow-up question does not skip delivery. It also blocks only this workflow's follow-up question until the current report exists and every `---` header field appears in one matching two-column table in that question's option previews within the preview cap — or, over the cap, the question text names the report file and every option preview is a compact summary within the cap naming it — the question-time check reads only the call, so a reply-text table before it does not count (it can come back as an empty progress update). Missing delivery evidence blocks this transition; apply the placement the deny reason names, then retry. Diagnostic/recovery questions remain available; use their own question header, not `oss-analyse`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
 
-Invoke `AskUserQuestion`. Options depend on mode:
+**Delivery — once**: the mode's delivery block (report `---` header as a `Field | Value` table, then its compact summary and `→ saved to <path>`) is shown only as the `preview` of every option below — never also as reply text, never Bash/tool stdout; on 5.5 models text before a tool call may come back as an empty progress update. **Preview cap**: ≤2000 chars and ≤12 lines per preview, every line counted — Claude Code withholds a longer preview and clips a taller one, no scroll. Block over the cap (a header of 11+ fields alone is): the report file is the full copy, every option's `preview` is a compact summary — the `Title`, `Outcome` and `Confidence` rows (those present) verbatim as a `Field | Value` table, then `→ full header + report: <REPORT_FILE>` — and the question text names that same path. `REPLY_MODE=true` (no 6a question): the block opens the turn's final reply, after Step 7's last tool call; the `Stop` hook enforces this fallback.
+
+> **Output-Routing exemption**: on the 6a question path the delivery block lives only in the option previews, so quality-gates.md §Report File Format's table-first-in-reply rule and Output Routing step 2a apply to the `REPLY_MODE=true` path only.
+
+Invoke `AskUserQuestion`. Options depend on mode; in both menus every option's `preview` = the delivery block above, verbatim, table first — or, over the preview cap, its compact summary naming the report path:
 
 **Thread mode** (`$CLEAN_ARGS` is a number):
 
 - header: `oss-analyse`
-- question: "What next?"
+- question: "What next? (report saved at \<REPORT_FILE>.)"
 - (a) label: `/develop:fix` — description: diagnose and fix the reported issue (requires `develop` plugin)
 - (b) label: `/develop:feature` — description: implement as new feature (requires `develop` plugin)
 - (c) label: `draft reply` — description: run `/oss:analyse $CLEAN_ARGS --reply` to shepherd a contributor-facing reply
@@ -335,7 +339,7 @@ Invoke `AskUserQuestion`. Options depend on mode:
 **Vitality / ecosystem mode** (`$CLEAN_ARGS` is `vitality` or `ecosystem`):
 
 - header: `oss-analyse`
-- question: "What next?"
+- question: "What next? (report saved at \<REPORT_FILE>.)"
 - (a) label: `/oss:analyse <N> --reply` — description: draft reply for specific thread
 - (b) label: `/oss:review <N>` — description: full code review for specific PR (requires `oss` plugin)
 - (c) label: `skip` — description: no action

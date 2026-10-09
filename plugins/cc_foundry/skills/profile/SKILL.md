@@ -137,7 +137,9 @@ echo '{"status":"complete","since":"'"$SINCE"'","session_id":"'"$SESSION_ID"'","
 
 ## Step 4: Emit terminal output
 
-Read YAML header from `$REPORT_DIR/report.md` (first block between `---` lines), render as two-column Markdown table (`Field | Value`, one row per key, file order) per quality-gates.md §Report File Format's Universal terminal-print rule — never print raw `---`-delimited block. Then print `→ $REPORT_DIR/report.md`. Then read Headline split block plus top 3 sessions from per-session table, and — when a `## Tokens & cost` section is present — window total or single-session total cost line, surface both as executive summary (per quality-gates.md output routing).
+Build the delivery block: read YAML header from `$REPORT_DIR/report.md` (first block between `---` lines), render as two-column Markdown table (`Field | Value`, one row per key, file order) per quality-gates.md §Report File Format — never the raw `---`-delimited block. Then `→ $REPORT_DIR/report.md`. Then read Headline split block plus top 3 sessions from per-session table, and — when a `## Tokens & cost` section is present — window total or single-session total cost line, add both as executive summary. Deliver it once: shown only as the `preview` of every Step 5 option — never also as reply text, never Bash/tool stdout; on 5.5 models text before a tool call may come back as an empty progress update. **Preview cap**: ≤2000 chars and ≤12 lines per preview, every line counted — Claude Code withholds a longer preview and clips a taller one, no scroll. Block over the cap: the report file is the full copy, every Step 5 option's `preview` is a compact summary — the header table alone when it fits, else its `Outcome` and `Confidence` rows verbatim plus the headline split — ending `→ full header + report: $REPORT_DIR/report.md`, and the Step 5 question text names that same path. Step 5 always asks once a report exists, so there is no reply-text path; a turn ending without the question gets the table demanded as final reply text by the `Stop` hook.
+
+> **Output-Routing exemption**: the delivery block lives only in the Step 5 option previews, so quality-gates.md §Report File Format's table-first-in-reply rule and Output Routing step 2a do not apply to the reply here; the full dump below still goes to `.temp/`.
 
 Also Write the long-output dump per quality-gates rule:
 
@@ -147,16 +149,18 @@ Write(file_path=".temp/output-profile-<branch>-<YYYY-MM-DD>.md", content=<full r
 
 Where `<branch>` = `$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')`.
 
-Backed by `hooks/enforce-profile-header.js`: on `Stop` it keeps a turn going once per report when it ends without the matching header table, so skipping the follow-up does not skip delivery; while Step 1 state is live, Step 5's workflow follow-up requires a saved report and its matching header table in the current parent reply. Missing/unreadable delivery evidence blocks that transition; print it again before retrying. Diagnostic/recovery questions remain available under their own question header, not `profile`.
+Backed by `hooks/enforce-profile-header.js`: on `Stop` it keeps a turn going once per report when it ends without the matching header table, so skipping the follow-up does not skip delivery; while Step 1 state is live, Step 5's workflow follow-up requires a saved report and its matching header table in that question's option previews — the question-time check reads only the call, so a reply-text table before it does not count (it can come back as an empty progress update). Within the preview cap the table counts in every option's preview; over it, the question text names the report file and every option preview is a compact summary within the cap naming it. Missing/unreadable delivery evidence blocks that transition; apply the placement the deny reason names before retrying. Diagnostic/recovery questions remain available under their own question header, not `profile`.
 
 ## Step 5: Follow-up gate
 
 Invoke `AskUserQuestion` (denied by `enforce-profile-header.js` until Step 2 has written `report.md` — if the analyzer found no sessions, report that and stop instead of asking):
 
 - header: `profile`
+- question: "What next? (report saved at \<REPORT_DIR>/report.md.)"
 - (a) Drill into slowest session — re-run with `--session-id <id>`
 - (b) Re-run with different window (`--since 7d`, `--since 30d`)
 - (c) Skip — done
+- every option: `preview` = the Step 4 delivery block, verbatim, table first — its only copy — or, over the preview cap, the Step 4 compact summary naming the report path
 
 </workflow>
 

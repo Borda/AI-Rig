@@ -252,7 +252,7 @@ Pass `$F2_PROMPT` (fully expanded) as the `prompt=` argument to `Agent(...)`.
 
 **Spawn note**: the F2 scientist runs in the background — spawn, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). Timeout is handled post-hoc — on the completion notification, check `$FORTIFY_DIR/ablation-candidates.jsonl`; if missing or empty, stop with `"fortify: Scientist timed out. Check $FORTIFY_DIR/ for partial output."` and surface with ⏱.
 
-Read `ablation-candidates.jsonl` after scientist completes. If `--max-ablations <M>` specified and component count + 1 (for full variant) exceeds M: sort by `expected_importance` (HIGH first, then MEDIUM, then LOW), keep top M-1 components plus always include `full` sanity-check variant. **Log dropped components**: print a warning listing each dropped component by `component_id` and `expected_importance` so users can verify the scientist's importance estimates before proceeding. Include this list in the F7 report under `## Dropped Variants`.
+Read `ablation-candidates.jsonl` after scientist completes. If `--max-ablations <M>` specified and component count + 1 (for full variant) exceeds M: sort by `expected_importance` (HIGH first, then MEDIUM, then LOW), keep top M-1 components plus always include `full` sanity-check variant. **Log dropped components**: list each dropped component by `component_id` and `expected_importance` in the Step F7 report's Skipped Variants section and the Step F8 terminal summary (text written before a tool call can arrive as an empty progress update) so users can verify the scientist's importance estimates before proceeding. Include this list in the F7 report under `## Dropped Variants`.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"

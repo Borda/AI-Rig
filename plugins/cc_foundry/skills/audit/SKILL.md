@@ -57,7 +57,7 @@ BATCH_SIZE_MIN=5       # minimum files per batch; ensures curator gets sufficien
 MAX_BATCHES=4          # total batch cap; EFFECTIVE_BATCH = max(BATCH_SIZE_MIN, ceil(total / MAX_BATCHES))
 ADVERSARIAL_BATCH_SIZE=2  # adversarial phases (A, A-prime) use smaller batches for deeper per-file attention
 AGENT_CALL_BUDGET=55   # target tool-calls per spawned agent; above ~60 agents stall mid-task without returning an envelope
-CAP_OPUS=5             # per claude-config.md §Parallel Spawn Ceilings — foundry:curator, foundry:challenger (opus/opusplan tier)
+CAP_OPUS=5             # per claude-config.md §Parallel Spawn Ceilings — foundry:curator, foundry:challenger (opus tier)
 CAP_SONNET=8           # per claude-config.md §Parallel Spawn Ceilings — foundry:qa-specialist (Phase D) (sonnet tier)
 WAVE_STEP=5            # growth toward a tier's ceiling happens this much at a time, never a sudden jump to the cap
 ```
@@ -124,7 +124,7 @@ AUDIT_TPL=$(cat "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || p
 
 Place these three lines at the top of every Bash block in Steps 2–11 that references either variable.
 
-**Unsupported flag check** — after extracting supported flags (`--local`, `--upgrade`, `--adversarial`, `--efficiency`, `--skip-gate`, `--keep`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found → print `` ! Unknown flag(s): `--<token>`. Supported: `--local`, `--upgrade`, `--adversarial`, `--efficiency`, `--skip-gate`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after extracting supported flags (`--local`, `--upgrade`, `--adversarial`, `--efficiency`, `--skip-gate`, `--keep`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found → invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--local`, `--upgrade`, `--adversarial`, `--efficiency`, `--skip-gate`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Step 1: Run pre-commit (if configured)
 
@@ -180,8 +180,9 @@ Enumerate everything in scope with built-in tools. Run all Glob calls in paralle
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 if [ "$LOCAL_MODE" = "true" ]; then
-  for pj in plugins/*/.claude-plugin/plugin.json plugins/*/.codex-plugin/plugin.json; do
-    [ -f "$pj" ] || continue
+  find plugins -mindepth 3 -maxdepth 3 -name plugin.json -type f \
+    \( -path 'plugins/*/.claude-plugin/*' -o -path 'plugins/*/.codex-plugin/*' \) 2>/dev/null |
+  while IFS= read -r pj; do
     plugin_name=$(basename "$(dirname "$(dirname "$pj")")")
     python3 -c "
 import json
@@ -472,6 +473,8 @@ When user picks fix option (a–c): run Steps 8–10 inline via `modes/fix.md` (
 - Efficiency override active: (a) + (b) + (c) + distill = 4 ✓ — (d) Skip replaced by distill label
 
 - question: "What next?" (include counts, e.g. "2 critical, 4 high, 3 medium, 1 low. What next?")
+
+- every option: `preview` = the Step 7 Audit Report (heading, `Total:` line, every finding row), verbatim — its only copy (`steps-4-5-7.md` §Step 7) — or, over the preview cap (≤2000 chars, ≤12 lines), the Step 7 compact summary naming `$RUN_DIR/audit-report.md`, which the question text then names too
 
 After completing `--upgrade`, `--adversarial`, or `--efficiency`: also fire this gate. For (d) Skip: remove the mode just run from the "for other modes" list. When `--adversarial --efficiency` combined: fire gate once after both complete with merged finding counts; remove both from (d) hint. Efficiency distill override: selecting distill option invokes `/distill executables` → `foundry:sw-engineer` extraction then `/audit --efficiency` re-run to confirm savings.
 

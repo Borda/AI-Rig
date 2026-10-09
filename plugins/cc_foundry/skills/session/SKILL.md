@@ -61,7 +61,7 @@ If `MODE` matches:
 - `sweep` → **Mode: sweep**
 - `drop` (alias: `archive`) → **Mode: drop**
 
-**Unsupported flag check** — after extracting mode token, scan `$ARGUMENTS` for remaining `--<token>` patterns. Found: print `` ! Unknown flag(s): `--<token>`. Supported modes: dump, recall, list, park, sweep, drop. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke correctly) · (b) **Continue ignoring** (skip unknown flags, proceed with recognized mode).
+**Unsupported flag check** — after extracting mode token, scan `$ARGUMENTS` for remaining `--<token>` patterns. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported modes: dump, recall, list, park, sweep, drop. `` — (a) **Abort** (stop, re-invoke correctly) · (b) **Continue ignoring** (skip unknown flags, proceed with recognized mode).
 
 Otherwise (empty, unrecognized, misspelled): use `AskUserQuestion`:
 
@@ -277,7 +277,7 @@ Read the **conversation**, not the filesystem. Nothing to run — history alread
 
 Call `TaskList` for fourth row. Detection stays **behavioural** — a new top-level request without an answer to prior question — never semantic-similarity scoring.
 
-Render:
+Build (not printed — the question below carries it):
 
 ```markdown
 ## Unlanded — [item count] items
@@ -287,7 +287,7 @@ Render:
 | 1 | retry backoff shape | deferred | user said "later, after the bench lands" |
 ```
 
-Then `AskUserQuestion`: (a) park all · (b) park a subset (list the numbers) · (c) skip. Selecting (a) or (b) runs **Mode: park** for each chosen item in the same turn.
+Then `AskUserQuestion`: (a) park all · (b) park a subset (list the numbers) · (c) skip. Selecting (a) or (b) runs **Mode: park** for each chosen item in the same turn. The Unlanded table is shown only as every option's `preview`, verbatim — never also as reply text (on 5.5 models text before a tool call may come back as an empty progress update). Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full table to `.temp/session/unlanded.md` first, make every option's `preview` a compact summary ending `→ full table: .temp/session/unlanded.md`, and name that path in the question text. Zero items: no question — `## Unlanded — 0 items` opens the final reply instead.
 
 When a `session-restore.js`-injected handover doc is present at the start of this conversation (a freshly restored session), its `## Decisions` and `## Outstanding` sections are part of the candidate set too — an item listed there and not yet re-confirmed as landed in the live turns since restore still counts as stated-but-unlanded. Do not require post-restore Edit/Write evidence for something the restored doc's own `## Files touched` table already marked `done`.
 
@@ -299,7 +299,7 @@ End with a `## Confidence` block per `quality-gates.md` — score on: every row 
 
 ### Substep 6a: Fuzzy-match the target
 
-Match everything after `drop ` against slugs and summaries in `.claude/state/session/PARKED.md`. Ambiguous (2+ equally close): list them, `AskUserQuestion` to disambiguate. No match: render parked list, stop.
+Match everything after `drop ` against slugs and summaries in `.claude/state/session/PARKED.md`. Ambiguous (2+ equally close): `AskUserQuestion` to disambiguate, one option per candidate (closest 4; label = slug, description = its summary). No match: render parked list, stop.
 
 ### Substep 6b: Remove the bullet and log the closure
 

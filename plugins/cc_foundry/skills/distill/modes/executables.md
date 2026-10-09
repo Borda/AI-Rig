@@ -62,7 +62,7 @@ No qualifying clusters found: print `✓ No extraction candidates at current thr
 
 ## Step E3: Present candidates and gate
 
-Print candidate summary table:
+Candidate summary table — the `preview` of every option of the question below, not reply text (text written before a tool call can arrive as an empty progress update). Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full table to `$RUN_DIR/candidates.md` first, make every option's `preview` a compact summary ending `→ full table: $RUN_DIR/candidates.md`, and name that path in the question text:
 
 ```text
 Bin/ extraction candidates:
@@ -79,7 +79,7 @@ Bin/ extraction candidates:
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract_code_blocks.py" "$_SCAN_DIR" --min-tokens 5 > "$RUN_DIR/blocks-before.jsonl"  # timeout: 30000
 ```
 
-Then call `AskUserQuestion` — do NOT write options as plain text first. Map options directly into tool call arguments:
+Then call `AskUserQuestion`, the candidate table as every option's `preview` — do NOT write options as plain text first. Map options directly into tool call arguments:
 
 - question: "Extract candidates to bin/ scripts?"
 - (a) label: `HIGH only` — description: extract only HIGH-verdict clusters
@@ -92,20 +92,20 @@ Then call `AskUserQuestion` — do NOT write options as plain text first. Map op
 
 ## Step E4: Extract
 
-> **Worktree isolation caveat** — `foundry:sw-engineer` runs with `isolation: worktree`. File writes inside agent (including `$RUN_DIR/extract-<cluster-id>.md` summary) land in agent's worktree under `.claude/worktrees/<id>/`, NOT main working tree. After agent returns JSON envelope, orchestrator must either (a) read summary from returned worktree path declared in agent's stdout, or (b) cherry-pick/merge worktree branch before reading `$RUN_DIR/extract-<cluster-id>.md` from main tree. Path resolution: use absolute main-tree path `$(git rev-parse --show-toplevel)/$RUN_DIR/extract-<cluster-id>.md` in prompt so agent has unambiguous target; agent's worktree shares same path layout, merging worktree branch back deposits summary at same path in main tree.
+> **Explicit worktree isolation** — each E4 spawn passes `isolation="worktree"` itself (`agents/sw-engineer.md` §Worktree isolation): clusters run in parallel, two may share one source `.md`, and the diff gate below reverts with `git checkout HEAD -- <file>` — in one shared tree that revert wipes a sibling cluster's edit or the user's uncommitted work. An isolated agent cannot write into the main tree, so its summary rides in the envelope, never a file; its edits stay in its worktree until §Transplant below.
 
-For each selected cluster, resolve `$_FS` path, spawn **foundry:sw-engineer** (one per cluster, all parallel — issue all in a single response). Substitute absolute `$RUN_DIR` value into prompt before spawning (resolve via `$(git rev-parse --show-toplevel)/$RUN_DIR`):
+For each selected cluster, resolve `$_FS` path, spawn **foundry:sw-engineer** (one per cluster, all parallel — issue all in a single response). Substitute `<BASE_SHA>` = main-tree `git rev-parse HEAD` into every prompt before spawning; HEAD stays fixed until E6 commits, so §Transplant reuses the same value:
 
 > **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing — work-displacement only; an isolation-motivated spawn (adversarial reviewer, distinct specialist role, model tier, worktree) runs regardless of size. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
 ```text
-Agent(subagent_type="foundry:sw-engineer", prompt="
+Agent(subagent_type="foundry:sw-engineer", isolation="worktree", name="extract-<cluster-id>", description="<cluster purpose, 3-5 words>", prompt="Extract cluster <cluster-id> to bin/ — <purpose>.
 _FS=$(python \"\${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py\" foundry skills/_shared 2>/dev/null || echo \"plugins/cc_foundry/skills/_shared\")
 cat \"$_FS/bin-authoring-guide.md\"
 Follow bin/ script conventions from the file loaded above.
-Task: extract cluster <cluster-id> to bin/.
 Cluster: purpose=<purpose>, language=<lang>, param slots=<differs-by values>.
 Source files: <list of source .md files>.
+BASE — step 0, before any edit: git status --porcelain must print nothing; then git branch --show-current, then git checkout -B <that branch> <BASE_SHA> (no branch printed → git checkout --detach <BASE_SHA>), then git merge-base --is-ancestor <BASE_SHA> HEAD. Any step fails → change nothing more, return status blocked with reason \"base mismatch\".
 **SURGICAL EDIT CONSTRAINT — mandatory**: modify ONLY the identified target block in each source file. Do NOT edit frontmatter, surrounding prose, other code blocks, check tables, or any content outside the target block. If you notice other issues in the file, record them in the summary — do not fix them.
 Steps:
 1. Create bin/<recommended-target> as a standalone Python executable following bin-authoring-guide.md: module docstring with Usage and Exit codes, argparse, type hints, __name__ guard. NEVER a .sh file — these plugins run on native Windows, where .sh does not execute (plugins/CLAUDE.md §Installability). Portability: pathlib, temp dir via os.environ.get(\"TMPDIR\") or tempfile.gettempdir(), session token via os.environ.get(\"CSID\") or os.environ.get(\"CLAUDE_CODE_SESSION_ID\") or \"shared\", never os.getppid(). CLI params: one named arg per param slot.
@@ -118,12 +118,21 @@ Steps:
    Count non-target changed lines. If any lines outside the target block changed: revert the file (git checkout HEAD -- <file>) and re-apply edit targeting only the block. Report diff line counts in summary.
 4. Verify: grep source files to confirm old block body absent; confirm bin/ script exists; run all three gates and confirm each exits 0 — python plugins/cc_foundry/bin/check_orphaned_bin.py, python plugins/cc_foundry/bin/check_cli_flag_drift.py, and python plugins/cc_foundry/bin/check_fence_symmetry.py <changed .md files>.
 5. Create test file: write `plugins/<plugin>/tests/test_<script-basename>.py` (or the matching `tests/` dir for the plugin) with at minimum pytest tests covering the public CLI entry point (use monkeypatch/capsys/tmp_path). Follow the test style in `tests/` alongside the bin/ script — check existing tests for fixture and import patterns. Non-empty file required; empty file fails Check R4.
-Write extraction summary to $RUN_DIR/extract-<cluster-id>.md. Include: diff line counts per file, any reverts performed, incidental issues noticed but NOT fixed.
-Return ONLY: {\"status\":\"done\",\"file\":\"$RUN_DIR/extract-<cluster-id>.md\",\"bin_script\":\"<path>\",\"source_files_updated\":N,\"test_file_created\":bool,\"confidence\":0.N}
+Put the extraction summary in the envelope summary field, never in a file — your worktree drops untracked and ignored files when removed, and main-tree paths are refused. Include: diff line counts per file, any reverts performed, incidental issues noticed but NOT fixed.
+Return ONLY: {\"status\":\"done\",\"changed\":[\"<every path you created or modified>\"],\"bin_script\":\"<path>\",\"source_files_updated\":N,\"test_file_created\":bool,\"summary\":\"<at most 5 lines>\",\"confidence\":0.N}
 ")
 ```
 
-**Health monitoring for extraction spawns** (`_shared/agent-spawn-protocol.md`): sw-engineer spawns run in background. Issue them together with `$RUN_DIR/agent-watch-extract.tsv` (one row per cluster: `<cluster-id>\t$RUN_DIR/extract-<cluster-id>.md\t900`) in one response, end turn, resume on each completion notification and run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$RUN_DIR"` once — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. On each notification read that cluster's `$RUN_DIR/extract-<cluster-id>.md`. Empty or missing: mark that cluster `timed_out`, surface with ⏱, continue with completed clusters.
+**Health monitoring for extraction spawns** (`_shared/agent-spawn-protocol.md`): sw-engineer spawns run in background. Issue them together with `$RUN_DIR/agent-watch-extract.tsv` (one row per cluster: `<cluster-id>\t-\t900`, envelope-only) in one response, end turn, resume on each completion notification and run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$RUN_DIR"` once — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. On each notification Write that cluster's envelope `summary` to `$RUN_DIR/extract-<cluster-id>.md` (orchestrator's own tree). No envelope: mark that cluster `timed_out`, surface with ⏱, continue with completed clusters.
+
+**Transplant — after the last E4 envelope, before E5; one cluster at a time, selection order.** Per `done` cluster, take `<wt>` and `<branch>` from its agent result:
+
+1. `git -C <wt> rev-parse HEAD` must print `<BASE_SHA>`; otherwise stale base → keep `<wt>`, surface `⚠ <cluster-id> stale base — not transplanted`, next cluster.
+2. `git -C <wt> add -- <changed paths from envelope>`, then `git -C <wt> diff --cached --binary <BASE_SHA> > "$RUN_DIR/extract-<cluster-id>.patch"`.
+3. `git apply "$RUN_DIR/extract-<cluster-id>.patch"` in the main tree. Fails (sibling cluster or uncommitted edit touched the same lines) → change nothing more, keep `<wt>`, surface `⚠ <cluster-id> not transplanted — merge by hand from <wt>`.
+4. Applied → assert `<wt>` lies under `<main-tree root>/.claude/worktrees/`, then `git worktree remove --force <wt>` and `git branch -D <branch>`. Assertion or removal fails → change nothing, list `<wt>` as leftover (`git worktree remove`, then `git worktree prune`). Never remove a path outside `.claude/worktrees/`.
+
+E5 then sees every transplanted change in the main tree; an untransplanted cluster's files are absent from the E5 list.
 
 ## Step E5: Re-audit changed files
 

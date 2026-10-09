@@ -61,7 +61,7 @@ fi
 
 `APPROVE_ALL=true`: every `AskUserQuestion` below **skipped** — ★ recommended option applied automatically. Print `[--approve] auto-accepting recommended option` in place of question.
 
-**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: print `` ! Unknown flag(s): `--<token>`. Supported: `--approve`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--approve`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Python detection
 
@@ -359,7 +359,7 @@ Options:
 
 - On **(b)**: set `SKIP_CONFLICTS_MODE=true`.
 - On **(c)**: initialize `APPROVED_CONFLICT_ENTRIES=()` and `PER_ITEM_REVIEW_MODE=true`.
-  - **Cap**: `${#LINK_CONFLICTS[@]} > 10`: emit warning "⚠ ${#LINK_CONFLICTS[@]} conflicts found — per-item review capped at 10; showing first 10. Run again for the rest.", process only first 10.
+  - **Cap**: `${#LINK_CONFLICTS[@]} > 10`: put "⚠ ${#LINK_CONFLICTS[@]} conflicts found — per-item review capped at 10; showing first 10. Run again for the rest." in the per-entry question text below (not reply text before the call), process only first 10.
   - Collect per-entry consent in **ONE** `AskUserQuestion` call: build `ceil(N/4)` questions, each `multiSelect: true` with up to 4 options (harness cap), one option per conflicting entry, labelled with entry name and its current state; header "Replace these?".
   - A ticked option = approve replacing that entry; unticked = keep existing. Cap 10 conflicts → 3 questions in one call. Do not iterate one call per entry — per-entry consent preserved by the per-entry option, not by a serial window.
   - For each ticked entry: append entry's identifier — the destination path exactly as the Phase 2 conflict line names it, i.e. `rules/foundry-<name>.md` for rules, or `TEAM_PROTOCOL.md` — to `APPROVED_CONFLICT_ENTRIES`; unticked entries left out. Phase 4 matches this string verbatim against `rules/$base`, so a bare `foundry-<name>.md` never matches and silently skips an approved rule.
@@ -434,7 +434,7 @@ python "$PLUGIN_ROOT/bin/purge_plugin_cache.py" --protect "$PLUGIN_ROOT" --prote
 
 Output `nothing to purge …`: print it, skip to Step 12 (no prompt).
 
-Otherwise the report lists `<plugin>/<version>  <size>  orphaned <N>d ago  leases:N` plus a total. Deletion is irreversible, so gate it. `APPROVE_ALL=true`: print `[--approve] auto-accepting: purge all listed cache versions`, take option (a) without prompting. Else invoke `AskUserQuestion`:
+Otherwise the report lists `<plugin>/<version>  <size>  orphaned <N>d ago  leases:N` plus a total. Deletion is irreversible, so gate it. `APPROVE_ALL=true`: print `[--approve] auto-accepting: purge all listed cache versions`, take option (a) without prompting. Else invoke `AskUserQuestion` with the report's version lines and total as the `preview` of every option — Bash output is not reply text the user reads. Preview cap: ≤2000 chars and ≤12 lines per preview (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full list to `.temp/setup/cache-purge.md` first, make every option's `preview` the total plus the first version lines that fit, ending `→ full list: .temp/setup/cache-purge.md`, and name that path in the question text:
 
 - (a) **Purge all listed** — reclaim every listed version
 - (b) **Skip** — keep everything, proceed to Step 12

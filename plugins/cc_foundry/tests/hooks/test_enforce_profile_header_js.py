@@ -29,12 +29,14 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 import pytest
 
 HOOK = Path(__file__).resolve().parent.parent.parent / "hooks" / "enforce-profile-header.js"
+ANALYZER = HOOK.parent.parent / "bin" / "timing_analyzer.py"
 
 CSID = "test-session-1234"
 SENTINEL_NAME = f"foundry-profile-state-{CSID}"
@@ -187,17 +189,25 @@ def _write_transcript(tmp_path: Path, assistant_text: str) -> Path:
 
 
 @_skip_node_unavailable
-def test_report_written_with_table_in_reply_has_no_reminder(
+def test_table_only_in_reply_text_is_denied_and_preview_passes(
     tmp_path: Path, profile_run: tuple[Path, Path, str]
 ) -> None:
-    """Table already printed this turn → allow with no additionalContext nudge."""
+    """A table printed as reply text before the question is denied; the same table as every preview passes.
+
+    Reply text written before a tool call can come back as an empty progress update the user never sees, so only the
+    call's own fields count at question time; the denial says so and the call corrected to it passes.
+    """
     report_dir, _, cwd = profile_run
     (report_dir / "report.md").write_text("---\nTitle: x\nSince: y\nTop N: z\n---\n", encoding="utf-8")
-    transcript = _write_transcript(
-        tmp_path, "| Field | Value |\n| --- | --- |\n| Title | x |\n| Since | y |\n| Top N | z |\n"
-    )
+    table = "| Field | Value |\n| --- | --- |\n| Title | x |\n| Since | y |\n| Top N | z |\n"
+    transcript = _write_transcript(tmp_path, table)
 
-    assert _run(tmp_path, _ask_payload(cwd=cwd, transcript_path=str(transcript))) == {}
+    reason = _denial_reason(_run(tmp_path, _ask_payload(cwd=cwd, transcript_path=str(transcript))))
+    retried = _run(tmp_path, _preview_payload(cwd, table))
+
+    assert reason is not None
+    assert "reply text before the call does not count" in reason
+    assert retried == {}
 
 
 @_skip_node_unavailable
@@ -447,3 +457,132 @@ def test_stop_passes_delivery_in_final_message(tmp_path: Path, profile_run: tupl
 
 
 DELIVERED = "| Field | Value |\n| --- | --- |\n| Title | x |\n| PR | #1 |\n| Date | y |\n"
+
+
+# ── Delivery via the follow-up question's option previews ────────────────────
+
+
+def _preview_payload(cwd: str, preview: str | None) -> dict:
+    """Build the follow-up payload, `preview` on every option (none when None), with no transcript text at all."""
+    labels = ("Drill into slowest session", "Skip — done")
+    options = [{"label": label, "description": "next step"} for label in labels]
+    if preview is not None:
+        for option in options:
+            option["preview"] = preview
+    questions = [{"question": "What next?", "header": "profile", "options": options}]
+    return _ask_payload(cwd=cwd, tool_input={"questions": questions}, transcript_path=None)
+
+
+@pytest.fixture(name="written_run")
+def _written_run(profile_run: tuple[Path, Path, str]) -> str:
+    """Stage a profile run whose analyzer wrote the report DELIVERED renders; returns the project cwd."""
+    report_dir, _, cwd = profile_run
+    (report_dir / "report.md").write_text("---\nTitle: x\nPR: #1\nDate: y\n---\n", encoding="utf-8")
+    return cwd
+
+
+class TestPreviewDelivery:
+    """The header table carried as option previews delivers it when text before the call came back empty."""
+
+    @_skip_node_unavailable
+    def test_preview_table_allows_follow_up(self, tmp_path: Path, written_run: str) -> None:
+        """The matching table in the previews allows the follow-up with no reply text in the transcript."""
+        assert _run(tmp_path, _preview_payload(written_run, DELIVERED)) == {}
+
+    @_skip_node_unavailable
+    def test_missing_preview_denial_names_preview_fix(self, tmp_path: Path, written_run: str) -> None:
+        """No table anywhere is denied, and the reason directs the table into the option previews."""
+        reason = _denial_reason(_run(tmp_path, _preview_payload(written_run, None)))
+
+        assert reason is not None
+        assert "`preview` of every option" in reason
+        assert "Re-issue" not in reason
+
+    @_skip_node_unavailable
+    def test_table_in_one_preview_is_denied_and_the_named_fix_passes(self, tmp_path: Path, written_run: str) -> None:
+        """A table in only one option's preview is denied with that spot named; the call so corrected passes.
+
+        The user sees only the focused option's preview, so one copy can go unseen; following the reason once must clear
+        the gate — no denial loop.
+        """
+        partial = _preview_payload(written_run, DELIVERED)
+        del partial["tool_input"]["questions"][0]["options"][1]["preview"]
+
+        reason = _denial_reason(_run(tmp_path, partial))
+        retried = _run(tmp_path, _preview_payload(written_run, DELIVERED))
+
+        assert reason is not None
+        assert "It sits in 1 of 2 option previews" in reason
+        assert retried == {}
+
+    @_skip_node_unavailable
+    def test_preview_pass_settles_the_stop_check(self, tmp_path: Path, written_run: str) -> None:
+        """Once the question carrying the previews was shown (PostToolUse), the turn may end without the table."""
+        payload = _preview_payload(written_run, DELIVERED)
+        assert _run(tmp_path, payload) == {}
+        assert _run(tmp_path, {**payload, "hook_event_name": "PostToolUse"}) == {}
+
+        assert _run(tmp_path, _stop_payload(cwd=written_run)) == {}
+
+    @_skip_node_unavailable
+    def test_allowed_but_unshown_follow_up_leaves_stop_armed(self, tmp_path: Path, written_run: str) -> None:
+        """A PreToolUse pass alone records nothing: another hook or a permission rule may still deny the question."""
+        assert _run(tmp_path, _preview_payload(written_run, DELIVERED)) == {}
+
+        assert _run(tmp_path, _stop_payload(cwd=written_run)).get("decision") == "block"
+
+
+@pytest.fixture(name="analyzed_run")
+def _analyzed_run(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> tuple[str, str]:
+    """Run the real ``timing_analyzer.py`` into the staged report dir; return the project cwd and the header table.
+
+    The analyzer runs from the project dir with the relative ``--output "$REPORT_DIR/report.md"`` the profile skill
+    passes (its ``REPORT_DIR`` is relative), so the header's ``Path`` value has its real width. The table renders every
+    ``---`` header field of the written report in file order, as Step 4 of the profile skill builds it.
+    """
+    report_dir, _, cwd = profile_run
+    timings = tmp_path / "timings.jsonl"
+    row = {"ts": "2030-01-01T00:00:01Z", "tool": "Bash", "duration_ms": 200, "session_id": "s1", "args": "command=ls"}
+    timings.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    invocations = tmp_path / "invocations.jsonl"
+    invocations.write_text("\n", encoding="utf-8")
+    report = report_dir / "report.md"
+    subprocess.run(
+        [
+            sys.executable,
+            str(ANALYZER),
+            "--timings",
+            str(timings),
+            "--invocations",
+            str(invocations),
+            "--since",
+            "30d",
+            "--output",
+            f"{REPORT_DIR_REL}/report.md",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=cwd,
+    )
+    header = report.read_text(encoding="utf-8").split("---\n", 2)[1]
+    rows = [line.partition(":") for line in header.splitlines()]
+    table = "| Field | Value |\n| --- | --- |\n" + "".join(
+        f"| {key.strip()} | {value.strip()} |\n" for key, _, value in rows
+    )
+    return cwd, table
+
+
+@_skip_node_unavailable
+def test_real_analyzer_header_in_previews_allows_follow_up(tmp_path: Path, analyzed_run: tuple[str, str]) -> None:
+    """A header written by the real analyzer and carried as every option preview passes the follow-up gate.
+
+    The analyzer once opened its header with a `[Profile] —` line holding no key and no `Title`, which the gate reads as
+    an unfinished report, so every real profile follow-up was denied even with its table delivered. Its 9 fields render
+    an 11-line table; its Confidence row is wider than the 86-column preview box and wraps, so it spans 12 rows, still
+    within the preview cap.
+    """
+    cwd, table = analyzed_run
+
+    assert _run(tmp_path, _preview_payload(cwd, table)) == {}

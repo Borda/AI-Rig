@@ -39,7 +39,7 @@ echo "$WT" > "${TMPDIR:-/tmp}/oss-<skill>-wt-${CSID}"   # final path, read by En
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/heal_git_artifacts.py" worktrees
 ```
 
-> Exit 0 (nothing reclaimable) or exit 2 (environment error) → leftovers aren't the cause; print the `git worktree add` error, stop. Exit 1 but the `add` error names none of the listed paths or branches → leftovers aren't the cause; print the error, stop. Exit 1 and the error names a listed path or branch → print the list and the `add` error, then `AskUserQuestion`: (a) **Stop** — keep everything, end the run · (b) **Remove them and retry** — run the block below in this turn, retry the create once. That retry fails too → print the error, stop; never loop back to the report. Removing a worktree deletes a directory tree, so never run the `--apply` form without that answer.
+> Exit 0 (nothing reclaimable) or exit 2 (environment error) → leftovers aren't the cause; print the `git worktree add` error, stop. Exit 1 but the `add` error names none of the listed paths or branches → leftovers aren't the cause; print the error, stop. Exit 1 and the error names a listed path or branch → `AskUserQuestion` with the list and the `add` error as the `preview` of both options, not as reply text before the call (it can arrive as an empty progress update); preview cap ≤2000 chars and ≤12 lines (Claude Code withholds or clips a larger preview, no scroll) — over it, Write both to `.temp/worktree-leftovers.md` first, preview the count, the `add` error and the first entries that fit, ending `→ full list: .temp/worktree-leftovers.md`, and name that path in the question text — never offer removal of an unseen list: (a) **Stop** — keep everything, end the run · (b) **Remove them and retry** — run the block below in this turn, retry the create once. That retry fails too → print the error, stop; never loop back to the report. Removing a worktree deletes a directory tree, so never run the `--apply` form without that answer.
 
 ```bash
 # timeout: 30000
@@ -69,7 +69,7 @@ Prefix `REPORT_DIR` with `$_ORIG_ROOT` (absolute). `$RUN_DIR` (`.temp/`) handoff
 Composition facts (verified against `resolve/modes/action-item-dispatch.md`):
 
 - **Mutex path** derives from git-common-dir + branch. Worktrees share the common-dir, so the lock is identical inside the session worktree → a second concurrent resolve on the same PR branch is still blocked. No regression.
-- **Phase-2 specialist worktrees** register on the same common-dir (siblings, not nested) and branch from `resolve-base-sha` (the PR HEAD after checkout) exactly as before.
+- **Phase-2 specialist worktrees** register on the same common-dir (siblings, not nested) and pin to `phase2-base-sha` — the PR HEAD captured right before the first spawn wave, after C1's `each` commits — exactly as before; `resolve-base-sha` (the prelude fingerprint) stays the reset fence's anchor.
 - **Step 11 caller-branch restore** becomes a harmless no-op — the main tree was never switched.
 - **Push** targets the same remote fork; unaffected by CWD.
 
@@ -82,3 +82,7 @@ End of run, after gates/push:
 1. `git branch --show-current` (from worktree CWD).
 2. `ExitWorktree(action="keep")` — returns session to original dir, leaves worktree + branch on disk. Never `remove`, never auto-merge. (`path`-entered worktrees are never auto-removed.)
 3. Surface a `Worktree` block: `path` · `branch` · note (review: `merge if you want the report's companion edits`; resolve: `` commits already pushed to the fork — worktree is disposable, remove with `git worktree remove` when done ``).
+
+## §Isolated spawns
+
+A spawn that itself passes `isolation="worktree"` gets its own worktree and **cannot write into the session worktree** ("This path is in a different worktree"), nor into the main checkout ("Edit the worktree copy of this file instead of the shared-checkout path"). Never give such an agent a deliverable path inside the session worktree — `$RUN_DIR` under `.temp/` included. Hand it a path outside every checkout (`mktemp -d`, as resolve's `IMPL_DIR`), or take its result from its return envelope or its worktree branch (resolve Phase 2 commits there, then cherry-picks). Review dimension agents spawn without `isolation`, so they write `$RUN_DIR` in the session worktree directly.

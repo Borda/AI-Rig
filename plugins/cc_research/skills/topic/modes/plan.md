@@ -109,7 +109,7 @@ Topic: [original $ARGUMENTS]
 
 TaskUpdate "Print report header" → `in_progress`.
 
-Read `$PLAN_OUT` and render every `---` header field as a two-column `Field | Value` table in file order. Print the compact summary below in the same turn, then TaskUpdate "Print report header" → `completed`. The topic hook blocks only the workflow follow-up until the saved header matches the current parent-visible table. Diagnostic/recovery questions remain available; unreadable delivery evidence does not authorize the follow-up.
+Read `$PLAN_OUT` and render every `---` header field as a two-column `Field | Value` table in file order, followed by the compact summary below, in the same turn — a delivery block not printed here: SKILL.md's Follow-up gate shows it only as every option's `preview`, never also as reply text; over the preview cap (≤2000 chars, ≤12 lines) its compact summary naming `$PLAN_OUT` takes that place (SKILL.md Step 3). Then TaskUpdate "Print report header" → `completed`. The topic hook blocks only the workflow follow-up until the saved header matches the current parent-visible table in that question's option previews within the preview cap — over it, the question text names `$PLAN_OUT` and every option preview is a compact summary naming it. Diagnostic/recovery questions remain available; unreadable delivery evidence does not authorize the follow-up.
 
 ```text
 ---

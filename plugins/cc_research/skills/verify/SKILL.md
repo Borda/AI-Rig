@@ -269,11 +269,9 @@ IFS= read -r OUT     < "${TMPDIR:-/tmp}/verify-${_VTAG}-out-${CSID}" 2>/dev/null
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:verify" "strict-mode-gate (before AskUserQuestion idle wait)" "${RUN_DIR}" "run-dir=${RUN_DIR}, out=${OUT}, partial-report=${RUN_DIR}/partial-report.md" "on (a): cp partial-report.md to \$OUT and stop; on (b): discard it, proceed to V5/V6 full report"  # timeout: 5000
 ```
 
-In the same reply that calls `AskUserQuestion` below, print (reply prose, not inside a bash `echo`): `` Long wait? `/compact` now — partial report staged at `$RUN_DIR/partial-report.md`, resume lossless. ``
+Invoke `AskUserQuestion` — do NOT write options as plain text. The `/compact` hint rides in the question text, never as reply prose before the call (text before a tool call can vanish on 5.5-family models):
 
-Invoke `AskUserQuestion` — do NOT write options as plain text:
-
-- question: "Strict mode hit HIGH severity mismatch — how to proceed?"
+- question: "Strict mode hit HIGH severity mismatch — how to proceed? (Long wait? `/compact` now — partial report staged at `$RUN_DIR/partial-report.md`, resume lossless.)"
 - (a) label: `Stop here` — description: copy staged partial report (passing claims only) to `$OUT`; fix mismatches and re-run `/research:verify`
 - (b) label: `Continue to full report` — description: discard staged partial report, proceed to V5/V6 and include failed claims in the full verification report
 
@@ -394,7 +392,7 @@ echo "DEVELOP_FIX_AVAILABLE=$DEVELOP_FIX_AVAILABLE"  # `|| ...=false` fallback m
 rm -f .temp/state/skill-contract.md  # clear before V6's idle gate — after it may never run (compaction-contract.md §Lifecycle)
 ```
 
-**Only when the block above printed `DEVELOP_FIX_AVAILABLE=true`**, print as plain text before the question: "Tip: `/develop:fix` (requires `develop` plugin) can also implement these fixes — run it manually." Printed `false` → omit the tip entirely; never emit it on the assumption the plugin is present.
+**Only when the block above printed `DEVELOP_FIX_AVAILABLE=true`**, append to the question text below (not reply text before the call, which can arrive as an empty progress update): "Tip: `/develop:fix` (requires `develop` plugin) can also implement these fixes — run it manually." Printed `false` → omit the tip entirely; never emit it on the assumption the plugin is present.
 
 - question: "What next?"
 - (a) label: `fix mismatches then re-run verify` — description: fix listed mismatches and re-run `/research:verify <paper>`

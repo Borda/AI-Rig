@@ -161,7 +161,9 @@ _PRESERVE="run-dir=$_RUN_DIR, aggregate=$_RUN_DIR/aggregate.md, summary=$_RUN_DI
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:audit" "report (after aggregate complete)" "$_RUN_DIR" "$_PRESERVE" "emit report → follow-up gate → optional fix mode (Steps 8-10) → Step 11"  # timeout: 5000
 ```
 
-Before emitting, read current `$RUN_DIR/summary.jsonl` (Step 5b may have appended net-new promoted findings), recompute severity totals. Then emit report (omit Upgrade Proposals if none passed genuine-value filter):
+Before emitting, read current `$RUN_DIR/summary.jsonl` (Step 5b may have appended net-new promoted findings), recompute severity totals. Then build the report (omit Upgrade Proposals if none passed genuine-value filter) and deliver it once: shown only as the `preview` of every Follow-up gate option — never also as reply text, never Bash/tool stdout (on 5.5 models text before a tool call may come back as an empty progress update). **Preview cap**: ≤2000 chars and ≤12 lines per preview, every line counted — Claude Code withholds a longer preview and clips a taller one, no scroll; a report with more than ~5 findings breaks it. Over the cap: Write the full report to `$RUN_DIR/audit-report.md` first, every gate option's `preview` is a compact summary — the `Total:` line, each security/critical finding line verbatim, then `→ full report: $RUN_DIR/audit-report.md` — and the gate's question text names that same path. `--skip-gate` (no question): it goes into the turn's final reply, after its last tool call, below Step 11b's header table — the `Stop` hook enforces this fallback.
+
+> **Output-Routing exemption**: on the gate path this findings report lives only in the option previews, so Output Routing (5+ findings → `.temp/output-*.md`, summary only) and the table-first-in-reply rule do not apply to it; the durable copy is `$RUN_DIR/aggregate.md` and Step 11's report.
 
 ```markdown
 ## Audit Report
@@ -181,6 +183,6 @@ Before emitting, read current `$RUN_DIR/summary.jsonl` (Step 5b may have appende
 |---|---------|------|-----------|
 ```
 
-After report → fire **Follow-up gate**, with question header `audit`. The hook requires `aggregate.md`, valid `summary.jsonl`, and current parent-visible `Audit Report`, exact `Total: N`, and every finding's `one_line`. A zero-finding summary is valid when its aggregate exists. Missing/unreadable delivery blocks only this fix transition; diagnostic/recovery questions use a different header and remain available. Do not require Step 11's final report before Step 7. If user picks fix option (a–c), proceed inline to fix mode (Steps 8–10, loaded from `modes/fix.md`). Otherwise skip to Step 11.
+After report → fire **Follow-up gate**, with question header `audit`. The hook requires `aggregate.md`, valid `summary.jsonl`, and current parent-visible `Audit Report`, exact `Total: N`, and every finding's `one_line` — carried whole by the gate's option previews within the preview cap (SKILL.md §Follow-up gate), or, over it, by `$RUN_DIR/audit-report.md` named in the question text with a compact summary naming it in every option preview. A zero-finding summary is valid when its aggregate exists. Missing/unreadable delivery blocks only this fix transition; diagnostic/recovery questions use a different header and remain available. Do not require Step 11's final report before Step 7. If user picks fix option (a–c), proceed inline to fix mode (Steps 8–10, loaded from `modes/fix.md`). Otherwise skip to Step 11.
 
 Returns to SKILL.md Steps 8–10 (fix dispatch, gated) / Step 11 (final report).

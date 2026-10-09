@@ -56,7 +56,7 @@ cat "$_RESEARCH_SHARED/agent-resolution.md"
 
 **Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase — paper collection, researcher analysis, report generation — all in the same response as the first real tool call. Mark in_progress/completed throughout. Every later `TaskUpdate` rides with the next real tool call — never a bookkeeping-only turn; the one standalone call is a `completed` right before a long report.
 
-- Always create **"Print report header"** as its own task (all paths — single-agent Step 3, `--team`, `plan`) — `in_progress` right after the report file is written (by the lead directly, or by a spawned consolidator's returned envelope); `completed` only once the `---` header has actually appeared in this response — after the table text, never before it (task-lifecycle's report-print exception).
+- Always create **"Print report header"** as its own task (all paths — single-agent Step 3, `--team`, `plan`) — `in_progress` right after the report file is written (by the lead directly, or by a spawned consolidator's returned envelope); `completed` only once the delivery block (`---` header table + compact summary) is built from the saved report for the Follow-up gate previews — it is shown only there, never also as reply text; the hook denies a gate call whose previews lack it.
 - This task exists because a sibling skill (oss:review) had an incident: report written correctly but terminal print step silently skipped while the hard-enforced `AskUserQuestion` fired anyway — tracking the print as its own task makes it as trackable as the tool calls around it.
 - The shared `## Follow-up gate` below must not fire while this task is `pending`/`in_progress`.
 
@@ -257,7 +257,9 @@ Write full report to `$REPORT_OUT` via Write tool (resolved by counter-suffix lo
 
 TaskUpdate "Print report header" → `in_progress`.
 
-Read the saved report and render every `---` header field as a two-column `Field | Value` table in file order, in this same turn. Then print the compact summary below; TaskUpdate "Print report header" → `completed` only after the matching table appears in this response:
+Read the saved report and build the delivery block in this same turn: every `---` header field as a two-column `Field | Value` table in file order, then the compact summary below. Not printed here — shown only as the `preview` of every Follow-up gate option, never also as reply text, never Bash/tool stdout (on 5.5 models text before a tool call may come back as an empty progress update). **Preview cap**: ≤2000 chars and ≤12 lines per preview, every line counted — Claude Code withholds a longer preview and clips a taller one, no scroll. Block over the cap: the report file is the full copy, every option's `preview` is a compact summary — the `Title` and `Confidence` rows (those present) verbatim as a `Field | Value` table plus the Best method line — ending `→ full header + report: <report path>`, and the gate's question text names that same path. The gate always fires, so there is no reply-text path; a turn ending without it gets the table demanded as final reply text by the `Stop` hook. TaskUpdate "Print report header" → `completed` once the block is built:
+
+> **Output-Routing exemption**: the delivery block lives only in the Follow-up gate option previews, so quality-gates.md §Report File Format's table-first-in-reply rule and Output Routing step 2a do not apply to the reply here.
 
 ```text
 ---
@@ -271,7 +273,7 @@ Confidence:  [aggregate score] — [key gaps]
 ---
 ```
 
-**Hook-enforced**: on `Stop`, `hooks/enforce-topic-header.js` keeps a turn going once per report when it ends without the matching header table — skipping the follow-up question does not skip delivery. It also blocks only this workflow's follow-up question until the current report exists and every `---` header field appears in one matching two-column table in the parent reply since the last human turn. Missing/unreadable transcript evidence blocks this transition; reprint the header, then retry. Diagnostic/recovery questions remain available; use their own question header, not `topic`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
+**Hook-enforced**: on `Stop`, `hooks/enforce-topic-header.js` keeps a turn going once per report when it ends without the matching header table — skipping the follow-up question does not skip delivery. It also blocks only this workflow's follow-up question until the current report exists and every `---` header field appears in one matching two-column table in that question's option previews within the preview cap — or, over the cap, the question text names the report file and every option preview is a compact summary within the cap naming it — the question-time check reads only the call, so a reply-text table before it does not count (it can come back as an empty progress update). Missing delivery evidence blocks this transition; apply the placement the deny reason names, then retry. Diagnostic/recovery questions remain available; use their own question header, not `topic`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
 
 End response with `## Confidence` block per CLAUDE.md output standards.
 
@@ -288,7 +290,7 @@ cat "$_TEAM_MODE"  # timeout: 5000
 
 Follow `modes/team.md` (loaded above) and execute its workflow.
 
-**Mandatory termination gate**: after `modes/team.md` returns (consolidation complete, report written, header printed per its own mandatory print step, "Print report header" task `completed`), continue to `## Follow-up gate` section below — do NOT exit early. `AskUserQuestion` call in `## Follow-up gate` is only authorized terminal action for team mode; reaching end of team workflow without invoking it is protocol violation.
+**Mandatory termination gate**: after `modes/team.md` returns (consolidation complete, report written, delivery block built per its own mandatory print step, "Print report header" task `completed`), continue to `## Follow-up gate` section below — do NOT exit early. `AskUserQuestion` call in `## Follow-up gate` is only authorized terminal action for team mode; reaching end of team workflow without invoking it is protocol violation.
 
 ## Plan Mode — only when first non-flag word of `$ARGUMENTS` is exactly `plan` (not a prefix match — "planning algorithms" must NOT trigger this mode)
 
@@ -304,11 +306,11 @@ cat "$_PLAN_MODE"  # timeout: 5000
 
 Follow `modes/plan.md` (loaded above) and execute its workflow.
 
-**Mandatory termination gate**: after `modes/plan.md` returns (phased plan emitted, report written, compact terminal summary printed per its own `Print compact terminal summary` step, "Print report header" task `completed`), continue to `## Follow-up gate` section below — do NOT exit early. `AskUserQuestion` call in `## Follow-up gate` is only authorized terminal action for plan mode; reaching end of plan workflow without invoking it is protocol violation.
+**Mandatory termination gate**: after `modes/plan.md` returns (phased plan emitted, report written, delivery block built per its own `Print compact terminal summary` step, "Print report header" task `completed`), continue to `## Follow-up gate` section below — do NOT exit early. `AskUserQuestion` call in `## Follow-up gate` is only authorized terminal action for plan mode; reaching end of plan workflow without invoking it is protocol violation.
 
 ## Follow-up gate
 
-**Hard gate**: check "Print report header" task status before anything else here. Not `completed` → the report header has not actually been printed yet — go back and do it now (Step 3 / team.md / plan.md, whichever path ran), then mark the task `completed`, before calling `AskUserQuestion` below. `hooks/enforce-topic-header.js` backs this gate structurally — the `AskUserQuestion` below is denied outright while the run's report file is absent or empty on disk.
+**Hard gate**: check "Print report header" task status before anything else here. Not `completed` → the delivery block has not been built yet — go back and do it now (Step 3 / team.md / plan.md, whichever path ran), then mark the task `completed`, before calling `AskUserQuestion` below, which carries the block as its only copy. `hooks/enforce-topic-header.js` backs this gate structurally — the `AskUserQuestion` below is denied outright while the run's report file is absent or empty on disk.
 
 ```bash
 rm -f .temp/state/skill-contract.md  # clear contract — topic research complete (compaction-contract.md §Lifecycle)  # timeout: 5000
@@ -317,10 +319,11 @@ rm -f .temp/state/skill-contract.md  # clear contract — topic research complet
 Call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments:
 
 - header: `topic`
-- question: "What next?"
+- question: "What next? (report saved at \<report path>.)" — the run's report file: `$REPORT_OUT`, or `$PLAN_OUT` on the plan path
 - (a) label: `/research:plan` — description: design a research program from these findings
 - (b) label: `/develop:feature` — description: implement based on findings (requires `develop` plugin)
 - (c) label: `skip` — description: no action
+- every option: `preview` = the delivery block (report header table, then compact summary), verbatim, table first — its only copy — or, over the preview cap, its compact summary naming the report path
 
 </workflow>
 

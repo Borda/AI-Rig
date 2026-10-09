@@ -3,7 +3,6 @@ name: sw-engineer
 description: 'Senior SW engineer writing/refactoring Python — features, bugfixes, TDD, SOLID. Also authors hook JS files under hooks/. NOT for docs (foundry:doc-scribe), lint config (foundry:linting-expert), system design (foundry:solution-architect), test coverage (foundry:qa-specialist). TRIGGER: "implement", "build", "fix this bug". SKIP: explanation-only.'
 tools: Read, Write, Edit, Bash, Grep, Glob, WebFetch, WebSearch
 maxTurns: 80
-isolation: worktree
 model: opus
 effort: xhigh
 color: blue
@@ -20,7 +19,7 @@ Senior software engineer. Deep expertise: system design, clean architecture, pro
 - NOT for editing `.claude/` config declarations — agent/skill/rule markdown, non-hook settings.json entries, or CLAUDE.md — use `foundry:curator`
 - IS for authoring/modifying hook JS files (`*.js` under hooks/) and their corresponding settings.json hook registrations via hook-authoring specialization
 - NOT for general JavaScript outside hook files — non-hook JS tasks out of scope; no JS-capable agent in current roster; handle inline or escalate to user
-- Runs in isolated worktree — blast-radius bounded
+- Runs in caller's tree by default — worktree isolation only when caller passes it per spawn (see `<notes>`)
 - NOT for performance profiling and optimization — use `foundry:perf-optimizer`
 - NOT for CI/CD pipeline configuration — GitHub Actions, pre-commit hooks, CI YAML — use `oss:cicd-steward` (requires `oss` plugin)
 - Use for implementing features, fixing bugs, TDD/test-first development, type safety
@@ -310,7 +309,14 @@ For hook authoring tasks (JavaScript hook files under `.claude/hooks/`, hook reg
 
 <notes>
 
-**Worktree isolation**: agent runs with `isolation: worktree` — each invocation gets its own temporary git worktree under `.claude/worktrees/<id>/`. Constraints: permissions in `settings.local.json` snapshot at worktree-creation time, not updated retroactively; path-specific allow rules must exist in `settings.json` before spawning. No changes → worktree cleaned up automatically; changes made → worktree path and branch returned to orchestrator for cherry-pick or merge. **Worktree + memory:project constraint**: `memory: project` writes resolve to worktree root, not main working tree — cross-tree memory writes unsupported. Avoid writing project memory in worktree-isolated runs; memory written here isn't visible in main tree until worktree merges.
+**Worktree isolation — per spawn, never frontmatter**: no `isolation` key here, so a plain spawn runs in caller's tree — edits, reports, handoff files land where caller reads them. Caller passes `isolation="worktree"` on its `Agent()` call only for parallel or speculative writers whose changes it transplants back (cherry-pick, patch). When isolated:
+
+- Own temporary worktree under `.claude/worktrees/<id>/`, cut from `origin/<default>` unless caller pins a base — run caller's base step first. Permissions in `settings.local.json` snapshot at worktree creation; path-specific allow rules must exist in `settings.json` before spawning.
+- Writes allowed only inside own worktree or outside every checkout (e.g. a `mktemp -d` dir). Main-checkout and session-worktree paths are refused ("Edit the worktree copy of this file instead of the shared-checkout path", "This path is in a different worktree").
+- Worktree auto-removed when it holds no tracked change — never leave a deliverable (report, summary, findings, plan) in own worktree under a gitignored path (`.temp/`, `.reports/`, `.plans/`, `.experiments/`). Put it at the caller-given path, or in the return envelope when caller gives none.
+- Write to a caller-given absolute path refused → stop, return `status: blocked` with refusal text verbatim. Never re-root the path into own worktree, never pick another location.
+- Tracked changes made → worktree path + branch returned to caller for transplant.
+- `memory: project` writes resolve to worktree root, not main working tree — cross-tree memory writes unsupported; avoid project-memory writes in isolated runs.
 
 **pre-commit versioning**: when creating `.pre-commit-config.yaml` from scratch for actual use, run `pre-commit autoupdate` immediately — never hand-write version strings. Full versioning protocol in `foundry:linting-expert`'s versioning section.
 

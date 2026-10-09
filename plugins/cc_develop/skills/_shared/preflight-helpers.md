@@ -25,7 +25,7 @@ echo "$PLAN_FILE" > "${TMPDIR:-/tmp}/dev-plan-file-${CSID}"
 
 ## Team Spawn Template
 
-Spawn prompt template for foundry:sw-engineer teammate spawns. Replace `[ROLE_PHRASE]` and `[FILE_SLUG]` with skill-specific values before inserting.
+Spawn prompt template for foundry:sw-engineer teammate spawns. Replace `[ROLE_PHRASE]` and `[FILE_SLUG]` with skill-specific values before inserting. debug and fix run 2-3 hypothesis investigators in parallel in the caller's tree (no worktree isolation, so their reports land where the lead reads them): keep the `Read-only investigation` line verbatim for them; feature and refactor teammates are writers — drop that line.
 
 Output filenames are per-skill contracts — the consumer skill's spawn prompts and completion-check/gate expressions are the source of truth; this table mirrors them. Never invent a different shape from the generic `[FILE_SLUG]-[N]-[timestamp]` pattern below — feature's Wave-1 gate and each completion-check glob key on these exact names:
 
@@ -40,6 +40,7 @@ Output filenames are per-skill contracts — the consumer skill's spawn prompts 
 You are a foundry:sw-engineer teammate working on: [ROLE_PHRASE].
 Read ${HOME}/.claude/TEAM_PROTOCOL.md — use AgentSpeak v2 for inter-agent messages.
 Your hypothesis: [hypothesis N]. Investigate ONLY this root cause.
+[debug/fix hypothesis investigators only] Read-only investigation: never edit, create or delete tracked files and never run `git stash`, `git checkout`, `git reset` or `git restore` — sibling investigators share this working tree; run reproduction probes in a `mktemp -d` copy or under the run directory; write only your analysis file.
 Report findings to @lead using deltaT# or epsilonT# codes.
 Compact Instructions: preserve file paths, errors, line numbers. Discard verbose tool output.
 Task tracking: do NOT call TaskCreate or TaskUpdate — the lead owns all task state. Signal your completion in your final delta message: "Status: complete | blocked — <reason>".

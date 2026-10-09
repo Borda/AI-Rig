@@ -104,7 +104,7 @@
 
 4. Assign sequential `queue_position` (1-indexed) in sorted order.
 
-5. Print queue as formatted table:
+5. Build queue as formatted table — shown only as the `preview` of every option of step 6's gate, never also as reply text before the call (text written before a tool call can arrive as an empty progress update, and this gate launches paid implementation agents). Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full queue table to `<RUN_DIR>/team-queue.md` first, make every option's `preview` a compact summary ending `→ full queue: <RUN_DIR>/team-queue.md`, and name that path in the question text; the summary keeps the `Total:` line and the first rows that fit. Never launch on an unseen queue — no gate call without the table or that named file:
 
    ```text
    # · Hypothesis · Axis · Scope · Expected Delta · Conf. · Agent
@@ -115,13 +115,13 @@
    Total: N hypotheses (N small, N medium, N large) across N axes
    ```
 
-Before user gate, update `state.json` `team_mode.phase` to `"B"` — enables resume re-display of queue if interrupted:
+Before user gate, update `state.json` `team_mode.phase` to `"B"` — lets resume re-offer the queue gate if interrupted:
 
 ```json
 {"team_mode": {"phase": "B", "run_dir": "<RUN_DIR>"}}
 ```
 
-6. Present user gate via `AskUserQuestion`:
+6. Present user gate via single-select `AskUserQuestion`, the queue table from step 5 as the `preview` of every option — or, over the preview cap, step 5's summary naming `<RUN_DIR>/team-queue.md`, which the question text then names too:
 
    ```text
    Proceed with implementation?
@@ -269,6 +269,6 @@ After all hypotheses processed (or user stops early with Ctrl-C / user abort):
 **Resume support**: `resume` mode reads `state.json.team_mode` to determine phase:
 
 - `phase: "A"` — re-run Phase A from scratch (read-only, cheap to repeat)
-- `phase: "B"` — re-display queue, re-prompt user gate
+- `phase: "B"` — rebuild the queue table, re-prompt Phase B's user gate with it as the `preview` of every option (over the preview cap: rewrite `<RUN_DIR>/team-queue.md`, preview its summary, name it in the question text)
 - `phase: "C"` — resume from `current_hypothesis + 1` (completed entries already in `team-results.jsonl`)
 - `phase: "D"` — re-generate report

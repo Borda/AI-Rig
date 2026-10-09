@@ -18,9 +18,10 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/measure_config_size.py" --
 
 ````bash
 printf "=== Check 13: Heading hierarchy continuity ===\n"
+{ find .claude/agents .claude/rules -maxdepth 1 -name '*.md' -type f
+  find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f; } 2>/dev/null | {
 violations=0
-for f in .claude/agents/*.md .claude/skills/*/SKILL.md .claude/rules/*.md; do # timeout: 5000
-    [ -f "$f" ] || continue
+while IFS= read -r f; do # timeout: 5000
     awk -v file="$f" '
     /^```/ { in_code = !in_code; next }
     in_code { next }
@@ -40,6 +41,7 @@ done
 if [ "$violations" -eq 0 ]; then
     printf "✓: Check 13 — no heading hierarchy violations found\n"
 fi
+}
 ````
 
 **Severity**: **medium** — heading jumps impair navigation. Fix: insert missing intermediate heading level, or demote/promote offending heading. **Report only** — never auto-fix.
@@ -52,8 +54,9 @@ Scan all agent and skill files via deterministic bin/ script:
 
 ```bash
 printf "=== Check 14a: Structural tag symmetry ===\n"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_tag_symmetry.py" \
-    .claude/agents/*.md .claude/skills/*/SKILL.md  # timeout: 10000
+{ find .claude/agents -maxdepth 1 -name '*.md' -type f -print0
+  find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f -print0; } 2>/dev/null |
+  xargs -0 -r python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_tag_symmetry.py"  # timeout: 10000
 ```
 
 **Severity**: **medium** — gate-level; must fix before audit passes.
@@ -71,8 +74,9 @@ Scan all agent and skill files via deterministic bin/ script:
 
 ```bash
 printf "=== Check 14b: Code fence symmetry ===\n"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_fence_symmetry.py" \
-    .claude/agents/*.md .claude/skills/*/SKILL.md  # timeout: 10000
+{ find .claude/agents -maxdepth 1 -name '*.md' -type f -print0
+  find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f -print0; } 2>/dev/null |
+  xargs -0 -r python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_fence_symmetry.py"  # timeout: 10000
 ```
 
 **Severity**: **high** — unclosed fence corrupts all subsequent code blocks in the file; Claude misparses the rest of the file.
@@ -180,7 +184,9 @@ done
 Scan agent and skill files for inline examples:
 
 ````bash
-for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do # timeout: 5000
+{ find .claude/agents -maxdepth 1 -name '*.md' -type f
+  find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f; } 2>/dev/null |
+while IFS= read -r f; do # timeout: 5000
     count=$(grep -cE '^```|^## Example|^### Example' "$f" 2>/dev/null || true)
     lines=$(wc -l <"$f" | tr -d ' ')
     [ "$count" -gt 0 ] && printf "%s: %d example blocks, %d total lines\n" "$f" "$count" "$lines"
@@ -276,8 +282,9 @@ Missing `description:` → **high**. Malformed `paths:` → **high**.
 **18c — Redundancy check**: Per rule file, identify 2–3 most specific directive phrases. Grep verbatim in `.claude/CLAUDE.md` and `.claude/agents/*.md`. Exact phrase in ≥2 locations outside rule file → **medium** (distillation incomplete).
 
 ```bash
-grep -l "Never switch to NumPy" .claude/agents/*.md .claude/CLAUDE.md 2>/dev/null # timeout: 5000
-grep -l "never git add" .claude/agents/*.md .claude/CLAUDE.md 2>/dev/null         # timeout: 5000
+{ find .claude/agents -maxdepth 1 -name '*.md' -type f -print0
+  find .claude -maxdepth 1 -name CLAUDE.md -type f -print0; } 2>/dev/null |
+  xargs -0 -r grep -Ho -e "Never switch to NumPy" -e "never git add" | sort -u # timeout: 5000
 ```
 
 **18d — Cross-reference integrity**: Grep agent files, skill files, CLAUDE.md for `.claude/rules/<name>.md` patterns. Verify each referenced filename exists on disk → missing → **high**.
@@ -364,8 +371,9 @@ Per agent or skill file, extract lines with emoji and annotated concept label. G
 
 ````bash
 printf "=== Check 26a: Emoji/symbol consistency ===\n"
-for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do # timeout: 5000
-    [ -f "$f" ] || continue
+{ find .claude/agents -maxdepth 1 -name '*.md' -type f
+  find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f; } 2>/dev/null |
+while IFS= read -r f; do # timeout: 5000
     awk '/^```/{skip=!skip} !skip && /[🔴🟡🟢🔵⛔✅❌⚠️💭▶️🔗🔹🔸🚫]/{print FILENAME": "NR": "$0}' "$f" 2>/dev/null
 done
 ````
@@ -380,8 +388,9 @@ Directive references to other skills (e.g., "run → /audit") must use `/name` f
 
 ```bash
 printf "=== Check 26b: Slash command notation ===\n"
-for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do # timeout: 5000
-    [ -f "$f" ] || continue
+{ find .claude/agents -maxdepth 1 -name '*.md' -type f
+  find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f; } 2>/dev/null |
+while IFS= read -r f; do # timeout: 5000
     grep -n '→ `/\?[a-z][a-z:-]*`\|run `/\?[a-z][a-z:-]*`\|suggest.*`/\?[a-z][a-z:-]*`' "$f" 2>/dev/null
 done
 ```
@@ -394,7 +403,9 @@ When file defines legend (any line matching `Legend:` followed by symbol/concept
 
 ```bash
 printf "=== Check 26c: Legend/key alignment ===\n"
-grep -n 'Legend:\|^Key:' .claude/agents/*.md .claude/skills/*/SKILL.md 2>/dev/null || true # timeout: 5000
+{ find .claude/agents -maxdepth 1 -name '*.md' -type f -print0
+  find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f -print0; } 2>/dev/null |
+  xargs -0 -r grep -Hn 'Legend:\|^Key:' || true # timeout: 5000
 ```
 
 Via model reasoning: extract (symbol, concept) pairs from legend. Per concept, scan file body outside code fences for different symbol. Flag: `Legend defines <concept> as <symbol-A> but body uses <symbol-B> at line N`.

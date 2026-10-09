@@ -142,7 +142,7 @@ If `ISSUE_REF` non-empty and issue fetch succeeded: include issue title, body, l
 2. Check local divergences: run `git log --oneline -10`, grep for symbols mentioned in issue; identify where local codebase differs structurally from what issue assumes
 3. Produce adaptation plan: upstream intent → local implementation using local conventions, existing abstractions, current code structure — never assume upstream approach ports directly
 
-**Unsupported flag check** — after ALL supported flags extracted (including `--issue` from block above), scan `$ARGUMENTS` for remaining `--<token>` tokens not in supported list. Do NOT include `--issue` in "unknown" set — it is consumed in second parse block above. Supported: `--plan`, `--team`, `--worktree`, `--no-batch`, `--no-challenge`, `--challenge`, `--no-codemap`, `--codemap`, `--accept-no-plan`, `--issue`, `--repo`, `--keep`. If truly unknown token found: print `` ! Unknown flag(s): `--<token>`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after ALL supported flags extracted (including `--issue` from block above), scan `$ARGUMENTS` for remaining `--<token>` tokens not in supported list. Do NOT include `--issue` in "unknown" set — it is consumed in second parse block above. Supported: `--plan`, `--team`, `--worktree`, `--no-batch`, `--no-challenge`, `--challenge`, `--no-codemap`, `--codemap`, `--accept-no-plan`, `--issue`, `--repo`, `--keep`. If truly unknown token found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Worktree isolation
 
@@ -292,7 +292,7 @@ cat "$_DEV_SHARED/plan-inline.md"
 
 Plan-inline skipped because `--plan` was supplied or `ACCEPT_NO_PLAN=true`, **and** complexity classified `large` → still surface the smell once: invoke `AskUserQuestion` — "Scope is large (8+ files or 2+ new modules) and the plan gate was bypassed. How to proceed?" · (a) **Narrow scope** (recommended) · (b) **Proceed** — scope accepted as-is.
 
-Present analysis summary before proceeding.
+Carry the analysis summary in the next gate question's `preview` when one fires, and in the Final Report — not as standalone reply text before further tool calls (text written before a tool call can arrive as an empty progress update). Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full summary to `$DEV_DIR/analysis.md` first, make every option's `preview` a compact summary ending `→ full analysis: $DEV_DIR/analysis.md`, and name that path in the question text.
 
 **Goal classification gate**: after sw-engineer analysis completes, scan the goal text for mixed signals — goal contains both feature keywords (add, implement, new, support) AND refactor keywords (rename, extract, restructure, decouple, consolidate) → invoke `AskUserQuestion`: "Goal mixes feature work and refactoring — split into two runs." · (a) **Abort** — run `/develop:refactor` first, then `/develop:feature` · (b) **Continue as feature-only** — treat refactoring as out of scope.
 
@@ -357,7 +357,7 @@ Spawn `foundry:challenger` with scope analysis from Step 1 (purpose, scope, risk
 
 Parse result:
 
-- **Blockers found** → STOP. Present findings, then invoke `AskUserQuestion` — "Challenger raised N blocker(s) on the implementation approach. How to proceed?" · (a) **Revise scope** — return to Step 1 analysis with the blockers as input · (b) **Accept risk** — proceed to Step 2 with each blocker documented in the Final Report Follow-up · (c) **Abort**. On Abort: stop. Never proceed to Step 2 on prose alone.
+- **Blockers found** → STOP. Invoke `AskUserQuestion` with the blocker findings (one line each: claim · file:line · evidence) as the `preview` of every option, not as reply text before the call (over the preview cap — ≤2000 chars, ≤12 lines — Write them to `$DEV_DIR/blockers.md` first, preview a compact summary ending `→ full list: $DEV_DIR/blockers.md`, and name that path in the question text) — "Challenger raised N blocker(s) on the implementation approach. How to proceed?" · (a) **Revise scope** — return to Step 1 analysis with the blockers as input · (b) **Accept risk** — proceed to Step 2 with each blocker documented in the Final Report Follow-up · (c) **Abort**. On Abort: stop. Never proceed to Step 2 on prose alone.
 - **Concerns only** → surface as advisory section before demo test; continue.
 - **No findings / all refuted** → proceed.
 
@@ -663,7 +663,7 @@ Use scan to prioritize which criteria below get deepest scrutiny.
 
 5. **Substantive gaps remain** → start next cycle (max 3 total).
 
-**After 3 cycles**: substantive issues remain → stop, surface to user before proceeding to Step 5.
+**After 3 cycles**: substantive issues remain → stop; they surface in the Incomplete Report Variant below (the final reply), not as reply text before Step 5's tool calls (text written before a tool call can arrive as an empty progress update).
 
 When stopping with unresolved issues, use the **Incomplete Report Variant** from `${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/feature/templates/report-templates.md`.
 
