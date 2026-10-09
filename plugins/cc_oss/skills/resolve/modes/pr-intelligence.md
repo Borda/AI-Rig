@@ -215,12 +215,17 @@ fi
 [ "${RESOLVED_THREAD_IDS_COUNT:-0}" = "0" ] && echo "⚠ Could not fetch resolved thread status — some items may already be resolved; review table carefully"  # timeout: 3000
 ```
 
-Read `$IMPL_DIR/pr-intelligence.md`, then put its full contents (Sources block + motivation + every action item table row) in an **assistant user-facing reply**, not Bash/tool stdout, once — as the last text of the message that issues Step 3d's AskUserQuestion (Step 3d gate; never printed earlier and again there). This is the only ACTION_ITEMS table in pure `pr` mode; Output-Routing `.temp` diversion does **not** apply (selection-driving, read-in-context; canonical exemption in SKILL.md Step 3c). Orchestrator context now holds *classified* table (~500–1000 tokens) rather than raw PR thread (often 5000–20000+ tokens on active PRs). Later steps read per-item details from `$IMPL_DIR/action-items.jsonl` when `full_comment_text` or other fields needed:
+Read `$IMPL_DIR/pr-intelligence.md`, then put its Sources block + motivation at the top of the `preview` of every bulk-action option of Step 3d's AskUserQuestion, above the action item table — not Bash/tool stdout, and never as reply text before that call: 5.5-family models may return reply text written before a tool call as an empty progress update. Every action item table row goes exactly once, in that same preview — never also as reply text (SKILL.md Step 3d **Table in the picker preview**); past the preview cap (2000 chars, 12 lines) the whole headed table goes to `$IMPL_DIR/action-items-table.md` instead, Q1's question text names that file with the line `→ Full item table: <path>`, and every preview carries the same capped summary naming it (SKILL.md Step 3d **Preview cap**); in `pr + report` mode Step 3c's merged Sources block replaces this one. This is the only ACTION_ITEMS table in pure `pr` mode; Output-Routing `.temp` diversion does **not** apply (selection-driving, read-in-context; canonical exemption in SKILL.md Step 3c). Orchestrator context now holds *classified* table (~500–1000 tokens) rather than raw PR thread (often 5000–20000+ tokens on active PRs). Later steps read per-item details from `$IMPL_DIR/action-items.jsonl` when `full_comment_text` or other fields needed: create `$IMPL_DIR/item-ids-now.txt` with the Write tool (the item ids to read, space-separated), then run this block unedited — one record per id:
 
 ```bash
-_ID="<id>"
-case "$_ID" in ''|*[!0-9]*) echo "! BLOCKED — item id placeholder not substituted or non-numeric"; exit 1 ;; esac
-jq -c ". | select(.id == $_ID)" "$IMPL_DIR/action-items.jsonl"  # timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; Step 1 never ran"; exit 1; }
+# ids from a Write-tool file, never a placeholder: block text stays invariant for the blueprint manifest
+[ -s "$IMPL_DIR/item-ids-now.txt" ] && _IDS=$(tr '\r\n\t' '   ' < "$IMPL_DIR/item-ids-now.txt") || _IDS=""
+case "$_IDS" in *[0-9]*) ;; *) echo "! BLOCKED — item-ids-now.txt missing or empty; create it with the Write tool (item ids, space-separated)"; exit 1 ;; esac
+case "$_IDS" in *[!0-9\ ]*) echo "! BLOCKED — item-ids-now.txt holds a non-numeric item id"; exit 1 ;; esac
+jq -b -c --arg ids "$_IDS" '($ids | split(" ") | map(select(. != ""))) as $sel | select((.id | tostring) as $id | $sel | index($id))' "$IMPL_DIR/action-items.jsonl"  # timeout: 5000
 ```
 
 ### `[question]` item handling

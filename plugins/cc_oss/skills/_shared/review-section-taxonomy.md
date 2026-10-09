@@ -33,20 +33,16 @@ All severities:
 | HIGH | any | `[req]` |
 | MEDIUM | Architecture, Performance, API Design (code-related) | `[req]` |
 | MEDIUM | Test Coverage, Documentation, Static Analysis, Codex Co-Review | `[suggest]` |
-| LOW | any | `[suggest]` — group by topic, never drop (see below) |
-| COSMETIC (`[cosmetic]` label) | any | `[suggest]` — severity 1; group per LOW Grouping Rule |
+| LOW | any | `[suggest]` — one item and one row per finding, never dropped (see below) |
+| COSMETIC (`[cosmetic]` label) | any | `[suggest]` — severity 1; same LOW Grouping Rule |
 
 ## LOW Grouping Rule
 
-Never omit LOW items **present in the report** — this rule binds the resolve parser (extraction + AskUserQuestion clustering), not what the review consolidator chooses to write. Report-side pruning governed by review/checklist.md §Consolidation Rules. When total pending items > 18 (AskUserQuestion checkbox ceiling: 2 calls × 3 item questions × 3 items — the 4th slot of every call is the mandatory bulk page, never items), cluster LOW items into composite `[suggest]` display rows by **topic or logical theme** (display only — `action-items.jsonl` keeps one item per finding so each keeps its stable `finding_id`). Cluster by semantic similarity, not by section or file. Each composite row:
+Never omit LOW items **present in the report** — this rule binds the resolve parser, not what the review consolidator chooses to write. Report-side pruning governed by review/checklist.md §Consolidation Rules.
 
-- `summary`: cluster theme (≤55 chars)
-- `change`: bullet list of every member finding with `file:line`
-- `severity`: max member severity (1–2 for LOW)
-- `full_comment_text`: concatenation of member bullets
-- `file`/`line`: blank (multi-file)
-
-Compress until total ≤ 18 — past that, resolve drops per-item checkboxes entirely for a compressed table. Surface every LOW as own row when count permits, group only as needed.
+- Every LOW finding stays its own `[suggest]` item in `action-items.jsonl`, with its own stable `finding_id`, and its own row in resolve's selection table at every pending count.
+- Never cluster LOW items into composite display rows. Resolve's selection gate (`hooks/enforce-resolve-table.js`) requires every pending and resolved/addressed id as its own table cell, so a composite row hides its member ids and the picker call is denied.
+- Past 18 pending items (AskUserQuestion checkbox ceiling: 2 calls × 3 item questions × 3 items — the 4th slot of every call is the mandatory bulk page, never items), resolve drops per-item checkboxes for its compressed table, which still lists every item as its own row.
 
 ## Grep Pattern (resolve parser)
 

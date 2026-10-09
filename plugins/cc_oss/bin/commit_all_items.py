@@ -21,18 +21,11 @@ Args:
 from __future__ import annotations
 
 import argparse
-import atexit
-import os
-import re
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 from shutil import which
-
-#: Matches each run of characters outside ``[a-z0-9]``, which slugification replaces with a hyphen.
-_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
 @dataclass(frozen=True)
@@ -57,54 +50,6 @@ class CommitSummaryFields:
     n_rejected: int
     bullet_list: str
     include_codex: bool = False
-
-
-def _slug(text: str) -> str:
-    """Slugify text to ``[a-z0-9-]`` with no trailing hyphen.
-
-    Args:
-        text: Input string.
-
-    Returns:
-        Slugified string.
-
-    Examples:
-        >>> _slug("My/Repo Name")
-        'my-repo-name'
-        >>> _slug("main")
-        'main'
-    """
-    return _SLUG_RE.sub("-", text.lower()).rstrip("-")
-
-
-def _sentinel_path(git: str) -> Path:
-    """Return the commit-auth sentinel path for the current repo+branch.
-
-    Mirrors the logic in ``commit_action_item.py`` and ``compute_commit_sentinel.py``.
-
-    Args:
-        git: Absolute path to the ``git`` executable.
-
-    Returns:
-        Path to sentinel file (may not yet exist).
-
-    Examples:
-        No doctest — requires live git; covered by pytest with monkeypatch.
-    """
-    root = subprocess.run(  # noqa: S603 - argv list, no shell
-        [git, "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False
-    ).stdout.strip()
-    branch = subprocess.run(  # noqa: S603 - argv list, no shell
-        [git, "branch", "--show-current"], capture_output=True, text=True, check=False
-    ).stdout.strip()
-    # Prefer a per-user temp dir over a world-readable default, but only when the value is
-    # absolute for this host. Windows CI inherits a POSIX-style TMPDIR that has no native
-    # directory, and a drive-less path would resolve against whatever drive the process
-    # happens to run on; the system temp dir is the interoperable fallback there.
-    native = PureWindowsPath if sys.platform == "win32" else PurePosixPath
-    candidates = (os.environ.get("TMPDIR"), os.environ.get("XDG_RUNTIME_DIR"))
-    base = Path(next((c for c in candidates if c and native(c).is_absolute()), tempfile.gettempdir()))
-    return base / f"claude-commit-auth-{_slug(Path(root).name)}-{_slug(branch)}"
 
 
 def _resolve(cmd: str) -> str:
@@ -262,9 +207,6 @@ def main(argv: list[str] | None = None) -> int:
         bullet_list = Path(summaries_file).read_text(encoding="utf-8")
     msg = build_commit_message(CommitSummaryFields(pr_number, *int_counts, bullet_list, include_codex))
     git = _resolve("git")
-    sentinel = _sentinel_path(git)
-    sentinel.touch()
-    atexit.register(lambda: sentinel.unlink(missing_ok=True))
     cached = subprocess.run([git, "diff", "--cached", "--quiet"], check=False)  # noqa: S603
     if cached.returncode == 0:
         print("commit_all_items: staging area empty — no commit created", file=sys.stderr)

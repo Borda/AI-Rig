@@ -10,6 +10,12 @@ import pytest
 
 _RESOLVE = Path(__file__).resolve().parents[2] / "skills" / "resolve"
 _BASH = shutil.which("bash")
+_ZSH = shutil.which("zsh")
+#: The Bash tool runs the login shell — zsh on macOS, which never sets ``BASH_REMATCH`` — so header parsing runs both.
+_SHELLS = [
+    pytest.param(_BASH, id="bash", marks=pytest.mark.skipif(_BASH is None, reason="bash not installed")),
+    pytest.param(_ZSH, id="zsh", marks=pytest.mark.skipif(_ZSH is None, reason="zsh not installed")),
+]
 
 
 def test_report_dispatch_uses_selected_ids_instead_of_pending_count() -> None:
@@ -80,20 +86,31 @@ def test_report_header_pr_reaches_step_4_in_fresh_shell(tmp_path: Path) -> None:
     assert (tmp_path / "42").read_text(encoding="utf-8") == "--pr 42"
 
 
-@pytest.mark.skipif(_BASH is None, reason="Resolve route uses Bash")
+@pytest.mark.parametrize("shell", _SHELLS)
 @pytest.mark.parametrize(
     ("frontmatter_pr", "heading", "line_ending", "expected_status", "expected_pr"),
     [
         pytest.param("n/a", "## Code Review: branch", "\n", 0, "n/a", id="local-report-clears-stale-pr"),
         pytest.param("#43", "## Code Review: PR #42 — title", "\n", 1, "", id="conflicting-pr-headings-block"),
         pytest.param("#4x", "## Code Review: PR #42", "\n", 1, "", id="malformed-pr-field-blocks"),
+        pytest.param("#042", "## Code Review: branch", "\n", 1, "", id="zero-led-pr-field-blocks"),
         pytest.param("#42", "## Code Review: PR #42", "\r\n", 0, "42", id="crlf-report-header"),
     ],
 )
 def test_report_header_state_rejects_ambiguous_pr(
-    tmp_path: Path, frontmatter_pr: str, heading: str, line_ending: str, expected_status: int, expected_pr: str
+    tmp_path: Path,
+    frontmatter_pr: str,
+    heading: str,
+    line_ending: str,
+    expected_status: int,
+    expected_pr: str,
+    shell: str,
 ) -> None:
-    """Report metadata must not inherit a prior PR or route conflicting identities."""
+    """Report metadata must not inherit a prior PR or route conflicting identities, under bash and zsh alike.
+
+    Under zsh the former ``[[ =~ ]]`` match left ``BASH_REMATCH`` unset, so a valid ``PR: #42`` header persisted an
+    empty PR number and every later block stopped on a missing PR.
+    """
     report_doc = (_RESOLVE / "modes" / "report-intelligence.md").read_text(encoding="utf-8")
     report = tmp_path / "review-report.md"
     report.write_bytes(line_ending.join(("---", f"PR: {frontmatter_pr}", "---", heading, "")).encode("utf-8"))
@@ -101,7 +118,7 @@ def test_report_header_state_rejects_ambiguous_pr(
     (tmp_path / f"resolve-report-file-{session}").write_text(f"{_bash_path(report)}\n", encoding="utf-8", newline="\n")
     (tmp_path / f"resolve-pr-number-{session}").write_text("99\n", encoding="utf-8", newline="\n")
     result = subprocess.run(
-        [_BASH, "-c", _bash_block_after(report_doc, "Report header state")],
+        [shell, "-c", _bash_block_after(report_doc, "Report header state")],
         cwd=tmp_path,
         env=os.environ | {"CLAUDE_CODE_SESSION_ID": session, "TMPDIR": str(tmp_path)},
         capture_output=True,
@@ -298,8 +315,8 @@ def test_no_pr_report_writes_local_commit_reference(tmp_path: Path, prior_ref: s
     ("marker", "next_line"),
     [
         pytest.param("**Concurrency guard — mutex + HEAD fingerprint**", "_GITDIR=", id="prelude"),
-        pytest.param("**SECURITY — every field below comes from", "_BATCH_TAG=", id="each"),
-        pytest.param("**SECURITY — file list and per-item summaries", "GROUP_IDS=", id="grouped"),
+        pytest.param("**SECURITY — every field below comes from", "IFS= read -r _BATCH_TAG <", id="each"),
+        pytest.param("**SECURITY — file list and per-item summaries", "_GROUP_NOW=", id="grouped"),
         pytest.param("**After loop — `COMMIT_MODE=all` only**", "# grep -c", id="all"),
     ],
 )
@@ -492,6 +509,7 @@ def test_failed_c1_each_commit_leaves_no_item_ledger(tmp_path: Path) -> None:
     impl_dir = tmp_path / "implementation"
     impl_dir.mkdir()
     (impl_dir / "c1-head-1.txt").write_text(head + "\n", encoding="utf-8", newline="\n")
+    (impl_dir / "c1-item-current.txt").write_text("1\n", encoding="utf-8", newline="\n")
     (impl_dir / "action-items.jsonl").write_text(
         '{"id":1,"author":"reviewer","full_comment_text":"fix note"}\n', encoding="utf-8", newline="\n"
     )
@@ -510,9 +528,8 @@ def test_failed_c1_each_commit_leaves_no_item_ledger(tmp_path: Path) -> None:
 
     dispatch = (_RESOLVE / "modes" / "action-item-dispatch.md").read_text(encoding="utf-8")
     start = dispatch.index("```bash", dispatch.index("**Only `each` mode commits here.**")) + len("```bash\n")
-    fence = dispatch[start : dispatch.index("```", start)].replace(
-        '_BATCH_TAG="<this batch\'s first item id — same value used for the brief file above>"', '_BATCH_TAG="1"'
-    )
+    # unedited: the item id comes from c1-item-current.txt, recorded by the brief block
+    fence = dispatch[start : dispatch.index("```", start)]
     # Model native Windows jq: only --binary suppresses CRLF in Git Bash pipes.
     jq_crlf = r"""jq() {
     for option in "$@"; do
@@ -542,6 +559,7 @@ def test_failed_c1_each_commit_leaves_no_item_ledger(tmp_path: Path) -> None:
     assert "C1 per-item commit failed" in result.stdout
     assert not (impl_dir / "c1-item-summary.tsv").exists()
     assert not (impl_dir / "c1-item-files.tsv").exists()
+    assert (impl_dir / "c1-item-current.txt").read_text(encoding="utf-8") == "1\n"  # kept for the rerun
     assert source.read_text(encoding="utf-8") == "after\n"
 
 

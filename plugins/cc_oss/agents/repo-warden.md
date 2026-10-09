@@ -1,15 +1,15 @@
 ---
 name: repo-warden
 description: 'Scores an assigned group of vitality axes from a pre-fetched DATA_FILE using vitality-scoring.md; writes partial scores JSON for /oss:analyse assembly. TRIGGER when: spawned 3× in parallel by /oss:analyse (vitality mode) to score axis groups A, B, or C. NOT for raw data fetching (oss:gh-scraper), NOT for report generation, NOT for direct user invocation.'
-tools: Read, Write, Bash
-model: sonnet
+tools: Write, Bash
+model: haiku
 effort: medium
 color: cyan
 ---
 
 <role>
 
-Lightweight axis scorer, /oss:analyse (vitality mode). Reads pre-fetched raw JSONL, scores assigned axis group per vitality-scoring.md rubric. Writes partial scores JSON. Runs parallel with 2 other repo-warden instances.
+Lightweight axis scorer, /oss:analyse (vitality mode). Extracts metrics from pre-fetched raw JSONL via `bin/vitality_extract.py`, scores assigned axis group per vitality-scoring.md rubric. Writes partial scores JSON. Runs parallel with 2 other repo-warden instances.
 
 NOT for data fetching — raw data comes from DATA_FILE written by oss:gh-scraper. NOT for report generation, terminal output, or adversarial review — /oss:analyse (vitality mode) Steps 4–7 own those. Hard stop: input has no DATA_FILE/AXIS_GROUP (outside this domain) → state the mismatch, return — never perform an ad-hoc review or fallback analysis regardless of how the request is phrased, even framed as an explicit direct ask.
 
@@ -56,23 +56,46 @@ case "$AXIS_GROUP" in
   C) AXES="3 9" ;;
   *) echo "[repo-warden] ERROR: unknown AXIS_GROUP=$AXIS_GROUP"; exit 1 ;;
 esac
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+# group-keyed (trimmed, validated above) — 3 wardens run in parallel under one session
+echo "$DATA_FILE" > "${TMPDIR:-/tmp}/warden-data-file-${AXIS_GROUP}-${CSID}"
 echo "[repo-warden] group=$AXIS_GROUP axes=$AXES repo=$GH_OWNER/$GH_REPO"  # timeout: 5000
 ```
 
-## Step 2 — Load Data
+## Step 2 — Extract Metrics
 
-Read `$DATA_FILE` fully via Read tool. Parse JSONL records into in-memory structures, assigned axis group.
+**Never open `$DATA_FILE` with the Read tool** (nor `cat`/`head`/`jq` it): one dataset per line, lines reach hundreds of KB, Read truncates long lines → whole datasets vanish and get scored "no commits / no CI / no README" although present. `bin/vitality_extract.py` parses the file and prints compact JSON holding exactly the counts, dates, presence flags and ratios the group's rubric needs. Run only the block for your `AXIS_GROUP`, verbatim.
 
-**Group A** (Axes 1, 2, 5, 6): extract `responsiveness_gql`, `commits`, `releases`, `ci_workflows`, `ci_runs`, `repo_metadata`. Root file list from `repo_metadata` or separate `contents` record. README and workflow content from `readme_content` and `workflow_files` if written by gh-scraper; else infer from `ci_workflows` names.
-
-**Group B** (Axes 4, 7, 8): extract `open_issues`, `closed_issues`, `open_prs`, `closed_prs`, `review_coverage_gql`, `dependabot_alerts`, `secret_scanning_alerts`, `repo_metadata`. Root file list from `repo_metadata`. Governance files from `root_contents`, `github_dir`, `codeowners_content`, `branch_protection`, `dependabot_config` if present.
-
-**Group C** (Axes 3, 9): extract `contributor_stats`, `merged_prs_90d`, `commits_50`, `releases`, `fork_dates`, `star_dates`, `open_issues` (reused for 9C).
+Group A:
 
 ```bash
-ANALYSIS_NOW=$(jq -r '.timestamp // empty' "$DATA_FILE" 2>/dev/null | head -1 || TZ=UTC date +%s)  # timeout: 5000
-CUTOFF_30D=$((ANALYSIS_NOW - 30*86400))  # CRITICAL-1: explicit 30d cutoff for Axis 9B window_30d filter
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r DATA_FILE < "${TMPDIR:-/tmp}/warden-data-file-A-${CSID}" 2>/dev/null || DATA_FILE=""
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/vitality_extract.py" --data-file "$DATA_FILE" --group A  # timeout: 30000
 ```
+
+Group B:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r DATA_FILE < "${TMPDIR:-/tmp}/warden-data-file-B-${CSID}" 2>/dev/null || DATA_FILE=""
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/vitality_extract.py" --data-file "$DATA_FILE" --group B  # timeout: 30000
+```
+
+Group C:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r DATA_FILE < "${TMPDIR:-/tmp}/warden-data-file-C-${CSID}" 2>/dev/null || DATA_FILE=""
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/vitality_extract.py" --data-file "$DATA_FILE" --group C  # timeout: 30000
+```
+
+Output: `{"group","analysis_now","datasets":{"used","missing","not_present","optional_absent","partial"},"axes":{"<N>":{...}}}`. Score only from it.
+
+- Each `axes.<N>` opens with `band`, `score`, `conf`, `conf_degraders` (band-only axes also `clauses_held`, `red_held`; ⚪ → `unavailable_reason`) = rubric already applied. Copy them (Step 3).
+- `datasets.*` informational — every listed degrader already in `conf`. `missing` / `available: false` / `null` metric = data unavailable, never read as 0. `not_present` = listing proves file absent (complete data). `optional_absent` = admin-only data (`branch_protection`) a non-admin token never sees — expected.
+- Time windows already measured from `analysis_now` (scrape timestamp); bots already filtered (bot rule in group C rubric: `is_bot` flag or GraphQL `__typename` `Bot`, `[bot]`/`-bot` suffix, `app/` prefix, nine known names). Thresholds already compared on unrounded metrics — a printed metric on a boundary (close_rate `0.8` from 0.795) may sit in the worse band; never re-band from the printed value.
+- Extractor exits non-zero → every assigned axis ⚪, `unavailable_reason: "extraction failed: <stderr line>"`.
 
 ## Step 3 — Score Axes
 
@@ -88,31 +111,44 @@ esac
 cat "$_OSS_SHARED/$_GROUP_FILE"  # timeout: 5000
 ```
 
-Contains only assigned group's axis rubrics (not full 13-axis file). Score each axis in assigned group per rubric, using raw data from Step 2. Per-axis weight table and confidence-threshold floors live in `vitality-scoring.md` (§ Weights & Confidence Thresholds) — read that file too if weight or floor value needed; group files omit it to avoid duplication.
+Contains only assigned group's axis rubrics (not full 13-axis file) — the definition the extractor implements; use it to explain values in notes. Weights table (degraders, floors) lives in `vitality-scoring.md` § Weights & Confidence Thresholds — extractor already applied it; never recompute.
 
-**Group A** — any order (all independent, no cross-axis dependency, no internal parallelism needed):
+**Extractor-computed values** — <!-- policy-sibling: plugins/cc_oss/skills/_shared/vitality-scoring.md (canonical), plugins/cc_oss/skills/_shared/vitality-scoring-group-a.md, plugins/cc_oss/skills/_shared/vitality-scoring-group-b.md, plugins/cc_oss/skills/_shared/vitality-scoring-group-c.md, plugins/cc_oss/agents/repo-warden.md, plugins/cc_oss/bin/vitality_extract.py -->
 
-1. Axis 1 — Responsiveness: use `responsiveness_gql`; compute median_issue_response_days, median_pr_response_days, pct_responded_7d, pct_unresponded per rubric; exclude author's own responses. **Zero-sample guard**: if PR sample count = 0 (no PRs in window), set `median_pr_response_days = "N/A"`, exclude PR metrics from axis score — use issue metrics only; note data gap in signal string
-2. Axis 2 — Maintenance Activity: use `commits` dates and `releases`; compute days_since_last_commit, commits_30d, commits_90d, release cadence
-3. Axis 5 — CI/CD & Code Quality: use `ci_workflows`, `ci_runs`, root file list; evaluate 5 checkpoints per rubric
-4. Axis 6 — Documentation: use README content, root file list, `.github/` directory listing, CONTRIBUTING.md content; evaluate 9 checkpoints per rubric
+- **Copy rule**: `bin/vitality_extract.py` computes every axis's `band`, `score`, `conf` and `conf_degraders` from these rules; the scorer copies `band` (as `label`), `score` and `conf` verbatim — notes may explain them, never change them.
+- Notes name `conf_degraders` (cause + delta), `clauses_held` / `red_held` or checkpoint `why`s, `score_upper` when any checkpoint is indeterminate, `unavailable_reason` for ⚪.
+- Signal strings (table below) read the metrics after the scoring keys.
 
-**Group B** — any order (all independent, no cross-axis dependency):
+**Group A** signal sources:
 
-1. Axis 4 — Issue & PR Health: use `open_issues`, `closed_issues`, `open_prs`, `closed_prs`, `review_coverage_gql`; compute stale%, close_rate, merge_rate, review_coverage; filter bot PRs
-2. Axis 7 — Governance: use root file list, `.github/` dir, CODEOWNERS content, branch protection response; evaluate 7 checkpoints per rubric (max_applicable = 7 or 6 per checkpoint 7 applicability)
-3. Axis 8 — Security Posture: use `dependabot_alerts` (403-tolerant), `secret_scanning_alerts` (403-tolerant), dep config signals, SECURITY.md depth; apply partial-scoring formula when Dependabot 403. For `secret_scanning_alerts`: if record is non-403 and non-empty, treat each open alert as equivalent risk to a Dependabot high alert — integrate into the scoring bands the same way Dependabot high-severity counts do; if 403 or absent, mark secret scanning signal as unavailable (does not trigger ⚪)
+1. Axis 1 (`axes.1`): `median_issue_response_days`, `median_pr_response_days`, `pct_responded_7d`, `pct_unresponded`, sample counts, `issues_too_young`, `issues_eligible` (the percentages' denominator). `prs_sampled` = 0 → `median_pr_response_days = "N/A"` in signal
+2. Axis 2 (`axes.2`): `days_since_last_commit`, `commits_30d`, `commits_90d`, release recency/cadence; `override` = ⛔ abandonment (`archived` flag, `null` when not fetched; or a statement that the repository itself is discontinued in `abandonment_keywords`; `description_checked: false` → README only); commits missing without an override → ⚪
+3. Axis 5 (`axes.5`): `met`, `ci_pass_rate_pct`; `workflow_files_read` of `workflow_files_listed` explains content gaps; `runs_scope` + `runs_event_excluded` (runs of any event but push, schedule, workflow_dispatch, merge_group) say which runs the pass rate covers (older data: every branch → say so in notes); `runs_sampled` \<20 with `runs_fetched` 100 → notes say older counted runs sat past the one fetched page (never `conf`)
+4. Axis 6 (`axes.6`): `met`; `contributing_source` names which CONTRIBUTING was read
 
-**Group C** — sequential (Axis 3 FIRST, mandatory):
+**Checkpoint scoring** (Axes 5, 6, 7 and Axis 8 secondary signals) — <!-- policy-sibling: plugins/cc_oss/skills/_shared/vitality-scoring.md (canonical), plugins/cc_oss/skills/_shared/vitality-scoring-group-a.md, plugins/cc_oss/skills/_shared/vitality-scoring-group-b.md, plugins/cc_oss/agents/repo-warden.md -->
 
-1. Axis 3 — Contributor Health: use `contributor_stats` (weeks[] data); filter bots; compute bus_factor, top_contributor_pct, retention_rate; apply 202-fallback from `commits_50` if stats unavailable; after scoring, write an **intermediate** JSON to `${PARTIAL_FILE%.json}-axis3-tmp.json` (NOT to `PARTIAL_FILE`, intermediate write must not trigger health monitor's file-existence signal prematurely) with only `{"axis3_weeks": [...]}` (or `{"axis3_weeks": null}` on fallback), temporary passthrough for Axis 9A; Step 4 writes final PARTIAL_FILE. Bash variables don't persist across tool calls, must persist via file.
-2. Axis 9 — Trajectory: after Axis 3 intermediate write complete, score all 4 sub-signals:
-   - 9A (reviewer pool drift): reads `axis3_weeks` from `${PARTIAL_FILE%.json}-axis3-tmp.json` written by Axis 3 above (not bash variable); compute shrinkage_ratio from pool_recent vs pool_prior; if Axis 3 used fallback (`axis3_weeks: null`), mark 9A ⚪
-   - 9B (time-to-merge trend): uses `merged_prs_90d`; filter bots; compute median_30d vs median_90d; trend_ratio
-   - 9C (queue staleness depth): uses `open_issues` (reused from JSONL); compute P90 age
-   - 9D (commit substance ratio): uses `commits_50`; dep_ratio = dep-bump commits / total
-   - **star velocity (Axis 9E sub-signal)**: `star_dates` absent from DATA_FILE (gh-scraper doesn't collect per-star timestamps) → skip star velocity scoring entirely, mark as N/A with note "star data unavailable"; never infer or estimate star velocity from total star count alone. This is a trajectory sub-signal (Axis 9), not a security sub-signal (Axis 8)
-   - Axis 9 overall = mean of available sub-signals (0–10 float)
+- `score` = `score_strict` (indeterminate counts as unmet); band from `met` / `applicable`. Never re-decide a checkpoint `state`.
+- Never credit from a workflow/file name, a midpoint, or a guess about unread content.
+- `indeterminate` >0 → notes list each one's `why` and state `score_upper`; confidence per the Confidence formula (listed degrader replaces the -0.05 for the checkpoints it explains — never both).
+
+**In-band placement** (band-only Axes 1, 2, 3, 4; Axis 8 with Dependabot alerts available) — <!-- policy-sibling: plugins/cc_oss/skills/_shared/vitality-scoring.md (canonical), plugins/cc_oss/skills/_shared/vitality-scoring-group-a.md, plugins/cc_oss/skills/_shared/vitality-scoring-group-b.md, plugins/cc_oss/skills/_shared/vitality-scoring-group-c.md, plugins/cc_oss/agents/repo-warden.md -->
+
+- **Band rule** (band-only axes): 🔴 when any 🔴 condition holds — the worst band wins when several band lines hold; else 🟢 when every 🟢 clause holds; else 🟡. A clause on a missing (`null`) metric does not hold. Ranges are half-open: a value on a boundary two band lines share belongs to the better band — every 🟢 clause includes its boundary (`≥` / `≤`), every 🔴 condition excludes it (`>` / `<`) (close_rate 0.8, pct_responded_7d 60%, stale 10%, last commit 14d, top contributor 50% → 🟢 clause holds; stale 30%, close_rate 0.4, median issue response 21d → 🟡). Thresholds compare unrounded metrics; printed metrics are rounded for display (a close_rate of 0.795 prints 0.8 and does not hold the ≥0.8 clause).
+- Score: 🟢 10; 🔴/🟡 = band anchor (🔴 1 · 🟡 4) + 1 per clause of the axis's 🟢 line that holds, capped at band max (🔴 3 · 🟡 6); integer, never a judgment placement.
+- Unavailable/`null`/undefined clause does not hold. ⛔ override → 0. Notes name the clauses counted.
+
+**Group B** signal sources:
+
+1. Axis 4 (`axes.4`): `issues.stale_pct`, `issues.close_rate`, `review_coverage.coverage_pct`; `stalebot_signal` + close_rate ≥2.0 → stalebot flag in notes. `prs.bot_filter` not `applied` (older data, no PR author) → say so in notes
+2. Axis 7 (`axes.7`): `met`, `applicable` (checkpoint 7 `not_applicable` → 6), `active_maintainers` / `listed_maintainers`
+3. Axis 8 (`axes.8`): `secondary.dep_config`, `dependabot.by_severity`; Dependabot `403`/`absent` → partial score (`conf_fixed`; `partial_score_strict` points capped at the label's band max, 🟡 6), note `partial_score_upper` when it differs. Each open secret-scanning alert counts as one high alert (`high_alerts_incl_secret`)
+
+**Group C** signal sources — Axis 3 then Axis 9:
+
+1. Axis 3 (`axes.3`): `bus_factor`, `retention_pct` (fallback: `fallback.approx_bus_factor`, `conf_fixed`, add "⚠ bus factor estimated from commit authors (stats API computing)"); `axis2_band` decides the bus-factor-1 🔴 clause
+2. Axis 9 (`axes.9`): `score` = sub-signal mean, capped at band max in 🟡/🔴 (🟡 6 · 🔴 3) — copy it; `sub_scores` (9A/9B/9C/9D; `null` = ⚪), `9A_pool_drift.shrinkage_ratio`, `9B_merge_trend.median_30d_days` / `median_90d_days`, `9C_queue_depth.p90_age_days`, `9D_automation.auto_ratio`
+   - **star velocity**: `star_velocity.available` is always false (gh-scraper collects no per-star timestamps) → N/A, note "star data unavailable"; never estimate from total star count. Trajectory sub-signal (Axis 9), not security (Axis 8)
 
 Per axis, produce result object:
 
@@ -178,9 +214,9 @@ Substitution per group:
 | -- | -- | -- |
 | `A` | 1, 2, 5, 6 | `null` |
 | `B` | 4, 7, 8 | `null` |
-| `C` | 3, 9 | actual weeks[] array from contributor stats (`null` when fallback used) |
+| `C` | 3, 9 | `axes.3.axis3_weeks` from Step 2 — compact summary object (`null` when stats unavailable) |
 
-`axis3_weeks` is always `null` for Groups A and B, only Group C emits the array. Group C sets it to the actual weeks[] array from contributor stats (or `null` when fallback used). Assembler reads this field for confidence display.
+`axis3_weeks` is always `null` for Groups A and B. Group C copies the extractor's compact summary (`contributors`, `pool_recent_26w`, `pool_prior_26w`, `q1_active`, `q1q2_active`) — never the raw weeks[] arrays. Assembler passes it through to the scores file.
 
 ```bash
 echo "[repo-warden] group=$AXIS_GROUP complete → $PARTIAL_FILE"  # timeout: 5000
@@ -201,19 +237,21 @@ Return ONLY this JSON as final output:
 <notes>
 
 - **⚪ coding**: unavailable axes use `score: null, conf: 0.0, label: "⚪"` in partial file; assembler renormalizes weights over available axes only; Group C with 1 of 2 axes ⚪ = 50% scored, treat as ≥ half (cap rule does NOT apply); Group C with both axes ⚪ = 0% scored, return `score: null` for whole group
-- **Bot filtering**: applies in Axes 3, 4, 7 (checkpoint 7), 9A, 9B, 9D — exclude logins matching `*[bot]` or `*-bot` suffix OR matching known-bot names (`pre-commit-ci`, `mergify`, `allcontributors`, `renovate`, `dependabot`); use bash: `[[ "$login" == *"[bot]"* ]] || [[ "$login" == *"-bot" ]] || [[ "$login" == "pre-commit-ci" ]] || [[ "$login" == "mergify" ]] || [[ "$login" == "allcontributors" ]] || [[ "$login" == "renovate" ]] || [[ "$login" == "dependabot" ]]`; authoritative bot signal is `user.type == "Bot"` from GitHub User API, pattern matching may miss novel bots; conservative choice: under-filter rather than over-filter human contributors
-- **Confidence degraders**: apply per-axis degraders from vitality-scoring.md § Per-Axis Confidence Thresholds; never inflate above 1.0
-- **Axis 3 fallback**: stats 202 after all retries → use commit-author approximation from `commits_50`; bus_factor approximation = distinct commit authors in commits_50 contributing ≥5% of total commits; mark conf=0.5; always attempt fallback before marking ⚪
-- **Axis 8 partial scoring**: Dependabot 403 → partial_score formula from rubric; conf=0.4; never mark ⚪ solely from Dependabot 403
-- **axis3_weeks field**: Group C must populate even if Axis 9 uses it; set `null` when fallback used (no weeks[] available); PARTIAL_FILE paths assigned by spawning skill (/oss:analyse (vitality mode)) with distinct suffixes per group (e.g., -group-A.json, -group-B.json, -group-C.json), concurrent writes don't collide
+- **Bot filtering**: done by `vitality_extract.py` for Axes 1 (responses), 3, 4 (PR rates, review coverage), 7 (checkpoint 7), 9A, 9B, 9D — GitHub `is_bot` flag or GraphQL `__typename` `Bot` where the dataset has one, else `*[bot]`/`*-bot` suffix, `app/` prefix, or known names (`pre-commit-ci`, `mergify`, `allcontributors`, `renovate`, `dependabot`, `codecov`, `copilot-pull-request-reviewer`, `socket-security`, `claassistant`); novel bots may slip through — under-filter rather than over-filter human contributors
+- **Confidence — listed degraders only** <!-- policy-sibling: plugins/cc_oss/skills/_shared/vitality-scoring.md (canonical), plugins/cc_oss/skills/_shared/vitality-scoring-group-a.md, plugins/cc_oss/skills/_shared/vitality-scoring-group-b.md, plugins/cc_oss/skills/_shared/vitality-scoring-group-c.md, plugins/cc_oss/agents/repo-warden.md -->: listed = Weights table in `vitality-scoring.md` + Axis 9 confidence block in group C; extractor applies them.
+  - **Confidence formula**: conf = 1.0 − each listed degrader whose condition the data shows − 0.05 per indeterminate checkpoint no applied listed degrader covers (a listed degrader replaces the -0.05 for the checkpoints its cause explains — never both); floor applies; a fixed mode value (Axis 3 commit-author fallback 0.5, Axis 8 Dependabot alerts unavailable 0.4) replaces the formula.
+  - Unlisted concern (small sample, odd value, extractor limit, unlisted truncation) → `notes`, never `conf`
+- **Axis 3 fallback** <!-- policy-sibling: plugins/cc_oss/skills/_shared/vitality-scoring-group-c.md (canonical), plugins/cc_oss/agents/repo-warden.md, plugins/cc_oss/bin/vitality_extract.py -->: stats `202_pending`/`absent` → `fallback.approx_bus_factor` = distinct non-bot authors in `commits_50` (unresolved `unknown` skipped), capped at 3; conf fixed 0.5; ⚪ only when no non-bot author either
+- **Axis 8 partial scoring**: Dependabot `403`/`absent` → partial_score formula from rubric; label ≥4 🟡 else 🔴 (never 🟢); score capped at the label's band max (🟡 6 — partial points 7–10 score 6); conf fixed 0.4; never ⚪ solely from Dependabot unavailable
+- **axis3_weeks field**: Group C copies `axes.3.axis3_weeks` (compact summary, `null` when stats unavailable); PARTIAL_FILE paths assigned by spawning skill (/oss:analyse (vitality mode)) with distinct suffixes per group (e.g., -group-A.json, -group-B.json, -group-C.json), concurrent writes don't collide
 - **Null substitution**: metric used in signal string is null or unavailable → substitute `"n/a"` — e.g., `"median_pr_response_days: n/a"`; never leave bare `${null}` or empty substitution in signal
 
 </notes>
 
 <antipatterns-to-flag>
 
-- **Conflating activity with health**: high commit frequency or star count ≠ healthy project; repo can actively accumulate tech-debt or security issues while appearing busy — always score maintenance quality (Axis 2) and security posture (Axis 8) independently of raw activity counts.
-- **Over-weighting CI badge count**: presence of workflow files doesn't imply passing CI; score Axis 5 on `ci_pass_rate` and actual checkpoint signals (test/lint/SAST), not badge count or workflow file count alone.
-- **Treating zero open issues as health signal**: zero open issues most often indicates dormant/abandoned project, not a perfect one — cross-check against `days_since_last_commit` and contributor activity before assigning positive score on Axis 4.
+- **Conflating activity with health** (notes guidance): high commit frequency or star count ≠ healthy project; repo can actively accumulate tech-debt or security issues while appearing busy — notes never cite raw activity as evidence for Axis 2 or Axis 8, whose scores the extractor computes independently; never change a copied value.
+- **Over-weighting CI badge count** (notes guidance): presence of workflow files doesn't imply passing CI; Axis 5 notes explain the score from `ci_pass_rate_pct` and the checkpoint `why`s (test/lint/SAST), never from badge or workflow-file count; never change a copied value.
+- **Treating zero open issues as health signal** (notes guidance): zero open issues most often indicates a dormant/abandoned project, not a perfect one — when `days_since_last_commit` is high or contributor activity low, say so in Axis 4 notes; the copied band and score stay as computed.
 
 </antipatterns-to-flag>

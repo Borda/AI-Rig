@@ -71,7 +71,9 @@ For each item in rework list (parsed from `$REWORK_JSON`):
 
 1. Extract specific section from `$REPORT_FILE` — grep from section heading to next `##` heading
 2. Extract relevant axis data from `$DATA_FILE` — `type` record(s) for that axis from JSONL
-3. Identify axis rubric section from `$_OSS_SHARED/vitality-scoring.md`
+3. Identify axis rubric section from the axis's group file in `$_OSS_SHARED` — `vitality-scoring-group-a.md` (Axes 1, 2, 5, 6), `vitality-scoring-group-b.md` (4, 7, 8), `vitality-scoring-group-c.md` (3, 9); `vitality-scoring.md` holds only the Weights table and shared rules
+
+Axis `score`, label and `conf` are extractor-owned (`bin/vitality_extract.py`, copied verbatim by oss:repo-warden; SCORES_FILE Health Score assembled from them in Step 3) — rework never changes them, even when a reviewer disputes one. A disputed value stays as computed: the revised section explains the dispute in its notes, and the dispute is reported as an extractor/rubric issue in the Adversarial Review block (6c).
 
 Spawn FRESH rework agent per flagged section with MINIMAL context (no report history, no prior iteration findings):
 
@@ -90,9 +92,9 @@ REVIEWER ISSUE: {item.issue}
 RAW DATA for this axis (from GitHub API):
 {axis_specific_data_from_DATA_FILE}
 SCORING RUBRIC for this axis:
-{axis_N_section_from_vitality_scoring_md}
+{axis_N_section_from_its_vitality_scoring_group_file}
 
-Instructions: Rewrite the section to address the reviewer's issue. Use only the raw data provided above — do not introduce claims unsupported by this data. Preserve the existing markdown format (headings, bold labels, evidence/impact/action structure). Do not change the axis score or label unless the raw data clearly contradicts the current value.
+Instructions: Rewrite the section to address the reviewer's issue. Use only the raw data provided above — do not introduce claims unsupported by this data. Preserve the existing markdown format (headings, bold labels, evidence/impact/action structure). Never change the axis score, label or confidence — the extractor computed them and the Health Score is assembled from them. If the reviewer disputes one, keep the value and add a note naming the disputed value, the reviewer's reason and the raw data behind it, marked "extractor/rubric issue".
 
 Write the revised section to {REVIEW_DIR}/axis_{axis_N}_iter{REWORK_ITER}.md using Write tool.
 Return ONLY: {"status":"done","file":"<path>","axis":N}
@@ -124,6 +126,7 @@ After loop exits (pass or max iterations): update `$REPORT_FILE` — replace pla
 
 **Rework iterations:** {REWORK_ITER} of {REWORK_MAX} maximum
 {If REWORK_ITER > 0: "**Sections revised:** {REWORK_SECTIONS comma-separated}"}
+{If a revised section marks an extractor/rubric issue: "**Disputed extractor values (unchanged):** axis N — {value} — {reason}" per dispute}
 
 **Challenger:** {findings from $REVIEW_DIR/challenger-iter{final_iter}.md}
 

@@ -24,21 +24,23 @@ IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/
 [ -f "$REPORT_FILE" ] || { echo "⛔ Report source missing; run the Step 1 report gate"; exit 1; }
 : > "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}"
 _REPORT_PR_FIELD=$(awk 'NR == 1 { next } { sub(/\015$/, ""); if ($0 == "---") exit; if ($0 ~ /^PR:[[:space:]]*/) { sub(/^PR:[[:space:]]*/, ""); print } }' "$REPORT_FILE")
-if [[ "$_REPORT_PR_FIELD" =~ ^#([1-9][0-9]*)$ ]]; then
-    PR_NUMBER="${BASH_REMATCH[1]}"
-elif [ "$_REPORT_PR_FIELD" = "n/a" ]; then
-    PR_NUMBER="n/a"
-else
-    echo "⛔ Report PR field is not a PR number or n/a; refusing an ambiguous checkout"
-    exit 1
-fi
+# case + prefix strip, not [[ =~ ]]: zsh (the Bash tool's shell on macOS) never sets BASH_REMATCH
+case "$_REPORT_PR_FIELD" in
+    n/a) PR_NUMBER="n/a" ;;
+    '#'[1-9]*) PR_NUMBER="${_REPORT_PR_FIELD#?}" ;;
+    *) PR_NUMBER="" ;;
+esac
+case "$PR_NUMBER" in
+    n/a) ;;
+    ''|*[!0-9]*) echo "⛔ Report PR field is not a PR number or n/a; refusing an ambiguous checkout"; exit 1 ;;
+esac
 _HEADING_PR=$(sed -nE 's/^## Code Review: (PR #|#)?([1-9][0-9]*)([[:space:]].*)?$/\2/p' "$REPORT_FILE" | head -1)
 [ -z "$_HEADING_PR" ] || [ "$_HEADING_PR" = "$PR_NUMBER" ] || { echo "⛔ Report PR heading conflicts with frontmatter"; exit 1; }
 printf '%s\n' "$PR_NUMBER" > "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}"
 echo "→ Report PR: $PR_NUMBER"
 ```
 
-Print Sources block before parsing findings:
+Sources block — it heads the `preview` of every bulk-action option of Step 3d's AskUserQuestion, above the action items table, same as `pr-intelligence.md`'s. Never as reply text before the parsing calls below: 5.5-family models may return reply text written before a tool call as an empty progress update.
 
 ```markdown
 ## Resolve — sources
@@ -47,8 +49,6 @@ Mode   : report
 PR     : #<N>  (extracted from report header, or "n/a — working on current branch")
 GitHub : not fetched
 Report : Read <path to report file>
-
-Building action items…
 ```
 
 <!-- loads: review-section-taxonomy.md -->
@@ -97,9 +97,9 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items
 - Zero findings leave an empty `action-items.jsonl`.
 - Render the table below from those records with the same IDs. Stop before Step 3d if the merge exits non-zero.
 - A compaction or Step 8 may reload only `action-items.jsonl`.
-- Stored items stay one per finding, so each keeps its `finding_id` and evidence paths. LOW-item clustering (taxonomy **LOW Grouping Rule**) shapes only the displayed table and picker when pending items exceed the checkbox ceiling; it never rewrites `action-items.jsonl`.
+- Stored items stay one per finding, so each keeps its `finding_id` and evidence paths, and the displayed table keeps one row per item id at every pending count — LOW items are never clustered into composite rows (taxonomy **LOW Grouping Rule**); past 18 pending, SKILL.md Step 3d's compressed table still lists every row, which the selection gate checks id by id.
 
-Print ACTION_ITEMS as a user-facing markdown table (severity descending):
+Render ACTION_ITEMS as a markdown table (severity descending), below the Sources block in the same preview:
 
 ```markdown
 ### Action Items — report
@@ -109,7 +109,7 @@ Print ACTION_ITEMS as a user-facing markdown table (severity descending):
 | 1 | [report][req] | code | 4 | foundry:sw-engineer | pending | rename param x to count | — |
 ```
 
-Columns exactly as above — never add `File`, `Sev`, `Loc` or any other column. Summary ≤60 chars. Notes = `—` when empty; carries commit SHA for `addressed` rows and classification verdicts (e.g. deprecation filter output) — never `file:line`, which the `file`/`line` fields already hold. Print it once, as the last text of the message that issues Step 3d's AskUserQuestion (SKILL.md Step 3d gate) — never here and again at the gate.
+Columns exactly as above — never add `File`, `Sev`, `Loc` or any other column. Summary ≤60 chars. Notes = `—` when empty; carries commit SHA for `addressed` rows and classification verdicts (e.g. deprecation filter output) — never `file:line`, which the `file`/`line` fields already hold. Render it exactly once, as the `preview` of every bulk-action option of Step 3d's AskUserQuestion (SKILL.md Step 3d **Table in the picker preview**) — or, past the preview cap (2000 chars, 12 lines), in `$IMPL_DIR/action-items-table.md` with the Sources block on top, Q1's question text naming that file with the line `→ Full item table: <path>`, and every preview carrying the same capped summary naming it (SKILL.md Step 3d **Preview cap**) — never also as reply text before the picker, never Bash/tool stdout, never here and again at the gate.
 
 PR# found in report header → use the persisted `PR_NUMBER` from the block above, set `$ARGUMENTS = <N>`, go to Step 3d, skip Step 3e, then Step 4; skip Step 3b. Step 3d chooses `SELECTED_ITEMS` and commit mode before checkout. Continue through the normal post-checkout steps to Step 8.
 

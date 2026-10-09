@@ -219,7 +219,7 @@
       },
       {
         "head": "! BLOCKED \u2014 C1 batch tag placeholder not substituted or non-numeric",
-        "now": "! BLOCKED \u2014 C1 batch tag placeholder not substituted or non-numeric"
+        "now": "! BLOCKED \u2014 C1 item id in $_C1_NOW missing or non-numeric"
       },
       {
         "head": "! BLOCKED \u2014 C1 cannot inspect Git status",
@@ -375,7 +375,7 @@
       },
       {
         "head": "! BLOCKED \u2014 domain/batch-tag placeholder not substituted or invalid",
-        "now": "! BLOCKED \u2014 domain/batch-tag placeholder not substituted or invalid"
+        "now": "! BLOCKED \u2014 challenge-log line $_N: domain/batch-tag"
       },
       {
         "head": "! BLOCKED \u2014 gh CLI required; install: https://cli.github.com",
@@ -403,7 +403,7 @@
       },
       {
         "head": "! BLOCKED \u2014 group tag placeholder not substituted or invalid",
-        "now": "! BLOCKED \u2014 group tag placeholder not substituted or invalid"
+        "now": "! BLOCKED \u2014 $_FENCE_NOW must hold exactly one group tag from phase2-groups.tsv"
       },
       {
         "head": "! BLOCKED \u2014 head-at-conflict sentinel unreadable",
@@ -419,11 +419,11 @@
       },
       {
         "head": "! BLOCKED \u2014 item id",
-        "now": "! BLOCKED \u2014 item id"
+        "now": "! BLOCKED \u2014 challenge-log line $_N: item id"
       },
       {
         "head": "! BLOCKED \u2014 item id placeholder not substituted or non-numeric",
-        "now": "! BLOCKED \u2014 item id placeholder not substituted or non-numeric"
+        "now": "! BLOCKED \u2014 challenge-log line $_N: item id"
       },
       {
         "head": "! BLOCKED \u2014 item/task id placeholder not substituted",
@@ -431,7 +431,7 @@
       },
       {
         "head": "! BLOCKED \u2014 item_id placeholder not substituted",
-        "now": "! BLOCKED \u2014 item_id placeholder not substituted"
+        "now": "! BLOCKED \u2014 IMPL_DIR sentinel missing; cannot confirm straggler commits"
       },
       {
         "head": "! BLOCKED \u2014 malformed commit entry in",
@@ -487,7 +487,7 @@
       },
       {
         "head": "! BLOCKED \u2014 resolution",
-        "now": "! BLOCKED \u2014 resolution"
+        "now": "! BLOCKED \u2014 challenge-log line $_N: resolution"
       },
       {
         "head": "! BLOCKED \u2014 resolve_preflight.py failed (gh missing/unauthenticated o",

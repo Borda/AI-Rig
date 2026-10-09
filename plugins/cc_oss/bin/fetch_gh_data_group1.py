@@ -13,6 +13,7 @@ warning prefix; the empty file signals "tried, failed" to scorers.
 Usage:
     fetch_gh_data_group1.py --repo <owner/repo> --output-dir <path>
                             [--cutoff-3y <YYYY-MM-DD>]
+                            [--cutoff-30d <iso>]
                             [--cutoff-90d <iso>]
                             [--cutoff-180d <iso>]
 
@@ -26,6 +27,7 @@ import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from shutil import which
@@ -42,23 +44,29 @@ _DISCUSSIONS_QUERY = (
     "nodes { number title closed createdAt }"
     "}}}"
 )
-#: GraphQL query fetching recent issues and PRs with first-comment data to measure response times.
+#: GraphQL query fetching recent issues and PRs with their first comments and reviews to measure response times.
+#: Ten events per item, not one: the rubric needs the first event by a human other than the author, and both the
+#: author's own follow-ups and bot comments (coverage, CLA, security scanners, AI reviewers) often come first — with
+#: ``first:1`` such an item read as unresponded or as answered in seconds. ``__typename`` marks bot accounts: GraphQL
+#: returns an app's login without its ``[bot]`` suffix, so the login alone cannot tell ``codecov`` from a person.
 _RESPONSIVENESS_QUERY = (
     "query($owner:String!,$repo:String!){"
     "repository(owner:$owner,name:$repo){"
     "issues(first:20,orderBy:{field:CREATED_AT,direction:DESC},states:OPEN){"
-    "nodes{number createdAt author{login} comments(first:1){nodes{createdAt author{login}}}}}"
+    "nodes{number createdAt author{login __typename} comments(first:10){nodes{createdAt author{login __typename}}}}}"
     "pullRequests(first:20,orderBy:{field:CREATED_AT,direction:DESC},states:[OPEN,MERGED]){"
-    "nodes{number createdAt author{login}"
-    " reviews(states:[APPROVED,CHANGES_REQUESTED,COMMENTED],first:1){nodes{createdAt author{login}}}"
-    " comments(first:1){nodes{createdAt author{login}}}}}}}"
+    "nodes{number createdAt author{login __typename}"
+    " reviews(states:[APPROVED,CHANGES_REQUESTED,COMMENTED],first:10){nodes{createdAt author{login __typename}}}"
+    " comments(first:10){nodes{createdAt author{login __typename}}}}}}}"
 )
-#: GraphQL query fetching the last 30 merged PRs with their approving reviewers to measure review coverage.
+#: GraphQL query fetching the 30 most recently updated merged PRs with their approving reviewers to measure review
+#: coverage. ``first`` (not ``last``) because the order is DESC — ``last`` returned the 30 oldest merged PRs. The nested
+#: ``reviews`` connection needs its own ``first``: without it GitHub rejects the whole query and the dataset is lost.
 _REVIEW_COVERAGE_QUERY = (
     "query($owner:String!,$repo:String!){"
     "repository(owner:$owner,name:$repo){"
-    "pullRequests(last:30,states:MERGED,orderBy:{field:UPDATED_AT,direction:DESC}){"
-    "nodes{number author{login} reviews(states:APPROVED){nodes{author{login}}}}}}}"
+    "pullRequests(first:30,states:MERGED,orderBy:{field:UPDATED_AT,direction:DESC}){"
+    "nodes{number author{login __typename} reviews(states:APPROVED,first:10){nodes{author{login __typename}}}}}}}"
 )
 
 
@@ -116,26 +124,41 @@ def _fetch_one(gh: str, name: str, cmd_args: list[str], output_dir: Path) -> tup
     return name, False
 
 
-def _build_datasets(
-    owner_repo: str,
-    cutoff_3y: str,
-    cutoff_90d: str,
-    cutoff_180d: str,
-) -> list[tuple[str, list[str]]]:
+@dataclass(frozen=True)
+class Cutoffs:
+    """Lookback boundaries the time-windowed fetches search from.
+
+    Attributes:
+        three_years: ISO date (``YYYY-MM-DD``) for the 3-year lookback (reserved; closed issues use ``days_30``).
+        days_30: ISO datetime for the 30-day closed-issue and closed-PR windows.
+        days_90: ISO datetime for the 90-day merged-PR window.
+        days_180: ISO datetime for the 180-day lookback (reserved).
+    """
+
+    three_years: str
+    days_30: str
+    days_90: str
+    days_180: str
+
+
+def _build_datasets(owner_repo: str, cutoffs: Cutoffs) -> list[tuple[str, list[str]]]:
     """Build the full list of ``(name, gh_command_args)`` for all datasets.
+
+    ``closed_issues`` and ``closed_prs`` cover the 30-day closing window only: the rubric reads nothing older from them,
+    and a list ordered by creation and cut at its cap silently dropped old items closed this month while their counts
+    read as complete. CI runs are fetched by Group 2, which knows the default branch they are scoped to.
 
     Args:
         owner_repo: ``"owner/repo"`` string.
-        cutoff_3y: ISO date string for 3-year lookback (``YYYY-MM-DD``).
-        cutoff_90d: ISO datetime string for 90-day lookback.
-        cutoff_180d: ISO datetime string for 180-day lookback (reserved).
+        cutoffs: Lookback boundaries of the windowed searches.
 
     Returns:
         List of ``(name, cmd_args)`` tuples, one per dataset.
 
     Examples:
-        >>> ds = _build_datasets("o/r", "2023-01-01", "2023-01-01T00:00:00Z", "2022-07-01T00:00:00Z")
-        >>> len(ds) == 21
+        >>> cut = Cutoffs("2023-01-01", "2023-03-02T00:00:00Z", "2023-01-01T00:00:00Z", "2022-07-01T00:00:00Z")
+        >>> ds = _build_datasets("o/r", cut)
+        >>> len(ds) == 20
         True
         >>> ds[0][0]
         'open_issues'
@@ -167,11 +190,11 @@ def _build_datasets(
                 "--state",
                 "closed",
                 "--search",
-                f"closed:>={cutoff_3y}",
+                f"closed:>={cutoffs.days_30}",
                 "--json",
                 "number,title,createdAt,closedAt",
                 "--limit",
-                "1001",
+                "1000",
             ],
         ),
         (
@@ -184,7 +207,7 @@ def _build_datasets(
                 "--state",
                 "open",
                 "--json",
-                "number,title,createdAt,updatedAt,reviews,statusCheckRollup",
+                "number,title,createdAt,updatedAt,reviews,statusCheckRollup,author",
                 "--limit",
                 "201",
             ],
@@ -198,8 +221,10 @@ def _build_datasets(
                 owner_repo,
                 "--state",
                 "closed",
+                "--search",
+                f"closed:>={cutoffs.days_30}",
                 "--json",
-                "number,title,createdAt,closedAt,mergedAt",
+                "number,title,createdAt,closedAt,mergedAt,author",
                 "--limit",
                 "201",
             ],
@@ -236,7 +261,7 @@ def _build_datasets(
                 "api",
                 f"repos/{owner_repo}",
                 "--jq",
-                "{default_branch,has_issues,has_projects,allow_forking,stargazers_count,forks_count,subscribers_count,open_issues_count}",
+                "{default_branch,description,archived,has_issues,has_projects,allow_forking,stargazers_count,forks_count,subscribers_count,open_issues_count}",
             ],
         ),
         (
@@ -297,18 +322,11 @@ def _build_datasets(
             "ci_workflows",
             [
                 "api",
-                f"repos/{owner_repo}/actions/workflows",
+                # one full page plus GitHub's total: the default page of 30 cut the registry silently
+                f"repos/{owner_repo}/actions/workflows?per_page=100",
                 "--jq",
-                "{count: (.workflows | length), names: [.workflows[].name]}",
-            ],
-        ),
-        (
-            "ci_runs",
-            [
-                "api",
-                f"repos/{owner_repo}/actions/runs?per_page=21",
-                "--jq",
-                "[.workflow_runs[] | {conclusion: .conclusion, name: .name}]",
+                "{count: (.workflows | length), total_count, names: [.workflows[].name],"
+                " workflows: [.workflows[] | {name, path, state}]}",
             ],
         ),
         (
@@ -321,7 +339,7 @@ def _build_datasets(
                 "--state",
                 "closed",
                 "--search",
-                f"merged:>={cutoff_90d}",
+                f"merged:>={cutoffs.days_90}",
                 "--json",
                 "number,createdAt,mergedAt,author",
                 "--limit",
@@ -340,6 +358,17 @@ def _build_datasets(
     ]
 
 
+#: Accepted value flags and the ``_parse_args`` field each one sets.
+_FLAG_FIELDS = {
+    "--repo": "owner_repo",
+    "--output-dir": "output_dir",
+    "--cutoff-3y": "cutoff_3y",
+    "--cutoff-30d": "cutoff_30d",
+    "--cutoff-90d": "cutoff_90d",
+    "--cutoff-180d": "cutoff_180d",
+}
+
+
 def _parse_args(args: list[str]) -> tuple[dict, str | None]:
     """Parse the manual reject-strict argv flags for ``--repo``/``--output-dir``/cutoffs.
 
@@ -354,51 +383,27 @@ def _parse_args(args: list[str]) -> tuple[dict, str | None]:
     Returns:
         ``(fields, None)`` on success, or ``(fields, error_message)`` on the first
         invalid/unknown/missing-required flag. ``fields`` keys: ``owner_repo``,
-        ``output_dir``, ``cutoff_3y``, ``cutoff_90d``, ``cutoff_180d``.
-    """
-    owner_repo = ""
-    output_dir = ""
-    cutoff_3y = ""
-    cutoff_90d = ""
-    cutoff_180d = ""
+        ``output_dir``, ``cutoff_3y``, ``cutoff_30d``, ``cutoff_90d``, ``cutoff_180d``.
 
+    Examples:
+        >>> fields, error = _parse_args(["--repo", "o/r", "--output-dir", "out", "--cutoff-30d", "2024-01-01"])
+        >>> fields["cutoff_30d"], error
+        ('2024-01-01', None)
+        >>> _parse_args(["--repo", "o/r", "--bogus"])[1]
+        "fetch_gh_data_group1: unknown arg '--bogus'"
+    """
+    fields = dict.fromkeys(_FLAG_FIELDS.values(), "")
     i = 0
     while i < len(args):
-        a = args[i]
-        if a == "--repo":
-            i += 1
-            owner_repo = args[i] if i < len(args) else ""
-        elif a == "--output-dir":
-            i += 1
-            output_dir = args[i] if i < len(args) else ""
-        elif a == "--cutoff-3y":
-            i += 1
-            cutoff_3y = args[i] if i < len(args) else ""
-        elif a == "--cutoff-90d":
-            i += 1
-            cutoff_90d = args[i] if i < len(args) else ""
-        elif a == "--cutoff-180d":
-            i += 1
-            cutoff_180d = args[i] if i < len(args) else ""
-        else:
-            fields = {
-                "owner_repo": owner_repo,
-                "output_dir": output_dir,
-                "cutoff_3y": cutoff_3y,
-                "cutoff_90d": cutoff_90d,
-                "cutoff_180d": cutoff_180d,
-            }
-            return fields, f"fetch_gh_data_group1: unknown arg '{a}'"
+        field = _FLAG_FIELDS.get(args[i])
+        if field is None:
+            return fields, f"fetch_gh_data_group1: unknown arg '{args[i]}'"
+        i += 1
+        fields[field] = args[i] if i < len(args) else ""
         i += 1
 
-    fields = {
-        "owner_repo": owner_repo,
-        "output_dir": output_dir,
-        "cutoff_3y": cutoff_3y,
-        "cutoff_90d": cutoff_90d,
-        "cutoff_180d": cutoff_180d,
-    }
-
+    owner_repo = fields["owner_repo"]
+    output_dir = fields["output_dir"]
     if not owner_repo:
         return fields, "fetch_gh_data_group1: --repo required"
     if not _REPO_RE.match(owner_repo):
@@ -415,7 +420,7 @@ def _parse_args(args: list[str]) -> tuple[dict, str | None]:
 def _fetch_all(gh: str, datasets: list[tuple[str, list[str]]], out_path: Path) -> int:
     """Fan out ``_fetch_one`` across all datasets and count the written files.
 
-    Cap concurrency at 10 — running 21 simultaneous ``gh api`` calls easily
+    Cap concurrency at 10 — running every dataset's ``gh api`` call at once easily
     triggers GitHub's secondary rate limits (HTTP 403 "abuse detection")
     which cause silent partial failures across the dataset.
 
@@ -467,21 +472,21 @@ def main(argv: list[str] | None = None) -> int:
 
     owner_repo: str = fields["owner_repo"]
     output_dir: str = fields["output_dir"]
-    cutoff_3y: str = fields["cutoff_3y"]
-    cutoff_90d: str = fields["cutoff_90d"]
-    cutoff_180d: str = fields["cutoff_180d"]
 
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    if not cutoff_3y:
-        now = datetime.now(tz=timezone.utc)
-        cutoff_3y = (now - timedelta(days=1095)).strftime("%Y-%m-%d")
-        cutoff_90d = (now - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        cutoff_180d = (now - timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # each omitted cutoff defaults on its own — a lone --cutoff-3y no longer leaves an empty `merged:>=` search
+    now = datetime.now(tz=timezone.utc)
+    cutoffs = Cutoffs(
+        three_years=fields["cutoff_3y"] or (now - timedelta(days=1095)).strftime("%Y-%m-%d"),
+        days_30=fields["cutoff_30d"] or (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        days_90=fields["cutoff_90d"] or (now - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        days_180=fields["cutoff_180d"] or (now - timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
 
     gh = _resolve("gh")
-    datasets = _build_datasets(owner_repo, cutoff_3y, cutoff_90d, cutoff_180d)
+    datasets = _build_datasets(owner_repo, cutoffs)
 
     count = _fetch_all(gh, datasets, out_path)
     print(f"[fetch_gh_data_group1] wrote {count} dataset files → {output_dir}", file=sys.stderr)

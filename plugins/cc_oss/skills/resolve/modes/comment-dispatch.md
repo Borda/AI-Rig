@@ -36,14 +36,6 @@ Print `⚠ bridge@borda-ai-rig is absent or disabled — falling back to <agent>
 
 **BATCH_SIZE=3** — dispatch at most 3 `Agent()` calls per response turn; wait for all to return before next batch. More comment items than that (multi-comment dispatch) → process first 3, wait, continue with next 3. Prevents rate-limit hits and unbounded parallel spawn. Lowered from 5 on cost evidence: each spawn carries ~120,851 tok fixed overhead regardless of item size, so a wide batch of small comments pays far more in overhead than the work is worth — batching narrower costs wall-clock, not tokens.
 
-Compute the scoped sentinel path via `compute_commit_sentinel.py`, touch it, and register a cleanup trap:
-
-```bash
-SENTINEL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/compute_commit_sentinel.py")  # timeout: 5000
-touch "$SENTINEL"  # timeout: 3000
-trap 'rm -f "$SENTINEL"' EXIT INT TERM
-```
-
 Two dispatch forms, not one call with a swappable name: bridge is a Skill, every fallback in Step 12 table is a subagent type — branch picks the tool, not just the target. These are Claude Code tool calls, not shell commands.
 
 ```text
@@ -99,8 +91,6 @@ cat "$_OSS_RESOLVE/modes/lint-qa-gate.md"  # timeout: 5000
 ```
 
 Execute its steps (loaded above).
-
-Commit authorization revoked automatically by `trap 'rm -f "$SENTINEL"' EXIT INT TERM` registered in Step 12a — `$SENTINEL` stays in scope for entire dispatch+review+gate sequence. Do **not** issue separate `rm -f /tmp/claude-commit-authorized` here — path no longer used (sentinel now scoped per repo+branch per `git-commit.md`).
 
 Mark task `completed` — riding in the same response as the next real tool call, or as the one standalone completion right before the final output (`rules/task-lifecycle.md` §TaskUpdate before long output):
 

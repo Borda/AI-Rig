@@ -37,10 +37,6 @@ _COVERED_BY_DEDICATED_TEST = {
     "release_setup",  # test_release_setup.py — asserts `which` (git) never invoked on --help
 }
 
-#: Scripts with no argparse/--help surface at all: main() ignores argv
-#: entirely, so there is no "--help exits 0" contract to assert.
-_NO_HELP_SURFACE = {"compute_commit_sentinel"}
-
 #: Scripts whose main() parses --help via argparse but catches the
 #: resulting SystemExit internally and returns an int instead of letting
 #: it propagate (normalises argparse's exit-2 to the bin/ convention of
@@ -50,11 +46,7 @@ _RETURNS_INSTEAD_OF_RAISING = {"fetch_gh_data_group2", "detect_thread_type"}
 _ALL_SCRIPTS = sorted(p.stem.replace("-", "_") for p in _BIN_DIR.glob("*.py"))
 
 _STANDARD_HELP_SCRIPTS = [
-    name
-    for name in _ALL_SCRIPTS
-    if name not in _COVERED_BY_DEDICATED_TEST
-    and name not in _NO_HELP_SURFACE
-    and name not in _RETURNS_INSTEAD_OF_RAISING
+    name for name in _ALL_SCRIPTS if name not in _COVERED_BY_DEDICATED_TEST and name not in _RETURNS_INSTEAD_OF_RAISING
 ]
 
 

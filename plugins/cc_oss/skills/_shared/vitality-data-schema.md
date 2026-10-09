@@ -1,44 +1,57 @@
 # Vitality Data Schemas
 
-Reference schemas, oss:gh-scraper data files.
+Reference schemas, oss:gh-scraper data files. Producer of record: `bin/assemble_vitality_data.py` (Group 1 records + coverage check); Group 2 records appended by `bin/fetch_gh_data_group2.py`. Consumer: `bin/vitality_extract.py` (per-axis metrics plus `band` / `score` / `conf` the scorer copies).
 
 ## JSONL Record Types (`DATA_FILE`)
 
-Each line: `{"type": "<dataset>", "repo": "<GH_OWNER>/<GH_REPO>", "timestamp": "<ANALYSIS_NOW>", "records": N, "partial": true|false, "data": <raw_json>}`
+Group 1 line: `{"type": "<dataset>", "repo": "<GH_OWNER>/<GH_REPO>", "timestamp": <ANALYSIS_NOW epoch int>, "records": N|null, "partial": true|false, "data": <raw_json>}`. Group 2 line: `{"type": "<dataset>", "data": <payload>}` (+ `source` / `branch` where noted).
 
-| `type` | Source | Data shape |
-| -- | -- | -- |
-| `open_issues` | Group 1: open issues | array of issue objects |
-| `closed_issues` | Group 1: closed issues (3y window) | array of issue objects |
-| `open_prs` | Group 1: open PRs | array of PR objects |
-| `closed_prs` | Group 1: closed PRs | array of PR objects |
-| `commits` | Group 1: recent commits | array of ISO date strings |
-| `releases` | Group 1: releases | array of {tag, published, downloads} |
-| `contributor_stats` | Group 1: contributor stats | array of {author, total, weeks} |
-| `repo_metadata` | Group 1: repo metadata | {default_branch, stargazers_count, forks_count, ...} |
-| `ci_workflows` | Group 1: CI workflows | {count, names} |
-| `ci_runs` | Group 1: CI runs | array of {conclusion, name} |
-| `dependabot_alerts` | Group 1: Dependabot | array of alert objects or string `"403"` |
-| `fork_dates` | Group 1: fork velocity | array of created_at strings |
-| `merged_prs_90d` | Group 1: Axis 9A | array of {number, createdAt, mergedAt, author} |
-| `commits_50` | Group 1: Axis 9B | array of {sha, message, author, date} |
-| `responsiveness_gql` | Group 1: GraphQL responsiveness | issues + PRs nodes |
-| `review_coverage_gql` | Group 1: GraphQL review coverage | pullRequests nodes |
-| `star_dates` | Group 2: star history | array of ISO date strings (180d window) |
-| `readme_content` | Group 2: README file content | decoded string (base64-decoded from API) |
-| `workflow_files` | Group 2: CI workflow file content | array of {name, content} (first 2 workflow files) |
-| `root_contents` | Group 1: repo root file listing | array of filename strings (from `/contents` endpoint) |
-| `github_dir` | Group 2: .github/ directory listing | array of filename strings |
-| `codeowners_content` | Group 2: CODEOWNERS file content | decoded string (checks .github/CODEOWNERS then root CODEOWNERS) |
-| `branch_protection` | Group 2: default branch protection | branch protection rules object (403 = push access required) |
-| `dependabot_config` | Group 2: Dependabot config | dependabot.yml file object (404 = not configured) |
+Req = required: absent → envelope `status: "partial"` + listed in `missing_required`. `listed` = required only when the root, `.github/` or `docs/` listing shows the file (otherwise absence = file doesn't exist). `always` = required on every run (Group 2 canary). Cap = item count marking truncation (`partial: true`).
 
-Rules:
+| `type` | Source | Req | Cap | Data shape |
+| -- | -- | -- | -- | -- |
+| `open_issues` | Group 1 | yes | 501 | array of issue objects |
+| `closed_issues` | Group 1 (30d closing window) | yes | 1000 | array of issue objects, closed since CUTOFF_30D; GitHub search returns at most 1000, so a full list is read as truncated (older DATA_FILEs: last 3 years, creation order, cap 1001 never reached) |
+| `open_prs` | Group 1 | yes | 201 | array of PR objects with `author{login, is_bot}` |
+| `closed_prs` | Group 1 (30d closing window) | yes | 201 | array of PR objects with `author{login, is_bot}`, closed since CUTOFF_30D |
+| `commits` | Group 1 | yes | 100 | array of ISO date strings |
+| `releases` | Group 1 | yes | — | array of {tag, published, downloads} (latest 10) |
+| `contributor_stats` | Group 1 | yes | — | array of {author, total, weeks}; `null` + `202_pending` while computing |
+| `repo_metadata` | Group 1 | yes | — | {default_branch, description, archived, stargazers_count, forks_count, ...} |
+| `ci_workflows` | Group 1 | yes | 100 | {count, total_count, names, workflows: [{name, path, state}]} — registry, includes `dynamic/*` and deleted-file workflows; one page of 100 (`per_page=100`); `partial` when `total_count` > `count` (older DATA_FILEs without `total_count`: `count` ≥100) |
+| `dependabot_alerts` | Group 1 | no | 100 | array of alert objects or `"403"` |
+| `secret_scanning_alerts` | Group 1 | no | 30 | array of alert objects or `"403"` |
+| `fork_dates` | Group 1 | no | 100 | array of created_at strings |
+| `merged_prs_90d` | Group 1 (Axis 9B) | yes | 201 | array of {number, createdAt, mergedAt, author{login, is_bot}} |
+| `commits_50` | Group 1 (Axes 3 fallback, 8, 9D) | yes | — | array of {sha, message, author, date} |
+| `responsiveness_gql` | Group 1 GraphQL | yes | — | 20 issues + 20 PRs, first 10 comments/reviews each, authors with `__typename` (`Bot` = automation) |
+| `review_coverage_gql` | Group 1 GraphQL | yes | — | pullRequests nodes (30 most recently updated merged) |
+| `root_contents` | Group 1 | yes | — | array of filename strings |
+| `all_issues` | Group 1 | no | 200 | array of issue objects |
+| `all_prs` | Group 1 | no | 100 | array of PR objects |
+| `discussions` | Group 1 GraphQL | no | — | discussions nodes (fails when Discussions disabled) |
+| `readme_content` | Group 2 | listed | — | decoded README text |
+| `contributing_text` | Group 2 | listed | — | decoded CONTRIBUTING text; `source` = path (root, `.github/`, then `docs/`, any extension). Root lists `docs/` but `docs_dir` absent → absence inconclusive (neither required nor proof of absence) |
+| `security_text` | Group 2 | listed | — | decoded SECURITY policy text; `source` = path (root, `.github/`, then `docs/`, any extension). Same `docs_dir` rule as `contributing_text` |
+| `changelog_headings` | Group 2 | listed | — | {head: first 10 lines, headings: ATX/Setext heading lines (cap 300)}; `source`, `bytes`, `truncated`. Listed = a changelog-stem file with an extension; a bare `changes`/`changelog` entry is inconclusive (may be a fragment directory) — neither required nor proof of absence |
+| `github_dir` | Group 2 | listed | — | array of `.github/` filename strings |
+| `docs_dir` | Group 2 | listed | — | array of `docs/` filename strings; listed = the root lists `docs` |
+| `codeowners_text` | Group 2 | listed | — | decoded CODEOWNERS text; `source` = path (`.github/CODEOWNERS`, root, then `docs/`). Same `docs_dir` rule as `contributing_text` |
+| `default_branch_status` | Group 2 | always | — | {protected: bool} from the public branches API; `branch` = default branch. Absent = Group 2 did not run or used a wrong branch |
+| `ci_runs` | Group 2 | always | — | array of {conclusion, name, event, head_branch}: one page of 100 completed runs of the default branch (`branch=`), newest first; `branch` = that branch, `records` = run count; the pass rate samples only `push`, `schedule`, `workflow_dispatch` and `merge_group` events. A full page is never flagged as truncation: it holds the newest 20 counted runs unless more than 80 are excluded (`runs_sampled` \<20 with `runs_fetched` 100 — the scorer notes it). Older DATA_FILEs: a Group 1 record of {conclusion, name} from every branch |
+| `branch_protection` | Group 2 | no | — | protection rules object (admin only); `branch` = default branch. Absent for every non-admin token → extractor lists it under `datasets.optional_absent`, never `missing` |
+| `workflows_list` | Group 2 | listed | — | array of `.github/workflows/` filename strings |
+| `workflow_files` | Group 2 | listed | 50 | every `.yml`/`.yaml` workflow file, `--- workflow: <name> ---` headers; `listed`, `fetched`, `failed`, `partial` (unread files) |
+| `dependabot_config` | Group 2 | listed | — | `.github/dependabot.yml` (else `.yaml`) contents-API object; `source` = path |
 
-- Skip datasets returning 403, persistent 202, or empty
-- Set `"partial": true` when truncation detected (e.g. 501/201/1001 response count hits limit)
-- Set `"records"` to item count in `data`
-- After write: `echo "[repo-warden] raw data: N datasets → $DATA_FILE"`
+Rules (applied by `assemble_vitality_data.py`):
+
+- Zero-byte Group 1 file = fetch failed → no record (missing). Valid empty array → record with `records: 0` (zero items is data)
+- `dependabot_alerts` / `secret_scanning_alerts` failed fetch → `"data": "403"`, `records: 0` (contract, not a verified HTTP status — push access required)
+- `contributor_stats` failed, `[]` or `{}` → `"data": null, "partial": true, "202_pending": true`
+- `"partial": true` when item count reaches Cap
+- `"records"` = list length; `0` for `"403"`; `null` for objects
+- Re-run replaces Group 1 types, keeps last record of every other type; atomic replace
 
 ## Scores JSON Schema (`SCORES_FILE`)
 

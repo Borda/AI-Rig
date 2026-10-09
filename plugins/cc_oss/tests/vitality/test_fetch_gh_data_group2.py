@@ -322,3 +322,294 @@ def test_gh_missing_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
                 str(tmp_path / "out.jsonl"),
             ]
         )
+
+
+# --- content needed by the checkpoint rubrics ---------------------------------
+
+
+def _run_main(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, payloads: dict[str, str]) -> dict[str, dict]:
+    """Run ``main`` against stubbed gh payloads and return the appended records by type."""
+    monkeypatch.setattr(fgd.subprocess, "run", _stub_gh_run(payloads))
+    monkeypatch.setattr(fgd, "which", lambda _: "/fake/gh")
+    data_file = tmp_path / "out.jsonl"
+    rc = fgd.main(["--owner", "owner", "--repo", "repo", "--default-branch", "main", "--data-file", str(data_file)])
+    assert rc == 0
+    return {rec["type"]: rec for rec in _records(data_file)}
+
+
+def test_every_workflow_file_is_fetched_and_counted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Read every YAML workflow file, skip non-workflow files, and record listed/fetched counts.
+
+    The CI rubric greps workflow content for test, lint and security steps; reading only the first two files left most
+    checkpoints unconfirmable on any repository with a split CI.
+    """
+    # Arrange
+    payloads = {
+        "/contents/.github/workflows": json.dumps(["a.yml", "b.yaml", "README.md"]),
+        "/contents/.github/workflows/a.yml": _b64("run: pytest\n"),
+        "/contents/.github/workflows/b.yaml": _b64("run: ruff check\n"),
+    }
+
+    # Act
+    records = _run_main(monkeypatch, tmp_path, payloads)
+
+    # Assert
+    workflow_files = records["workflow_files"]
+    assert (workflow_files["listed"], workflow_files["fetched"], workflow_files["partial"]) == (2, 2, False)
+    assert workflow_files["failed"] == []
+    assert "--- workflow: b.yaml ---\nrun: ruff check" in workflow_files["data"]
+
+
+@pytest.mark.parametrize(
+    ("cap", "payloads", "expected"),
+    [
+        pytest.param(
+            50,
+            {
+                "/contents/.github/workflows": json.dumps(["a.yml", "b.yml"]),
+                "/contents/.github/workflows/a.yml": _b64("x\n"),
+            },
+            (2, 1, True, ["b.yml"]),
+            id="failed-file-marks-partial",
+        ),
+        pytest.param(
+            1,
+            {
+                "/contents/.github/workflows": json.dumps(["a.yml", "b.yml"]),
+                "/contents/.github/workflows/a.yml": _b64("x\n"),
+                "/contents/.github/workflows/b.yml": _b64("y\n"),
+            },
+            (2, 1, True, []),
+            id="cap-marks-partial",
+        ),
+    ],
+)
+def test_incomplete_workflow_content_is_flagged_partial(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    cap: int,
+    payloads: dict[str, str],
+    expected: tuple,
+) -> None:
+    """Flag the workflow content partial when a file fails to fetch or the file cap is reached."""
+    # Arrange
+    monkeypatch.setattr(fgd, "_WORKFLOW_FETCH_CAP", cap)
+
+    # Act
+    record = _run_main(monkeypatch, tmp_path, payloads)["workflow_files"]
+
+    # Assert
+    assert (record["listed"], record["fetched"], record["partial"], record["failed"]) == expected
+
+
+@pytest.mark.parametrize(
+    ("payloads", "record_type", "source"),
+    [
+        pytest.param(
+            {
+                "/contents": json.dumps(["README.md", ".github"]),
+                "/contents/.github": json.dumps(["CONTRIBUTING.md"]),
+                "/contents/.github/CONTRIBUTING.md": _b64("Setup\n"),
+            },
+            "contributing_text",
+            ".github/CONTRIBUTING.md",
+            id="contributing-in-github-dir",
+        ),
+        pytest.param(
+            {
+                "/contents": json.dumps(["README.md", "docs"]),
+                "/contents/docs/SECURITY.md": _b64("Email security@example.org within 2 days\n"),
+            },
+            "security_text",
+            "docs/SECURITY.md",
+            id="security-in-docs",
+        ),
+        pytest.param(
+            {
+                "/contents": json.dumps(["Security.rst"]),
+                "/contents/Security.rst": _b64("Report privately\n"),
+            },
+            "security_text",
+            "Security.rst",
+            id="root-name-from-listing",
+        ),
+        pytest.param(
+            {
+                "/contents": json.dumps(["README.md", "docs"]),
+                "/contents/docs": json.dumps(["index.md", "CONTRIBUTING.rst"]),
+                "/contents/docs/CONTRIBUTING.rst": _b64("Setup: make dev\n"),
+            },
+            "contributing_text",
+            "docs/CONTRIBUTING.rst",
+            id="docs-name-from-docs-listing",
+        ),
+    ],
+)
+def test_community_file_found_where_github_looks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    payloads: dict[str, str],
+    record_type: str,
+    source: str,
+) -> None:
+    """Fetch CONTRIBUTING and SECURITY from the root, ``.github/`` or ``docs/`` and record which one was used."""
+    # Act
+    records = _run_main(monkeypatch, tmp_path, payloads)
+
+    # Assert
+    assert records[record_type]["source"] == source
+
+
+@pytest.mark.parametrize(
+    ("root", "docs_dir"),
+    [
+        pytest.param(["README.md", "docs"], ["index.md"], id="root-lists-docs"),
+        pytest.param(["README.md", "src"], None, id="root-without-docs-skips-the-listing"),
+    ],
+)
+def test_docs_listing_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, root: list[str], docs_dir: list[str] | None
+) -> None:
+    """Record the ``docs/`` listing when the root lists ``docs/``, so a policy file there is provable either way."""
+    # Arrange
+    payloads = {"/contents": json.dumps(root), "/contents/docs": json.dumps(["index.md"])}
+
+    # Act
+    records = _run_main(monkeypatch, tmp_path, payloads)
+
+    # Assert
+    assert records.get("docs_dir", {}).get("data") == docs_dir
+
+
+def test_changelog_outline_record(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Keep the changelog's first lines and heading lines, where release dates live, plus its size."""
+    # Arrange
+    text = "# Changelog\n\n## [Unreleased]\n\n- big entry\n\n## [1.2.0] — 2026-09-30\n\n- shipped\n"
+    payloads = {"/contents": json.dumps(["CHANGELOG.md"]), "/contents/CHANGELOG.md": _b64(text)}
+
+    # Act
+    record = _run_main(monkeypatch, tmp_path, payloads)["changelog_headings"]
+
+    # Assert
+    assert record["source"] == "CHANGELOG.md"
+    assert record["bytes"] == len(text.encode("utf-8"))
+    assert record["data"]["headings"] == ["# Changelog", "## [Unreleased]", "## [1.2.0] — 2026-09-30"]
+    assert record["truncated"] is False
+
+
+def test_changelog_outline_flags_heading_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Flag the outline truncated when a changelog has more headings than the cap keeps."""
+    # Arrange
+    monkeypatch.setattr(fgd, "_CHANGELOG_HEADING_CAP", 2)
+
+    # Act
+    outline, truncated = fgd.changelog_outline("## a\n## b\n## c\n")
+
+    # Assert
+    assert outline["headings"] == ["## a", "## b"]
+    assert truncated is True
+
+
+@pytest.mark.parametrize("name", ["dependabot.yml", "dependabot.yaml"])
+def test_dependabot_config_either_extension(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str) -> None:
+    """Record the Dependabot config under either extension GitHub accepts, with the path it came from."""
+    # Arrange
+    payloads = {f"/contents/.github/{name}": json.dumps({"name": name, "type": "file"})}
+
+    # Act
+    record = _run_main(monkeypatch, tmp_path, payloads)["dependabot_config"]
+
+    # Assert
+    assert record["source"] == f".github/{name}"
+
+
+def test_ci_runs_record_is_scoped_to_the_default_branch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Fetch one page of completed default-branch runs with their event, under a timeout sized for the large page.
+
+    Unscoped, the newest runs of a pull-request-heavy repository were mostly contributors' work in progress, so their
+    failures decided the project's CI health; ``event`` lets the extractor keep only push, schedule, workflow_dispatch
+    and merge_group runs, dropping the fork pull requests ``branch=`` still returns.
+    """
+    # Arrange
+    calls: list[tuple[str, str, int]] = []
+    runs = [{"conclusion": "success", "name": "CI", "event": "push", "head_branch": "main"}]
+
+    def _run(cmd, *args, **kwargs):  # type: ignore[no-untyped-def]
+        """Record the runs call and answer it; every other call 404s."""
+        if "/actions/runs" in cmd[2]:
+            calls.append((cmd[2], cmd[4], kwargs["timeout"]))
+            return _FakeCompleted(returncode=0, stdout=json.dumps(runs))
+        return _FakeCompleted(returncode=1, stdout="")
+
+    monkeypatch.setattr(fgd.subprocess, "run", _run)
+    monkeypatch.setattr(fgd, "which", lambda _: "/fake/gh")
+    data_file = tmp_path / "out.jsonl"
+
+    # Act
+    fgd.main(["--owner", "owner", "--repo", "repo", "--default-branch", "main", "--data-file", str(data_file)])
+
+    # Assert
+    record = next(rec for rec in _records(data_file) if rec["type"] == "ci_runs")
+    assert record == {"type": "ci_runs", "branch": "main", "records": 1, "data": runs}
+    assert calls == [
+        (
+            "repos/owner/repo/actions/runs?branch=main&status=completed&per_page=100",
+            "[.workflow_runs[] | {conclusion, name, event, head_branch}]",
+            30,
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("payloads", "record_type", "source"),
+    [
+        pytest.param(
+            {"/contents": json.dumps(["README.md", "Docs"]), "/contents/Docs/SECURITY.md": _b64("Report privately\n")},
+            "security_text",
+            "Docs/SECURITY.md",
+            id="capitalised-docs-dir-keeps-its-name",
+        ),
+        pytest.param(
+            {"/contents": json.dumps(["README.md", "docs"]), "/contents/docs/CODEOWNERS": _b64("* @docs-owner\n")},
+            "codeowners_text",
+            "docs/CODEOWNERS",
+            id="codeowners-in-docs",
+        ),
+    ],
+)
+def test_docs_dir_files_use_the_listed_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, payloads: dict[str, str], record_type: str, source: str
+) -> None:
+    """Fetch ``docs/`` files under the directory's real name, CODEOWNERS included as GitHub's third location.
+
+    A lower-case ``docs`` path 404s for a ``Docs/`` directory, which left the file and the ``docs_dir`` listing missing.
+    """
+    # Act
+    records = _run_main(monkeypatch, tmp_path, payloads)
+
+    # Assert
+    assert records[record_type]["source"] == source
+
+
+def test_docs_listing_uses_the_listed_name(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """List a ``Docs/`` directory under its own name, so its files are provable either way."""
+    # Arrange
+    payloads = {"/contents": json.dumps(["Docs"]), "/contents/Docs": json.dumps(["index.md"])}
+
+    # Act
+    records = _run_main(monkeypatch, tmp_path, payloads)
+
+    # Assert
+    assert records["docs_dir"]["data"] == ["index.md"]
+
+
+def test_default_branch_status_record(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Record the default branch's protected flag, which the branches API shows without admin rights."""
+    # Arrange
+    payloads = {"/branches/main": json.dumps({"protected": False})}
+
+    # Act
+    record = _run_main(monkeypatch, tmp_path, payloads)["default_branch_status"]
+
+    # Assert
+    assert record == {"type": "default_branch_status", "branch": "main", "data": {"protected": False}}

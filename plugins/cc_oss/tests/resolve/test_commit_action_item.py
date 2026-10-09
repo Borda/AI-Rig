@@ -1,12 +1,11 @@
 """Tests for ``bin/commit_action_item.py``.
 
 ``subprocess.run`` and ``which`` monkeypatched — no real git invocations. Tests cover argument validation, the early
-return for an empty stage, sentinel lifecycle, the successful commit path, and the pure ``_slug`` function.
+return for an empty stage, and the successful commit path.
 """
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -146,10 +145,6 @@ def _make_git_mock(
             calls.append(list(cmd))
         binary = Path(cmd[0]).name
         subcmd = cmd[1] if len(cmd) > 1 else ""
-        if binary == "git" and subcmd == "rev-parse":
-            return _FakeCompleted(returncode=0, stdout="/repo/my-project\n")
-        if binary == "git" and subcmd == "branch":
-            return _FakeCompleted(returncode=0, stdout="main\n")
         if binary == "git" and subcmd == "add":
             return _FakeCompleted(returncode=0)
         if binary == "git" and subcmd == "diff":
@@ -232,47 +227,6 @@ def test_multiple_files_with_spaces_are_added_as_separate_args(monkeypatch: pyte
     assert add_calls == [["/fake/git", "add", "--", "src/a.py", "docs/file with spaces.md"]]
 
 
-@pytest.mark.parametrize("commit_rc", [0, 1])
-def test_sentinel_cleaned_up_after_commit_path(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    commit_rc: int,
-) -> None:
-    """Sentinel exists for git commit but is removed before main returns on success and failure."""
-    msg = tmp_path / "msg.txt"
-    msg.write_text("msg\n")
-    fake_tmpdir = tmp_path / "tmp"
-    fake_tmpdir.mkdir()
-    sentinel_seen: list[bool] = []
-
-    def _fake_run(cmd: list[str], **_: Any) -> _FakeCompleted:
-        """Emulate Git while recording whether the sentinel existed at commit time."""
-        binary = Path(cmd[0]).name
-        subcmd = cmd[1] if len(cmd) > 1 else ""
-        if binary == "git" and subcmd == "rev-parse":
-            return _FakeCompleted(returncode=0, stdout="/repo/my-project\n")
-        if binary == "git" and subcmd == "branch":
-            return _FakeCompleted(returncode=0, stdout="main\n")
-        if binary == "git" and subcmd == "diff":
-            return _FakeCompleted(returncode=1)
-        if binary == "git" and subcmd == "commit":
-            sentinel_seen.append(any(f.name.startswith("claude-commit-auth-") for f in fake_tmpdir.iterdir()))
-            return _FakeCompleted(returncode=commit_rc)
-        return _FakeCompleted(returncode=0)
-
-    monkeypatch.setattr(cai, "which", lambda _: "/fake/git")
-    monkeypatch.setattr(cai.subprocess, "run", _fake_run)
-    monkeypatch.setenv("TMPDIR", str(fake_tmpdir))
-    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(fake_tmpdir))
-
-    rc = cai.main(["--message-file", str(msg), "--files", str(tmp_path / "f.py")])
-
-    assert rc == commit_rc
-    assert sentinel_seen == [True]
-    assert list(fake_tmpdir.iterdir()) == []
-
-
 def test_commit_called_with_message_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Commit invoked with ``-F <msg_file>``."""
     msg = tmp_path / "msg.txt"
@@ -287,38 +241,6 @@ def test_commit_called_with_message_file(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert str(msg) in commit_calls[0]
 
 
-def test_sentinel_created_before_commit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Sentinel file exists at the time git commit is called."""
-    msg = tmp_path / "msg.txt"
-    msg.write_text("msg\n")
-    sentinel_seen: list[bool] = []
-    fake_tmpdir = tmp_path / "tmp"
-    fake_tmpdir.mkdir()
-
-    def _fake_run(cmd: list[str], **_: Any) -> _FakeCompleted:
-        """Emulate Git and observe the sentinel before the commit call."""
-        binary = Path(cmd[0]).name
-        subcmd = cmd[1] if len(cmd) > 1 else ""
-        if binary == "git" and subcmd == "rev-parse":
-            return _FakeCompleted(returncode=0, stdout="/repo/my-project\n")
-        if binary == "git" and subcmd == "branch":
-            return _FakeCompleted(returncode=0, stdout="main\n")
-        if binary == "git" and subcmd == "commit":
-            # Check sentinel files in fake tmpdir
-            sentinel_seen.append(any(f.name.startswith("claude-commit-auth-") for f in fake_tmpdir.iterdir()))
-        return _FakeCompleted(returncode=0 if subcmd != "diff" else 1)
-
-    monkeypatch.setattr(cai, "which", lambda _: "/fake/git")
-    monkeypatch.setattr(cai.subprocess, "run", _fake_run)
-    # Commit_action_item now prefers TMPDIR / XDG_RUNTIME_DIR over
-    # tempfile.gettempdir() — set TMPDIR so the sentinel lands in our fake dir.
-    monkeypatch.setenv("TMPDIR", str(fake_tmpdir))
-    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(fake_tmpdir))
-    cai.main(["--message-file", str(msg), "--files", str(tmp_path / "f.py")])
-    assert sentinel_seen == [True]
-
-
 def test_git_missing_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Return None for git → FileNotFoundError raised."""
     msg = tmp_path / "msg.txt"
@@ -326,27 +248,6 @@ def test_git_missing_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(cai, "which", lambda _: None)
     with pytest.raises(FileNotFoundError, match="git"):
         cai.main(["--message-file", str(msg), "--files", str(tmp_path / "f.py")])
-
-
-# ---------------------------------------------------------------------------
-# _slug — pure function
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    [
-        pytest.param("main", "main", id="main"),
-        pytest.param("My/Repo Name", "my-repo-name", id="my-repo-name"),
-        pytest.param("feature/add-thing!", "feature-add-thing", id="feature-add-thing"),
-        pytest.param("UPPER-CASE", "upper-case", id="upper-case"),
-        pytest.param("trailing-", "trailing", id="trailing"),
-        pytest.param("multi---dashes", "multi-dashes", id="multi---dashes"),
-    ],
-)
-def test_slug(text: str, expected: str) -> None:
-    """Lowercase, replaces non-alnum runs, strips trailing hyphens."""
-    assert cai._slug(text) == expected
 
 
 # ---------------------------------------------------------------------------

@@ -1,10 +1,8 @@
 #!/usr/bin/env python
-"""commit_action_item.py — sentinel-aware commit helper for /oss:resolve Step 8.
+"""commit_action_item.py — commit helper for /oss:resolve Step 8.
 
-Touches the commit-auth sentinel for the current repo+branch (required by
-git-commit.md Gate 1) immediately before ``git commit``, so the pre-commit
-hook approves the commit. Cleans the sentinel afterwards regardless of exit
-status.
+Stages the given files and commits them with a caller-supplied or script-built
+message.
 
 Three message-source modes (mutually exclusive):
 
@@ -41,17 +39,14 @@ from __future__ import annotations
 
 import argparse
 import atexit
-import os
 import re
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 from shutil import which
 
-#: Matches each run of characters outside ``[a-z0-9]``, which slugification replaces with a hyphen.
-_SLUG_RE = re.compile(r"[^a-z0-9]+")
 #: Matches ASCII control characters, including newlines, that must not reach a commit message.
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
 #: Parses a Conventional Commits subject into type, optional scope, optional ``!`` marker and description.
@@ -126,29 +121,6 @@ class EachMessageFields:
     comment: str
     challenge: str
     include_codex: bool = False
-
-
-def _slug(text: str) -> str:
-    """Convert text to a filesystem/path-safe slug.
-
-    Lowercases, replaces non-alphanumeric runs with ``-``, strips trailing
-    hyphens.
-
-    Args:
-        text: Input string.
-
-    Returns:
-        Slugified string.
-
-    Examples:
-        >>> _slug("My/Repo Name")
-        'my-repo-name'
-        >>> _slug("main")
-        'main'
-        >>> _slug("feature/add-thing!")
-        'feature-add-thing'
-    """
-    return _SLUG_RE.sub("-", text.lower()).rstrip("-")
 
 
 def build_each_message(fields: EachMessageFields) -> str:
@@ -548,45 +520,6 @@ def _resolve_message_file(opts: dict[str, str | bool]) -> tuple[str, str | None]
     return msg_file, None
 
 
-def _compute_commit_sentinel(git: str) -> Path:
-    """Derive the Gate 1 commit-auth sentinel path for the current repo+branch.
-
-    Args:
-        git: Absolute path to the ``git`` executable.
-
-    Returns:
-        Path to sentinel file (may not yet exist).
-
-    Examples:
-        No doctest — requires live git; covered by pytest with monkeypatch.
-    """
-    root_proc = subprocess.run(  # noqa: S603
-        [git, "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    branch_proc = subprocess.run(  # noqa: S603
-        [git, "branch", "--show-current"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    repo_slug = _slug(Path(root_proc.stdout.strip()).name if root_proc.returncode == 0 else "repo")
-    branch_slug = _slug(branch_proc.stdout.strip() if branch_proc.returncode == 0 else "main")
-
-    # Prefer per-user temp dirs over a world-readable `/tmp` (macOS `/tmp`
-    # is mode 1777 — sentinel name leaks branch metadata). Order: TMPDIR
-    # (per-user on macOS) → XDG_RUNTIME_DIR (per-user on Linux) → fallback.
-    # A candidate counts only when absolute for this host: Windows CI inherits a
-    # POSIX-style TMPDIR with no native directory, and a drive-less path would
-    # resolve against whatever drive the process happens to run on.
-    _native = PureWindowsPath if sys.platform == "win32" else PurePosixPath
-    _candidates = (os.environ.get("TMPDIR"), os.environ.get("XDG_RUNTIME_DIR"))
-    _tmp = Path(next((c for c in _candidates if c and _native(c).is_absolute()), tempfile.gettempdir()))
-    return _tmp / f"claude-commit-auth-{repo_slug}-{branch_slug}"
-
-
 def _stage_and_commit(git: str, msg_file: str, files: list[str]) -> int:
     """Stage ``files`` and commit them using ``msg_file`` as the message.
 
@@ -659,7 +592,7 @@ def main(argv: list[str] | None = None) -> int:
     if args in (["-h"], ["--help"]):
         argparse.ArgumentParser(
             prog="commit_action_item.py",
-            description="Sentinel-aware commit helper for /oss:resolve Step 8.",
+            description="Commit helper for /oss:resolve Step 8.",
         ).parse_args(["-h"])
 
     opts, files, err = _parse_args(args)
@@ -679,16 +612,7 @@ def main(argv: list[str] | None = None) -> int:
     if git is None:
         raise FileNotFoundError("executable not found on PATH: git")
 
-    sentinel = _compute_commit_sentinel(git)
-
-    # Touch sentinel and register cleanup (mirrors bash `trap EXIT INT TERM`).
-    sentinel.touch()
-    atexit.register(lambda: sentinel.unlink(missing_ok=True))
-
-    try:
-        return _stage_and_commit(git, msg_file, files)
-    finally:
-        sentinel.unlink(missing_ok=True)
+    return _stage_and_commit(git, msg_file, files)
 
 
 if __name__ == "__main__":

@@ -119,7 +119,7 @@ Degenerate cases, all reducing to the old serial order with no special handling:
 Every spawned agent (intel, conflict, Phase 1 challenge, Phase 2 specialists, Step 9 QA/lint) runs in the background. Waiting on one is **never** a tool call:
 
 - **Never** call `ScheduleWakeup`, `ListAgents`, or a `Monitor` loop to wait for a spawned agent — and no `sleep`, no poll loop, no no-op call, no "waiting" turn. Spawn, end the turn, resume on the completion notification (`rules/task-lifecycle.md` §After spawning).
-- **Arm a deadline per agent.** In the same response as each spawn batch, write `$IMPL_DIR/agent-watch-<batch>.tsv` with the Write tool — one row per agent, `<name>\t<deliverable path, or - for an envelope-only agent>\t<deadline seconds>`. The file's write time is the spawn time, so no clock value is ever typed. Batch names and deadlines: `intel` 300 · `conflict` 900 · `challenge` 300 · `challenge-retry` 300 · `impl` 900 (rewrite per wave) · `qa` 900.
+- **Arm a deadline per agent.** In the same response as each spawn batch, write `$IMPL_DIR/agent-watch-<batch>.tsv` with the Write tool — one row per agent, `<name>\t<deliverable path, or - for an envelope-only agent>\t<deadline seconds>`. The file's write time is the spawn time, so no clock value is ever typed. Batch names and deadlines: `intel` 300 · `conflict` 900 · `challenge` 300 · `challenge-retry` 300 · `impl` 900 (rewrite per wave) · `impl-<group_tag>.link<k>` 900 (one file per chain link k≥2, never a rewrite; the spawn-base block also writes one, deadline 0 and any k, for a recorded link with no watch row — never launched, so it reads `timed_out` at once) · `qa` 900.
 - **Check once per wake-up.** On every completion or idle notification, first persist any envelope the notification carried (where a step says to write it to a file), then run the block below once, before acting on any agent output, and act on every row: `done` → consume it · `timed_out` → ⏱ `timed_out` now and take the step's documented fallback · an agent whose notification arrived but whose row is still `pending`/`awaiting-envelope` (idle or finished without its deliverable) → ⏱ `timed_out` now, never wait for it further · rows still open with no notification → end the turn.
 - Never ask the user whether to keep waiting, and never leave a stalled agent for the user to notice — a run the user returns to must already show every ⏱.
 - A ⏱ only informs. It never answers, skips, or defaults a user question: every gate the step defines still fires on the timed-out path.
@@ -484,17 +484,17 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items
 
 ### Sources confirmation
 
-Print Sources block (same format as Step 3a template; Mode=pr + report · PR=#<N> · GitHub=Read — PR body · <N> comments · <N> reviews · <N> inline code comments · <N> recurring findings merged · Report=Read <path>) right before merge summary and action item table.
+Sources block (same format as Step 3a template; Mode=pr + report · PR=#<N> · GitHub=Read — PR body · <N> comments · <N> reviews · <N> inline code comments · <N> recurring findings merged · Report=Read <path>), then the Step 3b contribution motivation, head the bulk-option `preview` of Step 3d's picker, above the merge summary and the action item table (past the preview cap, the top of the table file — Step 3d **Preview cap**) — never as reply text before the picker: 5.5-family models may return reply text written before a tool call as an empty progress update. This merged block replaces `pr-intelligence.md`'s own Sources block.
 
-Result: single merged `ACTION_ITEMS`. Storage order is append order (GitHub items `1..G`, then `[report]` items `G+1..`); the table below displays rows severity descending and always shows each row's stored id in `#`. Print merge summary before table:
+Result: single merged `ACTION_ITEMS`. Storage order is append order (GitHub items `1..G`, then `[report]` items `G+1..`); the table below displays rows severity descending and always shows each row's stored id in `#`. Merge summary — heads the table in the picker preview:
 
 ```text
 Report merged: <N> findings from /review · <M> deduplicated against GitHub comments · <K> added as [report] items
 ```
 
-**MANDATORY — print merged ACTION_ITEMS as markdown table in an assistant user-facing reply exactly once, as the last text of the message that issues Step 3d's AskUserQuestion** (severity descending; same columns as pr-intelligence.md table). The merge summary rides in that same message, right before the table — never print the table here and again at the Step 3d gate. Include every row in that reply, not Bash/tool stdout. This table is selection-driving data, not a decorative table — print it in full under every compression mode and every communication style active this session (caveman included), never replace it with a prose count or summary line. A reply that references "the table above" without the table in the same message, or in the message immediately before it, is a defect — regenerate the table before sending.
+**MANDATORY — render merged ACTION_ITEMS as markdown table exactly once, as the `preview` of every bulk-action option in Step 3d's AskUserQuestion** (severity descending; same columns as pr-intelligence.md table; Step 3d **Table in the picker preview**; past the preview cap, in the table file instead — Step 3d **Preview cap**) — never also as reply text before the picker, never Bash/tool stdout, never here and again at the gate. The merge summary line sits right above the table, below the Sources block and motivation, with every row below it. This table is selection-driving data, not a decorative table — render it in full under every compression mode and every communication style active this session (caveman included), never replace it with a prose count or summary line. A reply that references "the table above" without the table in that reply is a defect — the table lives in the picker preview; point there instead.
 
-> **Output-Routing exemption (canonical — applies to every ACTION_ITEMS table in this skill, Steps 3b/3c/3d)**: ACTION_ITEMS tables are selection-driving, read-in-context enumerations user must see before Step 3d picker. Put every row in an assistant user-facing reply regardless of row count, not Bash/tool stdout. Global Output Routing (*5+ findings → `.temp/output-*.md`, summary only*) does **not** apply — never divert these tables to a file. Makes explicit what the global rule's own copy-intent override (*read-in-context, acted-on-immediately → user-facing reply even if long*) already implies.
+> **Output-Routing exemption (canonical — applies to every ACTION_ITEMS table in this skill, Steps 3b/3c/3d)**: ACTION_ITEMS tables are selection-driving, read-in-context enumerations user must see in the Step 3d picker. Put every row in the picker's bulk-option `preview` regardless of row count while it fits the preview cap, else in the run's table file the picker's question names (Step 3d **Preview cap**) — once, not as reply text, not Bash/tool stdout. Global Output Routing (*5+ findings → `.temp/output-*.md`, summary only*) does **not** apply — never divert these tables to a `.temp` report; the table file is the picker's own over-cap copy, named in the question the user answers. Makes explicit what the global rule's own copy-intent override (*read-in-context, acted-on-immediately → user-facing reply even if long*) already implies.
 
 ```markdown
 ### Action Items — PR #<N> (merged)
@@ -518,15 +518,15 @@ Columns exactly as above — never add `File`, `Sev`, `Loc` or any other column,
 
 ## Step 3d: User item selection
 
-<!-- branch: main-path — item-selection (always fires in step 3d; ≤3 items = two calls: items + bulk + commit-mode + dispatch, then push + topic-group-when-grouped follow-up; 4-6 and 7-9 = two calls: checkboxes + bulk, then commit-mode + topic-group + dispatch + push follow-up; 10-18 = three: two checkbox pages + the same follow-up; ≥19 = two: bulk + commit-mode + topic-group + dispatch, then push follow-up; zero pending with closed items = bulk + commit-mode + topic-group + dispatch, then push; zero pending without closed items and with a PR = one push-only call; push question omitted when no PR number exists) -->
+<!-- branch: main-path — item-selection (always fires in step 3d; 1 item = two calls: bulk + commit-mode + dispatch (no item question), then push + topic-group-when-grouped follow-up; 2-3 items = two calls: bulk + items + commit-mode + dispatch, then push + topic-group-when-grouped follow-up; 4-6 and 7-9 = two calls: bulk + balanced checkboxes (2-3 items each), then commit-mode + topic-group + dispatch + push follow-up; 10-18 = three: two pages of bulk + balanced checkboxes (Call 2 never a 1-option question) + the same follow-up; every selection call leads with bulk; ≥19 = two: bulk + commit-mode + topic-group + dispatch, then push follow-up; zero pending with closed items = bulk + commit-mode + topic-group + dispatch, then push; zero pending without closed items and with a PR = one push-only call; push question omitted when no PR number exists) -->
 
 ! IMPORTANT — invoke `AskUserQuestion` tool directly. Never write options as plain text.
 
 Gather is complete here (3a, 3b, or 3c done). Report mode also enters this step for nonempty report items, so the same user choice supplies item scope and commit mode. Mark TASK_GATHER `completed` and TASK_SELECT `in_progress` **before** the selection prompt — otherwise the gather `activeForm` keeps driving the spinner through the user-selection window, falsely implying gather is still running. `TaskUpdate(task_id=TASK_GATHER, status="completed")` and `TaskUpdate(task_id=TASK_SELECT, status="in_progress")` both ride with the boundary-0 contract block below.
 
-Pending items = ACTION_ITEMS where `status` is `pending` or absent and type contains neither `[info]` nor legacy `[done]`. Closed items = `status` `resolved` or `addressed`: they stay in the table but never enter checkboxes, bulk options, or the pending count — the user pulls one in only by typing its id (see "Type something" below). With ≥1 closed item, print `→ N resolved/addressed items not in bulk options — type their ids to include` in the reply right before the picker.
+Pending items = ACTION_ITEMS where `status` is `pending` or absent and type contains neither `[info]` nor legacy `[done]`. Closed items = `status` `resolved` or `addressed`: they stay in the table but never enter checkboxes, bulk options, or the pending count — the user pulls one in only by typing its id (see "Type something" below). With ≥1 closed item, the bulk question's text says so in every selection call (**Bulk question text** below) — never as reply text before the picker: 5.5-family models may return it as an empty progress update, and in the closed-only branch this hint is the only usage instruction the user gets.
 
-- **Zero pending, closed items present** → follow the dedicated slot-table row below: no item checkboxes; ask the existing bulk menu, commit-mode, topic-group, and dispatch questions. The bulk menu's "Type something" field accepts explicit closed IDs in PR and report modes alike. Print the full table first. Bulk (a)/(b)/(c) selects no closed IDs; (d) stops as usual. Typed IDs follow the ordinary bulk-action resolution and commit-mode rules; then ask the push follow-up when a PR number exists — without a PR number there is no follow-up. If no IDs were selected, discard commit/group/dispatch answers and continue with the empty selection after the push follow-up.
+- **Zero pending, closed items present** → follow the dedicated slot-table row below: no item checkboxes; ask the existing bulk menu, commit-mode, topic-group, and dispatch questions. The bulk menu's "Type something" field accepts explicit closed IDs in PR and report modes alike. Show the full table once, as the bulk options' `preview`. Bulk sets hold no closed IDs, so (a)/(b)/(c) select only the typed IDs; typed IDs join any answer and (d) yields to them, while (d) with nothing typed stops as usual. Typed IDs follow the ordinary bulk-action resolution and commit-mode rules; then ask the push follow-up when a PR number exists — without a PR number there is no follow-up. If no IDs were selected, discard commit/group/dispatch answers and continue with the empty selection after the push follow-up.
 
 - **Zero pending, no closed items** → set `SELECTED_ITEMS` empty; when a PR number exists, ask the **Push question** below alone — the Steps 5–7 merge commit still needs push intent. Then continue to Step 3e for `pr`/`pr+report`, or skip Step 3e in `report` mode. This bypass never applies to a list containing resolved/addressed items.
 
@@ -534,7 +534,7 @@ Sort all pending items by severity descending (most impactful first).
 
 **Overlap — dispatch Steps 6–7a before asking.** Conflicted files and their tasks are already known (Step 5 ran in this run), and the `INTEL_AGENT` motivation Step 6a needs has just arrived, so the per-file resolution agents are dispatched **in this same response, before the `AskUserQuestion` call**. They work through the idle window below instead of after it. Their result is collected at the Step 7b join that opens Run 2. Nothing here is wasted whatever the user picks: conflict resolution is mandatory even at zero selected items. No conflicted files → nothing to dispatch; proceed straight to the gate.
 
-Longest idle window of the run sits here (median ~15 min, measured up to 16 h) — long enough for the prompt cache to expire, so the next turn rewrites the whole context at write rate. Persist a resume contract first, then print the hint so the user can `/compact` while waiting (skill can't trigger compaction itself):
+Longest idle window of the run sits here (median ~15 min, measured up to 16 h) — long enough for the prompt cache to expire, so the next turn rewrites the whole context at write rate. Persist a resume contract first, then carry the hint in the gate's question text so the user can `/compact` while waiting (skill can't trigger compaction itself):
 
 ```bash
 # compaction boundary 0 — before the Step 3d idle gate (compaction-contract.md §Lifecycle)
@@ -547,9 +547,19 @@ _PRESERVE="pr=$_PR_NUMBER, impl-dir=$_IMPL_DIR, intel=$_IMPL_DIR/pr-intelligence
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "item selection (Step 3d gate)" "$_IMPL_DIR" "$_PRESERVE" "resume: re-read action-items.jsonl + pr-intelligence.md, re-issue Step 3d AskUserQuestion; Steps 6-7a agents may be in flight — re-check git diff --name-only --diff-filter=U at the Step 7b join before Step 8"  # timeout: 5000
 ```
 
-Then print this line **in the reply** (prose, not Bash stdout — tool output is not reliably shown to the user): `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. ``
+The hint line `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. `` goes into the `question` text of Step 3d's first question — Call 1's bulk question (**Bulk question text** below), or the push question on the push-only path. Never as reply text, never Bash stdout: 5.5-family models may return reply text written before a tool call as an empty progress update, and tool output is not reliably shown to the user.
 
-**Print the table exactly once per selection**: the latest assistant user-facing reply contains every ACTION_ITEMS row the user is selecting from (the full Step 3b or 3c table, or the ≥19 compressed table) as the last text of the message that issues the first `AskUserQuestion` — after Steps 6–7a output (conflict fixes, merge commit), the contract block, and the `/compact` hint. Never print it earlier in the run and repeat it here: Bash, `Agent()` dispatch and other tool calls in the same turn are not turn boundaries, so they neither hide an earlier table from the user nor from the hook — repeating it only duplicates it. Repeat the table only when a real user turn separates it from the picker (e.g. resume after compaction); then repeat that table in the reply now. Bash/tool stdout, thinking/reasoning and a row count do not satisfy this gate — the table must be visible reply text. **Hook-enforced**: `hooks/enforce-resolve-table.js` denies the selection call while any pending `action-items.jsonl` id lacks a table row since the last user turn. On denial: table already printed as visible reply text in this same message → re-issue the identical call once, **without** printing the table again (the transcript can lag the message being written); table not printed → print it as reply text, then re-issue. The denial reports how many visible reply chars the hook found; 0 means nothing reached the user (table left in thinking), never a hook defect.
+**Show the table exactly once per selection call — in the picker preview, never as reply text**: every ACTION_ITEMS row the user is selecting from (the full Step 3b or 3c table, or the ≥19 compressed table) appears in the bulk-option `preview` of the call that asks — or, past the preview cap, in the table file that call names — and nowhere else: not as reply text before the picker, not earlier in the run and again here. Bash/tool stdout, thinking/reasoning and a row count never substitute for it. A call re-issued after a real user turn (e.g. resume after compaction) carries the preview again; nothing is reprinted.
+
+**Table in the picker preview — MANDATORY, the gate's source of truth**: every selection call — each call carrying the bulk-action question: Call 1 and Call 2 of the two-call layout, the closed-only call, the ≥19 call — sets the `preview` field of **each** of the bulk question's 4 options to that same table rendered from `action-items.jsonl`: every pending row plus closed rows, headed in `pr` and `pr + report` modes by the Sources block and contribution motivation, in `report` mode by its Sources block (`modes/report-intelligence.md`), then by the merge summary when Step 3c merged a report (the compressed table in ≥19 context-budget mode). Why: 5.5-family models may return reply text written before a tool call as an empty progress update, so a reply-text copy can vanish while the preview renders with the picker — and a visible second copy would only duplicate it. Only single-select questions render `preview` — a `multiSelect` item-checkbox question's preview never counts. This option field is unrelated to `DISPATCH_MODE=preview`. **Hook-enforced**: `hooks/enforce-resolve-table.js` denies the selection call unless one Markdown table in one source holds every pending and every resolved/addressed `action-items.jsonl` id — closed items are selected only by typing their ids, which line 3 of the **Bulk question text** invites in every call holding one, so a table without their rows has the user typing blind — in a place the user sees before answering: the call's first question, as its question text or the `preview` of **every** option of that single-select question (an html-format preview read with its wrapper tags removed) — never an option description, which the host renders as one line with its line breaks replaced. Reply text never counts — 5.5-family models may render it as an empty progress update. A table in only some option previews, or in a later question, is denied with a note naming where it sits — the picker shows only the focused option's preview and opens on question 1. Rows split across fields, options or tables never add up. A preview counts only within the preview cap below; the hook also accepts the table-file shape below, only when the named table is over the preview cap, checking that the file exists and its one table holds every required id. On an html preview host, wrap the table in `<pre>` with the table on its own lines. On denial: put the table in the bulk-option preview — or, past the cap, in the table file — and issue the corrected call; never add a reply-text copy, never re-send the unchanged call.
+
+**Preview cap — MANDATORY**: the host hides an option preview over 2000 characters and clips a longer one to the terminal height with no scroll, so a preview may hold at most **2000 characters and 12 rendered lines** (header lines, blank lines and the Sources block included, and a line over 86 characters counting as one line per 86 characters it spans, since the preview box wraps it; the hook counts them the same way). Measure before building the call. The headed table fits → it is the preview, as above. It does not fit — the usual case once the Sources block, motivation and merge summary head even a few rows, and always at ≥19 pending — →
+
+1. Write that whole headed table (Sources block, motivation, merge summary, every row) to `$IMPL_DIR/action-items-table.md` with the Write tool, before the call — rewrite it per selection call, so it always matches the rows the call asks about.
+2. Add line 6 of the **Bulk question text** — `→ Full item table: <IMPL_DIR>/action-items-table.md`, the real path — to Q1's question text, inside its first 2000 characters.
+3. Set every bulk option's `preview` to the same compact summary within the cap: pending and closed counts by type, the highest-severity rows (`#<id> <summary>`, one per line, as many as fit), and the file path.
+
+The user reads the file before answering; the summary only orients. Never split the table across previews, and never shrink rows to squeeze under the cap.
 
 **Cap mechanics — read before building any call**: the tool cap is **4 questions per call**. The `Submit` tab is NOT a question — a 4-question call renders 5 tabs. Never stop at 3 questions believing the cap is reached, and never over-pack a question past 3 items to avoid opening a 4th. Within one question, `AskUserQuestion` appends "Type something" outside the option list, so 3 items + Type something = 4 visible rows; that is the **≤3 items/question** limit, a separate constraint from the 4-question cap.
 
@@ -559,21 +569,22 @@ Then print this line **in the reply** (prose, not Bash stdout — tool output is
 | -- | -- | -- |
 | 0, closed items present | Q1 bulk · Q2 commit-mode · Q3 topic-group · Q4 dispatch | Q1 push, only when a PR number exists |
 | 0, no closed items | Q1 push, only when a PR number exists; otherwise no call | None |
-| ≤3 | Q1 items · Q2 bulk · Q3 commit-mode · Q4 dispatch | Q1 push · Q2 topic-group, only when commit mode = (b) |
-| 4-6 | Q1-Q2 items (≤3 each) · Q3 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch · Q4 push |
-| 7-9 | Q1-Q3 items (≤3 each) · Q4 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch · Q4 push |
-| 10-18 | Q1-Q3 items (first 9) · Q4 bulk → Call 2: Q1-Q3 items (remainder, ≤3 each) · Q4 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch · Q4 push |
+| 1 | Q1 bulk · Q2 commit-mode · Q3 dispatch — no item question | Q1 push · Q2 topic-group, only when commit mode = (b) |
+| 2-3 | Q1 bulk · Q2 items · Q3 commit-mode · Q4 dispatch | Q1 push · Q2 topic-group, only when commit mode = (b) |
+| 4-6 | Q1 bulk · Q2-Q3 items (2-3 each, balanced) | Q1 commit-mode · Q2 topic-group · Q3 dispatch · Q4 push |
+| 7-9 | Q1 bulk · Q2-Q4 items (2-3 each, balanced) | Q1 commit-mode · Q2 topic-group · Q3 dispatch · Q4 push |
+| 10-18 | Q1 bulk · Q2-Q4 items (first 3 questions of the balanced split, 8-9 items) → Call 2: Q1 bulk · Q2-Q4 items (remaining questions, 2-3 each) | Q1 commit-mode · Q2 topic-group · Q3 dispatch · Q4 push |
 | ≥19 | context-budget mode below — no item checkboxes exist | Q1 push, only when a PR number exists |
 
 Checkbox mode holds at most 18 items (2 calls × 3 questions × 3 items). Decide the mode from the pending count **before** building Call 1; never widen a question past 3 items and never open a Call 3 to stretch checkbox mode further.
 
-The two explicit zero-pending rows take precedence over the ≤3 row; its item checkboxes apply only with at least one pending item. The dispatch question is asked in **every** run with selectable pending or closed items and always shares a call with the commit-mode question, so the user sets how to commit and how to parallelize together. The ≤3 row spends its last slot on it, and topic-group moves to the follow-up, asked there only when commit mode = (b). The 4–18 pending-item bands ask commit-mode, topic-group, dispatch, and push together in one follow-up call; the topic-group answer is discarded unless commit mode = (b).
+The two explicit zero-pending rows take precedence over the 1 and 2-3 rows. Item checkboxes start at 2 pending items: `AskUserQuestion` rejects a question with fewer than 2 options, so a lone pending item gets no item question — the bulk action selects it, or "Type something" with its id — and every item question holds 2–3 options (**Item checkbox questions** below). The dispatch question is asked in **every** run with selectable pending or closed items and always shares a call with the commit-mode question, so the user sets how to commit and how to parallelize together. The 2-3 row spends its last slot on it, and topic-group moves to the follow-up, asked there only when commit mode = (b). The 4–18 pending-item bands ask commit-mode, topic-group, dispatch, and push together in one follow-up call; the topic-group answer is discarded unless commit mode = (b).
 
-For lists with pending or resolved/addressed items, the push question rides a follow-up call; zero pending with no closed items instead uses its push-only first call. Run 2 never stops to ask about pushing. When no PR number exists (`report` mode without a PR# in its header), Step 10 never runs: omit the push question, and the ≤3 follow-up then fires only when commit mode = (b).
+For lists with pending or resolved/addressed items, the push question rides a follow-up call; zero pending with no closed items instead uses its push-only first call. Run 2 never stops to ask about pushing. When no PR number exists (`report` mode without a PR# in its header), Step 10 never runs: omit the push question, and the 1 and 2-3 follow-up then fires only when commit mode = (b).
 
 Bulk action resolving to (d) Skip all → discard the commit-mode, topic-group, **and dispatch** answers from the same call and issue no follow-up call (nothing will be committed, no specialist will be dispatched, and the run jumps to Step 11 without pushing). This satisfies the distinct-menus rule below — menus stay separate questions; only the round-trips merge.
 
-**Bulk action — hard rule**: single-select, fixed options, **present in every selection call without exception** — Call 1 and Call 2 alike, positioned after that call's last item-checkbox question. A selection call without a bulk page is a defect, never a valid compression. Never put items in it. Items span ≤3 groups per call regardless of how many type categories exist.
+**Bulk action — hard rule**: single-select, fixed options, **present in every selection call without exception** — Call 1 and Call 2 alike, always Q1, before any item-checkbox question: its option previews hold the table, so the table is the first screen the user sees and items are picked with every row already in view. A selection call without a bulk page, or with the bulk page behind the checkboxes, is a defect, never a valid compression. Never put items in it as options — the table goes only in each option's `preview` (**Table in the picker preview** above), a field that adds no option. Items span ≤3 groups per call regardless of how many type categories exist.
 
 ```text
 Bulk-action question — multiSelect: FALSE (single-select only — user picks one bulk action, not a checklist)
@@ -584,28 +595,38 @@ Bulk-action question — multiSelect: FALSE (single-select only — user picks o
   (d) Skip all — skip all items, exit
 ```
 
-**ESSENTIAL — exactly these 4 options, verbatim, never substitute and never add** (empirically motivated: an observed run emitted an invented `Use my checked picks (Recommended)` option and dropped `+All [suggest]`). The checked-picks path needs no option — it is the "unanswered" branch below. Every selection call carries this menu; a call that omits it must be re-issued.
+**Bulk question text** — line 1 is always `Or choose a bulk action:`, kept verbatim although the question is Q1. Each line below it is added only when its condition holds, in this order — never as reply text before the call, which 5.5-family models may return as an empty progress update:
 
-**Bulk-action resolution**:
+1. `→ To pick items yourself, leave this unanswered and tick them on the next tabs. (a)–(c) add every item you tick or type; (d) applies only when you tick or type none.` — every selection call carrying item-checkbox questions. The bulk page comes first, so this line is how the user learns that skipping it is the cherry-pick path and that a bulk answer never discards a tick (Bulk-action resolution below).
+2. `→ N pending items — selecting in 2 calls; a bulk choice here ends selection after this call` — Call 1 of the two-call layout (10–18 pending).
+3. `→ N resolved/addressed items not in bulk options — type their ids to include` — every selection call while ≥1 closed item exists; in the closed-only branch it is the only usage instruction the user gets.
+4. `→ N pending items — selecting more than 50 runs them all in this pass (challenge at ≤12 items/agent, implementation in waves): a long run` — the ≥19 call when more than 50 items are pending: the user learns of the long run while choosing its scope (**Large-selection notice** below).
+5. `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. `` — Call 1 only, the Step 3d idle gate.
+6. `→ Full item table: <IMPL_DIR>/action-items-table.md` (the real path) — every selection call whose table is over the preview cap (**Preview cap** above); it must sit within the question text's first 2000 characters, the part the host shows.
 
-- (a) → `SELECTED_ITEMS` = all pending `[req]` IDs (closed items excluded); skip Call 2 in two-call flow; proceed to commit-mode resolution
-- (b) → `SELECTED_ITEMS` = all pending `[suggest]` IDs (closed items excluded); skip Call 2 in two-call flow; proceed to commit-mode resolution
-- (c) → `SELECTED_ITEMS` = all pending [req+suggest] IDs (closed items excluded); skip Call 2; proceed to commit-mode resolution (do NOT hardcode `COMMIT_MODE` — scope and commit mode are orthogonal; user still chooses granularity)
-- (d) → stop; print `→ All items skipped.`; jump to Step 11 (merged flow: discard the commit-mode answer from the same call)
-- unanswered / "Type something" → use checked IDs from the item questions, plus every item id typed in any "Type something" field — the only way a closed (`resolved`/`addressed`) item is selected; typed ids naming `[info]`, legacy `[done]`, or unknown items are dropped with a one-line note; proceed to commit-mode resolution; `COMMIT_MODE = each` (default)
+**ESSENTIAL — exactly these 4 options, verbatim, never substitute and never add** (empirically motivated: an observed run emitted an invented `Use my checked picks (Recommended)` option and dropped `+All [suggest]`). The checked-picks path needs no option — it is the "unanswered" branch below. Every selection call carries this menu; a call that omits it must be re-issued. The `preview` field on each of (a)-(d) carries the full ACTION_ITEMS table (compressed table at ≥19 pending), or past the preview cap the same compact summary naming the table file — a field of those options, never a fifth option.
 
-**Item checkbox questions**: each `multiSelect: true`, header "Items to implement:", labels: `<type> #<id>: <summary>` (≤55 chars), description: `@<author>` + for `location: discussion` items append `· thread (no GH resolve)` — no `file:line`: the location is already in `action-items.jsonl` and just takes up the option's space. Fill in severity order (≤3 items each — never 4, open another question instead). >9 pending items: two calls — print `→ N pending items — selecting in 2 calls` before Call 1, then build each call from the slot table above:
+**Bulk-action resolution** — a bulk answer never discards an explicit pick: (a)–(c) take the union of their bulk set, every checked ID from the item questions, and every item id typed in any "Type something" field; (d) yields to any checked or typed ID. Line 1 of the Bulk question text states this in every call with item checkboxes:
 
-- **Call 1** = Q1-Q3 item checkboxes (items 1-9) + Q4 bulk action.
-- **Call 2** = Q1-Q3 item checkboxes (remaining items, ≤3 each) + Q4 bulk action — the bulk menu repeats here, it is not carried over from Call 1.
-- Any bulk answer other than "unanswered" in Call 1 → skip Call 2 entirely (scope already resolved).
+- (a) → `SELECTED_ITEMS` = all pending `[req]` IDs ∪ checked IDs ∪ typed IDs; skip Call 2 in two-call flow; proceed to commit-mode resolution
+- (b) → `SELECTED_ITEMS` = all pending `[suggest]` IDs ∪ checked IDs ∪ typed IDs; skip Call 2 in two-call flow; proceed to commit-mode resolution
+- (c) → `SELECTED_ITEMS` = all pending [req+suggest] IDs ∪ typed IDs (every checked ID is already pending); skip Call 2; proceed to commit-mode resolution (do NOT hardcode `COMMIT_MODE` — scope and commit mode are orthogonal; user still chooses granularity)
+- (d) with no ID checked or typed → stop; print `→ All items skipped.`; jump to Step 11 (merged flow: discard the commit-mode answer from the same call). (d) with any checked or typed ID → resolve exactly as unanswered below: the explicit picks win.
+- unanswered / "Type something" → use checked IDs from the item questions, plus every item id typed in any "Type something" field; proceed to commit-mode resolution; `COMMIT_MODE = each` (default)
+- Typed IDs are the only way a closed (`resolved`/`addressed`) item is selected, under every answer above; typed ids naming `[info]`, legacy `[done]`, or unknown items are dropped with a one-line note.
+
+**Item checkbox questions**: each `multiSelect: true`, header "Items to implement:", labels: `<type> #<id>: <summary>` (≤55 chars), description: `@<author>` + for `location: discussion` items append `· thread (no GH resolve)` — no `file:line`: the location is already in `action-items.jsonl` and just takes up the option's space. Fill in severity order. **Every item question holds 2–3 options — never 1, never 4**: `AskUserQuestion` rejects a question with fewer than 2 options, and 3 items + "Type something" is the row limit. Split n pending items (2–18) into `q = ceil(n/3)` questions as evenly as possible: the first `n mod q` questions take `n//q + 1` items, the rest `n//q` (4 → 2+2, 5 → 3+2, 7 → 3+2+2, 10 → 3+3+2+2, 13 → 3+3+3+2+2, 16 → 3+3+3+3+2+2). Never fill greedily to 3 and leave a 1-item remainder. >9 pending items: two calls, announced by item 2 of Call 1's **Bulk question text** above; build each call from the slot table above:
+
+- **Call 1** = Q1 bulk action + Q2-Q4 item checkboxes (the first three questions of the balanced split — 8 or 9 items).
+- **Call 2** = Q1 bulk action + Q2-Q4 item checkboxes (the split's remaining questions, 2–3 items each — never a 1-option question) — the bulk menu repeats here, it is not carried over from Call 1, and so does its full-table `preview` on every option.
+- A Call 1 bulk answer that resolves to (a)–(c), or to (d) with nothing checked or typed, → skip Call 2 entirely (scope already resolved; Call 1's line 2 told the user). Unanswered, or (d) yielding to picks → Call 2 as usual.
 - ≥19 pending → context-budget mode below instead, decided before Call 1; never open a Call 3.
 
-**≥19 pending items — context-budget mode**: no per-item checkboxes in this branch. **MANDATORY, in this order — print first, ask second:** (1) print the compressed table (type · id · summary ≤40 chars · file) with every row in an assistant user-facing reply, not Bash/tool stdout, immediately before AskUserQuestion; same non-decorative/no-compression-substitute rule as Step 3c (Output-Routing exemption applies — never divert to `.temp`); (2) then issue ONE call: Q1 bulk action · Q2 commit-mode · Q3 topic-group · Q4 dispatch (all four slots; no item checkboxes exist in this mode); (3) once the bulk answer resolves to anything but (d) Skip all and a PR number exists, issue the follow-up call: Q1 push. Threshold is 19 because checkbox mode tops out at 18 — this branch takes the whole layout, never a partial checkbox pass.
+**≥19 pending items — context-budget mode**: no per-item checkboxes in this branch. **MANDATORY, in this order — render first, ask second:** (1) render the compressed table (type · id · summary ≤40 chars · file) with every row in `$IMPL_DIR/action-items-table.md` per **Preview cap** — 19+ rows never fit the `preview` of every bulk-action option, which carries the compact summary naming that file instead — never also as reply text, never Bash/tool stdout; same non-decorative/no-compression-substitute rule as Step 3c (Output-Routing exemption applies — never divert to `.temp`); (2) then issue ONE call: Q1 bulk action · Q2 commit-mode · Q3 topic-group · Q4 dispatch (all four slots; no item checkboxes exist in this mode), with each Q1 option's `preview` = that compressed table's compact summary naming the file, Q1's question text carrying line 6 of the **Bulk question text** and, with more than 50 pending, line 4; (3) once the bulk answer resolves to anything but (d) Skip all and a PR number exists, issue the follow-up call: Q1 push. Threshold is 19 because checkbox mode tops out at 18 — this branch takes the whole layout, never a partial checkbox pass.
 
-<!-- branch: main-path — commit-mode (same call in the ≤3-item merged layout; follow-up call with topic-group and dispatch for 4–18 pending items; skipped only when bulk action = (d) skip) -->
+<!-- branch: main-path — commit-mode (same call in the 1 and 2-3 item layouts; follow-up call with topic-group and dispatch for 4–18 pending items; skipped only when bulk action = (d) skip) -->
 
-**Commit mode** — placed per the slot table above: same call in the closed-only branch and for ≤3 pending items, follow-up call (paired with topic-group and dispatch) for 4–18 pending items, one shared call in context-budget mode. In the follow-up flow ask it immediately after the bulk action resolves to (a), (b), (c), or unanswered (skip only when (d) skip-all). Commit mode is always the user's choice; item scope ((c) = all items) never implies a commit mode:
+**Commit mode** — placed per the slot table above: same call in the closed-only branch and for 1–3 pending items, follow-up call (paired with topic-group and dispatch) for 4–18 pending items, one shared call in context-budget mode. In the follow-up flow ask it immediately after the bulk action resolves to (a), (b), (c), or unanswered (skip only when (d) skip-all). Commit mode is always the user's choice; item scope ((c) = all items) never implies a commit mode:
 
 ```text
 AskUserQuestion: "Commit mode for selected items:"
@@ -625,7 +646,7 @@ Set `COMMIT_MODE`:
 - (d) → `stage`
 - unanswered → `each` (default)
 
-**Topic-group question** — always present in the SAME call as the commit-mode menu wherever the slot table leaves room (the follow-up call for 4–18 pending items, the closed-only branch, and the ≥19 single call): the commit-mode answer is unknown when that call is built, so the question is asked unconditionally there and its answer discarded silently unless commit mode resolves to (b) — same pattern as the skip-all discard. For `≤3` items the first call is already full, so ask it in the follow-up call beside the push question, and only when commit mode = (b). Options are grouping strategies, not free-text labels: the orchestrator already knows each item's `change` category and `file`, so it proposes concrete groupings and only falls back to typing. Typed labels are collected here rather than at Step 8 — the same decision over the same item list (HEAD's Step 8 label question listed `SELECTED_ITEMS`), and a label question after implementation would park the unattended Run 2.
+**Topic-group question** — always present in the SAME call as the commit-mode menu wherever the slot table leaves room (the follow-up call for 4–18 pending items, the closed-only branch, and the ≥19 single call): the commit-mode answer is unknown when that call is built, so the question is asked unconditionally there and its answer discarded silently unless commit mode resolves to (b) — same pattern as the skip-all discard. For 1–3 pending items it rides the follow-up call beside the push question, asked only when commit mode = (b): the 2-3 first call is full, and the 1-item first call leaves its fourth slot free on purpose — with one pending item a grouping strategy matters only when typed closed ids widen the selection, so it is not asked unconditionally. Options are grouping strategies, not free-text labels: the orchestrator already knows each item's `change` category and `file`, so it proposes concrete groupings and only falls back to typing. Typed labels are collected here rather than at Step 8 — the same decision over the same item list (HEAD's Step 8 label question listed `SELECTED_ITEMS`), and a label question after implementation would park the unattended Run 2.
 
 ```text
 Topic-group question — multiSelect: FALSE
@@ -652,22 +673,23 @@ Type a topic for each item ID (e.g. '1=style 2=logic 3=tests'), or type 'auto' t
 
 `labels` only: write the pairs with the Write tool to `$IMPL_DIR/group-labels.tsv`, one `<id>\t<topic>` row per pair — numeric ids only, topic lowercased with every character outside `[a-z0-9-]` replaced by `-`. The Write tool, not a shell `echo`: the topics are user free text, and Step 8's group commit reads this file instead of asking again.
 
-**Dispatch-granularity question** — placed per the slot table above, asked when pending or resolved/addressed items are available (omitted on the empty-list push-only path; bulk action = (d) skip-all discards the answer, as for topic-group). It sets **wave width and sub-group size only**: specialist routing, the file-ownership tiebreak, and the import-coupling merge are correctness guards, never widened or dropped by any answer. The ≤5-items-per-group split is width, so `(c)` does drop it — deliberately, at the stall risk its own label states.
+**Dispatch-granularity question** — placed per the slot table above, asked when pending or resolved/addressed items are available (omitted on the empty-list push-only path; bulk action = (d) skip-all discards the answer, as for topic-group). It sets **wave width and sub-group size only**: specialist routing, the file-ownership tiebreak, and the import-coupling merge are correctness guards, never widened or dropped by any answer. The per-spawn item cap is width, so `(c)` widens it from 5 to 8 — never drops it: no answer hands one agent more than 8 items, and one file's overflow runs as chained links (`action-item-dispatch.md` Phase 2).
 
 ```text
 Dispatch-granularity question — multiSelect: FALSE
 "Phase 2 runs specialists in isolated worktrees. How should the work spread?"
-  (a) Auto — one worktree per specialist, split at ≤5 items, pool-capped waves (default)
+  (a) Auto — one worktree per specialist, split at ≤5 items, pool-capped waves (Recommended)
   (b) Sequential — same groups, one worktree at a time
-  (c) Per specialist — one worktree per specialist, no ≤5 split (⚠ >~10 items in one worktree can stall)
+  (c) Per specialist — one worktree per specialist, split at ≤8 items (fewer spawns; >8 items still split)
   (d) Custom — show the computed groups first, then choose from these
 ```
 
 Set `DISPATCH_MODE`:
 
 - (a) → `auto` · (b) → `sequential` · (c) → `per-specialist` · (d) → `preview` · unanswered → `auto` (default)
+- (a) is both default and recommended, so it stays first — deliberate exception to the recommended-second convention: the (a)–(d) letters key the fixed sentinel blocks below and the preview gate's re-ask.
 - Groups cannot be shown here: Phase 2 forms them from `SURVIVING_ITEMS` after Phase 1's challenge verdicts, so a concrete list does not exist at Step 3d. (d) Custom is the only path to approving real groups and costs one extra gate at the Phase 1 → Phase 2 boundary; the other three answers keep this run gate-free from here to dispatch.
-- `preview` is not a width. At that boundary `action-item-dispatch.md` prints the formed groups and re-asks (a)/(b)/(c), then the orchestrator runs the matching block below a second time to record the resolved width.
+- `preview` is not a width. At that boundary `action-item-dispatch.md` shows the formed groups as every option's `preview` of its re-ask and re-asks (a)/(b)/(c), then the orchestrator runs the matching block below a second time to record the resolved width.
 
 `(a)` auto:
 
@@ -816,7 +838,7 @@ IFS= read -r _PP < "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}" 2>/dev/null 
 echo "commit-mode=$_CM group-strategy=$_GS dispatch-mode=$_DM push=$_PA post-pr=$_PP"  # timeout: 3000
 ```
 
-**No per-pass item cap** — every selected ID enters Step 3e and Step 8 in this pass; never trim a selection or defer a remainder to a rerun. Step 8 bounds load per agent instead (`action-item-dispatch.md` §Caps: ≤12 items per challenge agent, ≤5 per implementation group, wave-paced). **Large-selection notice** — after bulk resolution and before creating item tasks, count `SELECTED_ITEMS`; more than 50 → print one line in the reply, `→ <N> items selected — all run in this pass; challenge fans out at ≤12 items/agent, expect a long run.` No question, no trim.
+**No per-pass item cap** — every selected ID enters Step 3e and Step 8 in this pass; never trim a selection or defer a remainder to a rerun. Step 8 bounds load per agent instead (`action-item-dispatch.md` §Caps: ≤12 items per challenge agent, ≤5 per implementation spawn — ≤8 under `per-specialist`, one file's overflow chained — wave-paced). **Large-selection notice** — rides in the ≥19 call's Q1 question text (**Bulk question text** line 4, more than 50 pending): a field the call itself renders, read while the user is still choosing the scope. Never as reply text before a tool call (5.5-family models may return that as an empty progress update) and never in a task subject (task tools may be disabled, and a subject update lands after the user's last answer). After bulk resolution, more than 50 selected → Step 11's final report repeats it as one line, `→ <N> items selected — all ran in this pass; challenge fanned out at ≤12 items/agent.` No question, no trim.
 
 ## Step 7b join: collect conflict resolutions — opens Run 2
 
@@ -1033,7 +1055,7 @@ cat "$_OSS_RESOLVE/modes/action-item-dispatch.md"  # timeout: 5000
 
 `TaskUpdate` calls stay orchestrator-owned throughout — Phase 1/2 subagents never touch task list (subagent can't drive parent's task list); only Phase 3, run by orchestrator itself after each cherry-pick, flips a task to `completed`. Explains why tasks flip in item-priority order during Phase 3 even though the work producing them ran concurrently in Phase 2.
 
-`action-item-dispatch.md` has no per-pass item cap: every selected item runs in one pass, never a rerun for a remainder. It bounds load per agent instead — ≤12 items per Phase 1 challenge agent (`ceil(n/12)` chunks per domain), ≤5 per Phase 2 implementation group — and paces both in pool-capped waves.
+`action-item-dispatch.md` has no per-pass item cap: every selected item runs in one pass, never a rerun for a remainder. It bounds load per agent instead — ≤12 items per Phase 1 challenge agent (`ceil(n/12)` chunks per domain), ≤5 per Phase 2 implementation spawn (≤8 under `per-specialist`; one file's overflow runs as sequential chained links) — and paces both in pool-capped waves.
 
 **Straggler gate — before leaving Step 8**: `action-item-dispatch.md`'s per-item close-out (REJECT, skipped, cherry-pick landed — including the C1 medium-effort Codex-direct shortcut, which never enters Phase 1/2/3 at all) should have already terminated every id in `item-tasks.tsv`; this catches whichever one didn't. Never move on to Step 9 over an open child — that hid the original leak. Fails closed on a lost `IMPL_DIR` sentinel: distinct from "no items were selected," which the file's own absence still reports safely.
 
@@ -1042,6 +1064,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; cannot verify child tasks before leaving Step 8"; exit 1; }
 if [ -f "$IMPL_DIR/item-tasks.tsv" ]; then
+    : > "$IMPL_DIR/straggler-check-ids.txt"  # the confirmation block below reads its ids here, never from a placeholder
     _SKIPPED_IDS=$(cut -f1 "$IMPL_DIR/skipped-items.txt" 2>/dev/null)
     # anchored right after id= — resolution= is the field placed there, before any free-text field
     # (action-item-dispatch.md's producer template), so a reviewer's quoted text can never match it
@@ -1051,6 +1074,7 @@ if [ -f "$IMPL_DIR/item-tasks.tsv" ]; then
         { printf '%s\n' "$_SKIPPED_IDS" "$_REJECTED_IDS" | grep -qx "$item_id"; } && printf 'closed: item=%s (rejected/skipped)\n' "$item_id" && continue
         [ -n "$task_id" ] || { echo "! skipping — item $item_id has an empty task id in item-tasks.tsv"; continue; }
         printf 'check: item=%s task=%s\n' "$item_id" "$task_id"  # not rejected/skipped — must have landed a commit; verify below, never assume
+        printf '%s\n' "$item_id" >> "$IMPL_DIR/straggler-check-ids.txt"
     done < "$IMPL_DIR/item-tasks.tsv"
 else
     echo "n/a — report mode or no items selected"
@@ -1063,47 +1087,51 @@ fi
 - A `! skipping` line names a malformed row (empty task id) — investigate `item-tasks.tsv` directly via `TaskList`/`grep` for that item id before proceeding; never guess its status.
 - For every `check:` line: call `TaskList`; if that task is already `completed`/`deleted`, done. If it's still open, do NOT default it to `completed` — confirm independently that item's commit is actually on the branch before calling `TaskUpdate(status="completed")`. The confirmation command depends on `COMMIT_MODE` — only `each` carries a per-item attribution token; `grouped` folds several ids into one message; `all`/`stage` carry none at all (`stage` never commits — the diff stays staged, per its own contract). A lost `resolve-base-sha` sentinel degrades the confirmation to an unscoped search across the whole branch, which can false-confirm a never-implemented item against a prior run's commit on the same branch — the block below warns and treats any match with extra suspicion in that case; both reads and the mode dispatch happen inside it, not by hand:
 
-Run once per printed `check:` line, substituting that line's `item_id`:
+Run once, unedited, right after the gate block above: it confirms every `check:` id, read from `straggler-check-ids.txt` (written by the gate block), and prints one `MATCH`/`NO MATCH` line per id — use the lines for ids whose task is still open:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; cannot confirm straggler commits"; exit 1; }
 IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" 2>/dev/null || COMMIT_MODE="each"
 IFS= read -r _BASE_SHA < "${TMPDIR:-/tmp}/resolve-base-sha-${CSID}" 2>/dev/null || _BASE_SHA=""
+[ -s "$IMPL_DIR/straggler-check-ids.txt" ] || { echo "n/a — the gate block printed no check: line"; exit 0; }
 [ -n "$_BASE_SHA" ] || echo "⚠ resolve-base-sha sentinel missing — confirmation below is unscoped, verify the matched commit's date/author before trusting it"
-_ITEM_ID="<item_id from a printed check: line>"
-case "$_ITEM_ID" in '<'*'>') echo "! BLOCKED — item_id placeholder not substituted"; exit 1 ;; esac
-case "$COMMIT_MODE" in
-    each)
-        # anchored to the literal attribution token commit_action_item.py --build emits, and
-        # range-bound to this run's commits — an unanchored, unscoped grep can match a different
-        # item's id as a substring (No.1 inside No.12) or a prior run's commit on the same branch
-        git log --oneline -E --grep="\[resolve No\.${_ITEM_ID}\]" ${_BASE_SHA:+"$_BASE_SHA..HEAD"}  # timeout: 5000
-        ;;
-    grouped)
-        # tokenize, exact-match — no boundary regex at all. Two prior attempts at this command were
-        # both wrong, in opposite directions: (1) --grep="items .*\b${_ITEM_ID}\b" never matches
-        # anything (\b is a GNU extension, does not compile under `git log -E`'s POSIX ERE); (2) a
-        # boundary-regex replacement against --oneline output is fail-open — --oneline prints only
-        # the commit subject, never the body where the item list lives, so it matches stray digits
-        # in the abbreviated sha or unrelated subject text and false-confirms items that never
-        # landed. --format=%B reads the full body (where "[resolve group] … items <ids>" actually
-        # is), isolates that one line per commit, splits it into whitespace-delimited tokens, and
-        # requires an EXACT token match — a group's own "PR #1" text can never satisfy grep -qx
-        # against a bare ${_ITEM_ID}, and "30" can never satisfy a check for "3". Verified against a
-        # live multi-commit repo (two group commits, ids "30 4" and "7 8"): every real id matched,
-        # "1" (present only inside "PR #1", not the items list) did not.
-        git log --format=%B --grep="items" ${_BASE_SHA:+"$_BASE_SHA..HEAD"} \
-            | grep -E '^\[resolve group\]' | tr ' ' '\n' | grep -qx "${_ITEM_ID}" \
-            && echo "MATCH — item ${_ITEM_ID} found in a group commit" \
-            || echo "NO MATCH — item ${_ITEM_ID} not found in any group commit"  # timeout: 5000
-        ;;
-    all|stage)
-        echo "no per-item token exists in the commit message for COMMIT_MODE=$COMMIT_MODE — grep cannot confirm this item; use this turn's own memory of Phase 3's PLAN_FILE/cherry-pick output, or: git diff --cached --stat / git show --stat against the item's .file"
-        ;;
-    *)
-        echo "! BLOCKED — COMMIT_MODE is '$COMMIT_MODE', not each/grouped/all/stage"; exit 1
-        ;;
-esac
+# every check: id from the gate block's file, never an item_id placeholder: one invariant run confirms them all
+case "$COMMIT_MODE" in each|grouped|all|stage) ;; *) echo "! BLOCKED — COMMIT_MODE is '$COMMIT_MODE', not each/grouped/all/stage"; exit 1 ;; esac
+while IFS= read -r _ITEM_ID || [ -n "$_ITEM_ID" ]; do
+    case "$_ITEM_ID" in ''|*[!0-9]*) continue ;; esac
+    case "$COMMIT_MODE" in
+        each)
+            # anchored to the literal attribution token commit_action_item.py --build emits, and
+            # range-bound to this run's commits — an unanchored, unscoped grep can match a different
+            # item's id as a substring (No.1 inside No.12) or a prior run's commit on the same branch
+            _HITS=$(git log --oneline -E --grep="\[resolve No\.${_ITEM_ID}\]" ${_BASE_SHA:+"$_BASE_SHA..HEAD"})  # timeout: 5000
+            [ -n "$_HITS" ] && printf 'MATCH — item %s: %s\n' "$_ITEM_ID" "$_HITS" || echo "NO MATCH — item ${_ITEM_ID} has no [resolve No.${_ITEM_ID}] commit"
+            ;;
+        grouped)
+            # tokenize, exact-match — no boundary regex at all. Two prior attempts at this command were
+            # both wrong, in opposite directions: (1) --grep="items .*\b${_ITEM_ID}\b" never matches
+            # anything (\b is a GNU extension, does not compile under `git log -E`'s POSIX ERE); (2) a
+            # boundary-regex replacement against --oneline output is fail-open — --oneline prints only
+            # the commit subject, never the body where the item list lives, so it matches stray digits
+            # in the abbreviated sha or unrelated subject text and false-confirms items that never
+            # landed. --format=%B reads the full body (where "[resolve group] … items <ids>" actually
+            # is), isolates that one line per commit, splits it into whitespace-delimited tokens, and
+            # requires an EXACT token match — a group's own "PR #1" text can never satisfy grep -qx
+            # against a bare ${_ITEM_ID}, and "30" can never satisfy a check for "3". Verified against a
+            # live multi-commit repo (two group commits, ids "30 4" and "7 8"): every real id matched,
+            # "1" (present only inside "PR #1", not the items list) did not.
+            git log --format=%B --grep="items" ${_BASE_SHA:+"$_BASE_SHA..HEAD"} \
+                | grep -E '^\[resolve group\]' | tr ' ' '\n' | grep -qx "${_ITEM_ID}" \
+                && echo "MATCH — item ${_ITEM_ID} found in a group commit" \
+                || echo "NO MATCH — item ${_ITEM_ID} not found in any group commit"  # timeout: 5000
+            ;;
+        all|stage)
+            echo "item ${_ITEM_ID}: no per-item token exists in the commit message for COMMIT_MODE=$COMMIT_MODE — grep cannot confirm this item; use this turn's own memory of Phase 3's PLAN_FILE/cherry-pick output, or: git diff --cached --stat / git show --stat against the item's .file"
+            ;;
+    esac
+done < "$IMPL_DIR/straggler-check-ids.txt"
 ```
 
 No confirming commit found → this item was never closed by any exit path; that's the exact defect this gate exists to catch — surface it via `AskUserQuestion` (dispose as `deleted` with a stated reason, or leave open and investigate) rather than guessing either status. Only once every printed id is accounted for, continue to Step 9. Batch every `TaskList`/`TaskUpdate` this gate needs into one response.
@@ -1161,14 +1189,15 @@ The block exits non-zero (`⛔` — fork remote or head ref unresolved, push sco
 
 <!-- branch: main-path — push confirmation (intent push or no recorded intent; skipped only on an explicit Step 3d "don't push" or an uncomputable scope) -->
 
-**Push confirmation — one `AskUserQuestion` call.** Per `git-commit.md` push-safety rule ("Never push without explicit user confirmation") this question precedes any `git push`. Second-longest idle window (measured up to 11 h). Boundary-2 contract already names every file Step 11 needs; print this line in the reply before the call: `` Long wait? `/compact` now — commits landed, challenge log + item map in <IMPL_DIR>, resume lossless. ``
+**Push confirmation — one `AskUserQuestion` call.** Per `git-commit.md` push-safety rule ("Never push without explicit user confirmation") this question precedes any `git push`. Second-longest idle window (measured up to 11 h). Boundary-2 contract already names every file Step 11 needs, so Q1's question text closes with the `/compact` hint (last bullet below) — never as reply text before the call: 5.5-family models may return reply text written before a tool call as an empty progress update.
 
-Q1 — push. Must surface:
+Q1 — push. Its question text must surface:
 
 - Target remote and branch: `$FORK_REMOTE/$HEAD_REF`
 - Diff stat: `$PUSH_STAT` (e.g. `3 files changed, 47 insertions(+), 12 deletions(-)`)
 - Commit count and last subject: `$PUSH_COUNT commits — last: "$LAST_SUBJECT"`
 - Target drift, only when `BASE_FRESH` is not `yes`: `no` → `⚠ origin/<BASE_REF> advanced <BASE_BEHIND> commits since the last merge — newest: "<first listed subject>"`; `unknown` → `⚠ could not verify origin/<BASE_REF> is merged`
+- Last line: `` Long wait? `/compact` now — commits landed, challenge log + item map in <IMPL_DIR>, resume lossless. ``
 
 Options:
 
@@ -1278,7 +1307,7 @@ IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev
 cat "$_OSS_RESOLVE/templates/resolve-report.md"  # timeout: 5000
 ```
 
-Report template (loaded above) — use for section structure. Its `### Push` section shows the printed `PUSH_STATUS` through the template's status table, never a prose recollection of Step 10.
+Report template (loaded above) — use for section structure. Its `### Push` section shows the printed `PUSH_STATUS` through the template's status table, never a prose recollection of Step 10. More than 50 items selected → the report's summary carries Step 3d's large-selection line.
 
 **Tell the review what happened.** When this run consumed a review report, append one outcome per review-sourced item (`fixed` / `self-resolved` / `rejected` / `skipped` / `pending`, finding title and location, commit hash, reason) to `resolution.jsonl` beside that report. `fixed` and `self-resolved` need an implementation record (Phase 2 commit, Codex-direct record, or a `[resolve No.<id>]` commit after this run's base head); an accepted but unmerged item stays `pending`. The next `/oss:review` of this PR reads the ledger, confirms earlier fixes at the new head and re-checks rejected findings before deciding whether to report them again. Append-only and idempotent per run; the script builds records from this run's own files, never from recollection:
 
@@ -1395,11 +1424,11 @@ Non-calibratable — `disable-model-invocation: true` means skill dispatches to 
 - **`[question]` items** — answer inline in resolve report only; reclassify before implementing; never silently implement unanswered question.
 - **Push verification** — confirm via `gh pr view --json commits`; exit 0 from `git push` necessary but not sufficient (branch protection can silently reject).
 - **Merge-push sequencing + escape hatch** — not atomic; concurrent push → non-fast-forward rejection; Step 10 never retries it unattended — the user retries the push only (don't re-run full merge). Target-branch races are the other half: a target commit landing between Step 5 and the push leaves the PR behind and conflicting without any push error — caught by the Step 9.0 and Step 10 `check_base_fresh.py` checks, never by the push itself. `git merge --abort` = undo conflict state; `git push --force-with-lease` on explicit user request only.
-- **Impl agent health + effort**: C1 medium-effort bridge implementation calls use `bridge:implement` on the default or explicit bridge route, one item from a clean worktree per call; Git-derived changed paths must match the reply before per-item records. Explicit `--agent foundry:*` sends medium items through Phase 1+2 with the selected specialist. Dirty or non-medium bridge items use the change-to-specialist table. Effort is never `low`, minimum `medium`, typo/doc `medium`, multi-file/new-feature `xhigh`, default `high`.
+- **Impl agent health + effort**: C1 medium-effort bridge implementation calls use `bridge:implement` on the default or explicit bridge route, one item from a clean worktree per call; Git-derived changed paths must match the reply before per-item records. Explicit `--agent foundry:*` sends medium items through Phase 1+2 with the selected specialist. Dirty or non-medium bridge items use the change-to-specialist table. Effort is never `low`, minimum `medium`, typo/doc `medium`, multi-file/new-feature `xhigh`, default `high`. Effort also picks the Phase 2 tier: a `foundry:sw-engineer` group whose max effort is `high` or `medium` — no `xhigh` item — spawns with `model="sonnet"` (`CAP_SONNET` pool); `medium`-only groups are included on purpose, a deliberate widening of a `high`-only rule, since C1 fall-through work is smaller, never harder; any `xhigh` item keeps its opus frontmatter (`action-item-dispatch.md` §Spawn wave cap).
 - **Two-phase challenge**: evidence = problem exists?; suggestion = fix quality?; evidence reject → skip; suggestion reject → self-resolved via `alternative` field; all in `CHALLENGE_LOG` + Step 11 report.
 - **COMMIT_MODE**: `each` (default); `all`; `stage` (⚠ branch restore skipped); `grouped` (falls back to `each` when labels skipped). Set via the commit-mode menu (Step 3d) — placement per the Step 3d slot table — skipped/discarded only when the bulk action = (d) skip-all. Distinct MENU from the bulk action (item scope vs commit strategy); item scope never implies commit mode; menus may share a call, never options.
 - **GROUP_STRATEGY**: `domain` (default) · `file` · `specialist` · `labels`. Set via the topic-group question (Step 3d), asked beside the commit-mode menu. Read only when `COMMIT_MODE=grouped`; `labels` are typed at Step 3d and persisted to `$IMPL_DIR/group-labels.tsv`, so no strategy adds a user round-trip at Step 8.
-- **DISPATCH_MODE**: `auto` (default) · `sequential` · `per-specialist` · `preview` (the "Custom" label). Set via the dispatch-granularity question (Step 3d), asked when pending or resolved/addressed items are available, beside the commit-mode or topic-group menu. Read by Phase 2 for sub-group splitting and wave width only — specialist routing, the file-ownership tiebreak and the import-coupling merge never change; `per-specialist` drops the ≤5 split, the one width guard a width answer may touch. Distinct from `GROUP_STRATEGY=specialist`, which is a commit-grouping strategy on its own sentinel. `preview` defers the width to one extra gate at the Phase 1 → Phase 2 boundary, where the formed groups are printed first; that gate resolves it to one of the other three.
+- **DISPATCH_MODE**: `auto` (default) · `sequential` · `per-specialist` · `preview` (the "Custom" label). Set via the dispatch-granularity question (Step 3d), asked when pending or resolved/addressed items are available, beside the commit-mode or topic-group menu. Read by Phase 2 for sub-group splitting and wave width only — specialist routing, the file-ownership tiebreak and the import-coupling merge never change; `per-specialist` widens the per-spawn cap from 5 to 8 items, the one width guard a width answer may touch — widened, never removed. Distinct from `GROUP_STRATEGY=specialist`, which is a commit-grouping strategy on its own sentinel. `preview` defers the width to one extra gate at the Phase 1 → Phase 2 boundary, where the formed groups are printed first; that gate resolves it to one of the other three.
 - **AskUserQuestion usage**: the normal action-item path, after successful source resolution and without diagnostic or conflict recovery, takes at most 3 calls at Step 3d (10-18 pending: two checkbox pages + the commit-mode/topic-group/dispatch/push-intent follow-up; every other nonempty band takes 2, while zero pending with no closed items and a PR takes 1 push-intent call) plus 1 Step 10 push confirmation unless the push intent was an explicit "don't push". Picking topic-group (d) without typing labels adds one Step 3d call for the topic-label question.
   - Every decision a later step needs and can see at Step 3d is asked there: commit mode, grouping strategy and typed labels, dispatch width, push intent, and the post-PR browser action. Between Step 3d and the Step 10 push confirmation, nothing is asked on this path.
   - Only `DISPATCH_MODE=preview` adds a call after Step 3d — the user elects it there by choosing Custom.

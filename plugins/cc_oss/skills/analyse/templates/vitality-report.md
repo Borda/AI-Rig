@@ -167,20 +167,20 @@ All data fetched from GitHub API at {REPORT_TIMESTAMP}. Record counts confirm an
 
 | Source | API Endpoint | Records Fetched | Window | Notes |
 |--------|-------------|-----------------|--------|-------|
-| Open issues | `GET /repos/{repo}/issues?state=open` | N | all open | [truncation status] |
-| Closed issues | `GET /repos/{repo}/issues?state=closed` | N | last 3 years | time-bounded; [truncation status] |
-| Open PRs | `GET /repos/{repo}/pulls?state=open` | N | all open | |
-| Closed PRs | `GET /repos/{repo}/pulls?state=closed` | N | recent 200 | merge rate window |
+| Open issues | `gh issue list --state open` (GraphQL, limit 501) | N | all open | [truncation status] |
+| Closed issues | `gh issue list --state closed --search "closed:>=CUTOFF_30D"` (search API) | N | last 30d | close rate window; [truncation status] |
+| Open PRs | `gh pr list --state open` (GraphQL, limit 201) | N | all open | [truncation status] |
+| Closed PRs | `gh pr list --state closed --search "closed:>=CUTOFF_30D"` (search API) | N | last 30d | merge rate window; [truncation status] |
 | Commits | `GET /repos/{repo}/commits` | N | last 100 | date range: [earliest]–[latest] |
 | Releases | `GET /repos/{repo}/releases` | N | last 10 | cadence + downloads |
 | Contributor stats | `GET /repos/{repo}/stats/contributors` | N contributors | all-time | [202 fallback status] |
 | Responsiveness sample | GraphQL issues + PRs | 20 + 20 | most recent | time-to-first-response |
 | CI workflows | `GET /repos/{repo}/actions/workflows` | N workflows | — | |
-| CI runs | `GET /repos/{repo}/actions/runs` | N | last 20 | pass rate |
+| CI runs | `GET /repos/{repo}/actions/runs?branch={default}&status=completed` | N | newest 100 completed on the default branch | pass rate over newest 20 counted: push, schedule, workflow_dispatch and merge_group runs only, skipped/neutral/cancelled excluded |
 | README | `GET /repos/{repo}/readme` | [size] bytes | — | |
 | Dependabot alerts | `GET /repos/{repo}/dependabot/alerts` | [N or 403] | open | 403 = no push access |
-| Star history | `GET /repos/{repo}/stargazers` | N | last 180d | advisory only |
-| Merged PRs 90d | `GET /repos/{repo}/pulls` (closed, merged:≥90d) | N | last 90d | Axis 9 TTM trend + reviewer pool |
+| Star history | not collected (no stargazers fetch; `star_velocity` unavailable) | — | — | advisory only |
+| Merged PRs 90d | `gh pr list --state closed --search "merged:>=CUTOFF_90D"` (search API) | N | last 90d | Axis 9 TTM trend + reviewer pool |
 | Commit messages | `GET /repos/{repo}/commits?per_page=50` | N | last 50 | Axis 9 substance ratio |
 
 _[Data completeness note]_

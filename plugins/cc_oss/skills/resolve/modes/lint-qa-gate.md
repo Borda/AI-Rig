@@ -97,10 +97,3 @@ tail -40 "$IMPL_DIR/full-suite.log"
 Exit 0 → proceed. Non-zero → the failing tests are blocking issues and count against the same 3-iteration gate cap: fix them (gate-loop step 2; the failing ids may be rerun while fixing, but that is never the verification), then **rerun the full suite** — the gate-loop verification for a full-suite failure is always a full-suite rerun — with the same two blocks — background run, rc and log rewritten on disk — because a fix can break something outside the targeted set. Repeat until the full suite exits 0 or the cap is spent; at the cap stop with the step 4 message, `⛔ QA gate blocked push — review findings above, fix errors, then re-run /resolve or push manually after fixing.` A green full-suite run must be the last test evidence before Step 10. Record the command, its source and every run's result in the final report.
 
 - Warnings (non-blocking) → record in report; don't block push
-
-Revoke commit authorization (recompute sentinel path — main PR flow doesn't set `$SENTINEL`):
-
-```bash
-SENTINEL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/compute_commit_sentinel.py" 2>/dev/null || echo "")
-rm -f "$SENTINEL"  # timeout: 3000
-```

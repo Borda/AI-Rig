@@ -10,7 +10,7 @@ Validate scoring range + sensitivity across known archetypes. Run `/oss:analyse 
 | Archived / abandoned | Mid | 12–28% | Axes 1+2+4 all 🔴 |
 | Never-governed, dead | Small | 2–12% | Axes 1+2+3+7 all 🔴 |
 | Accelerating (new contributors, shrinking TTM, low dep-bumps) | Any | — | Axis 9 🟢 (≥7.5) |
-| Decelerating (reviewer pool shrinking, queue growing, dep-bump-only output) | Any | — | Axis 9 🔴 (≤3.75) |
+| Decelerating (reviewer pool shrinking, queue growing, dep-bump-only output) | Any | — | Axis 9 🔴 (\<3.75; 3.75 itself is 🟡) |
 
 ## Concrete Test Repos
 

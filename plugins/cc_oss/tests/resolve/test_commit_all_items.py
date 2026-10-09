@@ -35,10 +35,6 @@ def _fake_git(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
         """Record Git argv and return the response needed by the bulk-commit path."""
         recorded.append(list(cmd))
         subcmd = cmd[1] if len(cmd) > 1 else ""
-        if subcmd == "rev-parse":
-            return _FakeCompleted(returncode=0, stdout="/repo/my-project\n")
-        if subcmd == "branch":
-            return _FakeCompleted(returncode=0, stdout="main\n")
         if subcmd == "diff":
             return _FakeCompleted(returncode=1)
         return _FakeCompleted(returncode=0)
@@ -150,17 +146,6 @@ def test_git_missing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cai, "which", lambda _: None)
     with pytest.raises(FileNotFoundError, match="git"):
         cai.main(["42", "3", "1", "0"])
-
-
-def test_windows_sentinel_uses_native_tempdir(
-    fake_git: list[list[str]], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A POSIX TMPDIR inherited by Windows cannot redirect the commit sentinel."""
-    monkeypatch.setenv("TMPDIR", "/tmp")
-    monkeypatch.setattr(cai.sys, "platform", "win32")
-    monkeypatch.setattr(cai.tempfile, "gettempdir", lambda: str(tmp_path))
-
-    assert cai._sentinel_path("/fake/git") == tmp_path / "claude-commit-auth-my-project-main"
 
 
 @pytest.mark.parametrize("flag", ["-h", "--help"])

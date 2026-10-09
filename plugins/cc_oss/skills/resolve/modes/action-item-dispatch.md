@@ -10,9 +10,9 @@
 
 **Task updates — entire Step 8**: every `TaskUpdate` this file calls for (REJECT/skip close-outs, per-item `completed` after a cherry-pick, group close-outs) rides in the same response as the next real tool call — never a response of task calls alone (SKILL.md §Task budget).
 
-**Commit authorization — entire Step 8**: `COMMIT_MODE` from Step 3d governs all commits; never re-ask regardless of mode, item count, or sentinel state. Multiple resolve flows per session each honor own Step 3d choice.
+**Commit authorization — entire Step 8**: `COMMIT_MODE` from Step 3d governs all commits; never re-ask regardless of mode or item count. Multiple resolve flows per session each honor own Step 3d choice.
 
-Determine implementation agent, set up file-handoff dir, and authorize commits before the loop:
+Determine implementation agent, set up file-handoff dir, and load the Step 3d commit mode before the loop:
 
 `bridge:implement` is a Skill routing marker, never a value passed to `Agent(subagent_type=)`, whether selected by default or explicitly with `--agent bridge:implement`. C1 dispatches it as `Skill(skill="bridge:implement")` for supported medium-effort items. Items that fall through C1 use the `change` → specialist table below, whose values are real subagent types. Other explicit `--agent <name>` values override that table and reach `Agent(subagent_type=)`.
 
@@ -32,7 +32,7 @@ IMPL_AGENT="${_AGENT_OVERRIDE:-bridge:implement}"
 SELECTED_ITEMS="<space-separated selected ids>"
 case "$SELECTED_ITEMS" in *'<'*'>'*|"") echo "! BLOCKED — SELECTED_ITEMS still holds the placeholder; substitute the Step 3d ids before running this block"; exit 1 ;; esac
 case "$SELECTED_ITEMS" in *[!0-9\ ]*) echo "! BLOCKED — SELECTED_ITEMS must be space-separated digits only, got: $SELECTED_ITEMS"; exit 1 ;; esac
-set -- $SELECTED_ITEMS  # numeric tokens only after the validation above
+set -- $(printf '%s\n' "$SELECTED_ITEMS")  # numeric tokens only after the validation above; cmd-substitution splits under zsh too, a bare $VAR does not
 for _ID in "$@"; do
     jq -e --argjson id "$_ID" 'select(.id == $id)' "$IMPL_DIR/action-items.jsonl" >/dev/null \
         || { echo "! BLOCKED — selected item $_ID missing from action-items.jsonl"; exit 1; }
@@ -113,18 +113,20 @@ Process items in `SELECTED_ITEMS` (from Step 3e) in priority order (`[req]` firs
   - otherwise → `CHANGE_SCOPE=targeted` (default)
 - Compute `CHANGE_SCOPE` once before the loop; pass to Step 9 via shell variable
 
-**Caps** — no per-pass item cap: every selected item runs in this pass, never a rerun for a remainder. Load is bounded per agent instead: Phase 1 chunks each challenge domain at ≤12 items/agent (`CHALLENGE_CHUNK=12`, below), Phase 2 groups survivors by specialist at ≤5/group, and both fire in ordered waves within the `claude-config.md` §Parallel Spawn Ceilings pools (**Spawn wave cap**, below), never through a single serial run. Challenge rejections shrink Phase 2 before any worktree opens. Never silently change the selected scope.
+**Caps** — no per-pass item cap: every selected item runs in this pass, never a rerun for a remainder. Load is bounded per agent instead, in every `DISPATCH_MODE`: Phase 1 chunks each challenge domain at ≤12 items/agent (`CHALLENGE_CHUNK=12`, below); Phase 2 hands each spawn ≤`GROUP_CAP` items (5; 8 under `per-specialist`), one file's overflow running as a chain of sequential links (Phase 2 below); both fire in ordered waves within the `claude-config.md` §Parallel Spawn Ceilings pools (**Spawn wave cap**, below), never through a single serial run. Challenge rejections shrink Phase 2 before any worktree opens. Never silently change the selected scope.
 
 **Parallel specialist-worktree dispatch**: C1 Codex-first routing (below) runs one item per call only on the bridge route and only from a clean worktree, so Git can identify paths changed during that call. Later C1 candidates in an uncommitted run fall through to the normal phases. Everything bypassing or falling through C1 splits into three passes: **Phase 1** challenge (read-only, parallel by domain), **Phase 2** implementation (one isolated `git worktree` per specialist, parallel), **Phase 3** merge-back (sequential, orchestrator-owned cherry-pick in original priority order). See Phase 1/2/3 below.
 
-**Per action item** — loop over `SELECTED_ITEMS` in priority order. Per item, read full details from `$IMPL_DIR/action-items.jsonl` (written by Step 3b pr-intelligence subagent) — this is the authoritative source for `full_comment_text`, `file`, `line`, `change`, `severity`, `author`:
+**Per action item** — loop over `SELECTED_ITEMS` in priority order. Read every selected item's full details once, from `$IMPL_DIR/action-items.jsonl` (written by Step 3b pr-intelligence subagent) — the authoritative source for `full_comment_text`, `file`, `line`, `change`, `severity`, `author`. The block prints one record per selected item, taking the ids from the persisted `selected-items.txt`, so it runs unedited:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
-_ID="<id>"
-case "$_ID" in ''|*[!0-9]*) echo "! BLOCKED — item id placeholder not substituted or non-numeric"; exit 1 ;; esac
-ITEM_DATA=$(jq -c ". | select(.id == $_ID)" "$IMPL_DIR/action-items.jsonl")  # timeout: 5000
+[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
+[ -s "$IMPL_DIR/selected-items.txt" ] && IFS= read -r SELECTED_ITEMS < "$IMPL_DIR/selected-items.txt" || SELECTED_ITEMS=""
+case "$SELECTED_ITEMS" in *[0-9]*) ;; *) echo "! BLOCKED — selected-items.txt missing or empty; run the Step 8 prelude first"; exit 1 ;; esac
+case "$SELECTED_ITEMS" in *[!0-9\ ]*) echo "! BLOCKED — selected-items.txt holds a non-numeric item id"; exit 1 ;; esac
+jq -b -c --arg ids "$SELECTED_ITEMS" '($ids | split(" ") | map(select(. != ""))) as $sel | select((.id | tostring) as $id | $sel | index($id))' "$IMPL_DIR/action-items.jsonl"  # timeout: 5000
 ```
 
 Use `.full_comment_text` for `IMPL_PROMPT`, `.file`/`.line` for commit scope and blast-radius lookup, `.change`/`.severity` for effort classification and agent routing.
@@ -210,14 +212,21 @@ Include non-empty `$ITEM_CALLERS` in impl agent prompt — see Phase 2.
 
 When `ITEM_EFFORT=medium` AND `CODEX_AVAILABLE=true` AND `IMPL_AGENT=bridge:implement` (default or explicit): dispatch Codex for evidence check + implementation. An explicit real Agent type bypasses C1 and routes medium items through Phase 1+2. Use **one item per C1 call**. Require a clean tracked and untracked worktree immediately before the call; if dirty, do not call the bridge and route the item through Phase 1+2 by the `change` table. A returned `files_touched` list is a claim, not attribution evidence. The fence below compares it with Git's actual changed paths before any per-item commit, staging record, or DONE status. In `stage`/`grouped`/`all` modes, the first C1 edit leaves the worktree dirty, so remaining medium items use Phase 1+2; `each` mode may run another C1 item after its commit restores a clean tree. The branch mutex blocks another resolve run, but an unrelated external writer can still change the tree; if that is observed, stop and reconcile before recording attribution.
 
-**SECURITY — never type a review comment into `args=` inline.** The comment text is untrusted external content; `bridge:implement`'s own contract requires routing text you did not author through a scratch file plus `--task-file`, never inline `--task`. Build the static wrapper with `printf` (no untrusted content in it), append each item's line via a separate `jq` extraction from `action-items.jsonl` — never hand-typed — then dispatch with `--task-file`:
+**SECURITY — never type a review comment into `args=` inline.** The comment text is untrusted external content; `bridge:implement`'s own contract requires routing text you did not author through a scratch file plus `--task-file`, never inline `--task`. Build the static wrapper with `printf` (no untrusted content in it), append each item's line via a separate `jq` extraction from `action-items.jsonl` — never hand-typed — then dispatch with `--task-file`.
+
+The item id is never typed into the block either: first create `$IMPL_DIR/c1-item-now.txt` with the Write tool, holding this C1 item's numeric id, then run the block. It consumes that file and records the id in `c1-item-current.txt`, which the commit fence below reads, so both blocks run unedited (blueprint-manifest hits in unattended Run 2) and the fence always acts on the item briefed last:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
-_BATCH_TAG="<this batch's first item id>"
-case "$_BATCH_TAG" in ''|*[!0-9]*) echo "! BLOCKED — C1 batch tag placeholder not substituted or non-numeric"; exit 1 ;; esac
+_C1_NOW="$IMPL_DIR/c1-item-now.txt"
+[ -s "$_C1_NOW" ] || { echo "! BLOCKED — $_C1_NOW missing; create it with the Write tool (this C1 item's numeric id) before running this block"; exit 1; }
+_BATCH_TAG=$(awk '{gsub(/\r/, "")} NF {t = $1; n += NF} END {if (n == 1) print t}' "$_C1_NOW")
+case "$_BATCH_TAG" in ''|*[!0-9]*) echo "! BLOCKED — C1 item id in $_C1_NOW missing or non-numeric; write exactly one numeric item id"; exit 1 ;; esac
+# consumed: the next C1 item needs a fresh id; the commit fence reads the one briefed here
+mv "$_C1_NOW" "$_C1_NOW.done"  # timeout: 3000
+printf '%s\n' "$_BATCH_TAG" > "$IMPL_DIR/c1-item-current.txt"
 _BRIEF="$IMPL_DIR/c1-brief-${_BATCH_TAG}.md"
 _C1_BEFORE=$(git status --porcelain=v1 --untracked-files=all) || { echo "! BLOCKED — C1 cannot inspect Git status"; exit 1; }
 [ -z "$_C1_BEFORE" ] || { echo "! BLOCKED — C1 requires a clean worktree; route this item through Phase 1+2"; exit 1; }
@@ -240,9 +249,10 @@ printf '%s\n' \
     "status=complete, verdict=DONE or UNCERTAIN; use DONE only when this one item's edit and checks are complete." \
     "Put actual changed paths in files_touched and a one-sentence reason in findings[0]." \
     >> "$_BRIEF"
+echo "→ C1 brief for item $_BATCH_TAG: $_BRIEF"
 ```
 
-Immediately after this Skill call returns, persist its raw public JSON object verbatim via the Write tool to `$IMPL_DIR/c1-reply-<batch_tag>.json` (same `<batch_tag>` as `_BATCH_TAG` above) — the commit fence and challenge-log append below both read it via `jq`, never by re-typing the reply's contents:
+Immediately after this Skill call returns, persist its raw public JSON object verbatim via the Write tool to `$IMPL_DIR/c1-reply-<batch_tag>.json` (`<batch_tag>` = the item id the brief block printed) — the commit fence and challenge-log append below both read it via `jq`, never by re-typing the reply's contents:
 
 ```text
 Skill(skill="bridge:implement", args="--task-file <substitute the absolute path written to _BRIEF above> --effort medium")
@@ -250,7 +260,7 @@ Skill(skill="bridge:implement", args="--task-file <substitute the absolute path 
 
 Parse the bridge public object, using the dispatched `_BATCH_TAG` as the item identity:
 
-- **DONE with `status=complete`** → run the fence below to verify the reply's file list against Git's actual changes, then mark the item resolved; commit/stage those Git-derived paths; append to `CHALLENGE_LOG` using the shared append block (§Challenge-log append below) with `_RESOLUTION=codex-direct` and `_DOMAIN=<batch_tag>` — that block extracts `finding=`/`evidence_why=`/`suggestion_why=`/`detail=` from the persisted `c1-reply-<batch_tag>.json` via `jq`, never by retyping the reviewer's text; skip Phase 1+2 for that item
+- **DONE with `status=complete`** → run the fence below to verify the reply's file list against Git's actual changes, then mark the item resolved; commit/stage those Git-derived paths; append to `CHALLENGE_LOG` using the shared append block (§Challenge-log append below) with a `<batch_tag> codex-direct <batch_tag>` line — that block extracts `finding=`/`evidence_why=`/`suggestion_why=`/`detail=` from the persisted `c1-reply-<batch_tag>.json` via `jq`, never by retyping the reviewer's text; skip Phase 1+2 for that item
 - **UNCERTAIN** → that item falls through to Phase 1+2 (normal challenge + implementation flow)
 - missing object fields or incomplete `DONE` → block before any per-item record; replan from the preserved reply
 
@@ -271,8 +281,9 @@ else
     case "$PR_REF" in "#$PR_NUMBER"|https://*/pull/"$PR_NUMBER") ;; *) echo "! BLOCKED — PR reference missing or mismatched"; exit 1 ;; esac
 fi
 [ -f "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" ] && IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" || COMMIT_MODE="unset"
-_BATCH_TAG="<this batch's first item id — same value used for the brief file above>"
-case "$_BATCH_TAG" in ''|*[!0-9]*) echo "! BLOCKED — C1 batch tag placeholder not substituted or non-numeric"; exit 1 ;; esac
+# the id the brief block recorded, never retyped: brief, Codex reply and HEAD file all name the same item
+IFS= read -r _BATCH_TAG < "$IMPL_DIR/c1-item-current.txt" 2>/dev/null || _BATCH_TAG=""
+case "$_BATCH_TAG" in ''|*[!0-9]*) echo "! BLOCKED — no C1 item briefed (c1-item-current.txt missing or invalid) — write c1-item-now.txt and run the brief block first"; exit 1 ;; esac
 _C1_FILE="$IMPL_DIR/c1-reply-${_BATCH_TAG}.json"
 [ -s "$_C1_FILE" ] || { echo "! BLOCKED — $_C1_FILE missing/empty; persist the Codex batch reply via the Write tool before running this block"; exit 1; }
 jq -e . "$_C1_FILE" >/dev/null 2>&1 || { echo "! BLOCKED — $_C1_FILE is not valid JSON"; exit 1; }
@@ -346,13 +357,15 @@ while IFS= read -r _ID; do
     printf '%s\t%s\n' "$_ID" "$_SUMMARY" >> "$IMPL_DIR/c1-item-summary.tsv"
     for _f in "${_FILES[@]}"; do printf '%s\t%s\n' "$_ID" "$_f" >> "$IMPL_DIR/c1-item-files.tsv"; done
 done < <(jq -b -r --arg id "$_BATCH_TAG" 'select(.verdict=="DONE" and .status=="complete") | $id' "$_C1_FILE")
+# consumed only once the item is recorded: a stop above keeps it for the rerun, a finished item never records twice
+mv "$IMPL_DIR/c1-item-current.txt" "$IMPL_DIR/c1-item-current.txt.done"  # timeout: 3000
 ```
 
 `c1-item-summary.tsv`/`c1-item-files.tsv` (`item_id<TAB>value`, one row per item/file) are read by the grouped-commit fence (§Site 5 below) to cover C1 items that never reach `phase2-commits.jsonl` — separate files from `c1-deferred-files.txt`, whose bare-path shape two existing consumers (the clean-run staging fence and the overlap guard's Python) already depend on unchanged.
 
 When `CODEX_AVAILABLE=false` OR `ITEM_EFFORT!=medium`: skip Codex routing; use Phase 1+2 directly. If `IMPL_AGENT=bridge:implement`, this fallback uses the `change` table, not the Skill marker as an Agent type.
 
-> **Agent budget** — Phase 1 spawns `Σ ceil(n_d/12)` challengers over the 3 challenger domains (≤3 spawns up to 12 items per domain); `comment-dispatch` batches at `BATCH_SIZE`.
+> **Agent budget** — Phase 1 spawns at least `Σ ceil(n_d/12)` challengers over the 3 challenger domains (≤3 spawns up to 12 items per domain; whole-file packing can add a chunk, never an item past 12); `comment-dispatch` batches at `BATCH_SIZE`.
 >
 > - Phase 1 chunks and Phase 2 sub-groups both pace through §Spawn wave cap below.
 > - What always applies regardless of grouping: each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call.
@@ -384,9 +397,9 @@ Set `DOMAIN_CHALLENGER` from routing table: architecture/API/coupling/default �
 
 Group items by `DOMAIN_CHALLENGER`, preserving each item's original priority-order position within its group (stable partition — needed later so Phase 3's merge plan also respects each specialist's internal commit order).
 
-- **Chunk each domain group at `CHALLENGE_CHUNK=12` items.** Per-item budget below is 4 tool calls, so 12 items ≈ 48 calls — inside the ~55–60 stall bound. A domain of `n_d` items splits into `ceil(n_d/12)` chunks of balanced size (sizes differ by at most one where file affinity allows).
-  - Keep every file's items in one chunk — shared file reads amortize, and verdicts on one file stay consistent. Fill chunks by whole files in priority order of each file's first item.
-  - One file with more than 12 items → that file alone is one chunk, over 12 allowed; file affinity wins.
+- **Chunk each domain group at `CHALLENGE_CHUNK=12` items.** Per-item budget below is 4 tool calls, so 12 items ≈ 48 calls — inside the ~55–60 stall bound. A domain of `n_d` items splits into at least `ceil(n_d/12)` chunks of balanced size (sizes differ by at most one where file affinity allows), one more whenever whole-file packing would push a chunk past 12 (three files of 7 items → 3 chunks, not 2). No chunk ever holds more than 12 items.
+  - Keep every file's items in one chunk while that file holds ≤12 items — shared file reads amortize, and verdicts on one file stay consistent. Fill chunks by whole files in priority order of each file's first item.
+  - One file with more than 12 items → that file's items alone, priority order, cut into `ceil(n/12)` ordered chunks of ≤12 (full chunks first, remainder last) — the same cut as a Phase 2 chained group. Unlike a Phase 2 chain they fire concurrently with every other chunk: Phase 1 only reads, so no lineage exists to serialize. Verdicts split across those chunks still converge — Phase 2's file-ownership tiebreak hands every surviving item of that file to one specialist, whose links apply them in priority order.
   - Preserve priority order inside each chunk.
 - One combined challenge call per chunk, covering ALL that chunk's items.
 - Derive `<domain>` per chunk as a short kebab-case slug from the group's shared theme (e.g. `logic`, `tests`, `docs-api`); a domain split into several chunks appends `-<k>` (`logic-1`, `logic-2`). The slug is the delta between chunks, reused as `name="challenge-<domain>"`, as the prompt lead, and as the output filename suffix — every `<domain>` below means this per-chunk slug.
@@ -433,17 +446,19 @@ Return ONLY compact JSON as your FINAL message (nothing after it):
 
 **Fire every chunk's `Agent()` call in the same response turn** — read-only (no working-tree writes), safe to run concurrently regardless of file overlap between chunks. More chunks than a tier's pool (§Spawn wave cap: `CAP_OPUS=5` for `foundry:challenger`/`foundry:sw-engineer`, `CAP_SONNET=8` for `foundry:qa-specialist`) → fire the first wave up to each pool, the next wave as earlier chunks return. In that same response, arm the deadlines (SKILL.md §Agent wait discipline): write `$IMPL_DIR/agent-watch-challenge.tsv` with one row per fired chunk, `challenge-<domain><TAB><IMPL_DIR>/challenge-domain-<domain>.md<TAB>300` (`CHALLENGE_TIMEOUT_S`); a later wave rewrites the file with its own rows. Never poll for verdicts — no `ScheduleWakeup`, `ListAgents` or `Monitor` loop; run the watch check at each wake-up. A chunk `timed_out`, or one whose notification arrived without its JSON reply → ⏱ now, and every item in it is treated `UNCERTAIN` per the verdict rules below (one single-item retry each, armed in `agent-watch-challenge-retry.tsv`). **No item is ever dropped or implemented by a timeout alone** — the first retry is automatic; what happens after a second timeout is the user's decision.
 
-**Challenge double-timeout gate** — fires only when a single-item retry also times out (a missing verdict blocked the run before this gate existed; the decision now goes to the user instead). Collect **every** item of this wave whose retry timed out, then ask **once** for all of them — one wait, never one per item. Print the items first in the reply (id · domain · summary), plus `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. ``, then invoke `AskUserQuestion` (actual tool call):
+**Challenge double-timeout gate** — fires only when a single-item retry also times out (a missing verdict blocked the run before this gate existed; the decision now goes to the user instead). Collect **every** item of this wave whose retry timed out, then ask **once** for all of them — one wait, never one per item. The items go in the question text itself, one line each (`#<id> · <domain> · <summary>`), never as reply text before the call: 5.5-family models may return reply text written before a tool call as an empty progress update, leaving the user to decide on bare ids. The gate is human idle, so the question text closes with the `/compact` hint line. Then invoke `AskUserQuestion` (actual tool call):
 
 ```text
-"The challenge for <N> item(s) timed out twice: <ids>. What should happen to them?"
+"The challenge for <N> item(s) timed out twice: <ids>. What should happen to them?
+  <for each item: #<id> · <domain> · <summary ≤60 chars>, one per line>
+Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless."
   (a) Implement unchallenged — ⏱ noted in the Challenge Log and the final report
   (b) Drop them — record as skipped, not implemented
   (c) Retry the challenge once more
   (d) Stop the run before implementation
 ```
 
-- (a) → for each id, write `$IMPL_DIR/challenge-verdicts-<domain>-retry-<id>.json` with the Write tool as `{"items":[{"id":<id>,"evidence":"VALID","evidence_rationale":"⏱ challenge timed out twice — implemented unchallenged (user choice)","suggestion":"VALID","suggestion_rationale":"⏱ challenge timed out — fix not evaluated","alternative":null}]}`, then run the normal `as-suggested` append — implemented as with `--no-challenge`, ⏱ visible in the Challenge Log and the Step 11 report.
+- (a) → for each id, write `$IMPL_DIR/challenge-verdicts-<domain>-retry-<id>.json` with the Write tool as `{"items":[{"id":<id>,"evidence":"VALID","evidence_rationale":"⏱ challenge timed out twice — implemented unchallenged (user choice)","suggestion":"VALID","suggestion_rationale":"⏱ challenge timed out — fix not evaluated","alternative":null}]}`, then run the shared append block with one `<id> as-suggested <domain>` line per id — implemented as with `--no-challenge`, ⏱ visible in the Challenge Log and the Step 11 report.
 - (b) → run the drop block below with the chosen ids and exclude them from `SURVIVING_ITEMS`; Phase 3's skipped-item close-out and the Step 11 report then show them as skipped.
 - (c) → one more single-item retry each (re-armed in `agent-watch-challenge-retry.tsv`); items that time out again come back to this same gate.
 - (d) or unanswered → stop as the group-preview gate's (d) does: spawn nothing, run Phase 3's cleanup block to release the branch mutex, report every selected item as pending, jump to Step 11. Never a silent default.
@@ -456,7 +471,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
 _DROP_IDS="<space-separated item ids the user chose to drop>"
 case "$_DROP_IDS" in *'<'*'>'*|"") echo "! BLOCKED — drop ids not substituted"; exit 1 ;; esac
-for _id in $_DROP_IDS; do
+for _id in $(printf '%s\n' "$_DROP_IDS"); do  # cmd-substitution splits under zsh too, a bare $VAR does not
     case "$_id" in *[!0-9]*) echo "! BLOCKED — drop id '$_id' is not numeric"; exit 1 ;; esac
     printf '%s\tchallenge timed out twice — dropped by user\n' "$_id" >> "$IMPL_DIR/skipped-items.txt"
 done
@@ -501,78 +516,93 @@ Parse each group's per-item verdict array — same granularity as a single-item 
 
 - Missing item id, or a present element with empty/null `evidence_rationale` or `suggestion_rationale` → treat as UNCERTAIN. Re-dispatch it alone (single-item challenge call, same domain); persist that reply via the Write tool to a **separate** file, `$IMPL_DIR/challenge-verdicts-<domain>-retry-<id>.json` — never overwrite the group's own `challenge-verdicts-<domain>.json`, which still holds every sibling item's verdict this pass hasn't appended yet. The retry prompt carries the item's `evidence=`/`verify=` markers like the group call. The append block below prefers the retry file for that id when present, and its `// "challenge agent returned no rationale after retry"` fallback covers the still-empty case exactly once, after the real retry — never before it.
 - **Ask the spotter** — the retry is still UNCERTAIN (empty rationale again) and the item carries a `finding_id` and its `author` names a real agent type (not an `@login`, not `codex`; on a GitHub item annotated by the merge, the agent type after `+`): dispatch that agent type for this item alone, as `name="caucus-<id>"`, with the same two-part prompt and JSON contract plus its `evidence=` file. This is the reviewer role that raised the finding, consulted on its own claim — a domain challenger guessing twice adds no signal. Persist the reply via the Write tool to `$IMPL_DIR/challenge-verdicts-<domain>-caucus-<id>.json`; arm `agent-watch-challenge-caucus.tsv` with a 300 s row. A caucus `evidence=VALID` counts only when its rationale cites the code it read (`file:line`); a bare restatement of the original claim falls to the no-rationale default, because the author agreeing with itself is not verification. Only then fall back to the no-rationale default. One caucus per item, never more.
-- `evidence=REJECT` → print `⊘ #<id> evidence rejected: <reason from the persisted verdict file>`; set type `[challenged:reject]`; run the shared append block below with `_ID=<id>`, `_RESOLUTION=rejected`, `_DOMAIN=<domain>`; drop from `SURVIVING_ITEMS`. The append block prints the task id to dispose (or explains why none exists in report mode); call `TaskUpdate(status="deleted")` on it.
-- `evidence=VALID` + `suggestion=VALID` → run the shared append block with `_RESOLUTION=as-suggested`; use original suggestion for implementation
-- `evidence=VALID` + `suggestion=REJECT` → run the shared append block with `_RESOLUTION=self-resolved`; self-resolve using `alternative` as guidance
+- `evidence=REJECT` → print `⊘ #<id> evidence rejected: <reason from the persisted verdict file>`; set type `[challenged:reject]`; list `<id> rejected <domain>` for the shared append block below; drop from `SURVIVING_ITEMS`. The append block prints the task id to dispose (or explains why none exists in report mode); call `TaskUpdate(status="deleted")` on it.
+- `evidence=VALID` + `suggestion=VALID` → list `<id> as-suggested <domain>`; use original suggestion for implementation
+- `evidence=VALID` + `suggestion=REJECT` → list `<id> self-resolved <domain>`; self-resolve using `alternative` as guidance
+- Batch the lines: one `challenge-log-now.txt` holding every settled item of a reply, then one run of the append block — never one run per item.
 
 ### Challenge-log append (shared — every producer in this file calls this block)
 
-**SECURITY — every free-text field (`finding`/`evidence_why`/`suggestion_why`/`detail`) is `jq`-extracted from a file persisted via the Write tool, never retyped by the orchestrator.** Only `_ID` (numeric), `_RESOLUTION` (one of four fixed words), and `_DOMAIN`/batch tag (`[a-z0-9-]+`) remain literal placeholders — all three are shape-guarded below, so an unsubstituted or malformed value aborts rather than silently mismatching:
+**SECURITY — every free-text field (`finding`/`evidence_why`/`suggestion_why`/`detail`) is `jq`-extracted from a file persisted via the Write tool, never retyped by the orchestrator.** The only values the orchestrator supplies are the item id (numeric), the resolution (one of four fixed words) and the domain slug or C1 item id (`[a-z0-9-]+`), and it never types them into the block. It lists them in `$IMPL_DIR/challenge-log-now.txt`, created with the Write tool: one `<item id> <resolution> <domain slug, or the C1 item id for codex-direct>` line per item, space-separated — one line or many, e.g. every verdict of one chunk's reply. Then it runs the block once, unedited, so the block text stays a blueprint-manifest hit in unattended Run 2. The block shape-checks every line and confirms each line's reply, item and task id before writing anything, so a stop never leaves the log half-written: fix the named cause and rerun. Only then does it consume the list (renamed to `challenge-log-now.txt.done`), so a rerun without a fresh list adds nothing twice:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; Step 3b/prelude never ran"; exit 1; }
-_ID="<numeric item id>"
-_RESOLUTION="<one of: codex-direct | rejected | as-suggested | self-resolved>"
-_DOMAIN="<domain slug (challenge call) or batch tag (C1 call) — lowercase/digits/hyphens only>"
-case "$_ID" in ''|*[!0-9]*) echo "! BLOCKED — item id placeholder not substituted or non-numeric"; exit 1 ;; esac
-case "$_RESOLUTION" in codex-direct|rejected|as-suggested|self-resolved) ;; *) echo "! BLOCKED — resolution '$_RESOLUTION' not one of the four known values"; exit 1 ;; esac
-case "$_DOMAIN" in ''|*[!a-z0-9-]*) echo "! BLOCKED — domain/batch-tag placeholder not substituted or invalid"; exit 1 ;; esac
-if [ "$_RESOLUTION" = "codex-direct" ]; then
-    _VJSON="$IMPL_DIR/c1-reply-${_DOMAIN}.json"
-else
-    _VJSON="$IMPL_DIR/challenge-verdicts-${_DOMAIN}-caucus-${_ID}.json"
-    [ -s "$_VJSON" ] || _VJSON="$IMPL_DIR/challenge-verdicts-${_DOMAIN}-retry-${_ID}.json"
-    [ -s "$_VJSON" ] || _VJSON="$IMPL_DIR/challenge-verdicts-${_DOMAIN}.json"
-fi
-[ -s "$_VJSON" ] || { echo "! BLOCKED — $_VJSON missing/empty; persist the agent/Codex JSON reply via the Write tool before running this block"; exit 1; }
-jq -e . "$_VJSON" >/dev/null 2>&1 || { echo "! BLOCKED — $_VJSON is not valid JSON"; exit 1; }
-_ITEM_DATA=$(jq -c ". | select(.id == $_ID)" "$IMPL_DIR/action-items.jsonl")
-[ -n "$_ITEM_DATA" ] || { echo "! BLOCKED — item $_ID not found in action-items.jsonl"; exit 1; }
-_FINDING=$(printf '%s' "$_ITEM_DATA" | jq -r '(.full_comment_text // "") | gsub("[\n\t]"; " ") | .[0:80]')
-# resolution= sits right after id=, before any free-text field (finding=/evidence_why=/suggestion_why=/
-# detail=), so a reviewer's quoted text can never precede it and be mistaken for it — every consumer greps
-# by field name at line start, anchored, never by position (grep -i absorbs casing drift on both fields).
-case "$_RESOLUTION" in
-    codex-direct)
-        _V=$(jq -c . "$_VJSON")
-        [ -n "$_V" ] && [ "$_V" != "null" ] || { echo "! BLOCKED — C1 reply missing in $_VJSON"; exit 1; }
-        _WHY=$(printf '%s' "$_V" | jq -r '(.findings[0] // "") | gsub("[\n\t]"; " ")')
-        printf 'id=%s resolution=codex-direct evidence=VALID suggestion=VALID finding=%s evidence_why=%s suggestion_why=%s detail=%s\n' \
-            "$_ID" "$_FINDING" "$_WHY" "$_WHY" "$_WHY" >> "$IMPL_DIR/challenge-log.txt"
-        ;;
-    rejected)
-        _V=$(jq -c --arg id "$_ID" '.items[]? | select((.id|tostring)==$id)' "$_VJSON")
-        [ -n "$_V" ] && [ "$_V" != "null" ] || { echo "! BLOCKED — item $_ID not present in $_VJSON"; exit 1; }
-        _EV_WHY=$(printf '%s' "$_V" | jq -r '(.evidence_rationale // "challenge agent returned no rationale after retry") | gsub("[\n\t]"; " ")')
-        printf 'id=%s resolution=rejected evidence=REJECT suggestion=— finding=%s evidence_why=%s suggestion_why=— detail=%s\n' \
-            "$_ID" "$_FINDING" "$_EV_WHY" "$_EV_WHY" >> "$IMPL_DIR/challenge-log.txt"
-        # item-tasks.tsv legitimately does not exist in report mode (Step 3e is pr/pr+report only) — a
-        # missing file here is normal, not malformed input, and must never abort the loop.
-        if [ -f "$IMPL_DIR/item-tasks.tsv" ]; then
-            _TID=$(awk -F'\t' -v id="$_ID" '$1==id{print $2}' "$IMPL_DIR/item-tasks.tsv")
-            [ -n "$_TID" ] || { echo "! BLOCKED — item $_ID has no task id in item-tasks.tsv; Step 3e never ran for it, or file is stale"; exit 1; }
-            echo "TaskUpdate target (deleted): item=$_ID task=$_TID"  # timeout: 3000
-        else
-            echo "→ item $_ID rejected (no item-tasks.tsv — report mode never runs Step 3e, no per-item task to dispose)"  # timeout: 3000
-        fi
-        ;;
-    as-suggested|self-resolved)
-        _V=$(jq -c --arg id "$_ID" '.items[]? | select((.id|tostring)==$id)' "$_VJSON")
-        [ -n "$_V" ] && [ "$_V" != "null" ] || { echo "! BLOCKED — item $_ID not present in $_VJSON"; exit 1; }
-        _EV_WHY=$(printf '%s' "$_V" | jq -r '(.evidence_rationale // "challenge agent returned no rationale after retry") | gsub("[\n\t]"; " ")')
-        _SUG_WHY=$(printf '%s' "$_V" | jq -r '(.suggestion_rationale // "challenge agent returned no rationale after retry") | gsub("[\n\t]"; " ")')
-        if [ "$_RESOLUTION" = "self-resolved" ]; then
-            _ALT=$(printf '%s' "$_V" | jq -r '(.alternative // "") | gsub("[\n\t]"; " ")')
-            printf 'id=%s resolution=self-resolved evidence=VALID suggestion=REJECT finding=%s evidence_why=%s suggestion_why=%s detail=%s\n' \
-                "$_ID" "$_FINDING" "$_EV_WHY" "$_SUG_WHY" "$_ALT" >> "$IMPL_DIR/challenge-log.txt"
-        else
-            printf 'id=%s resolution=as-suggested evidence=VALID suggestion=VALID finding=%s evidence_why=%s suggestion_why=%s detail=pending-impl:%s\n' \
-                "$_ID" "$_FINDING" "$_EV_WHY" "$_SUG_WHY" "$_ID" >> "$IMPL_DIR/challenge-log.txt"
-        fi
-        ;;
-esac
+_LOG_NOW="$IMPL_DIR/challenge-log-now.txt"
+[ -s "$_LOG_NOW" ] || { echo "! BLOCKED — $_LOG_NOW missing; create it with the Write tool, one '<item id> <resolution> <domain slug or C1 item id>' line per item, before running this block"; exit 1; }
+# reply a line's rationale comes from: C1 reply for codex-direct; else caucus, then retry, then the chunk's own reply
+_verdict_json() {
+    if [ "$2" = codex-direct ]; then printf '%s\n' "$IMPL_DIR/c1-reply-$3.json"; return; fi
+    for _f in "$IMPL_DIR/challenge-verdicts-$3-caucus-$1.json" "$IMPL_DIR/challenge-verdicts-$3-retry-$1.json"; do
+        [ -s "$_f" ] && { printf '%s\n' "$_f"; return; }
+    done
+    printf '%s\n' "$IMPL_DIR/challenge-verdicts-$3.json"
+}
+# pass 1: every line checked before any record lands
+_N=0
+while IFS=$' \t\r' read -r _ID _RESOLUTION _DOMAIN _EXTRA || [ -n "$_ID" ]; do
+    [ -n "$_ID" ] || continue
+    _N=$((_N + 1))
+    case "$_ID" in *[!0-9]*) echo "! BLOCKED — challenge-log line $_N: item id '$_ID' not numeric"; exit 1 ;; esac
+    case "$_RESOLUTION" in codex-direct|rejected|as-suggested|self-resolved) ;; *) echo "! BLOCKED — challenge-log line $_N: resolution '$_RESOLUTION' not one of the four known values"; exit 1 ;; esac
+    case "$_DOMAIN" in ''|*[!a-z0-9-]*) echo "! BLOCKED — challenge-log line $_N: domain/batch-tag '$_DOMAIN' missing or invalid (lowercase/digits/hyphens)"; exit 1 ;; esac
+    [ -z "$_EXTRA" ] || { echo "! BLOCKED — challenge-log line $_N: more than three fields"; exit 1; }
+    _VJSON=$(_verdict_json "$_ID" "$_RESOLUTION" "$_DOMAIN")
+    [ -s "$_VJSON" ] || { echo "! BLOCKED — $_VJSON missing/empty; persist the agent/Codex JSON reply via the Write tool before running this block"; exit 1; }
+    jq -e . "$_VJSON" >/dev/null 2>&1 || { echo "! BLOCKED — $_VJSON is not valid JSON"; exit 1; }
+    jq -e --argjson id "$_ID" 'select(.id == $id)' "$IMPL_DIR/action-items.jsonl" >/dev/null 2>&1 || { echo "! BLOCKED — item $_ID not found in action-items.jsonl"; exit 1; }
+    [ "$_RESOLUTION" = codex-direct ] || jq -e --arg id "$_ID" 'any(.items[]?; (.id|tostring)==$id)' "$_VJSON" >/dev/null 2>&1 || { echo "! BLOCKED — item $_ID not present in $_VJSON"; exit 1; }
+    # item-tasks.tsv legitimately does not exist in report mode (Step 3e is pr/pr+report only) — a
+    # missing file here is normal, not malformed input, and must never abort the loop.
+    if [ "$_RESOLUTION" = rejected ] && [ -f "$IMPL_DIR/item-tasks.tsv" ]; then
+        awk -F'\t' -v id="$_ID" '$1==id && $2!=""{f=1} END{exit !f}' "$IMPL_DIR/item-tasks.tsv" || { echo "! BLOCKED — item $_ID has no task id in item-tasks.tsv; Step 3e never ran for it, or file is stale"; exit 1; }
+    fi
+done < "$_LOG_NOW"
+[ "$_N" -gt 0 ] || { echo "! BLOCKED — $_LOG_NOW holds no line"; exit 1; }
+# consumed before any record lands: a stale list never adds a record twice
+mv "$_LOG_NOW" "$_LOG_NOW.done"  # timeout: 3000
+# pass 2: one record per line. resolution= sits right after id=, before any free-text field (finding=/evidence_why=/
+# suggestion_why=/detail=), so a reviewer's quoted text can never precede it and be mistaken for it — every consumer
+# greps by field name at line start, anchored, never by position (grep -i absorbs casing drift on both fields).
+while IFS=$' \t\r' read -r _ID _RESOLUTION _DOMAIN _EXTRA || [ -n "$_ID" ]; do
+    [ -n "$_ID" ] || continue
+    _VJSON=$(_verdict_json "$_ID" "$_RESOLUTION" "$_DOMAIN")
+    _ITEM_DATA=$(jq -b -c --argjson id "$_ID" 'select(.id == $id)' "$IMPL_DIR/action-items.jsonl")
+    _FINDING=$(printf '%s' "$_ITEM_DATA" | jq -b -r '(.full_comment_text // "") | gsub("[\n\t]"; " ") | .[0:80]')
+    case "$_RESOLUTION" in
+        codex-direct)
+            _WHY=$(jq -b -r '(.findings[0] // "") | gsub("[\n\t]"; " ")' "$_VJSON")
+            printf 'id=%s resolution=codex-direct evidence=VALID suggestion=VALID finding=%s evidence_why=%s suggestion_why=%s detail=%s\n' \
+                "$_ID" "$_FINDING" "$_WHY" "$_WHY" "$_WHY" >> "$IMPL_DIR/challenge-log.txt"
+            ;;
+        rejected)
+            _V=$(jq -b -c --arg id "$_ID" '.items[]? | select((.id|tostring)==$id)' "$_VJSON")
+            _EV_WHY=$(printf '%s' "$_V" | jq -b -r '(.evidence_rationale // "challenge agent returned no rationale after retry") | gsub("[\n\t]"; " ")')
+            printf 'id=%s resolution=rejected evidence=REJECT suggestion=— finding=%s evidence_why=%s suggestion_why=— detail=%s\n' \
+                "$_ID" "$_FINDING" "$_EV_WHY" "$_EV_WHY" >> "$IMPL_DIR/challenge-log.txt"
+            if [ -f "$IMPL_DIR/item-tasks.tsv" ]; then
+                _TID=$(awk -F'\t' -v id="$_ID" '$1==id{print $2}' "$IMPL_DIR/item-tasks.tsv")
+                echo "TaskUpdate target (deleted): item=$_ID task=$_TID"  # timeout: 3000
+            else
+                echo "→ item $_ID rejected (no item-tasks.tsv — report mode never runs Step 3e, no per-item task to dispose)"  # timeout: 3000
+            fi
+            ;;
+        as-suggested|self-resolved)
+            _V=$(jq -b -c --arg id "$_ID" '.items[]? | select((.id|tostring)==$id)' "$_VJSON")
+            _EV_WHY=$(printf '%s' "$_V" | jq -b -r '(.evidence_rationale // "challenge agent returned no rationale after retry") | gsub("[\n\t]"; " ")')
+            _SUG_WHY=$(printf '%s' "$_V" | jq -b -r '(.suggestion_rationale // "challenge agent returned no rationale after retry") | gsub("[\n\t]"; " ")')
+            if [ "$_RESOLUTION" = "self-resolved" ]; then
+                _ALT=$(printf '%s' "$_V" | jq -b -r '(.alternative // "") | gsub("[\n\t]"; " ")')
+                printf 'id=%s resolution=self-resolved evidence=VALID suggestion=REJECT finding=%s evidence_why=%s suggestion_why=%s detail=%s\n' \
+                    "$_ID" "$_FINDING" "$_EV_WHY" "$_SUG_WHY" "$_ALT" >> "$IMPL_DIR/challenge-log.txt"
+            else
+                printf 'id=%s resolution=as-suggested evidence=VALID suggestion=VALID finding=%s evidence_why=%s suggestion_why=%s detail=pending-impl:%s\n' \
+                    "$_ID" "$_FINDING" "$_EV_WHY" "$_SUG_WHY" "$_ID" >> "$IMPL_DIR/challenge-log.txt"
+            fi
+            ;;
+    esac
+done < "$_LOG_NOW.done"
 ```
 
 `item-tasks.tsv` legitimately does not exist in `report` mode (Step 3e is `pr`/`pr+report` only) — a missing file here is normal, not malformed input, so it must never abort the loop: every rejected item in a multi-item report-mode run has to be recorded, not just the first.
@@ -595,28 +625,37 @@ Group `SURVIVING_ITEMS` by real Agent type: use the `change` table when `IMPL_AG
 
 - Structural prep already captured the links: items A and B are **import-coupled** when one's module is in the other's `direct_imports` — B's module ∈ A's imports (or vice versa), reading `$IMPL_DIR/codemap-deps.jsonl` keyed by the module names in `codemap-maps.json`'s `file_module`. This uses forward `deps` (fan-out, bounded) rather than reverse `rdeps`, so recall is **not** truncated by the 20-caller display cap.
 - After the file-overlap pass, for each import-coupled pair still split across two groups, reassign the lower-ranked item's group to the higher-ranked one (same specialist ranking above) so both land in one worktree and the specialist keeps them consistent. Print `→ #<id> reassigned <from> → <to> (import coupling: <mod> ↔ <mod>)`.
-- This merge is **soft**, unlike file overlap: it yields to the 5-item cap below — if honoring it would push a group past 5, leave the pair split and rely on Phase 3's conflict fallback (under `DISPATCH_MODE=per-specialist` no such cap exists, so the merge always lands) plus the blast-radius context already handed to each agent.
+- This merge is **soft**, unlike file overlap: it yields to `GROUP_CAP` below — if honoring it would push a group past `GROUP_CAP` (5; 8 under `DISPATCH_MODE=per-specialist`), leave the pair split and rely on Phase 3's conflict fallback plus the blast-radius context already handed to each agent.
 - Empty `codemap-deps.jsonl` (no codemap-py query / query failure) → no-op; file-overlap grouping stands.
 
-Re-derive group membership after all reassignments (file overlap + import coupling), **then** cap 5 items/group (`auto` and `sequential` only — `per-specialist` skips this split) — same context ceiling the old file-affinity batching used; a specialist with more than 5 items splits into `ceil(N/5)` groups, **keeping every file's items together in the same sub-group** (never split one file's items across two sub-groups — would reintroduce the exact conflict this tiebreak exists to prevent). Each resulting sub-group is one worktree with its own `group` tag (reused in Phase 3's merge plan).
+Re-derive group membership after all reassignments (file overlap + import coupling), **then** split at `GROUP_CAP` items per spawn in **every** mode — `GROUP_CAP=5` for `auto`/`sequential`, `GROUP_CAP=8` for `per-specialist`. Keeps each agent inside the ~55–60 tool-call stall bound; no mode, chain or preview answer ever hands one spawn more than `GROUP_CAP` items.
+
+- Specialist with ≤`GROUP_CAP` items → one group, one spawn.
+- More → fill sub-groups of ≤`GROUP_CAP` by whole files (a file past `GROUP_CAP` items → next bullet), in priority order of each file's first item. Each sub-group = own worktree + own `group` tag (reused in Phase 3's merge plan), parallel. Never split one file's items across two **parallel** sub-groups — reintroduces the exact conflict this tiebreak exists to prevent.
+- Items with no `.file` share no file to conflict on: they fill any sub-group with room, or their own, and never chain however many there are.
+- One file holding more than `GROUP_CAP` items → its own **chained group**: that file's items, priority order, cut into `ceil(n/GROUP_CAP)` ordered links of ≤`GROUP_CAP` (full links first, remainder last). Links share one `group` tag and run strictly one after another — link k+1 spawns only after link k's envelope is persisted and both envelope fences below ran, then pins its worktree to link k's recorded tip (§Spawn base below), so it works on top of link k's commits. One worktree lineage, never two agents on that file at once; Phase 3 merges the chain as one group, commit order intact.
+- Each link gets its own `isolation="worktree"`, never a shared path: `commit_action_item.py` commits in its process cwd (no repo-dir argument) and a non-isolated agent's Bash cwd is the main tree, so a link pinned to an earlier link's path by prompt alone could commit onto the PR branch mid-Phase-2.
+- Worked example — 17 surviving `foundry:sw-engineer` items, all in one file: `auto`/`sequential` → one chain, links 5·5·5·2 (4 spawns, one at a time); `per-specialist` → links 8·8·1.
 
 **`DISPATCH_MODE` — user-chosen wave width** (Step 3d question; sentinel `${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}`, echoed by the boundary-1 block below). It changes how many worktrees run at once and how coarsely groups split, never which specialist owns an item:
 
 | Mode | Sub-group split | Firing |
 | -- | -- | -- |
-| `auto` | ≤5 items/group as above | pool-capped waves (default, unchanged) |
-| `sequential` | ≤5 items/group as above | one worktree at a time, priority order |
-| `per-specialist` | none — every item of one specialist in one worktree | pool-capped waves |
+| `auto` | ≤5 items/spawn (`GROUP_CAP=5`); one file past 5 → chained links | pool-capped waves (default) |
+| `sequential` | same split as `auto` | one worktree at a time, priority order |
+| `per-specialist` | ≤8 items/spawn (`GROUP_CAP=8`); one file past 8 → chained links | pool-capped waves |
 | `preview` | resolved below before any split | resolved below |
 
-`per-specialist` skips only the ≤5 split; the file-ownership tiebreak and import-coupling merge run first and unchanged — they are cross-specialist reassignments, so no width answer reaches them. It trades the ~55–60 tool-call stall bound (`claude-config.md` §Agent/Skill Spawn Discipline) for fewer spawns: past roughly 10 items one agent can exhaust its budget and return no envelope, and the label at Step 3d states that. A group that returns `partial: true` is handled as any other partial — its unfinished items stay pending and are reported at Step 11. An unreadable or unexpected sentinel value is `auto`: this gate tunes cost, so a lost answer degrades to current behaviour rather than blocking dispatch.
+`per-specialist` only widens the cap to `GROUP_CAP=8`; the file-ownership tiebreak and import-coupling merge run first and unchanged — they are cross-specialist reassignments, so no width answer reaches them. Fewer spawns than `auto` (a specialist with ≤8 items gets one worktree), still inside the ~55–60 tool-call stall bound (`claude-config.md` §Agent/Skill Spawn Discipline): past 8 items it splits and chains exactly as above. A group that returns `partial: true` is handled as any other partial — its unfinished items stay pending and are reported at Step 11. An unreadable or unexpected sentinel value is `auto`: this gate tunes cost, so a lost answer degrades to current behaviour rather than blocking dispatch.
 
-**Spawn wave cap** (per `claude-config.md` §Parallel Spawn Ceilings — `CAP_OPUS=5`, `CAP_SONNET=8`): the 5-item cap above bounds one specialist's own group size, not the combined sub-group count across specialist types.
+**Spawn wave cap** (per `claude-config.md` §Parallel Spawn Ceilings — `CAP_OPUS=5`, `CAP_SONNET=8`): `GROUP_CAP` above bounds one spawn's items, not the combined sub-group count across specialist types.
 
-- `foundry:sw-engineer`/`solution-architect`/`perf-optimizer` all draw from the opus pool; `foundry:qa-specialist`/`doc-scribe`/`linting-expert` from the sonnet pool.
-- Before firing, sum this run's sub-groups per pool; a pool whose sum exceeds its cap fires in ordered waves of that many (`SELECTED_ITEMS` priority order — the same order Phase 3's merge plan uses; item ids are stable handles, not priorities, since `[report]` items are appended after GitHub ids), waiting for each wave to return before opening the next — never one burst past the ceiling.
-- Small/typical runs (most PRs) never approach either cap and fire as one wave, unchanged from before.
-- `DISPATCH_MODE=sequential` narrows every wave to **one** group regardless of pool; `per-specialist` lowers the sub-group count to at most one per specialist type (≤6 total, so neither pool cap is ever reached) without changing either cap.
+- Pool = the spawn's effective model tier, not its agent name. **Model tier**: a `foundry:sw-engineer` group whose max `ITEM_EFFORT` is `high` or `medium` — no `xhigh` item — passes `model="sonnet"` and draws from `CAP_SONNET`; any `xhigh` item → no `model` argument, opus frontmatter, `CAP_OPUS`. Decided once per group: every link of a chain runs the same tier.
+- Deliberate widening of a `high`-only sonnet rule: a `medium`-only group is C1 fall-through (Codex absent, a dirty tree, or an explicit `--agent`) — typo/rename/docstring-class work, smaller than `high`, never harder — so it takes the sonnet tier too. Only `xhigh` keeps opus.
+- `foundry:solution-architect`/`perf-optimizer` → opus pool, never overridden; `foundry:qa-specialist`/`doc-scribe`/`linting-expert` → sonnet pool.
+- Before firing, sum this run's sub-groups per pool — a chained group counts as **one** slot for its whole life, since its links never overlap; a pool whose sum exceeds its cap fires in ordered waves of that many (`SELECTED_ITEMS` priority order — the same order Phase 3's merge plan uses; item ids are stable handles, not priorities, since `[report]` items are appended after GitHub ids), waiting for each wave to return before opening the next — never one burst past the ceiling. A wave holding a chain returns only when that chain's last link's fences ran, or its lineage ended.
+- Small/typical runs (most PRs) never approach either cap and fire as one wave.
+- `DISPATCH_MODE=sequential` narrows every wave to **one** group regardless of pool (a chain's links run back to back inside that slot); `per-specialist` usually yields one group per specialist, more only past 8 items, under the same caps.
 
 Snapshot the worktree list before dispatch — Phase 3's cleanup accounts for worktrees via each group's own envelope, so a group that stalls and never returns (§Health monitoring below) never gets its path into `specialist-worktrees.txt`; this snapshot is what lets the cleanup fence tell "a worktree nothing ever reported" apart from "a worktree that was never created":
 
@@ -627,6 +666,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # the prior refresh point (Step 3d, boundary0) was the only one until this run reached boundary2
 # (post-impl loop), so a compaction anywhere across both phases resumed at item selection and
 # re-asked an already-answered gate
+# resume reads phase2-groups.tsv (tags, links) + chain-<tag>.tsv (durable tip per link): a re-derived tag or a chain re-formed off base forks a second lineage on its file
 IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 IFS= read -r DISPATCH_MODE < "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}" 2>/dev/null || DISPATCH_MODE="auto"
@@ -635,30 +675,101 @@ case "$DISPATCH_MODE" in auto|sequential|per-specialist|preview) ;; *) DISPATCH_
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
 echo "DISPATCH_MODE=$DISPATCH_MODE"  # bash state does not persist; the split + firing rules above read this line
 IFS= read -r _PUSH_AUTH < "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}" 2>/dev/null || _PUSH_AUTH="unset"
-_PRESERVE="pr=${_PR_NUMBER}, impl-dir=${IMPL_DIR}, dispatch-mode=${DISPATCH_MODE}, push-auth=${_PUSH_AUTH} (Step 3d answer),  selected-items=${IMPL_DIR}/selected-items.txt, challenge-log=${IMPL_DIR}/challenge-log.txt, skipped-items=${IMPL_DIR}/skipped-items.txt, item-tasks=${IMPL_DIR}/item-tasks.tsv"
+_PRESERVE="pr=${_PR_NUMBER}, impl-dir=${IMPL_DIR}, dispatch-mode=${DISPATCH_MODE}, push-auth=${_PUSH_AUTH} (Step 3d answer),  selected-items=${IMPL_DIR}/selected-items.txt, challenge-log=${IMPL_DIR}/challenge-log.txt, skipped-items=${IMPL_DIR}/skipped-items.txt, item-tasks=${IMPL_DIR}/item-tasks.tsv, phase2-groups=${IMPL_DIR}/phase2-groups.tsv, phase2-base=${IMPL_DIR}/phase2-base-sha, spawn-now=${IMPL_DIR}/phase2-spawn-now.txt (still present = tags declared, spawn-base block not yet run), spawned=${IMPL_DIR}/phase2-spawned.tsv (links already spawned)"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "Phase 2 dispatch (after Phase 1 challenge verdicts)" "$IMPL_DIR" "${_PRESERVE}" "resume: re-read challenge-log.txt for verdicts + item-tasks.tsv for created tasks (report mode: item-tasks.tsv does not exist — use selected-items.txt as scope instead), continue Phase 2 implementation for items not yet in phase2-commits.jsonl — never re-issue Step 3d, item selection already answered"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "Phase 2 dispatch (after Phase 1 challenge verdicts)" "$IMPL_DIR" "${_PRESERVE}" "resume: re-read challenge-log.txt for verdicts + item-tasks.tsv for created tasks (report mode: item-tasks.tsv does not exist — use selected-items.txt as scope instead), continue Phase 2 implementation for items not yet in phase2-commits.jsonl; group tags and per-link items come from phase2-groups.tsv, never re-derived; a chained group resumes at its next link from chain-<tag>.tsv via the spawn-base block, never re-formed; a link listed in phase2-spawned.tsv is in flight or done, never spawned again — never re-issue Step 3d, item selection already answered"  # timeout: 5000
 git worktree list --porcelain | sed -n 's/^worktree //p' > "$IMPL_DIR/worktrees-before.txt"  # timeout: 5000
 ```
 
 **Group-preview gate — `DISPATCH_MODE=preview` only; every other mode skips this section entirely.** The user asked at Step 3d to see the real groups before anything spawns, which is why this is the one gate the default path never pays.
 
-1. Print the formed groups in a user-facing reply (not Bash stdout), one row per group: `specialist · item ids · files · reassignment reason if any`. Include every group; this table is the data the answer is about, so no compression mode and no communication style replaces it with a count.
-2. Print this line in the reply as well, since the gate is human idle and the contract was refreshed immediately above: `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. ``
-3. Invoke `AskUserQuestion` (actual tool call) — "Phase 2 groups are formed. How should they run?": (a) One worktree at a time · (b) Dispatch as shown — pool-capped waves **(Recommended)** · (c) One worktree per specialist, no ≤5 split · (d) Stop before dispatch.
+1. Build the formed-groups table, one row per group: `specialist · item ids · files · reassignment reason if any`. Include every group; this table is the data the answer is about, so no compression mode and no communication style replaces it with a count. It goes only into the question call, as the `preview` of each of its 4 single-select options (the same table on every option) — never as reply text before the call, never Bash stdout: 5.5-family models may return reply text written before a tool call as an empty progress update, and the user chose Custom precisely to see these groups. The host hides or clips a preview past 2000 characters or 12 lines (SKILL.md Step 3d **Preview cap**): a larger table goes to `$IMPL_DIR/phase2-groups-table.md` with the Write tool first, the question text names that path, and every option's preview carries the same short summary (group count, items per specialist) plus the path.
+2. The question text closes with this line, since the gate is human idle and the contract was refreshed immediately above — never as reply text, for the same 5.5 reason: `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. ``
+3. Invoke `AskUserQuestion` (actual tool call) — "Phase 2 groups are formed. How should they run?", every option's `preview` = the step 1 table: (a) One worktree at a time · (b) Dispatch as shown — pool-capped waves **(Recommended)** · (c) One worktree per specialist, split at ≤8 items · (d) Stop before dispatch.
 4. Map the answer and **run the matching Step 3d dispatch-mode block again** so the sentinel holds a width, never `preview`: (a) → `sequential` · (b) → `auto` · (c) → `per-specialist` · unanswered → `auto`. A `preview` value surviving into Phase 3 or a post-compaction resume would re-ask a decided gate.
-5. The previewed groups were formed under the `auto` split, so a resolved width of `per-specialist` **merges each specialist's sub-groups back into one** per the mode table above before any tag is derived — the shown grouping was the question, not the commitment. Then re-run the boundary-1 block: it is idempotent here (`worktrees-before.txt` is still empty, nothing spawned), and without it `skill-contract.md` keeps `dispatch-mode=preview` while the sentinel holds a width, so a compaction inside Phase 2's multi-minute window resumes from two disagreeing sources.
+5. The previewed groups were formed under the `auto` split, so a resolved width of `per-specialist` **re-runs the import-coupling merge at `GROUP_CAP=8`, then re-splits each specialist's items at 8** per the split rules above before any tag is derived — a pair the merge left split at 5 may now co-locate, sub-groups merge back up to 8 items, a chain re-cuts its links at 8; the shown grouping was the question, not the commitment. Then re-run the boundary-1 block: it is idempotent here (`worktrees-before.txt` is still empty, nothing spawned), and without it `skill-contract.md` keeps `dispatch-mode=preview` while the sentinel holds a width, so a compaction inside Phase 2's multi-minute window resumes from two disagreeing sources.
 6. (d) Stop → leave every worktree unspawned, mark no item `in_progress`, and run Phase 3's cleanup block (its worktree loop is a no-op over an empty `specialist-worktrees.txt`, and it is what releases the branch mutex this run took at the prelude — skipping it leaks the lock until the healer's 30-min cap). Report the formed groups, and the Phase 2 items as pending; items already committed by C1 in `each` mode stay resolved and are reported as such. Then jump to Step 11. Never partially dispatch a stopped run.
 
 Derive `<group_tag>` per group as a short kebab-case slug naming its shared file/theme (e.g. `tflite`, `changelog`, `tests`, `core`) — the delta between groups, reused as `name="impl-<group_tag>"`, as `description`, and as prompt line 1's lead.
 
+- Chain link k≥2 (link 1 = the plain form): `name="impl-<group_tag>-link<k>"`, prompt lead `<group_tag> link <k>/<K>`, and every per-link file carries `.link<k>` before its extension — a dot never passes the tag validation below, so no other group's file can collide.
 - `description` = 3–5 words naming this group's scope (files/theme touched), never echoing `name` or the shared effort/instruction boilerplate below.
 - Compose every group's `name`/`description`/prompt-line-1 triple in one pass before firing, and confirm each prompt line 1 opens with that group's own theme, not the shared "Effort level" framing — this is a `--` fanout over one target (same PR/run) same as Phase 1's challenge dispatch, so the same pre-spawn check applies (task-lifecycle.md §Spawn slots, "When every agent shares one target"): the framing sentence below is identical across every group and belongs after the lead, never as the row's visible label.
 
-Per group, mark its items' tasks in_progress, then dispatch with worktree isolation so concurrent specialists never race on a shared working tree (no stash dance needed — dirty state in one worktree can't collide with another):
+**Persist the groups once, before the first spawn** — create `$IMPL_DIR/phase2-groups.tsv` with the Write tool, one row per spawn: `<group_tag>\t<link>\t<item ids, space-separated>` (link `1` for an unchained group; a chain gets one row per link, `1..K`). Write it after any preview-gate re-split and never rewrite it. A resumed run takes group tags and per-link items from this file and never re-derives a slug: a different slug misses `chain-<tag>.tsv` and starts link 1 off base — a second lineage on that file. The spawn-base block below refuses to run without the file and blocks any tag it does not list.
+
+**Spawn base** — every Phase 2 worktree, chained or not, starts from a pinned sha, never the harness default: Claude Code cuts a subagent worktree from `origin/<default>` unless `worktree.baseRef` is `head` (`_shared/worktree-isolation.md`), so an unpinned specialist edits the default branch's copy of PR files and its picks conflict or go stale in Phase 3. In each spawn response, first create `$IMPL_DIR/phase2-spawn-now.txt` with the Write tool — the group tags spawning now (this wave's groups, or the one chain whose next link is due), space-separated, taken from `phase2-groups.tsv` — then run this block once; per tag it prints the link number, base and that link's items from `phase2-groups.tsv`. The block reads the tags from that file, never from a substituted placeholder, so its text stays invariant and matches the blueprint manifest in unattended Run 2. It consumes the file (renamed to `phase2-spawn-now.txt.done`), so every spawn response writes a fresh list. It also records every link it prints `→ spawn` for as a `<group_tag>\t<link>` row in `$IMPL_DIR/phase2-spawned.tsv`, and never prints `→ spawn` for a recorded link: a list redeclaring a link already spawned — a resume after compaction while that link still runs — gets `⏳ … spawn nothing` instead of a second agent on the same items (duplicate commits per item, a Phase 3 BLOCK). Spawn every `→ spawn` link in the very next response, writing its watch row (§Health monitoring) in that same response. A recorded link never spawned (a compaction in between) keeps its items pending for the Step 8 straggler gate, never a second spawn. A resume tells it apart by that watch row: present → `⏳ … spawned` (run `agent_watch.py`, wait only while it reads `pending`); absent → the block arms `agent-watch-impl-<group_tag>.link<k>.tsv` with a zero deadline and prints `⚠ … recorded but no watch row` — mark the link ⏱ and move on, since no notification will ever come for an agent that never started. `phase2-groups.tsv` is validated on every run: a malformed row, a (tag, link) listed twice, a tag whose links skip a number, or an item in two rows blocks before anything spawns.
+
+- Unchained group or link 1 → `$IMPL_DIR/phase2-base-sha`: `git rev-parse HEAD`, captured by the block's first run, right before the first spawn wave — after C1's `each` commits landed on the PR branch, before any Phase 2 work — and reused by every later wave and resume. Never `resolve-base-sha`: written at the prelude, before C1, it would hand specialists pre-C1 copies of C1-edited files. `resolve-base-sha` stays the reset fence's anchor.
+- Link k≥2 → the previous link's recorded tip. `$IMPL_DIR/chain-<group_tag>.tsv` (one `<link>\t<tip>` row per finished link, appended by the ledger fence below) is durable, so a resumed run continues the same lineage; a recorded `end` stops it, and a tag whose every listed link is recorded spawns nothing.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+[ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
+[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
+_GROUPS="$IMPL_DIR/phase2-groups.tsv"
+[ -s "$_GROUPS" ] || { echo "! BLOCKED — $_GROUPS missing; create it once with the Write tool (tag<TAB>link<TAB>item ids, one row per link) before the first spawn"; exit 1; }
+awk -F'\t' '{sub(/\r$/, "")} NF != 3 || $1 !~ /^[a-z0-9-]+$/ || $2 !~ /^[1-9][0-9]*$/ || $3 !~ /^[0-9]+( [0-9]+)*$/ {bad = 1} END {exit bad}' "$_GROUPS" || { echo "! BLOCKED — $_GROUPS has a malformed row; want tag<TAB>link<TAB>space-separated item ids"; exit 1; }
+# a duplicate (tag, link) merges two spawns onto one envelope past GROUP_CAP; a link gap reads as a finished chain; an item in two rows gets two agents
+_GROUPS_ERR=$(awk -F'\t' '{sub(/\r$/, "")} seen[$1 FS $2]++ {e = "group " $1 " link " $2 " is listed twice"; exit} {n[$1]++; if ($2 + 0 > m[$1]) m[$1] = $2 + 0; c = split($3, ids, " "); for (i = 1; i <= c; i++) if (item[ids[i]]++) {e = "item " ids[i] " sits in two rows"; exit}} END {if (e == "") for (t in n) if (n[t] != m[t]) {e = "group " t " skips a link number (want links 1.." m[t] ", each once)"; break}; if (e != "") print e}' "$_GROUPS")
+[ -z "$_GROUPS_ERR" ] || { echo "! BLOCKED — $_GROUPS: $_GROUPS_ERR; rewrite it with the Write tool before any spawn — one row per (tag, link), links 1..K per tag, each item in one row"; exit 1; }
+# first run only: HEAD after C1 each-commits, before any Phase 2 work; later waves + resumes reuse it
+[ -s "$IMPL_DIR/phase2-base-sha" ] || git rev-parse HEAD > "$IMPL_DIR/phase2-base-sha" 2>/dev/null  # timeout: 3000
+IFS= read -r _BASE_SHA < "$IMPL_DIR/phase2-base-sha" 2>/dev/null || _BASE_SHA=""
+case "$_BASE_SHA" in ''|*[!0-9a-f]*) echo "! BLOCKED — phase2-base-sha missing or invalid; Phase 2 worktrees cannot be pinned"; exit 1 ;; esac
+_SPAWN_NOW="$IMPL_DIR/phase2-spawn-now.txt"
+[ -s "$_SPAWN_NOW" ] || { echo "! BLOCKED — $_SPAWN_NOW missing; create it with the Write tool (this spawn's group tags, space-separated) before running this block"; exit 1; }
+_GROUP_TAGS=$(tr '\r\n\t' '   ' < "$_SPAWN_NOW")
+# consumed: the next spawn writes a fresh list
+mv "$_SPAWN_NOW" "$_SPAWN_NOW.done"  # timeout: 3000
+case "$_GROUP_TAGS" in
+    *[!a-z0-9\ -]*) echo "! BLOCKED — $_SPAWN_NOW holds an invalid group tag; take tags from phase2-groups.tsv"; exit 1 ;;
+    *[a-z0-9]*) ;;
+    *) echo "! BLOCKED — $_SPAWN_NOW names no group tag"; exit 1 ;;
+esac
+# durable spawn record: a link redeclared while in flight (resume after compaction) never gets a second agent
+_SPAWNED="$IMPL_DIR/phase2-spawned.tsv"
+# cmd-substitution splits in both shells — bare `$VAR` is a silent 1-iteration no-op under zsh
+for _TAG in $(printf '%s\n' "$_GROUP_TAGS"); do
+    awk -F'\t' -v t="$_TAG" '$1 == t {f = 1} END {exit !f}' "$_GROUPS" || { echo "! BLOCKED — group tag $_TAG not in phase2-groups.tsv; take tags from that file, never re-derive them"; exit 1; }
+    _CHAIN="$IMPL_DIR/chain-${_TAG}.tsv"
+    _LINK=1; _BASE="$_BASE_SHA"
+    [ -s "$_CHAIN" ] && _LINK=$(( $(wc -l < "$_CHAIN") + 1 )) && _BASE=$(tail -n 1 "$_CHAIN" | cut -f2)
+    _ITEMS=$(awk -F'\t' -v t="$_TAG" -v k="$_LINK" '{sub(/\r$/, "")} $1 == t && $2 == k {print $3}' "$_GROUPS")
+    _ENVELOPE="$IMPL_DIR/phase2-envelope-${_TAG}.json"
+    [ "$_LINK" -le 1 ] || _ENVELOPE="$IMPL_DIR/phase2-envelope-${_TAG}.link${_LINK}.json"
+    if [ "$_BASE" = end ]; then echo "⚠ $_TAG: lineage ended at link $((_LINK - 1)) — spawn nothing; its remaining items stay pending"
+    elif [ -z "$_ITEMS" ]; then echo "✓ $_TAG: all $((_LINK - 1)) link(s) recorded — spawn nothing"
+    elif awk -F'\t' -v t="$_TAG" -v k="$_LINK" '{sub(/\r$/, "")} $1 == t && $2 == k {f = 1} END {exit !f}' "$_SPAWNED" 2>/dev/null; then
+        # the watch row is armed in the Agent() response itself: present = launched; absent = never launched, or its wave's file was rewritten
+        _WATCH="$IMPL_DIR/agent-watch-impl-${_TAG}.link${_LINK}.tsv"
+        _AGENT="impl-$_TAG"
+        [ "$_LINK" -le 1 ] || _AGENT="impl-${_TAG}-link${_LINK}"
+        if [ -s "$_ENVELOPE" ]; then echo "⏳ $_TAG link $_LINK: envelope persisted, fences not run — run both envelope fences; spawn nothing"
+        elif cat "$IMPL_DIR/agent-watch-impl.tsv" "$_WATCH" 2>/dev/null | awk -F'\t' -v a="$_AGENT" '{sub(/\r$/, "")} $1 == a {f = 1} END {exit !f}'; then
+            echo "⏳ $_TAG link $_LINK: spawned, no envelope persisted yet — run agent_watch.py: pending → wait for its notification, timed_out → mark it ⏱; spawn nothing"
+        else
+            printf '%s\t%s\t0\n' "$_AGENT" "$_ENVELOPE" > "$_WATCH"  # timeout: 3000
+            echo "⚠ $_TAG link $_LINK: recorded but no watch row — never launched (compaction before its Agent call) or its wave's watch file was rewritten; armed as timed out in $_WATCH — mark it ⏱ and do not wait: its items stay pending for the Step 8 straggler gate; spawn nothing"
+        fi
+    else
+        printf '%s\t%s\n' "$_TAG" "$_LINK" >> "$_SPAWNED"  # timeout: 3000
+        echo "→ spawn $_TAG link $_LINK base $_BASE items $_ITEMS"
+    fi
+done
+```
+
+Step 0 pins with `git checkout -B`, not `git reset --keep`: same effect on a clean fresh worktree, but `git checkout` is on the plugin's Bash allow list (`.claude-plugin/permissions-allow.json`) and `git reset` is not — an un-allowed command parks a background agent on a permission prompt.
+
+Per group, mark its items' tasks in_progress (a chained group: per link, at that link's spawn), then dispatch with worktree isolation so concurrent specialists never race on a shared working tree (no stash dance needed — dirty state in one worktree can't collide with another). `model="sonnet"` only per §Spawn wave cap's model tier (a `foundry:sw-engineer` group whose max effort is `high` or `medium`, no `xhigh` item); any other spawn drops that argument:
 
 ```text
-Agent(subagent_type="<specialist>", isolation="worktree", name="impl-<group_tag>", description="<3-5 words: this group's file/theme scope>", prompt="<group_tag> — <N> item(s), effort <highest ITEM_EFFORT in group>.
+Agent(subagent_type="<specialist>", isolation="worktree", <model="sonnet", — §Spawn wave cap model tier only; drop otherwise> name="impl-<group_tag>", description="<3-5 words: this group's file/theme scope>", prompt="<group_tag> — <N> item(s), effort <highest ITEM_EFFORT in group>.
+BASE — step 0, before any item: git status --porcelain must print nothing; then git branch --show-current,
+then git checkout -B <that branch> <base sha printed by the spawn-base block> (no branch printed → git checkout --detach <sha>),
+then git merge-base --is-ancestor <same sha> HEAD. Any step fails → change nothing more, return every item under skipped
+with reason \"base mismatch\"; never reset, never retry.
+CHAIN (link k≥2 only — drop this line otherwise): commits already on the branch belong to earlier links — never amend or revert them; list only your own commits.
 Implement these action items one at a time. For each, apply the fix using best judgment
 (if suggestion was rejected in challenge, fix the underlying issue instead — see rationale/alternative below),
 then commit it individually before moving to the next item.
@@ -696,39 +807,84 @@ python \"${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_action_item.py\" --bui
 Items:
 <id>: <IMPL_PROMPT for this item> — blast-radius callers: <ITEM_CALLERS for this item, if any>
 ...
-Write findings (approach taken, files changed per item) to $IMPL_DIR/impl-worktree-<group_tag>.md using the Write tool.
+Write findings (approach taken, files changed per item) to $IMPL_DIR/impl-worktree-<group_tag>.md (chain link k≥2: impl-worktree-<group_tag>.link<k>.md) using the Write tool.
 Return ONLY compact JSON as your FINAL message (nothing after it):
 {\"worktree\":\"<absolute path of YOUR OWN worktree, from: git rev-parse --show-toplevel>\",\"commits\":[{\"item_id\":N,\"sha\":\"<sha>\"}],\"skipped\":[{\"item_id\":N,\"reason\":\"<why no commit>\"}]}")
 ```
 
-**Fire all specialist groups in the same response turn, respecting the spawn wave cap above** — this is the actual wall-clock win: N specialists implementing and committing concurrently, each isolated in its own worktree/branch; a run over either pool's cap fires wave-by-wave instead of one burst. `DISPATCH_MODE=sequential` fires one group per turn instead, each after the previous group's envelope is persisted — the user traded wall-clock for a serialized run, so never widen it back to a burst.
+**Fire all specialist groups in the same response turn, respecting the spawn wave cap above** — this is the actual wall-clock win: N specialists implementing and committing concurrently, each isolated in its own worktree/branch; a run over either pool's cap fires wave-by-wave instead of one burst. `DISPATCH_MODE=sequential` fires one group per turn instead, each after the previous group's envelope is persisted and its fences ran — for a chain, its last link's — the user traded wall-clock for a serialized run, so never widen it back to a burst.
 
-> **Health monitoring** — SKILL.md §Agent wait discipline: in each wave's spawn response, write `$IMPL_DIR/agent-watch-impl.tsv` (rewritten per wave) with one row per group, `impl-<group_tag><TAB><IMPL_DIR>/phase2-envelope-<group_tag>.json<TAB>900`. Never poll — no `ScheduleWakeup`, `ListAgents` or `Monitor` loop. The envelope file is the orchestrator's own write, so at every wake-up first persist each arrived envelope per the SECURITY rule below, then run the watch check: a group `timed_out`, or one whose notification arrived without its envelope → mark it ⏱ now, surface partial results from the groups that did return, proceed to merge-back with whatever landed; its unresolved items stay `in_progress` and get reported alongside other pending work.
+> **Health monitoring** — SKILL.md §Agent wait discipline: in each wave's spawn response, write `$IMPL_DIR/agent-watch-impl.tsv` (rewritten per wave) with one row per group, `impl-<group_tag><TAB><IMPL_DIR>/phase2-envelope-<group_tag>.json<TAB>900` (a chained group's row = its link 1). Never poll — no `ScheduleWakeup`, `ListAgents` or `Monitor` loop. The envelope file is the orchestrator's own write, so at every wake-up first persist each arrived envelope per the SECURITY rule below, then run the watch check: a group `timed_out`, or one whose notification arrived without its envelope → mark it ⏱ now, surface partial results from the groups that did return, proceed to merge-back with whatever landed; its unresolved items stay `in_progress` and get reported alongside other pending work.
+>
+> - **Chain link k≥2** — one row at a time, armed in that link's own spawn response in its own file: `$IMPL_DIR/agent-watch-impl-<group_tag>.link<k>.tsv`, row `impl-<group_tag>-link<k><TAB><IMPL_DIR>/phase2-envelope-<group_tag>.link<k>.json<TAB>900`. Never a rewrite of `agent-watch-impl.tsv` — its mtime is the clock of every group still running. Never link 1's envelope path either — it already exists, so the row would read `done` at spawn.
+> - Spawn link k+1 in the wake-up turn that ran both fences for link k, only when the ledger fence printed `→ chain tip`; the spawn-base block then reads the same tip from `chain-<group_tag>.tsv`. A link with no commits still records a tip — its unchanged base — so the chain continues. The fence records `end` and prints `⚠ … lineage ended` instead when the link reported `base mismatch` or its tip does not descend from its base → spawn no further link. Link k `timed_out` or no envelope → no fence run, no further link either. Either way the chain's unspawned items stay `pending` (never marked `in_progress`; the Step 8 straggler gate catches them) and are reported with other pending work. Skipped items alone never break the chain — the next link builds on whatever landed.
 
-**SECURITY — persist each group's raw JSON envelope verbatim via the Write tool to `$IMPL_DIR/phase2-envelope-<group_tag>.json` as soon as it returns, before running any bash on it.** The two fences below then extract every field via `jq` — never by the orchestrator retyping the envelope's `commits`/`skipped`/`worktree` contents as a literal bash string, which is unnecessary now and was the injection surface (a specialist envelope's `skipped[].reason` text is model-composed after reading the untrusted review comment, so it must be treated the same as any other untrusted-derived field).
+**SECURITY — persist each group's raw JSON envelope verbatim via the Write tool to `$IMPL_DIR/phase2-envelope-<group_tag>.json` (chain link k≥2: `phase2-envelope-<group_tag>.link<k>.json`) as soon as it returns, before running any bash on it.** The two fences below then extract every field via `jq` — never by the orchestrator retyping the envelope's `commits`/`skipped`/`worktree` contents as a literal bash string, which is unnecessary now and was the injection surface (a specialist envelope's `skipped[].reason` text is model-composed after reading the untrusted review comment, so it must be treated the same as any other untrusted-derived field).
 
 - `commits` entries feed Phase 3's merge plan — appended to `$IMPL_DIR/phase2-commits.jsonl`, tagged with this group's own worktree tag; `skipped` entries are appended to `$IMPL_DIR/skipped-items.txt`; `worktree` is appended to `$IMPL_DIR/specialist-worktrees.txt`. All three are durable records so Phase 3 survives a compaction between here and there.
 - Every group's extraction happens in this same orchestrator turn, so appends are sequential — no concurrent-write risk even with multiple groups returning at once.
-- Run both blocks once per group, right after that group's envelope is persisted — including a group whose every item was skipped: its worktree still exists and still needs removing, so these blocks run regardless of whether `commits` is empty:
+- Run both blocks once per group — once per link for a chained group, same `_GROUP_TAG` — right after that envelope is persisted, including one whose every item was skipped: its worktree still exists and still needs removing, so these blocks run regardless of whether `commits` is empty. The ledger row takes the shared `_GROUP_TAG`, so Phase 3 sees one group per chain; only the envelope filename carries the link.
+- The tag is never typed either. Before the two blocks, create `$IMPL_DIR/phase2-fence-now.txt` with the Write tool, holding that group's one tag (a chain's shared tag for every link); then run the ledger fence, then the skipped-items fence, which consumes the file (renamed to `phase2-fence-now.txt.done`). Both blocks read the tag from that file, never from a substituted placeholder, so their text stays invariant and matches the blueprint manifest in unattended Run 2. Consumption makes the next group's fences block until its own tag is written, so a stale tag never re-runs a finished group in place of the next. Several envelopes in one wake-up → file, ledger fence, skipped-items fence per group, one group after another.
+- The link is never typed: both blocks take the newest persisted envelope of the tag (link k+1's exists only once link k's ledger fence ran), and the ledger fence checks it against `chain-<group_tag>.tsv` — the link right after the last recorded one ingests, an already-recorded link reports its tip and appends nothing, any other gap blocks. The skipped-items fence records every link of the tag missing from `skipped-recorded.tsv`, oldest first, up to the newest envelope: spawn-base gates the next link on the chain row alone, so a link whose skipped-items fence a compaction cut off is backfilled from its durable envelope when the next link's fences run, never lost and never a stop. A rerun after compaction therefore never re-appends a link's commits or skipped items:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
-_GROUP_TAG="<this group's worktree tag>"
-case "$_GROUP_TAG" in ''|*[!a-z0-9-]*) echo "! BLOCKED — group tag placeholder not substituted or invalid"; exit 1 ;; esac
+_FENCE_NOW="$IMPL_DIR/phase2-fence-now.txt"
+[ -s "$_FENCE_NOW" ] || { echo "! BLOCKED — $_FENCE_NOW missing; create it with the Write tool (this envelope's one group tag) before running this block"; exit 1; }
+# tag from a Write-tool file, never a placeholder: block text stays invariant for the blueprint manifest
+_GROUP_TAG=$(awk '{gsub(/\r/, "")} NF {t = $1; n += NF} END {if (n == 1) print t}' "$_FENCE_NOW")
+case "$_GROUP_TAG" in ''|*[!a-z0-9-]*) echo "! BLOCKED — $_FENCE_NOW must hold exactly one group tag from phase2-groups.tsv"; exit 1 ;; esac
+# link from disk, never typed: newest persisted envelope — link k+1 spawns only after link k's fences ran
+_LINK=1
+while [ -s "$IMPL_DIR/phase2-envelope-${_GROUP_TAG}.link$((_LINK + 1)).json" ]; do _LINK=$((_LINK + 1)); done
 _ENVELOPE="$IMPL_DIR/phase2-envelope-${_GROUP_TAG}.json"
+[ "$_LINK" -le 1 ] || _ENVELOPE="$IMPL_DIR/phase2-envelope-${_GROUP_TAG}.link${_LINK}.json"
 [ -s "$_ENVELOPE" ] || { echo "! BLOCKED — $_ENVELOPE missing/empty; persist this group's raw JSON envelope via the Write tool before running this block"; exit 1; }
 jq -e . "$_ENVELOPE" >/dev/null 2>&1 || { echo "! BLOCKED — $_ENVELOPE is not valid JSON"; exit 1; }
+_CHAIN="$IMPL_DIR/chain-${_GROUP_TAG}.tsv"
+_ROWS=0
+[ -s "$_CHAIN" ] && _ROWS=$(awk 'END{print NR}' "$_CHAIN")
+# rerun: link already recorded — report its tip, append nothing (commits ledger has no dedup of its own)
+if [ "$_ROWS" -ge "$_LINK" ]; then
+    _TIP=$(awk -F'\t' -v k="$_LINK" '$1==k{t=$2} END{print t}' "$_CHAIN")
+    if [ "$_TIP" = end ]; then echo "⚠ group $_GROUP_TAG link $_LINK: lineage ended (already recorded) — spawn no further link"
+    else echo "→ chain tip ${_GROUP_TAG} link ${_LINK}: ${_TIP} (already recorded — nothing appended)"; fi
+    exit 0
+fi
+[ "$_ROWS" -eq $((_LINK - 1)) ] || { echo "! BLOCKED — chain-${_GROUP_TAG}.tsv records $_ROWS link(s) but link $_LINK's envelope is the newest; an earlier link's fences never ran — inspect before ingesting"; exit 1; }
 _BAD=$(jq -r '.commits[]? | select(((.item_id|type)!="number") or ((.sha|type)!="string") or ((.sha|test("^[0-9a-f]{7,40}$"))|not)) | @json' "$_ENVELOPE")
 [ -z "$_BAD" ] || { echo "! BLOCKED — malformed commit entry in $_ENVELOPE (bad item_id/sha shape): $_BAD"; exit 1; }
 jq -c --arg g "$_GROUP_TAG" '.commits[]? | . + {group:$g}' "$_ENVELOPE" >> "$IMPL_DIR/phase2-commits.jsonl"  # timeout: 5000 — never gate this append on the worktree field below: the commits ledger must land regardless, or a missing worktree path (specialist envelope bug, not a merge-correctness issue) would silently drop this group's items from Phase 3's plan
 _WORKTREE_PATH=$(jq -r '.worktree // empty' "$_ENVELOPE")
+_LAST_SHA=$(jq -r '.commits[-1].sha // empty' "$_ENVELOPE")
+_TIP=""
 if [ -n "$_WORKTREE_PATH" ] && [ -d "$_WORKTREE_PATH" ]; then
     printf '%s\n' "$_WORKTREE_PATH" >> "$IMPL_DIR/specialist-worktrees.txt"  # timeout: 3000
+    _TIP=$(git -C "$_WORKTREE_PATH" rev-parse HEAD 2>/dev/null)  # timeout: 3000
+elif [ -z "$_LAST_SHA" ]; then
+    echo "→ group $_GROUP_TAG link $_LINK: no commits, no worktree left — the harness removes an unchanged worktree"
 else
     # this group's commits already landed above and must not be lost over a missing/invalid cleanup-only field
     echo "⚠ group $_GROUP_TAG: envelope omitted or gave an invalid worktree field — its worktree will not be auto-removed; reclaim manually via 'git worktree list' or heal_git_artifacts.py worktrees after this run"
+    _TIP="$_LAST_SHA"
+fi
+# lineage record: next link's base, durable for resume; no-commit link carries its base forward
+if [ "$_LINK" -le 1 ]; then
+    IFS= read -r _PREV < "$IMPL_DIR/phase2-base-sha" 2>/dev/null || _PREV=""
+else
+    _PREV=$(awk -F'\t' -v k="$((_LINK - 1))" '$1==k{t=$2} END{print t}' "$_CHAIN" 2>/dev/null)
+fi
+[ -n "$_TIP" ] || _TIP="$_PREV"
+# unpinned link: surviving worktree HEAD sits on origin/<default>, not on its base — never hand that on
+jq -e 'any(.skipped[]?; (.reason // "") | test("base mismatch"))' "$_ENVELOPE" >/dev/null 2>&1 && _TIP=end
+[ "$_TIP" = end ] || git merge-base --is-ancestor "$_PREV" "$_TIP" 2>/dev/null || _TIP=end  # timeout: 5000
+awk -F'\t' -v k="$_LINK" '$1==k{f=1} END{exit !f}' "$_CHAIN" 2>/dev/null || printf '%s\t%s\n' "$_LINK" "$_TIP" >> "$_CHAIN"  # timeout: 3000 — re-run never double-appends
+if [ "$_TIP" = end ]; then
+    echo "⚠ group $_GROUP_TAG link $_LINK: lineage ended (base mismatch or tip off its base) — spawn no further link; remaining items stay pending"
+else
+    echo "→ chain tip ${_GROUP_TAG} link ${_LINK}: ${_TIP}"
 fi
 ```
 
@@ -736,20 +892,41 @@ fi
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
-_GROUP_TAG="<this group's worktree tag>"
-case "$_GROUP_TAG" in ''|*[!a-z0-9-]*) echo "! BLOCKED — group tag placeholder not substituted or invalid"; exit 1 ;; esac
-_ENVELOPE="$IMPL_DIR/phase2-envelope-${_GROUP_TAG}.json"
-[ -s "$_ENVELOPE" ] || { echo "! BLOCKED — $_ENVELOPE missing/empty; persist this group's raw JSON envelope via the Write tool before running this block"; exit 1; }
-jq -e . "$_ENVELOPE" >/dev/null 2>&1 || { echo "! BLOCKED — $_ENVELOPE is not valid JSON"; exit 1; }
-_SKIP_COUNT_BEFORE=$(jq '.skipped? | length // 0' "$_ENVELOPE" 2>/dev/null || echo 0)
-jq -r '.skipped[]? | select((.item_id|type)=="number") | "\(.item_id)\t\((.reason // "no reason given") | gsub("[\n\t]"; " "))"' "$_ENVELOPE" >> "$IMPL_DIR/skipped-items.txt"  # timeout: 3000
-_SKIP_COUNT_WRITTEN=$(jq -r '.skipped[]? | select((.item_id|type)=="number") | .item_id' "$_ENVELOPE" | wc -l | tr -d ' ')
-[ "$_SKIP_COUNT_BEFORE" = "$_SKIP_COUNT_WRITTEN" ] || echo "⚠ group $_GROUP_TAG: $_SKIP_COUNT_BEFORE skipped entries in envelope but only $_SKIP_COUNT_WRITTEN had a numeric item_id — malformed row(s) dropped, inspect $_ENVELOPE"
+_FENCE_NOW="$IMPL_DIR/phase2-fence-now.txt"
+[ -s "$_FENCE_NOW" ] || { echo "! BLOCKED — $_FENCE_NOW missing; create it with the Write tool (this envelope's one group tag), run the ledger fence, then this block"; exit 1; }
+_GROUP_TAG=$(awk '{gsub(/\r/, "")} NF {t = $1; n += NF} END {if (n == 1) print t}' "$_FENCE_NOW")
+case "$_GROUP_TAG" in ''|*[!a-z0-9-]*) echo "! BLOCKED — $_FENCE_NOW must hold exactly one group tag from phase2-groups.tsv"; exit 1 ;; esac
+# consumed: the next group's fences block until its own tag is written, so a stale tag never stands in for it
+mv "$_FENCE_NOW" "$_FENCE_NOW.done"  # timeout: 3000
+# same link derivation as the ledger fence: newest persisted envelope
+_LINK=1
+while [ -s "$IMPL_DIR/phase2-envelope-${_GROUP_TAG}.link$((_LINK + 1)).json" ]; do _LINK=$((_LINK + 1)); done
+# one record per group link, oldest unrecorded first: a link whose fence a compaction skipped is backfilled from its durable envelope, never lost; a recorded link never lands twice
+_SKIP_DONE="$IMPL_DIR/skipped-recorded.tsv"
+_NEW=0
+_K=1
+while [ "$_K" -le "$_LINK" ]; do
+    if ! awk -F'\t' -v g="$_GROUP_TAG" -v k="$_K" '$1==g && $2==k{f=1} END{exit !f}' "$_SKIP_DONE" 2>/dev/null; then
+        _ENVELOPE="$IMPL_DIR/phase2-envelope-${_GROUP_TAG}.json"
+        [ "$_K" -le 1 ] || _ENVELOPE="$IMPL_DIR/phase2-envelope-${_GROUP_TAG}.link${_K}.json"
+        [ -s "$_ENVELOPE" ] || { echo "! BLOCKED — $_ENVELOPE missing/empty; persist this group's raw JSON envelope via the Write tool before running this block"; exit 1; }
+        jq -e . "$_ENVELOPE" >/dev/null 2>&1 || { echo "! BLOCKED — $_ENVELOPE is not valid JSON"; exit 1; }
+        _SKIP_COUNT_BEFORE=$(jq '.skipped? | length // 0' "$_ENVELOPE" 2>/dev/null || echo 0)
+        jq -r '.skipped[]? | select((.item_id|type)=="number") | "\(.item_id)\t\((.reason // "no reason given") | gsub("[\n\t]"; " "))"' "$_ENVELOPE" >> "$IMPL_DIR/skipped-items.txt"  # timeout: 3000
+        printf '%s\t%s\n' "$_GROUP_TAG" "$_K" >> "$_SKIP_DONE"
+        _SKIP_COUNT_WRITTEN=$(jq -r '.skipped[]? | select((.item_id|type)=="number") | .item_id' "$_ENVELOPE" | wc -l | tr -d ' ')
+        [ "$_SKIP_COUNT_BEFORE" = "$_SKIP_COUNT_WRITTEN" ] || echo "⚠ group $_GROUP_TAG: $_SKIP_COUNT_BEFORE skipped entries in envelope but only $_SKIP_COUNT_WRITTEN had a numeric item_id — malformed row(s) dropped, inspect $_ENVELOPE"
+        [ "$_K" -eq "$_LINK" ] || echo "→ group $_GROUP_TAG link $_K: skipped items backfilled — its own skipped-items fence never ran"
+        _NEW=$((_NEW + 1))
+    fi
+    _K=$((_K + 1))
+done
+[ "$_NEW" -gt 0 ] || echo "✓ group $_GROUP_TAG link $_LINK: skipped items already recorded"
 ```
 
 ### Phase 3: Merge-back — sequential, orchestrator-owned
 
-**HEAD fingerprint check** — the worktrees branched from `resolve-base-sha`; verify the PR branch hasn't moved under us while Phase 2 ran. A moved base means an external write (human push, or a run that slipped the mutex) landed during Phase 2 — cherry-picks still apply (they replay each diff onto the current tip), but overlapping edits now surface as conflicts, so surface the drift rather than stack silently.
+**HEAD fingerprint check** — every Phase 2 worktree was pinned to `phase2-base-sha` at step 0 (a chain link to a tip descending from it, §Spawn base); verify the PR branch hasn't moved under us while Phase 2 ran. A move past `phase2-base-sha` means an external write (human push, or a run that slipped the mutex) landed during Phase 2 — cherry-picks still apply (they replay each diff onto the current tip), but overlapping edits now surface as conflicts, so surface the drift rather than stack silently. A move that stops at `phase2-base-sha` happened before Phase 2 spawned (C1's `each` commits): the worktrees already sit on it, so it is reported as such, never as drift. Either way `resolve-base-sha` is re-pointed to the current tip — the merge fence's guard and combined reset anchor on it.
 
 Precompute every specialist's original pre-cherry-pick patch-id first, in its own fenced block: the multi-line `python -c` call below must stay isolated from the check that consumes it, or the blueprint-manifest generator bails on per-command extraction for the whole surrounding block (`plugins/CLAUDE.md` §Blueprint Blocks) — the check block still needs the guard reads it shares with every other fence, and mixing them here has already cost this fence its auto-allow coverage once. `$IMPL_DIR/phase2-plan-shas.txt`/`phase2-plan-ids.txt` are fixed paths under `IMPL_DIR`, overwritten every run — no `mktemp`/`rm -f` needed, so nothing here trips the manifest generator's destructive-command filter either:
 
@@ -814,8 +991,14 @@ elif [ -n "$_BASE_SHA" ] && [ "$_NOW_SHA" != "$_BASE_SHA" ]; then
         echo "! BLOCKED — HEAD carries our own stranded pick(s) above base (${_BASE_SHA:0:8} → ${_NOW_SHA:0:8}):$_STRANDED — a prior Phase 3 pass likely crashed mid-plan; reset to base, then re-run this fence"
         exit 1
     fi
-    echo "⚠ base HEAD moved during Phase 2: ${_BASE_SHA:0:8} → ${_NOW_SHA:0:8} (external write)."
-    echo "  Cherry-picks apply onto the new base; any overlapping edit surfaces as a conflict → routed to Step 5a below."
+    # worktrees pin to phase2-base-sha (after C1 each-commits); only a move past it is Phase 2 drift
+    IFS= read -r _P2_BASE < "$IMPL_DIR/phase2-base-sha" 2>/dev/null || _P2_BASE="$_BASE_SHA"
+    if [ "$_NOW_SHA" = "$_P2_BASE" ]; then
+        echo "→ HEAD advanced before Phase 2 spawned: ${_BASE_SHA:0:8} → ${_NOW_SHA:0:8} (pre-Phase 2 commits, e.g. C1 each) — worktrees were pinned on it, not drift"
+    else
+        echo "⚠ base HEAD moved during Phase 2: ${_P2_BASE:0:8} → ${_NOW_SHA:0:8} (external write)."
+        echo "  Cherry-picks apply onto the new base; any overlapping edit surfaces as a conflict → routed to Step 5a below."
+    fi
     # re-point the persisted base at the new tip — the merge fence's combined reset targets this sentinel
     # absolutely (git reset --soft --end-of-options <sha>, not HEAD~n); leaving it at the stale pre-drift
     # value would rewind the branch PAST the external commit just detected, making it unreachable from HEAD
@@ -1187,7 +1370,7 @@ Type a topic for each item ID (e.g. '1=style 2=logic 3=tests'), or type 'auto' t
 
 `auto` mapping (used by `domain`): topic from each item's `.change` field: `style`→`style`, `test`→`tests`, `docs`→`docs`, `ci`→`ci`, `config`→`config`, `code`|`refactor`→`logic`; default `misc` when unclassified. Every item lands in exactly one group; an implemented item with no label or classification → `misc`; a labelled id that was rejected or skipped is ignored.
 
-Group items by topic label. For each unique topic group (ordered by first item ID in group), commit the group, then close out its tasks in a **separate** fence — this fence's own `git diff-tree`/`git log` calls need the guard reads shared with every other fence, and keeping them apart from the close-out loop's `awk`/`grep` calls keeps both independently covered (`plugins/CLAUDE.md` §Blueprint Blocks).
+Group items by topic label. For each unique topic group (ordered by first item ID in group), create `$IMPL_DIR/group-commit-now.txt` with the Write tool — one line, the topic then that group's item ids, space-separated (`tests 3 7 9`) — and run the commit fence unedited; it consumes the file, so each group writes its own. Then close out its tasks in a **separate** fence — this fence's own `git diff-tree`/`git log` calls need the guard reads shared with every other fence, and keeping them apart from the close-out loop's `awk`/`grep` calls keeps both independently covered (`plugins/CLAUDE.md` §Blueprint Blocks).
 
 **SECURITY — file list and per-item summaries are derived from git itself, never from an LLM-typed array.** `phase2-commits.jsonl` (`{item_id, sha, group}`, written by the fence above) already has, for every Phase-2-committed item, the real commit; `git diff-tree`/`git log` against that sha gives the exact files and subject with zero risk of the specialist's self-report omitting one (the residual risk this file's own design-scope section already flags).
 
@@ -1198,7 +1381,7 @@ Group items by topic label. For each unique topic group (ordered by first item I
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
-rm -f "$IMPL_DIR/group-commit-status.txt"  # cleared first, not just overwritten at the end — a fence that dies mid-way (timeout/interrupt) between this and the "ok"/"failed" write must never leave a PRIOR group's stale "ok" for the close-out fence to read
+echo failed > "$IMPL_DIR/group-commit-status.txt"  # reset first, not just overwritten at the end — a fence that dies mid-way (timeout/interrupt) between this and the "ok"/"failed" write must never leave a PRIOR group's stale "ok" for the close-out fence to read; no rm, which drops the whole block from the blueprint manifest
 IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
 IFS= read -r PR_REF < "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}" 2>/dev/null || PR_REF=""
 if [ "$PR_NUMBER" = "n/a" ]; then
@@ -1208,13 +1391,20 @@ else
     case "$PR_REF" in "#$PR_NUMBER"|https://*/pull/"$PR_NUMBER") ;; *) echo "! BLOCKED — PR reference missing or mismatched"; exit 1 ;; esac
 fi
 [ -f "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" ] && IFS= read -r CODEX_AVAILABLE < "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" || CODEX_AVAILABLE="false"  # reload (Check 41: fresh shell) — set in Step 1; a bare shell var here would always read unset in this separate Bash call, so the Codex co-author trailer below could never fire
-GROUP_IDS=(<item ids in this group>)
-_TOPIC="<topic — already sanitized to [a-z0-9-] per the strategy above>"
-for _gid in "${GROUP_IDS[@]}"; do case "$_gid" in ''|*[!0-9]*) echo "! BLOCKED — group id '$_gid' not numeric"; exit 1 ;; esac; done
-case "$_TOPIC" in ''|*[!a-z0-9-]*) echo "! BLOCKED — topic must be lowercase alphanumeric/hyphen"; exit 1 ;; esac
+# topic + ids from a Write-tool file, never placeholders: block text stays invariant for the blueprint manifest
+_GROUP_NOW="$IMPL_DIR/group-commit-now.txt"
+[ -s "$_GROUP_NOW" ] || { echo "! BLOCKED — $_GROUP_NOW missing; create it with the Write tool (one line: <topic> then this group's item ids, space-separated) before running this block"; exit 1; }
+_TOPIC=$(awk '{gsub(/\r/, "")} NF {n++; t = $1} END {if (n == 1) print t}' "$_GROUP_NOW")
+_GROUP_IDS=$(awk '{gsub(/\r/, "")} NF {n++; $1 = ""; s = $0} END {if (n == 1) print s}' "$_GROUP_NOW")
+case "$_TOPIC" in ''|*[!a-z0-9-]*) echo "! BLOCKED — topic must be lowercase alphanumeric/hyphen (first word of the one line in $_GROUP_NOW)"; exit 1 ;; esac
+case "$_GROUP_IDS" in *[!0-9\ ]*|'') echo "! BLOCKED — group ids in $_GROUP_NOW must be numeric, space-separated, after the topic"; exit 1 ;; esac
+case "$_GROUP_IDS" in *[0-9]*) ;; *) echo "! BLOCKED — group ids missing: $_GROUP_NOW names no item after the topic"; exit 1 ;; esac
+# consumed: the next group writes its own line, so a stale one never commits twice
+mv "$_GROUP_NOW" "$_GROUP_NOW.done"  # timeout: 3000
 : > "$IMPL_DIR/group-files.txt"; : > "$IMPL_DIR/group-summaries.txt"
 _COMMITTED_IDS=()  # only ids that actually contributed a file/summary below — an id with neither NEVER reaches group-ids.txt or the commit body, so the close-out fence and SKILL.md's straggler gate can't mark an unimplemented item completed
-for _gid in "${GROUP_IDS[@]}"; do
+# cmd-substitution splits under zsh too, a bare $VAR does not
+for _gid in $(printf '%s\n' "$_GROUP_IDS"); do
     _SHA=$(jq -r --arg id "$_gid" 'select((.item_id|tostring)==$id) | .sha' "$IMPL_DIR/phase2-commits.jsonl" 2>/dev/null | head -1)
     if [ -n "$_SHA" ]; then
         case "$_SHA" in *[!0-9a-f]*|'') echo "! BLOCKED — sha '$_SHA' for item $_gid is not hex"; exit 1 ;; esac
@@ -1317,7 +1507,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -s "$IMPL_DIR/merge-result.json" ] && jq -e '.conflict == null and .remaining == []' "$IMPL_DIR/merge-result.json" >/dev/null || { echo "! BLOCKED — Phase 3 has no clean result; cannot complete bulk tasks"; exit 1; }
 IFS= read -r _SELECTED_IDS < "$IMPL_DIR/selected-items.txt"
 case "$_SELECTED_IDS" in ''|*[!0-9\ ]*) echo "! BLOCKED — selected-items.txt has invalid item ids"; exit 1 ;; esac
-set -- $_SELECTED_IDS
+set -- $(printf '%s\n' "$_SELECTED_IDS")  # cmd-substitution splits under zsh too, a bare $VAR does not
 [ "$#" -gt 0 ] || { echo "! BLOCKED — selected-items.txt contains no item ids"; exit 1; }
 _SKIPPED_IDS=$(cut -f1 "$IMPL_DIR/skipped-items.txt" 2>/dev/null)
 # anchored right after id= — see the append block's note; resolution= there can never be a quoted substring
