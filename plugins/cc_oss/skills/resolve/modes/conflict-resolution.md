@@ -6,7 +6,7 @@
 
 <!-- Output: conflicts resolved or NO_CONFLICTS_FOUND=true set -->
 
-> **Three dispatch points, not one pass** (SKILL.md §Run structure). Step 5 runs in Run 1 right after Step 4, in the turn that spawned `INTEL_AGENT` — it needs only the checked-out branch. Steps 6–7a run later in Run 1, dispatched in the same turn as the Step 3d selection question, because Step 6a needs the motivation that agent synthesized. Step 7b is collected at the join opening Run 2, before any item task exists. Execute each part when its point is reached; never run all three back to back.
+> **Three dispatch points, not one pass** (SKILL.md §Run structure). Step 5 runs in Run 1 right after Step 4, in the turn that spawned `INTEL_AGENT` — it needs only the checked-out branch. Steps 6–7a run in Run 2, after the Step 3d answers: Step 6 in the fan's first response, the 7a spawn in the same response as the Phase 1 early-wave spawns (never before the Step 3d picker — the findings table is a single stream with no agent beside it). Step 7b is collected at the Step 7b join, whenever the envelope lands, before C1 and Phase 2. Execute each part when its point is reached; never run all three back to back.
 
 ## Step 5: Conflict detection
 
@@ -81,7 +81,9 @@ Store returned task ID alongside each file path as `conflict_task_id`. Print con
 | config.yaml | #<task_id> | pending |
 ```
 
-> **Invariant**: all conflict tasks `completed` before Step 8. Upfront creation keeps each conflict scoped, independently reversible.
+Write the file→task map in one Write tool call to `$IMPL_DIR/conflict-tasks.tsv` (`<filepath>\t<task_id>` per row): the task ids are orchestrator-held and a compaction in the Run 2 fan would otherwise lose them.
+
+> **Invariant**: all conflict tasks `completed` before C1 and Phase 2 (Phase 1's early wave runs first). Upfront creation keeps each conflict scoped, independently reversible.
 
 No conflicts → complete merge here:
 
@@ -105,7 +107,7 @@ git merge --abort
 
 ## Step 6: Distill conflict context
 
-> Run 1, dispatched in the Step 3d gate turn — after `INTEL_AGENT` returns, before the `AskUserQuestion` call. Runs through the user's idle window.
+> Run 2, first response of the fan (SKILL.md Step 7b join) — after the Step 3d answers, long after `INTEL_AGENT` returned.
 
 ### 6a: Source-branch intent
 
@@ -172,13 +174,13 @@ Return ONLY a compact JSON envelope — no prose, no explanation:
 ")
 ```
 
-> **Health monitoring** — SKILL.md §Agent wait discipline: in the spawn response, write `$IMPL_DIR/agent-watch-conflict.tsv` with the row `conflict-resolver<TAB>-<TAB>900` (envelope-only agent, 15-min deadline). Never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop; no filler call, no "waiting" line, no sleep. At the Step 7b join run the watch check first: `timed_out`, or a notification that arrived without the JSON envelope → ⏱ `timed_out` now, surface partial results, proceed with staged files.
+> **Health monitoring** — SKILL.md §Agent wait discipline: in the spawn response, write `$IMPL_DIR/agent-watch-conflict.tsv` with the row `conflict-resolver<TAB>$IMPL_DIR/conflict-envelope.json<TAB>900` (15-min deadline); on the completion notification persist the JSON envelope verbatim to that path with the Write tool before the watch check, so the row reads `done` — an envelope-only `-` row would stay open beside the other fan batches. Never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop; no filler call, no "waiting" line, no sleep. At the Step 7b join run the watch check first: `timed_out`, or a notification that arrived without the JSON envelope → ⏱ `timed_out` now, surface partial results and stop before C1 and Phase 2 (SKILL.md Step 7b join) — never implement on an unmerged tree.
 
-> **Turn placement**: this spawn is followed in the same response by Step 3d's `AskUserQuestion`, not by an ended turn — the selection question is substantive work, so the no-filler rule above is satisfied. The completion notification and the user's answer arrive independently; whichever lands second opens the join below.
+> **Turn placement**: spawn this agent in the same response as Phase 1's early-wave challenge spawns (`action-item-dispatch.md`), then end the turn; with no early wave it is the response's only spawn. Never spawn it before the Step 3d picker. The two batches finish independently; each notification is handled as it lands.
 
 ### 7b: Verify and complete merge
 
-> Run 2's first work — the Step 7b join, after both the agent envelope and the user's Step 3d answer are in hand, before Step 3e creates any item task.
+> The Step 7b join, once this agent's envelope is in hand — whether or not the challenge chunks have landed; C1 and Phase 2 wait for it, Phase 1 does not.
 
 Parse JSON from sw-engineer. Check `resolved == staged` — mismatch = file resolved but not staged → surface before proceeding.
 

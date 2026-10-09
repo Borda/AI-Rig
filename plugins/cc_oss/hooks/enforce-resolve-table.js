@@ -2,11 +2,12 @@
 // Enforce oss:resolve's item-selection boundary: the user must see every
 // selectable ACTION_ITEMS row on the Step 3d picker's first screen — the Q1
 // bulk-action question, whose option previews carry the table.
-// Why a hook: Steps 6–7a conflict resolution runs in the same turn, and its
-// output once pushed a reply-text table out of view — the user then selected
-// blind; on 5.5-family models reply text written before a tool call can also
-// come back as an empty progress update. SKILL.md therefore shows the table
-// once, in the bulk options' preview.
+// Why a hook: conflict-agent output once pushed a reply-text table out of
+// view — the user then selected blind (SKILL.md now dispatches Steps 6–7a
+// only after this picker, so nothing runs beside it); on 5.5-family models
+// reply text written before a tool call can also come back as an empty
+// progress update. SKILL.md therefore shows the table once, in the bulk
+// options' preview.
 // Only PreToolUse AskUserQuestion calls carrying the Step 3d bulk-action
 // question are gated; push, recovery and diagnostic questions pass through.
 // Scope: the run's `resolve-impl-dir-<CSID>` sentinel and its

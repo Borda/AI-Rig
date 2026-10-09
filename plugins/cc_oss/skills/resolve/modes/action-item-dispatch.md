@@ -97,7 +97,7 @@ Lock released in Phase 3's cleanup block. Crash before that leaks it — by desi
 
 `--agent <name>` overrides this routing table for real Agent types. `--agent bridge:implement` retains the bridge marker: C1 handles eligible items, while every Phase 2 fallback uses the table. Never pass a Skill name to `Agent(subagent_type=)`.
 
-> **Conflict gate**: verify all Step 5a conflict tasks `completed` before any action item. Still `pending`/`in_progress` → stop, surface list, wait. Items on unresolved conflicts compound diff.
+> **Conflict gate**: verify all Step 5a conflict tasks `completed` before C1 and before Phase 2 — Phase 1's early wave is the one step allowed earlier (read-only; reads from the pinned PR head while files conflict). Still `pending`/`in_progress` → stop, surface list, wait. Items on unresolved conflicts compound diff.
 
 Process items in `SELECTED_ITEMS` (from Step 3e) in priority order (`[req]` first, then `[suggest]`).
 
@@ -209,6 +209,8 @@ ITEM_CALLERS=$(awk "/^item #${item_id} /,/^[[:space:]]*$/" <<< "$BLAST_RADIUS_CO
 Include non-empty `$ITEM_CALLERS` in impl agent prompt — see Phase 2.
 
 **C1 — Codex-first routing for `medium` effort items** (skip Phase 1+2 when Codex handles it):
+
+C1 starts only after the Step 7b join — merge committed, tree clean — never inside the Run 2 fan beside the conflict agent.
 
 When `ITEM_EFFORT=medium` AND `CODEX_AVAILABLE=true` AND `IMPL_AGENT=bridge:implement` (default or explicit): dispatch Codex for evidence check + implementation. An explicit real Agent type bypasses C1 and routes medium items through Phase 1+2. Use **one item per C1 call**. Require a clean tracked and untracked worktree immediately before the call; if dirty, do not call the bridge and route the item through Phase 1+2 by the `change` table. A returned `files_touched` list is a claim, not attribution evidence. The fence below compares it with Git's actual changed paths before any per-item commit, staging record, or DONE status. In `stage`/`grouped`/`all` modes, the first C1 edit leaves the worktree dirty, so remaining medium items use Phase 1+2; `each` mode may run another C1 item after its commit restores a clean tree. The branch mutex blocks another resolve run, but an unrelated external writer can still change the tree; if that is observed, stop and reconcile before recording attribution.
 
@@ -393,6 +395,8 @@ echo "NO_CHALLENGE=$NO_CHALLENGE"  # timeout: 3000
 | Test coverage, assertions, regressions | `foundry:qa-specialist` |
 | Default / unclassified | `foundry:challenger` |
 
+**Early and late waves.** Phase 1 runs in two passes under the same rules. The **early wave** fires inside the Run 2 fan (SKILL.md Step 7b join), in the same response as the Step 7a conflict agent, over every selected item that is not a C1 candidate (`ITEM_EFFORT=medium` AND `CODEX_AVAILABLE=true` AND `IMPL_AGENT=bridge:implement`). The **late wave** runs after the join and C1, over every C1 candidate C1 did not complete (UNCERTAIN, dirty-tree fall-through, a second medium item in a non-`each` mode); same chunking, prompt, verdict processing and log append, `<domain>` slugs suffixed `-late` so no filename collides. An empty set skips its wave; Phase 2 starts after the late wave.
+
 Set `DOMAIN_CHALLENGER` from routing table: architecture/API/coupling/default → `foundry:challenger`; code logic/correctness/edge-cases → `foundry:sw-engineer`; test coverage/assertions/regressions → `foundry:qa-specialist`. Use agent-resolution.md fallback if foundry absent.
 
 Group items by `DOMAIN_CHALLENGER`, preserving each item's original priority-order position within its group (stable partition — needed later so Phase 3's merge plan also respects each specialist's internal commit order).
@@ -436,6 +440,7 @@ When a finding asserts a fact reading the referenced file alone can't settle (a 
 [thin] items are terse GitHub comments that no review finding covers: first locate the code they refer to (PR diff, named symbols). A request about docs, changelog, tests or process has no single code target: judge the request itself. A code request whose target stays unidentifiable → evidence=REJECT, rationale saying so.
 Part 2 — for EVERY item whose problem exists, is the suggested fix the right approach?
 Read each referenced file at <file:line>. Read-only: run no tests. Max 4 tool calls per item (the 4th reserved for one WebFetch/WebSearch when a claim needs external verification), plus one read per evidence/verify file.
+Early wave only (omit when no file conflicts): the tree is mid-merge and 7b may commit while you read. Read every file with `git show <PR_HEAD_OID>:<file>` (substitute the sha from the `resolve-pr-head-oid` sentinel), never from disk — disk holds conflict markers, clean-merged drift and an edit in progress, and `HEAD` itself moves at the merge commit.
 Items:
 <id>: <full_comment_text> (<file>:<line>) [confirmed verify=<verify_file>] [evidence=<source_file>] [thin]
 ...
@@ -444,7 +449,7 @@ Return ONLY compact JSON as your FINAL message (nothing after it):
 {\"items\":[{\"id\":N,\"evidence\":\"VALID\"|\"REJECT\",\"evidence_rationale\":\"<one sentence>\",\"suggestion\":\"VALID\"|\"REJECT\",\"suggestion_rationale\":\"<one sentence>\",\"alternative\":\"<brief alternative or null>\"}]}")
 ```
 
-**Fire every chunk's `Agent()` call in the same response turn** — read-only (no working-tree writes), safe to run concurrently regardless of file overlap between chunks. More chunks than a tier's pool (§Spawn wave cap: `CAP_OPUS=5` for `foundry:challenger`/`foundry:sw-engineer`, `CAP_SONNET=8` for `foundry:qa-specialist`) → fire the first wave up to each pool, the next wave as earlier chunks return. In that same response, arm the deadlines (SKILL.md §Agent wait discipline): write `$IMPL_DIR/agent-watch-challenge.tsv` with one row per fired chunk, `challenge-<domain><TAB><IMPL_DIR>/challenge-domain-<domain>.md<TAB>300` (`CHALLENGE_TIMEOUT_S`); a later wave rewrites the file with its own rows. Never poll for verdicts — no `ScheduleWakeup`, `ListAgents` or `Monitor` loop; run the watch check at each wake-up. A chunk `timed_out`, or one whose notification arrived without its JSON reply → ⏱ now, and every item in it is treated `UNCERTAIN` per the verdict rules below (one single-item retry each, armed in `agent-watch-challenge-retry.tsv`). **No item is ever dropped or implemented by a timeout alone** — the first retry is automatic; what happens after a second timeout is the user's decision.
+**Fire every chunk's `Agent()` call in the same response turn** — read-only (no working-tree writes), safe to run concurrently regardless of file overlap between chunks. In the early wave the Step 7a conflict agent (`foundry:sw-engineer`) sits in that same response and holds one `CAP_OPUS` slot. More chunks than a tier's pool (§Spawn wave cap: `CAP_OPUS=5` for `foundry:challenger`/`foundry:sw-engineer`, `CAP_SONNET=8` for `foundry:qa-specialist`) → fire the first wave up to each pool, the next wave as earlier chunks return. In that same response, arm the deadlines (SKILL.md §Agent wait discipline): write `$IMPL_DIR/agent-watch-challenge.tsv` with one row per fired chunk, `challenge-<domain><TAB><IMPL_DIR>/challenge-domain-<domain>.md<TAB>300` (`CHALLENGE_TIMEOUT_S`); a later wave rewrites the file with its own rows. Never poll for verdicts — no `ScheduleWakeup`, `ListAgents` or `Monitor` loop; run the watch check at each wake-up. A chunk `timed_out`, or one whose notification arrived without its JSON reply → ⏱ now, and every item in it is treated `UNCERTAIN` per the verdict rules below (one single-item retry each, armed in `agent-watch-challenge-retry.tsv`). **No item is ever dropped or implemented by a timeout alone** — the first retry is automatic; what happens after a second timeout is the user's decision.
 
 **Challenge double-timeout gate** — fires only when a single-item retry also times out (a missing verdict blocked the run before this gate existed; the decision now goes to the user instead). Collect **every** item of this wave whose retry timed out, then ask **once** for all of them — one wait, never one per item. The items go in the question text itself, one line each (`#<id> · <domain> · <summary>`), never as reply text before the call: 5.5-family models may return reply text written before a tool call as an empty progress update, leaving the user to decide on bare ids. The gate is human idle, so the question text closes with the `/compact` hint line. Then invoke `AskUserQuestion` (actual tool call):
 
@@ -461,7 +466,7 @@ Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless."
 - (a) → for each id, write `$IMPL_DIR/challenge-verdicts-<domain>-retry-<id>.json` with the Write tool as `{"items":[{"id":<id>,"evidence":"VALID","evidence_rationale":"⏱ challenge timed out twice — implemented unchallenged (user choice)","suggestion":"VALID","suggestion_rationale":"⏱ challenge timed out — fix not evaluated","alternative":null}]}`, then run the shared append block with one `<id> as-suggested <domain>` line per id — implemented as with `--no-challenge`, ⏱ visible in the Challenge Log and the Step 11 report.
 - (b) → run the drop block below with the chosen ids and exclude them from `SURVIVING_ITEMS`; Phase 3's skipped-item close-out and the Step 11 report then show them as skipped.
 - (c) → one more single-item retry each (re-armed in `agent-watch-challenge-retry.tsv`); items that time out again come back to this same gate.
-- (d) or unanswered → stop as the group-preview gate's (d) does: spawn nothing, run Phase 3's cleanup block to release the branch mutex, report every selected item as pending, jump to Step 11. Never a silent default.
+- (d) or unanswered → stop as the group-preview gate's (d) does: spawn nothing, run Phase 3's cleanup block to release the branch mutex, report every selected item as pending, jump to Step 11. Never a silent default. In the early wave Step 7a may still be running: collect it and complete 7b (commit the merge) first, or Step 11 reports `merge uncommitted — finish with git commit, or git merge --abort`.
 
 Drop block — (b) only; the ids are runtime values, so the block aborts unsubstituted:
 
@@ -610,6 +615,8 @@ done < "$_LOG_NOW.done"
 Items with `evidence=VALID` (appended above as `as-suggested` or `self-resolved`) form `SURVIVING_ITEMS`.
 
 ### Phase 2: Implementation — parallel, one worktree per specialist
+
+Phase 2 starts only after the Step 7b join, C1 and the Phase 1 late wave have finished.
 
 The codemap maps (`$IMPL_DIR/codemap-maps.json` — `file_module` + `centrality`; `$IMPL_DIR/codemap-deps.jsonl` — per-module `direct_imports`) were built in Phase 1's Structural prep, concurrently with the challenge agents, so both tiebreaks below read them with no fresh query. They cover all `SELECTED_ITEMS`; filter to survivors as needed.
 

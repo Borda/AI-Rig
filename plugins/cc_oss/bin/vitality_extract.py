@@ -2495,7 +2495,7 @@ def _sub_signal_scores(axis: dict[str, Any]) -> dict[str, int | None]:
 def score_axis9(view: DataView, axis: dict[str, Any]) -> dict[str, Any]:
     """Axis 9 — mean of the available sub-signal scores, band 🟢 ≥7.5 · 🟡 ≥3.75 · 🔴 below, and confidence.
 
-    A 🟢 axis scores the mean; a 🟡 or 🔴 mean is capped at the band maximum (🟡 6 · 🔴 3) like every other axis, so a 🟡
+    A 🟢 axis scores the mean; a 🟡 or 🔴 mean is capped at the band maximum (🟡 6 · 🔴 3) like every other axis, so 🟡
     trajectory never out-scores a 🟡 anywhere else (sub-signals 10/10/5/0 score 🟡 6, not 6.25).
     """
     subs = _sub_signal_scores(axis)

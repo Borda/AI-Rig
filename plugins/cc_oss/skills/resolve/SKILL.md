@@ -99,20 +99,22 @@ Two blocking user gates cut this workflow into three **runs**; an explicit "don'
 
 | Run | Executes | Ends at |
 | -- | -- | -- |
-| 1 | Step 1 · 2 · 3a · 3b ‖ **Step 4 + Step 5** · 3c · **Steps 6–7a** ‖ gate | Step 3d selection gate |
-| 2 | Step 7b join · 3e · 8 · 9 | Step 10 push confirmation (skipped on an explicit Step 3d "don't push") |
+| 1 | Step 1 · 2 · 3a · 3b ‖ **Step 4 + Step 5** · 3c · gate | Step 3d selection gate |
+| 2 | Step 3e · 6 · **Step 7a ‖ Step 8 Phase 1 early wave** · 7b join · C1 · Phase 1 late wave · rest of 8 · 9 | Step 10 push confirmation (skipped on an explicit Step 3d "don't push") |
 | 3 | Step 10 push · 11 · 12 | workflow end |
 
 **Run 2 is unattended on the normal path.** Step 3d collects every decision a later step needs and can predict up front with the same information — item scope, commit mode, grouping strategy and typed labels, dispatch width, push intent and the post-PR action — and persists each to a sentinel or `$IMPL_DIR` file. Later steps never re-ask a Step 3d decision. Push authorization is the one decision that cannot move: its required scope (diff stat, commit count, last subject) exists only after implementation, so Step 10 asks it with that scope unless the user explicitly chose "don't push" at Step 3d. Otherwise Run 2 asks only for error recovery (an unresolved item status, a challenge that timed out twice, a lost typed-labels file) or for the group preview the user explicitly chose at Step 3d.
 
-Two overlaps, both free — each rides an idle window the orchestrator already had:
+Two overlaps, each riding work that shares no data dependency with its partner:
 
 - **Step 4 + Step 5 beside the Step 3b intel agent.** Checkout and the `--no-commit` merge need only `PR_NUMBER`, never any intelligence output, so they run in the same turn that spawns `INTEL_AGENT` instead of waiting for its envelope.
-- **Steps 6–7a beside the Step 3d gate.** Conflict resolution does not depend on which items the user selects — Step 4 already mandates it at zero selected items — so the per-file agents are dispatched in the same turn as the selection question and work through the ~15 min of human idle.
+- **Step 7a beside the Step 8 Phase 1 challenge, after the gate.** Conflict resolution does not depend on which items get selected, and the challenge only reads, so both fire in one response once Step 3d has answered. While files conflict, Phase 1 reads every file from the pinned PR head (`git show <PR head oid>:<file>`), never the half-merged disk copy — one consistent snapshot whenever 7b commits (`action-item-dispatch.md` Phase 1).
 
-One dependency forbids a wider overlap: **Step 6a consumes the contribution motivation that `INTEL_AGENT` synthesizes** (`pr-intelligence.md`: PR body is stated intent, thread is the authoritative record). Steps 6–7 therefore cannot start before that envelope returns, and never fall back to a git-log-only lens.
+**Finding collection is one stream.** Everything up to the Step 3d picker (intel, merge findings, table) runs with no conflict agent in flight, so no agent notification or tool output interleaves with the `AskUserQuestion` call that `enforce-resolve-table.js` checks. Conflict agents once ran beside that call and the required table failed to land often enough to cost the picker a retry; the overlap moved behind the gate, where the user is not waiting on a table.
 
-Degenerate cases, all reducing to the old serial order with no special handling: `report` mode with no PR# skips Steps 4–7 entirely; zero conflicted files means Step 5 commits the merge itself and Steps 6–7 plus the join are no-ops; `--worktree` enters the worktree inside Step 4, so an `INTEL_AGENT` spawned moments earlier keeps writing to the absolute `IMPL_DIR` it was handed.
+Two dependencies bound the Run 2 fan. **Step 6a consumes the contribution motivation that `INTEL_AGENT` synthesizes** (`pr-intelligence.md`: PR body is stated intent, thread is the authoritative record) — its envelope is long in by Run 2, and a git-log-only lens is never a fallback. **C1 and Phase 2 need a committed merge and a clean tree**, so they wait for the Step 7b join; items C1 may take (`medium` effort with the bridge available) are held out of the early challenge wave and challenged late only if C1 hands them back.
+
+Degenerate cases, all reducing to the old serial order with no special handling: `report` mode with no PR# skips Steps 4–7 entirely; zero conflicted files means Step 5 commits the merge itself, Step 7a spawns nothing and Phase 1 runs alone; `--no-challenge` or zero selected items leaves Step 7a alone in the fan; `--worktree` enters the worktree inside Step 4, so an `INTEL_AGENT` spawned moments earlier keeps writing to the absolute `IMPL_DIR` it was handed.
 
 ## Agent wait discipline — no polling, per-agent deadlines
 
@@ -385,7 +387,8 @@ TASK_CLOSE    = TaskCreate(subject="Steps 10–11: Push and final report [if pr 
 | 4 end | `TASK_CHECKOUT` → `completed` | the FORK_REMOTE block |
 | 5 | `TASK_CONFLICT` → `in_progress` | the `conflict-resolution.md` load |
 | 3d | `TASK_GATHER` → `completed`, `TASK_SELECT` → `in_progress` | the boundary-0 contract block, before the selection prompt |
-| 7b join | `TASK_SELECT` → `completed`, `TASK_CONFLICT` → `completed` | the join's first tool call |
+| Run 2 fan | `TASK_SELECT` → `completed` | the fan's first tool call (Step 3e creates) |
+| 7b join | `TASK_CONFLICT` → `completed` | the merge commit call (zero conflicts: the fan's first tool call) |
 | 8 | `TASK_IMPL` → `in_progress` (or `deleted` when no items) | the codemap index block, or Step 9's first call |
 | 8 end | `TASK_IMPL` → `completed` | Step 9's boundary-2 block, with `TASK_LINT` → `in_progress` |
 | 9 end | `TASK_LINT` → `completed` | Step 10's first block, with `TASK_CLOSE` → `in_progress` (or `deleted` when Step 10 is skipped) |
@@ -532,7 +535,7 @@ Pending items = ACTION_ITEMS where `status` is `pending` or absent and type cont
 
 Sort all pending items by severity descending (most impactful first).
 
-**Overlap — dispatch Steps 6–7a before asking.** Conflicted files and their tasks are already known (Step 5 ran in this run), and the `INTEL_AGENT` motivation Step 6a needs has just arrived, so the per-file resolution agents are dispatched **in this same response, before the `AskUserQuestion` call**. They work through the idle window below instead of after it. Their result is collected at the Step 7b join that opens Run 2. Nothing here is wasted whatever the user picks: conflict resolution is mandatory even at zero selected items. No conflicted files → nothing to dispatch; proceed straight to the gate.
+**Single stream — no agent beside this gate.** Dispatch nothing here: the conflicted files (Step 5) wait, still staged and unresolved, and Steps 6–7a fire right after the answers, in the Run 2 fan (**Step 7b join**). The picker carries the findings table (**Table in the picker preview** below) and the table is what the hook checks, so it is the only thing in flight.
 
 Longest idle window of the run sits here (median ~15 min, measured up to 16 h) — long enough for the prompt cache to expire, so the next turn rewrites the whole context at write rate. Persist a resume contract first, then carry the hint in the gate's question text so the user can `/compact` while waiting (skill can't trigger compaction itself):
 
@@ -544,7 +547,7 @@ IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/nul
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _PRESERVE="pr=$_PR_NUMBER, impl-dir=$_IMPL_DIR, intel=$_IMPL_DIR/pr-intelligence.md, items=$_IMPL_DIR/action-items.jsonl, vars=$_IMPL_DIR/pr-vars.sh"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "item selection (Step 3d gate)" "$_IMPL_DIR" "$_PRESERVE" "resume: re-read action-items.jsonl + pr-intelligence.md, re-issue Step 3d AskUserQuestion; Steps 6-7a agents may be in flight — re-check git diff --name-only --diff-filter=U at the Step 7b join before Step 8"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "item selection (Step 3d gate)" "$_IMPL_DIR" "$_PRESERVE" "resume: re-read action-items.jsonl + pr-intelligence.md, re-issue Step 3d AskUserQuestion; Steps 6-7a not yet dispatched — Step 5 left the merge staged, resolve it in the Run 2 fan (Step 7b join)"  # timeout: 5000
 ```
 
 The hint line `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. `` goes into the `question` text of Step 3d's first question — Call 1's bulk question (**Bulk question text** below), or the push question on the push-only path. Never as reply text, never Bash stdout: 5.5-family models may return reply text written before a tool call as an empty progress update, and tool output is not reliably shown to the user.
@@ -840,15 +843,40 @@ echo "commit-mode=$_CM group-strategy=$_GS dispatch-mode=$_DM push=$_PA post-pr=
 
 **No per-pass item cap** — every selected ID enters Step 3e and Step 8 in this pass; never trim a selection or defer a remainder to a rerun. Step 8 bounds load per agent instead (`action-item-dispatch.md` §Caps: ≤12 items per challenge agent, ≤5 per implementation spawn — ≤8 under `per-specialist`, one file's overflow chained — wave-paced). **Large-selection notice** — rides in the ≥19 call's Q1 question text (**Bulk question text** line 4, more than 50 pending): a field the call itself renders, read while the user is still choosing the scope. Never as reply text before a tool call (5.5-family models may return that as an empty progress update) and never in a task subject (task tools may be disabled, and a subject update lands after the user's last answer). After bulk resolution, more than 50 selected → Step 11's final report repeats it as one line, `→ <N> items selected — all ran in this pass; challenge fanned out at ≤12 items/agent.` No question, no trim.
 
-## Step 7b join: collect conflict resolutions — opens Run 2
+## Step 7b join: dispatch and collect conflict resolutions — opens Run 2
 
-First work of Run 2, before any item task is created. In the same response as the join's first tool call: `TaskUpdate(task_id=TASK_SELECT, status="completed")`; `TaskUpdate(task_id=TASK_CONFLICT, status="completed")` rides with the merge commit call (§Zero bookkeeping-only turns). The Steps 6–7a agents dispatched beside the gate have been running through it; run the §Agent wait discipline check, then collect them (`### 7b: Verify and complete merge` in `conflict-resolution.md`): confirm `git diff --name-only --diff-filter=U` is empty, no residual conflict markers remain staged, mark each conflict task `completed` (all in one response), and commit the merge. A group that returned nothing is `timed_out` — surface it with ⏱ and stop before Step 8 rather than implementing on an unmerged tree.
+Run 2 opens with a fan, not a wait: conflict resolution (Steps 6–7a) and the Phase 1 early challenge wave start in one response, after the Step 3d answers are in. Order:
 
-Nothing dispatched (no conflicted files, or `report` mode with no PR#) → no-op, continue to Step 3e.
+1. **First response** — `TaskUpdate(task_id=TASK_SELECT, status="completed")` rides with Step 3e's `TaskCreate` batch and, when files conflict, the Step 6 context call (`conflict-resolution.md`; it needs only refs and the Step 3b motivation). The Step 3d confirm block rides here too. The one standalone-bookkeeping rule stays: no response of task calls alone (§Zero bookkeeping-only turns).
+2. **Prep response(s)** — Step 3e's map Write, then Step 8's `cat` load and every block through its prelude, C1-candidate split and verdict re-check, up to the first `Agent()` call. `report` mode skips 3e; zero selected items skips Step 8 and the fan holds Step 7a alone.
+3. **Fan response** — the Step 7a spawn and the Phase 1 early-wave spawns plus Structural prep, all in this one response, each batch armed in its own `agent-watch-*.tsv` (§Agent wait discipline). Refresh the compaction contract in the same response (block below): the fan outlives the Step 3d contract, and a resume must never re-dispatch 7a while its watch row is open. Then end the turn.
+
+````bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR=""
+IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
+IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
+_PRESERVE="pr=$_PR_NUMBER, impl-dir=$_IMPL_DIR, items=$_IMPL_DIR/action-items.jsonl, selected-items=$_IMPL_DIR/selected-items.txt, item-tasks=$_IMPL_DIR/item-tasks.tsv, conflict-tasks=$_IMPL_DIR/conflict-tasks.tsv, conflict-envelope=$_IMPL_DIR/conflict-envelope.json, watch=$_IMPL_DIR/agent-watch-conflict.tsv + agent-watch-challenge.tsv, Step 3d answered (sentinels hold commit-mode, dispatch-mode, push-auth)"
+[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "Run 2 fan (conflict resolve ‖ Phase 1 early wave)" "$_IMPL_DIR" "$_PRESERVE" "resume: never re-issue Step 3d; run agent_watch.py first; merge may be uncommitted (MERGE_HEAD) — never re-dispatch Step 7a while agent-watch-conflict.tsv has an open row; collect 7b when conflict-envelope.json exists, then C1, late wave, Phase 2"  # timeout: 5000
+``` No conflicted files → no 7a; `--no-challenge` or an empty early set → no early wave.
+4. **Each notification** — persist any envelope, run the watch check, then consume what landed: a challenge reply goes through Phase 1's verdict processing at once; the conflict envelope goes to 7b below. Order between the two never matters.
+5. **7b** (`### 7b: Verify and complete merge` in `conflict-resolution.md`) — confirm `git diff --name-only --diff-filter=U` is empty, no residual conflict markers remain staged, mark each conflict task `completed` (all in one response), commit the merge; `TaskUpdate(task_id=TASK_CONFLICT, status="completed")` rides with the commit call; with zero conflicts there is no 7b, so the close rides with the fan's first response instead. A conflict agent that returned nothing is `timed_out` — surface it with ⏱, run Phase 3's cleanup block (it holds the branch mutex since the prelude), and stop before C1 and Phase 2 rather than implementing on an unmerged tree: jump to Step 11 and state `merge uncommitted — finish with git commit, or git merge --abort`. Challenge results stay on disk. Then re-point the HEAD fingerprint the Step 8 prelude took (when it ran) before the merge commit existed; the block refuses when the commit's first parent is not that fingerprint, since a foreign local commit would otherwise be absorbed:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _PRIOR < "${TMPDIR:-/tmp}/resolve-base-sha-${CSID}" 2>/dev/null || _PRIOR=""
+[ -z "$_PRIOR" ] || [ "$(git rev-parse HEAD^1)" = "$_PRIOR" ] || { echo "⚠ merge commit's first parent is not the prelude fingerprint — foreign commit during the fan; fingerprint left as is"; exit 0; }
+git rev-parse HEAD > "${TMPDIR:-/tmp}/resolve-base-sha-${CSID}"  # timeout: 3000
+````
+
+6. **Join complete** = merge committed and every early-wave chunk, single-item retry, caucus and double-timeout gate settled or ⏱. Only then do C1, the Phase 1 late wave and Phase 2 begin (`action-item-dispatch.md`): C1 edits the tree, and retries read it.
+
+Nothing to fan (no conflicted files and an empty early set, or `report` mode with no PR#) → no-op, continue with the prep response.
 
 ## Step 3e: Create tasks for selected items
 
-`report` mode skips Step 3e, whether or not the report header names a PR. Step 3a already persisted its action items, and Step 8's report-mode task handling expects no `item-tasks.tsv`. Continue to Step 8 — Steps 4–7 already ran back in Run 1 when a PR# was found, and are skipped entirely when none was. `pr` and `pr+report` create per-item tasks below.
+`report` mode skips Step 3e, whether or not the report header names a PR. Step 3a already persisted its action items, and Step 8's report-mode task handling expects no `item-tasks.tsv`. Continue to Step 8 — Steps 4–5 already ran back in Run 1 when a PR# was found (skipped entirely when none was); Steps 6–7a fire in the Run 2 fan (Step 7b join). `pr` and `pr+report` create per-item tasks below.
 
 For each item in `SELECTED_ITEMS`, call `TaskCreate` **once per item** — one task per action item; scoped to selected items only, not all pending (avoids bloat when 20+ items exist but only a subset is selected). Issue every item's `TaskCreate` in **one response**, never one per turn — the same response as the Step 7b join's first tool call, so it is never a bookkeeping-only turn:
 
@@ -981,7 +1009,7 @@ git remote get-url "$FORK_REMOTE" >/dev/null 2>&1 \
 
 `TaskUpdate(task_id=TASK_CONFLICT, status="in_progress")` — rides with the load block below; it flips to `completed` at the Step 7b join.
 
-> **Split across two dispatch points, one loaded file.** Step 5 runs in Run 1 immediately after Step 4, beside the intel agent. Steps 6–7a are dispatched in Run 1's gate turn (Step 3d overlap directive); 7b is collected at the Step 7b join that opens Run 2. Load the file once here and execute the parts at their own points — re-`cat` it only if a compaction dropped it from context.
+> **Split across three dispatch points, one loaded file.** Step 5 runs in Run 1 immediately after Step 4, beside the intel agent. Steps 6–7a are dispatched in Run 2's fan, beside the Phase 1 early challenge wave (Step 7b join section) — never before the Step 3d picker; 7b is collected at the same join. Load the file once here and execute the parts at their own points — re-`cat` it only if a compaction dropped it from context.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -996,6 +1024,8 @@ Execute its steps (loaded above) at their dispatch points.
 *Skip when `SELECTED_ITEMS` is empty — jump to Step 9.*
 
 When skipping, `TaskUpdate(task_id=TASK_IMPL, status="deleted")` rides with Step 9's first call. Otherwise `TaskUpdate(task_id=TASK_IMPL, status="in_progress")` rides with the codemap index block below.
+
+Step 8 starts inside the Run 2 fan (Step 7b join): its prelude and the Phase 1 early wave run while the merge is still uncommitted; C1, the Phase 1 late wave and Phase 2 wait for the join.
 
 **Codemap index identity (if `CODEMAP_ENABLED=true`)**: resolve the index path the next block reuses. No query runs here — per-item blast radius is action-item-dispatch.md's **Pre-loop blast-radius scan**, which resolves each item's canonical module first and passes it as `rdeps`' positional argument.
 
