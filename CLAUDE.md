@@ -83,7 +83,7 @@ Policy below applies to any project; the full text ships in foundry (`plugins/cc
 Repository-specific additions:
 
 - Adversarial convergence loop: `AGENTS.md` links the Codex source-tree entrypoint; Foundry ships a local copy for Claude.
-- Multi-OS executables: this repository supports Linux, macOS, and native Windows, so the conditional rule always applies here; only the one `.sh` file named as legacy debt in `plugins/CLAUDE.md` §Installability is excepted.
+- Multi-OS executables: this repository supports Linux, macOS, and native Windows, so the conditional rule always applies here, without exception.
 - Instruction-file compression gate: save the byte-exact backup under `.codex/caveman-compress/backups/`; this repository's calibration gate (`plugins/codex-rig/runtime/calibration/run.py --layout plugin`) is mandatory.
 
 ## Interpreter Commands — Fix the Launcher, Not the Call Site

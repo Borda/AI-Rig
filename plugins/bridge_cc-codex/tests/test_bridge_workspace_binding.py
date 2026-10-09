@@ -30,8 +30,8 @@ import bridge_mcp  # noqa: E402
 class Client:
     """Exchange newline-delimited JSON with an actual server process with bounded waits."""
 
-    def __init__(self, server: Path = SERVER) -> None:
-        """Start the server and drain its stdout into a portable message queue."""
+    def __init__(self, server: Path = SERVER, env: dict[str, str] | None = None) -> None:
+        """Start the server, optionally with a replaced environment, and drain stdout into a portable message queue."""
         self.process = subprocess.Popen(
             [sys.executable, str(server), "--stdio"],
             stdin=subprocess.PIPE,
@@ -39,6 +39,7 @@ class Client:
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
+            env=env,
         )
         self.messages: queue.Queue[str] = queue.Queue()
         self.reader = threading.Thread(target=self._read, daemon=True)
@@ -100,9 +101,9 @@ class Client:
 
 
 @contextmanager
-def client(server: Path = SERVER) -> Iterator[Client]:
+def client(server: Path = SERVER, env: dict[str, str] | None = None) -> Iterator[Client]:
     """Own the server process lifetime for one independent protocol scenario."""
-    instance = Client(server)
+    instance = Client(server, env)
     try:
         yield instance
     finally:
@@ -118,7 +119,9 @@ def bind(connection: Client, folder: Path, request_id: int = 3) -> dict[str, Any
     confirmation = connection.receive()
     assert confirmation["method"] == "elicitation/create"
     assert confirmation["id"] != selection["id"]
-    assert folder.resolve().as_posix() in confirmation["params"]["message"]
+    assert confirmation["params"]["message"] == (
+        f"Bind Bridge calls in this process to exactly this canonical project folder: {folder.resolve().as_posix()}"
+    )
     assert confirmation["params"]["requestedSchema"]["properties"]["answer"]["enum"] == ["Bind this folder", "Cancel"]
     connection.answer(
         confirmation["id"], {"action": "accept", "content": {"answer": "Bind this folder"}, "_meta": None}
@@ -130,6 +133,122 @@ def status(connection: Client, request_id: int = 50) -> dict[str, Any]:
     """Read binding status without invoking any peer."""
     connection.call("bridge_status", request_id)
     return json.loads(connection.receive()["result"]["content"][0]["text"])
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("tool", ["bridge_advise", "bridge_review", "bridge_implement"])
+def test_proposed_project_requires_confirmation_before_dispatch(tool: str, tmp_path: Path) -> None:
+    """A proposed folder avoids typing but conveys no authority before native acceptance.
+
+    The confirmation form names Codex as the folder's source, so a user cannot mistake an unprompted proposal for a path
+    they typed themselves; the typed-path form used by ``bind`` carries no such origin line.
+    """
+    with client() as connection:
+        connection.initialize()
+        connection.call("bridge_bind_workspace", arguments={"proposed_workspace": str(tmp_path)})
+        confirmation = connection.receive()
+        assert confirmation["method"] == "elicitation/create"
+        assert confirmation["params"]["message"] == (
+            "Codex proposed this folder; you did not type it. Bind Bridge calls in this process to exactly this "
+            f"canonical project folder: {tmp_path.resolve().as_posix()}"
+        )
+        assert confirmation["params"]["requestedSchema"]["properties"]["answer"]["enum"] == [
+            "Bind this folder",
+            "Cancel",
+        ]
+        connection.call(tool, 4, {"task": "No peer before acceptance."})
+        assert connection.receive()["error"]["code"] == -32002
+        assert not (tmp_path / ".temp").exists()
+        connection.answer(confirmation["id"], {"action": "accept", "content": {"answer": "Bind this folder"}})
+        binding = connection.receive()["result"]["structuredContent"]
+        assert binding["workspace"] == tmp_path.resolve().as_posix()
+        connection.call(tool, 5, {"task": "Refuse before peer.", "depth": 1, "binding_id": binding["binding_id"]})
+        envelope = json.loads(connection.receive()["result"]["content"][0]["text"])
+        assert envelope["status"] == "refused"
+        assert envelope["blockers"] == ["recursion-depth"]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("proposal", [None, "", "relative", 1, True])
+def test_invalid_proposal_clears_previous_authority(proposal: Any, tmp_path: Path) -> None:
+    """Malformed proposals cannot preserve an older binding or create a new one."""
+    with client() as connection:
+        connection.initialize()
+        bind(connection, tmp_path)
+        connection.call("bridge_bind_workspace", 7, {"proposed_workspace": proposal})
+        assert connection.receive()["error"]["code"] == -32602
+        assert status(connection)["binding_status"] == "unbound"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("action", ["decline", "cancel"])
+def test_proposal_cancellation_and_concurrent_proposal_never_bind(action: str, tmp_path: Path) -> None:
+    """A second proposal cannot replace a target already displayed for confirmation."""
+    other = tmp_path / "other"
+    other.mkdir()
+    with client() as connection:
+        connection.initialize()
+        connection.call("bridge_bind_workspace", arguments={"proposed_workspace": str(tmp_path)})
+        confirmation = connection.receive()
+        assert confirmation["method"] == "elicitation/create"
+        connection.call("bridge_bind_workspace", 4, {"proposed_workspace": str(other)})
+        assert connection.receive()["error"]["code"] == -32001
+        connection.answer(confirmation["id"], {"action": action})
+        assert connection.receive()["result"]["structuredContent"]["binding_status"] == "unbound"
+
+
+@pytest.mark.integration
+def test_proposal_directory_replacement_cannot_authorize_new_directory(tmp_path: Path) -> None:
+    """Confirmation grants authority only to the unchanged displayed directory identity."""
+    project = tmp_path / "project"
+    project.mkdir()
+    with client() as connection:
+        connection.initialize()
+        connection.call("bridge_bind_workspace", arguments={"proposed_workspace": str(project)})
+        confirmation = connection.receive()
+        assert confirmation["method"] == "elicitation/create"
+        project.rename(tmp_path / "old")
+        project.mkdir()
+        connection.answer(confirmation["id"], {"action": "accept", "content": {"answer": "Bind this folder"}})
+        assert connection.receive()["result"]["structuredContent"]["binding_status"] == "unbound"
+
+
+@pytest.mark.integration
+def test_concurrent_proposal_cannot_replace_confirmed_target(tmp_path: Path) -> None:
+    """Acceptance of the first form cannot grant authority to a later proposed folder."""
+    other = tmp_path / "other"
+    other.mkdir()
+    with client() as connection:
+        connection.initialize()
+        connection.call("bridge_bind_workspace", arguments={"proposed_workspace": str(tmp_path)})
+        confirmation = connection.receive()
+        connection.call("bridge_bind_workspace", 4, {"proposed_workspace": str(other)})
+        assert connection.receive()["error"]["code"] == -32001
+        connection.answer(confirmation["id"], {"action": "accept", "content": {"answer": "Bind this folder"}})
+        assert connection.receive()["result"]["structuredContent"]["workspace"] == tmp_path.resolve().as_posix()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "answer",
+    [
+        pytest.param({"action": "accept", "content": {"answer": "Cancel"}}, id="explicit-cancel"),
+        pytest.param({"action": "accept", "content": {"answer": "unexpected"}}, id="invalid-choice"),
+        pytest.param({"action": "accept", "content": {}}, id="missing-answer"),
+    ],
+)
+def test_proposal_unaccepted_confirmation_has_no_authority(answer: dict[str, Any], tmp_path: Path) -> None:
+    """A malformed or cancelling native confirmation cannot authorize the proposal."""
+    with client() as connection:
+        connection.initialize()
+        old = bind(connection, tmp_path)["result"]["structuredContent"]["binding_id"]
+        connection.call("bridge_bind_workspace", 4, {"proposed_workspace": str(tmp_path)})
+        confirmation = connection.receive()
+        assert status(connection)["binding_status"] == "unbound"
+        connection.call("bridge_advise", 5, {"task": "Old ID must fail.", "binding_id": old})
+        assert connection.receive()["error"]["code"] == -32002
+        connection.answer(confirmation["id"], answer)
+        assert connection.receive()["result"]["structuredContent"]["binding_status"] == "unbound"
 
 
 @pytest.mark.integration
@@ -231,14 +350,16 @@ def test_missing_form_support_and_model_workspace_override_fail_closed(tmp_path:
 
 
 @pytest.mark.integration
-def test_eof_cancels_unconfirmed_binding(tmp_path: Path) -> None:
+@pytest.mark.parametrize("proposed", [False, True])
+def test_eof_cancels_unconfirmed_binding(tmp_path: Path, proposed: bool) -> None:
     """Closing the transport after selection never binds the pending canonical folder."""
     with client() as connection:
         connection.initialize()
-        connection.call("bridge_bind_workspace")
+        connection.call("bridge_bind_workspace", arguments={"proposed_workspace": str(tmp_path)} if proposed else {})
         selection = connection.receive()
-        connection.answer(selection["id"], {"action": "accept", "content": {"answer": str(tmp_path)}})
-        connection.receive()
+        if not proposed:
+            connection.answer(selection["id"], {"action": "accept", "content": {"answer": str(tmp_path)}})
+            connection.receive()
         connection.process.stdin.close()
         receipt = connection.receive()["result"]["structuredContent"]
         assert receipt == {"status": "cancelled", "binding_status": "unbound", "binding_id": None, "workspace": None}
@@ -246,7 +367,8 @@ def test_eof_cancels_unconfirmed_binding(tmp_path: Path) -> None:
 
 @pytest.mark.integration
 @pytest.mark.parametrize("folder_kind", ["relative", "root", "home", "payload", "missing", "file"])
-def test_binding_refuses_invalid_or_protected_folders(folder_kind: str, tmp_path: Path) -> None:
+@pytest.mark.parametrize("proposed", [False, True])
+def test_binding_refuses_invalid_or_protected_folders(folder_kind: str, tmp_path: Path, proposed: bool) -> None:
     """Only existing project directories outside broad or installed payload roots may bind."""
     file = tmp_path / "file"
     file.write_text("not a directory")
@@ -260,10 +382,120 @@ def test_binding_refuses_invalid_or_protected_folders(folder_kind: str, tmp_path
     }[folder_kind]
     with client() as connection:
         connection.initialize()
-        connection.call("bridge_bind_workspace")
+        connection.call("bridge_bind_workspace", arguments={"proposed_workspace": str(folder)} if proposed else {})
         form = connection.receive()
-        connection.answer(form["id"], {"action": "accept", "content": {"answer": str(folder)}})
-        assert connection.receive()["result"]["structuredContent"]["binding_status"] == "unbound"
+        if proposed:
+            assert form["error"]["code"] == -32602
+            assert status(connection)["binding_status"] == "unbound"
+        else:
+            connection.answer(form["id"], {"action": "accept", "content": {"answer": str(folder)}})
+            assert connection.receive()["result"]["structuredContent"]["binding_status"] == "unbound"
+
+
+@pytest.fixture
+def isolated_home(tmp_path: Path) -> SimpleNamespace:
+    """Build a throwaway user home with both agent configuration homes, two variable-named homes and a project.
+
+    The server runs with ``HOME``/``USERPROFILE`` and both configuration variables pointed here, so the probe never
+    depends on, or touches, the real ``~/.claude`` or ``~/.codex``.
+    """
+    home = tmp_path / "home"
+    folders = {
+        "claude-home": home / ".claude",
+        "codex-home": home / ".codex",
+        "descendant": home / ".claude" / "projects" / "example",
+        "codex-home-env": tmp_path / "codex-env-home",
+        "claude-config-env": tmp_path / "claude-env-config",
+        "env-descendant": tmp_path / "codex-env-home" / "sessions",
+        "project": home / "work" / "project",
+    }
+    for folder in folders.values():
+        folder.mkdir(parents=True, exist_ok=True)
+    folders["home-ancestor"] = tmp_path
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+        "CODEX_HOME": str(folders["codex-home-env"]),
+        "CLAUDE_CONFIG_DIR": str(folders["claude-config-env"]),
+    }
+    return SimpleNamespace(env=env, folders=folders)
+
+
+@pytest.fixture
+def isolated_home_env(isolated_home: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """Point this process's home and configuration variables at the isolated home for in-process server calls."""
+    for name in ("HOME", "USERPROFILE", "CODEX_HOME", "CLAUDE_CONFIG_DIR"):
+        monkeypatch.setenv(name, isolated_home.env[name])
+    return isolated_home
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "folder_kind",
+    [
+        "claude-home",
+        "codex-home",
+        "descendant",
+        "codex-home-env",
+        "claude-config-env",
+        "env-descendant",
+        "home-ancestor",
+    ],
+)
+@pytest.mark.parametrize("proposed", [False, True])
+def test_binding_refuses_agent_config_homes_and_home_ancestors(
+    folder_kind: str, isolated_home: SimpleNamespace, proposed: bool
+) -> None:
+    """A folder that would let a bound run edit agent configuration, or that spans the whole home, never binds.
+
+    A model steered by ingested content could propose ``~/.claude`` or ``~/.codex``; one confirmation click would then
+    root an ``implement`` run where it can rewrite the host's own allow lists or approval policy.
+    """
+    folder = isolated_home.folders[folder_kind]
+    with client(env=isolated_home.env) as connection:
+        connection.initialize()
+        connection.call("bridge_bind_workspace", arguments={"proposed_workspace": str(folder)} if proposed else {})
+        form = connection.receive()
+        if proposed:
+            assert form["error"]["code"] == -32602
+            assert status(connection)["binding_status"] == "unbound"
+        else:
+            connection.answer(form["id"], {"action": "accept", "content": {"answer": str(folder)}})
+            assert connection.receive()["result"]["structuredContent"]["binding_status"] == "unbound"
+
+
+@pytest.mark.integration
+def test_project_under_isolated_home_still_binds(isolated_home: SimpleNamespace) -> None:
+    """The widened refusal set keeps an ordinary project folder below the home bindable."""
+    with client(env=isolated_home.env) as connection:
+        connection.initialize()
+        assert bind(connection, isolated_home.folders["project"])["result"]["structuredContent"]["binding_status"] == (
+            "bound"
+        )
+
+
+@pytest.mark.parametrize(
+    "folder_kind",
+    [
+        pytest.param("claude-home", id="config-home"),
+        pytest.param("home-ancestor", id="home-ancestor"),
+    ],
+)
+def test_implement_refuses_config_home_launch_workspace(folder_kind: str, isolated_home_env: SimpleNamespace) -> None:
+    """A write-capable call refuses a host-launched workspace that is a configuration home or spans the user home."""
+    response = bridge_mcp.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "bridge_implement", "arguments": {"task": "Edit something."}},
+        },
+        trusted_workspace=isolated_home_env.folders[folder_kind],
+    )
+    assert response is not None
+    assert response["error"]["code"] == -32602
+    assert "write-capable bridge calls need a project workspace" in response["error"]["message"]
 
 
 def _directory_symlinks_available() -> bool:

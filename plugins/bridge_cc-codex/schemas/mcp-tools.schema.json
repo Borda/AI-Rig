@@ -60,7 +60,15 @@
     },
     "bridge_bind_workspace": {
       "additionalProperties": false,
-      "properties": {},
+      "properties": {
+        "proposed_workspace": {
+          "description": "Untrusted project folder suggestion; only native user confirmation creates authority.",
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        }
+      },
       "type": "object"
     },
     "bridge_implement": {

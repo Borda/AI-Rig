@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.0
+
+- Let Codex propose the known project folder for one exact canonical native confirmation, avoiding manual retyping. The confirmation form states that Codex proposed the folder, so it is distinguishable from confirming a typed path. The proposal conveys no authority; only user acceptance creates a binding. Empty arguments preserve manual folder selection.
+- Refuse to bind, typed or proposed, any directory above the user home and any agent configuration home with its contents: `~/.claude`, `~/.codex`, and the directories `CLAUDE_CONFIG_DIR` and `CODEX_HOME` name. A run rooted there could rewrite the host's own permission allow lists or approval policy. Folders compare by directory identity as well as spelling, so a case variant cannot pass, and a write-capable call from a server launched in such a folder is refused the same way.
+
 ## 0.6.7
 
 - End the child cleanup grace as soon as the child's process group has no members instead of always waiting the full 2 seconds; the maximum wait and the force-kill that follows are unchanged.

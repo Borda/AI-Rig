@@ -928,8 +928,8 @@ class TestAxis9Boundaries:
     def test_score_is_capped_at_the_band_maximum(self, subs: tuple, band: str, score: float) -> None:
         """Cap a 🟡 Axis 9 mean at 6 and a 🔴 mean at 3, like every other axis; 🟢 keeps the mean.
 
-        Live roboflow/rf-detr scored 🟡 6.25 (sub-signals 10/10/5/0): a 🟡 trajectory out-scored the 🟡 maximum every
-        other axis respects, the inversion the Axis 8 partial-score cap was introduced to remove.
+        Live roboflow/rf-detr scored 🟡 6.25 (sub-signals 10/10/5/0): a 🟡 trajectory out-scored the 🟡 maximum every other
+        axis respects, the inversion the Axis 8 partial-score cap was introduced to remove.
         """
         # Act
         result = vx.score_axis9(_view(), _axis9(*subs))

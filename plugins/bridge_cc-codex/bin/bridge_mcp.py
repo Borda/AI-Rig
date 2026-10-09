@@ -2,16 +2,18 @@
 
 Purpose: Let an installed Codex Bridge hand bounded work to a locally authenticated Claude CLI through host-launched
 MCP. Scope: Status, native workspace binding, implement, advise, and review share one process. It starts unbound; only a
-folder typed by the user and separately confirmed in a native form creates project authority. Every executable call
-names the current binding identity; folder resolution and directory identity are checked before dispatch. Binding
-selects project identity and grants no runtime permission, editing approval, authentication, or paid-call consent.
-Usage: Launch ``bridge_mcp.py --stdio``, initialize with form elicitation support, then invoke ``bridge_bind_workspace``
-with empty arguments before executable tools. Outputs: Native forms select and confirm the exact canonical folder; tool
-responses report binding/status or a compact Bridge envelope. Failure: Missing form support, unbound or stale
-identities, changed folders, malformed responses, and child failures fail closed with protocol diagnostics. Rebinding
-immediately clears previous authority; cancellation and EOF never bind. Used by: Codex-facing Bridge skills and setup
-consumers, using the installed question provider's strict correlation transport and the shared Python Bridge supervisor.
-No persistent binding, permission, settings, or credential writes occur.
+folder explicitly confirmed by the user in a native form creates project authority. A model-supplied proposal is only an
+untrusted candidate for that confirmation, whose form states that Codex proposed the folder; it never binds by itself.
+Every executable call names the current binding identity; folder resolution and directory identity are checked before
+dispatch. Binding selects project identity and grants no runtime permission, editing approval, authentication, or paid-
+call consent. Usage: Launch ``bridge_mcp.py --stdio``, initialize with form elicitation support, then invoke
+``bridge_bind_workspace`` with an optional ``proposed_workspace`` before executable tools. Empty arguments retain manual
+selection. Outputs: Native forms confirm the exact canonical folder; tool responses report binding/status or a compact
+Bridge envelope. Failure: Missing form support, unbound or stale identities, changed folders, malformed responses, and
+child failures fail closed with protocol diagnostics. Rebinding immediately clears previous authority; cancellation and
+EOF never bind. Used by: Codex-facing Bridge skills and setup consumers, using the installed question provider's strict
+correlation transport and the shared Python Bridge supervisor. No persistent binding, permission, settings, or
+credential writes occur.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import sys
 import uuid
 from collections.abc import Callable
@@ -77,6 +80,15 @@ TOOL_NAMES = {
 STATUS_TOOL_NAME = "bridge_status"
 #: Name of the MCP tool that binds the host-selected workspace for later calls.
 BIND_TOOL_NAME = "bridge_bind_workspace"
+#: Confirmation shown after the user typed the folder in the selection form.
+TYPED_CONFIRMATION_PROMPT = "Bind Bridge calls in this process to exactly this canonical project folder: {target}"
+#: Confirmation shown for a model-supplied proposal. It names the proposal's origin so an unprompted form is not
+#: mistaken for the user's own recent entry; the proposal itself still carries no authority.
+PROPOSED_CONFIRMATION_PROMPT = "Codex proposed this folder; you did not type it. " + TYPED_CONFIRMATION_PROMPT
+#: Environment variables naming a host agent's configuration home; each named directory is refused with its subtree.
+AGENT_CONFIG_HOME_VARIABLES = ("CLAUDE_CONFIG_DIR", "CODEX_HOME")
+#: Default host agent configuration homes under the user home, refused with their subtrees.
+AGENT_CONFIG_HOME_NAMES = (".claude", ".codex")
 
 
 def _plugin_version() -> str:
@@ -125,7 +137,7 @@ def tool_definitions() -> list[dict[str, Any]]:
         },
         {
             "name": BIND_TOOL_NAME,
-            "description": "Bind this process to a project folder selected and confirmed by the user in native forms. No model workspace argument is accepted; rebinding immediately clears the previous binding.",
+            "description": "Bind this process only after the user confirms the exact canonical project folder in a native form. Optional proposed_workspace is an untrusted suggestion that avoids retyping the known project; empty arguments ask for a folder. Rebinding immediately clears previous authority.",
             "inputSchema": definitions[BIND_TOOL_NAME],
         },
         *request_tools,
@@ -300,10 +312,10 @@ def _request_from_arguments(verb: str, arguments: dict[str, Any], trusted_worksp
     if "supported_efforts" in arguments and not supported:
         raise ValueError("supported_efforts must not be empty when supplied")
     workspace = trusted_workspace.resolve()
-    if verb == "implement" and workspace in _refused_write_roots(workspace):
+    refusal = _workspace_refusal(workspace) if verb == "implement" else None
+    if refusal is not None:
         raise ValueError(
-            "write-capable bridge calls need a project workspace; the MCP host launched this server "
-            "from the user home or a filesystem root"
+            f"write-capable bridge calls need a project workspace; the MCP host launched this server from {refusal}"
         )
     request = Request(
         verb,
@@ -324,18 +336,79 @@ def _request_from_arguments(verb: str, arguments: dict[str, Any], trusted_worksp
     return request
 
 
-def _refused_write_roots(workspace: Path) -> set[Path]:
-    """Return the launch directories too broad to root an acceptEdits run.
+def _user_home() -> Path | None:
+    """Return the resolved user home, or ``None`` when the host cannot resolve one.
 
     ``Path.home`` can raise on hosts with no home resolution (minimal containers); an unknown home must not crash the
-    server, only narrow the refusal set to the filesystem root.
+    server, only narrow the refusal set to what remains knowable.
+    """
+    try:
+        return Path.home().resolve()
+    except (OSError, RuntimeError):
+        return None
+
+
+def _refused_write_roots(workspace: Path) -> set[Path]:
+    """Return the exact directories too broad to root an acceptEdits run: filesystem root, user home, home ancestors.
+
+    Project folders below the home stay allowed; only the home itself and the directories above it are refused.
     """
     roots = {Path(workspace.anchor)}
-    try:
-        roots.add(Path.home().resolve())
-    except (OSError, RuntimeError):
-        pass
+    home = _user_home()
+    if home is not None:
+        roots.add(home)
+        roots.update(home.parents)
     return roots
+
+
+def _agent_config_roots() -> list[Path]:
+    """Return host agent configuration homes whose whole subtree no Bridge call may root.
+
+    A run rooted there could edit a host's own permission allow lists or approval policy, such as
+    ``~/.claude/settings.json`` or ``~/.codex/config.toml``. Both default homes count, and so do the directories
+    ``CLAUDE_CONFIG_DIR`` and ``CODEX_HOME`` name; an empty or relative variable value names no knowable directory and
+    is skipped.
+    """
+    candidates: list[Path] = []
+    for name in AGENT_CONFIG_HOME_VARIABLES:
+        value = os.environ.get(name, "")
+        try:
+            candidate = Path(value).expanduser() if value else None
+        except RuntimeError:
+            candidate = None
+        if candidate is not None and candidate.is_absolute():
+            candidates.append(candidate)
+    home = _user_home()
+    if home is not None:
+        candidates.extend(home / name for name in AGENT_CONFIG_HOME_NAMES)
+    return [candidate.resolve() for candidate in candidates]
+
+
+def _directory_identity(path: Path) -> tuple[int, int] | None:
+    """Return a directory's device and inode pair, or ``None`` when it is absent or the platform reports no inode."""
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    return (info.st_dev, info.st_ino) if info.st_ino else None
+
+
+def _workspace_refusal(canonical: Path) -> str | None:
+    """Return why a canonical folder may not root Bridge calls, or ``None`` when it may.
+
+    Folders compare by spelling and by directory identity, so a case-variant spelling on a case-insensitive filesystem
+    or a second link to the same directory cannot pass where the canonical spelling is refused.
+    """
+    broad = _refused_write_roots(canonical)
+    broad_identities = {_directory_identity(root) for root in broad} - {None}
+    if canonical in broad or _directory_identity(canonical) in broad_identities:
+        return "a filesystem root, the user home, or an ancestor of the user home"
+    config_roots = _agent_config_roots()
+    config_identities = {_directory_identity(root) for root in config_roots} - {None}
+    lineage_identities = {_directory_identity(folder) for folder in (canonical, *canonical.parents)}
+    if any(canonical.is_relative_to(root) for root in config_roots) or lineage_identities & config_identities:
+        return "an agent configuration home such as ~/.claude or ~/.codex"
+    return None
 
 
 def _result(request_id: Any, value: dict[str, Any]) -> dict[str, Any]:
@@ -365,8 +438,11 @@ def _workspace_binding(value: str) -> WorkspaceBinding:
     canonical = selected.resolve(strict=True)
     if len(PurePath(canonical).as_posix()) > 3500:
         raise ValueError("canonical workspace exceeds the native confirmation limit")
-    if not canonical.is_dir() or canonical in _refused_write_roots(canonical):
-        raise ValueError("workspace cannot be a filesystem root, user home, or non-directory")
+    if not canonical.is_dir():
+        raise ValueError("workspace must be an existing directory")
+    refusal = _workspace_refusal(canonical)
+    if refusal is not None:
+        raise ValueError(f"workspace cannot be {refusal}")
     plugin_root = Path(__file__).resolve().parents[1]
     if any(canonical.is_relative_to(root) for root in _protected_payload_roots(plugin_root)):
         raise ValueError("workspace cannot be inside the plugin payload or installation cache")
@@ -415,8 +491,9 @@ class BridgeServer(QuestionServer):
         if name == BIND_TOOL_NAME:
             self.workspace = None
             self.binding_id = None
-            if not isinstance(params.get("arguments", {}), dict) or params.get("arguments", {}):
-                self.error(request_id, -32602, "bridge_bind_workspace accepts an empty arguments object")
+            arguments = params.get("arguments", {})
+            if not isinstance(arguments, dict) or set(arguments) - {"proposed_workspace"}:
+                self.error(request_id, -32602, "bridge_bind_workspace accepts only optional proposed_workspace")
                 return
             if self.binding_phase is not None:
                 self.error(request_id, -32001, "workspace binding already pending")
@@ -426,6 +503,25 @@ class BridgeServer(QuestionServer):
                 return
             if len(self.decisions) + 2 > MAX_DECISIONS:
                 self.error(request_id, -32003, "binding capacity exhausted; start a new session")
+                return
+            if "proposed_workspace" in arguments:
+                proposal = arguments["proposed_workspace"]
+                try:
+                    if not isinstance(proposal, str) or not proposal.strip() or len(proposal) > 4096:
+                        raise ValueError("proposed_workspace must be nonempty text of at most 4096 characters")
+                    candidate = _workspace_binding(proposal)
+                except (OSError, RuntimeError, ValueError):
+                    self.error(
+                        request_id, -32602, "proposed_workspace must name an allowed absolute existing project folder"
+                    )
+                    return
+                self.candidate = candidate
+                self.binding_phase = "confirm"
+                self._ask_binding(
+                    request_id,
+                    PROPOSED_CONFIRMATION_PROMPT.format(target=PurePath(candidate.canonical).as_posix()),
+                    ["Bind this folder", "Cancel"],
+                )
                 return
             self.binding_phase = "select"
             self._ask_binding(request_id, "Enter the absolute existing project folder to use for Bridge calls.")
@@ -487,9 +583,7 @@ class BridgeServer(QuestionServer):
                 self.binding_phase = "confirm"
                 target = PurePath(self.candidate.canonical).as_posix()
                 self._ask_binding(
-                    decision.call_id,
-                    f"Bind Bridge calls in this process to exactly this canonical project folder: {target}",
-                    ["Bind this folder", "Cancel"],
+                    decision.call_id, TYPED_CONFIRMATION_PROMPT.format(target=target), ["Bind this folder", "Cancel"]
                 )
                 return
         if status == "answered" and self.binding_phase == "confirm" and answer == "Bind this folder":

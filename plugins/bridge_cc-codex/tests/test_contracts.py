@@ -530,8 +530,13 @@ def test_mcp_input_contract_rejects_unknown_or_incomplete_request_fields() -> No
     assert request["additionalProperties"] is False
     assert set(request["required"]) == {"task", "binding_id"}
     for name, definition in definitions.items():
-        if name in {"bridge_status", "bridge_bind_workspace"}:
+        if name == "bridge_status":
             assert definition == {"additionalProperties": False, "properties": {}, "type": "object"}
+            continue
+        if name == "bridge_bind_workspace":
+            assert definition["additionalProperties"] is False
+            assert set(definition["properties"]) == {"proposed_workspace"}
+            assert definition["properties"]["proposed_workspace"]["type"] == "string"
             continue
         assert "workspace" not in definition["properties"]
         assert "background" not in definition["properties"]

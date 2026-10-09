@@ -73,7 +73,7 @@ Finalization freezes the bounded capture under its lock; a failed drain returns 
 | `authentication-needed` or `auth-flow-launched` | The peer provider login is separate from Bridge configuration and may require a browser or device flow. | Approve the no-capture provider flow; only a separate redacted status probe can establish `host-authenticated`. |
 | `fresh-session-required` | A host restart or newly loaded MCP/plugin surface is needed. | Restart the relevant host manually and invoke setup again; setup never terminates or restarts a host. |
 | `trust-required` | The host requires an operator trust decision before loading the plugin or MCP server. | Complete the host trust prompt outside setup, then use a fresh session. |
-| `binding_status=unbound` or wrong project | The loaded MCP server has no current binding to the intended project. | Call `bridge_bind_workspace` with empty arguments; require native selection and exact canonical confirmation, then retain the new `binding_id`. Unbound alone does not mean stale installation. |
+| `binding_status=unbound` or wrong project | The loaded MCP server has no current binding to the intended project. | Call `bridge_bind_workspace` with the known absolute folder as untrusted `proposed_workspace`; require exact canonical native confirmation, then retain the new `binding_id`. Unbound alone does not mean stale installation. |
 | Missing or stale `binding_id` | The executable call does not match current user-confirmed project authority. | Read `bridge_status` and use its current ID only after verifying the intended project; rebinding invalidates older IDs. |
 
 ## Output-limit recovery
