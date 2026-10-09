@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -160,6 +161,114 @@ def test_hook_surfaces_one_bounded_block_reason(tmp_path: Path, isolated_plugin_
     assert "Codex executable was not found" not in message
     assert "No files changed" in message
     assert _snapshot(tmp_path) == before
+
+
+def _install_global_block(plugin_root: Path, home: Path, source: Path, *options: str) -> None:
+    """Write the managed global block with the packaged installer, as sync or a direct re-render would."""
+    home.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(plugin_root / "scripts" / "install_global_agents.py"),
+            "--source",
+            str(source),
+            "--codex-home",
+            str(home),
+            *options,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def _read_only_hook_message(home: Path, plugin_root: Path) -> str:
+    """Run the hook from ``plugin_root`` against ``home`` and return its system message.
+
+    Also asserts the read-only contract shared by every case: exit 0 without stderr, no change under ``home``, and no
+    installer bytecode written into the plugin root while the hook loads the installer's parser.
+    """
+    shutil.rmtree(plugin_root / "scripts" / "__pycache__", ignore_errors=True)
+    environment = os.environ.copy()
+    environment["PLUGIN_ROOT"] = str(plugin_root)
+    environment["CODEX_HOME"] = str(home)
+    before = _snapshot(home)
+
+    completed = subprocess.run(
+        [sys.executable, str(plugin_root / "hooks" / "session_start.py")],
+        input=_hook_input(),
+        capture_output=True,
+        env=environment,
+        check=False,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stderr == b""
+    assert _snapshot(home) == before
+    assert not list((plugin_root / "scripts").glob("__pycache__/install_global_agents.*"))
+    return json.loads(completed.stdout).get("systemMessage", "")
+
+
+def test_hook_warns_when_global_block_names_previous_plugin_root(tmp_path: Path, isolated_plugin_root: Path) -> None:
+    """Flag a global block a direct plugin update left on the previous version's root, naming no private path.
+
+    ``codex plugin add`` installs a new versioned cache directory but never re-renders the block, so every packaged
+    ``shared/<file>`` pointer keeps reading the old package (or a removed one) until the installer runs again.
+    """
+    home = tmp_path / "home"
+    previous_root = tmp_path / "plugins" / "cache" / "borda-ai-rig" / "codex-rig" / "0.33.1"
+    template = isolated_plugin_root / "assets" / "AGENTS.md"
+    _install_global_block(isolated_plugin_root, home, template, "--plugin-root", str(previous_root))
+
+    message = _read_only_hook_message(home, isolated_plugin_root)
+
+    assert (
+        "stale PLUGIN_ROOT — the managed CODEX_HOME/AGENTS.md block names …/0.33.1, "
+        f"not this session's …/{isolated_plugin_root.name}, so its shared/ pointers do not read this package"
+    ) in message
+    assert "No files changed" in message
+    assert "install_global_agents.py --source <installed-package>/assets/AGENTS.md" in message
+    assert str(tmp_path) not in message
+    assert str(isolated_plugin_root) not in message
+
+
+def test_hook_warns_when_global_block_predates_the_plugin_root_line(tmp_path: Path, isolated_plugin_root: Path) -> None:
+    """Flag the block every 0.33.1 install carries after a direct update: it names no root at all.
+
+    The template shipped beside the hook always defines ``PLUGIN_ROOT``, so a rootless block resolves none of its
+    packaged ``shared/<file>`` pointers; a root-only comparison would stay silent on the most common upgrade.
+    """
+    home = tmp_path / "home"
+    older_template = tmp_path / "older" / "AGENTS.md"
+    older_template.parent.mkdir()
+    current = (isolated_plugin_root / "assets" / "AGENTS.md").read_bytes()
+    older_template.write_bytes(re.sub(rb"^.*\{\{CODEX_RIG_PLUGIN_ROOT\}\}.*\n", b"", current, flags=re.MULTILINE))
+    _install_global_block(isolated_plugin_root, home, older_template)
+
+    message = _read_only_hook_message(home, isolated_plugin_root)
+
+    assert "block names no PLUGIN_ROOT (rendered from an older template)" in message
+    assert "No files changed" in message
+    assert str(tmp_path) not in message
+
+
+def test_hook_is_silent_when_global_block_names_its_own_root(tmp_path: Path, isolated_plugin_root: Path) -> None:
+    """Add no root warning when the block was rendered for the plugin root running the hook.
+
+    The doctor's ``active_package`` line is always present for this non-cache fixture root, so the assertion targets the
+    root warning itself rather than an empty message.
+    """
+    home = tmp_path / "home"
+    template = isolated_plugin_root / "assets" / "AGENTS.md"
+    _install_global_block(isolated_plugin_root, home, template, "--plugin-root", str(isolated_plugin_root))
+
+    message = _read_only_hook_message(home, isolated_plugin_root)
+
+    assert "PLUGIN_ROOT" not in message
+    assert "active_package:" in message
 
 
 def test_invalid_hook_input_fails_open_without_traceback(tmp_path: Path) -> None:

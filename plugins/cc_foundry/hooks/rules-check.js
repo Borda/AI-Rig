@@ -13,7 +13,7 @@
 //   A dangling link counts as missing (fs.existsSync follows the link).
 //
 // INJECTION
-//   Raw stdout, same as stale-plugin-check.js: SessionStart stdout is added as context.
+//   Raw stdout, same as session-restore.js: SessionStart stdout is added as context.
 //
 // EXIT CODES
 //   0  always — inject (stdout) or stay silent. Never blocks session start.

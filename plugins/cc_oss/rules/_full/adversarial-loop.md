@@ -39,6 +39,8 @@ The progress table has exactly these columns:
 
 Each numeric cell is the literal `old + new` split: `old` counts currently open signatures seen in any prior completed round, including closed-then-reopened signatures; `new` counts currently open signatures first seen in this round. The first row uses `0 + current` in every numeric column. Count only `open` and `fixed-pending-verification`; exclude `verified-fixed` and `rejected`. The `Critical` display combines `security` and `critical`, while the score retains weights security 20, critical 10, high 6, medium 4, low 2, and nit 1; `Weighted score` is `old weighted + new weighted` and equals `W_n`. An empty ledger prints no progress table or unreviewed zero row.
 
+The default table is one aggregate: each row sums every open finding from every reviewer, area and domain in the loop's reviewed scope for that round. Render a per-area or per-domain table only when the user asks for that filter, and never replace the aggregate with per-area tables or extra columns. When a round widens the reviewed scope, keep the aggregate row and state the added areas and their weighted contribution in one line of prose below the table.
+
 The stderr transcript includes a legend explaining the old/new split and preserves all prior rows. Call `--progress` only for a newly completed round; repeated status updates do not repeat the table. This is an agent delivery instruction, not a machine-enforced chat count: the helper is a repeatable renderer, and the host supplies no transcript receipt to this validator. The in-turn progress output is separate from the final result table, whose no-review row remains an explicit unavailable result rather than a fabricated clean zero.
 
 ### Table delivery checkpoint

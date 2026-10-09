@@ -8,7 +8,7 @@
 - Apply these rules to every file under `plugins/`.
 - `plugins/CLAUDE.md` remains the full authoring reference, and this file is the Codex-facing distillation.
 
-Root `AGENTS.md` already applies here and is not restated: edit scope, core principles, multi-OS executables, benchmark isolation, focused delegation, Markdown structure and no-wrap, and the test/lint workflow. This file adds only what is specific to authoring plugins.
+Root `AGENTS.md` and the shipped Codex Rig global template (`plugins/codex-rig/assets/AGENTS.md`) already apply here and are not restated: edit scope (root), core principles, multi-OS executables, benchmark isolation, focused delegation, Markdown structure and no-wrap (template), and the test/lint workflow (both). This file adds only what is specific to authoring plugins.
 
 ## Plugin Workflow
 

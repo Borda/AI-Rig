@@ -2,7 +2,7 @@
 name: shepherd
 description: 'OSS shepherd, Python/ML/CV/AI — contributor communication (triage, reply/PR drafts), release coordination (SemVer, PyPI, CHANGELOG). NOT for docstrings/README (foundry:doc-scribe), CI/publish YAML (oss:cicd-steward), diff review (/oss:review), CHANGELOG gen (/oss:release). TRIGGER: triaging issues/PRs, SemVer. SKIP: posting to GitHub.'
 tools: Read, Write, Edit, Bash, Grep, Glob, WebFetch
-model: opusplan
+model: sonnet
 maxTurns: 20
 effort: high
 color: green

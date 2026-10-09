@@ -13,15 +13,43 @@
 //   block. No sentinel bypasses it: the force check runs before any sentinel
 //   lookup, so even a valid push sentinel cannot authorize `git push --force`.
 //
-//   Detection is on what the command does, not how it is spelled. The
-//   invocation prefix is stripped (`env git push`, `GIT_TRACE=1 git push`,
-//   `/usr/bin/git push`), git's global options are stripped (`git -C /path
-//   push`), the string is split on shell operators and substitution boundaries
-//   (`cd /x && git push`, `echo $(git push ...)`), a short cluster carrying f
-//   counts as force (`git push -fu`), and a `+`-prefixed refspec (`git push
-//   origin +main`) counts as force even though it names no force flag.
-//   A push assembled at run time — via a variable, alias, or script — is beyond
-//   what any string inspection can see; the deny list is the backstop there.
+//   Detection is on what the command does, not how it is spelled
+//   (lib/shell-git.js). Every word naming git starts an invocation wherever it
+//   sits, so grouping and prefixes cannot hide one (`{ git push; }`, `if x;
+//   then git push; fi`, `time|sudo -u u|nohup|xargs git push`, `env -u V git
+//   push`, `/usr/bin/git push`); the name ignores case (`GIT`, `Git.exe` run
+//   git on macOS and Windows). Quoting and brace expansion are resolved (`git
+//   -C "dir with space" push`, `git {push,} -f`); operators, substitutions and
+//   shell source handed to another program are followed (`cd /x && git push`,
+//   `echo "$(git push)"`, `bash -c "git push"`, `eval '…'`); `python3 -c`,
+//   `perl -e`, `ruby -e` and `node -e` code naming git and push reads as a
+//   push carrying every token of that code. git's global options are stripped
+//   (`git -C /path push`), an unknown one read both as flag and as
+//   value-taking; an inline alias (`git -c alias.p=push p`, `--config-env
+//   alias.p=VAR`) is expanded, and one whose value is set at run time reads
+//   as a force push. `send-pack` (push's plumbing) and `http-push` are pushes.
+//   Force spellings: a short cluster carrying f (`git push -fu`); any `--force*`
+//   and any prefix git accepts for a force option (`--mir`, `--force-w`; an
+//   ambiguous one such as `--f` git refuses anyway); a `+`-prefixed refspec
+//   (`git push origin +main`), which names no force flag at all.
+//   Fail closed: a command whose quoting the lexer cannot follow is scanned for
+//   any `git` word, and unquoted prose naming one (`echo git push -f`) is
+//   treated as the invocation it spells. If the library itself cannot load,
+//   every command naming both `git` and a push command is blocked.
+//   LIMITS: a push assembled at run time — via a variable (`git push
+//   "$FLAGS"`), an alias or include from a config file, or a script on disk —
+//   is beyond what any string inspection can see, and some string-visible
+//   spellings are accepted limits by decision (ANSI-C strings, assigned
+//   values, commands git runs from config, Windows shells, globs, environment
+//   aliases, inline `remote.*` config, dashed programs; full list in
+//   lib/shell-git.js LIMITS). The settings.json
+//   deny entries do not cover it either: Claude Code matches them per
+//   subcommand after stripping a fixed wrapper set, never by path, inside
+//   `sh -c`, or behind `sudo` (permissions reference, "Wrappers").
+//
+//   Deleting remote refs is a regular push, not a force push: `git push origin
+//   :ref`, `--delete`/`-d` and `--prune` pass the force check and still need
+//   the sentinel and an AskUserQuestion confirmation like any other push.
 //
 //   Regular (non-force) `git push` requires a per-branch sentinel:
 //     /tmp/claude-push-auth-<repo-slug>-<branch-slug>  (15-min TTL)
@@ -32,7 +60,8 @@
 //   as forging the guard, so Claude must never create it itself.
 //
 // HOW IT WORKS
-//   1. PreToolUse(Bash): fires only on `git push` calls.
+//   1. PreToolUse(Bash): acts only on commands holding a `git push`,
+//      `git send-pack` or `git http-push`.
 //      Force-push forbidden unconditionally (exit 2 before any sentinel
 //      check); otherwise checks the push sentinel present and fresh.
 //   2. SessionStart: wipes all /tmp/claude-push-auth-* sentinels so
@@ -50,6 +79,23 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execSync } = require("child_process");
+
+// Loaded defensively: a guard that crashed on a missing module would exit 1, which Claude Code treats
+// as a non-blocking error — the push would go through. Without the parser, pushes fail closed below.
+let gitSubcommandArgs = null;
+try {
+  ({ gitSubcommandArgs } = require(path.join(__dirname, "lib", "shell-git.js")));
+} catch {
+  // gitSubcommandArgs stays null
+}
+
+// git's commands that update refs on a remote: `send-pack` is push's plumbing, `http-push` its
+// WebDAV transport.
+const PUSH_SUBCOMMANDS = ["push", "send-pack", "http-push"];
+// Long options whose any prefix git accepts (`--mir` = `--mirror`). A prefix git finds ambiguous
+// (`--f`: `--follow-tags` or `--force`) is refused before anything is pushed, so counting it costs
+// nothing. `--follow-tags` itself is a prefix of none of them.
+const FORCE_LONG_OPTIONS = ["force", "force-with-lease", "force-if-includes", "mirror"];
 
 function getSentinelDir() {
   return process.platform === "win32" ? os.tmpdir() : "/tmp";
@@ -88,90 +134,15 @@ function getPushSentinelPath(repoSlug, branchSlug) {
   return `${getSentinelDir()}/claude-push-auth-${repoSlug}-${branchSlug}`;
 }
 
-// Git's own global options sit between `git` and the subcommand, so a naive
-// tokens[1] === "push" test misses `git -C /path push --force` entirely. Strip
-// them first. The value-taking forms must consume their argument, or the value
-// itself would be mistaken for the subcommand.
-const GIT_GLOBAL_FLAGS_WITH_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
-
-/**
- * Drop `git`'s global options from a token list, returning the tokens from the
- * subcommand onward. Input must already start with the `git` token.
- */
-function stripGitGlobalFlags(tokens) {
-  let i = 1;
-  while (i < tokens.length) {
-    const t = tokens[i];
-    if (!t.startsWith("-")) break;
-    // `--git-dir=/x` and `-c k=v` carry their value inline; the bare forms take
-    // the next token.
-    if (t.includes("=") || !GIT_GLOBAL_FLAGS_WITH_VALUE.has(t)) {
-      i += 1;
-    } else {
-      i += 2;
-    }
-  }
-  return tokens.slice(i);
-}
-
-// Split a command string into the segments a shell would run separately, so a
-// push hidden after `&&`, `;`, `|`, `||` or inside `$(...)` / backticks is still
-// inspected. Splitting on the operator characters is deliberately coarse: an
-// operator inside quotes produces extra segments, which can only ever cause an
-// extra check, never a missed one. That is why `(` and `)` are split points even
-// though they also appear in ordinary subshells.
-function shellSegments(command) {
-  return command.split(/(?:\|\||&&|[;&|\n`()])/);
-}
-
-// A segment may reach git through a prefix that hides the literal `git` token:
-// environment assignments (`GIT_TRACE=1 git push`), an `env` wrapper
-// (`env git push`, `env -i VAR=v git push`), or an absolute path
-// (`/usr/bin/git push`). All three reach the same remote.
-const ENVIRONMENT_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-
-/**
- * Return a segment's tokens starting at the `git` token, or null when the
- * segment does not invoke git. The invocation prefix is stripped and argv[0] is
- * compared by basename, so a path or wrapper cannot hide the invocation.
- */
-function gitTokens(segment) {
-  const tokens = segment.trim().split(/\s+/).filter(Boolean);
-  let i = 0;
-  let sawEnv = false;
-  while (i < tokens.length) {
-    const t = tokens[i];
-    if (ENVIRONMENT_ASSIGNMENT.test(t) || (sawEnv && t.startsWith("-"))) {
-      i += 1;
-      continue;
-    }
-    if (t === "env" || t.endsWith("/env")) {
-      sawEnv = true;
-      i += 1;
-      continue;
-    }
-    break;
-  }
-  const rest = tokens.slice(i);
-  const argv0 = (rest[0] || "").split(/[/\\]/).pop();
-  return argv0 === "git" || argv0 === "git.exe" ? rest : null;
-}
-
-/**
- * True when a single command segment is a `git push` in any spelling.
- * Tolerates an invocation prefix and git's own global options.
- */
-function isGitPushSegment(segment) {
-  const tokens = gitTokens(segment);
-  return tokens !== null && stripGitGlobalFlags(tokens)[0] === "push";
-}
-
 // Of git push's short options only `-f` uses the letter f, so any short cluster
-// containing it is a force. Long options are matched on the `--force` prefix
-// alone, which must not be widened to a substring test: `--follow-tags` also
-// contains an f and is not a force.
+// containing it is a force. A long option is a force when its name (before any
+// `=`) starts with `force` or is a prefix of a FORCE_LONG_OPTIONS entry; never a
+// substring test, since `--follow-tags` also contains an f and is not a force.
 function isForceFlag(token) {
-  if (token.startsWith("--")) return token.startsWith("--force");
+  if (token.startsWith("--")) {
+    const name = token.slice(2).split("=")[0];
+    return name.startsWith("force") || (name !== "" && FORCE_LONG_OPTIONS.some((option) => option.startsWith(name)));
+  }
   return token.startsWith("-") && token.length > 1 && token.includes("f");
 }
 
@@ -180,24 +151,24 @@ function isForceFlag(token) {
 //
 // Spellings caught:
 //   * `-f`, and any short cluster carrying it (`git push -fu origin main`)
-//   * any `--force*` (--force, --force-with-lease, --force-if-includes)
+//   * any `--force*` (--force, --force-with-lease, --force-if-includes) and
+//     any abbreviation git accepts for one (`--force-w`, `--for`)
+//   * `--mirror` and its abbreviations (`--mir`, `--m`) — mirrors every local
+//     ref onto the remote, force-updating and deleting remote refs as needed
 //   * a `+`-prefixed refspec (`git push origin +main`) — a force push that
 //     names no force flag at all.
 //
-// Detection is on the invocation, not on one literal spelling of it: the
-// segment's prefix and git's global options are stripped first, so `env`,
-// `VAR=v`, an absolute path and `git -C /path` all resolve to the same check.
-// What remains uncovered is a push assembled at run time — through a variable,
-// an alias, or a script — which no string inspection can see.
-function isForcePush(command) {
-  return shellSegments(command).some((segment) => {
-    if (!isGitPushSegment(segment)) return false;
-    const args = stripGitGlobalFlags(gitTokens(segment)).slice(1);
-    if (args.some(isForceFlag)) return true;
-    // Refspecs are the non-flag arguments after the remote. A leading `+` on any
-    // of them requests a non-fast-forward update — a force push by another name.
-    return args.some((t) => !t.startsWith("-") && t.startsWith("+"));
-  });
+// `pushArgs` is one invocation's arguments from `push` on, as lib/shell-git.js
+// reads them — prefix, grouping, quoting, brace expansion, inline aliases and
+// git's global options already resolved.
+// Ref deletion (`:ref`, `--delete`, `--prune`) is not a force: it stays
+// sentinel-gated like any push.
+function isForcePush(pushArgs) {
+  const args = pushArgs.slice(1);
+  if (args.some(isForceFlag)) return true;
+  // Refspecs are the non-flag arguments after the remote. A leading `+` on any
+  // of them requests a non-fast-forward update — a force push by another name.
+  return args.some((t) => t.startsWith("+"));
 }
 
 function checkSentinel(sentinelPath, ttlMs) {
@@ -266,14 +237,23 @@ process.stdin.on("end", () => {
   if (tool_name !== "Bash") process.exit(0);
 
   const command = (tool_input && tool_input.command) || "";
-  // Anchoring on /^\s*git push\b/ would miss `git -C /path push` and any push
-  // placed after a shell operator; both reach the same remote. Inspect every
-  // segment instead.
-  if (!shellSegments(command).some(isGitPushSegment)) process.exit(0);
+  if (gitSubcommandArgs === null) {
+    if (!/\bgit\b[\s\S]*\b(?:push|send-pack|http-push)\b/i.test(command)) process.exit(0);
+    process.stderr.write(
+      "git push blocked — commit-guard cannot load hooks/lib/shell-git.js to inspect the command.\n" +
+        "Reinstall the foundry plugin; until then every command naming git and push is blocked.\n",
+    );
+    process.exit(2);
+  }
+  // Anchoring on /^\s*git push\b/ would miss `git -C /path push`, a push after
+  // a shell operator, and one inside a group or behind a prefix; all reach the
+  // same remote. Inspect every invocation the library finds instead.
+  const pushes = gitSubcommandArgs(command).filter((args) => PUSH_SUBCOMMANDS.includes(args[0]));
+  if (pushes.length === 0) process.exit(0);
 
   // Force-push is forbidden on any branch, always — checked before any
   // sentinel, so a valid push sentinel never bypasses it.
-  if (isForcePush(command)) {
+  if (pushes.some(isForcePush)) {
     process.stderr.write(
       `git push blocked — force-push is forbidden on any branch. No override, no sentinel bypasses this.\n`,
     );

@@ -41,7 +41,7 @@ AI-Rig gives Claude Code five independently installable plugins for Python, ML, 
 
 | Plugin                                          | Problem it solves                                                                              | Shipped surface                                                             |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| [`foundry`](../plugins/cc_foundry/README.md)    | Configuration drift, unclear specialist ownership, and lessons that disappear between sessions | 11 skills, 10 agents, 13 rules, and 15 JavaScript hook modules              |
+| [`foundry`](../plugins/cc_foundry/README.md)    | Configuration drift, unclear specialist ownership, and lessons that disappear between sessions | 11 skills, 10 agents, 17 rules, and 15 JavaScript hook modules              |
 | [`oss`](../plugins/cc_oss/README.md)            | Repeated issue, PR, feedback-resolution, and release-readiness work                            | 5 skills, 4 agents, 1 rule, and 4 active hook modules plus 1 shared helper  |
 | [`develop`](../plugins/cc_develop/README.md)    | Implementation that starts before scope, reproduction, or acceptance is clear                  | 7 skills, 1 rule, and 3 active hook modules plus 1 shared helper            |
 | [`research`](../plugins/cc_research/README.md)  | ML experiments that lack literature grounding, a methodology gate, or reviewable state         | 10 skills, 2 agents, 1 rule, and 3 active hook modules plus 1 shared helper |
@@ -145,7 +145,7 @@ The six Claude plugins are peers with closed, documented responsibilities:
 
 | Plugin          | Owns                                                                                                                                             | Optional relationship                                                                                                              |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Foundry         | 11 configuration, calibration, routing, session, profile, content, and maintenance skills; 10 specialist agents; 13 rules; 15 JavaScript modules | Supplies named specialists to sibling workflows when installed; absent specialists use the owning skill's fallback or stop rule    |
+| Foundry         | 11 configuration, calibration, routing, session, profile, content, and maintenance skills; 10 specialist agents; 17 rules; 15 JavaScript modules | Supplies named specialists to sibling workflows when installed; absent specialists use the owning skill's fallback or stop rule    |
 | OSS             | 5 maintainer and release skills; 4 agents; one quality-gates rule; 4 active hook handlers plus a shared helper                                   | Uses Foundry reviewers, bridge_CC-Codex, and gh only when available and required by the selected mode                              |
 | Develop         | 7 validate-first Python workflow skills; one quality-gates rule; 3 active hook handlers plus a shared helper                                     | Can use Foundry agents, Codemap-py structural context, and bridge_CC-Codex                                                         |
 | Research        | 10 experiment and evidence skills; 2 agents; one quality-gates rule; 3 active hook handlers plus a shared helper                                 | Requires explicit compute, Colab, Docker, bridge_CC-Codex, and Kaggle prerequisites for those paths; Foundry is required by Kaggle |
@@ -320,36 +320,40 @@ Rules are delivered by setup and remain namespaced so plugins can install indepe
 
 ### Rule inventory
 
-Foundry ships 13 rules: `artifact-lifecycle`, `claude-config`, `communication`, `compaction`, `debugging`, `external-data`, `foundry-config`, `git-commit`, `public-github`, `python-code`, `python-testing`, `quality-gates`, and `task-lifecycle`.
+Foundry ships 17 rules: `agent-spawn`, `artifact-lifecycle`, `claude-config`, `communication`, `compaction`, `debugging`, `external-data`, `foundry-config`, `git-commit`, `markdown`, `notebooks`, `public-github`, `python-code`, `python-testing`, `quality-gates`, `task-lifecycle`, and `untrusted-content`. Rules that matter only while touching one kind of file (`markdown`, `foundry-config`, the Python rules) load on first access of a matching file, and `agent-spawn` and `git-commit` are injected by `rule-inject.js` after the first `Agent()` or commit-creating git call, keeping the always-loaded set small.
 
 OSS, Develop, and Research each ship their own namespaced `quality-gates` rule. Similar filenames are deliberate independent copies, not an undeclared installation dependency.
 
 <details>
 <summary><strong>Rule reference</strong></summary>
 
-| Rule file               | Applies to                      | What it governs                                                                        |
-| ----------------------- | ------------------------------- | -------------------------------------------------------------------------------------- |
-| `artifact-lifecycle.md` | Global                          | Dot-prefixed artifact layout, run-directory naming, and retention policy               |
-| `claude-config.md`      | Global                          | Portable paths, bounded Bash execution, and navigation conventions                     |
-| `communication.md`      | Global                          | Progress narration, tone, output routing, and confidence reporting                     |
-| `compaction.md`         | Global                          | Context-compaction contract and durable skill state in `.temp/state/skill-contract.md` |
-| `debugging.md`          | Global                          | Root-cause diagnosis, evidence before fixes, and post-fix validation                   |
-| `external-data.md`      | Global                          | Completeness and pagination for REST, GraphQL, and GitHub CLI reads                    |
-| `foundry-config.md`     | `.claude/**`                    | Plan gates, post-edit checks, XML conventions, cleanup, and settings allow entries     |
-| `git-commit.md`         | Global                          | Commit format and push/branch safety                                                   |
-| `public-github.md`      | Global                          | Permitted read-only public GitHub operations and forbidden writes                      |
-| `python-code.md`        | `**/*.py`                       | Python style, APIs, deprecations, and type/design conventions                          |
-| `python-testing.md`     | `tests/**/*.py`, `**/test_*.py` | pytest structure, parametrization, mocking, and doctest placement                      |
-| `quality-gates.md`      | Global                          | Confidence blocks, quality loops, and output routing                                   |
-| `task-lifecycle.md`     | Global                          | Task sequencing, subagent conventions, and lifecycle handoffs                          |
+| Rule file               | Applies to                                     | What it governs                                                                                                        |
+| ----------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `agent-spawn.md`        | Injected on first `Agent()`; skill/agent files | Spawn labels, end-the-turn deadlines, and parallel spawn ceilings by model tier                                        |
+| `artifact-lifecycle.md` | Global                                         | Dot-prefixed artifact layout, run-directory naming, and retention policy                                               |
+| `claude-config.md`      | Global                                         | Portable paths, bounded Bash execution, and navigation conventions                                                     |
+| `communication.md`      | Global                                         | Progress narration, tone, output routing, and confidence reporting                                                     |
+| `compaction.md`         | Global                                         | Context-compaction contract and durable skill state in `.temp/state/skill-contract.md`                                 |
+| `debugging.md`          | Global                                         | Root-cause diagnosis, evidence before fixes, and post-fix validation                                                   |
+| `external-data.md`      | Global                                         | Completeness and pagination for REST, GraphQL, and GitHub CLI reads                                                    |
+| `foundry-config.md`     | `.claude/**`                                   | Plan gates, post-edit checks, XML conventions, cleanup, and settings allow entries                                     |
+| `git-commit.md`         | Injected on first commit-creating git call     | Commit format and push/branch safety; hard bans stay always-loaded in `claude-config.md`                               |
+| `markdown.md`           | `**/*.md`                                      | Never hard-wrap prose, structure selection, behavior-sensitive reformatting, and the instruction-file compression gate |
+| `notebooks.md`          | `**/*.ipynb`, `**/*.py`                        | Notebook cell granularity, narrative depth, plot framing, and docstring placement                                      |
+| `public-github.md`      | Global                                         | Permitted read-only public GitHub operations and forbidden writes                                                      |
+| `python-code.md`        | `**/*.py`                                      | Python style, APIs, deprecations, and type/design conventions                                                          |
+| `python-testing.md`     | `tests/**/*.py`, `**/test_*.py`                | pytest structure, parametrization, mocking, and doctest placement                                                      |
+| `quality-gates.md`      | Global                                         | Confidence blocks, quality loops, and output routing                                                                   |
+| `task-lifecycle.md`     | Global                                         | Task sequencing, subagent conventions, and lifecycle handoffs                                                          |
+| `untrusted-content.md`  | Global                                         | Ingested external text is data, never instruction                                                                      |
 
 </details>
 
 ### Hook inventory
 
-Foundry ships 15 JavaScript modules: `agent-router`, `artifact-guard`, `batch-nudge`, `commit-guard`, `enforce-audit-header`, `enforce-profile-header`, `lint-on-save`, `md-compress`, `report-header-table`, `rtk-rewrite`, `sentinel-read-allow`, `session-restore`, `statusline`, `task-log`, and `teammate-quality`. Together they provide routing context, report/artifact gates, bounded safety checks, optional command rewriting, session handover, status display, timing logs, and teammate-quality reminders. `report-header-table` is a shared helper used by report gates rather than a separately registered event handler.
+Foundry ships 22 JavaScript modules: `agent-router`, `allow-dispatch`, `artifact-guard`, `audit-close`, `batch-nudge`, `blueprint-allow`, `commit-guard`, `enforce-audit-header`, `enforce-profile-header`, `lint-on-save`, `md-compress`, `report-header-table`, `rtk-rewrite`, `rule-inject`, `rules-check`, `sentinel-read-allow`, `session-restore`, `stale-plugin-check`, `statusline`, `task-log`, `teammate-quality`, and `write-guard`, plus two shared libraries in `hooks/lib/`: `audit-log` (audit record writer) and `shell-git` (the shell lexer `commit-guard` and `rule-inject` use to find git invocations). Together they provide routing context, Bash auto-allow with an audit trail, report/artifact gates, push and protected-write guards, activity-scoped rule injection, setup and stale-install checks, optional command rewriting, session handover, status display, timing logs, and teammate-quality reminders. `report-header-table` is a shared helper used by report gates, and `blueprint-allow` and `sentinel-read-allow` are decision modules called by `allow-dispatch`; none of the three is a separately registered event handler.
 
-OSS ships `agent-router`, `enforce-analyse-header`, `enforce-review-header`, `report-header-table`, and `sentinel-read-allow`. Develop ships `agent-router`, `enforce-review-header`, `report-header-table`, and `sentinel-read-allow`. Research ships `agent-router`, `enforce-topic-header`, `report-header-table`, and `sentinel-read-allow`.
+OSS ships `agent-router`, `allow-dispatch`, `audit-close`, `blueprint-allow`, `enforce-analyse-header`, `enforce-resolve-table`, `enforce-review-header`, `report-header-table`, `sentinel-read-allow`, `stale-plugin-check`, and `write-guard`. Develop ships `agent-router`, `allow-dispatch`, `audit-close`, `blueprint-allow`, `enforce-review-header`, `report-header-table`, `sentinel-read-allow`, `stale-plugin-check`, and `write-guard`. Research ships `agent-router`, `allow-dispatch`, `audit-close`, `blueprint-allow`, `enforce-topic-header`, `report-header-table`, `sentinel-read-allow`, `stale-plugin-check`, and `write-guard`. Each of the three also ships `hooks/lib/audit-log`.
 
 Codemap-py registers six optional hooks: `guard-redundant-scan.py`, `inject-preamble.py`, `log-skill-start.py`, `log-tool-use.py`, `record-exhausted.py`, and `seed-session.py`; `_hookutil.py` is their shared non-executable helper. The hooks add ambient index status and session-sharded telemetry and narrowly discourage redundant structural scans. They fail open and are not required for scanning or querying.
 

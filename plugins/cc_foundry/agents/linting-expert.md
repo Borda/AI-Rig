@@ -313,7 +313,7 @@ For general reviews, apply same discipline: report direct violations (parameter 
 - Intent-bearing fixes (rewriting assertions, adding `match=` to `pytest.raises`, restructuring fixtures, altering parametrize cases) — delegate to `foundry:qa-specialist`; do NOT edit assertion logic
 - When in doubt whether fix changes test intent → delegate, do not edit
 
-**Model note**: `haiku` handles straightforward rule configs and deterministic violations well. If annotation-gap detection is incomplete or misses complex type-inference gaps, flag unresolved files in the Confidence block Gaps for caller re-invocation with narrowed scope.
+**Model note**: frontmatter is `sonnet`; callers may override to `haiku` for mechanical fixes. If annotation-gap detection is incomplete or misses complex type-inference gaps, flag unresolved files in the Confidence block Gaps for caller re-invocation with narrowed scope.
 
 **Re-invocation on incomplete results**: dispatched with "add annotations"/"annotate" and initial results incomplete (files processed < files in scope, type-inference gaps remain after first pass) — name unresolved files in Confidence block Gaps; caller re-invokes with narrower scope if N+ findings remain.
 

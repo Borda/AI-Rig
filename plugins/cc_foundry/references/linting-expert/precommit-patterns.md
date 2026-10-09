@@ -1,4 +1,4 @@
-<!-- Loaded by foundry:linting-expert (haiku + medium) -->
+<!-- Loaded by foundry:linting-expert (sonnet + medium) -->
 
 # pre-commit Configuration & Versioning (foundry:linting-expert specialized guidance)
 

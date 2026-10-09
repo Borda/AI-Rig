@@ -30,11 +30,8 @@ def test_review_summary_keeps_feasible_remediation_and_any_score_decrease(plugin
     [
         "cc_foundry/rules/quality-gates.md",
         "cc_develop/rules/quality-gates.md",
-        "cc_develop/rules/quality-gates-delta.md",
         "cc_oss/rules/quality-gates.md",
-        "cc_oss/rules/quality-gates-delta.md",
         "cc_research/rules/quality-gates.md",
-        "cc_research/rules/quality-gates-delta.md",
     ],
 )
 def test_output_length_cannot_force_redundant_completion_question(relative: str) -> None:

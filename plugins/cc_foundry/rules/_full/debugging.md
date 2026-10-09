@@ -18,7 +18,7 @@ Never patch symptom. Symptoms = evidence — treat as signal, not problem.
 
 **Loop bound**: max 3 diagnosis-fix iterations (matches §Safety breaks default); at limit — stop, report remaining symptoms, invoke `AskUserQuestion` before continuing.
 
-**Early-stop on repeated failure signature**: if a fix attempt draws the *same* rejection/failure signature (same error string, same failing assertion, same reviewer objection) twice in a row, stop immediately — don't wait for the iteration cap. Repeat means the last attempt added no new information toward resolution; a 3rd identical try only spends tokens. Report both attempts and the unchanged signature, then `AskUserQuestion`.
+**Early-stop on repeated failure signature**: if a fix attempt draws the *same* rejection/failure signature (same error string, same failing assertion, same reviewer objection) twice in a row, stop immediately — don't wait for the iteration cap. Repeat means the last attempt added no new information toward resolution; a 3rd identical try only spends tokens. Then `AskUserQuestion` with both attempts and the unchanged signature in the question text or every option's `preview` — not as reply text before the call, which can arrive as an empty progress update.
 
 ### Falsification check
 

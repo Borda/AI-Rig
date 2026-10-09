@@ -110,15 +110,21 @@ Spawning `Agent()` costs fixed overhead — measured ~120,851 tok (~73 tool-call
 
 ## Parallel Spawn Ceilings — by Model Tier
 
-Separate from the per-spawn threshold above: a ceiling on how many `Agent()` calls of a given model tier may be **in flight at once**, summed across every step/phase due in the same response. Independent pools per tier (cheaper/faster tiers tolerate wider fan-out; expensive reasoning tiers stay narrow) — not one shared total. Grow toward a tier's ceiling in waves of ≤5, never a sudden jump straight to it.
+<!-- policy-sibling: plugins/cc_foundry/rules/agent-spawn.md (§Parallel Spawn Ceilings) -->
 
-| Tier | Ceiling | Covers |
-| -- | -- | -- |
-| `haiku` | 20 | Cheap/fast prose passes (e.g. `foundry:humanizer`) |
-| `sonnet` | 8 | Most execution-tier agents (`foundry:qa-specialist`, `doc-scribe`, `linting-expert`, `web-explorer`, `creator`, `oss:cicd-steward`, `oss:gh-scraper`, `oss:repo-warden`, `research:data-steward`) |
-| `opus` (incl. `opusplan`) | 5 | Reasoning-tier agents (`foundry:challenger`, `curator`, `sw-engineer`, `perf-optimizer`, `solution-architect`, `research:scientist`, `oss:shepherd`) |
+In-flight `Agent()` ceilings per model tier, summed across every step/phase due in one response: `haiku` 20 · `sonnet` 8 · `opus` 5 — separate pools per tier, grown in waves of ≤5; pool = the spawn's effective model (an `Agent(..., model=…)` override counts). Tier roster table + multi-phase capping: `agent-spawn.md` §Parallel Spawn Ceilings — injected on the first `Agent()` call, loaded with skill/agent files.
 
-A skill firing several phases in the same response (e.g. `/foundry:audit --adversarial`) checks each phase's agent against this table and caps that phase's own batch width accordingly — a phase spawning `foundry:curator` (opus) is capped at 5 regardless of how wide a `--fast`-style flag would otherwise push it; a phase spawning `foundry:qa-specialist` (sonnet) has room to 8. Different tiers combining in one wave draw from separate pools, so an opus-tier phase and a sonnet-tier phase may run together without summing against a single shared number.
+## Lint/Format — Pinned Hooks, Not Bare Tools
+
+<!-- policy-sibling: plugins/cc_foundry/rules/python-code.md (§Lint/Format) -->
+
+Project pins lint/format tools via `.pre-commit-config.yaml` → never invoke them directly (`ruff`, `eslint`, `mdformat`, …; version/config drift vs CI); run `pre-commit run <hook-id> --files <path>`, ad-hoc checks included. Hook missing → add it to the config; no pin → direct tool use fine. Command forms: `python-code.md` §Lint/Format.
+
+## Instruction-File Compression Gate
+
+<!-- policy-sibling: plugins/cc_foundry/rules/markdown.md (§Instruction-File Compression Gate) -->
+
+Applies only to instruction files an LLM host loads (`AGENTS.md`, `CLAUDE.md`, rule, skill, or agent-definition files), never to ordinary docs or code. Compressing or structurally reformatting one = behavior-sensitive: byte-exact pre-change backup first, prove complete semantic preservation, restore the pre-change file on any loss; unresolved difference blocks completion. Five-step gate: `markdown.md` §Instruction-File Compression Gate (auto-loads on first access of any `*.md`) — Read before compressing.
 
 ## Ask Before Acting on Unknown Cause
 
@@ -129,3 +135,17 @@ When user asks "why" about something (deleted content, unexpected state, missing
 - Call `AskUserQuestion` tool directly — prose questions in brackets (`[AskUserQuestion: ...]`, `[Invoking AskUserQuestion: ...]`) do NOT satisfy this requirement; only actual tool invocation does
 
 Restoring without being asked = overstepping. "Why" = question, not request to fix.
+
+## Git Commit & Push — Hard Bans
+
+<!-- policy-sibling: plugins/cc_foundry/rules/git-commit.md -->
+
+Always on, format bullets included: the full commit rule (`git-commit.md`) is injected by `rule-inject.js` after the first commit-creating git call (`add`, `commit`, `push`, `merge`, …) of a session or subagent runs, beside that call's result — after the first message was drafted. Before drafting any commit message, Read `~/.claude/rules/foundry-git-commit.md` and its `_full/git-commit.md` unless already in context.
+
+- Never commit without authority: a documented skill workflow step, or a same-turn `AskUserQuestion` confirmation for every ad-hoc commit
+- Never `git add -A` / `git add .` (stage by name); never `--no-verify`; never `--no-gpg-sign` unless the user asks
+- Subject `type(scope): detail` ≤50 chars naming the highest-tier change in `git diff HEAD` + `git diff --stat HEAD`; never draft from session memory
+- Evidence-only body: every clause traces to a `+`/`-` line in `git diff HEAD`; no body line wrap; no GitHub auto-links (`#N`, `@name`); no non-VCS paths (`/tmp/`, `~/.claude/`)
+- Force-push (`-f`/`--force`/`--force-with-lease`) forbidden on any branch, always; regular `git push` asks via `AskUserQuestion` every time, skill workflows included
+- Detect the default branch dynamically, never hardcode `main`/`master`; prefer `git revert` over `reset --hard`, merge commits over rebase
+- Co-author trailer on every commit, after a `---` separator: `Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>` ; add `Co-authored-by: Codex <codex@openai.com>` when Codex shaped the outcome — replaces the host's default attribution line

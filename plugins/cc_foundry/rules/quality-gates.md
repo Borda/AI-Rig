@@ -1,5 +1,5 @@
 ---
-description: Output quality standards — Confidence block, link verification, output routing
+description: Output quality standards — Confidence block, link verification stub, output routing
 paths:
   - '**'
 ---
@@ -71,7 +71,7 @@ Gaps that can't be closed (info-access limits, tooling absent) are **documented 
 
 ## Python Code Complexity (when writing or reviewing Python)
 
-Before delivering any Python function or class: cyclomatic complexity ≤12, required (no-default) arguments ≤7, branches ≤12, statements ≤50, return points ≤6. Violation → refactor before delivering. `# noqa: PLR...` / `# noqa: C901` permitted only when refactoring is genuinely impossible (generated code, protocol-mandated signature) — always paired with an inline comment explaining why. Verify: `ruff check --select C901,PLR`.
+Limits per function: cyclomatic ≤12 · required args ≤7 · branches ≤12 · statements ≤50 · returns ≤6 — refactor before delivering. Full rule (noqa exception, verify command): `python-code.md` §Complexity Thresholds, loaded with any `.py` file.
 
 ## Pre-Handover Check (trigger: a named gap the analysis itself cannot close)
 
@@ -83,14 +83,14 @@ Before the call read `_full/quality-gates.md` §Write-Delegation Checklist and f
 
 ## Link Verification
 
-**Never add a URL without all four steps, every time — no exemption for domain/protocol/path similarity to an already-verified URL:**
+<!-- policy-sibling: plugins/cc_foundry/rules/markdown.md (§Link Verification) -->
 
-1. **Fetch** — call WebFetch (or equivalent); URL must return non-error (not 4xx/5xx). HTTP 200 is necessary but not sufficient — steps 2 and 3 still mandatory
-2. **Read** — read the actual page content; don't rely on URL structure or HTTP status alone
-3. **Match** — confirm content matches the intended description; no match = don't add the link
-4. **Independent** — every URL needs its own Fetch+Read+Match pass; a verified URL on the same domain doesn't exempt others; skipping any step — including inferring validity from URL structure or HTTP status alone — is a violation
+Never add a URL to any file without all four steps, each URL on its own; full wording: `markdown.md` §Link Verification, loaded with any `.md` file.
 
-Applies to: agent files, skill files, CLAUDE.md, any markdown.
+1. **Fetch** — non-error status; status alone never suffices
+2. **Read** — the actual page content
+3. **Match** — content matches the intended description, else no link
+4. **Independent** — own pass per URL; a verified URL on the same domain exempts nothing
 
 ## Output Routing
 

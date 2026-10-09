@@ -1,5 +1,5 @@
 ---
-description: Python coding standards — docstrings, deprecation, version policy, library API awareness, multi-OS portability, PyTorch AMP
+description: Python coding standards — docstrings, deprecation, version policy, library API awareness, multi-OS portability, PyTorch AMP, pinned lint/format hooks
 paths:
   - '**/*.py'
 ---
@@ -76,7 +76,7 @@ Applies to **every code-touching agent**, not `foundry:sw-engineer` alone. Train
 
 ## Multi-OS Executables — a POSIX Assumption is a Defect
 
-Scripts, hooks, `bin/` entry points, and CI steps run on Linux, macOS, and native Windows. Fix a portability break at its source; never skip the platform. (Test-side rules in `python-testing.md` §Cross-OS Tests.)
+Applies when the project supports more than one OS — declared by a CI OS matrix, packaging classifiers, or project docs; a single-OS project may skip it. There, scripts, hooks, `bin/` entry points, and CI steps run on every supported OS (typically Linux, macOS, and native Windows). Fix a portability break at its source; never skip a supported platform. (Test-side rules in `python-testing.md` §Cross-OS Tests.)
 
 - `pathlib` throughout: `Path(p).is_absolute()`, never `startswith("/")`; `PurePath(p).as_posix()` before hashing, serializing, or comparing — native separators change the digest. POSIX-absolute literals are unportable fixtures: `/host/x` resolves to `D:\host\x` on Windows.
 - **Serialized telemetry or provenance paths are cross-host coordinates, not local paths.** Preserve the exact string; recognize declared POSIX and Windows absolute forms with `PurePosixPath` and `PureWindowsPath`; never convert through host `Path` before an exact comparison. Regressions exercise both forms on every host.
@@ -117,6 +117,9 @@ A dict with known, fixed keys is the same failure as a bare string with fixed va
 - `slots=True` on dataclasses instantiated in loops or held in large collections.
 - **Boundary mirrors §Closed Option Sets** — parse into the type once at the edge (`Config(**raw)`), pass the typed object inward; serialize back to plain dict only on the way out (`dataclasses.asdict`).
 - 3+ positional args of the same type ⇒ the call site is unreadable and mis-orderable: make it a dataclass or force keyword-only (`*`).
+- **Plain `dict` stays right for dynamic keys, external JSON, and simple mappings** — the typed record is for reused, fixed-shape internal records, where it clarifies the contract and cuts field-name mistakes.
+- A shared types module must reduce real complexity, not just relocate definitions.
+- **Preserve runtime validation, behaviour, and serialized schemas** when introducing a record type — annotations alone do not enforce types.
 
 ## Closed Option Sets — never bare strings
 
@@ -143,7 +146,7 @@ class Severity(str, Enum):
 
 ## Complexity Thresholds
 
-Enforce via ruff `C901` + `PLR` rules (see `foundry:linting-expert` for config). Hard limits per function:
+Applies to every Python function or class written or reviewed by any agent — check before delivering. Enforce via ruff `C901` + `PLR` rules (see `foundry:linting-expert` for config). Hard limits per function:
 
 | Metric | Limit | ruff rule | Refactor signal |
 | -- | -- | -- | -- |
@@ -154,4 +157,14 @@ Enforce via ruff `C901` + `PLR` rules (see `foundry:linting-expert` for config).
 | Statements | ≤50 | `PLR0915` | split responsibility |
 | Return points | ≤6 | `PLR0911` | consolidate early-return paths |
 
-When a function exceeds any limit: **refactor first**. Adding `# noqa: PLR...` allowed only when refactoring genuinely impossible (generated code, parser output, protocol-mandated signature) — always add inline comment explaining why.
+When a function exceeds any limit: **refactor first**. Adding `# noqa: PLR...` / `# noqa: C901` allowed only when refactoring genuinely impossible (generated code, parser output, protocol-mandated signature) — always add inline comment explaining why. Verify: `ruff check --select C901,PLR` (through the pinned hook where the project pins ruff — §Lint/Format). Per-limit rationale: `_full/quality-gates.md` §Python Code Complexity.
+
+## Lint/Format — Pinned Hooks, Not Bare Tools
+
+<!-- policy-sibling: plugins/cc_foundry/rules/claude-config.md (§Lint/Format stub) -->
+
+Project pins lint/format tools via `.pre-commit-config.yaml` (ruff, eslint, mdformat, prettier, codespell, …) → **never invoke those tools directly** (`ruff check`, `ruff format`, `eslint`, `mdformat`, …) — version/config drift vs CI. Invoke the specific hook: `pre-commit run <hook-id> --files <path>` (single hook, targeted files) · `pre-commit run --all-files` (full sweep) · `pre-commit run <hook-id> --all-files` (single hook, repo-wide). Hook ids come from that config.
+
+- Applies to ad-hoc checks during edits — not just the commit-time run
+- Hook missing/needed and not yet in config → add it to `.pre-commit-config.yaml` rather than shelling out around it
+- No pre-commit pin in the project → direct tool use is fine

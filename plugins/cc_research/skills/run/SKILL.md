@@ -29,10 +29,6 @@ COLAB_KNOWN_HW:             H100, L4, T4, A100
 SUMMARY_INTERVAL:           10 iterations
 DIMINISHING_RETURNS_WINDOW: 5 iterations < 0.5% each → warn user and suggest stopping
 STATE_DIR:                  .experiments/state/<run-id>/  (timestamped dir per run — see .claude/rules/foundry-artifact-lifecycle.md)
-SENTINEL_SLUG_FORMULA: |
-  eval "$(bash "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/git_slugs.sh")"
-  # Sentinel path: ${TMPDIR:-/tmp}/claude-commit-auth-${REPO_SLUG}-${BRANCH_SLUG}  # tmpdir-exempt: user-shell-boundary
-  # Bash state is lost between tool calls — re-source git_slugs.sh at each use site; it is the only authorized slug form.
 ```
 
 <!-- Note: STATE_DIR (.experiments/state/) holds per-iteration artifacts (diary, experiments.jsonl).
@@ -366,18 +362,6 @@ Then proceed to R5.
 
 ### Step R5: Iteration loop
 
-```bash
-# REPO_SLUG / BRANCH_SLUG: source the single authorized slug form (see <constants>)
-eval "$(bash "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/git_slugs.sh")"  # timeout: 3000
-COMMIT_SENTINEL="${TMPDIR:-/tmp}/claude-commit-auth-${REPO_SLUG}-${BRANCH_SLUG}"  # tmpdir-exempt: user-shell-boundary
-touch "$COMMIT_SENTINEL"  # timeout: 3000
-# trap doesn't survive across Bash calls — commit-guard.js hook (foundry-owned) handles protection instead
-```
-
-> **Dependency — `commit-guard.js` (requires `foundry` plugin)**: the commit-sentinel dance above (touch at R5, re-touch each phase, `rm` at cleanup) is enforced by foundry's `commit-guard.js` `PreToolUse` hook. That hook ships with the `foundry` plugin only — research does not bundle it. **Standalone install (foundry absent): the sentinel touches become inert and `git commit` proceeds unguarded.** The sentinel logic is still safe to run (touch/`rm` on a temp file are harmless no-ops without the hook); it simply provides no protection. If you rely on atomic-commit guarding during `research:run`, install `foundry`.
-
-**Sentinel liveness**: touch `$COMMIT_SENTINEL` after each Phase 8 result write to extend monitoring window — do NOT rely solely on sentinel touched at loop start; slow iterations exceed 15-min TTL. Re-derive slug per SENTINEL_SLUG_FORMULA from `<constants>` (bash state lost between calls).
-
 **`--team` mode**: If `--team` active, follow `modes/team.md` and execute Phases A–D in place of standard iteration loop below.
 
 ```bash
@@ -518,14 +502,6 @@ cat "$CLAUDE_SKILL_DIR/modes/codex-copilot.md"  # timeout: 5000
 `git diff --stat`. If no files changed (no-op): append to JSONL with `status: no-op`, skip to Phase 8 (log), continue loop.
 
 #### Phase 4 — Commit change
-
-Refresh commit sentinel before staging — R5 loop can exceed the 15-min sentinel TTL set in R5 setup. Slug computation unavoidably re-run (bash state lost between tool calls); path pattern identical to R5 setup block above:
-
-```bash
-# refresh sentinel — bash state lost between calls, re-source slug (R5 form)
-eval "$(bash "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/git_slugs.sh")"  # timeout: 3000
-touch "${TMPDIR:-/tmp}/claude-commit-auth-${REPO_SLUG}-${BRANCH_SLUG}"  # timeout: 3000  # tmpdir-exempt: user-shell-boundary
-```
 
 Stage only modified files (never `git add -A`):
 
@@ -690,17 +666,9 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" 
 - **Early stop**: if `target` set, stop when metric crosses it. Mark `state.json` `status: goal-achieved`.
 - **Context compaction** (every SUMMARY_INTERVAL): write full iteration summary to `.experiments/state/<run-id>/progress-<i>.md`, discard verbose per-iteration details from working memory. Retain only: current metric, iteration count, JSONL path, `best_commit`. Full history recoverable from `experiments.jsonl` and `ideation-<i>.md`.
 
-**After campaign loop completes** (outside per-iteration loop):
-
-```bash
-# fresh shell — $COMMIT_SENTINEL gone, re-derive path before rm or cleanup is a silent no-op on ""
-eval "$(bash "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/git_slugs.sh")"  # timeout: 3000
-rm -f "${TMPDIR:-/tmp}/claude-commit-auth-${REPO_SLUG}-${BRANCH_SLUG}"  # timeout: 3000  (best-effort; commit-guard.js owns lifecycle)  # tmpdir-exempt: user-shell-boundary
-```
-
 ### Step R6: Results report
 
-Pre-compute branch before writing: `BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')` — deliberate second slug form, report paths only; commit sentinels use `git_slugs.sh`/`BRANCH_SLUG` (SENTINEL_SLUG_FORMULA). Not a bypass — retracted audit finding.
+Pre-compute branch before writing: `BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')` — report paths only.
 
 ```bash
 mkdir -p .reports/research  # timeout: 3000

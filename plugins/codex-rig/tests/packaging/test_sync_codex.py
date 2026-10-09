@@ -6,6 +6,8 @@ import hashlib
 import importlib.util
 import io
 import json
+import re
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -980,3 +982,69 @@ def test_instruction_preflight_accepts_stale_template_then_requires_current_heal
         if len(call) > 1 and Path(call[1]).name == "install_global_agents.py" and "--check" not in call
     )
     assert calls.index(check_calls[-1], install + 1) > install
+
+
+def _sync_with_real_instruction_installer(
+    tmp_path: Path, template: bytes
+) -> tuple[list[tuple[str, ...]], Path, Path, io.StringIO]:
+    """Run sync with fake Codex commands but the real global-instruction installer and an installed cache layout."""
+    module = _load_sync()
+    root = _marketplace_fixture(tmp_path)
+    plugin = root / "plugins" / "codex-rig"
+    (plugin / "assets" / "AGENTS.md").write_bytes(template)
+    _write_fixture_package_manifest(plugin, "0.3.0")
+    home = tmp_path / "home"
+    installed = home / "plugins" / "cache" / "borda-ai-rig" / "codex-rig" / "0.3.0"
+    shutil.copytree(PLUGIN_ROOT / "shared", installed / "shared", ignore=shutil.ignore_patterns("__pycache__"))
+    calls: list[tuple[str, ...]] = []
+    base_run = _fake_runner(root, calls)
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Execute every instruction-installer call against the isolated home; fake all Codex commands."""
+        if len(command) > 1 and Path(command[1]).name == "install_global_agents.py":
+            calls.append(tuple(str(item) for item in command))
+            return subprocess.run(
+                [sys.executable, str(SCRIPTS_DIR / "install_global_agents.py"), *command[2:]], **kwargs
+            )
+        return base_run(command, **kwargs)
+
+    output = io.StringIO()
+    assert module.sync_codex(module.parse_args([]), run=run, environ={"CODEX_HOME": str(home)}, stdout=output) == 0
+    return calls, home, installed, output
+
+
+@pytest.mark.integration
+def test_sync_writes_installed_root_so_global_pointers_resolve(tmp_path: Path) -> None:
+    """Sync renders the installed cache root into the global block, not the marketplace checkout it read it from.
+
+    The template is read from the marketplace checkout, but a session in any project must open the shared docs of the
+    installed cache. Sync's own post-install health check must also accept the block it just wrote.
+    """
+    calls, home, installed, output = _sync_with_real_instruction_installer(
+        tmp_path, (PLUGIN_ROOT / "assets" / "AGENTS.md").read_bytes()
+    )
+
+    body = (home / "AGENTS.md").read_text(encoding="utf-8")
+    assert re.findall(r"^`PLUGIN_ROOT` = `([^`]+)`", body, re.MULTILINE) == [str(installed)]
+    pointers = set(re.findall(r"`(shared/[\w.-]+\.(?:md|py))`", body))
+    assert "shared/global-baseline-details.md" in pointers
+    assert sorted(pointer for pointer in pointers if not (installed / pointer).is_file()) == []
+    installer_calls = [call for call in calls if Path(call[1]).name == "install_global_agents.py"]
+    assert [call[-2:] == ("--plugin-root", str(installed)) for call in installer_calls] == [False, True, True]
+    assert "global instructions created" in output.getvalue()
+
+
+@pytest.mark.integration
+def test_sync_calls_older_payload_installer_without_plugin_root(tmp_path: Path) -> None:
+    """A selected payload whose template predates the root placeholder gets the installer arguments it understands.
+
+    Repository sync can run against an older marketplace ref whose installer rejects unknown ``--plugin-root``.
+    """
+    template = b"# Global Agent Instructions\nOlder managed policy.\n"
+
+    calls, home, _installed, _output = _sync_with_real_instruction_installer(tmp_path, template)
+
+    assert template in (home / "AGENTS.md").read_bytes()
+    installer_calls = [call for call in calls if Path(call[1]).name == "install_global_agents.py"]
+    assert len(installer_calls) == 3
+    assert not any("--plugin-root" in call for call in installer_calls)

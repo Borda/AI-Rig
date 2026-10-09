@@ -32,7 +32,7 @@ Spawn **foundry:curator** per file with efficiency-specific prompt:
 
 > Audit `<file>` for cost and efficiency signals only. Do NOT run general quality checks. Check:
 >
-> 1. **Model tier**: `model:` declared? If `model: opus` or `model: opusplan`, does task genuinely require reasoning depth — adversarial multi-step analysis, architectural design, complex implementation? Flag if task primarily: template fill, pattern matching, structured summarization, orchestrator-only dispatch, or single-pass structured write.
+> 1. **Model tier**: `model:` declared? `opusplan` as subagent frontmatter runs `sonnet` (subagents never enter plan mode) — flag it; use `opus` or `sonnet` explicitly. If `model: opus`, does task genuinely require reasoning depth — adversarial multi-step analysis, architectural design, complex implementation? Flag if task primarily: template fill, pattern matching, structured summarization, orchestrator-only dispatch, or single-pass structured write.
 >
 >    **Performance-safety sub-check (mandatory before any downgrade recommendation)**: does agent produce quality-sensitive output? Signals: public-facing text (contributor replies, blog posts), security analysis (OWASP, exploit reasoning), adversarial reasoning, complex multi-file code design, creative original content. Any signal present → add `performance_risk: medium|high` to finding, require empirical validation note — do NOT recommend downgrade as P1/P2 without this caveat. A lower-cost model degrading output quality is not an efficiency gain.
 >
@@ -173,7 +173,7 @@ Spawn **foundry:curator** consolidator to merge all findings:
 >
 > Produce a cost-reduction report with these sections:
 >
-> 1. **Cheapest Viable Model table** — one row per agent/skill with cost issue: `| file | current model+effort | minimum viable | rationale | estimated saving |`; saving = opus→sonnet: LARGE, opusplan→sonnet: LARGE, xhigh→high: MEDIUM, xhigh→medium: MEDIUM (heuristic tiers — not measured against live run costs)
+> 1. **Cheapest Viable Model table** — one row per agent/skill with cost issue: `| file | current model+effort | minimum viable | rationale | estimated saving |`; saving = opus→sonnet: LARGE, xhigh→high: MEDIUM, xhigh→medium: MEDIUM (heuristic tiers — not measured against live run costs)
 > 2. **Unbounded Spawn Patterns** — list files with uncapped per-item agent dispatch; recommended cap + batch strategy
 > 3. **Token Bloat Hotspots** — top 5 files by redundant inline content; section name, line count, suggested action
 > 4. **Boilerplate Duplication + Bin/ Extraction Candidates** — pattern name × occurrence count × total redundant lines × extraction target; for each bin/ candidate from Phase A+B: block purpose, occurrence count, suggested `bin/<script-name>.sh`, estimated line reduction. Merge with Check 33 (Phase B2) similarity clusters: include Table 1 and Table 2 per plugin inline in this section, sorted by feasibility HIGH→LOW

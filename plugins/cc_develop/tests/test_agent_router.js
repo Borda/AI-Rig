@@ -3,9 +3,11 @@
 // Run: node --test plugins/cc_develop/tests/test_agent_router.js
 //
 // Only the network-free, deterministic helpers are covered here: cosine,
-// findBestCosine, and readDescription. The stdin main path is guarded by
-// require.main === module in the hook, so requiring the module is side-effect
-// free (no network, no stdin listener registered).
+// findBestCosine, readDescription, buildLlmRequest, parseLlmResponse and
+// pickHaikuFromModels. The
+// stdin main path is guarded by require.main === module in the hook, so
+// requiring the module is side-effect free (no network, no stdin listener
+// registered).
 
 "use strict";
 
@@ -15,7 +17,14 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { cosine, findBestCosine, readDescription } = require("../hooks/agent-router.js");
+const {
+  buildLlmRequest,
+  cosine,
+  findBestCosine,
+  parseLlmResponse,
+  pickHaikuFromModels,
+  readDescription,
+} = require("../hooks/agent-router.js");
 
 test("cosine: identical vectors → 1", () => {
   assert.equal(cosine([1, 2, 3], [1, 2, 3]), 1);
@@ -109,4 +118,38 @@ test("readDescription: missing description → empty string", () => {
 
 test("readDescription: nonexistent file → empty string (no throw)", () => {
   assert.equal(readDescription(path.join(tmpDir, "does-not-exist.md")), "");
+});
+
+// ── LLM pick request/response ───────────────────────────────────────────────
+
+test("buildLlmRequest: carries the resolved model id, thinking disabled", () => {
+  const body = buildLlmRequest([{ name: "a", description: "does a" }], "q", "claude-haiku-9");
+  assert.equal(body.model, "claude-haiku-9");
+  assert.deepEqual(body.thinking, { type: "disabled" });
+});
+
+test("pickHaikuFromModels: first entry with line 'haiku', never inferred from the id", () => {
+  const raw = JSON.stringify({
+    data: [
+      { id: "claude-haiku-preview", line: null },
+      { id: "claude-haiku-6", line: "haiku" },
+      { id: "claude-haiku-5-5", line: "haiku" },
+    ],
+  });
+  assert.equal(pickHaikuFromModels(200, raw), "claude-haiku-6");
+});
+
+test("parseLlmResponse: first text block wins over a leading thinking block", () => {
+  const raw = JSON.stringify({ content: [{ type: "thinking" }, { type: "text", text: " Agent-A \n" }] });
+  assert.equal(parseLlmResponse(200, raw), "agent-a");
+});
+
+test("parseLlmResponse: non-2xx error body throws, never returns 'none'", () => {
+  const raw = JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "bad model" } });
+  assert.throws(() => parseLlmResponse(400, raw), /HTTP 400 invalid_request_error: bad model/);
+});
+
+test("parseLlmResponse: no text block throws with stop_reason", () => {
+  const raw = JSON.stringify({ content: [{ type: "thinking" }], stop_reason: "max_tokens" });
+  assert.throws(() => parseLlmResponse(200, raw), /no text block \(stop_reason: max_tokens\)/);
 });

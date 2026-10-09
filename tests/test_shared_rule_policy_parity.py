@@ -283,12 +283,23 @@ def test_a_delta_states_no_rule_its_full_file_lacks(plugin: str) -> None:
 
 
 @pytest.mark.parametrize("plugin", SATELLITES)
-def test_a_delta_carries_its_output_routing_section_verbatim(plugin: str) -> None:
-    """Output Routing is the one section the delta must supply, so it may not drift from the full file.
+def test_a_delta_output_routing_defers_to_foundry_and_keeps_its_follow_up_examples(plugin: str) -> None:
+    """The delta points at foundry's Output Routing instead of repeating it, keeping only plugin additions.
+
+    Foundry's copy is delivered whenever the delta is (``sync_rules`` proves it first), so repeating the
+    routing body would re-send it every turn. The follow-up gate examples are the plugin-specific part and
+    must match the plugin's own full file.
 
     Args:
         plugin: Satellite plugin directory name.
     """
     full = _sections(_rule_files()[plugin].read_text(encoding="utf-8"))["Output Routing"]
     delta = _sections(_delta_files()[plugin].read_text(encoding="utf-8"))["Output Routing"]
-    assert delta == full, f"{plugin}/{DELTA_NAME} §Output Routing differs from {RULE_NAME}; copy it across verbatim"
+    pointer = f"{plugin}/{DELTA_NAME} §Output Routing must point at foundry's Output Routing"
+    assert "foundry §Output Routing" in delta, pointer
+    assert "`foundry-quality-gates.md`" in delta, pointer
+    examples = [line for line in delta.splitlines() if line.startswith("  - `")]
+    assert examples, f"{plugin}/{DELTA_NAME} §Output Routing lost its follow-up gate examples"
+    missing = [line for line in examples if line not in full]
+    assert not missing, f"{plugin}/{DELTA_NAME} follow-up examples differ from {RULE_NAME}: {missing}"
+    assert len(delta) < len(full) // 2, f"{plugin}/{DELTA_NAME} §Output Routing repeats the shared body"

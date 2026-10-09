@@ -48,8 +48,12 @@ import stat
 import sys
 import tempfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
+#: Token in the packaged template that rendering replaces with the absolute installed Codex Rig plugin root.
+PLUGIN_ROOT_PLACEHOLDER = b"{{CODEX_RIG_PLUGIN_ROOT}}"
+#: Rendered template line that defines ``PLUGIN_ROOT``, capturing the root written into its code span.
+RENDERED_ROOT_PATTERN = re.compile(rb"^`PLUGIN_ROOT` = `([^`\r\n]+)`", re.MULTILINE)
 #: Fixed opening text of the begin marker that precedes the managed global-instructions block.
 BEGIN_PREFIX = b"<!-- codex-rig:global-agents begin sha256="
 #: Pattern for a complete begin marker line, capturing the SHA-256 digest of the managed block body.
@@ -72,6 +76,49 @@ class UnsafeGlobalAgentsState(ValueError):
 def sha256(payload: bytes) -> str:
     """Return the lowercase SHA-256 digest for exact bytes."""
     return hashlib.sha256(payload).hexdigest()
+
+
+def rendered_template(template: bytes, source: Path, plugin_root: str | None = None) -> bytes:
+    """Write the absolute Codex Rig plugin root into the template's single placeholder.
+
+    The managed block is loaded by Codex sessions in unrelated projects, so its packaged ``shared/<file>`` pointers
+    and ``PLUGIN_ROOT`` helper recipes resolve only when the block itself names the installed plugin root. The root
+    defaults to the package that ships ``source`` (``<plugin-root>/assets/AGENTS.md``); sync passes the installed
+    cache root explicitly because it reads the template from the marketplace checkout. A root on this host is
+    canonicalized like the derived default (symlinks resolved, relative values anchored), so install, sync and a
+    later ``--check`` render one block however a symlinked Codex home was spelled; an absolute literal of the other
+    path flavour is written verbatim. A template without the placeholder is returned unchanged, which keeps arbitrary
+    or older templates installable byte for byte.
+
+    Example:
+        >>> template = b"`PLUGIN_ROOT` = `{{CODEX_RIG_PLUGIN_ROOT}}`\\n"
+        >>> rendered_template(template, Path("unused"), r"D:\\codex\\codex-rig\\0.1.0")
+        b'`PLUGIN_ROOT` = `D:\\\\codex\\\\codex-rig\\\\0.1.0`\\n'
+    """
+    count = template.count(PLUGIN_ROOT_PLACEHOLDER)
+    if count == 0:
+        if plugin_root is not None:
+            raise UnsafeGlobalAgentsState("template has no plugin-root placeholder; omit --plugin-root")
+        return template
+    if count > 1:
+        raise UnsafeGlobalAgentsState("template repeats the plugin-root placeholder; refusing to render")
+    root = plugin_root if plugin_root is not None else str(source.resolve().parent.parent)
+    # The derived default is already resolved; resolving an explicit host root too keeps `--plugin-root <link>` and
+    # `--source <link>/assets/AGENTS.md` from rendering two different blocks (a false stale-template diagnosis). An
+    # absolute literal of the other flavour is kept: the host Path flavour would rewrite its separators.
+    other_flavour = not Path(root).is_absolute() and (
+        PurePosixPath(root).is_absolute() or PureWindowsPath(root).is_absolute()
+    )
+    if not other_flavour:
+        root = os.path.realpath(root)
+    # The root is rendered inside a one-line Markdown code span; a backtick or line break would end it early.
+    if any(character in root for character in "`\r\n"):
+        raise UnsafeGlobalAgentsState("plugin root contains a backtick or line break; refusing to render")
+    try:
+        encoded = root.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise UnsafeGlobalAgentsState("plugin root is not representable as UTF-8; refusing to render") from error
+    return template.replace(PLUGIN_ROOT_PLACEHOLDER, encoded)
 
 
 def managed_block(template: bytes) -> bytes:
@@ -151,6 +198,53 @@ def stripped_payload(existing: bytes) -> tuple[bytes, str]:
     return updated, "removed"
 
 
+def authenticated_managed_body(existing: bytes) -> bytes | None:
+    """Return the body of the single authenticated managed block, without changing anything.
+
+    Read-only diagnostics use it to inspect what installation wrote. ``None`` means there is no such block: absent,
+    duplicated, malformed, or edited by hand (``--check`` reports the last three).
+
+    Example:
+        >>> managed_block(b"body\\n") == BEGIN_PREFIX + sha256(b"body\\n").encode() + b" -->\\nbody\\n" + END_MARKER
+        True
+        >>> authenticated_managed_body(b"user notes\\n\\n" + managed_block(b"body\\n"))
+        b'body\\n'
+        >>> authenticated_managed_body(managed_block(b"body\\n").replace(b"body", b"edit")) is None
+        True
+    """
+    if existing.count(BEGIN_PREFIX) != 1 or existing.count(END_MARKER.rstrip(b"\n")) != 1:
+        return None
+    begin_match = BEGIN_PATTERN.search(existing)
+    if begin_match is None:
+        return None
+    end_index = existing.find(END_MARKER, begin_match.end())
+    if end_index < 0:
+        return None
+    body = existing[begin_match.end() : end_index]
+    return body if sha256(body) == begin_match.group(1).decode("ascii") else None
+
+
+def rendered_plugin_root(body: bytes) -> str | None:
+    """Return the plugin root a managed block body was rendered with, or ``None`` when it names none.
+
+    A body from a template that predates the ``PLUGIN_ROOT`` line names no root; diagnostics compare a returned root
+    with the running plugin to spot a block left behind by a plugin update.
+
+    Example:
+        >>> rendered_plugin_root(b"`PLUGIN_ROOT` = `/opt/codex-rig/0.1.0`, the installed Codex Rig package\\n")
+        '/opt/codex-rig/0.1.0'
+        >>> rendered_plugin_root(b"# Global Agent Instructions\\n") is None
+        True
+    """
+    roots = RENDERED_ROOT_PATTERN.findall(body)
+    if len(roots) != 1:
+        return None
+    try:
+        return roots[0].decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
 def backup_target(target: Path, codex_home: Path, payload: bytes) -> Path:
     """Create and verify a unique backup before changing an existing target."""
     backup_root = codex_home / "backups" / "codex-rig"
@@ -193,15 +287,16 @@ def atomic_write(
             temporary_path.unlink()
 
 
-def check_global_agents(source: Path, codex_home: Path) -> list[str]:
+def check_global_agents(source: Path, codex_home: Path, *, plugin_root: str | None = None) -> list[str]:
     """Diagnose only the managed instruction file and two verified legacy skill routes.
 
     Missing optional setup is allowed. Diagnostics contain reasons, never private policy bytes; this is not a scan of
-    the entire user directory and does not modify any target, backup, or skill.
+    the entire user directory and does not modify any target, backup, or skill. The template is rendered with the same
+    plugin root installation would write, so a current block is not misreported as stale.
     """
     if source.is_symlink() or not source.is_file():
         raise UnsafeGlobalAgentsState("template must be an ordinary file")
-    template = source.read_bytes()
+    template = rendered_template(source.read_bytes(), source, plugin_root)
     block = managed_block(template)
     reasons: list[str] = []
     target = codex_home / "AGENTS.md"
@@ -267,16 +362,17 @@ def migrated_prefix_payload(existing: bytes, block: bytes, digest: str) -> bytes
 
 
 def install_global_agents(
-    source: Path, codex_home: Path, legacy_prefix_sha256: str | None = None
+    source: Path, codex_home: Path, legacy_prefix_sha256: str | None = None, *, plugin_root: str | None = None
 ) -> tuple[str, Path, Path | None]:
     """Install the template or explicitly migrate one digest-selected legacy prefix.
 
     Ordinary installation refuses unmanaged global-policy overlap. Migration removes only the reviewed prefix before the
-    authenticated managed block and keeps all custom suffix bytes; every changed existing target gets a backup.
+    authenticated managed block and keeps all custom suffix bytes; every changed existing target gets a backup. The
+    block holds the rendered template, so a new plugin root (a plugin upgrade) updates it like any template change.
     """
     if source.is_symlink() or not source.is_file():
         raise UnsafeGlobalAgentsState(f"template must be an ordinary file: {source}")
-    template = source.read_bytes()
+    template = rendered_template(source.read_bytes(), source, plugin_root)
     block = managed_block(template)
     target = codex_home / "AGENTS.md"
     if target.is_symlink():
@@ -351,6 +447,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, help="packaged assets/AGENTS.md template (required unless --remove)")
     parser.add_argument("--codex-home", type=Path, required=True, help="target Codex home")
+    parser.add_argument(
+        "--plugin-root",
+        help="absolute installed Codex Rig root written into the managed block (default: package containing --source)",
+    )
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument("--remove", action="store_true", help="strip the managed block instead of installing it")
     actions.add_argument(
@@ -363,6 +463,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if not args.remove and args.source is None:
         parser.error("--source is required unless --remove is given")
+    if args.remove and args.plugin_root is not None:
+        parser.error("--plugin-root renders the template and does not apply to --remove")
     return args
 
 
@@ -371,7 +473,7 @@ def main() -> int:
     args = parse_args()
     try:
         if args.check:
-            reasons = check_global_agents(args.source, args.codex_home)
+            reasons = check_global_agents(args.source, args.codex_home, plugin_root=args.plugin_root)
             for reason in reasons:
                 print(f"global-agents-check: {reason}", file=sys.stderr)
             if reasons:
@@ -384,7 +486,7 @@ def main() -> int:
             action, target, backup = remove_global_agents(args.codex_home)
         else:
             action, target, backup = install_global_agents(
-                args.source, args.codex_home, args.migrate_legacy_prefix_sha256
+                args.source, args.codex_home, args.migrate_legacy_prefix_sha256, plugin_root=args.plugin_root
             )
     except UnsafeGlobalAgentsState as error:
         print(f"global-agents-error: {error}", file=sys.stderr)

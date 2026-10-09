@@ -36,6 +36,7 @@ paths:
   - Keep single, simple `str`, `bool`, `int`, and `float` cases bare and let pytest derive the default ID; a wish for a descriptive ID alone does not justify a `pytest.param` wrapper. Use a concise semantic ID for a generated oversized string whose default ID would be unreadable.
   - Wrap every tuple case, including multi-argument rows, as `pytest.param(..., id="meaningful-case")`: pass row arguments separately, and preserve a tuple-valued single argument as `pytest.param((...), id=...)`.
   - Use `pytest.param` with semantic IDs for functions, containers, and other opaque or unstable objects, retaining case-specific `marks=`. IDs describe behavior or intent, never memory addresses or object hashes.
+  - Remove optional trailing commas that force short lists or calls onto multiple lines, then run the project's formatter/linter hooks (`claude-config.md` §Lint/Format). Retain required tuple commas, comments, and formatter-restored wrapping; skip ambiguous edits. Preserve values, argument unpacking, order, duplicates, marks, and assertions.
 - Group topic-related tests into class; class name carries unit (and optionally condition) so method names describe expected outcome only. The shared prefix moves into the class name and comes out of every method name — the method reads as the assertion, not as a restatement of its subject:
 
 ```python
@@ -57,9 +58,15 @@ Markers exist so a suite can be sliced by what a test *requires*, not by what it
 - Reuse a repeated collection-time `pytest.mark.skipif(...)` condition as a named decorator (e.g. `_skip_node_unavailable`), preserving its predicate and reason. This does not authorize new skips or weaken the capability-probe policy.
 - Keep full CI unfiltered; marker selection is for local and targeted runs.
 
+## Parallel Runs (pytest-xdist)
+
+- Wide runs go parallel (`-n <workers>`); keep focused single-file runs serial, where worker startup costs more than it saves.
+- Drop `-n` when the failure itself is what you are reading: xdist interleaves worker output, hides `-x` ordering, and breaks `--pdb`. Reproduce a failure serially before diagnosing it.
+- A test that passes serially and fails only under `-n` is a real defect, not an xdist artifact — usually shared machine-global state (a `${TMPDIR}` sentinel without its `-${CSID}` suffix, per `claude-config.md` §TMPDIR Sentinel Scoping; a fixed port; a file written outside `tmp_path`). Fix the isolation; never pin that suite serial to hide it.
+
 ## Cross-OS Tests
 
-Companion to `python-code.md` §Multi-OS Executables. Production portability is fixed there; these are the test-side rules.
+Companion to `python-code.md` §Multi-OS Executables, same scope: projects supporting more than one OS. Production portability is fixed there; these are the test-side rules.
 
 - **Skips are the last resort.** Never a blanket `skipif(sys.platform == "win32")` — probe the capability and skip on `OSError`. Document each surviving skip and re-audit it.
 - Test skips are **collection-time decorators only** (`pytest.mark.skipif`, `pytest.mark.skip`, or parametrized marks). Never call `pytest.skip()` from a test or fixture body.

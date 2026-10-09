@@ -47,6 +47,8 @@ Box `╔═╗`/`╚═╝` + `▓` footer frame the reply against surrounding t
 
 - Narrate at milestones; print `[→ what and why]` before significant Bash calls
 - 5+ min silence warrants a status note
+- Body opens with short plain-English sentence naming full topic or question before technical detail, so each reply stands alone — incl. after topic switch or long pause — progress updates, questions, approval requests, errors, blockers, handoffs, final answers. No unexplained "both"/"that"; no conversation recap. Never prepend prose to machine-only payloads or break a requested exact output format
+- Structured terminal updates: one intro sentence, then bullets for parallel facts, numbered steps for ordered actions, compact tables for comparisons. Concrete counts + evidence links; separate completion status, verification, open work, next owner/action. Detail goes in linked full report. Preserve exact-output contracts and native question ownership <!-- policy-sibling: plugins/codex-rig/assets/AGENTS.md §Coordination Discipline, plugins/codex-rig/shared/native-skill-contract.md -->
 
 ## Execution Failure Signaling
 
@@ -73,6 +75,12 @@ Block is FIRST content, not a footnote; state what was asked, what can't proceed
 - **Verbal summary as skeleton**: user verbal summary = output skeleton — mirror order, abstraction level, named examples verbatim; no added info user didn't mention; source material (README, code) fill explicit gaps only; preserve quotable phrases exact, no paraphrasing
 - **Format-label register**: translate the format label (Slack message, PR description, executive summary, etc.) to its implied register before writing — per-format register rules: `_full/communication.md`. When format ambiguous, ask one question before writing.
 
+## Markdown Authoring
+
+<!-- policy-sibling: plugins/cc_foundry/rules/markdown.md (§Markdown Authoring) -->
+
+**Never hard-wrap prose** in any Markdown file — one physical line per prose paragraph; keep intentional structural breaks (headings, lists, tables, blockquotes, links, `<details>`, fenced code); never blindly reflow a whole file. Structure selection + behavior-sensitive reformatting: `markdown.md` (loads on first access of any `*.md`).
+
 ## Interactive Questions
 
 **Hard constraint — stop before writing any question.** Need user info → invoke `AskUserQuestion` tool immediately. Prose question + "note: should use tool" caveat = still violation. Two options only: answer without asking, or call tool. No plain-text question ever.
@@ -85,6 +93,7 @@ Any bracketed, annotated, narrated, or simulated form of a question — parenthe
 - When `AskUserQuestion` not in skill's `allowed-tools`, add it before asking any question
 - Max 4 questions per call; group related sub-questions into one option set rather than asking sequentially
 - **Recommended option placement**: place recommended option **second** in options list, not first and not last. First slot = most natural/neutral default; second = recommended; last = skip/abort.
+- **Preview cap — ≤2000 chars and ≤12 lines per option `preview`** (every line counts, table rows included; a line over 86 chars wraps and counts once per 86 chars it spans). Claude Code shows a placeholder instead of a longer preview and clips a taller one with no scroll, so over-cap content is never seen. Content the user must read before answering that fits → the `preview` of every single-select option of the call's first question. Over the cap → write the full content to the skill's report/run file first, make every option's `preview` a compact summary within the cap plus that file's path, and name the file in the question text. Never make an over-cap preview the content's only copy. Detail: `_full/communication.md` §Confidence Display.
 
 ### Confidence Display
 

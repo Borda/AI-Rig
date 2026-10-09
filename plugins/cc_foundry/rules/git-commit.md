@@ -1,10 +1,13 @@
 ---
-description: Git commit conventions and safety rules — applies globally
+description: Git commit conventions and safety rules — injected by rule-inject.js after the first commit-creating git call of a session or subagent runs (add/commit/push/merge/revert/cherry-pick/am/rebase, annotated tag); hard bans stay always-loaded in claude-config.md
 paths:
-  - '**'
+  - '**/.git/COMMIT_EDITMSG'
+  - '**/.gitmessage'
 ---
 
 ## Commit & Push — Hard Constraints (stub)
+
+<!-- policy-sibling: plugins/cc_foundry/rules/claude-config.md (§Git Commit & Push — Hard Bans) -->
 
 > Full protocol in `_full/git-commit.md` (diff-gathering, large-diff subagent summarization, tier tables, grouped-commit flow, sentinel details). **MANDATORY before drafting any commit message or pushing**: resolve + Read it:
 >

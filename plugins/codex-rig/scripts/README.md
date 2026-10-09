@@ -92,11 +92,14 @@ plugins/codex-rig/bin/python plugins/codex-rig/scripts/validate_package.py
 **Usage** (verified via `--help`):
 
 ```
-usage: install_global_agents.py [-h] [--source SOURCE] --codex-home CODEX_HOME
+usage: install_global_agents.py [-h] [--source SOURCE] --codex-home CODEX_HOME [--plugin-root PLUGIN_ROOT]
                                [--remove | --check | --migrate-legacy-prefix-sha256 DIGEST]
 
 --source SOURCE          packaged assets/AGENTS.md template (required unless --remove)
 --codex-home CODEX_HOME  target Codex home
+--plugin-root PLUGIN_ROOT
+                         absolute installed Codex Rig root written into the managed block
+                         (default: package containing --source)
 --remove                 strip the managed block instead of installing it
 --check                  read-only bounded instruction and legacy-route health check
 --migrate-legacy-prefix-sha256 DIGEST
@@ -109,6 +112,8 @@ usage: install_global_agents.py [-h] [--source SOURCE] --codex-home CODEX_HOME
 plugins/codex-rig/bin/python plugins/codex-rig/scripts/install_global_agents.py \
     --source plugins/codex-rig/assets/AGENTS.md --codex-home ~/.codex
 ```
+
+**Rendering:** Install and `--check` replace the template's single `{{CODEX_RIG_PLUGIN_ROOT}}` placeholder with the absolute plugin root before hashing, so the block's `PLUGIN_ROOT` line resolves every packaged `shared/<file>` pointer from sessions in any project. The root defaults to the package containing `--source`; sync reads the template from the marketplace checkout and passes the installed cache root as `--plugin-root`, omitting it for an older template without the placeholder. A root on the running host is canonicalized like the derived default (symlinks resolved), so a symlinked `CODEX_HOME` spelling cannot make a healthy block look stale; an absolute root of the other path flavour is written verbatim. A new root after a plugin upgrade updates the block like any template change. A direct `codex plugin add` upgrade does not run the installer, so the SessionStart hook reads the rendered root back through the read-only `authenticated_managed_body` and `rendered_plugin_root` helpers and warns when it names another root than the running plugin, or none.
 
 **Safety:** Ordinary install refuses an overlapping unmanaged global policy before writes. `--check` examines the proposed installed composition, including incompatible unmarked global policy; an exact unmarked copy of the current template remains adoptable. It detects stale or invalid managed blocks and exact recognized legacy `develop`/`analyse` skill descriptions; optional absence is valid. Sync runs this check before plugin removal, installation, or profile writes, permitting only the precise stale-template-only diagnostic as a normal upgrade and retaining strict post-install health validation. Marketplace refresh precedes this check. Migration authenticates the current managed block, requires the old prefix SHA-256, saves the full original, and preserves custom suffix bytes. It does not preserve custom obligations inside the removed prefix or delete skills. Review the complete replacement diff before migration. Observed concurrent drift rejects replacement, although no portable atomic compare-and-swap prevents the final check/replace race; a verified backup may remain after late rejection.
 

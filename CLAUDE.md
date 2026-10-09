@@ -1,3 +1,7 @@
+# AI-Rig — Project-Only Instructions
+
+<!-- Scope: maintaining this repository only; never shipped. Policy meant for every project or install goes into the plugin that ships it, never here. -->
+
 <!-- policy-sibling-sync: CLAUDE.md, AGENTS.md, plugins/AGENTS.md, plugins/CLAUDE.md -->
 
 - Any policy change in one listed instruction file must trigger a relevance review of every other listed file before completion.
@@ -7,17 +11,19 @@
 
 ## Instruction Layering
 
-Start every user-facing message with a short plain-English explanation that names the full topic or question before technical details. Apply this to progress updates, questions, approval requests, errors, blockers, handoffs, and final answers; do not use unexplained references such as “both” or “that,” and do not repeat the entire conversation. Keep later evidence precise; do not prepend prose to machine-only payloads or violate an explicitly requested exact output format.
-
 Repository-wide policy belongs in this top-level file. Lower-scope instruction files inherit it and must add only narrower rules or explicit exceptions, never repeat the same policy.
 
+When a top-level policy changes, review lower layers for conflicts or obsolete duplication rather than copying the new text into them.
+
+**This file is for maintaining this repository only and is never shipped** — plugin users never see it. Anything general, meant for every project or every install, must be distributed in the plugin that ships it (`plugins/cc_foundry/rules/` or `plugins/cc_foundry/CLAUDE.src.md` for Claude, `plugins/codex-rig/assets/AGENTS.md` or `plugins/codex-rig/shared/` for Codex), never added here. This file holds only this repository's own conventions and pointers to those shipped rules.
+
 ## Version Continuity
+
+This repository's own convention, not shipped policy: other projects commonly decide SemVer at release time rather than per commit.
 
 - Before changing any shipped version or serialized artifact schema, identify its version family and read that family's value from the last committed `HEAD`; do not use an earlier uncommitted edit or an unrelated nested version as the baseline.
 - A changed integer schema advances exactly one step from its committed current value. A new version family starts at 1. Keep older versions only as explicitly labeled historical readers; several revisions before the next commit still produce one bump from `HEAD`.
 - Check the proposed value against `HEAD` before handoff and record the comparison with the affected verification. Reject skipped or downgraded versions. Plugin release versions also follow the separate SemVer pre-bump gate in `plugins/CLAUDE.md`.
-
-When a top-level policy changes, review lower layers for conflicts or obsolete duplication rather than copying the new text into them.
 
 ## Edit Scope — Hard Constraint
 
@@ -38,20 +44,7 @@ When a top-level policy changes, review lower layers for conflicts or obsolete d
 
 ## Lint/Format — Use pre-commit Hooks, Not Direct Tools
 
-Repo pins lint/format tools via `.pre-commit-config.yaml` (ruff, eslint, mdformat, prettier, codespell, etc). **Never invoke these tools directly** (`ruff check`, `ruff format`, `eslint`, `mdformat`, ...) — version/config drift vs CI.
-
-Invoke the specific hook instead:
-
-```bash
-pre-commit run <hook-id> --files <path>   # single hook, targeted files
-pre-commit run --all-files                # full sweep
-pre-commit run <hook-id> --all-files      # single hook, repo-wide
-```
-
-Hook ids (from `.pre-commit-config.yaml`): `ruff-check`, `ruff-format`, `eslint`, `mdformat`, `codespell`, `pyproject-fmt`, `validate-pyproject`, `end-of-file-fixer`, `trailing-whitespace`.
-
-- Applies to ad-hoc checks during edits — not just the commit-time run
-- If a hook is missing/needed and not yet in config, add it to `.pre-commit-config.yaml` rather than shelling out around it
+Generic rule: `foundry:rules/claude-config.md` §Lint/Format (command forms: `foundry:rules/python-code.md` §Lint/Format). Hook ids (from `.pre-commit-config.yaml`): `ruff-check`, `ruff-format`, `eslint`, `mdformat`, `codespell`, `pyproject-fmt`, `validate-pyproject`, `end-of-file-fixer`, `trailing-whitespace`.
 
 ## Test Workflow
 
@@ -60,76 +53,38 @@ Hook ids (from `.pre-commit-config.yaml`): `ruff-check`, `ruff-format`, `eslint`
 - Run tests with `.venv/bin/python -m pytest <paths>` — **not** `uv run pytest` or a bare `pytest`; the project venv is the pinned environment. Start focused, broaden to the affected suite before completion.
 - Broad local runs go parallel: `.venv/bin/python -m pytest -n 4 <paths>` (pytest-xdist, already in the test group). Measured on the full suite: 11556 tests in ~5 min at `-n 4`, several times faster than the same run serial. Use `-n 4` for any run wide enough to be worth waiting on; keep focused single-file runs serial, where worker startup costs more than it saves.
 - Coverage tracing is opt-in: CI passes the `--cov=<plugin>/bin` list (see `.github/workflows/ci-tests.yml`), and a local run measures only when you add `--cov=<path>` with `--cov-report=term-missing`. Keep sources out of `[tool.coverage]`: it also configures tests that start their own coverage run. Untraced is the default because tracing slows every test, most on Windows.
-- Drop `-n` when the failure itself is what you are reading: xdist interleaves worker output, hides `-x` ordering, and breaks `--pdb`. Reproduce a failure serially before diagnosing it.
-- A test that passes serially and fails only under `-n` is a real defect, not an xdist artifact — usually shared machine-global state (a `${TMPDIR}` sentinel without its `-${CSID}` suffix, a fixed port, a written file outside `tmp_path`). Fix the isolation; never paper over it by pinning that suite serial.
-
-## Test Parametrization
-
-Generic `pytest.param` and ID discipline lives in `foundry:rules/python-testing.md` §Test Structure (delivered as `~/.claude/rules/foundry-python-testing.md`); the equivalent text for Codex stays in `AGENTS.md` §Test Parametrization. Repo-specific addition:
-
-- Remove optional trailing commas that force short lists or calls onto multiple lines, then run the pinned Ruff hooks. Retain required tuple commas, comments, and Ruff-restored wrapping; skip ambiguous edits. Preserve values, argument unpacking, order, duplicates, marks, and assertions.
+- Reading a failure serially, and a pass-serial/fail-under-`-n` test being a real isolation defect: `foundry:rules/python-testing.md` §Parallel Runs (pytest-xdist).
 
 ## Test Selection
 
-Generic marker discipline — semantic markers, never `pytestmark`, `--strict-markers`, classify by contract not duration, named `skipif` decorators — lives in `foundry:rules/python-testing.md` §Test Selection — Markers; `AGENTS.md` §Test Selection carries it for Codex. This repository's vocabulary and commands:
+Generic marker discipline: `foundry:rules/python-testing.md` §Test Selection — Markers. This repository's vocabulary and commands:
 
 - `integration` for real component interactions; `installed_plugin` for tests runnable without repository context; `packaging` for build/install/payload contracts; `live` for real external services or credentials.
 - `installed_plugin` does not imply `packaging`. A `live` test also carries `integration` and retains explicit opt-in guards; selection never authorizes network or paid execution. Capability probes remain separate.
 - Register selectors in repository **and shipped test** configuration.
 - From the repository root, use `.venv/bin/python -m pytest -m installed_plugin` or `.venv/bin/python -m pytest -m "packaging and not live"`; omit paths for project-wide discovery. On Windows use `.venv\Scripts\python.exe`.
 
-## Python Record Types
+## Shipped Generic Policy — Pointers
 
-- Prefer dataclasses for reused, fixed-shape internal records to clarify contracts and reduce field-name mistakes.
-- Keep dictionaries for dynamic keys, external JSON, and simple mappings. Shared types modules must reduce real complexity.
-- Preserve runtime validation, behavior, and serialized schemas; annotations alone do not enforce types.
+Policy below applies to any project; the full text ships in foundry (`plugins/cc_foundry/rules/`, delivered to Claude as `~/.claude/rules/foundry-<name>.md`). Cited as `foundry:rules/<file>.md`. In this repository read `plugins/cc_foundry/rules/<file>.md` directly: the installed copy lags the working tree until it is published and synced with `make sync-claude`.
 
-## Python Documentation Style
+| Topic                                                      | Foundry home                                                                      |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Test parametrization (`pytest.param` IDs, trailing commas) | `python-testing.md` §Test Structure                                               |
+| Python record types (dataclass default, dict boundaries)   | `python-code.md` §Structured Data                                                 |
+| Docstring conventions (plain-English opening line)         | `python-code.md` §Docstring Style                                                 |
+| Multi-OS executables                                       | `python-code.md` §Multi-OS Executables; tests `python-testing.md` §Cross-OS Tests |
+| Adversarial convergence loop                               | `quality-gates.md` §Adversarial Convergence Loop; `_full/adversarial-loop.md`     |
+| Notebook authoring (`.ipynb` and Jupytext `# %%` scripts)  | `notebooks.md`; `_full/notebook-style.md`                                         |
+| Markdown authoring (no hard-wrap, structure selection)     | `markdown.md` §Markdown Authoring                                                 |
+| Instruction-file compression gate                          | `markdown.md` §Instruction-File Compression Gate                                  |
+| Plan and benchmark isolation from shipped content          | `artifact-lifecycle.md` §Evidence Isolation                                       |
 
-Docstring conventions live in `foundry:rules/python-code.md` §Docstring Style — including the rule that a docstring's opening line states purpose in plain English, with code-shaped detail moved below. `AGENTS.md` §Python Documentation Style carries it for Codex. No repo-specific addition.
+Repository-specific additions:
 
-## Adversarial Convergence Loop
-
-Use `foundry:rules/_full/adversarial-loop.md` before every independent review → authorized-fix cycle. Its scope, ledger, strictly decreasing nonnegative integer score after baseline `W_0`, independent final snapshot, weights (`security 20 · critical 10 · high 6 · medium 4 · low 2 · nit 1`), stop rules, and remediation contract are mandatory. Never close an unreviewed fix; feasible authorized structural fixes remain in the loop and repeated signatures require canonical root-cause handling; unavailable independent coverage or stale final snapshots stop a clean claim; open `security` or `critical` findings also forbid completion and commit. Every stop with open findings names the residue, evidence, score series, and concrete decision required. `AGENTS.md` links the Codex source-tree entrypoint; Foundry ships this local copy for Claude. No repo-specific addition.
-
-## Notebook Authoring
-
-Cell granularity, markdown narrative depth, plot framing, shell magics, and docstring placement live in `foundry:rules/notebooks.md`, full body `foundry:rules/_full/notebook-style.md` — applies to every notebook (`.ipynb`) and Jupytext `# %%` percent-format `.py` script created or edited, not only kaggle output. `AGENTS.md` §Notebook Authoring links the same canonical `plugins/codex-rig/shared/notebook-style.md` for Codex. No repo-specific addition.
-
-## Markdown Policy
-
-Never hard-wrap prose in any Markdown file. Keep each prose paragraph on one physical line; preserve intentional structural breaks in headings, lists, tables, blockquotes, links, HTML `<details>` blocks, fenced code. Do not blindly unwrap or reflow a whole file; edit only the intended prose and retain its surrounding structure.
-
-Structure Markdown for scanning and correct execution, not from line length alone. When one paragraph combines multiple actions, conditions, actors, statuses, exceptions, or decision branches, use the smallest fitting structure:
-
-- Parallel obligations or independently checkable facts → bullets.
-- Ordered actions, recovery paths, or state transitions → numbered lists.
-- Ordered sub-steps nested under a numbered item → letters, written as bullets with a letter label (`- a. …`, `- b. …`), so references read `2b`, never `2.2`; CommonMark has no lettered list type.
-- Compact closed mappings or comparisons with repeated fields → tables; keep long causal explanations out of table cells.
-- Genuine notes, warnings, interpretation limits, or safety boundaries → blockquotes.
-- Optional depth that would interrupt the main path → existing or justified `<details>` block.
-
-Keep causal reasoning and cohesive rationale as prose. Do not convert paragraphs wholesale, add headings for every rule, or duplicate an existing navigation system. Keep headings concise and move detailed contracts below them.
-
-When reformatting behavior-sensitive agent, skill, setup, approval, or recovery instructions, preserve modal language, exact literals, ordering, and stop conditions; run the affected contract and calibration gates because formatting can change instruction salience even when the words remain similar.
-
-## Lossless Instruction Compression Handover Gate
-
-Compression/structural reformatting of any `AGENTS.md` or `CLAUDE.md` = behavior-sensitive. Before handoff:
-
-1. Save verified byte-exact pre-change backup under `.codex/caveman-compress/backups/`, outside active instruction-discovery paths; never overwrite existing backup.
-2. Compare backup vs result for complete semantic preservation: scope, actors, obligations, modal strength, exceptions, ordering, approval/stop conditions, thresholds, examples, and cross-file relationships stay unambiguous.
-3. Preserve headings, list hierarchy, fenced/inline code, commands, paths, URLs, identifiers, versions, numbers, environment variables, and other behavior-bearing literals exactly unless the task explicitly changes them.
-4. Run affected Markdown, instruction-contract, and calibration gates. Broad instruction-set changes also require independent agent followability review against the pre-change backup.
-5. If any instruction is lost, weakened, broadened, ambiguous, harder to navigate, or less reliably followed, reject the compression and restore the pre-change file. An unresolved comparison difference blocks completion.
-
-## Multi-OS Executables — POSIX Assumption = Defect
-
-Scripts, hooks, `bin/`, and CI steps all run on Linux, macOS, and native Windows. Fix at source; skip never.
-
-The full rule now lives in the foundry plugin, delivered to Claude as `~/.claude/rules/foundry-python-code.md`: production portability in `foundry:rules/python-code.md` §Multi-OS Executables (`pathlib`, `as_posix()` before hash/compare, cross-host serialized paths via `PurePosixPath`/`PureWindowsPath`, `newline="\n"`, win32 `env=` keeping `SystemRoot`/`COMSPEC`/`PATHEXT`/`TEMP`/`TMP`, `shell: bash` for `.sh` CI steps, capability degradation) and test-side portability in `foundry:rules/python-testing.md` §Cross-OS Tests (capability-probe skips over blanket `skipif(sys.platform == "win32")`, collection-time skip decorators only, and the recurrent-defect guard for simulated-OS tests). `AGENTS.md` §Multi-OS Executables carries the same rule verbatim for Codex, which does not receive foundry rules.
-
-No repo-specific addition beyond the two `.sh` files named as legacy debt in `plugins/CLAUDE.md` §Installability.
+- Adversarial convergence loop: `AGENTS.md` links the Codex source-tree entrypoint; Foundry ships a local copy for Claude.
+- Multi-OS executables: this repository supports Linux, macOS, and native Windows, so the conditional rule always applies here; only the one `.sh` file named as legacy debt in `plugins/CLAUDE.md` §Installability is excepted.
+- Instruction-file compression gate: save the byte-exact backup under `.codex/caveman-compress/backups/`; this repository's calibration gate (`plugins/codex-rig/runtime/calibration/run.py --layout plugin`) is mandatory.
 
 ## Interpreter Commands — Fix the Launcher, Not the Call Site
 
@@ -147,20 +102,6 @@ Claude recipe commands retain `python` identities used by allow rules and bluepr
 | Codex MCP servers              | Fixed `python` executable prerequisite, checked during setup; no global shim installation or automatic PATH modification.         |
 
 - Guards: `tests/test_hook_interpreter_fallback.py` and `plugins/codex-rig/tests/packaging/test_sync_codex.py`. Extend them when adding a launch layer.
-
-## Benchmark Isolation
-
-Benchmark task IDs, target repositories, prompt wording, expected answers, and task-specific source or symbol examples are test evidence, not production content.
-
-Never copy them into shipped plugins, skills, templates, or user-facing docs; use neutral generic examples and encode the generalized contract in a regression test instead.
-
-## Plan Isolation
-
-Plans, reports, scratch artifacts, and private implementation notes are evidence, not production content.
-
-Never copy plan-only notation, section references, task IDs, private source or code examples, plan-only placeholder names, or private shorthand into shipped code, plugins, skills, templates, schemas, or user-facing docs, and never make a shipped artifact depend on access to its originating `.plans/` or `.reports/` context.
-
-Re-express every adopted requirement as a self-contained contract with complete or sufficiently descriptive names, neutral examples, and all context needed to understand and verify it without the originating plan.
 
 ## Memory Policy
 

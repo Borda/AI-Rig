@@ -2,14 +2,16 @@
 
 ## Check 19 — Model tier appropriateness
 
-Three capability tiers:
+Capability tiers:
 
 | Tier | Model | Example agents |
 | -- | -- | -- |
-| Plan-gated | `opusplan` | solution-architect, oss:shepherd, curator |
+| High-stakes design/config | `opus` | solution-architect, curator |
 | Implementation | `opus` | sw-engineer, research:scientist, perf-optimizer |
-| Diagnostics / writing | `sonnet` | web-explorer, doc-scribe, research:data-steward, oss:cicd-steward, qa-specialist |
-| High-freq diagnostics | `haiku` | linting-expert |
+| Diagnostics / writing | `sonnet` | web-explorer, doc-scribe, research:data-steward, oss:cicd-steward, oss:shepherd, qa-specialist |
+| Mechanical fetch / rubric scoring | `haiku` | oss:gh-scraper, oss:repo-warden |
+
+Frontmatter declares aliases only; a pinned model ID freezes the version and is a finding.
 
 Extract declared models:
 
@@ -24,10 +26,11 @@ done
 
 Use model reasoning. Classify each agent by tier from `<role>`, `description`, workflow body. Cross-ref vs declared model:
 
-- `focused-execution` + `opus`/`opusplan` → **medium** (potential overkill)
+- `focused-execution` + `opus` → **medium** (potential overkill)
+- `opusplan` in agent frontmatter → **medium**: `opusplan` as subagent frontmatter runs `sonnet` (subagents never enter plan mode) — use `opus` or `sonnet` explicitly
 - `deep-reasoning` + `sonnet` → **high** (likely underpowered)
 - **Orchestration signal**: workflow body contains `Spawn`, `Agent tool`, or explicit sub-agent delegation → classify `deep-reasoning` regardless of description — `sonnet` on orchestrating agent → **high**
-- `plan-gated` + `sonnet` → **high**
+- `high-stakes design/config` + `sonnet` → **high**
 - `focused-execution` + `haiku` → **not a finding**
 
 **Important**: CLAUDE.md `## Agent Teams` specifies models for team-mode spawn — NOT a mandate for agent frontmatter. Don't flag frontmatter models as violations for differing from CLAUDE.md team-mode spec.
@@ -83,8 +86,9 @@ Holistic roster-level analysis. Subsumes former `/distill review` mode. Run as p
 ```bash
 # Extract all agent descriptions for model reasoning
 printf "%-25s %s\n" "AGENT" "DESCRIPTION"
-for f in .claude/agents/*.md plugins/*/agents/*.md 2>/dev/null; do  # timeout: 5000
-    [ -f "$f" ] || continue
+{ find .claude/agents -maxdepth 1 -name '*.md' -type f
+  find plugins -mindepth 3 -maxdepth 3 -path 'plugins/*/agents/*.md' -type f; } 2>/dev/null |
+while IFS= read -r f; do  # timeout: 5000
     name=$(basename "$f" .md)
     desc=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^description:/{sub(/^[^:]*: /,""); print}' "$f")
     printf "%-25s %s\n" "$name" "$desc"

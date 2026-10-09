@@ -12,9 +12,12 @@
 //      SessionStart: embed each local agent description via text-embedding-3-small
 //      PreToolUse:   embed query → cosine similarity → best agent above threshold
 //
-//   B. Anthropic LLM pick (ANTHROPIC_API_KEY set — always available in Claude Code):
-//      PreToolUse:   pass agent list + query to claude-haiku → pick best name or "none"
-//      5-second timeout via Promise.race; falls through to tier 3 on timeout
+//   B. Anthropic LLM pick (ANTHROPIC_API_KEY set — absent under subscription/OAuth login):
+//      PreToolUse:   pass agent list + query to the newest Haiku → pick best name or "none"
+//      Model id resolved at runtime, never frozen: ANTHROPIC_DEFAULT_HAIKU_MODEL → 24h cache
+//      file → GET /v1/models (first entry with line "haiku") → logged constant fallback
+//      5-second timeout via Promise.race; non-2xx, error body, missing text block or
+//      timeout → logged to stderr, falls through to tier 3 (fail open, never blocks)
 //      No SessionStart work needed for this path
 //
 // HOW IT WORKS
@@ -53,7 +56,19 @@ const BUILT_INS = new Set(["claude", "general-purpose", "claude-code-guide", "Ex
 const OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
 const COSINE_THRESHOLD = 0.65;
 
-const ANTHROPIC_LLM_MODEL = "haiku";
+// The raw Messages API needs an API model id — the Claude Code alias "haiku" is rejected — so the
+// id is resolved at runtime (resolveHaikuModel). This constant is only the last resort when the
+// env override, the cache and the Models API all fail: the latest Haiku known when written.
+const FALLBACK_HAIKU_MODEL = "claude-haiku-5-5";
+const HAIKU_MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const MODELS_TIMEOUT_MS = 2000;
+// Guards ids read back from the cache or the Models API before they reach a request body.
+const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/[\]-]{0,199}$/;
+// Haiku 5.5 thinks adaptively by default and thinking tokens count toward max_tokens, so a
+// small budget can end after the thinking block with no text. Thinking is disabled (allowed at
+// effort high or below); the budget still leaves room for a one-name reply.
+const ANTHROPIC_LLM_MAX_TOKENS = 256;
+const LLM_TIMEOUT_MS = 5000;
 
 // ── Atomic write ──────────────────────────────────────────────────────────────
 
@@ -206,48 +221,133 @@ function findBestCosine(index, queryEmbedding) {
   return best;
 }
 
-// ── Anthropic LLM pick ────────────────────────────────────────────────────────
+// ── Anthropic API helpers ─────────────────────────────────────────────────────
 
-function askLlm(agents, query, apiKey) {
+// Parses an API response body, throwing on non-2xx, non-object or error-typed bodies.
+function parseApiBody(statusCode, raw) {
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch (_) {
+    throw new Error(`HTTP ${statusCode}: response body is not JSON`);
+  }
+  const isObject = body !== null && typeof body === "object";
+  const failed = statusCode < 200 || statusCode >= 300 || !isObject || body.type === "error" || body.error;
+  if (failed) {
+    const err = (isObject && body.error) || {};
+    const detail = err.message ? `: ${err.message}` : "";
+    throw new Error(`HTTP ${statusCode} ${err.type || "error"}${detail}`);
+  }
+  return body;
+}
+
+function anthropicRequest(apiKey, { timeoutMs, ...options }, payload) {
   return new Promise((resolve, reject) => {
-    const list = agents.map((a) => `- ${a.name}: ${a.description.slice(0, 120)}`).join("\n");
-    const prompt =
-      `Pick the best agent for this request. Reply with ONLY the agent name, or "none" if no agent fits.\n\n` +
-      `Request: ${query}\n\nAgents:\n${list}`;
-    const body = JSON.stringify({
-      model: ANTHROPIC_LLM_MODEL,
-      max_tokens: 50,
-      messages: [{ role: "user", content: prompt }],
+    const headers = { "x-api-key": apiKey, "anthropic-version": "2023-06-01" };
+    if (payload !== undefined) {
+      headers["Content-Type"] = "application/json";
+      headers["Content-Length"] = Buffer.byteLength(payload);
+    }
+    const req = https.request({ hostname: "api.anthropic.com", headers, ...options }, (res) => {
+      let raw = "";
+      res.setEncoding("utf8");
+      res.on("data", (d) => (raw += d));
+      res.on("end", () => resolve({ statusCode: res.statusCode, raw }));
     });
-    const req = https.request(
-      {
-        hostname: "api.anthropic.com",
-        path: "/v1/messages",
-        method: "POST",
-        headers: {
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(body),
-        },
-      },
-      (res) => {
-        let raw = "";
-        res.on("data", (d) => (raw += d));
-        res.on("end", () => {
-          try {
-            const r = JSON.parse(raw);
-            resolve((r.content?.[0]?.text || "none").trim().toLowerCase());
-          } catch (e) {
-            reject(e);
-          }
-        });
-      },
-    );
     req.on("error", reject);
-    req.write(body);
+    if (timeoutMs) req.setTimeout(timeoutMs, () => req.destroy(new Error(`request timeout after ${timeoutMs}ms`)));
+    if (payload !== undefined) req.write(payload);
     req.end();
   });
+}
+
+// ── Haiku model resolution ────────────────────────────────────────────────────
+
+function haikuModelCachePath(env) {
+  const token = env.CSID || env.CLAUDE_CODE_SESSION_ID || "shared";
+  const safe = /^[A-Za-z0-9_-]+$/.test(token) ? token : "shared";
+  return path.join(env.TMPDIR || os.tmpdir(), `agent-router-haiku-model-${safe}`);
+}
+
+function readCachedModel(cachePath, nowMs) {
+  try {
+    if (nowMs - fs.statSync(cachePath).mtimeMs > HAIKU_MODEL_CACHE_TTL_MS) return null;
+    const id = fs.readFileSync(cachePath, "utf8").trim();
+    return MODEL_ID_PATTERN.test(id) ? id : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// The Models API lists newest releases first; `line` names the family. The docs say never to
+// infer the line from the id, so an id merely containing "haiku" does not qualify.
+function pickHaikuFromModels(statusCode, raw) {
+  const body = parseApiBody(statusCode, raw);
+  const models = Array.isArray(body.data) ? body.data : [];
+  const entry = models.find((m) => m && m.line === "haiku" && MODEL_ID_PATTERN.test(String(m.id)));
+  if (!entry) throw new Error(`no model with line "haiku" among ${models.length} listed`);
+  return entry.id;
+}
+
+function listModels(apiKey) {
+  return anthropicRequest(apiKey, { path: "/v1/models?limit=1000", method: "GET", timeoutMs: MODELS_TIMEOUT_MS });
+}
+
+// Newest Haiku id, never frozen: env override → cache (24h by mtime) → Models API → constant.
+// `fetchModels` and `log` are injectable so tests run without network.
+async function resolveHaikuModel({ env, apiKey, nowMs = Date.now(), fetchModels = listModels, log }) {
+  const override = (env.ANTHROPIC_DEFAULT_HAIKU_MODEL || "").trim();
+  if (override) return { model: override, source: "env" };
+  const cachePath = haikuModelCachePath(env);
+  const cached = readCachedModel(cachePath, nowMs);
+  if (cached) return { model: cached, source: "cache" };
+  try {
+    const { statusCode, raw } = await fetchModels(apiKey);
+    const model = pickHaikuFromModels(statusCode, raw);
+    try {
+      atomicWrite(cachePath, model + "\n");
+    } catch (_) {
+      // An unwritable cache only costs a repeat lookup next call.
+    }
+    return { model, source: "models-api" };
+  } catch (e) {
+    log(`agent-router: Haiku model lookup failed (${e.message}); using fallback ${FALLBACK_HAIKU_MODEL}\n`);
+    return { model: FALLBACK_HAIKU_MODEL, source: "fallback" };
+  }
+}
+
+// ── Anthropic LLM pick ────────────────────────────────────────────────────────
+
+function buildLlmRequest(agents, query, model) {
+  const list = agents.map((a) => `- ${a.name}: ${a.description.slice(0, 120)}`).join("\n");
+  const prompt =
+    `Pick the best agent for this request. Reply with ONLY the agent name, or "none" if no agent fits.\n\n` +
+    `Request: ${query}\n\nAgents:\n${list}`;
+  return {
+    model,
+    max_tokens: ANTHROPIC_LLM_MAX_TOKENS,
+    thinking: { type: "disabled" },
+    messages: [{ role: "user", content: prompt }],
+  };
+}
+
+// Returns the picked name (trimmed, lowercased) or throws. A failed request must surface as an
+// error, never as "none" — "none" is a legitimate model answer, so conflating the two hides a
+// broken router behind what looks like an honest no-fit.
+function parseLlmResponse(statusCode, raw) {
+  const body = parseApiBody(statusCode, raw);
+  // The response may open with a thinking block — select by type, never by position.
+  const blocks = Array.isArray(body.content) ? body.content : [];
+  const textBlock = blocks.find((b) => b && b.type === "text" && typeof b.text === "string");
+  if (!textBlock) throw new Error(`HTTP ${statusCode}: no text block (stop_reason: ${body.stop_reason || "unknown"})`);
+  return textBlock.text.trim().toLowerCase();
+}
+
+async function askLlm(agents, query, apiKey, log) {
+  const { model } = await resolveHaikuModel({ env: process.env, apiKey, log });
+  const payload = JSON.stringify(buildLlmRequest(agents, query, model));
+  const { statusCode, raw } = await anthropicRequest(apiKey, { path: "/v1/messages", method: "POST" }, payload);
+  return parseLlmResponse(statusCode, raw);
 }
 
 // ── Index build ───────────────────────────────────────────────────────────────
@@ -290,7 +390,17 @@ async function buildIndex(cwd, openaiKey) {
 // Pure helpers are exported for unit testing. require.main guard below ensures the
 // stdin main path only runs when executed directly (always true in production).
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { cosine, findBestCosine, readDescription };
+  module.exports = {
+    FALLBACK_HAIKU_MODEL,
+    buildLlmRequest,
+    cosine,
+    findBestCosine,
+    haikuModelCachePath,
+    parseLlmResponse,
+    pickHaikuFromModels,
+    readDescription,
+    resolveHaikuModel,
+  };
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -379,14 +489,19 @@ if (require.main === module) {
       if (target === "general-purpose" && anthropicKey && index.local_agents.length > 0) {
         try {
           const picked = await Promise.race([
-            askLlm(index.local_agents, queryText, anthropicKey),
-            new Promise((resolve) => setTimeout(() => resolve("none"), 5000)),
+            askLlm(index.local_agents, queryText, anthropicKey, (m) => process.stderr.write(m)),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error(`timeout after ${LLM_TIMEOUT_MS}ms`)), LLM_TIMEOUT_MS),
+            ),
           ]);
           if (picked && picked !== "none" && index.local_agents.some((a) => a.name === picked)) {
             target = picked;
             routingNote = `[Router: '${subagentType}' → '${target}' (llm)]`;
           }
-        } catch (_) {}
+        } catch (e) {
+          // Fail open: the Agent() call still proceeds via tier 3; stderr keeps the failure visible.
+          process.stderr.write(`agent-router: LLM pick failed (${e.message}); falling back to general-purpose\n`);
+        }
       }
 
       process.stdout.write(

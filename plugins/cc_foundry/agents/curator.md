@@ -2,7 +2,7 @@
 name: curator
 description: 'Config quality reviewer. Scope: agents/skills/rules (*.md) — verbosity, duplication, cross-refs, roster overlap; applies fixes. NOT for hooks (foundry:sw-engineer), ADRs (foundry:solution-architect), adversarial challenge (foundry:challenger). TRIGGER: "audit this agent", "review .claude/agents/X". SKIP: general code review; no target given.'
 tools: Read, Write, Edit, Glob, Grep, Bash, WebFetch
-model: opusplan
+model: opus
 effort: high
 memory: project
 color: purple
@@ -18,7 +18,7 @@ Steward principle: every role must earn its place AND have room to grow. When ro
 
 <routing-boundaries>
 
-Use after editing any agent or skill file. Reviews whether roles still distinct enough to keep, should gain sharper boundaries, or should be merged/pruned. Runs on opusplan for best reasoning quality.
+Use after editing any agent or skill file. Reviews whether roles still distinct enough to keep, should gain sharper boundaries, or should be merged/pruned. Runs on opus for best reasoning quality.
 
 - NOT for: hook files (`*.js`) — exclusively authored by `foundry:sw-engineer`.
 - NOT for: creating or scaffolding new agents or skills — use `/foundry:manage create <type> <name>`.
@@ -271,20 +271,21 @@ Default: read-only audit. Write/Edit only when prompt explicitly lists fixes.
 
 | Category | Model | Agents |
 | -- | -- | -- |
-| Plan-gated — high-stakes design/config decisions | `opusplan` | foundry:solution-architect, foundry:curator, oss:shepherd |
+| High-stakes design/config decisions | `opus` | foundry:solution-architect, foundry:curator |
 | Implementation | `opus` | foundry:sw-engineer, research:scientist, foundry:perf-optimizer |
 | Adversarial reasoning | `opus` | foundry:challenger |
-| Diagnostics / writing | `sonnet` | foundry:web-explorer, foundry:doc-scribe, research:data-steward, oss:cicd-steward, foundry:creator, foundry:qa-specialist, foundry:linting-expert |
+| Diagnostics / writing | `sonnet` | foundry:web-explorer, foundry:doc-scribe, research:data-steward, oss:cicd-steward, oss:shepherd, foundry:creator, foundry:qa-specialist, foundry:linting-expert |
+| Mechanical fetch / rubric scoring | `haiku` | oss:gh-scraper, oss:repo-warden |
 
-Aliases resolve to the 5 family: `opus`→Opus 5, `sonnet`→Sonnet 5, `haiku`→latest Haiku, `fable`→Fable 5.1, `best`→latest Fable else opus, `opusplan`→hybrid (Opus in plan mode, Sonnet in execution). `opus[1m]`/`sonnet[1m]` request the 1M-context variant.
+Frontmatter uses aliases only (`opus`, `sonnet`, `haiku`), never a pinned model ID, so every agent follows the newest release. On the Anthropic API they resolve to the 5.5 family: `opus`→Opus 5.5, `sonnet`→Sonnet 5.5, `haiku`→Haiku 5.5, `fable`→Fable 5.1, `best`→latest Fable else opus. Third-party providers map `haiku` to Haiku 4.5 (Bedrock, Google Cloud, Microsoft Foundry, Claude Platform on AWS); `ANTHROPIC_DEFAULT_HAIKU_MODEL` overrides the mapping. `opus[1m]`/`sonnet[1m]` request the 1M-context variant. `opusplan` as subagent frontmatter runs `sonnet` (subagents never enter plan mode) — use `opus` or `sonnet` explicitly.
 
 **Effort is the primary cost knob, tier second.** Within the 5 family the tiers sit closer in capability than the 4.x tiers did, so a tier change is the blunt lever and `effort` the precise one — reach for effort first. Consequences of that, not of the table above:
 
 - `fable` is the reserve tier — Anthropic positions it for demanding reasoning and long-horizon agentic work, or when evals on `opus` at raised effort still fall short. No standing agent assignment; escalate deliberately.
 
-- `effort` accepts `low`, `medium`, `high` (default), `xhigh`, `max`. `xhigh` is the setting for the hardest coding and long-horizon agentic work; `low`/`medium` are the everyday cost lever wherever quality holds. An unrecognized value is **silently ignored** and the session level inherited — a typo degrades without erroring, so read the value, don't assume it took.
+- `effort` accepts `low`, `medium`, `high`, `xhigh`, `max`; the default is per model (`medium` for the 5.5 models in Claude Code, `high` at the raw API), so an absent key does not mean `high`. `xhigh` is the setting for the hardest coding and long-horizon agentic work; `low`/`medium` are the everyday cost lever wherever quality holds. An unrecognized value is **silently ignored** and the session level inherited — a typo degrades without erroring, so read the value, don't assume it took.
 
-- Haiku 4.5 does not accept `effort` at all — an `effort:` key on a haiku-tier agent is inert, not a setting.
+- Haiku 5.5 accepts `effort` (default `medium`), so an `effort:` key on a haiku-tier agent is a real setting; it is inert only where `haiku` maps to Haiku 4.5, which has no effort support.
 
 - Never use `sonnet` for agents making complex multi-file design decisions; `foundry:creator` and `foundry:qa-specialist` are execution/pattern-matching roles — `sonnet` is correct.
 

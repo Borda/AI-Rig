@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import cost_analyzer as ca
+import pytest
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> Path:
@@ -22,7 +23,14 @@ def _write_jsonl(path: Path, rows: list[dict]) -> Path:
     return path
 
 
-def _usage_row(message_id: str, *, ts: str = "2030-01-01T00:00:00Z", sidechain: bool = False, **usage) -> dict:
+def _usage_row(
+    message_id: str,
+    *,
+    ts: str = "2030-01-01T00:00:00Z",
+    sidechain: bool = False,
+    model: str = "claude-opus-5",
+    **usage,
+) -> dict:
     """Build one transcript row carrying a usage object.
 
     Examples:
@@ -32,7 +40,7 @@ def _usage_row(message_id: str, *, ts: str = "2030-01-01T00:00:00Z", sidechain: 
     return {
         "timestamp": ts,
         "isSidechain": sidechain,
-        "message": {"id": message_id, "model": "claude-opus-5", "usage": usage, "content": []},
+        "message": {"id": message_id, "model": model, "usage": usage, "content": []},
     }
 
 
@@ -66,15 +74,119 @@ class TestDedupeByMessageId:
 class TestTierAndCost:
     """Covers tier fallback and USD pricing beyond the module doctests."""
 
-    def test_unrecognised_model_prices_as_opus(self):
-        """Unknown model ids price at the most expensive tier — overstate, don't hide."""
-        assert ca.tier("some-future-model") == "opus"
+    def test_unrecognised_model_is_unknown_tier(self):
+        """A model id naming no known family reports as its own ``unknown`` tier, never folded into a known one."""
+        assert ca.tier("some-future-model") == ca.UNKNOWN_TIER
 
-    def test_cache_write_twelve_point_five_x_cache_read(self):
-        """Cache writes price 12.5x cache reads — why a cold start dominates cost."""
-        w = ca.cost({"cache_creation_input_tokens": 1})
-        r = ca.cost({"cache_read_input_tokens": 1})
-        assert round(w / r, 3) == 12.5
+    @pytest.mark.parametrize(
+        ("future_id", "newest_known_id"),
+        [
+            pytest.param("claude-opus-6", "claude-opus-5-5", id="opus"),
+            pytest.param("claude-sonnet-6-1", "claude-sonnet-5-5", id="sonnet"),
+            pytest.param("claude-haiku-6", "claude-haiku-5-5", id="haiku"),
+            pytest.param("claude-fable-6", "claude-fable-5-1", id="fable"),
+        ],
+    )
+    def test_future_model_prices_as_newest_of_its_family(self, future_id: str, newest_known_id: str):
+        """A release newer than the table prices exactly like its family's newest known model — never zero.
+
+        Pricing it at the global maximum would inflate every row of a newly released model several-fold; dropping or
+        zeroing it would hide real spend. The family's latest price is the closest known estimate.
+        """
+        usage = {"input_tokens": 1_000, "output_tokens": 1_000, "cache_read_input_tokens": 200_000}
+        assert ca.tier(future_id) == ca.tier(newest_known_id)
+        assert ca.cost(usage, future_id) == ca.cost(usage, newest_known_id) > 0
+
+    @pytest.mark.parametrize(
+        "retired_id",
+        [
+            pytest.param("claude-3-5-haiku-20241022", id="legacy-order-haiku"),
+            pytest.param("claude-3-opus-20240229", id="legacy-order-opus"),
+            pytest.param("claude-3-7-sonnet-20250219", id="legacy-order-sonnet"),
+            pytest.param("claude-opus-4-3", id="below-family-newest"),
+        ],
+    )
+    def test_retired_model_without_a_row_prices_at_unknown_rate(self, retired_id: str):
+        """A retired id with no row of its own prices at the maximum known rates, never at the family's newest.
+
+        Mapping it to the newest model of its family priced an older, dearer generation at the 5.5 family's much lower
+        rates — the under-statement the module's overstate-never-hide principle forbids.
+        """
+        usage = {"input_tokens": 1_000, "output_tokens": 1_000, "cache_read_input_tokens": 1_000}
+        priced = [ca.cost(usage, f"claude-{key.replace('.', '-')}") for key in ca.PRICES]
+        assert ca.tier(retired_id) == ca.UNKNOWN_TIER
+        assert ca.cost(usage, retired_id) >= max(priced)
+
+    def test_retired_model_warns_maximum_known_rates(self, capsys):
+        """A retired id's stderr warning names the maximum known rates, not a newest-of-family price."""
+        ca._warn_unpriced([ca.Call("m1", "claude-3-5-haiku-20241022", {"output_tokens": 5})])
+
+        assert "priced as maximum known rates" in capsys.readouterr().err
+
+    def test_unknown_rate_is_most_expensive_on_every_field(self):
+        """Unknown ids price at or above every known band on each field — overstate, don't hide.
+
+        Taking any single model as the fallback understates whichever field another model prices higher (Fable 5 has the
+        dearest cache read of the current models, the retired Opus 4.1 the dearest input and output).
+        """
+        rates = [p.base for p in ca.PRICES.values()] + [p.long_prompt[1] for p in ca.PRICES.values() if p.long_prompt]
+        assert all(all(u >= r for u, r in zip(ca.UNKNOWN_RATE, rate)) for rate in rates)
+
+    def test_unknown_model_costs_more_than_any_priced_model(self):
+        """The same usage costs most under an unknown id, so a missing price entry surfaces as an inflated row."""
+        usage = {"input_tokens": 10, "output_tokens": 10, "cache_read_input_tokens": 10}
+        priced = [ca.cost(usage, f"claude-{key.replace('.', '-')}") for key in ca.PRICES]
+        assert ca.cost(usage, "some-future-model") >= max(priced)
+
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [
+            pytest.param("claude-opus-5-5", 25.0, id="opus-5.5-reads-at-5pct"),
+            pytest.param("claude-sonnet-5-5", 25.0, id="sonnet-5.5-reads-at-5pct"),
+            pytest.param("claude-opus-5", 12.5, id="opus-5-reads-at-10pct"),
+            pytest.param("claude-fable-5-1", 50.0, id="fable-5.1-reads-at-2.5pct"),
+            pytest.param("claude-haiku-4-5-20251001", 12.5, id="haiku-4.5-reads-at-10pct"),
+        ],
+    )
+    def test_cache_write_to_read_ratio_per_model(self, model: str, expected: float):
+        """A 5-minute cache write costs 12.5x-50x a cache read depending on the model's read multiplier.
+
+        The flat 12.5x of the old three-tier table understated a rebuild on the 5.5 models by half, which is the figure
+        that justifies never ``/clear``-ing mid-run.
+        """
+        w = ca.cost({"cache_creation_input_tokens": 1}, model)
+        r = ca.cost({"cache_read_input_tokens": 1}, model)
+        assert round(w / r, 3) == expected
+
+    def test_one_hour_cache_write_prices_at_twice_input(self):
+        """A 1-hour write prices at 2x input, a 5-minute write at 1.25x — the split comes from ``cache_creation``.
+
+        Claude Code's main loop writes the 1-hour cache; pricing those tokens at the 5-minute rate understated every
+        main-loop rebuild by 37.5%.
+        """
+        split = {"ephemeral_5m_input_tokens": 1_000_000, "ephemeral_1h_input_tokens": 1_000_000}
+        usage = {"cache_creation_input_tokens": 2_000_000, "cache_creation": split}
+        assert ca.cost(usage, "claude-opus-5-5") == 4.0 * 1.25 + 4.0 * 2.0
+
+    @pytest.mark.parametrize(
+        ("usage", "expected_input_rate"),
+        [
+            pytest.param({"input_tokens": 100_000}, 0.10, id="input-at-threshold-low-band"),
+            pytest.param({"input_tokens": 100_001}, 0.50, id="input-over-threshold-high-band"),
+            pytest.param(
+                {"input_tokens": 1, "cache_read_input_tokens": 90_000, "cache_creation_input_tokens": 10_000},
+                0.50,
+                id="cache-tokens-count-toward-prompt",
+            ),
+        ],
+    )
+    def test_haiku_5_5_band_follows_prompt_size(self, usage: dict, expected_input_rate: float):
+        """Haiku 5.5 bands on input + cache read + cache write; over 100,000 prompt tokens is the higher band.
+
+        Counting only ``input_tokens`` would put nearly every cached Claude Code request (a few input tokens, the rest
+        cache) in the cheaper band — subagent spawns alone carry ~120K tokens of fixed context.
+        """
+        assert ca.rate_for("claude-haiku-5-5", ca.prompt_tokens(usage)).input == expected_input_rate
 
 
 class TestBucket:
@@ -87,8 +199,20 @@ class TestBucket:
             ca.Call("m2", "claude-haiku-4-5", {"output_tokens": 7}, sidechain=True),
         ]
         got = ca.bucket(calls)
-        assert got[("main", "opus")]["out"] == 100
-        assert got[("sidechain", "haiku")]["out"] == 7
+        assert got[("main", "opus")].output == 100
+        assert got[("sidechain", "haiku")].output == 7
+
+    def test_cost_summed_per_call_across_haiku_5_5_bands(self):
+        """A bucket mixing short and long Haiku 5.5 prompts carries the sum of per-call costs.
+
+        Re-pricing the bucket's summed tokens would put both requests in the >100K band and overstate the short one
+        five-fold — the reason buckets accumulate cost per call.
+        """
+        short = ca.Call("m1", "claude-haiku-5-5", {"input_tokens": 60_000})
+        long = ca.Call("m2", "claude-haiku-5-5", {"input_tokens": 60_000, "cache_read_input_tokens": 60_000})
+        got = ca.bucket([short, long])[("main", "haiku")]
+        assert got.cost_usd == ca.cost(short.usage, short.model) + ca.cost(long.usage, long.model)
+        assert round(got.cost_usd, 6) == round((60_000 * 0.10 + 60_000 * 0.50 + 60_000 * 0.05) / 1_000_000, 6)
 
     def test_empty_calls_yields_empty_buckets(self):
         """No calls means no buckets — not a KeyError."""
@@ -249,3 +373,19 @@ class TestMainCli:
         rc = ca.main(["--projects-root", str(root), "--since", "1h", "--output", str(out)])
         assert rc == 1
         assert "no sessions" in capsys.readouterr().err
+
+    def test_unpriced_model_warns_once_and_stays_in_report(self, tmp_path: Path, capsys):
+        """A future model id prints one stderr warning and still lands in its family's row with a nonzero cost.
+
+        Two calls of the same unpriced id must not repeat the warning; the report must not lose the spend.
+        """
+        root = self._projects_root(tmp_path)
+        rows = [_usage_row(m, model="claude-opus-6", output_tokens=1_000) for m in ("m1", "m2")]
+        _write_jsonl(root / "-slug-a" / "sid1.jsonl", rows)
+        out = tmp_path / "cost.md"
+        rc = ca.main(["--projects-root", str(root), "--session-id", "sid1", "--output", str(out)])
+        err = capsys.readouterr().err
+        assert rc == 0
+        assert err.count("warning: no list price for model 'claude-opus-6'") == 1
+        assert "newest known opus (opus-5.5)" in err
+        assert "| main | opus | 0 | 2,000 |" in out.read_text(encoding="utf-8")

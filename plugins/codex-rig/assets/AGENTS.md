@@ -8,6 +8,14 @@ Python, ML/AI, OSS dev under project standard. Python 3.10+ mandatory min. 3.9 E
 
 File = global baseline for Codex-managed projects. Project-local `AGENTS.md` + contributor guides give repo-specific commands, workflows, architecture, acceptance criteria. Project-specific guidance exists → follow over global baseline. Project-local guidance should define, at min: environment bootstrap, lint/type-check/test/build commands, package manager, release entrypoint, task completion criteria.
 
+Activity-specific detail lives in packaged `shared/global-baseline-details.md`; a section here that names one of its `§` sections binds as if that text were inline, so read it before starting the named activity.
+
+`PLUGIN_ROOT` = `{{CODEX_RIG_PLUGIN_ROOT}}`, the installed Codex Rig package: every `shared/<file>` this file names is `PLUGIN_ROOT/shared/<file>`; on native Windows run `PLUGIN_ROOT/bin/python` as `bin/python.cmd`.
+
+### Lossless instruction compression gate
+
+Applies only to instruction files an LLM host loads (`AGENTS.md`, `CLAUDE.md`, rule, skill, or agent-definition files). Compression or structural reformatting of one is behavior-sensitive: before handoff read packaged `shared/global-baseline-details.md` §"Lossless instruction compression gate" and pass every gate. Reject the compression and restore the pre-change file when any instruction is lost, weakened, broadened, made ambiguous, harder to navigate, or less reliably followed.
+
 ## Freshness Policy
 
 Docs, deps, CI/CD, releases, security, deprecations → prefer current primary sources over memory/cached assumptions. Live verification unavailable → say so, mark guidance potentially stale. OpenAI/Codex questions → prefer configured OpenAI developer docs MCP server when available, then primary web sources.
@@ -16,11 +24,12 @@ Docs, deps, CI/CD, releases, security, deprecations → prefer current primary s
 
 - Specific, understood, bounded, reversible, low-risk work with clear acceptance: act directly and verify; a coherent fix plus its regression stays one task. Unknown cause → investigate first. Unclear scope/acceptance, coupled domains, material risk or consequential design choices → pause further implementation and promote. Nontrivial work defines scope, owned files and acceptance before editing. Medium/large or unexpectedly nontrivial implementation: top-level plan → independent challenge/resolve → implementation details → independent challenge/resolve → bounded independent delegated execution in parallel when useful → parent integration, verification and final plan crosscheck. Serialize coupled/shared work. Reuse still-current parent-scoped plans and challenges for bounded children; no recursive planning. File count, ordinary logs, factual queries and optional tooling do not force orchestration. Read-only analysis uses planning suited to uncertainty without inventing implementation. Preserve actual runtime permissions, protected decisions, independent coverage and project checks; instruction bounds never prove enforced isolation.
 - Prefer smallest reversible change solving actual problem. Fix feels speculative → stop, re-scope before widening blast radius.
-- Use subagents when task splits clean into disjoint file ownership or parallel verification. Prompt tight, task-specific; no dup of main thread full context.
-- Verification = part of work, not follow-up. No task done until relevant lint/tests/gates run and result explainable concrete.
+- Use subagents when task splits clean into disjoint file ownership or parallel verification. Prompt tight, task-specific; no dup of main thread full context. Never assign duplicate investigation or overlapping edits across agents.
+- Verification = part of work, not follow-up. No task done until relevant lint/tests/gates run and result explainable concrete; failures, residual risks, deliberately deferred scope reported accurately.
 - Every resumed skill run, including after user intervention or repeated invocation, retains its normal closing gate and output contract. Recover first unmet checkpoint, reuse only still-valid evidence, and finish validation before declaring completion; do not replace required final structure with informal recap. Existing non-artifact workflows retain their own documented final verification.
 - Failed tool call: retry unchanged only if external state may have changed; else diagnose, adapt.
 - Multiple agents: handoffs compact, ownership clear. Never redo other agent work unless resolving conflict or explicit gap.
+- Every independent review → authorized-fix cycle follows packaged `shared/adversarial-loop.md`; read it before dispatch. Its scope, evidence ledger, strictly decreasing nonnegative integer score after baseline `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, stop and remediation rules are mandatory. Never fork the implementing conversation for review or treat a local fix as closed before later independent verification.
 - Progress stalls or path drifts → re-plan, no forcing current approach.
 - Confidence limited → say so, separate verified facts from hypotheses.
 - Before final output: compare result vs request; within output contract, disclose unmet constraints, filled material assumptions, corrected prior claims, deliberate deviations.
@@ -39,25 +48,14 @@ Apply this policy to every same or plausibly shared obstacle, incl. one appearin
 ### Reasoning-progress escalation policy
 
 - Apply this policy separately to stalled workstream.
-- Keep user's primary goal and acceptance fixed. Auxiliary setup, review dispatch, report repair, and validators must serve a named unmet primary acceptance criterion or an explicit user request; omit unrelated work. A requested review/report is itself primary work.
-- Known authorized fix → implement fix + regression before another review-preparation cycle. Agent-owned reviewer/receipt failure → diagnose once, attempt one bounded repair; failed repair stops that route, not safe primary work. Never rotate reviewer names, rebuild reports repeatedly, or ask user to debug agent setup. Another supported route needs cause-avoiding evidence and permitted retry. Required coverage still gates clean completion; missing permission, prerequisite, or protected-state decision may require user.
-- Schema-3 ledger retains `primary_goal`; cycle declares `work_kind=primary|auxiliary`. Auxiliary cycle names unmet criterion in `required_for` and sets `material_progress=false`. Auxiliary validator success or new metadata never resets primary stall/recurrence counts; closure remains user's acceptance, not artifact readiness.
-- Work cycle records objective, operation/hypothesis, observed output, next decision.
-- Material progress = new falsifiable evidence, decision-changing scope/root-cause narrowing, acceptance-check status change, or user-directed decision; repeated equivalent actions, rewording, elapsed time, token count, confidence claims don't qualify.
-- Closure condition = unchanged result ending workstream: passing acceptance check, resolved decision, or user-approved scope.
 - Two primary cycles no material progress, or three evidence-backed unsuccessful primary attempts since last evidence-backed material primary progress, require owner persist `reasoning-progress.json` and validate via `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/escalation_ledger.py --ledger <run-directory>/reasoning-progress.json` before further cycle. Cycles append-only: stage one in `<run-directory>/reasoning-cycles.jsonl.rec`, run same command with `--append`; header holds other state, rewritten in place.
-- Ledger records objective; closure condition; operations/hypotheses; outputs/evidence; why each attempt lacked progress/closure; current model/effort when observable; state changes; recurrence count.
-
-1. Pause, request exactly one permitted higher-capability advisory pass: first supported reasoning-effort increase, else next valid model tier.
-2. Advisor route valid only when observed sandbox `read-only`; diagnoses, proposes one bounded recovery action + stop condition, makes no state changes or acceptance claim.
-3. Read-only advisory route unavailable/unverified → ask human for missing advisory-route decision; never claim enforced isolation. Keep that route stopped while continuing unrelated authorized work or already-permitted source-inspection alternative with its limitations disclosed.
-4. Parent may run that one action.
-5. Action makes no evidence-backed material primary progress and closure condition remains unmet → stop that workstream and ask human with ledger, advisory evidence, current hypotheses, rejected alternatives, one recommended next step with alternatives, and evidence or decision needed to resume. Explain which unaffected work can continue.
-6. Evidence-backed material primary progress permits useful unfinished recovery to continue and resets unsuccessful-attempt sequence; auxiliary success never does. Never reset/weaken separate repeated-obstacle policy; Luna never escalates bounded support to Sol, and Astra requires a separate evidenced escalation.
+- Advisory pass, recovery action, auxiliary-work and ledger-content rules, and the stop-and-ask-human handover: read packaged `shared/global-baseline-details.md` §"Reasoning-progress escalation" before running or reporting a stalled workstream.
 
 ## Coordination Discipline
 
 - Start every user-facing message with short plain-English explanation of outcome, situation, or requested action before technical details. This includes progress updates, questions, approval requests, errors, blockers, handoffs, and final answers. Keep later evidence precise; machine-only payloads and explicitly requested exact output formats stay unchanged.
+- Prefer structured terminal updates: one short introductory sentence, then concise bullets for parallel facts, numbered steps for ordered actions, and compact tables for comparisons. Show concrete counts and evidence links; separate completion status, verification, open work and next owner/action. Keep detailed explanations in the linked full report. Preserve exact-output contracts and native question ownership.
+- Narrate at milestones; before significant command, state what + why. 5+ min without visible output → short status note.
 - Name the topic or question being answered so each reply stands alone, including after a topic switch or long pause. Avoid unanchored “both,” “that,” or “yes”; give enough context to identify the request without repeating the conversation. Preserve exact-output exceptions.
 - Keep live plan for multi-step work, update as task shape changes. Use as session task ledger.
 - One owner per file set at a time. Other thread/agent owns same surface → coordinate, no overwrite.
@@ -68,16 +66,10 @@ Apply this policy to every same or plausibly shared obstacle, incl. one appearin
 
 ## Runtime Effort Policy
 
-- Normal parent, implementation, verification, data, performance, research, and adversarial roles use `gpt-6.1-sol`; parent, implementation, verification, and performance start at `medium`, while data, research, and adversarial challenge use `high`.
-- Delegation, documentation, CI/CD, web evidence, OSS triage, static analysis, and curation use `gpt-6-luna`; static analysis and web evidence start at `medium`, the others at `high`.
-- Final behavior-changing and executable acceptance decisions stay with the Sol parent/session.
-- `security-auditor` and `solution-architect` use `gpt-6.1-sol` at `high`, only after explicit user request or agent selection; both remain read-only advisory passes.
-- Historical GPT-5.6 routing evidence remains archived, not proof of GPT-6 quality or cost. Astra has no standing role assignment.
-
 Reasoning effort is role-specific. Reserve `xhigh`/`max` for explicit task-level escalation after representative evidence shows the assigned effort insufficient. Codex has no separate review-effort config key; `/review` inherits session `medium` unless the invocation explicitly sets `model_reasoning_effort="high"`.
 
-- `medium`: normal coding, verification, performance analysis, linting, and web-evidence work.
-- `high`: challenge, deep review, data/research method, coordination, documentation, CI, OSS triage, curation, architecture, and security work.
+- Final behavior-changing and executable acceptance decisions stay with the Sol parent/session.
+- Role-to-model and starting-effort assignments, `security-auditor` and `solution-architect` limits, and the `medium`/`high` effort classes: read packaged `shared/global-baseline-details.md` §"Runtime effort policy" before assigning a model, effort, or delegated role.
 
 ______________________________________________________________________
 
@@ -102,17 +94,33 @@ Coding principles = canonical standard for implementation + review:
 13. No explanatory comments immediately before function/class definition. Purpose, behavior, constraints, usage belong in that definition docstring.
 14. Type annotations on all new public APIs, Python 3.10 syntax: `list[T]`, `dict[K, V]`, `X | Y`.
 15. Prefer doctest-driven or executable acceptance checks: define interface + failing check before implementation when behavior changes.
-16. Python project hygiene: use project's configured `ruff`, pre-commit, packaging, export, value-object, structural-typing, deprecation conventions. Introduce `src/`, `__all__`, dataclasses, Protocols, or `pyDeprecate` only when project/current design requires them.
+16. Python project hygiene: use project's configured `ruff`, pre-commit, packaging, export, value-object, structural-typing, deprecation conventions. Introduce `src/`, `__all__`, Protocols, or `pyDeprecate` only when project/current design requires them; dataclasses follow item 19. When the project pins lint/format tools through pre-commit, run them via `pre-commit run <hook-id> --files <paths>` (single hook, targeted files), never the bare tool: direct invocation drifts from the pinned version/config. Applies to ad-hoc checks during edits, not only the commit-time run. Use `pre-commit run --all-files` only when the task requires the repository-wide gate; preserve unrelated working-tree changes. Needed hook missing from config → add it to the pre-commit config rather than shelling around it.
 17. Abstractions must reduce cognitive load and concept count reader must follow. Extract only stable repeated behavior, genuinely shared infra, or irrelevant construction mechanics; keep behavior-defining inputs/outcomes explicit. Cover complete related behavior already present, place abstraction in narrowest shared scope, prefer small visible duplication over aliases, wrappers, factories, layers adding indirection w/o semantic value.
 18. Keep Python imports at module scope by default. Local import only for verified circular-import boundary, optional-dependency boundary, import-behavior test, or material startup/side-effect constraint; make reason evident from surrounding code or document when not obvious.
+19. Internal records: once item 16's current-design condition holds, prefer dataclasses for reused, fixed-shape internal records to clarify contracts and reduce field-name mistakes. Keep dictionaries for dynamic keys, external JSON, and simple mappings. Shared types modules must reduce real complexity. Preserve runtime validation, behavior, and serialized schemas; annotations alone do not enforce types.
+
+### Markdown Authoring
+
+- Never hard-wrap prose in any Markdown file.
+- Keep each prose paragraph on one physical line; preserve intentional structural breaks in headings, lists, tables, blockquotes, links, HTML `<details>` blocks, and fenced code.
+- Do not blindly unwrap or reflow a whole file; edit only the intended prose and retain its surrounding structure.
+
+Before restructuring Markdown (lists, tables, blockquotes, `<details>`) or reformatting behavior-sensitive instructions, read packaged `shared/global-baseline-details.md` §"Markdown authoring".
+
+### Multi-OS Executables
+
+Applies when the project supports more than one OS — declared by a CI OS matrix, packaging classifiers, or project docs; a single-OS project may skip it. There, scripts, hooks, `bin/` entry points, and CI steps run on every supported OS (typically Linux, macOS, and native Windows), and a POSIX-only assumption is a defect to fix at the source, never a reason to skip a supported platform.
+
+In such a project, before writing or editing scripts, hooks, `bin/` entry points, CI steps, or tests, read packaged `shared/global-baseline-details.md` §"Multi-OS Executables" (path handling, serialized paths, subprocess `env=`, CI shell, capability-probe skips).
+
+### Notebook Authoring
+
+Use Codex Rig's packaged `shared/notebook-style.md` before writing or editing any notebook — a Jupyter `.ipynb`, or a Jupytext `# %%` percent-format `.py` script destined to become one. It covers cell granularity, markdown narrative depth, plot framing, shell magics, and docstring placement; apply it in full regardless of which skill or task produced the notebook.
 
 ### Codex Rig Module Documentation
 
 - Every shipped non-test Python module starts w/ maintainer-facing module docstring containing `Purpose:`, `Scope:`, `Usage:`, `Outputs:`, `Failure:`, `Used by:`.
-- Describe module boundary, inputs/outputs or artifact paths, side effects (or deliberate lack), real CLI/import entrypoint, important failure/exit behavior, workflow/callers consuming it.
-- Docstring must orient maintainer w/o first reading implementation; Codex Rig enforces 700-char min.
-- Keep function docstrings focused on local contracts; module docstrings explain system role.
-- Tests exempt from six-section format but still need concise module description.
+- Before writing or editing a shipped module docstring, read packaged `shared/global-baseline-details.md` §"Codex Rig module documentation".
 
 ### Testing
 
@@ -126,11 +134,8 @@ Every test must pass The Suspicious Check:
 4. Assertions specific enough for subtle errors?
 
 - Coverage follows public contract, regression risk, blast radius. Cover applicable `None`, empty, boundary, negative, ML tensor NaN/Inf/dtype/shape cases; don't manufacture unrelated matrices.
-- Parametrize cases when only inputs/expected outputs vary and arrange/action/assert use same behavioral oracle. Give semantic IDs; keep distinct behaviors in named tests.
-- Keep behavior-defining data + actions visible. Reuse meaningful local values arrange through assert; extract fixtures/helpers only when hiding irrelevant construction or genuinely shared infra, never scenario intent.
-- Fixtures return ready-to-use concrete state or cohesive tuple of related state. Don't return callable factory unless fixture-managed lifecycle requires it; use ordinary helper function for configurable construction. Keep fixture deps minimal, unpack only values test needs, avoid aliases/forwarding helpers adding no meaning.
-- Test public behavior. Mock only true external boundaries outside test's control, not system-under-test internals.
-- Use smallest test surface proving behavior; don't add framework, global fixture, or config for one local case.
+- Before writing or changing tests, read packaged `shared/global-baseline-details.md` §"Testing details": pytest parametrization and ID rules (`pytest.param` with semantic IDs, never `ids=`), marker selection, xdist parallel runs, fixture, mocking, and test-surface shape.
+- Benchmark task IDs, target repositories, prompt wording, expected answers, and task-specific source or symbol examples are test evidence, not production content. Never copy them into shipped plugins, Skills, templates, or user-facing docs; use neutral generic examples and encode the generalized contract in a regression test instead.
 - Approximate numeric behavior: `torch.testing.assert_close(rtol=1e-4, atol=1e-6)`. Exact tensor identity may use `torch.equal()` when exactness is contract. Always confirm: test FAILS before fix, test PASSES after fix.
 
 ### ML/AI Specifics
@@ -163,21 +168,10 @@ Every test must pass The Suspicious Check:
 - Route RTK-eligible shell commands through `rtk` proactive, e.g. `rtk git status --short` not `git status --short`.
 - No relying on PreToolUse hooks rewriting commands in Codex. Codex treats hook denials as visible tool failures — hook fail-open, command routing = agent responsibility.
 - Destructive/state-changing commands stay under normal approval rules; never use RTK routing to bypass explicit user approval.
-- Keep shell network access blocked by default. Select `github-read` for a fresh session with `codex -c 'default_permissions="github-read"'` only when the consuming checkout defines that project-local profile or explicit setup or sync has installed the managed Codex-home profile. Plugin installation alone does not provide either profile in an unrelated project.
-- Run audited GitHub data reads through installed `shared/github_read.py`, and PR collection through `shared/collect_pr.py`. Current runtime network access and required filesystem write grants permit them without a separate runtime read request; only unavailable required capability uses the five-field brief and external approval for the complete owning helper. The profile extends `:workspace`, enables the network proxy for `api.github.com` and `github.com`, and grants `.git` writes under workspace roots for all commands in the selected session. It controls destinations, not HTTP methods or executable identity; helper validation and the remote-mutation ban remain mandatory. A denial or stricter host restriction stops the read with a specific diagnostic; never retry by broadening permission.
-- For those GitHub helpers, use the current session's effective permissions, not a stored default or profile definition. An active `github-read` profile supplies network evidence unless stricter runtime restrictions contradict it. When the profile name is hidden, explicit runtime network access enabled is sufficient to attempt the audited helper under existing destination policy; preserve explicit denied destinations. Verify required report, `.git`, and checkout paths are writable separately. With required grants, omit `sandbox_permissions` and `justification`, give no approval brief, and request no reusable rule. Missing profile identity or a failed lookup is not disabled access; never use `codex execpolicy list`, inspect credentials, or search other sessions to detect a profile. Required capability disabled, outside allowed write roots, or genuinely unknown uses the existing owning-command approval boundary only if runtime policy permits it; report uncertainty accurately. A `github-network` error alone is not an approval denial. Missing or unknown required capability with requests allowed requires the five-field brief and runtime approval for the complete owning helper before terminal reporting; continue after approval without requiring profile installation. An explicit denial or non-overridable restriction stops the attempt without a broadened retry. This changes no permission grants, profiles, or remote-mutation boundaries.
-- Runnable plugin code blocks are preapproved recipes within the invoked workflow scope; required preparation and checks inherit that authorization. Forbidden-operation examples and unevaluated placeholders are not grants. Use existing grants or the configured native automatic approval reviewer for the complete populated command; no blanket shell, interpreter, or arbitrary gate-runner allowance.
-- For other intentionally networked CLI, inspect the complete owning command's current network and filesystem grants, including nested subprocesses, dependency caches and hook environments. Existing grants or applicable preapproval use default execution without another request; network intent alone does not require escalation.
-- Only a verified missing capability requires `sandbox_permissions="require_escalated"` with narrow justification from the first attempt; never enable persistent workspace network access, request broad interpreter prefix, or assume nested executable's approval covers its parent. Do not propose a timestamp-specific whole-command prefix for `run_gates.py`.
-- Pytest outside the canonical `run_gates.py` gate follows packaged `shared/native-skill-contract.md` §Sandboxed Test Runs:
-  - Targeted loop runs without `-n`/`--numprocesses`/`--dist` in command or pytest `addopts` add `-p no:xdist`, so plugins opening a localhost socket whenever xdist is installed stay inside sandbox.
-  - Only interpreter-family reusable prefix permitted = repo's exact pinned test-runner prefix (e.g. `["<repo>/.venv/bin/python", "-m", "pytest"]`), requested once at scope selection only when selected work needs escalated pytest; never bare interpreter, `python -c`, or gate runner. Escalated pytest commands start with exactly that prefix — no `env VAR=...` or shell wrapper; pass env vars through tool's env field. Brief must state approved pytest runs unsandboxed, including repo `conftest.py`, for rest of session.
-  - Canonical gate keeps configured test command; its escalation stays one-time for complete `run_gates.py` command without `prefix_rule`.
-  - Loops run only changed-file targets from `shared/test_targets.py` (codemap-py test impact, else name/import heuristics); full suite runs once at canonical gate, never per finding or iteration.
+- Keep shell network access blocked by default. GitHub data reads and PR collection run only through installed `shared/github_read.py` and `shared/collect_pr.py`; with the required network and filesystem grants in the current session, omit `sandbox_permissions` and `justification`, give no approval brief, and request no reusable rule. Only a verified missing capability needs `sandbox_permissions="require_escalated"` with narrow justification; never enable persistent workspace network access, request a broad interpreter prefix, or retry a denied command with broader permission. A denial or stricter host restriction stops the read with a specific diagnostic. Missing or unknown required capability with requests allowed requires the five-field brief and runtime approval for the complete owning helper before terminal reporting; continue after approval without requiring profile installation. Before any networked CLI or GitHub read, read packaged `shared/global-baseline-details.md` §"Networked CLI and GitHub reads" (`github-read` profile selection, effective-grant evidence, which CLIs count as networked).
+- Pytest outside the canonical `run_gates.py` gate follows packaged `shared/native-skill-contract.md` §Sandboxed Test Runs: targeted runs without `-n`/`--numprocesses`/`--dist` in command or pytest `addopts` add `-p no:xdist`; the only interpreter-family reusable prefix is the repo's exact pinned test-runner prefix, never bare interpreter, `python -c`, or gate runner; loops run only changed-file targets from `shared/test_targets.py`, the full suite once at the canonical gate. Prefix form, disclosure, and gate-escalation rules: packaged `shared/global-baseline-details.md` §"Sandboxed pytest runs".
 - Wait for child agents only with blocking `wait_agent` + timeout; never poll with `list_agents`, `sleep`, or re-check loops. Child past its per-agent deadline (default 30 min) = `timed_out`, reported at once.
 - Plan updates (`update_plan`) ride with the next real tool call; no plan-only turns.
-- This includes `kaggle`, Codex Git marketplace add/upgrade + owning sync wrapper, paid `codex exec`, and any networked CLI outside the audited GitHub-read boundary; web/browser/MCP/connector tools use their own permission path.
-- Marketplace/plugin listing and `codex plugin add` from existing snapshot stay sandboxed.
 - Missing external CLIs = user-owned prerequisites: explain required install + auth, but never install from workflow.
 - Before every intentional approval request, give one short plugin-owned brief containing exactly these five fields:
   - `Action and purpose`
@@ -192,15 +186,7 @@ Every test must pass The Suspicious Check:
   - Keep runtime `justification`/reason separate from pre-brief.
   - It must be a short plain-English question about the requested outcome or material effect and must not repeat the command, argv, flags, paths, multiline content, or full approval brief.
   - Justified reusable `prefix_rule` must be short categorical safe prefix, never entire command; omit `prefix_rule` for one-time or high-risk commands.
-- GitHub data reads use `shared/github_read.py` only:
-  - Treats `gh` as opaque local credential broker: never run `gh auth`, read token/keychain/account state, or retain GitHub CLI stdout/stderr on failure.
-  - Permits only audited built-in view groups (`gist`, `issue`, `pr`, `project`, `release`, `repo`, `ruleset`, `run`, `workflow`), `gh api` GET requests, GraphQL queries, PR diffs, local `gh pr checkout`; rejects unlisted `gh * view` commands, remote mutation, browser-opening `--web`, non-GET REST calls, file-backed API fields, GraphQL mutations.
-  - Use unauthenticated public `api.github.com` GET fallback only as final public-data fallback; private-only evidence fails closed.
-  - GitHub Discussions use explicit read-only GraphQL query since `gh` has no `discussion view` command.
-  - Codex Git marketplace add/upgrade = separate explicit lifecycle op, not GitHub data read.
-- Keep `collect_pr.py` as only resource-specific GitHub collector unless another workflow demonstrably needs composite, validated evidence bundle or local-state operation.
-  - Issues, releases, repositories, Discussions use `github_read.py` direct.
-  - New collector needs written bundle contract, consumer workflow, regression tests; don't create parity wrappers around single read.
+- GitHub data reads use `shared/github_read.py` only: `gh` is an opaque local credential broker — never run `gh auth`, read token/keychain/account state, or retain GitHub CLI stdout/stderr on failure; `collect_pr.py` stays the only resource-specific collector. Audited view groups, REST/GraphQL limits, and the public fallback: packaged `shared/global-baseline-details.md` §"GitHub data reads".
 - `git` CLI allowed for task-scoped local repository operations and read-only remote access under existing authorization: status, diff, log, show, add, commit, local branch creation/deletion/listing, switch/restore/reset/clean, local merge/cherry-pick, local config, upstream, and tracking changes, `ls-remote`, `clone`, `fetch`, `remote update`, `submodule update --remote`, and guarded `pull --ff-only`. Destructive operations retain action-specific consent; actual denied capabilities and narrower workflow protections remain controlling.
   - Prefer GitHub CLI for GitHub metadata through the packaged reader/collector boundary. For read-only review, fetch and verify the exact PR commit, then inspect it in a detached isolated worktree without switching the invoking branch or reusing its dirty files; bind source-dependent gates to that worktree. Remediation must use collector `checkout_mode=remediate`, try `gh pr checkout <canonical PR URL>`, and keep an attached branch; after failure, only a verified same-repository checkout of the actual PR branch is allowed, while fork recovery uses the shared bounded adversarial route and returns to successful `gh` checkout. Native `gh` or an authorized same-repository checkout may create or update the original PR branch/tracking, but no manual exact-commit fallback, generated branch, or tracking repair is permitted. Normal fetches use no persistent ref destinations; the same-repository fallback may instead perform a guarded local update of an explicitly selected remote-tracking ref from the already fetched, verified PR head, using the observed prior value and preserving divergent or concurrently changed refs, for native tracking creation, without a second network fetch. The collector captures exact verified commit IDs, preserves unrelated work, and records the observed checkout mode. Fresh PR and target source are agent-owned preparation; fetch both before conflict analysis. On a separately verified PR branch with verified upstream and confirmed clean index/worktree, authorized `git pull --ff-only` may update local source; reverify HEAD against fresh PR metadata. The collector's fetched and verified checkout already supplies fresh source, so do not add redundant pull. Do not merge, rebase, reset, discard user changes, or manually change tracking configuration merely to refresh review or remediation.
   - Never use `git` for remote repository mutation: no push, remote branch/tag deletion, or server-side configuration changes. Local config and tracking edits remain subject to the PR-specific verified checkout and recovery protections above; ordinary authorization does not permit manual tracking repair merely to refresh a PR. Native `gh pr checkout` and the explicitly authorized same-repository original-branch checkout may perform their own local branch/tracking setup. A fast-forward-only pull is remote read plus local update, not remote publication. Use existing grants or the configured native automatic approval reviewer for the complete owning command; only a verified missing capability requires an allowed runtime approval request. Preserve the marketplace workflow's native-CLI route and its specific clone restriction.
@@ -211,43 +197,9 @@ ______________________________________________________________________
 
 ## Docstring Style Resolution
 
-Before writing/changing docstrings:
+Resolve the docstring style from the project first, as in Code Quality items 10 and 11; the fallback is the 6-point Google/Napoleon style. Read packaged `shared/global-baseline-details.md` §"Docstring style resolution" for the resolution checklist, fallback section rules, and worked example.
 
-- Inspect project for explicit style.
-- Check project-local `AGENTS.md`, contributor docs, `pyproject.toml`, lint/doc settings like `pydocstyle` or `ruff`, Sphinx/MkDocs config.
-- No explicit style configured → read nearby modules + tests, match dominant local style.
-
-Fallback = 6-point Google/Napoleon style below. Use only when project doesn't define or clearly demonstrate other style.
-
-- Public APIs need all relevant sections in selected project style.
-- Types live in function signatures — never repeat in Args/Returns unless project style explicit does so.
-- Internal helpers still need purpose docstring when new or material changed; keep concise unless args, return values, raised errors, examples need explicit explanation.
-- Explanatory text about why function/class exists belongs in that definition docstring, not preceding inline comment.
-
-```python
-def compute_score(predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-    """Compute element-wise accuracy score between predictions and targets.
-
-    Applies softmax to predictions before comparison. Handles batch-size-1
-    without broadcasting errors.
-
-    Args:
-        predictions: Raw logits, shape (B, C), in (-inf, +inf).
-        targets: Class indices, shape (B,), in [0, C).
-
-    Returns:
-        Per-sample accuracy, shape (B,), in [0.0, 1.0].
-
-    Raises:
-        ValueError: If predictions and targets have incompatible batch dimensions.
-
-    Example:
-        >>> preds = torch.tensor([[2.0, 0.5], [0.1, 3.0]])
-        >>> tgts = torch.tensor([0, 1])
-        >>> compute_score(preds, tgts)
-        tensor([1., 1.])
-    """
-```
+- A docstring's opening line must state the documented object's purpose in plain English. Move formulas, assignments, configuration literals, function-call notation, and other code-shaped details into the following description or a relevant section.
 
 ______________________________________________________________________
 
@@ -257,29 +209,7 @@ ______________________________________________________________________
 
 Default: main agent for indivisible work.
 
-Use `delegation-lead` when task has multiple separable workstreams and routing across configured Luna and Sol roles expected to cut total cost or elapsed time after coordination overhead.
-
-Stay in main agent when:
-
-- Work not splittable into disjoint ownership or evidence axes
-- Handoff would dup context parent already has
-- Preparing, waiting, validating delegation costs more than direct execution
-- Next action = single parent-owned acceptance or destructive-action decision
-
-Use delegation lead when:
-
-- 2+ independent domains, file sets, evidence searches, or verification commands can proceed w/o overlapping ownership
-- Lower-cost registered Luna role can own bounded support work while the Sol parent retains behavior, architecture, security, and executable acceptance
-- Parallel work likely cuts wall time w/o flooding every specialist w/ same context
-- Task needs explicit routing ledger + consolidated handover
-
-Parent agent responsibilities:
-
-- Scope task, owned files, acceptance criteria before delegation
-- Integrate subagent outputs into one coherent change
-- Inspect delegation lead handover ledger, relevant diffs, verification evidence before accepting work
-- Reject scope widening, unsupported completion claims, final acceptance transferred to support role
-- Final judgment on conflicts, overlaps, release readiness
+Delegate through `delegation-lead` only when the task has multiple separable workstreams and routing is expected to cut total cost or elapsed time after coordination overhead; otherwise stay in the main agent. Read packaged `shared/global-baseline-details.md` §"Delegation default mode" for the stay-or-delegate criteria and parent responsibilities.
 
 ### Required workflow routing
 
@@ -289,15 +219,7 @@ Parent agent responsibilities:
 
 ### Collaboration team patterns
 
-- Architecture/public API changes: `solution-architect` + `sw-engineer` + `qa-specialist` + `doc-scribe`
-- Security-sensitive features: `security-auditor` + `sw-engineer` + `qa-specialist`
-- Data pipeline changes: `data-steward` + `sw-engineer` + `qa-specialist`
-- Toolchain/CI quality changes: `cicd-steward` + `linting-expert` + `curator`
-- External migration/release-note driven changes: `web-explorer` + `solution-architect` + `sw-engineer`
-- Release readiness: `oss-shepherd` + `cicd-steward` + `doc-scribe` + `qa-specialist`
-- Research-paper implementation: `scientist` + `solution-architect` + `sw-engineer` + `qa-specialist`
-- High-risk plan validation: `challenger` + relevant domain specialist before implementation
-- PR review-to-resolution: `code-review` with `scope=pr` writes report after collecting PR evidence, fetching target branch, checking out/updating PR locally. Then `code-remediate` with `mode=pr` re-collects online PR reviews, fetches latest target branch + PR branch, records clean PR/target implementation context plus merge-conflict risk before editing, triages each comment, fixes only valid selected findings in local code.
+Choose specialist teams (architecture and public API, security, data pipeline, toolchain and CI, migration and release notes, release readiness, research implementation, high-risk plan validation, PR review-to-resolution) from packaged `shared/global-baseline-details.md` §"Collaboration team patterns".
 
 ### Model escalation policy
 
@@ -319,7 +241,7 @@ Every local commit created by Codex must end with:
 When Claude shaped the committed diff (code, review, diagnosis, or work Codex commits on Claude's behalf), put `Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>` on the line before it. Applies to every skill and workflow.
 
 - Use Codex Rig's packaged `shared/commit-response-template.md` exactly for commit + summary messages.
-- Stage + commit reviewed paths in one owning command (`git add -- <paths> && git commit --cleanup=verbatim -m <message>`) after showing exact path list + full message and checking no staged entry outside those paths; afterward committed file set must equal reviewed path list.
+- Stage + commit reviewed paths in one owning command (`git add -- <paths> && git commit --cleanup=verbatim -m <message>`) after showing exact path list + full message and checking no staged entry outside those paths; afterward committed file set must equal reviewed path list. A merge commit instead commits its already-staged, reviewed merge index with `git commit` alone and follows the template's merge commit proof.
 - `commit_attribution` setting and individual skill rules reinforce this project-wide requirement.
 
 Every proposed/created commit message must use packaged template's `Changes:`, `Impact:`, `Verification:`, `Residual limits:` sections.
@@ -351,29 +273,7 @@ Parent-owned, non-destructive handovers between agents.
 - Changes overlap/conflict → pause, return control to parent agent
 - Final accepted changes follow Commit Authorization
 
-**Handing off:**
-
-```bash
-mkdir -p .codex/handover
-git diff -- <owned-paths> > .codex/handover/<from>→<to>-$(date +%s).patch
-```
-
-Also include short text handoff covering:
-
-- files touched
-- intent of change
-- verification performed
-- open risks or questions
-
-**Receiving:**
-
-```bash
-git apply .codex/handover/<patch-file>
-```
-
-Apply only if no discarding of local changes required.
-
-Conflicts with existing work → resolve at parent-agent level, no cleaning tree.
+For patch handovers (writing, applying, naming `.codex/handover/` patches) read packaged `shared/global-baseline-details.md` §"Work handover patches".
 
 **Final state.** Leave changes unstaged unless Commit Authorization permits commit.
 
@@ -383,13 +283,11 @@ Conflicts with existing work → resolve at parent-agent level, no cleaning tree
 - Return control clean to parent workflow.
 - No discarding local changes unless parent explicit requests.
 
-**Naming convention:**
+### Plan isolation
 
-```text
-<from-role>→<to-role>-<unix-timestamp>.patch
-```
-
-Examples: `sw-engineer→qa-specialist-1735000000.patch` · `linting-expert→claude-1735000001.patch`
+- Plans, reports, scratch artifacts, and private implementation notes are evidence, not production content.
+- Never copy plan-only notation, section references, task IDs, private source or code examples, plan-only placeholder names, or private shorthand into shipped code, plugins, Skills, templates, schemas, or user-facing docs, and never make a shipped artifact depend on access to its originating plan or report context.
+- Re-express every adopted requirement as a self-contained contract with complete or sufficiently descriptive names, neutral examples, and all context needed to understand and verify it without the originating plan.
 
 ### Human-in-the-loop — always pause for approval before:
 

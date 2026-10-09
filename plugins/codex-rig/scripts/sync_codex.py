@@ -56,6 +56,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from _package_identity import PackageIdentityError, verify_package
+from install_global_agents import PLUGIN_ROOT_PLACEHOLDER
 
 
 class SyncAction(str, Enum):
@@ -424,6 +425,9 @@ def sync_codex(
     if args.no_codex_global_agents:
         print("  [skip] global instructions unchanged", file=stdout)
     else:
+        # The template comes from the marketplace checkout, but sessions must read the installed cache's shared docs.
+        # A selected payload without the placeholder predates --plugin-root, so its installer is called as before.
+        root_args = ["--plugin-root", str(installed_root)] if PLUGIN_ROOT_PLACEHOLDER in template.read_bytes() else []
         result = _run(
             run,
             [
@@ -433,13 +437,23 @@ def sync_codex(
                 str(template),
                 "--codex-home",
                 str(_codex_home(environ)),
+                *root_args,
             ],
         )
         if result.stdout:
             print(result.stdout.rstrip(), file=stdout)
         health = _run(
             run,
-            [sys.executable, str(installer), "--check", "--source", str(template), "--codex-home", str(home)],
+            [
+                sys.executable,
+                str(installer),
+                "--check",
+                "--source",
+                str(template),
+                "--codex-home",
+                str(home),
+                *root_args,
+            ],
         )
         if health.stdout:
             print(health.stdout.rstrip(), file=stdout)

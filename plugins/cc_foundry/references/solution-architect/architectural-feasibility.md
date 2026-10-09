@@ -1,4 +1,4 @@
-<!-- Loaded by foundry:solution-architect (opusplan + high) -->
+<!-- Loaded by foundry:solution-architect (opus + high) -->
 
 # Architectural Feasibility (foundry:solution-architect specialized guidance)
 

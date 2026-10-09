@@ -5,13 +5,20 @@
 
 give an installed Codex session an actionable indication of managed role-shim health before normal work begins. It turns
 the packaged doctor result into a short startup message so an operator can recognize degraded setup without opening
-diagnostic files first.
+diagnostic files first. It also warns when the managed global-instructions block in ``CODEX_HOME/AGENTS.md`` names a
+different Codex Rig root than this plugin, or no root at all, which happens after a direct plugin update that did not
+re-render the block: the block's packaged ``shared/<file>`` pointers then read another package version, a removed one,
+or (for a block from a template before the ``PLUGIN_ROOT`` line) no package.
 
 ## Scope
 
 parses hook input and invokes the diagnostic surface only; it never installs, repairs, removes, or otherwise changes
 shims. The doctor subprocess is bounded by input, output, and time limits, and the hook validates that it is running
-from the active installed plugin root.
+from the active installed plugin root. The global-instructions comparison reads a bounded ``AGENTS.md`` through the
+packaged installer's read-only parser and never writes. A missing file, or a missing, duplicated or hand-edited block,
+produces no warning (``install_global_agents.py --check`` owns those diagnoses). A block naming no root warns without
+re-reading this package's template: the template shipped beside this hook always defines ``PLUGIN_ROOT``, so a rootless
+block was rendered from an older (or custom) template.
 
 ## Usage
 
@@ -29,7 +36,8 @@ helper functions.
 
 prints a bounded JSON-compatible hook response that is informative but does not reveal private filesystem or credential
 details. Healthy diagnostics produce a continue response without a system warning, while degraded or blocked checks
-include a sanitized reason and the safe status command.
+include a sanitized reason and the safe status command. A stale global-instructions root adds one warning naming only
+the last component of each root (normally the plugin version), or that the block names none, and the re-render command.
 
 ## Failure
 
@@ -40,11 +48,16 @@ session to continue while directing the operator to the doctor command.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+
+# The hook runs from the installed plugin cache; loading the installer parser must not write bytecode there.
+if __name__ == "__main__":
+    sys.dont_write_bytecode = True
 
 #: Largest hook event payload, in bytes, read from standard input before it is rejected as oversized.
 MAX_INPUT_BYTES = 65_536
@@ -52,6 +65,8 @@ MAX_INPUT_BYTES = 65_536
 MAX_OUTPUT_BYTES = 1_048_576
 #: Character cap for the failed-check reason shown in the startup health message.
 MAX_REASON_CHARS = 240
+#: Largest global ``AGENTS.md``, in bytes, read to compare its managed plugin root; a larger file is not compared.
+MAX_GLOBAL_AGENTS_BYTES = 1_048_576
 
 
 def _response(message: str | None = None) -> str:
@@ -125,11 +140,66 @@ def _bounded_reason(reason: str) -> str:
     return f"{prefix[:head_length]}…{suffix}"
 
 
+def _managed_block_root(root: Path, agents: Path) -> tuple[bool, str | None]:
+    """Report whether one authenticated global block exists and the plugin root it names, via this package's parser."""
+    installer = root / "scripts" / "install_global_agents.py"
+    spec = importlib.util.spec_from_file_location("codex_rig_install_global_agents", installer)
+    if spec is None or spec.loader is None:
+        raise ImportError("global-instructions installer is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with agents.open("rb") as stream:
+        payload = stream.read(MAX_GLOBAL_AGENTS_BYTES + 1)
+    body = module.authenticated_managed_body(payload) if len(payload) <= MAX_GLOBAL_AGENTS_BYTES else None
+    if body is None:
+        return False, None
+    return True, module.rendered_plugin_root(body)
+
+
+def _global_root_notice(root: Path) -> str | None:
+    """Warn when the global managed block names another plugin root than the one running this hook, or none.
+
+    Advisory only: an unreadable file or parser is not a shim-health failure, so it yields no warning rather than
+    replacing the doctor result. Roots compare after symlink resolution, as the installer renders them.
+    """
+    home_value = os.environ.get("CODEX_HOME")
+    try:
+        agents = (Path(home_value) if home_value else Path.home() / ".codex") / "AGENTS.md"
+        if not agents.is_file():
+            return None
+        managed, rendered = _managed_block_root(root, agents)
+    except (OSError, ImportError, RuntimeError, SyntaxError):
+        return None
+    if not managed:
+        return None
+    if rendered is None:
+        stale = "names no PLUGIN_ROOT (rendered from an older template)"
+    elif os.path.normcase(os.path.realpath(rendered)) == os.path.normcase(os.path.realpath(root)):
+        return None
+    else:
+        # Only the last component is shown: the full roots are private paths. Split on both separators so a root of
+        # the other path flavour cannot leak whole.
+        rendered_name = rendered.replace("\\", "/").rstrip("/").rpartition("/")[2]
+        stale = _bounded_reason(f"names …/{rendered_name}, not this session's …/{root.name}")
+    return (
+        f"Codex Rig global instructions: stale PLUGIN_ROOT — the managed CODEX_HOME/AGENTS.md block {stale}, so its "
+        "shared/ pointers do not read this package. No files changed. Re-render with $codex-rig:sync or this "
+        "package's scripts/install_global_agents.py --source <installed-package>/assets/AGENTS.md --codex-home <home>."
+    )
+
+
+def _joined(*messages: str | None) -> str | None:
+    """Combine the present startup warnings into one system message."""
+    return " ".join(message for message in messages if message) or None
+
+
 def main() -> int:
     """Run the packaged doctor and surface only actionable degraded health."""
+    root_notice: str | None = None
     try:
         _input()
         root = _plugin_root()
+        root_notice = _global_root_notice(root)
         manager = root / "scripts" / "manage_role_agents.py"
         completed = subprocess.run(  # noqa: S603 - argv list, no shell
             [sys.executable, str(manager), "doctor"],
@@ -147,10 +217,11 @@ def main() -> int:
         message = None
         if classification != "healthy":
             message = _health_message(result, classification)
-        print(_response(message))
+        print(_response(_joined(message, root_notice)))
         return 0
     except (OSError, subprocess.TimeoutExpired, ValueError, json.JSONDecodeError) as error:
-        print(_response(f"Codex Rig shim health check unavailable: {error}. Run $codex-rig:agent-shims doctor."))
+        unavailable = f"Codex Rig shim health check unavailable: {error}. Run $codex-rig:agent-shims doctor."
+        print(_response(_joined(unavailable, root_notice)))
         return 0
 
 

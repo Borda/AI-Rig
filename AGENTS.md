@@ -1,4 +1,6 @@
-# Repository Agent Instructions
+# AI-Rig — Project-Only Agent Instructions
+
+<!-- Scope: maintaining this repository only; never shipped. Policy meant for every project or install goes into the plugin that ships it, never here. -->
 
 <!-- policy-sibling-sync: CLAUDE.md, AGENTS.md, plugins/AGENTS.md, plugins/CLAUDE.md -->
 
@@ -9,6 +11,11 @@
 
 - Repository-wide policy belongs in this top-level file.
 - Lower-scope instruction files inherit it and must add only narrower rules or explicit exceptions, never repeat the same policy; when a top-level policy changes, review lower layers for conflicts or obsolete duplication rather than copying the new text into them.
+- **This file is for maintaining this repository only and is never shipped** — plugin users never see it. Anything general, meant for every project or every install, must be distributed in the plugin that ships it (the Codex Rig global template [plugins/codex-rig/assets/AGENTS.md](plugins/codex-rig/assets/AGENTS.md) or `plugins/codex-rig/shared/`; foundry rules for Claude), never added here. This file holds only this repository's own conventions and restates none of the shipped baseline.
+
+## Shipped Global Baseline
+
+These generic rules ship in the global template (section names as in that file) and are not restated here: core principles and focused delegation (§Execution Discipline, §Subagent Spawn Rules, §Code Quality), internal record types (§Code Quality item 19), docstring opening line (§Docstring Style Resolution), Multi-OS Executables, Markdown Authoring, the lossless instruction compression gate (§Scope And Layering), pytest parametrization, marker discipline and xdist isolation (§Testing), pre-commit hooks over bare lint tools (§Code Quality item 16), benchmark isolation (§Testing), plan isolation (§Work Handover) and Notebook Authoring. Sections below add only this repository's specifics. This repository supports Linux, macOS, and native Windows, so the conditional Multi-OS Executables rule always applies here.
 
 ## Edit Scope
 
@@ -17,45 +24,13 @@
 - The Makefile installs from the pushed GitHub remote, not the local working tree: commit and push first, then `make sync-claude` or `make sync-codex`. Running it against uncommitted work silently installs the previous state.
 - Never initiate propagation mid-task; it is a deliberate human-triggered step.
 
-## Core Principles
-
-Start every user-facing message with a short plain-English explanation that names the full topic or question before technical details. Apply this to progress updates, questions, approval requests, errors, blockers, handoffs, and final answers; do not use unexplained references such as “both” or “that,” and do not repeat the entire conversation. Keep later evidence precise; do not prepend prose to machine-only payloads or violate an explicitly requested exact output format.
-
-Simplicity and reliability come first. Understand the affected flow and root cause, then prefer the smallest clear, reversible solution that satisfies the verified contract. Prefer established project patterns, standard tools, and deletion over new abstractions, dependencies, configuration, or layers; add complexity only when current evidence proves it necessary.
-
-Verification is part of implementation. Work is not complete until relevant checks pass and failures, residual risks, and deliberately deferred scope are reported accurately.
-
 ## Version Continuity
+
+This repository's own convention, not shipped policy: other projects commonly decide SemVer at release time rather than per commit.
 
 - Before changing any shipped version or serialized artifact schema, identify its version family and read that family's value from the last committed `HEAD`; do not use an earlier uncommitted edit or an unrelated nested version as the baseline.
 - A changed integer schema advances exactly one step from its committed current value. A new version family starts at 1. Keep older versions only as explicitly labeled historical readers; several revisions before the next commit still produce one bump from `HEAD`.
-- Check the proposed value against `HEAD` before handoff and record the comparison with the affected verification. Reject skipped or downgraded versions. Plugin release versions also follow the separate SemVer pre-bump gate in `plugins/AGENTS.md`.
-
-## Python Record Types
-
-- Prefer dataclasses for reused, fixed-shape internal records to clarify contracts and reduce field-name mistakes.
-- Keep dictionaries for dynamic keys, external JSON, and simple mappings. Shared types modules must reduce real complexity.
-- Preserve runtime validation, behavior, and serialized schemas; annotations alone do not enforce types.
-
-## Python Documentation Style
-
-- A docstring's opening line must state the documented object's purpose in plain English. Move formulas, assignments, configuration literals, function-call notation, and other code-shaped details into the following description or a relevant section.
-
-## Multi-OS Executables
-
-Scripts, hooks, `bin/` entry points, and CI steps all run on Linux, macOS, and native Windows. A POSIX-only assumption is a defect to fix at the source, never a reason to skip the platform.
-
-- `pathlib`; `Path(p).is_absolute()` not a leading-slash check; `PurePath(p).as_posix()` before hashing, serializing, or comparing a path — native separators change the digest.
-- POSIX-absolute literals are not portable fixtures: `/host/x` resolves to `D:\host\x` on Windows.
-- Serialized telemetry or provenance paths are cross-host coordinates, not local paths: preserve their exact string; recognize declared POSIX and Windows absolute forms with `PurePosixPath` and `PureWindowsPath`; never convert them through host `Path` before exact comparison. Regressions must exercise both forms on every host.
-- Byte-asserted or hashed writes use `newline="\n"` or bytes; text mode emits CRLF on Windows.
-- Sanitized subprocess `env=` keeps `SystemRoot`, `SYSTEMROOT`, `COMSPEC`, `PATHEXT`, `TEMP`, `TMP` on win32, else the child Python aborts before running; temp dirs via `os.environ.get("TMPDIR") or tempfile.gettempdir()`, never `/tmp`.
-- A workflow `run:` step invoking `.sh` needs explicit `shell: bash` — the Windows default shell dot-sources it and exits zero, a false green.
-- Symlinks, file modes, and uid checks are capabilities: degrade in production code first.
-- Skips are the last resort: never a blanket `skipif(sys.platform == "win32")`, always a capability probe skipping on `OSError`, with each surviving skip documented and re-audited.
-- Test skips must be collection-time decorators (`pytest.mark.skipif`, `pytest.mark.skip`, or parametrized marks); never call `pytest.skip()` from a test or fixture body.
-- Green macOS is absence of regression, not Windows support: prove Windows semantics with `PureWindowsPath` or `ntpath`, since monkeypatching `os.name` does not change `pathlib`.
-- Recurrent defect guard: a test simulating another OS must explicitly supply every host-only API and constant it exercises instead of assuming the runner exports them. For absent surfaces such as `os.killpg` or `signal.SIGKILL`, install test doubles with `monkeypatch.setattr(..., raising=False)` and use `monkeypatch.delattr(..., raising=False)` in the regression to prove the missing-attribute case; keep the simulated branch running on every host rather than adding an OS skip.
+- Check the proposed value against `HEAD` before handoff and record the comparison with the affected verification. Reject skipped or downgraded versions. Plugin release versions also follow the separate SemVer pre-bump gate in [plugins/AGENTS.md](plugins/AGENTS.md).
 
 ## Interpreter Commands — Fix the Launcher, Not the Call Site
 
@@ -74,80 +49,20 @@ Claude recipe commands retain `python` identities used by allow rules and bluepr
 
 - Guards: `tests/test_hook_interpreter_fallback.py` and `plugins/codex-rig/tests/packaging/test_sync_codex.py`. Extend them when adding a launch layer.
 
-## Benchmark Isolation
-
-- Benchmark task IDs, target repositories, prompt wording, expected answers, and task-specific source or symbol examples are test evidence, not production content.
-- Never copy them into shipped plugins, Skills, templates, or user-facing docs; use neutral generic examples and encode the generalized contract in a regression test instead.
-
-## Plan Isolation
-
-- Plans, reports, scratch artifacts, and private implementation notes are evidence, not production content.
-- Never copy plan-only notation, section references, task IDs, private source or code examples, plan-only placeholder names, or private shorthand into shipped code, plugins, Skills, templates, schemas, or user-facing docs, and never make a shipped artifact depend on access to its originating `.plans/` or `.reports/` context.
-- Re-express every adopted requirement as a self-contained contract with complete or sufficiently descriptive names, neutral examples, and all context needed to understand and verify it without the originating plan.
-
-## Focused Delegation
-
-- Use the lowest-cost capable subagent for small, well-defined support work when the task splits into independent bounded workstreams and the expected time or cost saving exceeds coordination overhead.
-- Give each subagent narrow file or evidence ownership, only the context it needs, and explicit acceptance gates; parallelize disjoint work and never assign duplicate investigation or overlapping edits.
-- Keep indivisible or very small work in the main agent.
-- The main agent owns integration, reviews every handoff against its gates, resolves conflicts, and retains final acceptance for behavior-changing or executable results.
-
 ## Adversarial Convergence Loop
 
-Use the canonical procedure in [plugins/codex-rig/shared/adversarial-loop.md](plugins/codex-rig/shared/adversarial-loop.md) for every independent review → authorized-fix cycle. Read it before dispatch; its scope, evidence ledger, strictly decreasing nonnegative integer score after baseline `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, and remediation rules are mandatory.
-
-Do not fork the implementing conversation for review or treat a local fix as closed before later independent verification. Feasible authorized structural findings remain in the loop; repeated open signatures require root-cause evidence under the canonical recurrence policy. Unavailable independent coverage or stale final snapshot stops a clean claim; an open `security` or `critical` finding also forbids completion and commit. Stop on plateau or non-convergence with open findings, or exhaustion of a stricter caller budget. Every such stop reports only completed-round scores (for example `W_0 → W_1 → W_2`), or `not-run` when no review completed, plus per-tier residue and evidence, then asks for the concrete missing decision; a clean loop still requires the owning workflow’s remaining gates.
-
-## Notebook Authoring
-
-Use the canonical standard in [plugins/codex-rig/shared/notebook-style.md](plugins/codex-rig/shared/notebook-style.md) before writing or editing any notebook — a Jupyter `.ipynb`, or a Jupytext `# %%` percent-format `.py` script destined to become one. It covers cell granularity, markdown narrative depth, plot framing, shell magics, and docstring placement; apply it in full regardless of which skill or task produced the notebook.
-
-## Markdown Policy
-
-- Never hard-wrap prose in any Markdown file.
-- Keep each prose paragraph on one physical line; preserve intentional structural breaks in headings, lists, tables, blockquotes, links, HTML `<details>` blocks, and fenced code.
-- Do not blindly unwrap or reflow a whole file; edit only the intended prose and retain its surrounding structure.
-
-Structure Markdown for scanning and correct execution, not from line length alone. When one paragraph combines multiple actions, conditions, actors, statuses, exceptions, or decision branches, use the smallest fitting structure:
-
-- Parallel obligations or independently checkable facts → bullets.
-- Ordered actions, recovery paths, or state transitions → numbered lists.
-- Ordered sub-steps nested under a numbered item → letters, written as bullets with a letter label (`- a. …`, `- b. …`), so references read `2b`, never `2.2`; CommonMark has no lettered list type.
-- Compact closed mappings or comparisons with repeated fields → tables; keep long causal explanations out of table cells.
-- Genuine notes, warnings, interpretation limits, or safety boundaries → blockquotes.
-- Optional depth that would interrupt the main path → an existing or justified `<details>` block.
-- Keep causal reasoning and cohesive rationale as prose.
-- Do not convert paragraphs wholesale, add headings for every rule, or duplicate an existing navigation system.
-- Keep headings concise and move detailed contracts below them.
-- When reformatting behavior-sensitive agent, skill, setup, approval, or recovery instructions, preserve modal language, exact literals, ordering, and stop conditions; run the affected contract and calibration gates because formatting can change instruction salience even when the words remain similar.
+The loop ships in the global template. In this repository read the source-tree copy [plugins/codex-rig/shared/adversarial-loop.md](plugins/codex-rig/shared/adversarial-loop.md) directly before every independent review → authorized-fix cycle: the installed copy lags the working tree until it is published and synced.
 
 ## Lossless Instruction Compression Handover Gate
 
-Compression or structural reformatting of any `AGENTS.md` or `CLAUDE.md` is behavior-sensitive and must pass every gate before handoff:
-
-1. Save a verified byte-exact pre-change backup under `.codex/caveman-compress/backups/`, outside active instruction-discovery paths; never overwrite an existing backup.
-2. Compare the backup and result for complete semantic preservation: scope, actors, obligations, modal strength, exceptions, ordering, approval and stop conditions, thresholds, examples, and cross-file relationships must remain unambiguous.
-3. Preserve headings, list hierarchy, fenced and inline code, commands, paths, URLs, identifiers, versions, numbers, environment variables, and other behavior-bearing literals exactly unless the task explicitly changes them.
-4. Run the affected Markdown, instruction-contract, and calibration gates. Broad instruction-set changes also require an independent agent followability review against the pre-change backup.
-5. Reject the compression and restore the pre-change file when any instruction is lost, weakened, broadened, made ambiguous, harder to navigate, or less reliably followed. An unresolved comparison difference blocks completion.
-
-Plugin-specific authoring, installability, cross-reference, versioning, and verification rules live in [plugins/AGENTS.md](plugins/AGENTS.md).
-
-## Test Parametrization
-
-- Keep single, simple `str`, `bool`, `int`, and `float` cases bare with pytest's default IDs; descriptive IDs alone do not justify wrappers. Use concise semantic IDs for generated oversized strings whose default IDs would be unreadable.
-- Wrap every tuple case, including multi-argument rows, as `pytest.param(..., id="meaningful-case")`: pass row arguments separately; preserve a tuple-valued single argument as `pytest.param((...), id=...)`.
-- Use `pytest.param` with semantic IDs for functions, containers, and other opaque/unstable objects; retain case-specific `marks=`. IDs describe behavior or intent, never memory addresses or object hashes.
-- Never pass separate `ids=` to `pytest.mark.parametrize`—list, tuple, callable, or otherwise. Generated cases and mapping rows follow the same rules; attach each required ID to its case.
-- Remove optional trailing commas that force short lists or calls onto multiple lines, then run the pinned Ruff hooks. Retain required tuple commas, comments, and Ruff-restored wrapping; skip ambiguous edits. Preserve values, argument unpacking, order, duplicates, marks, and assertions.
+The gate ships in the global template (§Scope And Layering). Repository specifics: this repository's calibration gate (`plugins/codex-rig/runtime/calibration/run.py --layout plugin`) is mandatory; save the byte-exact backup under `.codex/caveman-compress/backups/`, and plugin-specific authoring, installability, cross-reference, versioning, and verification rules live in [plugins/AGENTS.md](plugins/AGENTS.md).
 
 ## Test Selection
 
+Generic marker discipline ships in the global template (§Testing). This repository's vocabulary and commands:
+
 - Use semantic markers: `integration` for real component interactions; `installed_plugin` for tests runnable without repository context; `packaging` for build/install/payload contracts; `live` for real external services or credentials.
-- Apply markers directly to tests or homogeneous classes; never assign `pytestmark`, including lists of markers. Do not infer membership from paths, names, platforms, or mocked subprocesses. Ordinary tests may remain unmarked.
-- Reuse repeated collection-time `pytest.mark.skipif(...)` conditions as named decorators such as `_skip_node_unavailable`; preserve predicates and reasons. This does not authorize new skips or weaken the capability-probe policy.
 - `installed_plugin` does not imply `packaging`. A `live` test also carries `integration` and retains explicit opt-in guards; selection never authorizes network or paid execution. Capability probes remain separate.
-- Register selectors in repository and shipped test configuration; validate with `--strict-markers`. Classify tests by their behavioral contract or execution requirements, never duration; use CI duration reports to investigate underperforming tests. Full CI remains unfiltered.
 - From the repository root, use `.venv/bin/python -m pytest -m installed_plugin` or `.venv/bin/python -m pytest -m "packaging and not live"`; omit paths for project-wide discovery. On Windows use `.venv\Scripts\python.exe`.
 
 ## Project Workflow
@@ -157,8 +72,6 @@ Plugin-specific authoring, installability, cross-reference, versioning, and veri
 - Run focused tests with `.venv/bin/python -m pytest <paths>` and broaden to the affected suite before completion.
 - Broad local runs go parallel: `.venv/bin/python -m pytest -n 4 <paths>` (pytest-xdist, already in the test group). Measured on the full suite: 11556 tests in ~5 min at `-n 4`, several times faster than the same run serial. Use `-n 4` for any run wide enough to be worth waiting on; keep focused single-file runs serial, where worker startup costs more than it saves.
 - Coverage tracing is opt-in: CI passes the `--cov=<plugin>/bin` list (see `.github/workflows/ci-tests.yml`), and a local run measures only when you add `--cov=<path>` with `--cov-report=term-missing`. Keep sources out of `[tool.coverage]`: it also configures tests that start their own coverage run. Untraced is the default because tracing slows every test, most on Windows.
-- Drop `-n` when the failure itself is what you are reading: xdist interleaves worker output, hides `-x` ordering, and breaks `--pdb`. Reproduce a failure serially before diagnosing it.
-- A test that passes serially and fails only under `-n` is a real defect, not an xdist artifact — usually shared machine-global state (a `${TMPDIR}` sentinel without its `-${CSID}` suffix, a fixed port, a written file outside `tmp_path`). Fix the isolation; never pin that suite serial to hide it.
-- Lint/format edits via the pinned pre-commit hooks, never the bare tool: `pre-commit run ruff-check --files <changed-python-paths>`, `pre-commit run ruff-format --files <changed-python-paths>`, and `pre-commit run mdformat --files <changed-markdown-paths>`; direct `ruff` or `mdformat` invocation drifts from the version/config pinned in `.pre-commit-config.yaml`.
-- Use `pre-commit run --all-files` only when the task requires the repository-wide gate; preserve unrelated working-tree changes.
+- The generic xdist isolation rule ships in the global template (§Testing); in this repository the usual shared machine-global state is a `${TMPDIR}` sentinel without its `-${CSID}` suffix.
+- Lint/format edits via the pinned pre-commit hooks (generic rule: global template §Code Quality item 16): `pre-commit run ruff-check --files <changed-python-paths>`, `pre-commit run ruff-format --files <changed-python-paths>`, and `pre-commit run mdformat --files <changed-markdown-paths>`; direct `ruff` or `mdformat` invocation drifts from the version/config pinned in `.pre-commit-config.yaml`. Use `pre-commit run --all-files` only when the task requires the repository-wide gate.
 - Release and build entry points are plugin-specific; follow `plugins/AGENTS.md` and the owning plugin's scripts and README. Remote publication remains human-owned.
