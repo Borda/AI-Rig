@@ -2,25 +2,25 @@
 // allow-dispatch.js — PreToolUse hook (matcher: Bash)
 //
 // PURPOSE
-//   The single registered auto-allow hook for this plugin. It asks the two
+//   The single registered auto-allow hook for this plugin. It asks the required
 //   decision modules — `blueprint-allow.js` (provenance: this exact command
-//   text is in a reviewed, versioned plugin file) and `sentinel-read-allow.js`
-//   (shape: this command is a known read-only idiom) — in rank order, emits the
-//   first allow, and appends one audit record describing what both of them
-//   said. The modules keep their own logic, their own standalone drivers and
-//   their own test suites; this file adds no policy of its own.
+//   text is in a reviewed, versioned plugin file), `sentinel-read-allow.js`
+//   (shape: this command is a known read-only idiom) — and, when shipped,
+//   the optional Foundry module `github-read-allow.js`
+//   (gh read: every command is an allowlisted gh read; no grant or record) —
+//   in rank order, emits the first allow, and
+//   appends one audit record describing what all of them said. The modules keep
+//   their own logic, their own standalone drivers and their own test suites;
+//   this file adds no policy of its own.
 //
 // HOW IT WORKS
 //   1. Read stdin once.
-//   2. Inside its own protected block, require `blueprint-allow.js` and call
-//      `evaluate(raw)`.
-//   3. If blueprint allowed, write its payload to stdout immediately.
-//   4. Inside its own protected block, require `sentinel-read-allow.js` and
-//      call `evaluate(raw)`.
-//   5. If nothing has been written yet, write shape's payload when it allowed;
-//      otherwise write nothing.
-//   6. Append one audit record carrying the effective verdict and both lanes'
-//      raw verdicts — unless both lanes returned `none`, in which case there is
+//   2. For each lane in LANES order, inside its own protected block, require
+//      the module and call `evaluate(raw)`.
+//   3. The first lane that allowed has its payload written to stdout
+//      immediately; a later allow is recorded but never printed.
+//   4. Append one audit record carrying the effective verdict and every lane's
+//      raw verdict — unless every lane returned `none`, in which case there is
 //      no opinion to record and nothing is written.
 //
 // ALLOW-ONLY — WHY IT EXITS 0 ON EVERY PATH
@@ -35,14 +35,15 @@
 // EXIT CODES
 //   0  always — see ALLOW-ONLY above. This hook has no blocking path.
 //
-// ACCEPTED BEHAVIOUR DELTAS versus registering the two modules separately
-//   1. When both modules allow, the host receives ONE allow payload instead of
-//      two. The decision is identical and the reason string is blueprint's;
-//      rank order makes that deterministic where parallel hooks were not.
-//   2. A crash in this file loses both verdicts, where a crash in one of two
-//      separately registered hooks lost only one. The per-module protected
-//      blocks confine that to this file's own stdin handling.
-//   3. The two evaluations share one process, one timeout and one failure
+// ACCEPTED BEHAVIOUR DELTAS versus registering the modules separately
+//   1. When several modules allow, the host receives ONE allow payload instead
+//      of several. The decision is identical and the reason string is the
+//      highest-ranked lane's; rank order makes that deterministic where
+//      parallel hooks were not.
+//   2. A crash in this file loses every verdict, where a crash in one of
+//      several separately registered hooks lost only one. The per-module
+//      protected blocks confine that to this file's own stdin handling.
+//   3. The evaluations share one process, one timeout and one failure
 //      boundary. A stall anywhere can push the hook past its timeout, and the
 //      host then discards its ENTIRE output — printing early does not save an
 //      already-written allow. What step 3 does buy is that a slow shape
@@ -50,7 +51,7 @@
 //      that audit I/O sits after every decision.
 //
 // ENVIRONMENT
-//   RIG_AUDIT=0  disables audit writing. The hook still evaluates both modules
+//   RIG_AUDIT=0  disables audit writing. The hook still evaluates every module
 //                and still prints its payload: the switch disables logging,
 //                never permission behaviour. Checked before the audit library is
 //                required, so a disabled audit costs nothing and cannot fail
@@ -59,11 +60,16 @@
 "use strict";
 
 const path = require("path");
+const fs = require("fs");
 
-/** Rank order is the contract: blueprint outranks shape, so its allow and its reason string win. */
+/**
+ * Rank order is the contract: blueprint outranks shape, shape outranks the gh-read lane, so the first allow and its
+ * reason string win.
+ */
 const LANES = [
   { name: "blueprint", module: "blueprint-allow.js" },
   { name: "shape", module: "sentinel-read-allow.js" },
+  { name: "gh-read", module: "github-read-allow.js", optional: true },
 ];
 
 /** This hook's short name, used to build `agent_id`. */
@@ -96,9 +102,9 @@ function verdictOf(result) {
 }
 
 /**
- * Return the `action_detail` of the before-row, or null when neither lane reached a decision.
+ * Return the `action_detail` of the before-row, or null when no lane reached a decision.
  * The effective decision is the winning lane's when one allowed, `passthrough` when at least one lane examined the
- * command and declined, and nothing at all when both returned `none`.
+ * command and declined, and nothing at all when all returned `none`.
  */
 function beforeDetail(results) {
   // The winner is the first lane that both said allow AND produced a payload, which is exactly the test `dispatch`
@@ -164,7 +170,7 @@ function recordDecision(raw, results) {
 }
 
 /**
- * Run both lanes over `raw`, write at most one payload, and record what happened.
+ * Run every lane over `raw`, write at most one payload, and record what happened.
  * Returns the payload that was written, or null — the stdout oracle is `payload ? JSON.stringify(payload) : <empty>`,
  * and never the string "null".
  */
@@ -172,6 +178,8 @@ function dispatch(raw, write) {
   const results = [];
   let printed = null;
   for (const lane of LANES) {
+    // Siblings ship only the required lanes; a present but broken optional module still reports module-error.
+    if (lane.optional && !fs.existsSync(path.join(__dirname, lane.module))) continue;
     const result = evaluateLane(lane, raw);
     results.push(result);
     if (printed === null && result.decision === "allow" && result.payload) {

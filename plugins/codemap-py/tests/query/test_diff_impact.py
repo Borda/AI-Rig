@@ -201,7 +201,9 @@ class TestDiffFileMode:
         """
         root, index_path = git_project
         diff_path = root / "pr.diff"
-        diff_path.write_text(f"diff --git a/lib.py b/lib.py\n--- a/lib.py\n+++ b/lib.py\n{hunk}", newline="\n")
+        diff_path.write_text(
+            f"diff --git a/lib.py b/lib.py\n--- a/lib.py\n+++ b/lib.py\n{hunk}", encoding="utf-8", newline="\n"
+        )
         data = _query(scan_query, root, index_path, "--no-heal", "diff-impact", "--diff-file", str(diff_path))
         assert [module["changed_symbols"] for module in data["changed_modules"]] == [expected]
 

@@ -16,6 +16,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _hook_env import _bash_runs_posix_script
 
 _PLUGINS = Path(__file__).resolve().parents[3]
 _CHECKS_SKILLS = _PLUGINS / "cc_foundry" / "skills" / "audit" / "templates" / "checks-skills.md"
@@ -121,7 +122,8 @@ def _plugin_only_tree(tmp_path: Path) -> Path:
     "shell",
     [
         pytest.param(
-            "bash", marks=pytest.mark.skipif(shutil.which("bash") is None, reason="requires bash to run the block")
+            "bash",
+            marks=pytest.mark.skipif(not _bash_runs_posix_script(), reason="requires Bash executing POSIX scripts"),
         ),
         pytest.param(
             "zsh", marks=pytest.mark.skipif(shutil.which("zsh") is None, reason="requires zsh to run the block")

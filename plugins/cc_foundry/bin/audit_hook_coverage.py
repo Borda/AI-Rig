@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """audit_hook_coverage.py — measure how often the auto-allow hooks fire in real sessions.
 
-Two decision modules can grant a Bash call a permission bypass: ``blueprint-allow.js``
-(exact normalized-text match against a plugin's committed ``blueprint-manifest.json``)
-and ``sentinel-read-allow.js`` (shape match on read-only compounds). Neither is
-registered as a hook of its own any more — each plugin registers ``allow-dispatch.js``,
-which calls both as libraries in rank order and emits the first allow. Both modules keep
+Three decision modules can grant a Bash call a permission bypass: ``blueprint-allow.js``
+(exact normalized-text match against a plugin's committed ``blueprint-manifest.json``),
+``sentinel-read-allow.js`` (shape match on read-only compounds) and
+``github-read-allow.js`` (a command made only of allowlisted gh reads). None is
+registered as a hook of its own — each plugin registers ``allow-dispatch.js``, which
+calls them as libraries in rank order and emits the first allow. This tool measures the
+first two only; gh-read allows are not replayed. Both measured modules keep
 their standalone entry points, which is what lets this tool subprocess one of them
 directly. Both were validated against *committed text* — the share of fenced blueprint
 blocks each one covers. That is not the same population as the commands sessions

@@ -27,7 +27,7 @@ Deliver oss's rules to Claude's user-level rule namespace, and its own permissio
 
 **Why does oss deliver only its own rules?** Each plugin installs independently. A plugin that shipped a sibling's rules would break standalone installation and couple releases. Still true with the delta variant: `oss-quality-gates.md` links either `rules/quality-gates-delta.md` (when a foundry-owned `foundry-quality-gates.md` is already delivered) or the complete `rules/quality-gates.md` (when it is not) — both sources belong to this plugin, and the delta only *points* at foundry's copy for the shared obligations rather than delivering it. Standalone install loses no rule; all four `quality-gates.md` copies loading at once was 51,274 B of context on every turn.
 
-NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only `permissions.allow` and `permissions.deny` arrays are touched, additively except for removing two exact retired allow rules: `Bash(gh api repos/*:*)` and `Bash(uv pip install:*)`. Writes nothing under `~/.codex/`.
+NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only `permissions.allow` and `permissions.deny` arrays are touched, additively except for removing two exact retired allow rules (`Bash(gh api repos/*:*)` and `Bash(uv pip install:*)`). Writes nothing under `~/.codex/`.
 
 </objective>
 
@@ -116,7 +116,7 @@ Report: "Backed up ~/.claude/settings.json → ~/.claude/settings.json.bak-<time
 
 Before merging, remove only two exact retired allow entries, each shipped by an earlier oss version:
 
-- `Bash(gh api repos/*:*)` — the shipped `Bash(gh api repos/*)` replaces it.
+- `Bash(gh api repos/*:*)` — nothing replaces it; the broad repository API allow entry is no longer shipped.
 - `Bash(uv pip install:*)` — nothing replaces it. It auto-approved every `uv pip install`, including the review overlay's support check and wheel fetch, which must each reach their own permission prompt, and project-environment installs or source builds the overlay forbids.
 
 Preserve every other user allow entry, all deny entries, and unrelated settings.
@@ -140,7 +140,7 @@ Writes merged `permissions.deny` array:
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}"
 _jq_result=$(jq --slurpfile deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" \
-    '.permissions.deny = ((.permissions.deny // []) + $deny[0] | unique)' \
+    '.permissions.deny = (((.permissions.deny // []) + $deny[0]) | unique)' \
     ~/.claude/settings.json)  # timeout: 5000
 [ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/oss_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/oss_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging permissions.deny — settings.json unchanged\n"; exit 1; }
 ```
@@ -168,6 +168,7 @@ cp "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}" ~/.claude/settings.json  # 
 - Rules linked: N → `~/.claude/rules/oss-*.md`
 - Unchanged: N · Obsolete removed: N · Conflicts kept: N (name each)
 - Permissions: N allow entries added, N deny entries added
+- stale gh deny entries from older versions: run /foundry:setup (requires `foundry` plugin)
 - Failures: N (name each; a failure means the platform refused the symlink — rules are never copied as a fallback)
 
 </workflow>

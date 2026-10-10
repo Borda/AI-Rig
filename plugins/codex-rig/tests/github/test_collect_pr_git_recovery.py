@@ -100,10 +100,11 @@ class RepositoryTemplate:
 
 
 def _build_repository_template(root: Path) -> RepositoryTemplate:
-    """Create a local PR source, a stale branch, and a checked-out PR head under one template root."""
+    """Create copyable PR repositories with background maintenance disabled before writes."""
     source = root / "source"
     source.mkdir()
     _git(source, "init", "-b", "main")
+    _git(source, "config", "maintenance.auto", "false")
     _git(source, "config", "core.autocrlf", "false")
     _git(source, "config", "user.name", "Collector fixture")
     _git(source, "config", "user.email", "collector@example.invalid")
@@ -128,6 +129,7 @@ def _build_repository_template(root: Path) -> RepositoryTemplate:
     worktree = root / "worktree"
     worktree.mkdir()
     _git(worktree, "init", "-b", "main")
+    _git(worktree, "config", "maintenance.auto", "false")
     _git(worktree, "config", "core.autocrlf", "false")
     _git(worktree, "config", "user.name", "Collector fixture")
     _git(worktree, "config", "user.email", "collector@example.invalid")

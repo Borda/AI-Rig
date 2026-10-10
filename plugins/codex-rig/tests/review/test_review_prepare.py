@@ -145,7 +145,7 @@ def _build_review_inputs(
     large_patch: bool = False,
     unchanged: bool = False,
 ) -> Path:
-    """Write semantic reviewer decisions while leaving mechanical evidence to the producer."""
+    """Build reviewer evidence without background maintenance mutating the copyable Git template."""
     spec = importlib.util.spec_from_file_location("prepare_validator", SKILL / "validate_artifacts.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -156,6 +156,7 @@ def _build_review_inputs(
     # Git checks out unchanged callers from HEAD, so writer LF alone cannot fix their checkout bytes.
     for command in (
         ["init", "-q"],
+        ["config", "maintenance.auto", "false"],
         ["config", "core.autocrlf", "false"],
         ["config", "user.name", "Test"],
         ["config", "user.email", "test@example.com"],

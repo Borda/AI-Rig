@@ -293,6 +293,24 @@ class TestDerivedLineage:
 class TestSchemaConformance:
     """Non-conforming records are counted, excluded from grouping, and never fatal."""
 
+    @pytest.mark.parametrize(
+        ("lanes", "valid"),
+        [
+            pytest.param(["blueprint", "shape"], True, id="required-lanes"),
+            pytest.param(["blueprint", "shape", "gh-read"], True, id="optional-gh-read"),
+            pytest.param(["blueprint"], False, id="missing-required-verdict"),
+            pytest.param(["blueprint", "shape", "gh-read", "none"], False, id="too-many-verdicts"),
+            pytest.param(["blueprint", "shape", "shape"], False, id="duplicate-third-lane"),
+            pytest.param(["blueprint", "shape", "unknown"], False, id="unknown-third-lane"),
+        ],
+    )
+    def test_optional_lane_keeps_verdict_count_and_identity_checks(self, lanes: list[str], valid: bool) -> None:
+        """Only two or three distinct known verdict lanes satisfy the before-row contract."""
+        rows = [json.loads(line) for line in (LOGS / "clean-single-plugin.jsonl").read_text().splitlines() if line]
+        record = rows[1]
+        record["action_detail"]["verdicts"] = [{"lane": lane, "decision": "passthrough"} for lane in lanes]
+        assert bool(verifier.schema_findings(record)) is not valid
+
     def test_schema_invalid_rows_are_excluded_not_fatal(self) -> None:
         """Four malformed rows are reported, the run still exits 0, and they take no part in grouping."""
         report = _report(LOGS / "schema-invalid.jsonl")

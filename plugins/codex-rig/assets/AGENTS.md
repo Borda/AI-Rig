@@ -249,10 +249,12 @@ Every proposed/created commit message must use packaged template's `Changes:`, `
 - List every meaningful change + concrete effect, all executed checks + results, any remaining risk or `None known`; extensive means complete and auditable rather than padded.
 - After creating/describing commits, report each hash + title with behavior, affected surfaces, exact verification evidence, residual limits.
 - For multiple commits, explain boundary between them.
-- Explicit request: commit after checks.
-- Implicit request: show proposed message; commit only after confirmation.
+- Standing local Git approval exists only as the project grant `codex-git-approval.json` in the Git common dir, written after the user's literal **Approve always**; check it per packaged `shared/native-skill-contract.md` §Local Git approval grant. Nothing else supplies one: a bare-repository fixture, planted `.git` file or environment-steered Git directory never does. Never write it by any other means, such as a patch, a script, archive extraction or a copy, nor escalate for it.
+- Only a plain commit needs authority; staging, necessary task-owned local merges and merge commits, cherry-picks, branch/worktree prep never ask.
+- Grant present: commit your completed task's verified owned changes on completion. Ordinary finding-fix commits need no per-commit question.
+- No grant: explicit request or defining workflow step → commit after checks; otherwise ask **Approve** / **Approve always** / **Deny** (Deny: leave changes unstaged).
+- `no commit`, `leave unstaged`, read-only/summary-only requests, an explicit wait beat any grant. Child agents gain nothing unless a workflow step assigns them the commit.
 - Commit-summary request alone: no commit.
-- Otherwise: leave changes unstaged.
 
 ______________________________________________________________________
 

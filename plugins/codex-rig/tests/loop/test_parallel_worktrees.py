@@ -123,9 +123,10 @@ class RepositoryTemplates:
 
     @staticmethod
     def _commit(repository: Path, files: dict[str, str], message: str) -> tuple[Path, str, str]:
-        """Commit LF-only fixture files in a new repository and return its path, head, and tree."""
+        """Commit LF-only files without background maintenance racing later repository copies."""
         repository.mkdir()
         _git(repository, "init", "-q")
+        _git(repository, "config", "maintenance.auto", "false")
         _git(repository, "config", "user.name", "Codex Test")
         _git(repository, "config", "user.email", "codex-test@example.invalid")
         for name, content in files.items():

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.0
+
+- Tell the `implement` peer, in both directions, to leave every change unstaged and uncommitted and to run no Git write, push included, so the caller reviews the diff and owns every commit. A peer still loads its own project instructions, where a local Git approval grant in the checkout would otherwise make a completion commit its default. A bridge child gains nothing from any approval grant or push token; each is the calling session's authority record.
+
 ## 0.7.0
 
 - Let Codex propose the known project folder for one exact canonical native confirmation, avoiding manual retyping. The confirmation form states that Codex proposed the folder, so it is distinguishable from confirming a typed path. The proposal conveys no authority; only user acceptance creates a binding. Empty arguments preserve manual folder selection.

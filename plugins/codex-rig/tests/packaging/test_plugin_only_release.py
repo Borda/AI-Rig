@@ -1142,6 +1142,72 @@ def test_code_remediate_rejects_conflicts_without_merge_authorization(tmp_path: 
         validator._validate_code_remediate_merge_resolution(metadata, pr_dir, {"local_head": "base-oid"})
 
 
+@pytest.mark.parametrize("authorization", ["explicit-input", "user-confirmed"])
+def test_code_remediate_accepts_each_recorded_merge_authorization_source(authorization: str, tmp_path: Path) -> None:
+    """Accept a completed conflicted merge under each recorded authorization source.
+
+    A task-owned target merge runs with no question or grant check and records its invocation as ``explicit-input``; an
+    explicit approval of a withheld merge records ``user-confirmed``. Both must validate.
+    """
+    validator = _load_shared_artifact_validator()
+    pr_dir = tmp_path / "pr"
+    pr_dir.mkdir()
+    path = pr_dir / "merge-resolution.json"
+    _write_merge_resolution(
+        path,
+        conflicts_detected=True,
+        status="completed",
+        authorization=authorization,
+        post_merge_head="merge-oid",
+        merge_commit="merge-oid",
+        resolved_paths=["src/conflicted.py"],
+        evidence=["merge-prestage.md", "pytest.log"],
+    )
+    metadata = {
+        "merge_resolution": {
+            "artifact_path": str(path),
+            "authorization": authorization,
+            "conflicts_detected": True,
+            "status": "completed",
+        }
+    }
+
+    assert validator._validate_code_remediate_merge_resolution(metadata, pr_dir, {"local_head": "base-oid"}) is None
+
+
+def test_code_remediate_rejects_grant_label_on_target_merge(tmp_path: Path) -> None:
+    """Reject a grant-derived ``standing-policy`` label on a completed conflicted target merge.
+
+    Target integration never checks a local Git approval grant, so a merge record citing one carries provenance no
+    workflow writes; the validator keeps only the invocation and explicit-approval sources.
+    """
+    validator = _load_shared_artifact_validator()
+    pr_dir = tmp_path / "pr"
+    pr_dir.mkdir()
+    path = pr_dir / "merge-resolution.json"
+    _write_merge_resolution(
+        path,
+        conflicts_detected=True,
+        status="completed",
+        authorization="standing-policy",
+        post_merge_head="merge-oid",
+        merge_commit="merge-oid",
+        resolved_paths=["src/conflicted.py"],
+        evidence=["merge-prestage.md", "pytest.log"],
+    )
+    metadata = {
+        "merge_resolution": {
+            "artifact_path": str(path),
+            "authorization": "standing-policy",
+            "conflicts_detected": True,
+            "status": "completed",
+        }
+    }
+
+    with pytest.raises(SystemExit, match="target-merge-authorization-required"):
+        validator._validate_code_remediate_merge_resolution(metadata, pr_dir, {"local_head": "base-oid"})
+
+
 def test_code_remediate_rejects_in_progress_merge_at_result_time(tmp_path: Path) -> None:
     """Treat the run's in-progress merge record as unfinished integration, never as a completed merge.
 

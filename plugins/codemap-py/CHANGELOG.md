@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.41.1
+
+- Stop shipping the GitHub write deny entries (`gh issue`/`pr`/`release`/`gist` writes, `gh repo fork`/`create`, `gh api` with `--method`/`-X` `POST`, `PATCH`, `PUT` or `DELETE`). Claude Code applies a settings deny rule even after a hook allows a call, so they would defeat the one-time `gh-write` approval of foundry's gh write guard. The manual deny merge stays additive; run `/foundry:setup` (requires `foundry` plugin) to scrub stale denies from earlier installs. Without Foundry a gh write reaches the normal permission prompt, except through the two GitHub API calls this plugin's own allow list pre-approves (`Bash(gh api repos/*)`, `Bash(gh api graphql:*)`): a field POST or a GraphQL mutation made through them runs unprompted, a known gap kept so a codemap-only install reads GitHub without prompts.
+- Stop denying local `git branch -D`, `git branch -d` and `git tag -d`: local Git runs freely, and only force and mirror pushes stay denied.
+
 ## 0.41.0
 
 - Deny `git push --force-if-includes` and `git push --mirror` in the shipped permission deny list, beside the existing force-push entries.

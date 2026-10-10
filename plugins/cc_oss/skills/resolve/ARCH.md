@@ -66,7 +66,9 @@ VERIFY  (step 9)  target drift check → re-merge on drift, unattended, ≤2  (s
                   ▣ qa-specialist ‖ ▣ linting-expert  (targeted tests)
   full suite once, background run  (step 9)
   |
-◆ PUSH CONFIRMATION  (step 10)  diff stat + commit count + target drift — skipped on an explicit "don't push" intent
+◆ DRIFT QUESTION  (step 10)  re-sync target or continue — BASE_FRESH=no only, its own call
+  |
+◆ PUSH CONFIRMATION  (step 10)  git-push Approve/Deny: diff stat + commit count + target drift — skipped on an explicit "don't push" intent
   |
 SHIP  push (step 10) · final report + resolution.jsonl → review dir (step 11) · ▣ comment dispatch (step 12)
 ```
@@ -106,10 +108,11 @@ Both fans overlap work with no data dependency between the lanes. The first work
 | group preview (`DISPATCH_MODE=preview`, elected at SELECTION) | conditional | challenge → specialists |
 | challenge timed out twice (batched per wave) | conditional, error recovery | challenge → specialists |
 | unresolved item status | conditional, error recovery | final report |
-| **PUSH CONFIRMATION** (target, diff stat, commit count, last subject, target-branch drift + re-sync option; post-PR too when no intent was recorded) | **always**, unless SELECTION recorded an explicit "don't push" | ship |
+| DRIFT QUESTION (re-sync target first, or continue to the push question) | conditional, `BASE_FRESH=no` only, its own call before the push confirmation | push confirmation |
+| **PUSH CONFIRMATION** (`git-push` question, `Approve` / `Deny`: target, diff stat, commit count, last subject, target-branch drift; post-PR too when no intent was recorded) | **always**, unless SELECTION recorded an explicit "don't push"; never asked again: a push with no upstream tracking is handed to the user as the explicit-refspec command, which no approval covers | ship |
 | typed-labels file lost | conditional, error recovery | implement commit |
 
-Normal action-item path costs at most 3 `AskUserQuestion` calls at the selection gate plus the push confirmation. Between them, only the user-elected group preview and the error-recovery gates can ask. The push itself can still stop for a push guard or permission prompt — deliberate user safety controls the skill never bypasses; it records the push status, saves the guard's exact unblock lines, continues to the final report, and ends that report with those lines.
+Normal action-item path costs at most 3 `AskUserQuestion` calls at the selection gate plus the push confirmation (plus the drift question when the target moved). Between them, only the user-elected group preview and the error-recovery gates can ask. The push itself can still stop for a push guard or permission prompt — deliberate user safety controls the skill never bypasses; it records the push status, saves the refused push command, continues to the final report, and ends that report with it.
 
 ## Mode branches
 

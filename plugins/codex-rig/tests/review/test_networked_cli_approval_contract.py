@@ -111,7 +111,9 @@ def test_user_questions_expose_answers_without_weakening_authorization() -> None
     assert "Do not re-ask a decision already supplied" in questions
     assert "Silence, skip, timeout, preselection, an empty result, an example answer" in questions
     assert "unrelated text grants no consent" in questions
-    assert "`Authorize this local merge and commit?` with separate canonical options `Approve` and `Deny`" in skill
+    assert "Authorize this local merge and commit?" not in skill
+    assert "`Authorize finishing this existing merge and the described local commit?`" in skill
+    assert "Pass `Approve` and `Deny` as separate canonical options to the selected permitted native control" in skill
     assert "Generated repair questions follow the same native routing as the merge question" in skill
     assert "Authorize parent-owned or sequential fallback for this selected scope?" not in skill
     assert "exactly one nonempty `Ineligibility reason: <reason>` line" in skill

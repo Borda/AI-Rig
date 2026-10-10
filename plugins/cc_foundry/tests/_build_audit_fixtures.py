@@ -95,17 +95,20 @@ def before_row(
     *,
     blueprint: str = "passthrough",
     shape: str = "passthrough",
+    gh_read: str | None = None,
     session_id: str | None = SESSION,
 ) -> dict:
-    """Return one ``pre_execution`` row for ``plugin``, with both lane verdicts spelled out.
+    """Return one ``pre_execution`` row for ``plugin``, with its required and optional lane verdicts spelled out.
 
     ``blueprint`` and ``shape`` each take ``allow``, ``passthrough``, ``none`` or ``module-error``; the effective
-    verdict follows rank order, so a blueprint allow wins over a shape allow.
+    verdict follows rank order: blueprint, shape, then the optional ``gh_read`` lane.
     """
     verdicts = [
         _verdict("blueprint", blueprint),
         _verdict("shape", shape),
     ]
+    if gh_read is not None:
+        verdicts.append(_verdict("gh-read", gh_read))
     # The digest exists only when the blueprint lane actually normalized the command, i.e. it reached a decision.
     blueprint_decided = blueprint in ("allow", "passthrough")
     if blueprint == "allow":
@@ -114,8 +117,12 @@ def before_row(
         detail = {"decision": "allow", "lane": "shape", "rank": 2}
         if blueprint_decided:
             detail["digest"] = DIGEST
+    elif gh_read == "allow":
+        detail = {"decision": "allow", "lane": "gh-read", "rank": 3}
+        if blueprint_decided:
+            detail["digest"] = DIGEST
     else:
-        detail = {"decision": "passthrough" if "passthrough" in (blueprint, shape) else "none", "lane": "none"}
+        detail = {"decision": "passthrough" if "passthrough" in (blueprint, shape, gh_read) else "none", "lane": "none"}
         if blueprint_decided:
             detail["digest"] = DIGEST
     detail["verdicts"] = verdicts
@@ -128,7 +135,7 @@ def before_row(
 
 
 def _verdict(lane: str, decision: str) -> dict:
-    """Return one entry of the two-element ``verdicts`` array."""
+    """Return one lane entry of the ``verdicts`` array."""
     if decision == "allow":
         entry = {"lane": lane, "decision": "allow"}
         if lane == "blueprint":
@@ -216,6 +223,16 @@ def build(fixture_dir: Path) -> dict:
             *(before_row(f"s4-before-{p}", p, tid) for p in PLUGINS[1:]),
             *(after_row(f"s4-after-{p}", p, tid) for p in PLUGINS),
             *(lifecycle_row(f"s4-end-{p}", p, "session.end") for p in PLUGINS),
+        ],
+        {"exit": 0, "buckets": {}},
+    )
+
+    case(
+        "clean-three-lane-gh-read",
+        [
+            before_row("gh-read-before", "cc_foundry", tid, gh_read="allow"),
+            after_row("gh-read-after", "cc_foundry", tid),
+            lifecycle_row("gh-read-end", "cc_foundry", "session.end"),
         ],
         {"exit": 0, "buckets": {}},
     )

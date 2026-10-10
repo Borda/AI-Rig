@@ -122,8 +122,8 @@ REQUIRED_FIELDS = (
 ACTION_TYPES = frozenset({"tool.bash", "session.start", "session.end"})
 #: Values a record's record_phase may take: written before the action runs or after it completes.
 RECORD_PHASES = frozenset({"pre_execution", "post_execution"})
-#: Lane names a before-row and each of its two verdicts may carry in action_detail.
-LANES = frozenset({"blueprint", "shape", "none"})
+#: Lane names a before-row and its verdicts may carry in action_detail; gh-read is optional outside Foundry.
+LANES = frozenset({"blueprint", "shape", "gh-read", "none"})
 #: Decision values a before-row and each of its verdicts may record in action_detail.
 DECISIONS = frozenset({"allow", "passthrough", "none"})
 #: `plugin` and `unknown` are the only authorities a hook may write; `human` is reserved and never emitted.
@@ -187,17 +187,17 @@ def row_kind(record: dict) -> str | None:
 
 
 def _check_decision_and_verdicts(detail: dict) -> list[str]:
-    """Check a before-row's own decision and lane, and the pair of verdicts behind them."""
+    """Check a before-row's own decision and lane, and its two or three distinct lane verdicts."""
     findings = []
     if detail.get("decision") not in DECISIONS or detail.get("lane") not in LANES:
         findings.append("before-row needs a valid decision and lane")
     verdicts = detail.get("verdicts")
-    if not isinstance(verdicts, list) or len(verdicts) != 2:
-        findings.append("before-row needs exactly two verdicts")
+    if not isinstance(verdicts, list) or len(verdicts) not in (2, 3):
+        findings.append("before-row needs two or three verdicts")
         return findings
     lanes = [entry.get("lane") if isinstance(entry, dict) else None for entry in verdicts]
-    if len(set(lanes)) != 2 or not set(lanes) <= LANES:
-        findings.append("verdicts must carry two distinct known lanes")
+    if len(set(lanes)) != len(verdicts) or not set(lanes) <= LANES:
+        findings.append("verdicts must carry distinct known lanes")
     if any(not isinstance(entry, dict) or entry.get("decision") not in DECISIONS for entry in verdicts):
         findings.append("each verdict needs a valid decision")
     return findings

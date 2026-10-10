@@ -793,7 +793,11 @@ plugins/cc_develop/
 **Permission manifests**:
 
 - `.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved.
-- `.claude-plugin/permissions-deny.json` is its counterpart — the operations that must stay denied no matter how broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, branch and tag deletion, force-push, `claude --dangerously-skip-permissions`) plus every public-GitHub write (`gh issue`/`pr`/`release`/`gist` create, edit, merge, delete, and `gh api` with `POST`, `PATCH`, `PUT` or `DELETE`).
+- `.claude-plugin/permissions-deny.json` is its counterpart — the operations that must stay denied no matter how broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, force-push, `claude --dangerously-skip-permissions`). It holds no gh write or local branch/tag deletion entry.
+
+Develop ships no git/gh guard; foundry supplies that guard (requires `foundry` plugin). Develop's allow list omits `Bash(gh api repos/*)`, `Bash(gh api graphql:*)`, `Bash(git branch:*)`, and `Bash(git tag:*)`. Without foundry or other matching user rules, these command families reach normal permission handling on new installs, including prompts for routine reads such as `git branch --show-current`.
+
+Upgrades preserve these four allow entries in existing settings if an older setup merged them. `/develop:setup` does not remove them because foundry ships the same strings; without foundry, remove them manually from `~/.claude/settings.json` to restore prompts. Stale gh deny entries from older versions are cleaned only by `/foundry:setup` (requires `foundry` plugin).
 
 Both files are merged into `~/.claude/settings.json` by `/develop:setup` (Step 5). Setup removes the obsolete `Bash(gh api repos/*:*)` allow entry while preserving every other existing allow and deny entry; the merge is otherwise additive and idempotent. Deny entries are prefix matches, so they stop the documented command forms rather than every possible flag ordering.
 

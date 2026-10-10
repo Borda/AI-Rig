@@ -27,7 +27,7 @@ Deliver research's rules to Claude's user-level rule namespace, and its own perm
 
 **Why does research deliver only its own rules?** Each plugin installs independently. A plugin that shipped a sibling's rules would break standalone installation and couple releases. Still true with the delta variant: `research-quality-gates.md` links either `rules/quality-gates-delta.md` (when a foundry-owned `foundry-quality-gates.md` is already delivered) or the complete `rules/quality-gates.md` (when it is not) — both sources belong to this plugin, and the delta only *points* at foundry's copy for the shared obligations rather than delivering it. Standalone install loses no rule; all four `quality-gates.md` copies loading at once was 51,274 B of context on every turn.
 
-NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only the `permissions.allow` and `permissions.deny` arrays are touched, additively except for replacing the exact obsolete `Bash(gh api repos/*:*)` rule. Writes nothing under `~/.codex/`.
+NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only the `permissions.allow` and `permissions.deny` arrays are touched, additively except for removing the exact obsolete `Bash(gh api repos/*:*)` rule. Writes nothing under `~/.codex/`.
 
 </objective>
 
@@ -129,7 +129,7 @@ cp ~/.claude/settings.json "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}"  # 
 
 Report: "Backed up ~/.claude/settings.json → ~/.claude/settings.json.bak-<timestamp>"
 
-Before merging, remove only the obsolete `Bash(gh api repos/*:*)` entry; the shipped `Bash(gh api repos/*)` replaces it. Preserve every other user allow entry, all deny entries, and unrelated settings.
+Before merging, remove only the obsolete `Bash(gh api repos/*:*)` entry; nothing replaces it. Preserve the four broad allow entries already in settings, because foundry uses the same strings: `Bash(gh api repos/*)`, `Bash(gh api graphql:*)`, `Bash(git branch:*)`, and `Bash(git tag:*)`. Preserve every other user allow entry, all deny entries, and unrelated settings.
 
 Writes merged `permissions.allow` array:
 
@@ -142,7 +142,7 @@ _jq_result=$(jq --slurpfile perms "$PLUGIN_ROOT/.claude-plugin/permissions-allow
 [ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/research_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/research_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging permissions.allow — settings.json unchanged\n"; exit 1; }
 ```
 
-Report: "Added N new permissions.allow entries (M already present)." Also report whether the exact obsolete repository API rule was replaced.
+Report: "Added N new permissions.allow entries (M already present)." Also report whether the exact obsolete repository API rule was removed.
 
 Writes merged `permissions.deny` array:
 
@@ -155,7 +155,7 @@ _jq_result=$(jq --slurpfile deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.j
 [ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/research_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/research_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging permissions.deny — settings.json unchanged\n"; exit 1; }
 ```
 
-Report: "Added N new permissions.deny entries (M already present)."
+Report: "Added N new permissions.deny entries (M already present)." Also report: "stale gh deny entries from older versions: run /foundry:setup" (requires `foundry` plugin).
 
 Deny wins over allow in Claude Code, so merging both in either order yields the same effective policy.
 

@@ -19,13 +19,14 @@ REQUEST_ARGS = ("--goal", "Review changed files", "--specification", "Fixture co
 
 @pytest.fixture(scope="module")
 def _committed_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Build the committed baseline repository once per module; tests only ever copy it."""
+    """Build a committed baseline without background maintenance mutating its copies."""
     repository = tmp_path_factory.mktemp("committed-template") / "repository"
     repository.mkdir()
     for name in ("alpha.py", "beta.py", "removed.py"):
         (repository / name).write_text(f"VALUE = '{name}'\n", encoding="utf-8", newline="\n")
     for args in (
         ("init", "-q"),
+        ("config", "maintenance.auto", "false"),
         ("add", "."),
         ("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "initial"),
     ):
@@ -41,6 +42,27 @@ def _copy_changed_repository(template: Path, repository: Path) -> Path:
     (repository / "removed.py").unlink()
     (repository / "new.py").write_text("VALUE = 'new'\n", encoding="utf-8", newline="\n")
     return repository
+
+
+@pytest.mark.integration
+def test_committed_template_does_not_start_maintenance(
+    tmp_path_factory: pytest.TempPathFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep Git maintenance from changing the template while its consumers copy it."""
+    global_config = tmp_path / "gitconfig"
+    global_config.write_text("[maintenance]\n\tauto = true\n", encoding="utf-8", newline="\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    trace = tmp_path / "git-trace.jsonl"
+    monkeypatch.setenv("GIT_TRACE2_EVENT", trace.as_posix())
+    template = _committed_template.__wrapped__(tmp_path_factory)
+    events = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+    assert any(event["event"] == "start" and "commit" in event["argv"] for event in events)
+    assert not [event for event in events if event["event"] == "child_start" and "maintenance" in event.get("argv", [])]
+    repository = _copy_changed_repository(template, tmp_path / "repository")
+    assert subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"], cwd=repository, check=True, capture_output=True
+    ).stdout.strip()
 
 
 @pytest.fixture

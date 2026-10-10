@@ -20,7 +20,7 @@ gh pr list --state all --limit 500
 gh release list --limit 500  # floor for typical repos; verify for prolific repos — not a ceiling
 
 gh api repos/:owner/:repo/issues --paginate
-gh api repos/:owner/:repo/pulls --paginate --field state=all
+gh api --method GET repos/:owner/:repo/pulls --paginate --field state=all
 
 # paginate + jq for large result sets
 # --paginate emits one JSON array per page; jq '[.[]]'

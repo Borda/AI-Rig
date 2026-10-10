@@ -27,7 +27,7 @@ Deliver develop's rules to Claude's user-level rule namespace, and its own permi
 
 **Why does develop deliver only its own rules?** Each plugin installs independently. A plugin shipping a sibling's rules would break standalone installation, couple releases. Still true with the delta variant: `develop-quality-gates.md` links either `rules/quality-gates-delta.md` (when a foundry-owned `foundry-quality-gates.md` is already delivered) or the complete `rules/quality-gates.md` (when it is not) — both sources belong to this plugin, and the delta only *points* at foundry's copy for the shared obligations rather than delivering it. Standalone install loses no rule; all four `quality-gates.md` copies loading at once was 51,274 B of context on every turn.
 
-NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only the `permissions.allow` and `permissions.deny` arrays are touched, additively except for replacing the exact obsolete `Bash(gh api repos/*:*)` rule. Writes nothing under `~/.codex/`.
+NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only the `permissions.allow` and `permissions.deny` arrays are touched, additively except for removing the exact obsolete `Bash(gh api repos/*:*)` rule. Writes nothing under `~/.codex/`.
 
 </objective>
 
@@ -106,7 +106,7 @@ On **(b)**, re-run Step 3's command with `--approve` appended and report the res
 
 This plugin ships its own `permissions-allow.json` and `permissions-deny.json`. Claude Code doesn't read them from the plugin manifest, so without this step they're inert files — allow entries never suppress a prompt, deny entries never block anything.
 
-Merge is idempotent: `unique` keeps existing entries from duplicating. Each plugin merges only its own pair; the allow merge replaces the exact obsolete repository API rule and preserves every other entry.
+Merge is idempotent: `unique` keeps existing entries from duplicating. Each plugin merges only its own pair; the allow merge removes the exact obsolete repository API rule and preserves every other entry.
 
 Create the file on first install, back it up before any write — a standalone install may reach this step with no `~/.claude/settings.json` at all:
 
@@ -120,7 +120,7 @@ cp ~/.claude/settings.json "$HOME/.claude/settings.json.bak-develop-${SETUP_BAK_
 
 Report: "Backed up ~/.claude/settings.json → ~/.claude/settings.json.bak-<timestamp>"
 
-Before merging, remove only the obsolete `Bash(gh api repos/*:*)` entry; the shipped `Bash(gh api repos/*)` replaces it. Preserve every other user allow entry, all deny entries, and unrelated settings.
+Before merging, remove only the obsolete `Bash(gh api repos/*:*)` entry; no broad repository API allow is added. Preserve every other user allow entry, all deny entries, and unrelated settings, including existing repository API, GraphQL, branch and tag allows that foundry may also have installed.
 
 Writes merged `permissions.allow` array:
 
@@ -133,7 +133,7 @@ _jq_result=$(jq --slurpfile perms "$PLUGIN_ROOT/.claude-plugin/permissions-allow
 [ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/develop_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/develop_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging permissions.allow — settings.json unchanged\n"; exit 1; }
 ```
 
-Report: "Added N new permissions.allow entries (M already present)." Also report whether the exact obsolete repository API rule was replaced.
+Report: "Added N new permissions.allow entries (M already present)." Also report whether the exact obsolete repository API rule was removed.
 
 Writes merged `permissions.deny` array:
 
@@ -176,6 +176,7 @@ cp "$HOME/.claude/settings.json.bak-develop-${SETUP_BAK_TS}" ~/.claude/settings.
 - Rules linked: N → `~/.claude/rules/develop-*.md`
 - Unchanged: N · Obsolete removed: N · Conflicts kept: N (name each)
 - Permissions: N allow entries added, N deny entries added
+- stale gh deny entries from older versions: run /foundry:setup (requires `foundry` plugin)
 - Failures: N (name each; a failure means the platform refused the symlink — rules are never copied as a fallback)
 
 </workflow>

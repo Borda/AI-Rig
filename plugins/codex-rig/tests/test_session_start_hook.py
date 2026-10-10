@@ -255,20 +255,33 @@ def test_hook_warns_when_global_block_predates_the_plugin_root_line(tmp_path: Pa
     assert str(tmp_path) not in message
 
 
-def test_hook_is_silent_when_global_block_names_its_own_root(tmp_path: Path, isolated_plugin_root: Path) -> None:
+@pytest.mark.parametrize("codex_available", [True, False])
+def test_hook_is_silent_when_global_block_names_its_own_root(
+    tmp_path: Path, isolated_plugin_root: Path, monkeypatch: pytest.MonkeyPatch, codex_available: bool
+) -> None:
     """Add no root warning when the block was rendered for the plugin root running the hook.
 
-    The doctor's ``active_package`` line is always present for this non-cache fixture root, so the assertion targets the
-    root warning itself rather than an empty message.
+    Control Codex availability so the unrelated shim-health diagnostic is deterministic on development and CI hosts.
+    Neither a non-cache fixture root nor a missing executable should produce a stale global-root warning.
     """
     home = tmp_path / "home"
     template = isolated_plugin_root / "assets" / "AGENTS.md"
     _install_global_block(isolated_plugin_root, home, template, "--plugin-root", str(isolated_plugin_root))
+    monkeypatch.setenv("PATH", str(tmp_path))
+    if codex_available:
+        codex = tmp_path / ("codex.cmd" if sys.platform == "win32" else "codex")
+        codex.write_bytes(b"@exit /b 0\r\n" if sys.platform == "win32" else b"#!/bin/sh\nexit 0\n")
+        codex.chmod(0o700)
 
     message = _read_only_hook_message(home, isolated_plugin_root)
 
     assert "PLUGIN_ROOT" not in message
-    assert "active_package:" in message
+    if codex_available:
+        assert "active_package: plugin root is not the selected cache-version path" in message
+        assert "executables:" not in message
+    else:
+        assert "executables: Codex executable is unavailable on PATH" in message
+        assert "active_package:" not in message
 
 
 def test_invalid_hook_input_fails_open_without_traceback(tmp_path: Path) -> None:

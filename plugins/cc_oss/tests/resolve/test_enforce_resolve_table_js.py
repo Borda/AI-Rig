@@ -108,7 +108,7 @@ def _run(tmp_path: Path, questions: list[dict], transcript: Path | None) -> str 
     }
     env = {**os.environ, "TMPDIR": str(tmp_path), "CLAUDE_CODE_SESSION_ID": CSID}
     proc = subprocess.run(
-        ["node", str(HOOK)], input=json.dumps(payload), capture_output=True, text=True, timeout=10, env=env
+        ["node", str(HOOK)], input=json.dumps(payload), capture_output=True, encoding="utf-8", timeout=10, env=env
     )
     assert proc.returncode == 0, proc.stderr
     out = proc.stdout.strip()
@@ -491,7 +491,7 @@ class TestSharedHelperContract:
         proc = subprocess.run(
             ["node", "-e", script, str(HOOK.parent / "report-header-table.js"), *names],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             timeout=10,
         )
         assert proc.returncode == 0, proc.stderr
@@ -516,7 +516,7 @@ class TestSharedHelperContract:
         proc = subprocess.run(
             ["node", "-e", script, str(HOOK.parent / "report-header-table.js"), export],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             timeout=10,
         )
         assert match is not None

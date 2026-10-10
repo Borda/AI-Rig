@@ -196,19 +196,19 @@ _jq_result=$(jq --slurpfile perms "$PLUGIN_ROOT/.claude-plugin/permissions-allow
 
 Writeback happens in-bash above (`mv`). Report: "Added N new permissions.allow entries (M already present)." Also report whether the exact obsolete repository API rule was replaced.
 
-Check whether `$PLUGIN_ROOT/.claude-plugin/permissions-deny.json` exists. If so: merge via jq below — add only entries not already present:
+Check whether `$PLUGIN_ROOT/.claude-plugin/permissions-deny.json` exists. If so: merge via jq below. First remove exactly the retired entries listed in `permissions-deny-retired.json` (exact string match): the deny entries earlier versions shipped for `gh` writes — a settings deny rule still applies after a hook `allow`, so they would defeat the user's one-time `gh-write` approval, and `hooks/gh-write-guard.js` now gates every gh write — and for local `git branch -D`/`-d` and `git tag -d`, since local Git runs freely. Then add only entries not already present; every other user deny entry stays:
 
 Writes merged `permissions.deny` array:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_jq_result=$(jq --slurpfile deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" \
-    '.permissions.deny = ((.permissions.deny // []) + $deny[0] | unique)' \
+_jq_result=$(jq --slurpfile deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" --slurpfile retired "$PLUGIN_ROOT/.claude-plugin/permissions-deny-retired.json" \
+    '.permissions.deny = ((((.permissions.deny // []) - $retired[0]) + $deny[0]) | unique)' \
     ~/.claude/settings.json)  # timeout: 5000
 [ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging permissions.deny — settings.json unchanged\n"; exit 1; }
 ```
 
-Writeback happens in-bash above (`mv`). Report: "Added N new permissions.deny entries (M already present)."
+Writeback happens in-bash above (`mv`). Report: "Added N new permissions.deny entries (M already present)." Also report how many retired deny entries were removed.
 
 ## Step 6: Copy permissions-guide.md
 

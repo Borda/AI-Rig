@@ -114,13 +114,15 @@ def _release_source_template(tmp_path_factory: pytest.TempPathFactory) -> tuple[
     """Build the one-commit release source repository once per module and return it with its head and tree.
 
     Git writes the repository bytes itself, so they never depend on the host newline default the release fixture varies.
-    Every case copies this read-only template instead of spawning the same six Git commands again; tests that add
-    commits mutate only their private copy.
+    Automatic maintenance is disabled before committing so Git cannot mutate the template while it is copied. Every case
+    copies this read-only template instead of spawning the same Git commands again; tests that add commits mutate only
+    their private copy.
     """
     repository = tmp_path_factory.mktemp("release-source-template") / "source"
     repository.mkdir()
     for arguments in (
         ["init", "-q"],
+        ["config", "maintenance.auto", "false"],
         ["config", "user.name", "Release Test"],
         ["config", "user.email", "release@example.invalid"],
         ["commit", "--allow-empty", "-m", "fixture\n\nCo-authored-by: Codex <codex@openai.com>"],

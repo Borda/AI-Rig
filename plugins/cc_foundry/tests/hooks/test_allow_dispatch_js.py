@@ -1,8 +1,9 @@
 """Tests for ``hooks/allow-dispatch.js``, the single registered Bash auto-allow hook.
 
-Byte-parity with the two decision modules lives in ``test_hook_stdout_captures.py``, which replays a frozen capture.
-This suite covers what the dispatcher adds on top of that: rank order, isolation between the two lanes, the audit row it
-appends, and the promise that no audit outcome can reach the decision.
+Byte-parity with the blueprint and shape modules lives in ``test_hook_stdout_captures.py``, which replays a frozen
+capture. This suite covers what the dispatcher adds on top of that: rank order across the three lanes (blueprint, shape,
+gh-read), isolation between them, the audit row it appends, and the promise that no audit outcome can reach the
+decision.
 
 The three accepted behaviour deltas are asserted where they are observable and left alone where they are not. In
 particular, nothing here claims the host accepted a payload — a subprocess cannot see that — and nothing tests the
@@ -15,6 +16,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -22,16 +24,22 @@ from pathlib import Path
 import build_blueprint_manifest as bbm
 import pytest
 from _audit_harness import install
+from _grant_repo import make_repo
 
 DISPATCH_HOOK = "allow-dispatch.js"
 SENTINEL_HOOK = "sentinel-read-allow.js"
+GH_READ_HOOK = "github-read-allow.js"
+VERIFIER = Path(__file__).resolve().parents[2] / "bin" / "verify_blueprint_audit.py"
 LIBRARY = Path("lib") / "audit-log.js"
 
 #: A command the shape module allows on its own, used wherever a shape allow is needed.
 SHAPE_ALLOWED = 'V=$(cat "${TMPDIR:-/tmp}/x-${CSID}")'
+#: A command the gh-read module allows under a grant, and neither other lane allows without a manifest entry.
+GH_READ = "gh pr view 12 --json title"
 
 NODE_UNAVAILABLE = shutil.which("node") is None
 _skip_node_unavailable = pytest.mark.skipif(NODE_UNAVAILABLE, reason="requires node to execute the hook")
+_skip_git_unavailable = pytest.mark.skipif(shutil.which("git") is None, reason="requires git to resolve the grant")
 
 
 def _payload(command: str, **overrides: object) -> dict:
@@ -61,6 +69,45 @@ def _verdicts(row: dict) -> dict[str, dict]:
 def _env(tmp_path: Path):
     """Return an isolated plugin root and home with no blueprint manifest installed."""
     return install(tmp_path)
+
+
+@_skip_node_unavailable
+@pytest.mark.integration
+@pytest.mark.parametrize("gh_read_present", [True, False])
+def test_dispatcher_audit_round_trip(tmp_path: Path, gh_read_present: bool) -> None:
+    """Real dispatcher rows verify with three lanes in Foundry and two when gh-read is absent."""
+    env = install(tmp_path)
+    if not gh_read_present:
+        (env.root / "hooks" / GH_READ_HOOK).unlink()
+    proc = env.run(DISPATCH_HOOK, _payload(GH_READ))
+    assert proc.returncode == 0
+    assert bool(proc.stdout) is gh_read_present
+    (row,) = env.rows()
+    verdicts = row["action_detail"]["verdicts"]
+    assert [entry["lane"] for entry in verdicts] == ["blueprint", "shape"] + (["gh-read"] if gh_read_present else [])
+    assert all(entry.get("why") != "module-error" for entry in verdicts)
+    verified = subprocess.run(
+        [sys.executable, str(VERIFIER), "verify", str(env.audit_dir), "--json"],
+        capture_output=True,
+        text=True,
+        env=env.env(),
+        timeout=30,
+        check=False,
+    )
+    assert verified.returncode == 0, verified.stderr
+    totals = json.loads(verified.stdout)["totals"]
+    assert totals["schema-invalid"] == totals["corrupt-record"] == 0
+    assert totals["counts"]["lane"]["blueprint"]["passthrough"] == 1
+
+
+@_skip_node_unavailable
+def test_missing_required_lane_still_records_module_error(env) -> None:
+    """A missing shape module remains a failure verdict while the gh-read allow survives."""
+    (env.root / "hooks" / SENTINEL_HOOK).unlink()
+    proc = env.run(DISPATCH_HOOK, _payload(GH_READ))
+    assert b'"permissionDecision":"allow"' in proc.stdout
+    (row,) = env.rows()
+    assert _verdicts(row)["shape"] == {"lane": "shape", "decision": "none", "why": "module-error"}
 
 
 @_skip_node_unavailable
@@ -99,10 +146,11 @@ class TestEffectiveVerdict:
         assert verdicts["blueprint"]["decision"] == "passthrough"
         assert verdicts["shape"] == {"lane": "shape", "decision": "none", "why": "not-applicable"}
 
+    @pytest.mark.parametrize("module", [SENTINEL_HOOK, GH_READ_HOOK])
     @pytest.mark.parametrize(
         "command", [42, pytest.param(["ls"], id="list"), pytest.param({"cmd": "ls"}, id="object"), True]
     )
-    def test_a_non_string_command_is_none_not_module_error(self, env, command) -> None:
+    def test_a_non_string_command_is_none_not_module_error(self, env, command, module: str) -> None:
         """A malformed host payload must never be recorded as a broken module.
 
         ``module-error`` is the signal that a decision module could not be loaded or threw. A non-string ``command``
@@ -114,10 +162,10 @@ class TestEffectiveVerdict:
         assert proc.stdout == b""
         assert proc.returncode == 0
 
-        # Both lanes return `none` here, so no row is written — scanning `env.rows()` for a bad verdict would pass
+        # Every lane returns `none` here, so no row is written — scanning `env.rows()` for a bad verdict would pass
         # whether the module answered cleanly or threw. The verdict has to be read from `evaluate` directly.
         script = (
-            f"const m = require({json.dumps(str(env.root / 'hooks' / SENTINEL_HOOK))});"
+            f"const m = require({json.dumps(str(env.root / 'hooks' / module))});"
             f"process.stdout.write(JSON.stringify(m.evaluate({json.dumps(payload)})));"
         )
         result = subprocess.run(
@@ -153,6 +201,71 @@ class TestEffectiveVerdict:
         (row,) = broken.rows()
         assert _verdicts(row)["blueprint"]["why"] == "module-error"
         assert "digest" not in row["action_detail"]
+
+
+@_skip_node_unavailable
+@_skip_git_unavailable
+@pytest.mark.integration
+class TestGhReadLane:
+    """The gh-read lane is third: it allows covered gh reads with no record, and only when the first two did not."""
+
+    @pytest.fixture(name="project")
+    def _project(self, tmp_path: Path):
+        """Return a plugin root, a git repository holding no approval record, and a runner bound to that project."""
+        env = install(tmp_path, manifest=None)
+        repo = make_repo(tmp_path)
+
+        def run(command: str):
+            return env.run(DISPATCH_HOOK, _payload(command, cwd=str(repo)), cwd=repo, CLAUDE_PROJECT_DIR=str(repo))
+
+        return env, repo, run
+
+    def test_read_allow_is_rank_three(self, project) -> None:
+        """A covered read is allowed by the gh-read lane with no record on disk.
+
+        Neither earlier lane allows this command, so the effective verdict is the third lane's (user policy: gh reads
+        run free).
+        """
+        env, _, run = project
+        proc = run(GH_READ)
+        assert b'"permissionDecision":"allow"' in proc.stdout
+        (row,) = env.rows()
+        detail = row["action_detail"]
+        assert (detail["decision"], detail["lane"], detail["rank"]) == ("allow", "gh-read", 3)
+
+    def test_verdicts_are_recorded_in_rank_order(self, project) -> None:
+        """The row lists every lane's verdict in LANES order: blueprint, shape, gh-read.
+
+        Rank order is the dispatcher's contract; the verdict list is where it is observable without exporting LANES.
+        """
+        env, _, run = project
+        run(GH_READ)
+        (row,) = env.rows()
+        assert [entry["lane"] for entry in row["action_detail"]["verdicts"]] == ["blueprint", "shape", "gh-read"]
+
+    def test_blueprint_outranks_a_read_allow(self, tmp_path: Path) -> None:
+        """When the manifest also blesses the read, blueprint wins and the gh-read allow is recorded, never printed.
+
+        Exactly one payload reaches the host and its reason is blueprint's, so provenance stays the stronger statement.
+        """
+        env = install(tmp_path, manifest=_manifest_for(GH_READ))
+        repo = make_repo(tmp_path)
+        proc = env.run(DISPATCH_HOOK, _payload(GH_READ, cwd=str(repo)), cwd=repo, CLAUDE_PROJECT_DIR=str(repo))
+        assert b"plugin blueprint" in proc.stdout
+        assert proc.stdout.count(b'"permissionDecision":') == 1
+        (row,) = env.rows()
+        assert (row["action_detail"]["lane"], row["action_detail"]["rank"]) == ("blueprint", 1)
+        assert _verdicts(row)["gh-read"]["decision"] == "allow"
+
+    def test_broken_gh_read_module_leaves_blueprint_working(self, tmp_path: Path) -> None:
+        """A gh-read module that throws is ``module-error`` and suppresses nothing before it."""
+        command = "git rev-parse --show-toplevel"
+        env = install(tmp_path, manifest=_manifest_for(command))
+        (env.root / "hooks" / GH_READ_HOOK).write_text("throw new Error('boom');", encoding="utf-8")
+        proc = env.run(DISPATCH_HOOK, _payload(command))
+        assert b'"permissionDecision":"allow"' in proc.stdout
+        (row,) = env.rows()
+        assert _verdicts(row)["gh-read"] == {"lane": "gh-read", "decision": "none", "why": "module-error"}
 
 
 @_skip_node_unavailable

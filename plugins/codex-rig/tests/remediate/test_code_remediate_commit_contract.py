@@ -27,10 +27,13 @@ def test_remediation_offers_post_gate_commit_modes() -> None:
     assert "never omit a feasible mode to fit a menu limit" in commit_section
     assert "If an earlier explicit answer already supplies the mode" in commit_section
     assert "omit the question and reuse that authorization" in commit_section
-    assert "Do not stage without an explicit valid answer bound to this plan" in commit_section
+    assert (
+        "Do not stage without a local Git approval grant or an explicit valid answer bound to this plan"
+        in commit_section
+    )
     assert "If authorization is missing and runtime cannot ask" in commit_section
     assert "Do not stage before this question" not in commit_section
-    assert "silence, preselection, stale or duplicate replies cannot authorize staging" in commit_section
+    assert "silence, preselection, stale or duplicate replies cannot create authorization" in commit_section
 
 
 def test_remediation_finalization_cannot_skip_commit_disposition() -> None:
@@ -134,4 +137,4 @@ def test_explicit_commit_sequence_override_reaches_handoff_consumer() -> None:
     assert "preserve its hashes and `committed` disposition" in skill
     assert "before final report validation" in handoff
     assert "then return with actual hashes/disposition to complete validation and promotion" in handoff
-    assert "Grouping alone does not invoke this sequencing override" in handoff
+    assert "Standing approval or grouping alone does not invoke this sequencing override" in handoff

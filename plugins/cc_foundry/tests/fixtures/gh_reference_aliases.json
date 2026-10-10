@@ -1,0 +1,1022 @@
+{
+  "commands": [
+    {
+      "aliases": [
+        "agent-tasks",
+        "agent",
+        "agents"
+      ],
+      "path": "agent-task"
+    },
+    {
+      "aliases": [],
+      "path": "agent-task create"
+    },
+    {
+      "aliases": [],
+      "path": "agent-task list"
+    },
+    {
+      "aliases": [],
+      "path": "agent-task view"
+    },
+    {
+      "aliases": [],
+      "path": "alias"
+    },
+    {
+      "aliases": [],
+      "path": "alias delete"
+    },
+    {
+      "aliases": [],
+      "path": "alias import"
+    },
+    {
+      "aliases": [
+        "alias ls"
+      ],
+      "path": "alias list"
+    },
+    {
+      "aliases": [],
+      "path": "alias set"
+    },
+    {
+      "aliases": [],
+      "path": "api"
+    },
+    {
+      "aliases": [
+        "at"
+      ],
+      "path": "attestation"
+    },
+    {
+      "aliases": [],
+      "path": "attestation download"
+    },
+    {
+      "aliases": [],
+      "path": "attestation trusted-root"
+    },
+    {
+      "aliases": [],
+      "path": "attestation verify"
+    },
+    {
+      "aliases": [],
+      "path": "auth"
+    },
+    {
+      "aliases": [],
+      "path": "auth login"
+    },
+    {
+      "aliases": [],
+      "path": "auth logout"
+    },
+    {
+      "aliases": [],
+      "path": "auth refresh"
+    },
+    {
+      "aliases": [],
+      "path": "auth setup-git"
+    },
+    {
+      "aliases": [],
+      "path": "auth status"
+    },
+    {
+      "aliases": [],
+      "path": "auth switch"
+    },
+    {
+      "aliases": [],
+      "path": "auth token"
+    },
+    {
+      "aliases": [],
+      "path": "browse"
+    },
+    {
+      "aliases": [],
+      "path": "cache"
+    },
+    {
+      "aliases": [],
+      "path": "cache delete"
+    },
+    {
+      "aliases": [
+        "cache ls"
+      ],
+      "path": "cache list"
+    },
+    {
+      "aliases": [],
+      "path": "co"
+    },
+    {
+      "aliases": [
+        "cs"
+      ],
+      "path": "codespace"
+    },
+    {
+      "aliases": [],
+      "path": "codespace code"
+    },
+    {
+      "aliases": [],
+      "path": "codespace cp"
+    },
+    {
+      "aliases": [],
+      "path": "codespace create"
+    },
+    {
+      "aliases": [],
+      "path": "codespace delete"
+    },
+    {
+      "aliases": [],
+      "path": "codespace edit"
+    },
+    {
+      "aliases": [],
+      "path": "codespace jupyter"
+    },
+    {
+      "aliases": [
+        "codespace ls",
+        "cs ls"
+      ],
+      "path": "codespace list"
+    },
+    {
+      "aliases": [],
+      "path": "codespace logs"
+    },
+    {
+      "aliases": [],
+      "path": "codespace ports"
+    },
+    {
+      "aliases": [],
+      "path": "codespace ports forward"
+    },
+    {
+      "aliases": [],
+      "path": "codespace ports visibility"
+    },
+    {
+      "aliases": [],
+      "path": "codespace rebuild"
+    },
+    {
+      "aliases": [],
+      "path": "codespace ssh"
+    },
+    {
+      "aliases": [],
+      "path": "codespace stop"
+    },
+    {
+      "aliases": [],
+      "path": "codespace view"
+    },
+    {
+      "aliases": [],
+      "path": "completion"
+    },
+    {
+      "aliases": [],
+      "path": "config"
+    },
+    {
+      "aliases": [],
+      "path": "config clear-cache"
+    },
+    {
+      "aliases": [],
+      "path": "config get"
+    },
+    {
+      "aliases": [
+        "config ls"
+      ],
+      "path": "config list"
+    },
+    {
+      "aliases": [],
+      "path": "config set"
+    },
+    {
+      "aliases": [],
+      "path": "copilot"
+    },
+    {
+      "aliases": [],
+      "path": "discussion"
+    },
+    {
+      "aliases": [],
+      "path": "discussion comment"
+    },
+    {
+      "aliases": [],
+      "path": "discussion create"
+    },
+    {
+      "aliases": [],
+      "path": "discussion edit"
+    },
+    {
+      "aliases": [
+        "discussion ls"
+      ],
+      "path": "discussion list"
+    },
+    {
+      "aliases": [],
+      "path": "discussion view"
+    },
+    {
+      "aliases": [
+        "extensions",
+        "ext"
+      ],
+      "path": "extension"
+    },
+    {
+      "aliases": [],
+      "path": "extension browse"
+    },
+    {
+      "aliases": [],
+      "path": "extension create"
+    },
+    {
+      "aliases": [],
+      "path": "extension exec"
+    },
+    {
+      "aliases": [],
+      "path": "extension install"
+    },
+    {
+      "aliases": [
+        "ext ls",
+        "extension ls",
+        "extensions ls"
+      ],
+      "path": "extension list"
+    },
+    {
+      "aliases": [
+        "ext uninstall",
+        "extension uninstall",
+        "extensions uninstall"
+      ],
+      "path": "extension remove"
+    },
+    {
+      "aliases": [],
+      "path": "extension search"
+    },
+    {
+      "aliases": [],
+      "path": "extension upgrade"
+    },
+    {
+      "aliases": [],
+      "path": "gist"
+    },
+    {
+      "aliases": [],
+      "path": "gist clone"
+    },
+    {
+      "aliases": [
+        "gist new"
+      ],
+      "path": "gist create"
+    },
+    {
+      "aliases": [],
+      "path": "gist delete"
+    },
+    {
+      "aliases": [],
+      "path": "gist edit"
+    },
+    {
+      "aliases": [
+        "gist ls"
+      ],
+      "path": "gist list"
+    },
+    {
+      "aliases": [],
+      "path": "gist rename"
+    },
+    {
+      "aliases": [],
+      "path": "gist view"
+    },
+    {
+      "aliases": [],
+      "path": "gpg-key"
+    },
+    {
+      "aliases": [],
+      "path": "gpg-key add"
+    },
+    {
+      "aliases": [],
+      "path": "gpg-key delete"
+    },
+    {
+      "aliases": [
+        "gpg-key ls"
+      ],
+      "path": "gpg-key list"
+    },
+    {
+      "aliases": [],
+      "path": "issue"
+    },
+    {
+      "aliases": [],
+      "path": "issue close"
+    },
+    {
+      "aliases": [],
+      "path": "issue comment"
+    },
+    {
+      "aliases": [
+        "issue new"
+      ],
+      "path": "issue create"
+    },
+    {
+      "aliases": [],
+      "path": "issue delete"
+    },
+    {
+      "aliases": [],
+      "path": "issue develop"
+    },
+    {
+      "aliases": [],
+      "path": "issue edit"
+    },
+    {
+      "aliases": [
+        "issue ls"
+      ],
+      "path": "issue list"
+    },
+    {
+      "aliases": [],
+      "path": "issue lock"
+    },
+    {
+      "aliases": [],
+      "path": "issue pin"
+    },
+    {
+      "aliases": [],
+      "path": "issue reopen"
+    },
+    {
+      "aliases": [],
+      "path": "issue status"
+    },
+    {
+      "aliases": [],
+      "path": "issue transfer"
+    },
+    {
+      "aliases": [],
+      "path": "issue unlock"
+    },
+    {
+      "aliases": [],
+      "path": "issue unpin"
+    },
+    {
+      "aliases": [],
+      "path": "issue view"
+    },
+    {
+      "aliases": [],
+      "path": "label"
+    },
+    {
+      "aliases": [],
+      "path": "label clone"
+    },
+    {
+      "aliases": [],
+      "path": "label create"
+    },
+    {
+      "aliases": [],
+      "path": "label delete"
+    },
+    {
+      "aliases": [],
+      "path": "label edit"
+    },
+    {
+      "aliases": [
+        "label ls"
+      ],
+      "path": "label list"
+    },
+    {
+      "aliases": [],
+      "path": "licenses"
+    },
+    {
+      "aliases": [],
+      "path": "org"
+    },
+    {
+      "aliases": [
+        "org ls"
+      ],
+      "path": "org list"
+    },
+    {
+      "aliases": [],
+      "path": "pr"
+    },
+    {
+      "aliases": [
+        "pr co"
+      ],
+      "path": "pr checkout"
+    },
+    {
+      "aliases": [],
+      "path": "pr checks"
+    },
+    {
+      "aliases": [],
+      "path": "pr close"
+    },
+    {
+      "aliases": [],
+      "path": "pr comment"
+    },
+    {
+      "aliases": [
+        "pr new"
+      ],
+      "path": "pr create"
+    },
+    {
+      "aliases": [],
+      "path": "pr diff"
+    },
+    {
+      "aliases": [],
+      "path": "pr edit"
+    },
+    {
+      "aliases": [
+        "pr ls"
+      ],
+      "path": "pr list"
+    },
+    {
+      "aliases": [],
+      "path": "pr lock"
+    },
+    {
+      "aliases": [],
+      "path": "pr merge"
+    },
+    {
+      "aliases": [],
+      "path": "pr ready"
+    },
+    {
+      "aliases": [],
+      "path": "pr reopen"
+    },
+    {
+      "aliases": [],
+      "path": "pr revert"
+    },
+    {
+      "aliases": [],
+      "path": "pr review"
+    },
+    {
+      "aliases": [],
+      "path": "pr status"
+    },
+    {
+      "aliases": [],
+      "path": "pr unlock"
+    },
+    {
+      "aliases": [],
+      "path": "pr update-branch"
+    },
+    {
+      "aliases": [],
+      "path": "pr view"
+    },
+    {
+      "aliases": [],
+      "path": "preview"
+    },
+    {
+      "aliases": [],
+      "path": "preview prompter"
+    },
+    {
+      "aliases": [],
+      "path": "project"
+    },
+    {
+      "aliases": [],
+      "path": "project close"
+    },
+    {
+      "aliases": [],
+      "path": "project copy"
+    },
+    {
+      "aliases": [],
+      "path": "project create"
+    },
+    {
+      "aliases": [],
+      "path": "project delete"
+    },
+    {
+      "aliases": [],
+      "path": "project edit"
+    },
+    {
+      "aliases": [],
+      "path": "project field-create"
+    },
+    {
+      "aliases": [],
+      "path": "project field-delete"
+    },
+    {
+      "aliases": [],
+      "path": "project field-list"
+    },
+    {
+      "aliases": [],
+      "path": "project item-add"
+    },
+    {
+      "aliases": [],
+      "path": "project item-archive"
+    },
+    {
+      "aliases": [],
+      "path": "project item-create"
+    },
+    {
+      "aliases": [],
+      "path": "project item-delete"
+    },
+    {
+      "aliases": [],
+      "path": "project item-edit"
+    },
+    {
+      "aliases": [],
+      "path": "project item-list"
+    },
+    {
+      "aliases": [],
+      "path": "project link"
+    },
+    {
+      "aliases": [
+        "project ls"
+      ],
+      "path": "project list"
+    },
+    {
+      "aliases": [],
+      "path": "project mark-template"
+    },
+    {
+      "aliases": [],
+      "path": "project unlink"
+    },
+    {
+      "aliases": [],
+      "path": "project view"
+    },
+    {
+      "aliases": [],
+      "path": "release"
+    },
+    {
+      "aliases": [
+        "release new"
+      ],
+      "path": "release create"
+    },
+    {
+      "aliases": [],
+      "path": "release delete"
+    },
+    {
+      "aliases": [],
+      "path": "release delete-asset"
+    },
+    {
+      "aliases": [],
+      "path": "release download"
+    },
+    {
+      "aliases": [],
+      "path": "release edit"
+    },
+    {
+      "aliases": [
+        "release ls"
+      ],
+      "path": "release list"
+    },
+    {
+      "aliases": [],
+      "path": "release upload"
+    },
+    {
+      "aliases": [],
+      "path": "release verify"
+    },
+    {
+      "aliases": [],
+      "path": "release verify-asset"
+    },
+    {
+      "aliases": [],
+      "path": "release view"
+    },
+    {
+      "aliases": [],
+      "path": "repo"
+    },
+    {
+      "aliases": [],
+      "path": "repo archive"
+    },
+    {
+      "aliases": [],
+      "path": "repo autolink"
+    },
+    {
+      "aliases": [
+        "repo autolink new"
+      ],
+      "path": "repo autolink create"
+    },
+    {
+      "aliases": [],
+      "path": "repo autolink delete"
+    },
+    {
+      "aliases": [
+        "repo autolink ls"
+      ],
+      "path": "repo autolink list"
+    },
+    {
+      "aliases": [],
+      "path": "repo autolink view"
+    },
+    {
+      "aliases": [],
+      "path": "repo clone"
+    },
+    {
+      "aliases": [
+        "repo new"
+      ],
+      "path": "repo create"
+    },
+    {
+      "aliases": [],
+      "path": "repo delete"
+    },
+    {
+      "aliases": [],
+      "path": "repo deploy-key"
+    },
+    {
+      "aliases": [],
+      "path": "repo deploy-key add"
+    },
+    {
+      "aliases": [],
+      "path": "repo deploy-key delete"
+    },
+    {
+      "aliases": [
+        "repo deploy-key ls"
+      ],
+      "path": "repo deploy-key list"
+    },
+    {
+      "aliases": [],
+      "path": "repo edit"
+    },
+    {
+      "aliases": [],
+      "path": "repo fork"
+    },
+    {
+      "aliases": [],
+      "path": "repo gitignore"
+    },
+    {
+      "aliases": [
+        "repo gitignore ls"
+      ],
+      "path": "repo gitignore list"
+    },
+    {
+      "aliases": [],
+      "path": "repo gitignore view"
+    },
+    {
+      "aliases": [],
+      "path": "repo license"
+    },
+    {
+      "aliases": [
+        "repo license ls"
+      ],
+      "path": "repo license list"
+    },
+    {
+      "aliases": [],
+      "path": "repo license view"
+    },
+    {
+      "aliases": [
+        "repo ls"
+      ],
+      "path": "repo list"
+    },
+    {
+      "aliases": [],
+      "path": "repo read-dir"
+    },
+    {
+      "aliases": [],
+      "path": "repo read-file"
+    },
+    {
+      "aliases": [],
+      "path": "repo rename"
+    },
+    {
+      "aliases": [],
+      "path": "repo set-default"
+    },
+    {
+      "aliases": [],
+      "path": "repo sync"
+    },
+    {
+      "aliases": [],
+      "path": "repo unarchive"
+    },
+    {
+      "aliases": [],
+      "path": "repo view"
+    },
+    {
+      "aliases": [
+        "rs"
+      ],
+      "path": "ruleset"
+    },
+    {
+      "aliases": [],
+      "path": "ruleset check"
+    },
+    {
+      "aliases": [
+        "rs ls",
+        "ruleset ls"
+      ],
+      "path": "ruleset list"
+    },
+    {
+      "aliases": [],
+      "path": "ruleset view"
+    },
+    {
+      "aliases": [],
+      "path": "run"
+    },
+    {
+      "aliases": [],
+      "path": "run cancel"
+    },
+    {
+      "aliases": [],
+      "path": "run delete"
+    },
+    {
+      "aliases": [],
+      "path": "run download"
+    },
+    {
+      "aliases": [
+        "run ls"
+      ],
+      "path": "run list"
+    },
+    {
+      "aliases": [],
+      "path": "run rerun"
+    },
+    {
+      "aliases": [],
+      "path": "run view"
+    },
+    {
+      "aliases": [],
+      "path": "run watch"
+    },
+    {
+      "aliases": [],
+      "path": "search"
+    },
+    {
+      "aliases": [],
+      "path": "search code"
+    },
+    {
+      "aliases": [],
+      "path": "search commits"
+    },
+    {
+      "aliases": [],
+      "path": "search issues"
+    },
+    {
+      "aliases": [],
+      "path": "search prs"
+    },
+    {
+      "aliases": [],
+      "path": "search repos"
+    },
+    {
+      "aliases": [],
+      "path": "secret"
+    },
+    {
+      "aliases": [
+        "secret remove"
+      ],
+      "path": "secret delete"
+    },
+    {
+      "aliases": [
+        "secret ls"
+      ],
+      "path": "secret list"
+    },
+    {
+      "aliases": [],
+      "path": "secret set"
+    },
+    {
+      "aliases": [
+        "skills"
+      ],
+      "path": "skill"
+    },
+    {
+      "aliases": [
+        "skill add",
+        "skills add"
+      ],
+      "path": "skill install"
+    },
+    {
+      "aliases": [
+        "skill ls",
+        "skills ls"
+      ],
+      "path": "skill list"
+    },
+    {
+      "aliases": [
+        "skill show",
+        "skills show"
+      ],
+      "path": "skill preview"
+    },
+    {
+      "aliases": [],
+      "path": "skill publish"
+    },
+    {
+      "aliases": [],
+      "path": "skill search"
+    },
+    {
+      "aliases": [],
+      "path": "skill update"
+    },
+    {
+      "aliases": [],
+      "path": "ssh-key"
+    },
+    {
+      "aliases": [],
+      "path": "ssh-key add"
+    },
+    {
+      "aliases": [],
+      "path": "ssh-key delete"
+    },
+    {
+      "aliases": [
+        "ssh-key ls"
+      ],
+      "path": "ssh-key list"
+    },
+    {
+      "aliases": [],
+      "path": "status"
+    },
+    {
+      "aliases": [],
+      "path": "variable"
+    },
+    {
+      "aliases": [
+        "variable remove"
+      ],
+      "path": "variable delete"
+    },
+    {
+      "aliases": [],
+      "path": "variable get"
+    },
+    {
+      "aliases": [
+        "variable ls"
+      ],
+      "path": "variable list"
+    },
+    {
+      "aliases": [],
+      "path": "variable set"
+    },
+    {
+      "aliases": [],
+      "path": "workflow"
+    },
+    {
+      "aliases": [],
+      "path": "workflow disable"
+    },
+    {
+      "aliases": [],
+      "path": "workflow enable"
+    },
+    {
+      "aliases": [
+        "workflow ls"
+      ],
+      "path": "workflow list"
+    },
+    {
+      "aliases": [],
+      "path": "workflow run"
+    },
+    {
+      "aliases": [],
+      "path": "workflow view"
+    }
+  ],
+  "gh_version": "2.102.0",
+  "source": "gh help reference, gh version 2.102.0: every command heading path and its Aliases entries"
+}

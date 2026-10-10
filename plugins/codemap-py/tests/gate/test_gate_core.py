@@ -2,7 +2,7 @@
 
 Each cross-process case uses the ``spawn`` start method so every child is a genuinely independent process with its own
 ``fcntl``/``msvcrt`` handles — the only faithful way to exercise the coordination contract. POSIX ``fork`` cases use
-``os.fork`` directly and are skipped on Windows with a named reason. Every test is bounded well under 10s.
+``os.fork`` directly and are skipped on Windows with a named reason. Workers use bounded waits and joins.
 
 Cross-process ordering is reconstructed from the gate's event log (``CODEMAP_RWGATE_EVENTLOG``): every lifecycle
 transition appends one JSON line, and the file's APPEND order (atomic ``O_APPEND`` writes) is the order key — not the
@@ -18,6 +18,7 @@ import os
 import sys
 import threading
 import time
+from multiprocessing.synchronize import Event
 from pathlib import Path
 
 import pytest
@@ -55,11 +56,14 @@ def _w_reader_once(index: str, out: str, timeout: float) -> None:
         Path(out).write_text(json.dumps({"v": (data or {}).get("v")}))
 
 
-def _w_reader_hold(index: str, ready: str, hold: float, timeout: float) -> None:
-    """Hold a read lease after signaling readiness to a coordinating test."""
+def _w_reader_hold(index: str, ready: str, hold: float, timeout: float, release: Event | None = None) -> None:
+    """Hold a read lease until a delay expires or the parent explicitly releases it."""
     with _rwgate.read_index(index, timeout=timeout) as data:
         Path(ready).write_text(json.dumps({"v": (data or {}).get("v")}))
-        time.sleep(hold)
+        if release is None:
+            time.sleep(hold)
+        else:
+            assert release.wait(hold), "parent did not release reader"
 
 
 def _w_reader_loop(index: str, duration: float, timeout: float) -> None:
@@ -116,13 +120,16 @@ def _w_writer_slow(index: str, exclusive: float, timeout: float) -> None:
     _rwgate.write_index(index, _build, timeout=timeout)
 
 
-def _w_writer_hold_intent(index: str, ready: str, hold: float) -> None:
-    """Advertise a pending writer, hold the lease, then publish version 99."""
+def _w_writer_hold_intent(index: str, ready: str, hold: float, release: Event | None = None) -> None:
+    """Hold writer intent until a delay or explicit release, then publish version 99."""
 
     def _build(target: Path) -> None:
         """Signal writer intent, hold it, and then publish the version."""
         Path(ready).write_text("x")
-        time.sleep(hold)
+        if release is None:
+            time.sleep(hold)
+        else:
+            assert release.wait(hold), "parent did not release writer"
         _rwgate.atomic_publish(target, b'{"v": 99}')
 
     _rwgate.write_index(index, _build, timeout=30.0)
@@ -335,29 +342,51 @@ def test_writer_not_starved_under_reader_load(index: Path, tmp_path: Path) -> No
 
 
 # ── timeouts: never a stale read ─────────────────────────────────────────────
-def test_reader_timeout_returns_busy_never_stale(index: Path, tmp_path: Path) -> None:
-    """A reader blocked by writer intent hits IndexBusy — it never reads stale."""
+@pytest.mark.parametrize("contender_start_delay", [0.0, 2.0])
+def test_reader_timeout_returns_busy_never_stale(index: Path, tmp_path: Path, contender_start_delay: float) -> None:
+    """A reader hits IndexBusy while writer intent stays live, including delayed startup."""
     ready = str(tmp_path / "w.ready")
-    holder = _SPAWN.Process(target=_w_writer_hold_intent, args=(str(index), ready, 1.5))
-    holder.start()
-    assert _wait_file(ready), "writer never took intent"
+    release = _SPAWN.Event()
+    holder = _SPAWN.Process(target=_w_writer_hold_intent, args=(str(index), ready, 30.0, release))
     out = str(tmp_path / "r.out")
     reader = _SPAWN.Process(target=_w_reader_expect_busy, args=(str(index), out, 0.3))
-    reader.start()
-    _join([reader], timeout=5.0)
-    holder.join(5.0)
-    assert json.loads(Path(out).read_text()) == {"busy": True}
+    holder.start()
+    try:
+        assert _wait_file(ready), "writer never took intent"
+        # Deliberately exceed the former timed hold to cover slow spawn/scheduling.
+        time.sleep(contender_start_delay)
+        reader.start()
+        _join([reader], timeout=5.0)
+        assert reader.exitcode == 0
+        assert json.loads(Path(out).read_text()) == {"busy": True}
+        assert holder.is_alive(), "writer released before reader timeout"
+    finally:
+        release.set()
+        _join([holder], timeout=5.0)
+        if reader.pid is not None:
+            _join([reader], timeout=5.0)
+    assert holder.exitcode == 0
+    with _rwgate.read_index(index, timeout=5.0) as data:
+        assert data["v"] == 99, "writer did not publish after release"
 
 
-def test_writer_drain_timeout_returns_busy(index: Path, tmp_path: Path) -> None:
-    """A writer that cannot drain a live reader raises IndexBusy (no build over it)."""
+@pytest.mark.parametrize("contender_start_delay", [0.0, 2.0])
+def test_writer_drain_timeout_returns_busy(index: Path, tmp_path: Path, contender_start_delay: float) -> None:
+    """A writer times out without mutation while a reader remains live through delayed startup."""
     ready = str(tmp_path / "r.ready")
-    reader = _SPAWN.Process(target=_w_reader_hold, args=(str(index), ready, 1.5, 5.0))
+    release = _SPAWN.Event()
+    reader = _SPAWN.Process(target=_w_reader_hold, args=(str(index), ready, 30.0, 5.0, release))
     reader.start()
-    assert _wait_file(ready), "reader never acquired"
-    with pytest.raises(_rwgate.IndexBusy):
-        _rwgate.write_index(index, lambda t: _rwgate.atomic_publish(t, b'{"v": 2}'), timeout=0.3)
-    reader.join(5.0)
+    try:
+        assert _wait_file(ready), "reader never acquired"
+        time.sleep(contender_start_delay)
+        with pytest.raises(_rwgate.IndexBusy):
+            _rwgate.write_index(index, lambda t: _rwgate.atomic_publish(t, b'{"v": 2}'), timeout=0.3)
+        assert reader.is_alive(), "reader released before writer timeout"
+    finally:
+        release.set()
+        _join([reader], timeout=5.0)
+    assert reader.exitcode == 0
     with _rwgate.read_index(index, timeout=5.0) as data:
         assert data["v"] == 1, "index was mutated despite drain timeout"
 
