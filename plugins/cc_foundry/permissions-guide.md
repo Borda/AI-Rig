@@ -2,7 +2,7 @@
 
 Annotated companion to `.claude-plugin/permissions-allow.json` (allow list) and `.claude-plugin/permissions-deny.json` (deny list) — canonical sources merged into `~/.claude/settings.json` by `/foundry:setup`. Working copy at `.claude/permissions-guide.md`, kept in sync by `/audit` (Check 4 drift check) and `/manage add perm` / `/manage remove perm`.
 
-**Destructive git commands explicitly denied** — see Deny List below. Deny rules evaluated before allow rules; matching deny always blocks regardless of any allow entry. Force-push (`git push --force`/`-f`/`--force-with-lease`/`--force-if-includes`/`--mirror`) denied unconditionally via `.claude/settings.json` `deny` — no override, any branch. The deny list is a literal-prefix backstop only (no path, wrapper, `sh -c` or abbreviation forms); `commit-guard.js` is the primary guard. Regular `git push` not settings.json-denied; gated by `commit-guard.js` hook sentinel — every push requires fresh `AskUserQuestion` confirmation (no auto-arm), Claude runs `git push` only after user arms sentinel from own shell. `git remote` not denied — prompt user for approval.
+**Force and mirror pushes explicitly denied** — see Deny List below; local Git, branch and tag deletion included, runs freely. Deny rules evaluated before allow rules; matching deny always blocks regardless of any allow entry. Force-push (`git push --force`/`-f`/`--force-with-lease`/`--force-if-includes`/`--mirror`) denied unconditionally via `.claude/settings.json` `deny` — no override, any branch. The deny list is a literal-prefix backstop only (no path, wrapper, `sh -c` or abbreviation forms); `commit-guard.js` is the primary guard. Regular `git push` and every other remote write (`subtree push`, `send-pack`, `http-push`, `lfs push`) not settings.json-denied; gated by `commit-guard.js` single-use push token — each push requires a fresh `git-push` `AskUserQuestion`, whose `Approve` lets `approval-guard.js` record the token (no auto-arm); the former `/tmp` sentinel no longer authorizes anything. `git remote` not denied — prompt user for approval.
 
 ## Deny List — always blocked
 
@@ -12,11 +12,10 @@ Annotated companion to `.claude-plugin/permissions-allow.json` (allow list) and 
 | `Bash(rm -rf:*)` | Recursive force delete | Irreversible; destroys entire directory trees |
 | `Bash(ssh:*)` | SSH connections | Prevents agent from opening remote sessions |
 | `Bash(sudo:*)` | Privilege escalation | Agents must not gain root access |
-| `Bash(git branch -D:*)` | Force-delete local branch | Irreversible; require explicit confirmation |
-| `Bash(git branch -d:*)` | Delete local branch | Requires explicit user confirmation |
-| `Bash(git tag -d:*)` | Delete local tag | Requires explicit user confirmation |
 | `Bash(curl -X DELETE:*)` | HTTP DELETE requests | Destructive external state mutation |
 | `Bash(curl --request DELETE:*)` | HTTP DELETE requests (alternate form) | Destructive external state mutation |
+
+**GitHub writes through `gh` are not denied here.** `hooks/gh-write-guard.js` blocks every gh write unless the user approved that exact command: a `gh-write` `AskUserQuestion` answered `Approve` records a single-use token (`claude-gh-write-approval.json` in the git common dir, 15 min) and the guard spends it with a PreToolUse `allow`. A gh force update to remote history (`gh repo sync --force`, `gh pr update-branch --rebase`, a `gh api` `force` field, a GraphQL `force:` argument) is blocked with no approval path, the same as the git force-push ban. A settings deny rule still applies after a hook `allow`, so a gh write deny entry would deny the approved command; the plugins ship none. Local `git branch -D`/`-d` and `git tag -d` are no longer denied either: local Git runs freely. Each setup removes exactly the retired entries of both kinds listed in `.claude-plugin/permissions-deny-retired.json`.
 
 ## Built-in tool permissions
 
@@ -51,7 +50,7 @@ Claude Code applies an additional, undocumented "sensitive file" classifier to t
 
 ### Known limitation — "Contains expansion" gate on `$(...)`
 
-Bash commands containing command substitution `$(...)` (also backticks and process substitution) make prefix allow-rules fail-closed — the permission prompt shows reason "Contains expansion" no matter what the allow list says. Two-part mitigation shipped in plugins: (1) skill files use `IFS= read -r VAR < file` instead of `VAR=$(cat file)` for sentinel reads (see `rules/claude-config.md` §TMPDIR Sentinel Scoping); (2) every plugin except `codemap-py` (Python-only hooks by contract) registers one Bash `PreToolUse` auto-allow hook, `hooks/allow-dispatch.js`, and ships two decision modules behind it.
+Bash commands containing command substitution `$(...)` (also backticks and process substitution) make prefix allow-rules fail-closed — the permission prompt shows reason "Contains expansion" no matter what the allow list says. Two-part mitigation shipped in plugins: (1) skill files use `IFS= read -r VAR < file` instead of `VAR=$(cat file)` for sentinel reads (see `rules/claude-config.md` §TMPDIR Sentinel Scoping); (2) every plugin except `codemap-py` (Python-only hooks by contract) registers one Bash `PreToolUse` auto-allow hook, `hooks/allow-dispatch.js`, and ships three decision modules behind it.
 
 `sentinel-read-allow.js` decides by **shape**: it auto-allows commands whose only substitutions are the blueprint idioms (`$(cat "${TMPDIR:-/tmp}/…")` sentinel reads, `$(date -u +FMT)` stamps) — or that contain the substitution-free `IFS= read -r VAR < sentinel` form, which no prefix allow-rule can match (first token is the `IFS=` assignment) — and whose every segment starts with a read-only whitelisted token; anything else falls through to the normal prompt.
 
@@ -59,13 +58,15 @@ Substitutions that capture other command output (`$(git rev-parse ...)`, `$(jq .
 
 The trust statement shifts from "this shape looks safe" to "this exact text exists in a reviewed, versioned plugin file": a command that captures output is covered once it matches a blueprint entry byte-for-byte; any deviation (hand-typed, adapted, or reordered) misses and still prompts, which is the intended fail-closed behavior for non-blueprinted code.
 
-Neither module is registered as a hook of its own. The dispatcher calls them as libraries in rank order — provenance first, shape second — emits the first allow, and appends one audit record naming what both of them said (§Audit records). Both keep their standalone entry points, their own test suites and their place in the propagation manifest; a user's own `settings.json` may still register either directly, and such a registration keeps working but bypasses the dispatcher, so its decision is never recorded. Migrate one by removing the `settings.json` entry: the plugin's own registration already covers the same commands.
+`github-read-allow.js` decides by **gh read**: it auto-allows a command whose every part is an allowlisted `gh` read (`gh pr view`, `gh issue list`, a `gh api` GET, a GraphQL query the text shows), in every session and spawned agent, with no grant or record; a gh write is never allowed here and `gh-write-guard.js` gates it.
+
+No module is registered as a hook of its own. The dispatcher calls them as libraries in rank order — provenance first, shape second, gh read third — emits the first allow, and appends one audit record naming what each of them said (§Audit records). Each keeps its standalone entry point, their own test suites and their place in the propagation manifest; a user's own `settings.json` may still register either directly, and such a registration keeps working but bypasses the dispatcher, so its decision is never recorded. Migrate one by removing the `settings.json` entry: the plugin's own registration already covers the same commands.
 
 ### Audit records
 
 The dispatcher writes one JSON line per Bash call describing what it decided, and `hooks/audit-close.js` writes one describing what happened afterwards. Records live in `~/.claude/logs/audit/`, one file per session (`s-<key>.jsonl`, where the key is a hash of the session id), plus a shared `_no-session.jsonl` for calls that arrive without one.
 
-Each record names the plugin and hook that wrote it, the session and tool-call ids, the working directory, the effective decision with its lane and provenance, and both modules' individual verdicts. It carries a `record_hash` over its own canonical form.
+Each record names the plugin and hook that wrote it, the session and tool-call ids, the working directory, the effective decision with its lane and provenance, and every module's individual verdict. It carries a `record_hash` over its own canonical form.
 
 Four things this log deliberately does not do:
 
@@ -83,7 +84,7 @@ python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" prune --older-than 
 
 `verify` exits 1 only when a record's own hash fails; torn framing from concurrent appends and every classification finding are warnings. `prune` is the only thing in the system that deletes a log file, is never run by a hook, and never prunes `_no-session.jsonl` by age — a growing one means the host stopped sending a session id, which is a regression to investigate. Nothing schedules `prune`; run it from your own scheduler if you want retention automatic.
 
-`RIG_AUDIT=0` disables audit writing everywhere. It disables logging only: both modules are still evaluated and the same permission decision is still emitted.
+`RIG_AUDIT=0` disables audit writing everywhere. It disables logging only: every module is still evaluated and the same permission decision is still emitted.
 
 Both hooks were validated against *committed text* — the share of shipped blueprint blocks each covers. That is a different population from the commands sessions actually execute, so measure the second before trusting it: `python "${CLAUDE_PLUGIN_ROOT}/bin/audit_hook_coverage.py" --since <hook-ship-date> --skills-only` replays every Bash call in the local transcripts through the installed hooks and reports the split by mechanism. Pass `--since`, or sessions predating a hook drag the rate toward zero; the denominator counts every Bash call, including ad-hoc ones no blueprint ever produced, so the result is a floor rather than a verdict.
 
@@ -172,8 +173,8 @@ Both hooks were validated against *committed text* — the share of shipped blue
 | `Bash(gh issue list:*)` | List issues | `/analyse dupes` and health overview |
 | `Bash(gh release view:*)` | Inspect existing release's notes and assets | `/release` reads previous release as baseline |
 | `Bash(gh release list:*)` | List releases | Find most recent tag to set changelog range |
-| `Bash(gh api graphql:*)` | Execute GitHub GraphQL API queries; the prefix also matches mutations, which `hooks/gh-write-guard.js` blocks before this allow applies | `/analyse discussion` mode fetches Discussion threads via GraphQL API |
-| `Bash(gh api repos/*)` | GitHub REST API calls for repo resources; the prefix also matches writes (`-f`/`-F` fields send a POST, `-X`), which `hooks/gh-write-guard.js` blocks before this allow applies | `/analyse`, `/oss:review`, `/resolve` fetch PR reviews, issue data via REST |
+| `Bash(gh api graphql:*)` | Execute GitHub GraphQL API queries; the prefix also matches mutations, which `hooks/gh-write-guard.js` blocks before this allow applies unless the user approved that exact command | `/analyse discussion` mode fetches Discussion threads via GraphQL API |
+| `Bash(gh api repos/*)` | GitHub REST API calls for repo resources; the prefix also matches writes (`-f`/`-F` fields send a POST, `-X`), which `hooks/gh-write-guard.js` blocks before this allow applies unless the user approved that exact command | `/analyse`, `/oss:review`, `/resolve` fetch PR reviews, issue data via REST |
 | `Bash(gh api search/*)` | GitHub REST API search endpoint | `/resolve` searches for downstream usage of changed APIs |
 
 ## Git — read-only

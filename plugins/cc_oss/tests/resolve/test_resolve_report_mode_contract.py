@@ -589,6 +589,7 @@ def test_handoff_wiring_reaches_each_consumer() -> None:
         pytest.param("pushed", "main", id="pushed-returns-to-saved-branch"),
         pytest.param("skipped-by-user", "pr-7", id="declined-push-stays"),
         pytest.param("blocked-guard", "pr-7", id="blocked-push-stays"),
+        pytest.param("blocked-needs-manual-push", "pr-7", id="handed-over-push-stays"),
     ],
 )
 def test_final_branch_restore_only_after_push(tmp_path: Path, push_status: str, expected_branch: str) -> None:

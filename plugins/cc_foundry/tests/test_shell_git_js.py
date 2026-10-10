@@ -71,6 +71,16 @@ def _unreadable(command: str) -> bool:
     return json.loads(proc.stdout)
 
 
+def _unreadable_reason(command: str, program: str = "gh") -> str:
+    """Return the ``info.unreadableReason`` text ``programInvocations`` sets for ``command``."""
+    proc = _node(
+        f"const info = {{}}; lib.programInvocations({json.dumps(command)}, {json.dumps(program)}, info);"
+        " process.stdout.write(JSON.stringify(info.unreadableReason));"
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
 @_skip_node_unavailable
 class TestModule:
     """The module loads cleanly and exposes only its one entry point."""
@@ -404,6 +414,108 @@ class TestPrecision:
 
 
 @_skip_node_unavailable
+class TestHeredocBodies:
+    """A quoted heredoc body handed to a data command is data, even on a line that opens with ``git push``.
+
+    The coarse pass splits raw text at newlines, so a body line opening with ``git push`` read as a push and blocked a
+    command that pushes nothing: release notes written with ``cat``, a commit message given on stdin. It skips such a
+    body only when the lexer read the whole command and every command in it is a data command; any body a shell, an
+    interpreter or an unknown program may run keeps its coarse reading.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("cat > notes.md <<'EOF'\nline one\ngit push origin main\nline three\nEOF", id="plain"),
+            pytest.param("cat > n.md <<'EOF'\n  git push origin main\nEOF", id="indented"),
+            pytest.param("cat > n.md <<'EOF'\n```\ngit push origin main\n```\nEOF", id="markdown-fence"),
+            pytest.param("git commit -F - <<'EOF'\ngit push is documented here\nEOF", id="commit-message-on-stdin"),
+            pytest.param('cat > n.md <<"EOF"\ngit push origin main\nEOF', id="double-quoted-delimiter"),
+            pytest.param("cat > n.md <<\\EOF\ngit push origin main\nEOF", id="escaped-delimiter"),
+            pytest.param("cat <<-'EOF' > n.md\n\tgit push -f origin main\n\tEOF", id="tab-stripping-force-text"),
+            pytest.param("tee n.md <<'EOF'\ngit push --force\nEOF", id="tee"),
+            pytest.param(
+                "gh pr create --title x --body-file - <<'EOF'\ngit push origin main\nEOF", id="gh-body-on-stdin"
+            ),
+            pytest.param(
+                "git commit -m \"$(cat <<'EOF'\nfix: x\n\ngit push now works\nEOF\n)\"",
+                id="commit-message-substitution",
+            ),
+            pytest.param("mkdir -p docs && cat > docs/x.md <<'EOF'\ngit push origin main\nEOF", id="after-mkdir"),
+        ],
+    )
+    def test_body_line_opening_with_push_is_data(self, command: str) -> None:
+        """Every command here only stores or sends the body, so no reading is a push.
+
+        Each was blocked as a push needing a token (round 9b live lane, F2), while the same text mid-line passed.
+        """
+        assert not any(reading.split(" ")[0] == "push" for reading in _readings(command))
+
+    @pytest.mark.parametrize(
+        ("command", "reading"),
+        [
+            pytest.param("bash <<'EOF'\ngit push origin main\nEOF", "push origin main", id="bash"),
+            pytest.param("sh <<'EOF'\n  git push origin main\nEOF", "push origin main", id="sh"),
+            pytest.param("python3 <<'EOF'\ngit push origin main\nEOF", "push origin main", id="interpreter"),
+            pytest.param(
+                "cat <<'EOF' | awk '{system($0)}'\ngit push origin main\nEOF", "push origin main", id="piped-to-awk"
+            ),
+            pytest.param(
+                "cat > x.sh <<'EOF'\ngit push origin main\nEOF\nchmod +x x.sh && ./x.sh",
+                "push origin main",
+                id="script-run-after",
+            ),
+            pytest.param(
+                "cat <<'EOF' > >(sh)\ngit push origin main\nEOF", "push origin main", id="process-substitution"
+            ),
+            pytest.param(
+                "git -c alias.x='!sh' x <<'EOF'\ngit push origin main\nEOF", "push origin main", id="git-inline-config"
+            ),
+            pytest.param(
+                "git bisect run awk '{system($0)}' <<'EOF'\ngit push origin main\nEOF",
+                "push origin main",
+                id="git-subcommand-running-a-program",
+            ),
+            pytest.param("cat > n.md <<EOF\ngit push origin main\nEOF", "push origin main", id="unquoted-delimiter"),
+            pytest.param(
+                "cat > n.md <<'EOF'\ngit push origin main\nEOF\necho 'unbalanced", "push origin main", id="unparsed"
+            ),
+            pytest.param("sudo cat <<'EOF'\ngit push origin main\nEOF", "push origin main", id="prefix-program"),
+            # `<<` the lexer reads as a heredoc where the shells read none: bash runs line 2 as a command
+            pytest.param("echo $[ 1 << 'X' ]\ngit push origin main\nX", "push origin main", id="arithmetic-bracket"),
+            pytest.param("echo ${x:-<<'X'}\ngit push origin main\nX", "push origin main", id="parameter-default"),
+            pytest.param("(( cat << '2' ))\ngit push origin main\n2", "push origin main", id="arithmetic-command"),
+            pytest.param(
+                "cat <<'EOF'\r\nbody\r\nEOF\r\ngit push origin main\r\n", "push origin main", id="crlf-delimiter"
+            ),
+        ],
+    )
+    def test_body_a_program_may_run_keeps_its_reading(self, command: str, reading: str) -> None:
+        """A body fed to a shell, interpreter or unknown program, an unquoted body or an unparsed command still reads.
+
+        The coarse pass exists so the lexer only adds git detections; it gives up a body only where the whole command is
+        known to treat it as data. That includes text where the lexer reads a heredoc the shells do not: inside
+        ``$[…]``, ``${…}`` or ``((…))`` ``<<`` is a shift or literal text, and with CRLF line ends the delimiter word
+        keeps its CR, so bash and zsh run the line the lexer would take for body text (probed live on both).
+        """
+        assert reading in _readings(command)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("cat <<'EOF' <<'E2'\none\nEOF\ngit push origin main\nE2", id="second-heredoc-body"),
+            pytest.param("cat <<'EOF'\ngit push origin main", id="unterminated-body"),
+        ],
+    )
+    def test_shells_read_these_lines_as_body(self, command: str) -> None:
+        """Both bash and zsh feed these lines to ``cat`` (probed live), so no reading is a push.
+
+        Two heredocs on one line are read in order; a body with no delimiter line runs to the end of the input.
+        """
+        assert not any(reading.split(" ")[0] == "push" for reading in _readings(command))
+
+
+@_skip_node_unavailable
 class TestRedirections:
     """A redirection is never an argument; only an unquoted ``<``, ``>`` or ``&>`` starts one.
 
@@ -607,6 +719,39 @@ class TestProgramInvocations:
         assert _unreadable(command) is unreadable
 
     @pytest.mark.parametrize(
+        ("command", "program", "construct"),
+        [
+            pytest.param("echo ${(U)HOME}", "gh", "${(flags)…}", id="zsh-flags"),
+            pytest.param("echo ${(e)HOME}", "git", "${(flags)…}", id="zsh-eval-flag-git"),
+            pytest.param('echo $"x"', "gh", '$"…"', id="locale-string"),
+            pytest.param("echo .(e:'date':)", "gh", "glob qualifier", id="zsh-glob-qualifier"),
+            pytest.param("echo $'\\u0041'", "git", "$'…'", id="ansi-c-escape"),
+            pytest.param('x="${ gh pr view 1; }"', "gh", "${ cmd; }", id="command-brace"),
+            pytest.param("x=$$'a'", "gh", "$$", id="dollars-before-a-quote"),
+            pytest.param("printf 'a\\n' | sh", "gh", "stdin", id="backslash-printed-to-a-shell"),
+        ],
+    )
+    def test_unreadable_reason_names_the_construct(self, command: str, program: str, construct: str) -> None:
+        """``info.unreadableReason`` names the shell syntax that made the command unreadable, for any program.
+
+        The guards block such a command; their message must name the real cause, not a push or a gh write the command
+        may not hold (round 9b live lane, F5: ``echo ${(U)HOME}`` was "git push blocked").
+        """
+        assert construct in _unreadable_reason(command, program)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("gh pr view 1", id="plain"),
+            pytest.param("gh pr $'cr\\x65ate'", id="readable-escape"),
+            pytest.param("gh pr view 'unbalanced", id="unbalanced-is-not-shell-dependent"),
+        ],
+    )
+    def test_unreadable_reason_is_empty_for_readable_quoting(self, command: str) -> None:
+        """A command bash and zsh read alike carries no reason, unbalanced quoting included (that is not unreadable)."""
+        assert _unreadable_reason(command) == ""
+
+    @pytest.mark.parametrize(
         ("command", "words"),
         [
             pytest.param('x="${a%"b"}"; gh pr merge 1', ["gh", "pr", "merge", "1"], id="nested-quotes-then-a-write"),
@@ -680,6 +825,16 @@ class TestProgramInvocations:
         where gh reads ``create``, so a guessed argv can hide a write instead of widening the answer.
         """
         assert _invocations(command, "gh") is None
+
+    def test_heredoc_delimiter_keeps_a_carriage_return(self) -> None:
+        """A heredoc delimiter word ends only at a blank, newline or operator, as in the shells: a CR stays in it.
+
+        With CRLF line ends bash and zsh read the delimiter ``EOF\\r``, end the body at the line ``EOF\\r`` and run the
+        next line (probed live). Stopping the word at the CR made the lexer read the rest as body, hiding a gh write.
+        """
+        command = "cat <<'EOF'\r\nbody\r\nEOF\r\ngh issue close 1 -c x\r\n"
+
+        assert ["gh", "issue", "close", "1", "-c", "x\r"] in _invocations(command, "gh")
 
     def test_code_not_naming_the_program_keeps_the_answer(self) -> None:
         """Interpreter code that never names gh leaves the rest of the command exactly read."""

@@ -40,7 +40,8 @@ def _hook_tmp_base() -> Path:
     scope, so collection on a node-less host still reaches the skip markers.
 
     Returns:
-        Directory holding ``claude-state-<sid>`` and ``claude-push-auth-*``.
+        Directory holding ``claude-state-<sid>`` and leftover ``claude-push-auth-*`` sentinels of the former push
+        mechanism, which commit-guard deletes at session start.
 
     Examples:
         >>> _hook_tmp_base().is_absolute()

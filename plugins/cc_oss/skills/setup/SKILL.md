@@ -27,7 +27,7 @@ Deliver oss's rules to Claude's user-level rule namespace, and its own permissio
 
 **Why does oss deliver only its own rules?** Each plugin installs independently. A plugin that shipped a sibling's rules would break standalone installation and couple releases. Still true with the delta variant: `oss-quality-gates.md` links either `rules/quality-gates-delta.md` (when a foundry-owned `foundry-quality-gates.md` is already delivered) or the complete `rules/quality-gates.md` (when it is not) — both sources belong to this plugin, and the delta only *points* at foundry's copy for the shared obligations rather than delivering it. Standalone install loses no rule; all four `quality-gates.md` copies loading at once was 51,274 B of context on every turn.
 
-NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only `permissions.allow` and `permissions.deny` arrays are touched, additively except for removing two exact retired allow rules: `Bash(gh api repos/*:*)` and `Bash(uv pip install:*)`. Writes nothing under `~/.codex/`.
+NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only `permissions.allow` and `permissions.deny` arrays are touched, additively except for removing two exact retired allow rules (`Bash(gh api repos/*:*)` and `Bash(uv pip install:*)`) and the exact retired deny entries (gh writes, local branch/tag deletion) listed in `permissions-deny-retired.json`. Writes nothing under `~/.codex/`.
 
 </objective>
 
@@ -134,18 +134,20 @@ _jq_result=$(jq --slurpfile perms "$PLUGIN_ROOT/.claude-plugin/permissions-allow
 
 Report: "Added N new permissions.allow entries (M already present)." Also report which of the two retired allow rules were removed.
 
+Before merging the deny list, remove exactly the retired entries listed in `permissions-deny-retired.json` (exact string match): the deny entries earlier oss versions shipped for `gh` writes — a settings deny rule still applies after a hook `allow`, so they would defeat the user's one-time `gh-write` approval, and `hooks/gh-write-guard.js` now gates every gh write — and for local `git branch -D`/`-d` and `git tag -d`, since local Git runs freely. Every other user deny entry stays.
+
 Writes merged `permissions.deny` array:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}"
-_jq_result=$(jq --slurpfile deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" \
-    '.permissions.deny = ((.permissions.deny // []) + $deny[0] | unique)' \
+_jq_result=$(jq --slurpfile deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" --slurpfile retired "$PLUGIN_ROOT/.claude-plugin/permissions-deny-retired.json" \
+    '.permissions.deny = ((((.permissions.deny // []) - $retired[0]) + $deny[0]) | unique)' \
     ~/.claude/settings.json)  # timeout: 5000
 [ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/oss_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/oss_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging permissions.deny — settings.json unchanged\n"; exit 1; }
 ```
 
-Report: "Added N new permissions.deny entries (M already present)."
+Report: "Added N new permissions.deny entries (M already present)." Also report how many retired deny entries were removed.
 
 Deny wins over allow in Claude Code, so merging both in either order yields the same effective policy.
 

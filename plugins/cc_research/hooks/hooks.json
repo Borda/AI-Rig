@@ -1,5 +1,5 @@
 {
-  "description": "research plugin hooks: agent routing fallback, gh write guard, Bash auto-allow dispatch with audit records, topic report-header gate",
+  "description": "research plugin hooks: agent routing fallback, gh write guard, approval-record writer and self-grant guard, Bash auto-allow dispatch with audit records, topic report-header gate",
   "hooks": {
     "PostToolUse": [
       {
@@ -15,6 +15,15 @@
         "hooks": [
           {
             "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/enforce-topic-header.js\"; done; exit 0",
+            "type": "command"
+          }
+        ],
+        "matcher": "AskUserQuestion"
+      },
+      {
+        "hooks": [
+          {
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/approval-guard.js\"; done; exit 0",
             "type": "command"
           }
         ],
@@ -60,6 +69,15 @@
           }
         ],
         "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/approval-guard.js\"; done; exit 0",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit"
       },
       {
         "hooks": [

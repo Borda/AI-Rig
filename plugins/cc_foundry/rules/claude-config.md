@@ -142,7 +142,7 @@ Restoring without being asked = overstepping. "Why" = question, not request to f
 
 Always on, format bullets included: the full commit rule (`git-commit.md`) is injected by `rule-inject.js` after the first commit-creating git call (`add`, `commit`, `push`, `merge`, …) of a session or subagent runs, beside that call's result — after the first message was drafted. Before drafting any commit message, Read `~/.claude/rules/foundry-git-commit.md` and its `_full/git-commit.md` unless already in context.
 
-- Never commit without authority: a documented skill workflow step, or a same-turn `AskUserQuestion` confirmation for every ad-hoc commit
+- Never commit without authority: skill workflow step, explicit same-turn user request, local Git grant, or same-turn `git-approve` answer
 - Never `git add -A` / `git add .` (stage by name); never `--no-verify`; never `--no-gpg-sign` unless the user asks
 - Subject `type(scope): detail` ≤50 chars naming the highest-tier change in `git diff HEAD` + `git diff --stat HEAD`; never draft from session memory
 - Evidence-only body: every clause traces to a `+`/`-` line in `git diff HEAD`; no body line wrap; no GitHub auto-links (`#N`, `@name`); no non-VCS paths (`/tmp/`, `~/.claude/`)

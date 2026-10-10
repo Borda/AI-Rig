@@ -1295,6 +1295,15 @@ def _prompt_with_budget(request: Request) -> str:
             "Perform an adversarial read-only review: identify concrete correctness, safety, and regression risks. "
             "Do not edit files or invoke write-capable tools.\n\n"
         )
+    elif _is_write_verb(request.verb):
+        # A write-capable peer still loads its host's project instructions and can see the checkout's approval records:
+        # a local Git approval grant would make a completion commit its default, and a pending push token could be
+        # spent. A bridge child gains nothing from a grant or token: they are the authority records of the calling
+        # session that owns the task, which reviews the diff and owns every commit and push.
+        preamble += (
+            "Leave every change unstaged and uncommitted: do not run git add, git commit, git push, or any other Git "
+            "write. The caller reviews the diff and commits.\n\n"
+        )
     return preamble + request.task
 
 

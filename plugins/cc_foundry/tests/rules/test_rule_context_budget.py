@@ -29,8 +29,12 @@ EAGER_GLOBS = frozenset({"**", "**/*"})
 # rule-inject.js context arrives beside the first git call's result, after that message
 # was drafted; stub/detail pairs gained policy-sibling markers. Raised again from 59315:
 # default-branch and history-safety bullets stay eager because `reset --hard` never
-# triggers injection and `rebase` injects only after it ran.
-EAGER_BUDGET_BYTES = 59455
+# triggers injection and `rebase` injects only after it ran. Raised again from 59455: the eager
+# commit-authority ban names the local Git grant as its third source, or it would contradict the
+# injected git-commit.md before that rule arrives. Raised again from 59464: the gh-write approval
+# question (public-github.md) must be seen before the first gh write, which no hook injects a
+# rule for, and untrusted-content.md states that free gh reads stay data.
+EAGER_BUDGET_BYTES = 59990
 #: Rules ``hooks/rule-inject.js`` injects on their activity; eager loading would duplicate them.
 HOOK_INJECTED_RULES = ("agent-spawn.md", "git-commit.md")
 

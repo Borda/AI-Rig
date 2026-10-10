@@ -1,6 +1,7 @@
 """Prevent audited remediation contract failures before prompting or editing source."""
 
 import json
+from functools import partialmethod
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,13 @@ from test_remediation_finalize import HELPER, _stale_metadata
 from test_remediation_finalize import valid_run as _shared_valid_run
 
 _valid_run = pytest.fixture(name="valid_run")(_shared_valid_run.__wrapped__)
+
+
+@pytest.fixture
+def legacy_text_encoding(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise UTF-8 artifacts with the legacy Windows text default on every host."""
+    monkeypatch.setattr(Path, "read_text", partialmethod(Path.read_text, encoding="cp1252"))
+    monkeypatch.setattr(Path, "write_text", partialmethod(Path.write_text, encoding="cp1252"))
 
 
 def _small_sequential_plan(run: Path) -> dict:
@@ -36,10 +44,12 @@ def _small_sequential_plan(run: Path) -> dict:
     _write_workplan(metadata, run)
     doc = run / "resolution-workplan.md"
     doc.write_text(
-        doc.read_text().replace(
+        doc.read_text(encoding="utf-8").replace(
             "## Parallel Approval\n",
             "## Parallel Approval\n\nIneligibility reason: Documentation depends on the source fix.\n",
-        )
+        ),
+        encoding="utf-8",
+        newline="\n",
     )
     return metadata
 
@@ -101,10 +111,10 @@ def test_report_occurrences_preserved_before_scope(tmp_path: Path, capsys: pytes
             "confidence_recovery": {"remaining_limits": ["Missing stubs."]},
         },
     }
-    (tmp_path / "findings-input.txt").write_text(json.dumps(report))
+    (tmp_path / "findings-input.txt").write_text(json.dumps(report), encoding="utf-8", newline="\n")
     assert HELPER.main(["obligations", "--run", str(tmp_path)]) == 0
     capsys.readouterr()
-    sources = json.loads((tmp_path / "report-obligations.json").read_text())["sources"]
+    sources = json.loads((tmp_path / "report-obligations.json").read_text(encoding="utf-8"))["sources"]
     assert len(sources) == 6
     assert sources[1]["source_id"].endswith("#/follow_up/0")
     assert sources[2]["source_id"].endswith("#/follow_up/1")
@@ -112,18 +122,18 @@ def test_report_occurrences_preserved_before_scope(tmp_path: Path, capsys: pytes
     inventory = _selection()
     inventory["items"][0]["sources"].extend(sources[0:2] + sources[3:])
     selection = tmp_path / "selection.json"
-    selection.write_text(json.dumps(inventory))
+    selection.write_text(json.dumps(inventory), encoding="utf-8", newline="\n")
     argv = ["preflight", "--run", str(tmp_path), "--stage", "selection", "--report"]
     assert HELPER.main(argv) == 1
     assert "report-obligation-omitted" in capsys.readouterr().out
     assert not (tmp_path / "resolution-scope.md").exists()
     inventory["items"][0]["sources"].append(sources[2])
-    selection.write_text(json.dumps(inventory))
+    selection.write_text(json.dumps(inventory), encoding="utf-8", newline="\n")
     assert HELPER.main(argv) == 0
     assert inventory["selected_indexes"] is None
     assert HELPER._report_finding_ids(inventory["items"][0]) == ["F7"]
     report["follow_up"][1] = "Changed producer obligation."
-    (tmp_path / "findings-input.txt").write_text(json.dumps(report))
+    (tmp_path / "findings-input.txt").write_text(json.dumps(report), encoding="utf-8", newline="\n")
     assert HELPER.main(argv) == 1
     assert "report-obligation" in capsys.readouterr().out
 
@@ -133,10 +143,12 @@ def test_public_plan_checkpoint_needs_no_completed_outcomes(tmp_path: Path, caps
     _small_sequential_plan(tmp_path)
     inventory = _selection()
     inventory["selected_indexes"] = [1, 2]
-    (tmp_path / "selection.json").write_text(json.dumps(inventory))
+    (tmp_path / "selection.json").write_text(json.dumps(inventory), encoding="utf-8", newline="\n")
     draft = tmp_path / "planning.json"
     draft.write_text(
-        json.dumps({"resolution_workplan": {"parallel_eligible": False, "parallel_approval_required": False}})
+        json.dumps({"resolution_workplan": {"parallel_eligible": False, "parallel_approval_required": False}}),
+        encoding="utf-8",
+        newline="\n",
     )
     assert (
         HELPER.main(
@@ -157,7 +169,7 @@ def test_public_plan_checkpoint_needs_no_completed_outcomes(tmp_path: Path, caps
     assert HELPER.main(argv) == 0
     assert {p: p.read_bytes() for p in before} == before
     inventory["selected_indexes"] = [1]
-    (tmp_path / "selection.json").write_text(json.dumps(inventory))
+    (tmp_path / "selection.json").write_text(json.dumps(inventory), encoding="utf-8", newline="\n")
     assert HELPER.main(argv) == 1
     assert "work-bucket-coverage-mismatch" in capsys.readouterr().out
 
@@ -168,7 +180,9 @@ def test_counts_follow_latest_status_event(valid_run: tuple[Path, dict]) -> None
     (run / "resolution-events.jsonl.rec").write_text(
         json.dumps(
             {"kind": "item", "id": "R1", "triage_status": "already-applied", "resolution_status": "already-applied"}
-        )
+        ),
+        encoding="utf-8",
+        newline="\n",
     )
     HELPER.append_record(run, "resolution-events.jsonl")
     table = HELPER.derive_metadata(run, result["metadata"])["final_resolution_table"]
@@ -189,15 +203,17 @@ def test_missing_or_invalid_outcome_never_gets_default_counts(
         HELPER.derive_metadata(run, result["metadata"])
 
 
+@pytest.mark.usefixtures("legacy_text_encoding")
 def test_preflight_contract_precedes_question_and_edits() -> None:
     """Keep executable early gates at the skill boundaries that consume their evidence."""
-    skill = (HELPER.SHARED_DIRECTORY.parent / "skills/code-remediate/SKILL.md").read_text()
+    skill = (HELPER.SHARED_DIRECTORY.parent / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
     assert skill.index("--stage selection") < skill.index("### Terminal Scope Context Contract")
     assert skill.index("--stage plan") < skill.index("### 07:")
-    assert "Final status counts derive" in (HELPER.SHARED_DIRECTORY.parent / "README.md").read_text()
+    assert "Final status counts derive" in (HELPER.SHARED_DIRECTORY.parent / "README.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("legacy_text_encoding")
 def test_sequential_report_followup_reaches_truthful_failed_result(
     valid_run: tuple[Path, dict], capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -207,10 +223,10 @@ def test_sequential_report_followup_reaches_truthful_failed_result(
     producer = Path(metadata["review_report_intake"]["admission_evidence"]["producer_result_path"])
     report = json.loads(producer.read_bytes())
     report["follow_up"] = ["Retain the mixed-input closure regression."]
-    producer.write_text(json.dumps(report))
+    producer.write_text(json.dumps(report), encoding="utf-8", newline="\n")
     (run / "findings-input.txt").write_bytes(producer.read_bytes())
     assert HELPER.main(["obligations", "--run", str(run)]) == 0
-    sources = json.loads((run / "report-obligations.json").read_text())["sources"]
+    sources = json.loads((run / "report-obligations.json").read_text(encoding="utf-8"))["sources"]
     table = metadata["final_resolution_table"]
     table["items"][0]["sources"].append(next(source for source in sources if "#/follow_up/" in source["source_id"]))
     table["items"][1].update(
@@ -225,23 +241,25 @@ def test_sequential_report_followup_reaches_truthful_failed_result(
     table.update(selectable_rows_total=2, nonselectable_rows_total=0)
     total = sum(len(item["sources"]) for item in table["items"])
     table.update(source_records_total=total, represented_source_records_total=total)
-    selection = json.loads((run / "selection.json").read_text())
+    selection = json.loads((run / "selection.json").read_text(encoding="utf-8"))
     for item, original in zip(selection["items"], table["items"]):
         for field in HELPER.IDENTITY_FIELDS:
             item[field] = original[field]
     selection["selected_indexes"] = None
-    (run / "selection.json").write_text(json.dumps(selection))
+    (run / "selection.json").write_text(json.dumps(selection), encoding="utf-8", newline="\n")
     assert HELPER.main(["preflight", "--run", str(run), "--stage", "selection", "--report"]) == 0
     selection["selected_indexes"] = [1, 2]
-    (run / "selection.json").write_text(json.dumps(selection))
-    (run / "resolution-scope.md").write_text(HELPER.final_handoff.render_selection(selection))
+    (run / "selection.json").write_text(json.dumps(selection), encoding="utf-8", newline="\n")
+    (run / "resolution-scope.md").write_text(
+        HELPER.final_handoff.render_selection(selection), encoding="utf-8", newline="\n"
+    )
     metadata["resolution_scope"].update(selected_indexes=[1, 2], deferred_indexes=[])
     metadata["review_report_intake"].update(review_gate_items_total=1, review_gate_items_selectable=1)
     (run / "specialists").rmdir()
     plan = _small_sequential_plan(run)
     metadata["resolution_workplan"] = plan["resolution_workplan"]
     draft = run / "draft.json"
-    draft.write_text(json.dumps(metadata))
+    draft.write_text(json.dumps(metadata), encoding="utf-8", newline="\n")
     assert HELPER.main(["preflight", "--run", str(run), "--stage", "plan", "--metadata", str(draft)]) == 0
     metadata["unresolved_summary"].update(
         selected_items_total=2,
@@ -261,17 +279,19 @@ def test_sequential_report_followup_reaches_truthful_failed_result(
     (run / "unresolved.txt").write_text(
         "## Unresolved Work Summary\nClosure class: environment-blocked\n"
         "## Why Selected Items Remain Unresolved\nAttempted evidence: checks/types.stderr.txt\n"
-        "## Next Action\nNext owner: environment. Supply dependency stubs and rerun types.\n"
+        "## Next Action\nNext owner: environment. Supply dependency stubs and rerun types.\n",
+        encoding="utf-8",
+        newline="\n",
     )
-    gates = json.loads((run / "gates.json").read_text())
+    gates = json.loads((run / "gates.json").read_text(encoding="utf-8"))
     gates.update(status="fail", checks_failed=["types"], failed_count=1)
     gates["checks_not_applicable"] = [name for name in gates.get("checks_not_applicable", []) if name != "types"]
     gate = next(check for check in gates["checks"] if check["id"] == "types")
     gate.update(status="fail", exit_code=1)
     gate.pop("reason", None)
-    (run / gate["stderr"]).write_text("Missing dependency stubs.\n")
-    (run / "gates.json").write_text(json.dumps(gates))
-    handoff = json.loads((run / "final-handoff.json").read_text())
+    (run / gate["stderr"]).write_text("Missing dependency stubs.\n", encoding="utf-8", newline="\n")
+    (run / "gates.json").write_text(json.dumps(gates), encoding="utf-8", newline="\n")
+    handoff = json.loads((run / "final-handoff.json").read_text(encoding="utf-8"))
     handoff.update(
         outcome={"title": "fail", "summary": "Source fix verified; type prerequisite unresolved."},
         remaining=[
@@ -289,9 +309,9 @@ def test_sequential_report_followup_reaches_truthful_failed_result(
         "reason": "Type gate failed.",
         "evidence": "checks/types.stderr.txt",
     }
-    (run / "handoff-draft.json").write_text(json.dumps(handoff))
+    (run / "handoff-draft.json").write_text(json.dumps(handoff), encoding="utf-8", newline="\n")
     HELPER.render_ledger(run, metadata)
-    draft.write_text(json.dumps(metadata))
+    draft.write_text(json.dumps(metadata), encoding="utf-8", newline="\n")
     assert (
         HELPER.main(
             [
@@ -313,12 +333,12 @@ def test_sequential_report_followup_reaches_truthful_failed_result(
         )
         == 0
     ), capsys.readouterr().out
-    promoted = json.loads((run / "result.json").read_text())
+    promoted = json.loads((run / "result.json").read_text(encoding="utf-8"))
     assert promoted["status"] == "fail"
     assert promoted["checks_failed"] == ["types"]
     assert promoted["metadata"]["final_resolution_table"]["triage_status_counts"]["valid"] == 2
     assert promoted["metadata"]["unresolved_summary"]["environment_blocked_items"] == 1
-    assert "Supply dependency stubs and rerun types." in (run / "final.md").read_text()
+    assert "Supply dependency stubs and rerun types." in (run / "final.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("generation", ["historical-promoted", "new-candidate", "new-promoted"])

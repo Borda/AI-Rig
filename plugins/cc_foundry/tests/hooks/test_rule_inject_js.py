@@ -54,7 +54,7 @@ def temp_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def git_repo(tmp_path: Path) -> Path:
-    """Empty git repo on branch ``main`` whose unique name keeps commit-guard's push sentinel name unclaimed."""
+    """Empty git repo on branch ``main`` whose unique name keeps commit-guard's legacy sentinel wipe off siblings."""
     repo = tmp_path / f"inject-{uuid.uuid4().hex[:12]}"
     subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True, timeout=15)
     return repo

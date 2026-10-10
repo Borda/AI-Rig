@@ -843,7 +843,8 @@ def test_context_budget_mode_asks_commit_mode_and_dispatch_together() -> None:
 #: Post-Step-3d `AskUserQuestion` mentions that are error recovery, a user-elected gate, or an explicit "no ask" note.
 _POST_SELECTION_ASK_ALLOWLIST = (
     "No confirming commit found",  # straggler gate: unresolved item status
-    "**Push confirmation — one `AskUserQuestion` call.**",  # Step 10: scope-bearing push confirmation
+    "**Push confirmation — one `AskUserQuestion` call.**",  # Step 10: scope-bearing push confirmation (git-push)
+    "**Drift question — its own `AskUserQuestion` call",  # Step 10: target moved since Step 9 (BASE_FRESH=no only)
     "Assign a topic label to each implemented item",  # Step 8: typed-labels file lost (recovery)
     "no new `AskUserQuestion` here",  # Step 11 states it reads the stored answer
     "Phase 2 groups are formed",  # group preview, elected at Step 3d via Custom dispatch
@@ -877,6 +878,30 @@ def test_post_selection_steps_ask_only_for_recovery_or_elected_preview() -> None
         if "AskUserQuestion" in line and not any(marker in line for marker in _POST_SELECTION_ASK_ALLOWLIST)
     ]
     assert unexpected == []
+
+
+def test_step_10_push_confirmation_is_the_git_push_question() -> None:
+    """Step 10 asks the ``git-push`` question, so the user's Approve records the push token the push guard spends.
+
+    Any other question shape records nothing, and every push would stop at the guard. The drift choice cannot sit in a
+    two-option question: it is its own call, asked first and only when the target moved. The explicit-refspec fallback
+    is never asked again: no approval covers a push whose remote and ref are run-time values, so the user runs it.
+    """
+    skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
+    push_step = skill[skill.index("## Step 10: Push") : skill.index("## Step 11")]
+    drift = push_step.index("**Drift question — its own `AskUserQuestion` call, `BASE_FRESH=no` only")
+    confirmation = push_step.index("**Push confirmation — one `AskUserQuestion` call.**")
+    options = push_step[confirmation : push_step.index("Q2 — `unset` intent only")]
+
+    assert drift < confirmation
+    assert "Q1 — push: header `git-push`, `multiSelect` false." in options
+    assert "- **Approve** — this push, once" in options
+    assert "- **Deny** — skip the push" in options
+    assert "Re-sync target first" not in options
+    # A push approval covers only this branch written out, so the run-time-valued fallback is handed to the user.
+    assert "no second push question, no agent push" in push_step
+    assert 'git push "$FORK_REMOTE"' not in push_step
+    assert "! touch" not in push_step
 
 
 def test_push_question_lives_in_step_3d_with_fixed_blocks() -> None:
@@ -975,7 +1000,16 @@ def test_step_1_resets_push_answer_to_unset(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "status", ["pushed", "blocked-guard", "blocked-permission", "rejected-non-ff", "skipped-by-user", "not-attempted"]
+    "status",
+    [
+        "pushed",
+        "blocked-guard",
+        "blocked-permission",
+        "blocked-needs-manual-push",
+        "rejected-non-ff",
+        "skipped-by-user",
+        "not-attempted",
+    ],
 )
 def test_step_10_records_each_push_status_with_its_own_block(status: str) -> None:
     """Every push outcome is a closed-set value, so each needs a literal block the report can trust.
@@ -1004,16 +1038,27 @@ def test_blocked_push_keeps_guard_lines_verbatim_and_never_bypasses_the_guard() 
 
 
 @pytest.mark.skipif(_BASH is None, reason="The Step 11 report preamble is Bash")
-def test_step_11_surfaces_push_status_and_unblock_file(tmp_path: Path) -> None:
-    """The final report reads the recorded status and the saved unblock lines, not the transcript."""
+@pytest.mark.parametrize(
+    "status",
+    [
+        pytest.param("blocked-guard", id="guard-blocked"),
+        pytest.param("blocked-needs-manual-push", id="handed-over-explicit-refspec"),
+    ],
+)
+def test_step_11_surfaces_push_status_and_unblock_file(tmp_path: Path, status: str) -> None:
+    """The final report reads the recorded status and the saved unblock lines, not the transcript.
+
+    A push the guard blocked and a push handed to the user (no upstream tracking: the explicit-refspec form no approval
+    covers) both end the report with the line the user runs.
+    """
     skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
     block = _bash_block_containing(skill, "boundary3: pre-final-report write")
     session = "resolve-report-push"
     impl_dir = tmp_path / "impl"
     impl_dir.mkdir()
-    (impl_dir / "push-unblock.txt").write_text("! touch /x\ngit push\n", encoding="utf-8", newline="\n")
+    (impl_dir / "push-unblock.txt").write_text("git push origin pr-7\n", encoding="utf-8", newline="\n")
     (tmp_path / f"resolve-impl-dir-{session}").write_text(f"{_bash_path(impl_dir)}\n", encoding="utf-8", newline="\n")
-    (tmp_path / f"resolve-push-status-{session}").write_text("blocked-guard\n", encoding="utf-8", newline="\n")
+    (tmp_path / f"resolve-push-status-{session}").write_text(f"{status}\n", encoding="utf-8", newline="\n")
     (tmp_path / f"resolve-oss-resolve-{session}").write_text(
         f"{_bash_path(_RESOLVE)}\n", encoding="utf-8", newline="\n"
     )
@@ -1035,9 +1080,9 @@ def test_step_11_surfaces_push_status_and_unblock_file(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "PUSH_STATUS=blocked-guard" in result.stdout
-    assert f"PUSH_UNBLOCK={_bash_path(impl_dir)}/push-unblock.txt\n! touch /x\ngit push\n" in result.stdout
-    assert "push-status=blocked-guard" in (tmp_path / ".temp/state/skill-contract.md").read_text(encoding="utf-8")
+    assert f"PUSH_STATUS={status}" in result.stdout
+    assert f"PUSH_UNBLOCK={_bash_path(impl_dir)}/push-unblock.txt\ngit push origin pr-7\n" in result.stdout
+    assert f"push-status={status}" in (tmp_path / ".temp/state/skill-contract.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(_BASH is None, reason="The Step 8 prelude is Bash")

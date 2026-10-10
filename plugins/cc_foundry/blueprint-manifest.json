@@ -264,6 +264,10 @@
       "kind": "command",
       "src": "skills/distill/SKILL.md:118"
     },
+    "0b78a68aa56f4446201d8ae00e9ccd126047a3f5211bf62962e4353f23589164": {
+      "kind": "command",
+      "src": "skills/setup/SKILL.md:203"
+    },
     "0ba8de36028dc740b7b4d7be44c664d4dc93e5f827042829fe7c23c3ca091ce7": {
       "kind": "block",
       "src": "skills/audit/templates/checks-skills.md:703"
@@ -799,6 +803,10 @@
     "23d21ab2759233036ffeb632ee6719d7713c53f6155411588068bb4b937329d2": {
       "kind": "block",
       "src": "skills/calibrate/modes/routing.md:17"
+    },
+    "23eefbf744adbe1d035200bf130dbb080b24625ecf0f4325d5bb5f213a2fbdd3": {
+      "kind": "block",
+      "src": "rules/_full/git-commit.md:201"
     },
     "23f491b88ce2b7922e34eebc665dcfec4b4151e1a00dd0f07463b820f9702943": {
       "kind": "command",
@@ -2664,10 +2672,6 @@
       "kind": "block",
       "src": "skills/audit/templates/checks-agents.md:46"
     },
-    "7e61c450982c68afe61e657df859e72fb95fc6b92cfd46a9a91e085b5725b7c0": {
-      "kind": "command",
-      "src": "skills/setup/SKILL.md:203"
-    },
     "7e997aef3b066f1c196b1c0964981a6a8232b76b0845ab644e23a930f74bcc7c": {
       "kind": "command",
       "src": "skills/audit/templates/checks-install.md:44"
@@ -3223,6 +3227,10 @@
     "98eb2cefaf545a72088b01b24e87a6770df9a4bce8871c3263168e02b9d8f016": {
       "kind": "block",
       "src": "skills/audit/templates/checks-install.md:44"
+    },
+    "990555ca1d49069056c26ff2ded8e49b2d4b53386b26ab99f692cb239fb3ba66": {
+      "kind": "block",
+      "src": "skills/setup/SKILL.md:203"
     },
     "995e20ede0ddb070b3b7e710b9549a23efa3f442a53d2cb1509f220f3283f81f": {
       "kind": "command",
@@ -3831,10 +3839,6 @@
     "b4a49871f41355ba37f686b07d75c596dca63345f2a0a7d93ff76d9aad8771e3": {
       "kind": "command",
       "src": "agents/perf-optimizer.md:73"
-    },
-    "b4b7170f386f1ee87a62f1976b0990363801d7b0c33f48bb6413ff3a4bc91374": {
-      "kind": "block",
-      "src": "skills/setup/SKILL.md:203"
     },
     "b4bdc848109722a383d0a972c6eb859f2abd29565b8c4cc7199e7c9eb708f1b7": {
       "kind": "command",
@@ -5237,6 +5241,6 @@
       "src": "rules/claude-config.md:41"
     }
   },
-  "plugin": "cc_foundry@0.66.0",
+  "plugin": "cc_foundry@0.67.0",
   "schema": 1
 }

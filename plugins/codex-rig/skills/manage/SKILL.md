@@ -142,6 +142,8 @@ Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gates.py --help`. Supply 
 
 ### 08: Write mandatory result artifact
 
+Completion commit: run the [Local Git approval grant](../../shared/native-skill-contract.md#local-git-approval-grant) check. `grant …` → commit the verified, owned changes with the shared commit template unless the user asked for no commit, leave unstaged or to wait; `no grant` → an explicit commit request commits after checks, otherwise ask that section's one question (Approve / Approve always / Deny) before committing, and **Deny** leaves the changes unstaged. Record the check result, any answer and the commit disposition in the handoff.
+
 Manage artifacts include `ownership.md`; follow `../../shared/helper-cli-contract.md`. Write with `MANAGE_METADATA`, validate as `manage`, promote only validated candidate.
 
 ## Fail-Fast Rules

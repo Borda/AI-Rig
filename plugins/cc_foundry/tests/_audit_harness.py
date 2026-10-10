@@ -23,13 +23,17 @@ _TESTS_DIR = Path(__file__).resolve().parent
 PLUGIN_DIR = _TESTS_DIR.parent
 HOOKS_DIR = PLUGIN_DIR / "hooks"
 
-#: Hooks and libraries copied into every isolated plugin root.
+#: Hooks and libraries copied into every isolated plugin root. The gh-read lane and the two libraries it reads are
+#: shipped too, so every dispatcher run evaluates all three lanes as an installed plugin does.
 SHIPPED = (
     Path("blueprint-allow.js"),
     Path("sentinel-read-allow.js"),
+    Path("github-read-allow.js"),
     Path("allow-dispatch.js"),
     Path("audit-close.js"),
     Path("lib/audit-log.js"),
+    Path("lib/shell-git.js"),
+    Path("lib/approval-grants.js"),
 )
 
 
@@ -60,13 +64,21 @@ class AuditEnv:
         base.update(extra)
         return base
 
-    def run(self, hook: str, payload: dict | str, **env_extra: str) -> subprocess.CompletedProcess:
-        """Run one hook out of this root and return the completed process, with stdout kept as raw bytes."""
+    def run(
+        self, hook: str, payload: dict | str, *, cwd: Path | None = None, **env_extra: str
+    ) -> subprocess.CompletedProcess:
+        """Run one hook out of this root and return the completed process, with stdout kept as raw bytes.
+
+        The hook runs in the throwaway home unless ``cwd`` names another directory. The gh-read lane resolves its grant
+        from the working directory's git repository, so inheriting the runner's checkout would let a real grant recorded
+        there change what these tests see.
+        """
         stdin = payload if isinstance(payload, str) else json.dumps(payload)
         return subprocess.run(
             ["node", str(self.root / "hooks" / hook)],
             input=stdin.encode("utf-8"),
             capture_output=True,
+            cwd=str(cwd or self.home),
             env=self.env(**env_extra),
             timeout=30,
             check=False,

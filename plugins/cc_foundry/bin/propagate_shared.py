@@ -435,7 +435,20 @@ MANIFEST: list[dict[str, object]] = [
         ],
     },
     {
-        # The hard deny for GitHub writes through gh. Every plugin ships the
+        # Third decision module behind allow-dispatch.js: auto-allows a Bash
+        # command made only of allowlisted gh reads. Every copy of the dispatcher
+        # requires it by name, so each plugin ships one; a missing copy would
+        # silently turn gh reads back into prompts on a standalone install.
+        "canonical": "plugins/cc_foundry/hooks/github-read-allow.js",
+        "copies": [
+            "plugins/cc_oss/hooks/github-read-allow.js",
+            "plugins/cc_develop/hooks/github-read-allow.js",
+            "plugins/cc_research/hooks/github-read-allow.js",
+        ],
+    },
+    {
+        # The guard for GitHub writes through gh: blocked unless the user approved
+        # that exact command, force updates always. Every plugin ships the
         # `gh api repos/*` and `gh api graphql:*` allows it closes, and a plugin
         # may be installed alone, so each registers its own copy.
         "canonical": "plugins/cc_foundry/hooks/gh-write-guard.js",
@@ -443,6 +456,29 @@ MANIFEST: list[dict[str, object]] = [
             "plugins/cc_oss/hooks/gh-write-guard.js",
             "plugins/cc_develop/hooks/gh-write-guard.js",
             "plugins/cc_research/hooks/gh-write-guard.js",
+        ],
+    },
+    {
+        # Approval-record writer (PostToolUse AskUserQuestion) and self-grant guard
+        # (PreToolUse). Every copy runs with nothing coordinating them: the writer is
+        # atomic and idempotent and the guard a pure function of the payload, so a
+        # stale copy is the only way two plugins could disagree.
+        "canonical": "plugins/cc_foundry/hooks/approval-guard.js",
+        "copies": [
+            "plugins/cc_oss/hooks/approval-guard.js",
+            "plugins/cc_develop/hooks/approval-guard.js",
+            "plugins/cc_research/hooks/approval-guard.js",
+        ],
+    },
+    {
+        # Scope table, record store and guard logic behind approval-guard.js. Readers
+        # fail closed on a record version or scope they do not know, so copies of
+        # different releases never widen; foundry's commit-guard.js reads it too.
+        "canonical": "plugins/cc_foundry/hooks/lib/approval-grants.js",
+        "copies": [
+            "plugins/cc_oss/hooks/lib/approval-grants.js",
+            "plugins/cc_develop/hooks/lib/approval-grants.js",
+            "plugins/cc_research/hooks/lib/approval-grants.js",
         ],
     },
     {

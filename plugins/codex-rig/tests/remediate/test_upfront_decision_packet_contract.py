@@ -34,15 +34,16 @@ def test_packet_is_part_of_scope_checkpoint_and_keeps_rendered_scope() -> None:
     assert "### Upfront Decision Packet" in CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     assert packet in scope_step
     assert "steps 06–11 run without another conversational question on the normal path" in packet
-    assert "`Commit verified remediation-owned changes after gates pass?`" in packet
+    assert "`How should verified remediation-owned changes be grouped into commits?`" in packet
     assert all(value in packet for value in COMMIT_VALUES)
     assert "`proceed automatically`, `show the plan and wait for my approval`" in packet
     assert "The packet adds no line to that file and does not change `presentation_version`" in packet
     assert "ask the scope question first and complete any Custom follow-up" in packet
+    assert "optional grouping never blocks standing approval" in packet
     assert "Never hide a feasible commit value behind Other" in packet
     assert "Explicit `remediation_scope` input skips the scope question" in packet
     assert "`## Upfront Decisions`" in packet
-    assert "An unanswered packet question grants nothing" in packet
+    assert "An unanswered packet question grants nothing new" in packet
     assert "Never combine scope, commit, and work-plan decisions in one question or answer field" in packet
     assert "The packaged `ask_user` form has one answer field" in packet
 
@@ -81,7 +82,7 @@ def test_commit_step_reuses_packet_answer_and_names_material_changes() -> None:
 
     assert "An upfront packet commit mode is such an answer" in commit
     assert "a packet `leave unstaged` answer makes the disposition `declined`" in commit
-    assert "`decide after verification`, or a preference left unanswered or dismissed, asks here" in commit
+    assert "an explicit `decide after verification` answer asks here" in commit
     assert "A new exclusion, destination change, infeasible grouping, or external-obligation commit" in commit
     assert "`remediation-foldable-question-after-scope`" in fail_fast
 

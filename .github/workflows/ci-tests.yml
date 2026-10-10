@@ -94,7 +94,7 @@ jobs:
       - name: 🧪 Run plugin tests (Python bin/ + JS hooks)
         run: |
           uv run --only-group test pytest -n 4 --dist worksteal \
-            -W error::DeprecationWarning --durations=0 --durations-min=0.1 \
+            -W error::DeprecationWarning --durations=500 --durations-min=0.2 \
             --cov=plugins/codemap-py/bin --cov=plugins/codemap-py/src \
             --cov=plugins/cc_develop/bin --cov=plugins/cc_foundry/bin \
             --cov=plugins/cc_oss/bin --cov=plugins/cc_research/bin \

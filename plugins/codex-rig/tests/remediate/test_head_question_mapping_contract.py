@@ -1,8 +1,8 @@
-"""Pin every code-remediate user question and approval that existed before the stall fixes to an ask that still happens.
+"""Keep genuinely missing workflow decisions reachable without asking for local Git work that needs no authority.
 
-Each row names one ask or approval site from the pre-change contract and the phrase in the current contract that keeps
-it. A row may move a question earlier only when it stays the same decision with the same information; no row may be
-answered by a silent default.
+Question sites remain available for unsupported scope, missing resolution intent, withheld authority or other unresolved
+decisions. A task-owned target merge proceeds without a question or grant check, and a recorded local Git approval grant
+answers its bounded plain-commit decision; neither is a silent default, and neither may trigger the same question again.
 """
 
 from __future__ import annotations
@@ -36,7 +36,11 @@ def _text(relative: str) -> str:
             "request runtime approval for the complete owning command when required capability is unavailable",
             id="02-collection-runtime-approval",
         ),
-        pytest.param(SKILL, "ask `Authorize this local merge and commit?`", id="03-target-merge-authorization"),
+        pytest.param(
+            SKILL,
+            "Ask only for genuinely missing scope or resolution intent, and only that decision, never merge authorization",
+            id="03-target-merge-resolution-intent",
+        ),
         pytest.param(
             SKILL,
             "`Authorize finishing this existing merge and the described local commit?`",
@@ -62,7 +66,9 @@ def _text(relative: str) -> str:
             id="12-commit-mode",
         ),
         pytest.param(
-            SKILL, "Do not stage without an explicit valid answer bound to this plan", id="12-no-silent-stage"
+            SKILL,
+            "Do not stage without a local Git approval grant or an explicit valid answer bound to this plan",
+            id="12-no-silent-stage",
         ),
         pytest.param(
             COMMIT_TEMPLATE,
@@ -92,23 +98,19 @@ def test_pre_change_ask_site_still_happens(relative: str, phrase: str) -> None:
     assert phrase in _text(relative)
 
 
-def test_commit_preference_defaults_to_the_unchanged_step_12_offer() -> None:
-    """Keep the step 12 opt-in commit offer unless the user explicitly chose a commit mode upfront.
-
-    The upfront packet may only move the same decision earlier: its recommended value defers to step 12, and an
-    unanswered or dismissed preference behaves exactly like that value, never like a commit.
-    """
+def test_commit_preference_reuses_a_grant_and_preserves_explicit_hold() -> None:
+    """Default optional grouping under a local Git approval grant while retaining a user's explicit deferred choice."""
     skill = _text(SKILL)
     packet = skill.split("### Upfront Decision Packet", 1)[1].split("### 06:", 1)[0]
     commit = skill.split("### 12: Offer An Opt-In Commit After Verified Remediation", 1)[1]
-
-    assert "`decide after verification`, `all at once`," in packet
-    assert "Recommendations: `decide after verification` for the commit preference" in packet
-    assert "the commit modes are explicit opt-in shortcuts only" in packet
-    assert "unanswered, dismissed, cancelled, or declined, including in the sequential fallback" in packet
-    assert "It never authorizes a commit" in packet
-    assert "`decide after verification`, or a preference left unanswered or dismissed, asks here" in commit
-    assert commit.index("show the complete compact `commit-plan.md`") < commit.index("An upfront packet commit mode")
+    assert "Recommend `all at once` under a grant" in packet
+    assert "an unanswered or dismissed grouping preference uses `all at once`" in packet
+    assert "An explicit `decide after verification` answer still defers" in packet
+    assert "Without a grant, an unanswered" in packet
+    assert "a commit mode answers **Approve** for that plan and `leave unstaged` answers **Deny**" in packet
+    assert "an explicit `decide after verification` answer asks here" in commit
+    assert "Record the grant as the consent source" in commit
+    assert "a packet `leave unstaged` answer makes the disposition `declined`" in commit
 
 
 def test_finalize_never_answers_decisions_and_escalates_repeated_failures() -> None:

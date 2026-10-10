@@ -1,8 +1,19 @@
-"""Subprocess tests for ``hooks/gh-write-guard.js``, the hard deny for GitHub writes made through ``gh``.
+"""Subprocess tests for ``hooks/gh-write-guard.js``, the approval gate for GitHub writes made through ``gh``.
 
 The shipped allow lists pre-approve ``Bash(gh api repos/*)`` and ``Bash(gh api graphql:*)``, which also match writes
 (``gh api repos/o/r/issues -f title=x`` is a POST, a GraphQL query can be a mutation). The guard exits 2 on every gh
-write, which Claude Code applies before any allow rule. Contracts tested here:
+write the user did not approve, which Claude Code applies before any allow rule. Contracts tested here:
+
+* **One-time approval** — a single-use ``gh-write-once`` token in the session project's git common dir allows exactly
+  the approved command text, once per tool call across every plugin copy, and prints a PreToolUse ``allow``. Other
+  text, an invalid or foreign token, a spawned agent, no ``tool_use_id``, no approval library or a command without an
+  exact argv stay blocked and keep the token. Every case runs with ``GH_TOKEN=dummy GH_HOST=x.invalid``; no case runs
+  gh.
+* **Transcript proof** — the token is spent only when the session transcript holds the approving ``gh-write`` question
+  it names (``question_id``), with the same text and command, answered ``Approve`` by the user within the token
+  lifetime, never pre-filled, and not already spent. A forged or re-planted token stays blocked.
+* **Files unchanged** — every file the approved command names (``--body-file``, ``-F k=@f``, ``--input``, assets) must
+  hold the content it held when the user approved, and a file absent then must still be absent.
 
 * **Writes blocked** — every known write subcommand, however the shell spells it: behind flags, aliases, grouping,
   ``bash -c``, ``eval``, a here-string, quoting or interpreter code.
@@ -23,8 +34,10 @@ write, which Claude Code applies before any allow rule. Contracts tested here:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -86,7 +99,7 @@ class TestWritesBlocked:
             pytest.param("gh release upload v1 a.tgz", id="release-upload"),
             pytest.param("gh release delete-asset v1 a.tgz", id="release-delete-asset"),
             pytest.param("gh gist rename 1 a b", id="gist-rename"),
-            pytest.param("gh repo sync --force", id="repo-sync-force"),
+            pytest.param("gh repo sync o/fork", id="repo-sync"),
             pytest.param("gh repo edit --visibility public", id="repo-edit"),
             pytest.param("gh repo rename x", id="repo-rename"),
             pytest.param("gh repo delete o/r --yes", id="repo-delete"),
@@ -237,6 +250,11 @@ class TestWritesBlocked:
             pytest.param("trap 'gh pr create --title t --body b' EXIT", id="trap-handler"),
             pytest.param("source /dev/stdin <<< 'gh pr create --title t --body b'", id="source-stdin-here-string"),
             pytest.param(". /dev/stdin <<'EOF'\ngh pr create --title t --body b\nEOF", id="dot-stdin-heredoc"),
+            pytest.param("if source <(echo 'gh pr create --title t --body b'); then :; fi", id="source-after-if"),
+            pytest.param("if . /dev/stdin <<< 'gh pr create --title t --body b'; then :; fi", id="dot-after-if"),
+            pytest.param("{ . /dev/stdin; } <<< 'gh pr create --title t --body b'", id="dot-in-group"),
+            pytest.param("X=1 . /dev/stdin <<< 'gh pr create --title t --body b'", id="dot-after-assignment"),
+            pytest.param("builtin source /dev/stdin <<< 'gh pr create --title t --body b'", id="builtin-source"),
             pytest.param("cat <<EOF\nEO\\\nF\ngh pr create --title t --body b\nEOF", id="continued-terminator-line"),
             pytest.param("cat <\\\n<EOF\nx'\nEOF\ngh pr create --title t --body b #'", id="continued-heredoc-operator"),
         ],
@@ -248,6 +266,30 @@ class TestWritesBlocked:
         literal invocation: xargs appends them, a shell runs what ``echo`` prints, a builtin evaluates a ``$(…)`` in
         an array subscript, ``trap``/``source`` run their argument or stdin, or a backslash-newline joins a heredoc
         line the shells read differently from the raw text.
+        """
+        result = run_hook("gh-write-guard.js", _bash(command))
+
+        assert result.returncode == 2, f"{command!r} was not blocked"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("echo .(e:'gh pr create --title t --body b':)", id="glob-qualifier-e"),
+            pytest.param("echo .(Ne:'gh pr create --title t --body b':)", id="glob-qualifier-list-with-e"),
+            pytest.param("echo *(e:'gh pr create --title t --body b':)", id="star-glob-qualifier-e"),
+            pytest.param("echo .(+gh)", id="glob-qualifier-plus-function"),
+            pytest.param("echo ${(e):-'$(gh pr create --title t --body b)'}", id="parameter-flag-e"),
+            pytest.param("x='$(gh pr create --title t --body b)'; echo ${(e)x}", id="parameter-flag-e-on-variable"),
+            pytest.param(
+                "cat <<EOF\n${(e):-'$(gh pr create --title t --body b)'}\nEOF", id="parameter-flag-in-heredoc"
+            ),
+        ],
+    )
+    def test_zsh_code_syntax_is_blocked(self, run_hook, command: str) -> None:
+        """Zsh syntax that evaluates text as code blocks, since zsh is the Bash tool's shell on macOS.
+
+        A ``(e:…:)`` or ``(+name)`` glob qualifier closing a word and a ``${(flags)…}`` expansion run a gh write under
+        zsh while bash rejects or ignores them, so the lexer's bash reading would show no gh word at all.
         """
         result = run_hook("gh-write-guard.js", _bash(command))
 
@@ -364,6 +406,37 @@ class TestNoExactArgvFailsClosed:
         assert "cannot read this command's gh arguments exactly" in result.stderr
 
     @pytest.mark.parametrize(
+        ("command", "construct"),
+        [
+            pytest.param("echo ${(U)HOME}", "parameter flags", id="zsh-parameter-flags"),
+            pytest.param('echo $"x"', "locale string", id="locale-string"),
+            pytest.param("echo .(e:'date':)", "glob qualifier", id="zsh-glob-qualifier"),
+            pytest.param("echo $'\\u0041'", "escape bash and zsh decode differently", id="ansi-c-unicode-escape"),
+        ],
+    )
+    def test_unreadable_syntax_names_the_syntax_not_a_gh_write(self, run_hook, command: str, construct: str) -> None:
+        """Shell syntax the shells read differently still blocks, but the reason names that syntax, not a gh write.
+
+        These commands name no gh at all; the old text led with "gh write blocked" and the gh-write question, which no
+        approval could ever satisfy, so the model was told to ask the user for nothing.
+        """
+        result = run_hook("gh-write-guard.js", _bash(command))
+
+        assert result.returncode == 2
+        assert result.stderr.startswith("Bash command blocked — it holds shell syntax the guards cannot read exactly")
+        assert construct in result.stderr
+        assert ("gh write blocked" in result.stderr, "AskUserQuestion" in result.stderr) == (False, False)
+
+    def test_unreadable_syntax_beside_a_gh_write_says_no_approval_covers_it(self, run_hook) -> None:
+        """A gh write written with such syntax names the syntax and says no gh-write approval can cover it."""
+        result = run_hook("gh-write-guard.js", _bash('gh pr create --title $"fix"'))
+
+        assert result.returncode == 2
+        assert "locale string" in result.stderr
+        assert "cannot be read exactly is never covered" in result.stderr
+        assert "AskUserQuestion" not in result.stderr
+
+    @pytest.mark.parametrize(
         "command",
         [
             pytest.param("gh pr view 1 'x", id="unbalanced-quote-read"),
@@ -448,7 +521,7 @@ class TestApiFailsClosed:
             pytest.param(
                 "gh api graphql -f query='query { a } mutation { b }'", "mutation", id="graphql-mutation-later"
             ),
-            pytest.param("gh api graphql -F query=@q.graphql", "file", id="graphql-query-file"),
+            pytest.param("gh api graphql -F query=@q.graphql", "does not show", id="graphql-query-file"),
             pytest.param('gh api graphql -f query="$Q"', "query", id="graphql-variable-query"),
             pytest.param('gh api graphql -f query="$(cat q.graphql)"', "does not show", id="graphql-substituted-query"),
             pytest.param("gh api graphql --input body.json", "--input", id="graphql-input"),
@@ -574,6 +647,14 @@ class TestReadsPass:
             pytest.param("printf -v x '%s' \"$y\"", id="printf-v-plain-name"),
             pytest.param("trap 'rm -f \"$tmpenv\"' EXIT INT TERM", id="oss-resolve-trap"),
             pytest.param("source .venv/bin/activate && gh pr view 1", id="source-a-file"),
+            pytest.param("echo (e:x:) && gh pr view 1", id="parenthesis-word-is-no-qualifier"),
+            pytest.param("f() { gh pr view 1; }; f", id="function-definition"),
+            pytest.param("a=(e: f); gh pr view 1", id="array-assignment"),
+            pytest.param("[[ ab =~ ^(e:|b)$ ]] && gh pr view 1", id="regex-group-inside-a-word"),
+            pytest.param(
+                "jq -e . f.json && python3 - <<'PY'\nprint(isinstance(name, str))\nPY\ngh pr view 1",
+                id="dot-as-jq-data-leaves-heredoc-alone",
+            ),
             pytest.param(
                 "gh api --method GET repos/:owner/:repo/pulls --paginate --field state=all", id="foundry-rule"
             ),
@@ -652,6 +733,445 @@ class TestMissingLibrary:
 
         assert result.returncode == expected, result.stderr
         assert ("shell-git.js" in result.stderr) == (expected == 2)
+
+
+APPROVED = "gh pr create --title fix --body-file body.md"
+#: A GraphQL ref update whose ``force`` sits in a nested variable object (``input.force``), not in the query text.
+GRAPHQL_NESTED_FORCE = (
+    "gh api graphql -f query='mutation($i:UpdateRefInput!){updateRef(input:$i){ref{name}}}' "
+    "-F 'i[refId]=R' -F 'i[oid]=abc' -F 'i[force]=true'"
+)
+#: The batch form: ``force`` inside an element of a list variable (``refUpdates[].force``).
+GRAPHQL_LIST_FORCE = (
+    'gh api graphql -f query=\'mutation($u:[RefUpdate!]!){updateRefs(input:{repositoryId:"R",refUpdates:$u})'
+    "{clientMutationId}}' -F 'u[][name]=refs/heads/main' -F 'u[][force]=true'"
+)
+#: What the guard prints when this call spent the user's approval.
+SPENT_ALLOW = {
+    "hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "allow",
+        "permissionDecisionReason": "one-time gh-write approval spent",
+    }
+}
+_skip_node_or_git_unavailable = pytest.mark.skipif(
+    shutil.which("node") is None or shutil.which("git") is None, reason="requires node and git to resolve a checkout"
+)
+
+
+def _new_checkout(path: Path) -> Path:
+    """Create a git checkout with one commit at ``path``; no ``GIT_*`` variable steers git."""
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    path.mkdir(parents=True)
+    for args in (
+        ["init", "-b", "main"],
+        ["-c", "user.name=T", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "i"],
+    ):
+        subprocess.run(["git", *args], cwd=path, check=True, capture_output=True, timeout=30, env=env)
+    return path
+
+
+@pytest.fixture(name="checkout")
+def _checkout(tmp_path: Path) -> Path:
+    """Session project checkout holding the token."""
+    return _new_checkout(tmp_path / "repo")
+
+
+def _call(command: str, checkout: Path, call_id: str | None = "toolu_call", **extra: object) -> dict:
+    """Build the ``PreToolUse(Bash)`` payload of one tool call in ``checkout``; ``call_id`` None leaves it out."""
+    payload = {**_bash(command), "cwd": str(checkout), **extra}
+    return payload if call_id is None else {**payload, "tool_use_id": call_id}
+
+
+@pytest.fixture(name="guard")
+def _guard(run_hook, checkout: Path, approval_transcript):
+    """Return a callable running the guard on one payload with ``CLAUDE_PROJECT_DIR`` bound to ``project``.
+
+    The payload carries the checkout's session transcript, as the harness sends ``transcript_path`` with every call,
+    unless the case sets its own.
+    """
+
+    def _run(payload: dict, project: Path | None = None) -> subprocess.CompletedProcess:
+        """Run gh-write-guard as the harness does in session project ``project`` (default: the checkout)."""
+        env = {"CLAUDE_PROJECT_DIR": str(project or checkout), "GH_TOKEN": "dummy", "GH_HOST": "x.invalid"}
+        sent = {"transcript_path": str(approval_transcript(checkout)), **payload}
+        return run_hook("gh-write-guard.js", sent, cwd=checkout, env_extra=env)
+
+    return _run
+
+
+@_skip_node_or_git_unavailable
+class TestOneTimeApproval:
+    """The user's ``gh-write`` approval lets exactly that command run once; everything else stays blocked."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param(APPROVED, id="exact"),
+            pytest.param(f"  {APPROVED}\n", id="surrounding-whitespace"),
+        ],
+    )
+    def test_approved_command_spends_the_token(self, guard, gh_write_token, checkout: Path, command: str) -> None:
+        """The whole command, trimmed, equals the token's: the guard prints ``allow`` and the token is spent."""
+        token = gh_write_token(checkout, APPROVED)
+        result = guard(_call(command, checkout))
+        assert (result.returncode, json.loads(result.stdout)) == (0, SPENT_ALLOW)
+        assert not token.exists()
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param(f"{APPROVED} --draft", id="extra-argument"),
+            pytest.param(APPROVED.replace(" ", "  ", 1), id="inner-whitespace"),
+            pytest.param(f"{APPROVED}; gh pr merge 1", id="second-command"),
+            pytest.param("gh issue close 3", id="other-write"),
+            pytest.param(f"bash -c '{APPROVED}'", id="wrapped"),
+        ],
+    )
+    def test_other_text_is_blocked_and_keeps_the_token(
+        self, guard, gh_write_token, checkout: Path, command: str
+    ) -> None:
+        """Any other text is a write the user did not see: blocked, and the approved command can still run."""
+        token = gh_write_token(checkout, APPROVED)
+        result = guard(_call(command, checkout))
+        assert (result.returncode, "approves another command" in result.stderr) == (2, True)
+        assert token.exists()
+
+    @pytest.mark.parametrize(
+        ("overrides", "reason"),
+        [
+            pytest.param({"expires_at": "2026-01-01T00:00:00.000Z"}, "has expired", id="expired"),
+            pytest.param({"version": 2}, "unknown record version", id="unknown-version"),
+            pytest.param({"scope": "push-once"}, "unknown scope", id="other-scope"),
+            pytest.param({"answer": "Deny"}, "does not hold answer Approve", id="other-answer"),
+            pytest.param({"command": None}, "lacks command", id="no-command"),
+            pytest.param({"command": ""}, "no command text", id="empty-command"),
+        ],
+    )
+    def test_invalid_token_is_no_approval(
+        self, guard, gh_write_token, checkout: Path, overrides: dict, reason: str
+    ) -> None:
+        """An expired, unknown or malformed token allows nothing; it is left in place and the reason is named."""
+        token = gh_write_token(checkout, APPROVED, **overrides)
+        result = guard(_call(APPROVED, checkout))
+        assert (result.returncode, reason in result.stderr) == (2, True)
+        assert token.exists()
+
+    @pytest.mark.parametrize(
+        ("extra", "call_id", "reason"),
+        [
+            pytest.param({"agent_id": "agent-7"}, "toolu_call", "spawned agent", id="spawned-agent"),
+            pytest.param({}, None, "tool_use_id", id="no-call-id"),
+        ],
+    )
+    def test_call_that_cannot_spend_keeps_the_token(
+        self, guard, gh_write_token, checkout: Path, extra: dict, call_id: str | None, reason: str
+    ) -> None:
+        """A spawned agent's call, or one without a ``tool_use_id`` to key the spend, is blocked."""
+        token = gh_write_token(checkout, APPROVED)
+        result = guard(_call(APPROVED, checkout, call_id, **extra))
+        assert (result.returncode, reason in result.stderr) == (2, True)
+        assert token.exists()
+
+    def test_another_projects_token_is_no_approval(self, guard, gh_write_token, checkout: Path, tmp_path: Path) -> None:
+        """A token in a checkout other than the session project allows nothing there."""
+        token = gh_write_token(checkout, APPROVED)
+        result = guard(_call(APPROVED, checkout), project=_new_checkout(tmp_path / "project"))
+        assert (result.returncode, "session project" in result.stderr) == (2, True)
+        assert token.exists()
+
+    def test_a_spent_token_allows_only_its_own_call(self, guard, gh_write_token, checkout: Path) -> None:
+        """Another plugin copy judging the same call is allowed by its claim; a new call with the same text is not."""
+        gh_write_token(checkout, APPROVED)
+        first = guard(_call(APPROVED, checkout, "toolu_one"))
+        same_call = guard(_call(APPROVED, checkout, "toolu_one"))
+        next_call = guard(_call(APPROVED, checkout, "toolu_two"))
+        assert [first.returncode, same_call.returncode, next_call.returncode] == [0, 0, 2]
+
+    def test_command_without_an_exact_argv_is_never_approved(self, guard, gh_write_token, checkout: Path) -> None:
+        """Quoting the shells read differently fails closed even when a token holds exactly that text."""
+        command = 'gh pr create --title $"fix"'
+        token = gh_write_token(checkout, command)
+        result = guard(_call(command, checkout))
+        assert (result.returncode, "cannot be read exactly" in result.stderr) == (2, True)
+        assert token.exists()
+
+    def test_block_names_the_question_to_ask(self, guard, checkout: Path) -> None:
+        """With no token the block tells Claude the exact question shape, and what to do outside a repository."""
+        result = guard(_call(APPROVED, checkout))
+        assert result.returncode == 2
+        for needle in ("AskUserQuestion", "`gh-write`", "`Approve` / `Deny`", "inline code span", "Outside a git"):
+            assert needle in result.stderr
+
+    def test_outside_a_repository_stays_blocked(self, run_hook, tmp_path: Path) -> None:
+        """Without a git checkout there is no token location: the write is blocked and the user runs it."""
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        env = {"CLAUDE_PROJECT_DIR": str(plain), "GH_TOKEN": "dummy", "GH_HOST": "x.invalid"}
+        result = run_hook("gh-write-guard.js", _call(APPROVED, plain), cwd=plain, env_extra=env)
+        assert (result.returncode, "not a git work tree" in result.stderr) == (2, True)
+
+
+@_skip_node_or_git_unavailable
+class TestForceUpdateNeverApproved:
+    """A gh force update to remote history is blocked even with a token for its exact text (no force to a remote)."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("gh repo sync o/fork --force", id="repo-sync-force"),
+            pytest.param("gh repo sync --force=true", id="repo-sync-force-value"),
+            pytest.param("gh pr update-branch 7 --rebase", id="pr-update-branch-rebase"),
+            pytest.param("gh api -X PATCH repos/o/r/git/refs/heads/main -F force=true -f sha=abc", id="api-field"),
+            pytest.param("gh api -X PATCH repos/o/r/git/refs/heads/main -f force=1 -f sha=abc", id="api-field-one"),
+            pytest.param("gh api -X PATCH repos/o/r/git/refs/heads/main --input body.json", id="api-input-ref"),
+            pytest.param(
+                'gh api graphql -f query=\'mutation { updateRef(input: {refId: "x", oid: "y", force: true}) { clientMutationId } }\'',
+                id="graphql-force",
+            ),
+            pytest.param("gh api graphql -F query=@update.graphql", id="graphql-query-file"),
+            pytest.param("gh issue close 3; gh repo sync --force", id="force-after-another-write"),
+            pytest.param(GRAPHQL_NESTED_FORCE, id="graphql-nested-variable-force"),
+            pytest.param(GRAPHQL_LIST_FORCE, id="graphql-nested-list-force"),
+            pytest.param(
+                "gh api -X PATCH repos/o/r/git/refs/heads/main -f 'ref[Force]=1' -f sha=abc", id="rest-nested-force"
+            ),
+            pytest.param("gh api graphql --input body.json", id="graphql-input-body"),
+        ],
+    )
+    def test_token_for_the_exact_text_does_not_allow(self, guard, gh_write_token, checkout: Path, command: str) -> None:
+        """The force check runs before any token is read: blocked, no question offered, the token untouched.
+
+        A user who approved the text still gets no force update: the ban mirrors the git force-push ban, which no
+        approval lifts either.
+        """
+        token = gh_write_token(checkout, command)
+        result = guard(_call(command, checkout))
+        assert (result.returncode, "gh force update blocked" in result.stderr, token.exists()) == (2, True, True)
+        assert "AskUserQuestion" not in result.stderr
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("gh repo sync o/fork", id="repo-sync"),
+            pytest.param("gh pr update-branch 7", id="pr-update-branch-merge"),
+            pytest.param(
+                "gh api -X PATCH repos/o/r/git/refs/heads/main -F force=false -f sha=abc", id="api-force-false"
+            ),
+            pytest.param("gh api -X POST repos/o/r/git/refs -f ref=refs/heads/x -f sha=abc", id="api-create-ref"),
+            pytest.param(
+                GRAPHQL_NESTED_FORCE.replace("i[force]=true", "i[force]=false"), id="graphql-nested-force-false"
+            ),
+        ],
+    )
+    def test_non_force_write_stays_approvable(self, guard, gh_write_token, checkout: Path, command: str) -> None:
+        """The same commands without force are ordinary gh writes: the user's exact-text token lets them run once."""
+        gh_write_token(checkout, command)
+        result = guard(_call(command, checkout))
+        assert (result.returncode, json.loads(result.stdout or "{}")) == (0, SPENT_ALLOW)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param(GRAPHQL_NESTED_FORCE, id="graphql-nested-variable-force"),
+            pytest.param(GRAPHQL_LIST_FORCE, id="graphql-nested-list-force"),
+            pytest.param("gh api graphql --input body.json", id="graphql-input-body"),
+        ],
+    )
+    def test_nested_force_is_a_force_update_without_a_token(self, guard, checkout: Path, command: str) -> None:
+        """A force nested in a variable object or list, or hidden in a GraphQL body file, is banned, not just a write.
+
+        Before the fix the key test matched only a top-level ``force`` field, so these read as plain mutations that an
+        exact-text token could allow; the ban must hold before any token is read.
+        """
+        result = guard(_call(command, checkout))
+        assert (result.returncode, "gh force update blocked" in result.stderr) == (2, True)
+
+
+@_skip_node_or_git_unavailable
+class TestTranscriptProof:
+    """A token is spent only when the session transcript proves the user answered ``Approve`` to its own question."""
+
+    def test_token_without_its_question_is_no_approval(self, guard, gh_write_token, checkout: Path) -> None:
+        """A token naming a question the transcript lacks — a forged record — allows nothing and is kept.
+
+        Writing the record file is the self-grant the name guard tries to stop; the transcript proof makes a forged
+        record worthless even where a spelling slips past that guard.
+        """
+        token = gh_write_token(checkout, APPROVED, question_id="toolu_forged000000000000000")
+        result = guard(_call(APPROVED, checkout))
+        assert (result.returncode, "not in the session transcript" in result.stderr) == (2, True)
+        assert token.exists()
+
+    @pytest.mark.parametrize(
+        ("shape", "reason"),
+        [
+            pytest.param({"answer": "Deny"}, "no Approve answer", id="answered-deny"),
+            pytest.param({"prefilled": True}, "pre-filled", id="prefilled-answer"),
+            pytest.param({"is_error": True}, "no Approve answer", id="error-result"),
+            pytest.param({"age_minutes": 20}, "older than", id="stale-answer"),
+            pytest.param({"header": "git-push"}, "asks no gh-write question", id="other-header"),
+            pytest.param({"question": "Close it: `gh issue close 9`?"}, "asks no gh-write question", id="other-text"),
+        ],
+    )
+    def test_unproven_answer_is_no_approval(
+        self, guard, gh_write_token, approval_answer, checkout: Path, shape: dict, reason: str
+    ) -> None:
+        """An approving call that is not the user's fresh ``Approve`` to this very question allows nothing.
+
+        Each case plants a token whose ``question_id`` names a transcript call differing in one way from what the
+        writer requires: the answer, who picked it, the result, its age, the header or the question text.
+        """
+        question = f"Open the PR: `{APPROVED}`?"
+        call_id = approval_answer(
+            checkout,
+            shape.get("header", "gh-write"),
+            shape.get("question", question),
+            shape.get("answer", "Approve"),
+            answered_at=datetime.now(timezone.utc) - timedelta(minutes=shape.get("age_minutes", 0)),
+            prefilled=shape.get("prefilled", False),
+            is_error=shape.get("is_error", False),
+        )
+        token = gh_write_token(checkout, APPROVED, question=question, question_id=call_id)
+        result = guard(_call(APPROVED, checkout))
+        assert (result.returncode, reason in result.stderr) == (2, True), result.stderr
+        assert token.exists()
+
+    def test_question_naming_another_command_is_no_approval(
+        self, guard, gh_write_token, approval_answer, checkout: Path
+    ) -> None:
+        """The proven question must name the token's command: a record pairing a real answer with other text is refused.
+
+        The user approved ``gh issue close 9``; a token carrying that answer's id and question but another ``command``
+        must not run the other command.
+        """
+        question = "Close it: `gh issue close 9`?"
+        call_id = approval_answer(checkout, "gh-write", question)
+        token = gh_write_token(checkout, APPROVED, question=question, question_id=call_id)
+        result = guard(_call(APPROVED, checkout))
+        assert (result.returncode, "names another command" in result.stderr) == (2, True), result.stderr
+        assert token.exists()
+
+    @pytest.mark.parametrize(
+        ("transcript", "reason"),
+        [
+            pytest.param("", "no session transcript", id="no-transcript-path"),
+            pytest.param("missing.jsonl", "transcript is unreadable", id="unreadable-transcript"),
+        ],
+    )
+    def test_call_without_a_readable_transcript_is_no_approval(
+        self, guard, gh_write_token, checkout: Path, transcript: str, reason: str
+    ) -> None:
+        """Without a transcript to read, the approval cannot be proven: blocked, token kept (fail closed)."""
+        token = gh_write_token(checkout, APPROVED)
+        path = str(checkout.parent / transcript) if transcript else ""
+        result = guard(_call(APPROVED, checkout, transcript_path=path))
+        assert (result.returncode, reason in result.stderr) == (2, True), result.stderr
+        assert token.exists()
+
+    def test_replanted_token_after_its_spend_is_refused(self, guard, gh_write_token, checkout: Path) -> None:
+        """A token re-planted with an already spent approval's question id allows nothing: one answer, one run.
+
+        The real answer stays in the transcript after the spend, so the proof alone would accept a copy of the spent
+        token; the spent claim still holding that question id refuses it.
+        """
+        token = gh_write_token(checkout, APPROVED)
+        planted = token.read_text(encoding="utf-8")
+        first = guard(_call(APPROVED, checkout, "toolu_one"))
+        token.write_text(planted, encoding="utf-8")
+        replay = guard(_call(APPROVED, checkout, "toolu_two"))
+        assert first.returncode == 0, first.stderr
+        assert (replay.returncode, "already spent" in replay.stderr) == (2, True), replay.stderr
+        assert token.exists()
+
+
+@_skip_node_or_git_unavailable
+class TestFilesUnchanged:
+    """Every file the approved command names must hold, at the run, what it held when the user approved."""
+
+    @pytest.mark.parametrize(
+        ("command", "name"),
+        [
+            pytest.param("gh issue comment 3 --body-file c.md", "c.md", id="body-file"),
+            pytest.param("gh issue comment 3 --body-file=c.md", "c.md", id="body-file-attached"),
+            pytest.param("gh pr comment 3 -F c.md", "c.md", id="short-body-file"),
+            pytest.param("gh release create v1 --notes-file c.md", "c.md", id="notes-file"),
+            pytest.param("gh api repos/o/r/issues -F title=x -F body=@c.md", "c.md", id="api-field-file"),
+            pytest.param("gh api -X POST repos/o/r/issues --input c.md", "c.md", id="api-input"),
+            pytest.param("gh release upload v1 'c.md#Notes'", "c.md", id="release-asset-label"),
+        ],
+    )
+    def test_changed_file_is_no_approval(self, guard, gh_write_token, checkout: Path, command: str, name: str) -> None:
+        """A file rewritten after the approval blocks the call and keeps the token: the user approved other content.
+
+        The token binds the command text only through ``command``; without the file digest, the text the user approved
+        would post whatever the file holds at run time.
+        """
+        (checkout / name).write_text("approved body\n", encoding="utf-8")
+        token = gh_write_token(checkout, command)
+        (checkout / name).write_text("secrets the user never saw\n", encoding="utf-8")
+        result = guard(_call(command, checkout))
+        assert (result.returncode, "changed after the user approved" in result.stderr) == (2, True), result.stderr
+        assert token.exists()
+
+    @pytest.mark.parametrize(
+        ("command", "name"),
+        [
+            pytest.param("gh issue comment 3 --body-file c.md", "c.md", id="body-file"),
+            pytest.param("gh api repos/o/r/issues -F title=x -F body=@c.md", "c.md", id="api-field-file"),
+        ],
+    )
+    def test_unchanged_file_spends_the_token(
+        self, guard, gh_write_token, checkout: Path, command: str, name: str
+    ) -> None:
+        """The same file content as at the approval lets the approved command run once."""
+        (checkout / name).write_text("approved body\n", encoding="utf-8")
+        gh_write_token(checkout, command)
+        result = guard(_call(command, checkout))
+        assert (result.returncode, json.loads(result.stdout or "{}")) == (0, SPENT_ALLOW), result.stderr
+
+    def test_file_created_after_the_approval_is_no_approval(self, guard, gh_write_token, checkout: Path) -> None:
+        """A file absent when the user approved must still be absent: its content was never shown."""
+        token = gh_write_token(checkout, "gh issue comment 3 --body-file late.md")
+        (checkout / "late.md").write_text("written after the approval\n", encoding="utf-8")
+        result = guard(_call("gh issue comment 3 --body-file late.md", checkout))
+        assert (result.returncode, "changed after the user approved" in result.stderr) == (2, True), result.stderr
+        assert token.exists()
+
+    def test_file_removed_after_the_approval_is_no_approval(self, guard, gh_write_token, checkout: Path) -> None:
+        """A file present at the approval and gone at the run no longer matches the approval: blocked."""
+        (checkout / "c.md").write_text("approved body\n", encoding="utf-8")
+        token = gh_write_token(checkout, "gh issue comment 3 --body-file c.md")
+        (checkout / "c.md").unlink()
+        result = guard(_call("gh issue comment 3 --body-file c.md", checkout))
+        assert (result.returncode, "changed after the user approved" in result.stderr) == (2, True), result.stderr
+        assert token.exists()
+
+
+@_skip_node_or_git_unavailable
+class TestMissingApprovalLibrary:
+    """Without ``lib/approval-grants.js`` no approval can be read, so every gh write stays blocked."""
+
+    def test_write_blocked_and_token_kept(self, gh_write_token, checkout: Path, tmp_path: Path) -> None:
+        """The guard still lexes with its own ``lib/shell-git.js`` and blocks the approved command, naming the gap."""
+        hooks = tmp_path / "broken" / "hooks"
+        (hooks / "lib").mkdir(parents=True)
+        source = PLUGINS_DIR / "cc_foundry" / "hooks"
+        (hooks / "gh-write-guard.js").write_bytes((source / "gh-write-guard.js").read_bytes())
+        (hooks / "lib" / "shell-git.js").write_bytes((source / "lib" / "shell-git.js").read_bytes())
+        token = gh_write_token(checkout, APPROVED)
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(checkout), "GH_TOKEN": "dummy", "GH_HOST": "x.invalid"}
+        result = subprocess.run(
+            ["node", str(hooks / "gh-write-guard.js")],
+            input=json.dumps(_call(APPROVED, checkout)),
+            capture_output=True,
+            encoding="utf-8",
+            timeout=15,
+            cwd=checkout,
+            env=env,
+        )
+        assert (result.returncode, "approval-grants.js" in result.stderr) == (2, True)
+        assert token.exists()
 
 
 @_skip_node_unavailable

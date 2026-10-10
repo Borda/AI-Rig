@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -586,6 +587,51 @@ def test_oversized_remaining_summary_becomes_a_blocked_public_envelope(
 
     assert envelope["status"] == "blocked"
     assert "invalid model result" in envelope["verdict"]
+
+
+@pytest.mark.parametrize(
+    ("verb", "forbids_git_writes"),
+    [
+        pytest.param("implement", True, id="implement-forbids-git-writes"),
+        pytest.param("advise", False, id="advise-read-only"),
+        pytest.param("review", False, id="review-read-only"),
+    ],
+)
+def test_write_capable_prompt_leaves_commits_to_the_caller(tmp_path: Path, verb: str, forbids_git_writes: bool) -> None:
+    """The implement prompt tells the peer to stage, commit and push nothing so the calling session owns every commit.
+
+    A Codex peer runs `workspace-write` with `approval_policy="never"` and still loads project instructions; with a
+    local Git approval grant in the checkout its completion default would otherwise be to commit before the caller
+    reviewed it, and a pending push token could be spent. A bridge child gains nothing from any grant or token: each is
+    the calling session's authority record.
+    """
+    prompt = bridge_call._prompt_with_budget(_request(tmp_path, verb=verb))
+
+    assert ("do not run git add, git commit, git push, or any other Git write" in prompt) is forbids_git_writes
+    assert ("The caller reviews the diff and commits." in prompt) is forbids_git_writes
+
+
+@pytest.mark.parametrize(
+    "build_argv",
+    [
+        pytest.param(bridge_call.build_codex_argv, id="codex-peer"),
+        pytest.param(bridge_call.build_claude_argv, id="claude-peer"),
+    ],
+)
+def test_implement_argv_carries_the_git_write_ban_in_both_directions(
+    tmp_path: Path, build_argv: Callable[[bridge_call.Request, Path], list[str]]
+) -> None:
+    """Both peer commands carry the implement prompt's Git write ban to the child.
+
+    The Codex and Claude children are launched by separate argv builders; a builder that bypassed the shared prompt
+    would leave one direction free to commit or spend a push token under the caller's grant.
+    """
+    schema_path = tmp_path / "core-schema.json"
+    schema_path.write_text("{}", encoding="utf-8")
+
+    argv = build_argv(_request(tmp_path, verb="implement"), schema_path)
+
+    assert "do not run git add, git commit, git push, or any other Git write" in "\n".join(argv)
 
 
 def test_budget_prompt_and_timeout_terminate_held_process(tmp_path: Path) -> None:

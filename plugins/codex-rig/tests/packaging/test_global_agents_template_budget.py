@@ -17,8 +17,11 @@ NATIVE_CONTRACT = PLUGIN_ROOT / "shared" / "native-skill-contract.md"
 # detail belongs in ``shared/global-baseline-details.md``, loaded only when the template's trigger line names it.
 # Raise this number deliberately, in the same change that justifies the added always-loaded text, never to make a
 # failing run green. Raised by 217 bytes for the one ``PLUGIN_ROOT`` line the installer renders with the absolute
-# installed root: without it no ``shared/<file>`` pointer resolves from a session outside this repository.
-TEMPLATE_BYTE_BUDGET = 39035
+# installed root: without it no ``shared/<file>`` pointer resolves from a session outside this repository. Raised by
+# 966 bytes for the local Git approval grant lines in Commit Authorization: commit authority is one of the rules that
+# must stay always-loaded, since a session that never reads the shared contract would otherwise commit or self-grant
+# without knowing the grant exists.
+TEMPLATE_BYTE_BUDGET = 40001
 
 
 @pytest.mark.packaging

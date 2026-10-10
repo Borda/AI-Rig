@@ -851,7 +851,7 @@ Run 2 opens with a fan, not a wait: conflict resolution (Steps 6–7a) and the P
 2. **Prep response(s)** — Step 3e's map Write, then Step 8's `cat` load and every block through its prelude, C1-candidate split and verdict re-check, up to the first `Agent()` call. `report` mode skips 3e; zero selected items skips Step 8 and the fan holds Step 7a alone.
 3. **Fan response** — the Step 7a spawn and the Phase 1 early-wave spawns plus Structural prep, all in this one response, each batch armed in its own `agent-watch-*.tsv` (§Agent wait discipline). Refresh the compaction contract in the same response (block below): the fan outlives the Step 3d contract, and a resume must never re-dispatch 7a while its watch row is open. Then end the turn.
 
-````bash
+```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR=""
 IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
@@ -859,7 +859,10 @@ IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null ||
 _PRESERVE="pr=$_PR_NUMBER, impl-dir=$_IMPL_DIR, items=$_IMPL_DIR/action-items.jsonl, selected-items=$_IMPL_DIR/selected-items.txt, item-tasks=$_IMPL_DIR/item-tasks.tsv, conflict-tasks=$_IMPL_DIR/conflict-tasks.tsv, conflict-envelope=$_IMPL_DIR/conflict-envelope.json, watch=$_IMPL_DIR/agent-watch-conflict.tsv + agent-watch-challenge.tsv, Step 3d answered (sentinels hold commit-mode, dispatch-mode, push-auth)"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "Run 2 fan (conflict resolve ‖ Phase 1 early wave)" "$_IMPL_DIR" "$_PRESERVE" "resume: never re-issue Step 3d; run agent_watch.py first; merge may be uncommitted (MERGE_HEAD) — never re-dispatch Step 7a while agent-watch-conflict.tsv has an open row; collect 7b when conflict-envelope.json exists, then C1, late wave, Phase 2"  # timeout: 5000
-``` No conflicted files → no 7a; `--no-challenge` or an empty early set → no early wave.
+```
+
+No conflicted files → no 7a; `--no-challenge` or an empty early set → no early wave.
+
 4. **Each notification** — persist any envelope, run the watch check, then consume what landed: a challenge reply goes through Phase 1's verdict processing at once; the conflict envelope goes to 7b below. Order between the two never matters.
 5. **7b** (`### 7b: Verify and complete merge` in `conflict-resolution.md`) — confirm `git diff --name-only --diff-filter=U` is empty, no residual conflict markers remain staged, mark each conflict task `completed` (all in one response), commit the merge; `TaskUpdate(task_id=TASK_CONFLICT, status="completed")` rides with the commit call; with zero conflicts there is no 7b, so the close rides with the fan's first response instead. A conflict agent that returned nothing is `timed_out` — surface it with ⏱, run Phase 3's cleanup block (it holds the branch mutex since the prelude), and stop before C1 and Phase 2 rather than implementing on an unmerged tree: jump to Step 11 and state `merge uncommitted — finish with git commit, or git merge --abort`. Challenge results stay on disk. Then re-point the HEAD fingerprint the Step 8 prelude took (when it ran) before the merge commit existed; the block refuses when the commit's first parent is not that fingerprint, since a foreign local commit would otherwise be absorbed:
 
@@ -868,7 +871,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _PRIOR < "${TMPDIR:-/tmp}/resolve-base-sha-${CSID}" 2>/dev/null || _PRIOR=""
 [ -z "$_PRIOR" ] || [ "$(git rev-parse HEAD^1)" = "$_PRIOR" ] || { echo "⚠ merge commit's first parent is not the prelude fingerprint — foreign commit during the fan; fingerprint left as is"; exit 0; }
 git rev-parse HEAD > "${TMPDIR:-/tmp}/resolve-base-sha-${CSID}"  # timeout: 3000
-````
+```
 
 6. **Join complete** = merge committed and every early-wave chunk, single-item retry, caucus and double-timeout gate settled or ⏱. Only then do C1, the Phase 1 late wave and Phase 2 begin (`action-item-dispatch.md`): C1 edits the tree, and retries read it.
 
@@ -1219,27 +1222,34 @@ The block exits non-zero (`⛔` — fork remote or head ref unresolved, push sco
 
 <!-- branch: main-path — push confirmation (intent push or no recorded intent; skipped only on an explicit Step 3d "don't push" or an uncomputable scope) -->
 
-**Push confirmation — one `AskUserQuestion` call.** Per `git-commit.md` push-safety rule ("Never push without explicit user confirmation") this question precedes any `git push`. Second-longest idle window (measured up to 11 h). Boundary-2 contract already names every file Step 11 needs, so Q1's question text closes with the `/compact` hint (last bullet below) — never as reply text before the call: 5.5-family models may return reply text written before a tool call as an empty progress update.
+**Drift question — its own `AskUserQuestion` call, `BASE_FRESH=no` only, before the push confirmation and never in the same call.** The target branch moved since Step 9's merge. Question text: the drift line below, then the `/compact` hint line. Options:
 
-Q1 — push. Its question text must surface:
+- (a) **Re-sync target first** — run Step 9 again from its drift gate (9.0 re-merges, then lint/QA), then return to the top of Step 10 with the new scope. Not counted against 9.0's 2-re-sync cap — the user chose it.
+- (b) **Continue to the push question** — keep the current merge; the push confirmation shows the drift line.
+
+Unanswered → (b): the push still needs its own `Approve`. `BASE_FRESH` `yes` or `unknown` → no drift question.
+
+**Push confirmation — one `AskUserQuestion` call.** Per `git-commit.md` push-safety rule ("Never push without explicit user confirmation") this question precedes any `git push`. It is the `git-push` question: the user's `Approve` lets foundry's approval hook record a single-use push token for one push of this branch at this HEAD, which the push guard spends on the `git push` below. Second-longest idle window (measured up to 11 h). Boundary-2 contract already names every file Step 11 needs, so Q1's question text closes with the `/compact` hint (last bullet below) — never as reply text before the call: 5.5-family models may return reply text written before a tool call as an empty progress update.
+
+Q1 — push: header `git-push`, `multiSelect` false. Its question text must surface:
 
 - Target remote and branch: `$FORK_REMOTE/$HEAD_REF`
 - Diff stat: `$PUSH_STAT` (e.g. `3 files changed, 47 insertions(+), 12 deletions(-)`)
 - Commit count and last subject: `$PUSH_COUNT commits — last: "$LAST_SUBJECT"`
 - Target drift, only when `BASE_FRESH` is not `yes`: `no` → `⚠ origin/<BASE_REF> advanced <BASE_BEHIND> commits since the last merge — newest: "<first listed subject>"`; `unknown` → `⚠ could not verify origin/<BASE_REF> is merged`
+- The command it approves: `` `git push` ``
 - Last line: `` Long wait? `/compact` now — commits landed, challenge log + item map in <IMPL_DIR>, resume lossless. ``
 
-Options:
+Options: exactly these two labels.
 
-- (a) **Push** — proceed with `git push` below (default)
-- (b) **Skip push** — stop after Step 9; user pushes manually later
-- (c) **Re-sync target first** — `BASE_FRESH=no` only: run Step 9 again from its drift gate (9.0 re-merges, then lint/QA), then return here and ask Q1 again with the new scope. Not counted against 9.0's 2-re-sync cap — the user chose it.
+- **Approve** — this push, once: proceed with `git push` below
+- **Deny** — skip the push; the user pushes manually later
 
 `PUSH_AUTH=skip` with `BASE_FRESH=no` → still print the drift line beside the skip message, so the manual push is not made blind.
 
 Q2 — `unset` intent only — after the final report: (a) **Open PR in browser** (`gh pr view <PR_NUMBER> --web`) · (b) **Skip**. Run the matching Step 3d post-PR block (`open` or `skip`) — never edit a block's value.
 
-Only proceed to the `git push` below on Q1 option (a). On option (b): print `` → Push skipped — run `git push` manually when ready. ``, record `skipped-by-user`, and jump to Step 11 (the post-PR answer still applies there). Unanswered Q1 is never authorization: treat it as (b).
+Only proceed to the `git push` below on Q1 `Approve`. On `Deny`: print `` → Push skipped — run `git push` manually when ready. ``, record `skipped-by-user`, and jump to Step 11 (the post-PR answer still applies there). Unanswered Q1 is never authorization: treat it as `Deny`. Never create, copy or edit the push token yourself.
 
 <!-- policy-sibling: plugins/CLAUDE.md §Blueprint Blocks (canonical), plugins/cc_foundry/agents/challenger.md, plugins/cc_oss/skills/resolve/SKILL.md (Step 3d, Step 10), plugins/cc_oss/skills/review/SKILL.md (reject gate) -->
 
@@ -1249,22 +1259,24 @@ git push # timeout: 30000
 
 An authorized push still stops on its own failures — never retried in a loop, never forced, never re-asked. The push guard and the absent `git push` allow rule are deliberate user safety controls: never weaken, bypass, or work around either, and never create, touch, or edit a guard's authorization file yourself.
 
-- **Blocked by a push guard** (a hook rejects the call and names a user-created authorization file) → print the guard's instruction verbatim, do not retry, record `blocked-guard`, and write its exact `! touch …` / `git push …` / `! rm -f …` lines — copied character for character from the guard's message, no paraphrase — with the Write tool to `$IMPL_DIR/push-unblock.txt`. Continue to Step 11.
-- **Blocked by a denied permission** (the harness permission prompt for `git push` was refused) → do not retry, record `blocked-permission`, and write the exact push command that was denied (`git push`, or the explicit-refspec form below) with the Write tool to `$IMPL_DIR/push-unblock.txt`. Continue to Step 11.
+- **Blocked by a push guard** (a hook rejects the call and asks for the `git-push` question: no `Approve` on record, the token expired, or HEAD moved since the answer) → print the guard's reason verbatim, do not retry, record `blocked-guard`, and write the push command it refused — copied character for character, no paraphrase — with the Write tool to `$IMPL_DIR/push-unblock.txt`, so the user can run it from their own shell or approve a new `git-push` question in a later run. Continue to Step 11.
+- **Blocked by a denied permission** (the harness permission prompt for `git push` was refused) → do not retry, record `blocked-permission`, and write the exact push command that was denied (`git push`) with the Write tool to `$IMPL_DIR/push-unblock.txt`. Continue to Step 11.
 - **Rejected as non-fast-forward** (the PR branch moved on the remote) → no force and no retry. Print `⛔ Push rejected (non-fast-forward) — the PR branch moved; merge the remote branch, then push manually.`, record `rejected-non-ff`, and continue to Step 11.
-- **No upstream or wrong tracking** (plain `git push` cannot resolve its destination) → the explicit-refspec fallback below, once; its own outcome is then classified by the bullets above.
+- **No upstream or wrong tracking** (plain `git push` cannot resolve its destination) → the manual-push hand-off below; the agent never runs a second push.
 - **Push lands** → record `pushed` after the verification block below.
 
-Push failed for lack of upstream tracking → fallback:
+Push failed for lack of upstream tracking → manual-push hand-off. The explicit-refspec push names its remote and ref through run-time values, which a push approval never covers (it covers one push of this branch, remote and branch written out), so the user runs it by hand: no second push question, no agent push, none from a spawned agent either. The block prints the command with its values filled in:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r FORK_REMOTE < "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}" 2>/dev/null || FORK_REMOTE=""
 IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""
-# empty refspec → push to wrong ref
-[ -n "$FORK_REMOTE" ] && [ -n "$HEAD_REF" ] || { echo "⛔ Step 10 fallback: FORK_REMOTE/HEAD_REF unresolved — refusing explicit-refspec push"; exit 1; }
-git push "$FORK_REMOTE" HEAD:"$HEAD_REF" # timeout: 30000
+# empty refspec → the handed-over command would push to the wrong ref
+[ -n "$FORK_REMOTE" ] && [ -n "$HEAD_REF" ] || { echo "⛔ Step 10 fallback: FORK_REMOTE/HEAD_REF unresolved — refusing explicit-refspec hand-off"; exit 1; }
+printf 'git push %s HEAD:%s\n' "$FORK_REMOTE" "$HEAD_REF"  # timeout: 3000
 ```
+
+The block exits non-zero → record `not-attempted`. Otherwise print `→ Push needs your shell — no upstream tracking; run: <printed line>`, write the printed line — copied character for character — with the Write tool to `$IMPL_DIR/push-unblock.txt`, record `blocked-needs-manual-push`, and continue to Step 11.
 
 Verify push reached GitHub — confirm latest commit headlines match what was committed:
 
@@ -1296,6 +1308,13 @@ echo blocked-guard > "${TMPDIR:-/tmp}/resolve-push-status-${CSID}"  # timeout: 3
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 echo blocked-permission > "${TMPDIR:-/tmp}/resolve-push-status-${CSID}"  # timeout: 3000
+```
+
+`blocked-needs-manual-push`:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo blocked-needs-manual-push > "${TMPDIR:-/tmp}/resolve-push-status-${CSID}"  # timeout: 3000
 ```
 
 `rejected-non-ff`:
@@ -1332,7 +1351,7 @@ _PRESERVE="pr=${_PR_NUMBER}, final-report=pending-write, impl-dir=${_IMPL_DIR}, 
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "final-report (after push)" "$_IMPL_DIR" "${_PRESERVE}" "write final report → post-PR action gate"  # timeout: 5000
 echo "PUSH_STATUS=$PUSH_STATUS"
-case "$PUSH_STATUS" in blocked-guard|blocked-permission) echo "PUSH_UNBLOCK=$_IMPL_DIR/push-unblock.txt"; cat "$_IMPL_DIR/push-unblock.txt" 2>/dev/null || echo "⚠ push-unblock.txt missing" ;; esac
+case "$PUSH_STATUS" in blocked-guard|blocked-permission|blocked-needs-manual-push) echo "PUSH_UNBLOCK=$_IMPL_DIR/push-unblock.txt"; cat "$_IMPL_DIR/push-unblock.txt" 2>/dev/null || echo "⚠ push-unblock.txt missing" ;; esac
 IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
 cat "$_OSS_RESOLVE/templates/resolve-report.md"  # timeout: 5000
 ```
@@ -1353,7 +1372,7 @@ else
 fi
 ```
 
-**Unblock push — last actionable item.** `PUSH_STATUS` is `blocked-guard` or `blocked-permission` → the block above `cat`s the `PUSH_UNBLOCK` file; end the report — after `**Next**`, the Challenge Log, Confidence, and every other section — with a `## Unblock push` section that repeats its lines verbatim in a fenced block. The user returns to the bottom of the report and runs exactly those lines; never paraphrase, reorder, or regenerate them. File missing or empty → print `⚠ push-unblock.txt missing — scroll to Step 10 for the guard's exact lines` in that section instead.
+**Unblock push — last actionable item.** `PUSH_STATUS` is `blocked-guard`, `blocked-permission` or `blocked-needs-manual-push` → the block above `cat`s the `PUSH_UNBLOCK` file; end the report — after `**Next**`, the Challenge Log, Confidence, and every other section — with a `## Unblock push` section that repeats its lines verbatim in a fenced block. The user returns to the bottom of the report and runs exactly those lines; never paraphrase, reorder, or regenerate them. File missing or empty → print `⚠ push-unblock.txt missing — scroll to Step 10 for the guard's exact lines` in that section instead.
 
 Immediately before printing it — the one standalone bookkeeping call, so a compaction mid-report cannot leave the run `in_progress` (`rules/task-lifecycle.md` §TaskUpdate before long output):
 
@@ -1459,7 +1478,7 @@ Non-calibratable — `disable-model-invocation: true` means skill dispatches to 
 - **COMMIT_MODE**: `each` (default); `all`; `stage` (⚠ branch restore skipped); `grouped` (falls back to `each` when labels skipped). Set via the commit-mode menu (Step 3d) — placement per the Step 3d slot table — skipped/discarded only when the bulk action = (d) skip-all. Distinct MENU from the bulk action (item scope vs commit strategy); item scope never implies commit mode; menus may share a call, never options.
 - **GROUP_STRATEGY**: `domain` (default) · `file` · `specialist` · `labels`. Set via the topic-group question (Step 3d), asked beside the commit-mode menu. Read only when `COMMIT_MODE=grouped`; `labels` are typed at Step 3d and persisted to `$IMPL_DIR/group-labels.tsv`, so no strategy adds a user round-trip at Step 8.
 - **DISPATCH_MODE**: `auto` (default) · `sequential` · `per-specialist` · `preview` (the "Custom" label). Set via the dispatch-granularity question (Step 3d), asked when pending or resolved/addressed items are available, beside the commit-mode or topic-group menu. Read by Phase 2 for sub-group splitting and wave width only — specialist routing, the file-ownership tiebreak and the import-coupling merge never change; `per-specialist` widens the per-spawn cap from 5 to 8 items, the one width guard a width answer may touch — widened, never removed. Distinct from `GROUP_STRATEGY=specialist`, which is a commit-grouping strategy on its own sentinel. `preview` defers the width to one extra gate at the Phase 1 → Phase 2 boundary, where the formed groups are printed first; that gate resolves it to one of the other three.
-- **AskUserQuestion usage**: the normal action-item path, after successful source resolution and without diagnostic or conflict recovery, takes at most 3 calls at Step 3d (10-18 pending: two checkbox pages + the commit-mode/topic-group/dispatch/push-intent follow-up; every other nonempty band takes 2, while zero pending with no closed items and a PR takes 1 push-intent call) plus 1 Step 10 push confirmation unless the push intent was an explicit "don't push". Picking topic-group (d) without typing labels adds one Step 3d call for the topic-label question.
+- **AskUserQuestion usage**: the normal action-item path, after successful source resolution and without diagnostic or conflict recovery, takes at most 3 calls at Step 3d (10-18 pending: two checkbox pages + the commit-mode/topic-group/dispatch/push-intent follow-up; every other nonempty band takes 2, while zero pending with no closed items and a PR takes 1 push-intent call) plus 1 Step 10 push confirmation unless the push intent was an explicit "don't push" — plus 1 Step 10 drift question first when `BASE_FRESH=no`, and the push confirmation once more before the explicit-refspec fallback, whose failed first attempt spent the single-use push token. Picking topic-group (d) without typing labels adds one Step 3d call for the topic-label question.
   - Every decision a later step needs and can see at Step 3d is asked there: commit mode, grouping strategy and typed labels, dispatch width, push intent, and the post-PR browser action. Between Step 3d and the Step 10 push confirmation, nothing is asked on this path.
   - Only `DISPATCH_MODE=preview` adds a call after Step 3d — the user elects it there by choosing Custom.
   - Other paths can add questions for unsupported flags, missing reports, too many conflicts, codemap index gates (all before Step 3d), an unresolved item status, a challenge that timed out twice (one batched question per wave), a lost typed-labels file, or a push-intent question left unanswered at Step 3d (Step 10 then also asks the post-PR question); they are outside this normal-path count.

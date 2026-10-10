@@ -1,16 +1,18 @@
 ---
-description: Public GitHub is read-only — forbids all writes (issues, PRs, releases, gists, repos) via gh CLI or curl mutations
+description: Public GitHub — gh reads run free; every gh write needs the user's one-time gh-write approval of the exact command
 paths:
   - '**/*'
 ---
 
-## Public GitHub — Read-Only (stub)
+## Public GitHub — Reads Free, Writes Approved (stub)
 
-Claude + all agents (subagents, skills, teammates) **read-only** on public GitHub. Hard constraint — not suggestion.
+Claude + all agents: GitHub reads (`gh *list`, `gh *view`, `gh pr diff/checks`, `gh api` GET, graphql queries, `WebFetch` on github.com) run free, no question.
 
-Any write/mutate command on any public/external GitHub repo **permanently forbidden** — issue/PR/release/gist create-comment-edit-close-merge-delete, `gh repo fork`/`gh repo create`, `gh api ... --method POST/PATCH/PUT/DELETE`, `gh api graphql` mutations, all curl write verbs (`-X POST/PATCH/PUT`). Read ops (`gh *list`, `gh *view`, `gh pr diff/checks`, `gh api graphql` reads, `WebFetch` on github.com) permitted.
+Every write on any repo (issue/PR/release/gist create-comment-edit-close-merge-delete, `gh repo fork`/`create`, `gh api` method/field/`--input`, graphql mutations) needs the user's approval of that exact command; `gh-write-guard.js` blocks the rest. curl write verbs stay denied.
 
-> Full protocol in `_full/public-github.md` (exhaustive permitted/forbidden command enumerations). Read when a command's read/write status is unclear:
+**gh-write approval** — lead only: draft, then one AskUserQuestion, header `gh-write`, options exactly `Approve` / `Deny`, naming the command once as an inline code span (double backticks if it holds one; one plain line, no `;`/`|`/`$`/glob; long text via `--body-file`, shown in it; no fence). `Approve` → run exactly that text, whole Bash command, once. No git repo → give the user the command. Never touch the token; agents never ask or spend it.
+
+> Full protocol in `_full/public-github.md` (read/write enumerations, token rules). Read when a command's read/write status is unclear:
 >
 > ```bash
 > RULE_FULL="$(ls -td ~/.claude/plugins/cache/borda-ai-rig/foundry/*/rules/_full/public-github.md 2>/dev/null | head -1)"; [ -z "$RULE_FULL" ] && RULE_FULL="plugins/cc_foundry/rules/_full/public-github.md"  # timeout: 5000

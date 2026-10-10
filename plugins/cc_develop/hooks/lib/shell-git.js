@@ -14,8 +14,10 @@
 //
 // EXPORTS
 //   gitSubcommandArgs(command)        every reading of every git invocation, from the subcommand on
-//   programInvocations(command, name) every invocation of program `name`, from the program word on;
-//                                     null for any program but git when no exact argv exists (step 5)
+//   programInvocations(command, name, info)
+//                                     every invocation of program `name`, from the program word on;
+//                                     null for any program but git when no exact argv exists (step 5);
+//                                     `info.unreadable` / `info.unreadableReason` name unreadable syntax
 //
 // HOW IT WORKS
 //   1. Precise pass. A quote-aware lexer splits the command into simple commands (word lists) at
@@ -63,7 +65,17 @@
 //   4. Coarse pass, git only. The original detector — raw operator split, quotes ignored, argv[0]
 //      after an environment prefix — runs too, so the lexer can only add git detections, never
 //      lose one the earlier hooks made. Other programs have no earlier detector to preserve, and
-//      quotes-ignored tokens would split their quoted arguments.
+//      quotes-ignored tokens would split their quoted arguments. One exception: the body of a
+//      quoted-delimiter heredoc (`<<'EOF'`, `<<"EOF"`, `<<\EOF`) is left out of the coarse text when
+//      the lexer read the whole command, nothing was unreadable, every simple command in it,
+//      substitutions included, is a data command (DATA_PROGRAMS, `git commit|tag|notes`, `gh
+//      pr|issue|release|gist|api`), and the rest is a plain skeleton (plainSkeleton: no `$`,
+//      backtick, parenthesis, bracket, brace, backslash, `#` or CR outside quotes, but the
+//      commit-message `"$(cat <<'EOF'…)"`): no shell expands that body, none of those commands runs
+//      it, and with no `$[…]`, `${…}`, `((…))` or CRLF the lexer places the body exactly where the
+//      shells do, so a body line `git push origin main` in release notes or a commit message is no
+//      push. A body a shell, interpreter, pipe consumer, prefix program or later script may run
+//      keeps its reading, and so does an unquoted-delimiter body.
 //   5. Fail closed. When the lexer cannot follow the quoting (unbalanced quote, unterminated
 //      substitution, heredoc without a delimiter) or a brace expansion yields more than
 //      MAX_BRACE_WORDS words, git reads any git word in any raw segment, quote and brace
@@ -78,7 +90,10 @@
 //      quote to bash, text to zsh; nested double quotes and `\X` pairs there are read as every
 //      shell reads them). So does `${` followed by a space, tab, newline or `|` — unquoted, in
 //      double quotes or in a heredoc body: bash 5.3 runs `${ cmd; }` and `${|cmd;}` as commands,
-//      older bash and zsh reject them. A backslash-newline right after `$`, after `${`, inside a
+//      older bash and zsh reject them. zsh syntax that runs code bash never reads is unreadable
+//      too: a `${(flags)…}` expansion (`(e)` evaluates the value) anywhere, and a `(…)` closing an
+//      unquoted word that holds a code-running glob qualifier (`.(e:'cmd':)`, `*(+name)`) — zsh is
+//      the Bash tool's shell on macOS. A backslash-newline right after `$`, after `${`, inside a
 //      heredoc delimiter, right after an unquoted `<` or `>`, or ending a line of an unquoted-delimiter
 //      heredoc body is unreadable too: every shell splices the line before reading the opener or
 //      comparing the line to the delimiter (`$\⏎'…'` is `$'…'`, `<\⏎<` is `<<`, `EO\⏎F` ends the
@@ -86,7 +101,9 @@
 //      (`# x \⏎git push` runs the push), so nothing is spliced ahead of lexing. Text printed to a
 //      shell reading stdin that holds a backslash is unreadable as well (step 1). Since such quoting may hide
 //      the program word itself, git then also reads `push --force`, and programInvocations sets
-//      `info.unreadable` for the caller. Any other program gets null from programInvocations
+//      `info.unreadable` for the caller and `info.unreadableReason` to the first construct found
+//      (UNREADABLE_SYNTAX), so a block message can name the real cause, not a push or gh write the
+//      command may not hold. Any other program gets null from programInvocations
 //      instead, and so does interpreter code naming it: quote-stripped words shift positionals
 //      (`--title 'a b' create` reads `b` where gh reads `create`), so a guessed argv is not a
 //      superset and the caller must fail closed on its own terms.
@@ -101,7 +118,8 @@
 //   resolved through `git config`: running git inside the hook on every Bash call is not worth a
 //   rare spelling. These string-visible spellings are not followed either, by decision — the
 //   finder stays scoped to the review findings it fixes:
-//     * shell syntax only zsh has (`=git push`, glob qualifiers, `${~x}`): the lexer reads bash.
+//     * shell syntax only zsh has (`=git push`, `${~x}`, a glob qualifier that runs no code): the
+//       lexer reads bash. Code-running zsh syntax is unreadable instead (step 5).
 //     * an assigned value is not read as commands: `X='git push -f'; $X`, `GIT_SSH_COMMAND=…`,
 //       `GIT_PAGER=…`, `EDITOR=…`.
 //     * commands git itself runs from configuration or options: `-c core.pager=…`,
@@ -156,6 +174,28 @@ const SOURCE_RUNNERS = new Set([
   "trap",
   "source",
   ".",
+]);
+// Words a builtin such as `.` can follow in its own simple command: shell keywords and the bash and
+// zsh precommand modifiers (an option of `time` or `command` and an assignment may follow them too).
+// `.` elsewhere is data (`jq -e .`, `git add .`), so it runs nothing.
+const BUILTIN_PREFIXES = new Set([
+  "!",
+  "{",
+  "if",
+  "then",
+  "else",
+  "elif",
+  "do",
+  "while",
+  "until",
+  "time",
+  "coproc",
+  "builtin",
+  "command",
+  "exec",
+  "noglob",
+  "nocorrect",
+  "-",
 ]);
 // Shells that run commands read from stdin when given no script and no `-c` string (`echo '…' | sh`,
 // `sh < <(…)`, `bash -s`), or whose `-c` string is the last word, so xargs supplies it.
@@ -340,18 +380,18 @@ function lexFrom(src, start, inSubst, acc) {
       i = end + 1;
     } else if (c === "$" && next === "$" && DOLLARS_BEFORE_OPENER.test(src.slice(i))) {
       // `$$'…'`: bash reads `$$` then a plain quote, zsh `$` then `$'…'`
-      return unreadable(acc);
-    } else if (COMMAND_BRACE.test(src.slice(i, i + 4)) || CONTINUED_DOLLAR.test(src.slice(i, i + 3))) {
-      return unreadable(acc);
+      return unreadable(acc, UNREADABLE_SYNTAX.dollars);
+    } else if (c === "$" && unreadableExpansion(src, i)) {
+      return unreadable(acc, unreadableExpansion(src, i));
     } else if (c === "$" && next === "'") {
       const read = readAnsiC(src, i + 2);
       if (read === null) return -1;
-      if (read.unreadable) return unreadable(acc);
+      if (read.unreadable) return unreadable(acc, UNREADABLE_SYNTAX.ansiC);
       appendQuoted(read.text);
       i = read.end;
     } else if (c === "$" && next === '"') {
       // A locale string: bash reads `$"git"` as `git`, zsh as `$git`.
-      return unreadable(acc);
+      return unreadable(acc, UNREADABLE_SYNTAX.locale);
     } else if (c === '"') {
       const read = readExpanding(src, i + 1, '"', acc);
       if (read === null) return -1;
@@ -371,7 +411,7 @@ function lexFrom(src, start, inSubst, acc) {
       while (i < src.length && src[i] !== "\n") i += 1;
     } else if (acc.redirections && (c === "<" || c === ">") && next === "\\" && src[i + 2] === "\n") {
       // `<\⏎<EOF`: the shells splice the line first and read `<<`, the lexer would read two `<`
-      return unreadable(acc);
+      return unreadable(acc, UNREADABLE_SYNTAX.continued);
     } else if (c === "<" && next === "<" && src[i + 2] === "<") {
       endWordBeforeRedirection(); // `<<<` is one redirection token: a here-string, never a heredoc start
       hereString = true;
@@ -381,7 +421,7 @@ function lexFrom(src, start, inSubst, acc) {
       endWordBeforeRedirection();
       const read = readHeredocStart(src, i + 2);
       if (read === null) return -1;
-      if (read.unreadable) return unreadable(acc);
+      if (read.unreadable) return unreadable(acc, UNREADABLE_SYNTAX.heredocDelimiter);
       pending.push(read.doc);
       i = read.end;
     } else if (acc.redirections && parameter === 0 && (c === "<" || c === ">" || (c === "&" && next === ">"))) {
@@ -394,8 +434,12 @@ function lexFrom(src, start, inSubst, acc) {
       redirectTarget = true;
     } else if (c === "\n") {
       endCommand();
-      i = readHeredocBodies(src, i + 1, pending.splice(0), acc);
+      i = readHeredocBodies(src, i + 1, pending.splice(0), acc, inSubst);
       if (i < 0) return -1;
+    } else if (c === "(" && word !== null && !word.endsWith("=") && runsZshQualifier(src, i)) {
+      // zsh reads `(…)` closing a word as glob qualifiers, and `e…` or `+name` there runs code
+      // (`.(e:'cmd':)`); bash rejects the word. An array assignment `a=(…)` is no qualifier.
+      return unreadable(acc, UNREADABLE_SYNTAX.zshQualifier);
     } else if (c === "(") {
       endCommand();
       depth += 1;
@@ -452,16 +496,16 @@ function readExpanding(src, start, terminator, acc) {
       // a heredoc body pairs `$$` left to right in every shell: `$$(x)` is the PID then text
       text += "$$";
       i += 2;
-    } else if (COMMAND_BRACE.test(src.slice(i, i + 4)) || CONTINUED_DOLLAR.test(src.slice(i, i + 3))) {
-      acc.unreadable = true;
+    } else if (c === "$" && unreadableExpansion(src, i)) {
+      markUnreadable(acc, unreadableExpansion(src, i));
       return null;
     } else if (terminator === '"' && c === "$" && next === "$" && DOLLARS_BEFORE_EXPANSION.test(src.slice(i))) {
       // `"$${…}"`, `"$$(…)"`: bash opens the expansion on the second `$`, zsh reads `$$` first
-      acc.unreadable = true;
+      markUnreadable(acc, UNREADABLE_SYNTAX.dollars);
       return null;
     } else if (parameter > 0 && c === "'") {
       // `"${x:-'…'}"`: bash reads the single quotes as quotes, zsh as text — no one reading is right
-      acc.unreadable = true;
+      markUnreadable(acc, UNREADABLE_SYNTAX.quoteInExpansion);
       return null;
     } else if (parameter > 0 && c === '"') {
       // `"${x%"$y"}"`: both shells nest the inner double quotes inside the expansion
@@ -495,6 +539,31 @@ function readExpanding(src, start, terminator, acc) {
     }
   }
   return terminator === null ? { text, end: i } : null;
+}
+
+/**
+ * True when the `(` at `open`, attached to a word, closes that word with a group zsh reads as glob
+ * qualifiers holding one that runs code. Quotes inside the group are skipped whole.
+ */
+function runsZshQualifier(src, open) {
+  let depth = 0;
+  for (let j = open; j < src.length; j += 1) {
+    const c = src[j];
+    if (c === "\\") {
+      j += 1;
+    } else if (c === "'" || c === '"') {
+      const end = src.indexOf(c, j + 1);
+      if (end < 0) return false;
+      j = end;
+    } else if (c === "(") {
+      depth += 1;
+    } else if (c === ")" && --depth === 0) {
+      const after = src[j + 1];
+      const closesWord = after === undefined || /[\s;&|<>)]/.test(after);
+      return closesWord && ZSH_CODE_QUALIFIER.test(src.slice(open + 1, j));
+    }
+  }
+  return false;
 }
 
 /**
@@ -538,6 +607,37 @@ const COMMAND_BRACE = /^\$\{(?:[ \t\n|]|\\\n)/;
 // `$` then a backslash-newline: the shells splice the line before reading what follows the `$`
 // (`$\⏎'…'` is `$'…'`, `$\⏎(` is `$(`), which the lexer, deciding on the raw next character, misses.
 const CONTINUED_DOLLAR = /^\$\\\n/;
+// `${(flags)…}`: zsh parameter flags, `(e)` and `(P)` among them, evaluate the value as code or a
+// name; bash rejects the form, so no bash reading of it is right.
+const ZSH_FLAGS = /^\$\{\(/;
+// What `info.unreadableReason` names for each kind of unreadable syntax, so a guard blocking the command
+// can name the real cause instead of the push or gh write the command may not hold.
+const UNREADABLE_SYNTAX = Object.freeze({
+  dollars: "`$$` right before a quote, brace or parenthesis",
+  commandBrace: "bash 5.3's `${ cmd; }` or `${|cmd;}`",
+  continued: "a backslash-newline the shells splice before reading what follows it",
+  zshFlags: "zsh `${(flags)…}` parameter flags",
+  ansiC: "a `$'…'` escape bash and zsh decode differently",
+  locale: 'a `$"…"` locale string',
+  heredocDelimiter: "a heredoc delimiter written with `$'…'`, `$\"…\"` or a backslash-newline",
+  zshQualifier: "a zsh glob qualifier that runs code (`(e:…:)`, `(+name)`)",
+  quoteInExpansion: "a single quote inside a double-quoted `${…}`",
+  printedBackslash: "text with a backslash printed to a shell reading stdin",
+  heredocInSubstitution:
+    "a heredoc inside `$(…)` whose body could close the substitution early in bash 3.2 (an unbalanced `)` such " +
+    "as a `1)` list item, a backtick or `$'`); pass the text by file instead (`git commit -F <file>`, `--body-file`)",
+});
+
+/** The unreadable syntax a `$` at `i` opens (`${ cmd; }`, `$\⏎`, `${(flags)…}`), or null. */
+function unreadableExpansion(src, i) {
+  if (COMMAND_BRACE.test(src.slice(i, i + 4))) return UNREADABLE_SYNTAX.commandBrace;
+  if (CONTINUED_DOLLAR.test(src.slice(i, i + 3))) return UNREADABLE_SYNTAX.continued;
+  if (ZSH_FLAGS.test(src.slice(i, i + 3))) return UNREADABLE_SYNTAX.zshFlags;
+  return null;
+}
+// A zsh glob qualifier list holding one that runs code: `e` and any delimiter (`e:…:`, `e'…'`), or
+// `+name`. A qualifier list has no unquoted whitespace, so the qualifier comes before the first one.
+const ZSH_CODE_QUALIFIER = /^\S*?(?:e[^\w\s]|\+[A-Za-z_])/;
 
 /**
  * One escape inside a `$'…'` body at `i` (the character after the backslash): its text and the index
@@ -587,7 +687,9 @@ function readHeredocStart(src, start) {
   while (src[i] === " " || src[i] === "\t") i += 1;
   let delim = "";
   let quoted = false;
-  while (i < src.length && !/[\s;&|<>()]/.test(src[i])) {
+  // The word ends only at a shell metacharacter: a CR (CRLF line ends) or any other space stays in it, as
+  // in bash and zsh, which then end the body at the line `EOF\r`.
+  while (i < src.length && !/[ \t\n;&|<>()]/.test(src[i])) {
     const c = src[i];
     // `<<$'EOF'`: which line ends the body depends on how the shell decodes the delimiter
     if (c === "$" && (src[i + 1] === "'" || src[i + 1] === '"')) return { unreadable: true };
@@ -611,10 +713,14 @@ function readHeredocStart(src, start) {
   return delim ? { doc: { delim, strip, quoted }, end: i } : null;
 }
 
-/** Consume the bodies of `docs`, in order, from `start` (the line after the `<<` line). */
-function readHeredocBodies(src, start, docs, acc) {
+/**
+ * Consume the bodies of `docs`, in order, from `start` (the line after the `<<` line). A quoted-delimiter
+ * body is recorded in `acc.quotedBodies` as its span of `src`, delimiter line included.
+ */
+function readHeredocBodies(src, start, docs, acc, inSubst = false) {
   let i = start;
   for (const doc of docs) {
+    const bodyStart = i;
     let body = "";
     while (i < src.length) {
       const newline = src.indexOf("\n", i);
@@ -623,11 +729,15 @@ function readHeredocBodies(src, start, docs, acc) {
       i = lineEnd + 1;
       // An unquoted delimiter's body joins a line ending in an odd backslash run with the next one
       // before the shells compare it to the delimiter (`EO\⏎F` ends the body, `x\⏎EOF` does not).
-      if (!doc.quoted && /(?:^|[^\\])(?:\\\\)*\\$/.test(line)) return unreadable(acc);
+      if (!doc.quoted && /(?:^|[^\\])(?:\\\\)*\\$/.test(line)) return unreadable(acc, UNREADABLE_SYNTAX.continued);
       if ((doc.strip ? line.replace(/^\t+/, "") : line) === doc.delim) break;
       body += `${line}\n`;
     }
+    // bash 3.2 (macOS /bin/bash) ends a `$(` by scanning for its `)` before it reads the heredoc, so a body
+    // that closes the substitution early runs its tail as commands there, while zsh and bash ≥ 4 read data.
+    if (inSubst && closesSubstitution(body)) return unreadable(acc, UNREADABLE_SYNTAX.heredocInSubstitution);
     acc.heredocs.push(body);
+    if (doc.quoted) acc.quotedBodies.push({ src, start: bodyStart, end: Math.min(i, src.length) });
     // An unquoted delimiter leaves `$(…)` and backticks in the body live.
     if (!doc.quoted && readExpanding(body, 0, null, acc) === null) return -1;
   }
@@ -635,19 +745,59 @@ function readHeredocBodies(src, start, docs, acc) {
 }
 
 /**
+ * True when a heredoc `body` read inside `$(` could end the substitution early in bash 3.2, which scans the
+ * body text for the `)` before it reads the heredoc: a backtick or `$'` (quoting that scan models differently),
+ * or a `)` that takes paren depth below zero either counting every paren or skipping quoted ones (single and
+ * double quotes, backslash escapes). Only the body is scanned, delimiter line excluded; balanced `fix(x)` and
+ * an apostrophe stay readable, a list item `1)` does not (pass such text by file).
+ */
+function closesSubstitution(body) {
+  if (/`|\$'/.test(body)) return true;
+  let plain = 0;
+  let quoted = 0;
+  let quote = "";
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c === "(") plain += 1;
+    else if (c === ")" && --plain < 0) return true;
+    if (c === "\\" && quote !== "'") i += 1;
+    else if (quote) quote = c === quote ? "" : quote;
+    else if (c === "'" || c === '"') quote = c;
+    else if (c === "(") quoted += 1;
+    else if (c === ")" && --quoted < 0) return true;
+  }
+  return false;
+}
+
+/**
  * Simple commands and heredoc bodies of `src`, or null when the lexer cannot follow its quoting.
  * `redirections` false reads `<` and `>` as ordinary characters, for text that is not shell source.
  */
 function lexShell(src, redirections = true, failure = {}) {
-  const acc = { commands: [], heredocs: [], overflow: false, unreadable: false, redirections };
+  const acc = {
+    commands: [],
+    heredocs: [],
+    quotedBodies: [],
+    overflow: false,
+    unreadable: false,
+    unreadableReason: "",
+    redirections,
+  };
   if (lexFrom(src, 0, false, acc) >= 0 && !acc.overflow) return acc;
   failure.unreadable = acc.unreadable;
+  failure.reason = acc.unreadableReason;
   return null;
 }
 
-/** Mark `acc` as holding quoting the shells read differently; the lexer then fails closed (-1). */
-function unreadable(acc) {
+/** Record in `acc` that it holds `reason`, syntax the shells read differently; the first reason found is kept. */
+function markUnreadable(acc, reason) {
   acc.unreadable = true;
+  if (!acc.unreadableReason) acc.unreadableReason = reason;
+}
+
+/** Mark `acc` as holding quoting the shells read differently (`reason`); the lexer then fails closed (-1). */
+function unreadable(acc, reason) {
+  markUnreadable(acc, reason);
   return -1;
 }
 
@@ -784,7 +934,7 @@ function collectWords(words, found, depth, target) {
   words.forEach((word, j) => {
     const name = programName(word);
     if (name === target.name) found.push(withXargsTail(words, j));
-    else if (runner < 0 && SOURCE_RUNNERS.has(name)) runner = j;
+    else if (runner < 0 && SOURCE_RUNNERS.has(name) && (name !== "." || j === commandStart(words))) runner = j;
     else if (interpreter < 0 && INTERPRETERS.test(name)) interpreter = j;
     else if (subscript < 0 && SUBSCRIPT_BUILTINS.has(unmarkGlobs(name))) subscript = j;
   });
@@ -822,12 +972,25 @@ function withXargsTail(words, j) {
   return [...shown, XARGS_TAIL];
 }
 
+/** Index of the word a simple command runs, past keywords, precommand modifiers, their options and assignments. */
+function commandStart(words) {
+  let s = 0;
+  while (
+    s < words.length &&
+    (BUILTIN_PREFIXES.has(words[s]) || ENVIRONMENT_ASSIGNMENT.test(words[s]) || (s > 0 && words[s].startsWith("-")))
+  ) {
+    s += 1;
+  }
+  return s;
+}
+
 /**
  * True when `words` runs a shell that takes its commands from stdin: `sh` or `bash -s` with no script,
  * `xargs sh -c` with the string left to xargs, or `source`/`.` reading stdin or `<(…)`.
  */
 function readsStdinSource(words) {
-  if ((words[0] === "source" || words[0] === ".") && words.length > 1) return STDIN_FILE.test(words[1]);
+  const s = commandStart(words);
+  if ((words[s] === "source" || words[s] === ".") && words.length > s + 1) return STDIN_FILE.test(words[s + 1]);
   const r = words.findIndex((word) => STDIN_SHELLS.has(programName(word)));
   if (r < 0) return false;
   const args = words.slice(r + 1);
@@ -887,13 +1050,23 @@ function programTarget(name) {
   return target;
 }
 
+/** Record on `target` that the command holds unreadable syntax (`reason`); the first reason found is kept. */
+function markTargetUnreadable(target, reason) {
+  target.unreadable = true;
+  if (!target.unreadableReason) target.unreadableReason = reason || "";
+}
+
+/**
+ * Push every invocation of `target` in `command` onto `found`. Returns the lexed command when the lexer read all
+ * of it, or null when it fell back to the raw scan.
+ */
 function collect(command, found, depth, target) {
   const failure = {};
   const lexed = lexShell(command, true, failure);
   if (lexed === null) {
-    if (failure.unreadable) target.unreadable = true;
+    if (failure.unreadable) markTargetUnreadable(target, failure.reason);
     target.unlexable(command, found, failure.unreadable);
-    return;
+    return null;
   }
   let runsSource = false;
   for (const words of lexed.commands) {
@@ -908,28 +1081,121 @@ function collect(command, found, depth, target) {
     // one has no exact reading and fails closed.
     const printed = lexed.commands.map((words) => words.slice(1).map(unmarkGlobs).join(" "));
     if (printed.some((text) => text.includes("\\"))) {
-      target.unreadable = true;
+      markTargetUnreadable(target, UNREADABLE_SYNTAX.printedBackslash);
       target.unlexable(command, found, true);
-      return;
+      return null;
     }
     for (const text of printed) collect(text, found, depth + 1, target);
   }
+  return lexed;
+}
+
+// --- coarse pass: quoted heredoc bodies that are data ---
+
+// Programs that only store or print what they are given: none runs its stdin or an argument as code,
+// evaluates an argument's subscript (SUBSCRIPT_BUILTINS) or starts another program.
+const DATA_PROGRAMS = new Set(["cat", "tee", "mkdir", "echo"]);
+// git subcommands that read a message from stdin (`commit -F -`, `tag -F -`, `notes add -F -`) and run
+// no program the command line names. Global options (`-c alias.x='!sh'`) leave the command unknown.
+const GIT_DATA_SUBCOMMANDS = new Set(["commit", "tag", "notes"]);
+// gh groups whose commands read stdin as a body (`--body-file -`, `--notes-file -`, `--input -`) and run
+// no program; gh-write-guard.js gates their writes.
+const GH_DATA_GROUPS = new Set(["pr", "issue", "release", "gist", "api"]);
+
+/** True when a lexed simple command only stores, prints or sends the heredoc body it is given. */
+function isDataCommand(words) {
+  const name = programName(words[0]);
+  if (DATA_PROGRAMS.has(name)) return true;
+  if (name === "git") return GIT_DATA_SUBCOMMANDS.has(words[1]);
+  if (name === "gh") return GH_DATA_GROUPS.has(words[1]);
+  return false;
+}
+
+// A quoted heredoc operator as it opens in the coarse text: `<<'EOF'`, `<<-"EOF"`, `<<\EOF`.
+const QUOTED_HEREDOC = /<<-?[ \t]*(?:'[^'\n]*'|"[^"\n]*"|\\[^ \t\n;&|<>()]+)/y;
+// The commit-message idiom once its body is cut out: a double-quoted substitution holding only `cat` and a
+// quoted heredoc (`git commit -m "$(cat <<'EOF'⏎…⏎EOF⏎)"`).
+const MESSAGE_SUBSTITUTION = /"\$\([ \t]*cat[ \t]+<<-?[ \t]*(?:'[^'\n]*'|"[^"\n]*"|\\[^ \t\n;&|<>()"]+)\n[ \t]*\)"/y;
+// A double-quoted string holding no expansion, escape or substitution.
+const PLAIN_DOUBLE_QUOTED = /"[^"$`\\]*"/y;
+// Unquoted characters opening a context where the lexer may read a heredoc the shells do not, or place its
+// body elsewhere: `$[…]`, `${…}`, `$((…))`, `((…))`, `[[…]]` (where `<<` is a shift or text), backticks, a
+// comment, an escape, a CR (the shells keep it in the delimiter word), a vertical tab, form feed or NUL.
+const SKELETON_FORBIDDEN = /[$`()[\]{}\\#\r\v\f\0]/;
+
+/** True when the sticky `pattern` matches `text` at `at`: the index after the match, or -1. */
+function matchAt(pattern, text, at) {
+  pattern.lastIndex = at;
+  return pattern.test(text) ? pattern.lastIndex : -1;
+}
+
+/**
+ * True when `skeleton` (a command with its quoted heredoc bodies cut out) holds only plain words, quotes,
+ * operators and quoted heredoc operators, so every `<<` in it is a heredoc the shells read where the lexer does:
+ * single-quoted text, double-quoted text without `$`, backtick or backslash (or the commit-message substitution),
+ * a here-string `<<<`, and no SKELETON_FORBIDDEN character outside quotes. An unquoted-delimiter heredoc fails.
+ */
+function plainSkeleton(skeleton) {
+  let i = 0;
+  while (i >= 0 && i < skeleton.length) {
+    const c = skeleton[i];
+    if (c === "'") {
+      const end = skeleton.indexOf("'", i + 1);
+      i = end < 0 ? -1 : end + 1;
+    } else if (c === '"') {
+      const end = matchAt(MESSAGE_SUBSTITUTION, skeleton, i);
+      i = end >= 0 ? end : matchAt(PLAIN_DOUBLE_QUOTED, skeleton, i);
+    } else if (skeleton.startsWith("<<<", i)) {
+      i += 3;
+    } else if (skeleton.startsWith("<<", i)) {
+      i = matchAt(QUOTED_HEREDOC, skeleton, i);
+    } else {
+      i = SKELETON_FORBIDDEN.test(c) ? -1 : i + 1;
+    }
+  }
+  return i >= 0;
+}
+
+/**
+ * The text the coarse pass reads: `command` without its quoted-delimiter heredoc bodies when the lexer read the
+ * whole command, every simple command in it, substitutions included, is a data command, and what remains is a
+ * plain skeleton — such a body is data to every shell (`cat > notes.md <<'EOF'` with a line `git push origin
+ * main`). Otherwise `command` unchanged: a body a shell, an interpreter, a pipe consumer or a later script may
+ * run, or one the lexer may have placed differently from the shells, keeps its raw reading.
+ */
+function coarseText(command, lexed) {
+  if (lexed === null || !lexed.commands.every(isDataCommand)) return command;
+  // Only spans of the command text itself: a backtick body is lexed as a string of its own.
+  const bodies = lexed.quotedBodies.filter((body) => body.src === command).sort((a, b) => a.start - b.start);
+  let skeleton = "";
+  let at = 0;
+  for (const body of bodies) {
+    if (body.start < at) continue;
+    skeleton += command.slice(at, body.start);
+    at = body.end;
+  }
+  skeleton += command.slice(at);
+  return plainSkeleton(skeleton) ? skeleton : command;
 }
 
 /**
  * Every invocation of `target` in `command`, from the program word on; unquoted globs still marked.
- * `info.unreadable` is set when the command holds quoting bash and zsh read differently.
+ * `info.unreadable` is set when the command holds quoting bash and zsh read differently, and
+ * `info.unreadableReason` names that syntax (empty otherwise).
  */
 function findInvocations(command, target, info = {}) {
   info.unreadable = false;
+  info.unreadableReason = "";
   if (typeof command !== "string") return [];
   const found = [];
   const run = Object.create(target); // per-call state: GIT is shared across calls
   run.unreadable = false;
-  collect(command, found, 0, run);
+  run.unreadableReason = "";
+  const lexed = collect(command, found, 0, run);
   info.unreadable = run.unreadable;
+  info.unreadableReason = run.unreadableReason;
   if (target.coarse) {
-    for (const segment of coarseSegments(command)) {
+    for (const segment of coarseSegments(run.unreadable ? command : coarseText(command, lexed))) {
       const tokens = coarseCommandTokens(segment);
       if (tokens.length && programName(tokens[0]) === target.name) found.push(tokens);
     }
@@ -1053,7 +1319,8 @@ function gitSubcommandArgs(command) {
  * oversized brace expansion, quoting bash and zsh read differently) or interpreter code naming the
  * program: no exact argv exists, so the caller fails closed. `info.unreadable` (optional object) is
  * set when quoting bash and zsh read differently was found, for any program: such quoting may hide
- * the program word itself. May repeat an invocation; callers test with `some`/`filter`, never count.
+ * the program word itself; `info.unreadableReason` names that syntax ("" when there is none). May
+ * repeat an invocation; callers test with `some`/`filter`, never count.
  */
 function programInvocations(command, name, info = {}) {
   const program = String(name).toLowerCase();

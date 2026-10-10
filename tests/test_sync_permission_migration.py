@@ -1,4 +1,9 @@
-"""Verify shipped permission rules and execute setup migrations against isolated user settings."""
+"""Verify shipped permission rules and execute setup migrations against isolated user settings.
+
+Two migrations run against isolated settings: the allow merge removes each plugin's exact retired allow rules, and the
+deny merge removes the exact retired gh write deny entries (``permissions-deny-retired.json``), which would otherwise
+defeat the gh write guard's one-time approval, since a settings deny rule still applies after a hook allows a call.
+"""
 
 from __future__ import annotations
 
@@ -174,4 +179,100 @@ def test_setup_migrates_only_obsolete_rule(plugin: str, settings: dict[str, obje
     assert json.loads(second.stdout) == migrated
     expected = json.loads(json.dumps(settings))
     expected.setdefault("permissions", {})["allow"] = migrated["permissions"]["allow"]
+    assert migrated == expected
+
+
+#: A gh write deny entry every hook plugin and codemap-py shipped before the gh write guard's one-time approval.
+RETIRED_GH_DENY = "Bash(gh pr merge:*)"
+#: Local branch and tag deletion denies every hook plugin and codemap-py shipped before local Git ran freely.
+RETIRED_LOCAL_DENY = ("Bash(git branch -D:*)", "Bash(git branch -d:*)", "Bash(git tag -d:*)")
+#: Force and mirror push denies every plugin keeps: no approval ever covers a force push.
+KEPT_FORCE_DENY = (
+    "Bash(git push --force:*)",
+    "Bash(git push --force-with-lease:*)",
+    "Bash(git push -f:*)",
+    "Bash(git push --force-if-includes:*)",
+    "Bash(git push --mirror:*)",
+)
+KEPT_DENY = KEPT_FORCE_DENY[0]
+
+
+def _plugin_json(plugin: str, name: str) -> list[str]:
+    """Return one of a plugin's shipped ``.claude-plugin`` permission lists."""
+    return json.loads((ROOT / "plugins" / plugin / ".claude-plugin" / name).read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("plugin", PLUGINS)
+def test_shipped_deny_list_holds_no_retired_entry(plugin: str) -> None:
+    """No shipped deny entry names a gh command or a local branch/tag deletion; every force push deny stays.
+
+    A settings deny rule still applies after a hook allows a call, so a shipped gh write deny would make every one-time
+    ``gh-write`` approval spend its token and still be denied; local Git, deletions included, runs freely. The retired
+    list holds exactly those two kinds and nothing the list still ships.
+    """
+    deny = _plugin_json(plugin, "permissions-deny.json")
+    retired = _plugin_json(plugin, "permissions-deny-retired.json")
+
+    assert [rule for rule in deny if rule.startswith("Bash(gh ") or rule in RETIRED_LOCAL_DENY] == []
+    assert [rule for rule in KEPT_FORCE_DENY if rule not in deny] == []
+    assert {RETIRED_GH_DENY, *RETIRED_LOCAL_DENY} <= set(retired)
+    assert [
+        rule for rule in retired if rule in deny or not (rule.startswith("Bash(gh ") or rule in RETIRED_LOCAL_DENY)
+    ] == []
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(JQ is None, reason="jq is required to execute the shipped setup migration")
+@pytest.mark.parametrize("plugin", PLUGINS)
+@pytest.mark.parametrize(
+    "settings",
+    [
+        pytest.param({}, id="first-install"),
+        pytest.param({"permissions": {"deny": [RETIRED_GH_DENY, RETIRED_GH_DENY, KEPT_DENY]}}, id="retired-and-kept"),
+        pytest.param({"permissions": {"deny": [*RETIRED_LOCAL_DENY, KEPT_DENY]}}, id="retired-local-deletion"),
+        pytest.param(
+            {
+                "permissions": {
+                    "allow": ["Bash(custom-tool:*)"],
+                    "deny": [RETIRED_GH_DENY, "Bash(gh pr merge --admin:*)", "Bash(custom-deny:*)"],
+                },
+                "env": {"CUSTOM_SETTING": "preserved"},
+            },
+            id="preserve-user-settings",
+        ),
+    ],
+)
+def test_setup_retires_only_the_shipped_gh_write_denies(plugin: str, settings: dict[str, object]) -> None:
+    """Setup removes exactly the retired gh write denies, adds the shipped ones, keeps the rest, and is idempotent.
+
+    A user's own deny entry that only resembles a retired one (``Bash(gh pr merge --admin:*)``) stays: removal is an
+    exact string match against the plugin's retired list.
+    """
+    root = ROOT / "plugins" / plugin
+    source = root / ("README.md" if plugin == "codemap-py" else "skills/setup/SKILL.md")
+    expressions = re.findall(r"'([^'\n]*\.permissions\.deny = [^'\n]*)'", source.read_text(encoding="utf-8"))
+    assert len(expressions) == 1, "setup must expose one executable deny merge"
+    meta = root / ".claude-plugin"
+    command = [
+        JQ,
+        "--slurpfile",
+        "deny",
+        str(meta / "permissions-deny.json"),
+        "--slurpfile",
+        "retired",
+        str(meta / "permissions-deny-retired.json"),
+        expressions[0],
+    ]
+
+    first = subprocess.run(command, input=json.dumps(settings), capture_output=True, text=True, check=True)
+    migrated = json.loads(first.stdout)
+    second = subprocess.run(command, input=first.stdout, capture_output=True, text=True, check=True)
+
+    original_deny = settings.get("permissions", {}).get("deny", [])
+    shipped = _plugin_json(plugin, "permissions-deny.json")
+    retired = set(_plugin_json(plugin, "permissions-deny-retired.json"))
+    assert migrated["permissions"]["deny"] == sorted(set(original_deny + shipped) - retired)
+    assert json.loads(second.stdout) == migrated
+    expected = json.loads(json.dumps(settings))
+    expected.setdefault("permissions", {})["deny"] = migrated["permissions"]["deny"]
     assert migrated == expected

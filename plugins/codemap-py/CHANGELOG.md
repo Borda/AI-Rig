@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.42.0
+
+- Stop shipping the GitHub write deny entries (`gh issue`/`pr`/`release`/`gist` writes, `gh repo fork`/`create`, `gh api` with `--method`/`-X` `POST`, `PATCH`, `PUT` or `DELETE`), and make the manual deny merge in the README remove exactly those entries from user settings, listed in the new `.claude-plugin/permissions-deny-retired.json`. Claude Code applies a settings deny rule even after a hook allows a call, so they would defeat the one-time `gh-write` approval of the sibling `cc_*` plugins' gh write guard. Without one of those plugins a gh write reaches the normal permission prompt, except through the two GitHub API calls this plugin's own allow list pre-approves (`Bash(gh api repos/*)`, `Bash(gh api graphql:*)`): a field POST or a GraphQL mutation made through them runs unprompted, a known gap kept so a codemap-only install reads GitHub without prompts.
+- Stop denying local `git branch -D`, `git branch -d` and `git tag -d`: local Git runs freely, and only force and mirror pushes stay denied. The manual deny merge removes these three entries from user settings too.
+
 ## 0.41.0
 
 - Deny `git push --force-if-includes` and `git push --mirror` in the shipped permission deny list, beside the existing force-push entries.
