@@ -1,5 +1,5 @@
 {
-  "description": "oss plugin hooks: agent routing fallback + Bash auto-allow dispatch with audit records + oss:review and oss:analyse report-header gates + oss:resolve item-table gate",
+  "description": "oss plugin hooks: agent routing fallback + gh write guard + Bash auto-allow dispatch with audit records + oss:review and oss:analyse report-header gates + oss:resolve item-table gate",
   "hooks": {
     "PostToolUse": [
       {
@@ -78,6 +78,15 @@
           }
         ],
         "matcher": "Agent"
+      },
+      {
+        "hooks": [
+          {
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/gh-write-guard.js\"; done; exit 0",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
       },
       {
         "hooks": [

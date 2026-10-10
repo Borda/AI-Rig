@@ -11,8 +11,10 @@ library misses is a force-push bypass in one hook and a lost rule in the other. 
   time reads as ``push --force``.
 * **Interpreter code** — ``python -c``/``perl -e``/``node -e`` code naming git and push reads as a push.
 * **Precision where it matters** — quoted text, commit-message heredocs and look-alike subcommands do not surface one.
+* **Redirections** — an unquoted redirection is dropped with its target and fd number, decided where quoting is known:
+  a quoted ``>`` stays an argument, ``'a>'&`` still ends a command, a plain git alias keeps ``>`` as an argument.
 * **Fail closed** — quoting the lexer cannot follow, an oversized brace expansion, and unknown git global options widen
-  the answer, never narrow it.
+  the git answer, never narrow it; for any other program the answer is null instead of a guessed argv.
 
 Each case runs the shipped module in ``node``; the hook-level tests cover how each hook acts on the answer.
 """
@@ -50,6 +52,25 @@ def _readings(command: object) -> set[str]:
     return {" ".join(args) for args in json.loads(proc.stdout)}
 
 
+def _invocations(command: object, program: str) -> list[list[str]] | None:
+    """Return every invocation of ``program`` the library finds in ``command``, as word lists, or None for no argv."""
+    proc = _node(
+        f"process.stdout.write(JSON.stringify(lib.programInvocations({json.dumps(command)}, {json.dumps(program)})));"
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def _unreadable(command: str) -> bool:
+    """Return the ``info.unreadable`` flag ``programInvocations`` sets for ``command``."""
+    proc = _node(
+        f"const info = {{}}; lib.programInvocations({json.dumps(command)}, 'gh', info);"
+        " process.stdout.write(JSON.stringify(info.unreadable));"
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
 @_skip_node_unavailable
 class TestModule:
     """The module loads cleanly and exposes only its one entry point."""
@@ -62,11 +83,16 @@ class TestModule:
 
         assert proc.returncode == 0, proc.stderr
 
-    def test_exports_only_git_subcommand_args(self) -> None:
-        """A narrow surface keeps the lexer internals free to change without breaking either hook."""
+    def test_exports_only_the_entry_points(self) -> None:
+        """A narrow surface keeps the lexer internals free to change without breaking any hook.
+
+        ``gitSubcommandArgs`` serves the git hooks; ``programInvocations`` serves the gh write guard, which reads gh
+        invocations from the same lexer. ``XARGS_TAIL`` is the word ``programInvocations`` puts where xargs supplies
+        arguments at run time, so the gh guard can tell ``xargs gh api`` from a complete ``gh api`` argv.
+        """
         proc = _node("process.stdout.write(JSON.stringify(Object.keys(lib)));")
 
-        assert json.loads(proc.stdout) == ["gitSubcommandArgs"]
+        assert json.loads(proc.stdout) == ["gitSubcommandArgs", "programInvocations", "XARGS_TAIL"]
 
     @pytest.mark.parametrize("command", [None, 42, ["git", "push"]])
     def test_non_string_command_yields_nothing(self, command: object) -> None:
@@ -97,11 +123,14 @@ class TestRecall:
             pytest.param("sudo -u git git push -f", "push -f", id="sudo-user-named-git"),
             pytest.param("env -u HOME git push --force", "push --force", id="env-unset-value"),
             pytest.param("GIT_TRACE=1 /usr/bin/git push", "push", id="assignment-and-path"),
-            pytest.param("ls | xargs -I{} git add {}", "add {}", id="xargs-with-options"),
+            # xargs replaces `{}` and supplies no visible words: both read as run-time text
+            pytest.param("ls | xargs -I{} git add {}", "add $(xargs) $(xargs)", id="xargs-with-options"),
             pytest.param('git -C "dir with space" push', "push", id="quoted-dir-with-space"),
             pytest.param('git -C "a;b" push -f', "push -f", id="quoted-dir-with-operator"),
             pytest.param('"git" commit -m x', "commit -m x", id="quoted-argv0"),
             pytest.param("git push $'--force'", "push --force", id="ansi-c-quoting"),
+            pytest.param("$'\\x67it' push -f", "push -f", id="ansi-c-hex-escape-program"),
+            pytest.param("git push $'\\x2df'", "push -f", id="ansi-c-hex-escape-option"),
             pytest.param("echo `git push -f`", "push -f", id="backticks"),
             pytest.param('echo "$(git push -f)"', "push -f", id="substitution-in-double-quotes"),
             pytest.param("diff <(git push -f) x", "push -f", id="process-substitution"),
@@ -112,8 +141,13 @@ class TestRecall:
             pytest.param("env -S 'git push -f'", "push -f", id="env-split-string"),
             pytest.param("bash <<'EOF'\ngit push -f\nEOF", "push -f", id="heredoc-to-shell"),
             pytest.param("cat <<'EOF' | sh\ncd x; git push -f\nEOF", "push -f", id="heredoc-piped-to-shell"),
-            pytest.param("git push 2>&1 | tee log", "push 2>&1", id="redirection-not-background"),
+            pytest.param("git push 2>&1 | tee log", "push", id="redirection-not-background"),
             pytest.param("BASH -c 'git push -f'", "push -f", id="runner-name-case"),
+            pytest.param("bash <<< 'git push -f'", "push -f", id="here-string-to-shell"),
+            pytest.param('sh <<<"git push origin +main"', "push origin +main", id="here-string-glued"),
+            pytest.param("<<< 'git push -f' bash", "push -f", id="here-string-before-runner"),
+            pytest.param("cat <<< hi\ntime git push -f\nhi", "push -f", id="here-string-then-next-line"),
+            pytest.param("cat <<<hi\nsudo GIT push origin main", "push origin main", id="here-string-glued-next-line"),
         ],
     )
     def test_invocation_is_found(self, command: str, reading: str) -> None:
@@ -202,6 +236,88 @@ class TestInlineAliases:
 
 
 @_skip_node_unavailable
+class TestInlineAutocorrect:
+    """An inline ``help.autocorrect`` that runs git's guess for a mistyped subcommand lets any subcommand run as push.
+
+    git 2.54 probed: ``1``, ``immediate``, ``true``, ``yes``, ``2``, ``-1`` and the bare key run the correction (a
+    mistyped status subcommand runs status); ``0``, ``false``, ``off``, ``no``, the empty value, ``show``, ``prompt``
+    (no terminal) and ``never`` do not. A misspelling git maps to push is easy to find (``pus``, ``pussh``), so every
+    subcommand under an enabling value reads as ``push --force``.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git -c help.autocorrect=immediate pussh --force origin main", id="immediate"),
+            pytest.param("git -c help.autocorrect=1 status", id="numeric-delay"),
+            pytest.param("git -c help.autocorrect=-1 status", id="negative-immediate"),
+            pytest.param("git -c help.autocorrect status", id="bare-key-is-true"),
+            pytest.param("time git -c help.autoCorrect=immediate pus -f", id="key-case-ignored"),
+            pytest.param("git --config-env help.autocorrect=V pus -f", id="config-env-run-time-value"),
+            pytest.param('git -c help.autocorrect="$V" status', id="variable-run-time-value"),
+            pytest.param("git -c help.autocorrect=0 -c help.autocorrect=1 status", id="last-value-wins-on"),
+        ],
+    )
+    def test_enabling_value_reads_every_subcommand_as_force_push(self, command: str) -> None:
+        """A value that runs the correction, or one only the environment holds, adds a ``push --force`` reading."""
+        assert "push --force" in _readings(command)
+
+    @pytest.mark.parametrize(
+        "value",
+        ["0", "false", "FALSE", "off", "no", "", "never", "show", "prompt"],
+    )
+    def test_disabling_value_adds_nothing(self, value: str) -> None:
+        """A value that never runs a guess leaves only the literal reading."""
+        assert _readings(f"git -c help.autocorrect={value} status") == {"status"}
+
+    def test_last_value_wins_off(self) -> None:
+        """A later disabling entry overrides an earlier enabling one, as git reads repeated ``-c`` keys."""
+        assert _readings("git -c help.autocorrect=1 -c help.autocorrect=0 status") == {"status"}
+
+
+@_skip_node_unavailable
+class TestPathnameExpansion:
+    """An unquoted glob in a git argument can expand to a planted file named like a flag or refspec.
+
+    ``touch ./-f; git push origin -?`` runs ``git push origin -f``. The literal reading stays, and a second reading
+    reads each unquoted glob argument as ``--force``, so a guard fails closed. Readings remain plain strings.
+    """
+
+    @pytest.mark.parametrize(
+        ("command", "reading"),
+        [
+            pytest.param("git push origin -?", "push origin --force", id="question-mark-flag"),
+            pytest.param("git push origin ?main", "push origin --force", id="question-mark-refspec"),
+            pytest.param("git push origin ma*", "push origin --force", id="star"),
+            pytest.param("git push origin [+]main", "push origin --force", id="bracket"),
+            pytest.param("bash -c 'git push origin ma*'", "push origin --force", id="nested-shell-source"),
+        ],
+    )
+    def test_glob_argument_adds_a_force_reading(self, command: str, reading: str) -> None:
+        """The glob argument is read as ``--force`` in an extra reading, also inside shell source a runner lexes."""
+        assert reading in _readings(command)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git push origin '-?'", id="single-quoted"),
+            pytest.param('git push origin "?main"', id="double-quoted"),
+            pytest.param("git push origin \\?main", id="escaped"),
+            pytest.param("git push origin $*", id="positional-parameters"),
+            pytest.param("git push origin ${arr[0]}", id="array-subscript"),
+            pytest.param("git -c alias.p='push origin ma*' p", id="plain-alias-value"),
+        ],
+    )
+    def test_literal_glob_character_adds_nothing(self, command: str) -> None:
+        """Quoted, escaped and parameter characters never expand; git splits a plain alias without globbing."""
+        assert "push origin --force" not in _readings(command)
+
+    def test_every_reading_is_a_plain_string(self) -> None:
+        """The marks the lexer uses internally never leak: ``git add *.py`` reads as itself and as ``add --force``."""
+        assert _readings("git add *.py") == {"add *.py", "add --force"}
+
+
+@_skip_node_unavailable
 class TestInterpreterCode:
     """Code an interpreter runs is not shell syntax; a raw scan for git plus push reads it as a push."""
 
@@ -264,6 +380,7 @@ class TestPrecision:
                 "git commit -m \"$(cat <<'EOF'\nfix: x\n\nDon't git push --force here.\nEOF\n)\"",
                 id="commit-message-heredoc",
             ),
+            pytest.param("cat <<< 'git push -f'", id="here-string-to-non-runner"),
         ],
     )
     def test_no_push_reading(self, command: str) -> None:
@@ -284,6 +401,55 @@ class TestPrecision:
     def test_parameter_expansion_braces_are_not_brace_expansion(self) -> None:
         """``${HOME%%,*}`` holds a comma inside ``${…}``; reading it as brace expansion would invent words."""
         assert _readings("git log ${HOME%%,*}a") == {"log ${HOME%%,*}a"}
+
+
+@_skip_node_unavailable
+class TestRedirections:
+    """A redirection is never an argument; only an unquoted ``<``, ``>`` or ``&>`` starts one.
+
+    The lexer decides while it still sees the quoting. A decision on dequoted words read ``-t '>'`` as a redirection and
+    glued ``'a>'&gh …`` into one word, hiding the second command.
+    """
+
+    @pytest.mark.parametrize(
+        ("command", "words"),
+        [
+            pytest.param("gh api x 2>&1 >out <in >|c &>>d 1>&- <>rw", ["gh", "api", "x"], id="every-operator"),
+            pytest.param("gh api x > out.json", ["gh", "api", "x"], id="separate-target"),
+            pytest.param("gh 2>/dev/null pr create", ["gh", "pr", "create"], id="before-the-subcommand"),
+            pytest.param("gh pr 2<<<x create", ["gh", "pr", "create"], id="fd-here-string"),
+            pytest.param("gh pr {fd}>x create", ["gh", "pr", "create"], id="variable-fd"),
+            pytest.param(
+                "gh api x -q a>b -f c=d", ["gh", "api", "x", "-q", "a", "-f", "c=d"], id="operator-ends-a-word"
+            ),
+            pytest.param("gh api x -t '>' -f a=b", ["gh", "api", "x", "-t", ">", "-f", "a=b"], id="single-quoted"),
+            pytest.param('gh api x -t "<<" -f a=b', ["gh", "api", "x", "-t", "<<", "-f", "a=b"], id="double-quoted"),
+            pytest.param("gh api x -q \\> -f a=b", ["gh", "api", "x", "-q", ">", "-f", "a=b"], id="escaped"),
+            pytest.param('gh pr view "2">x', ["gh", "pr", "view", "2"], id="quoted-digits-are-no-fd"),
+            pytest.param("gh pr view 2&>x", ["gh", "pr", "view", "2"], id="and-redirection-takes-no-fd"),
+            pytest.param("true '>'&gh pr create", ["gh", "pr", "create"], id="quoted-operator-before-background"),
+            pytest.param("cat > >(gh pr create)", ["gh", "pr", "create"], id="process-substitution-target"),
+        ],
+    )
+    def test_invocation_words(self, command: str, words: list[str]) -> None:
+        """Exactly the words bash passes to gh: redirections, their targets and fd numbers gone, quoted text kept."""
+        assert _invocations(command, "gh") == [words]
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git 2>/dev/null push -f", id="before-the-subcommand"),
+            pytest.param("git > x push -f", id="separate-target-before-the-subcommand"),
+            pytest.param("{ git 2>/dev/null push -f; }", id="grouped"),
+        ],
+    )
+    def test_redirection_never_reads_as_the_git_subcommand(self, command: str) -> None:
+        """Bash runs ``git push -f`` for each; read as the subcommand, the redirection hid the push from both hooks."""
+        assert "push -f" in _readings(command)
+
+    def test_plain_alias_keeps_angle_brackets_as_arguments(self) -> None:
+        """Git splits a plain alias itself, so ``>`` there is an argument and the ``-f`` after it a push flag."""
+        assert "push > -f" in _readings("git -c alias.p='push > -f' p")
 
 
 @_skip_node_unavailable
@@ -314,3 +480,215 @@ class TestFailClosed:
         readings = _readings("git push " + "{a,b}" * 9 + " -f")
 
         assert any(reading.startswith("push ") and reading.endswith(" -f") for reading in readings)
+
+    @pytest.mark.parametrize(
+        ("command", "reading"),
+        [
+            pytest.param('git push origin "?main', "push origin --force", id="unbalanced-quote"),
+            pytest.param("git push origin ?main {1..300}", "push origin --force 1..300", id="oversized-braces"),
+        ],
+    )
+    def test_glob_on_the_raw_path_reads_as_force(self, command: str, reading: str) -> None:
+        """The raw scan knows no quoting, so every glob character there counts as unquoted."""
+        assert reading in _readings(command)
+
+
+@_skip_node_unavailable
+class TestProgramInvocations:
+    """``programInvocations`` finds any program the way the git readings do: one lexer for every guard."""
+
+    @pytest.mark.parametrize(
+        ("command", "words"),
+        [
+            pytest.param("gh pr create -t x", ["gh", "pr", "create", "-t", "x"], id="plain"),
+            pytest.param("cd /x && { gh pr merge 1; }", ["gh", "pr", "merge", "1"], id="grouped-after-operator"),
+            pytest.param("bash -c 'gh pr create'", ["gh", "pr", "create"], id="bash-c"),
+            pytest.param('eval "gh issue close 3"', ["gh", "issue", "close", "3"], id="eval"),
+            pytest.param("sudo -u u GH.EXE repo delete", ["GH.EXE", "repo", "delete"], id="prefix-case-and-exe"),
+            pytest.param("bash <<< 'gh release create v1'", ["gh", "release", "create", "v1"], id="here-string"),
+            pytest.param(
+                "gh api graphql -f query='query { viewer { login } }'",
+                ["gh", "api", "graphql", "-f", "query=query { viewer { login } }"],
+                id="quoted-argument-stays-one-word",
+            ),
+            pytest.param(
+                "gh api repos/o/r/pulls?state=open", ["gh", "api", "repos/o/r/pulls?state=open"], id="glob-plain"
+            ),
+        ],
+    )
+    def test_invocation_is_found_with_quoting_removed(self, command: str, words: list[str]) -> None:
+        """Each invocation is its words from the program word on, quoting removed and glob marks never leaked."""
+        assert words in _invocations(command, "gh")
+
+    @pytest.mark.parametrize(
+        ("command", "word"),
+        [
+            pytest.param("gh pr $'cr\\x65ate'", "create", id="hex"),
+            pytest.param("gh pr $'\\x63\\x72eate'", "create", id="hex-one-and-two-digits"),
+            pytest.param("gh pr $'\\143reate'", "create", id="octal"),
+            pytest.param("gh pr $'a\\'b'", "a'b", id="escaped-quote"),
+            pytest.param("gh pr $'a\\tb'", "a\tb", id="named-escape"),
+            pytest.param("gh pr $'a\\\\b'", "a\\b", id="escaped-backslash"),
+        ],
+    )
+    def test_ansi_c_escapes_both_shells_share_decode(self, command: str, word: str) -> None:
+        """Named, octal and ``\\xHH`` escapes yield the text bash and zsh both pass to the program.
+
+        Left undecoded, ``gh pr $'cr\\x65ate'`` read as ``x65ate``-shaped text while the shell ran ``gh pr create``.
+        """
+        assert ["gh", "pr", word] in _invocations(command, "gh")
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("gh pr $'\\u0063reate'", id="unicode-escape"),
+            pytest.param("gh pr $'\\U00000063reate'", id="long-unicode-escape"),
+            pytest.param("gh pr $'\\x{63}reate'", id="hex-brace-escape"),
+            pytest.param("gh pr $'\\cA'", id="control-escape"),
+            pytest.param("gh pr $'cre\\qate'", id="unknown-escape"),
+            pytest.param("gh pr $'create\\x00junk'", id="nul"),
+            pytest.param('gh pr $"create"', id="locale-string"),
+            pytest.param("cat <<$'EOF'\nhi\nEOF\ngh pr merge 1", id="ansi-c-heredoc-delimiter"),
+            pytest.param('cat <<$"EOF"\nhi\nEOF\ngh pr merge 1', id="locale-heredoc-delimiter"),
+            pytest.param("x=$$'\\'; gh pr create #'", id="dollars-before-a-quote"),
+            pytest.param('x="${y:-\'"\'}"; gh pr create # "\'', id="single-quote-in-double-quoted-expansion"),
+            pytest.param('x="$${y:-"}"; gh pr create # "', id="dollars-before-a-brace-in-double-quotes"),
+            pytest.param('x="$$(echo ")"); gh pr create # "', id="dollars-before-a-paren-in-double-quotes"),
+            pytest.param('x="${y:-\\}\'"\'}"; gh pr create # "\'', id="escaped-brace-then-single-quote-in-expansion"),
+            pytest.param('x="${ gh pr create; }"', id="command-brace-in-double-quotes"),
+            pytest.param('x="${|gh pr create;}"', id="value-brace-in-double-quotes"),
+            pytest.param('x="${\tgh pr create; }"', id="command-brace-after-a-tab"),
+            pytest.param('x="${\ngh pr create; }"', id="command-brace-after-a-newline"),
+            pytest.param("x=${ gh pr create; }", id="command-brace-unquoted"),
+            pytest.param("cat <<EOF\n${ gh pr create; }\nEOF", id="command-brace-in-heredoc"),
+            pytest.param("cat <<EOF\n$$${ gh pr create; }\nEOF", id="command-brace-after-pid-in-heredoc"),
+            pytest.param('gh pr view "${ gh pr create --title t --body b; }"', id="command-brace-as-a-read-argument"),
+            pytest.param("gh pr view 1 $\\\n'\\''; gh pr create #'", id="continued-ansi-c-string"),
+            pytest.param("gh pr view 1 <<EO\\\nF\nx\nEOF\ngh pr create", id="continued-heredoc-delimiter"),
+            pytest.param("cat <<EOF\n$\\\n(gh pr create)\nEOF", id="continued-substitution-in-heredoc"),
+            pytest.param('gh pr view "$\\\n(gh pr create)"', id="continued-substitution-in-double-quotes"),
+            pytest.param('x="${\\\n gh pr create; }"', id="continued-command-brace"),
+            pytest.param("cat <<EOF\nEO\\\nF\ngh pr create\nEOF", id="continued-terminator-line"),
+            pytest.param("cat <\\\n<EOF\nx\nEOF", id="continued-redirection-operator"),
+            pytest.param("printf 'gh pr cr\\x65ate\\n' | sh", id="escapes-printed-to-a-stdin-shell"),
+        ],
+    )
+    def test_quoting_the_shells_read_differently_has_no_exact_argv(self, command: str) -> None:
+        """Escapes and locale strings bash and zsh decode differently leave no exact argv: the caller fails closed.
+
+        The Bash tool runs the user's shell. zsh reads ``$'\\x{63}'`` as a NUL then ``{63}`` and ``$"git"`` as ``$git``,
+        bash 3.2 has no ``\\u``; no single reading is right for every shell.
+        """
+        assert _invocations(command, "gh") is None
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git $'\\x{70}ush' -f origin main", id="hex-brace-subcommand"),
+            pytest.param("$'\\x{67}it' push", id="hex-brace-program"),
+            pytest.param('git $"push" -f', id="locale-subcommand"),
+        ],
+    )
+    def test_quoting_the_shells_read_differently_reads_as_force_push(self, command: str) -> None:
+        """Git reads ``push --force`` beside its raw-segment fallback: the unreadable text may hide the program word."""
+        assert "push --force" in _readings(command)
+
+    @pytest.mark.parametrize(
+        ("command", "unreadable"),
+        [
+            pytest.param("gh pr $'\\x{63}reate'", True, id="unreadable-escape"),
+            pytest.param('echo $"hello"', True, id="locale-string-without-the-program"),
+            pytest.param("gh pr view 'x$'", False, id="dollar-before-a-closing-quote"),
+            pytest.param("gh pr $'cr\\x65ate'", False, id="readable-escape"),
+        ],
+    )
+    def test_unreadable_flag_reports_shell_dependent_quoting(self, command: str, unreadable: bool) -> None:
+        """``info.unreadable`` comes from the lexer, not from a text search: ``'x$'`` is a plain quoted word."""
+        assert _unreadable(command) is unreadable
+
+    @pytest.mark.parametrize(
+        ("command", "words"),
+        [
+            pytest.param('x="${a%"b"}"; gh pr merge 1', ["gh", "pr", "merge", "1"], id="nested-quotes-then-a-write"),
+            pytest.param('gh pr view "${N:-1}"', ["gh", "pr", "view", "${N:-1}"], id="expansion-as-an-argument"),
+            pytest.param('x="${a:-b\\}c}"; gh pr view 1', ["gh", "pr", "view", "1"], id="escaped-brace-stays-inside"),
+            pytest.param('gh pr view "$$" 1', ["gh", "pr", "view", "$$", "1"], id="pid-before-the-closing-quote"),
+            pytest.param(
+                'echo "${HOME} ${#x} ${z[@]}"; gh pr view', ["gh", "pr", "view"], id="parameters-stay-readable"
+            ),
+            pytest.param(
+                "cat <<EOF\n$$$(gh pr create)\nEOF", ["gh", "pr", "create"], id="pid-then-substitution-in-heredoc"
+            ),
+            pytest.param(
+                'x="`echo \\"\'\\"; gh pr create; \\"\'\\"`"',
+                ["gh", "pr", "create"],
+                id="escaped-double-quote-in-backticks-in-double-quotes",
+            ),
+            pytest.param("echo hi # note \\\ngh pr create", ["gh", "pr", "create"], id="comment-does-not-continue"),
+            pytest.param("trap 'gh pr create' EXIT", ["gh", "pr", "create"], id="trap-handler-is-source"),
+            pytest.param("echo 'gh pr view 1' | sh", ["gh", "pr", "view", "1"], id="text-printed-to-a-stdin-shell"),
+            pytest.param("let 'a[$(gh pr view 1)]=1'", ["gh", "pr", "view", "1"], id="subscript-substitution"),
+            pytest.param("echo 1 | xargs gh pr view", ["gh", "pr", "view", "$(xargs)"], id="xargs-tail"),
+        ],
+    )
+    def test_double_quotes_nest_inside_a_double_quoted_expansion(self, command: str, words: list[str]) -> None:
+        """``"${x%"$y"}"`` nests its inner quotes in bash and zsh alike, so the command after it is still seen."""
+        assert words in _invocations(command, "gh")
+
+    def test_ansi_c_closing_quote_is_found_before_decoding(self) -> None:
+        """The string ends where the shell ends it: a backslash skips one character, ``\\\\`` included.
+
+        Decoding first let ``\\c`` consume a backslash, so the escaped quote after it closed nothing and the gh write
+        that followed read as part of the string.
+        """
+        assert _invocations("x=$'a\\\\'; gh pr create # '", "gh") == [["gh", "pr", "create"]]
+
+    def test_no_coarse_pass_splits_a_quoted_argument(self) -> None:
+        """Only git keeps the quotes-ignored coarse pass; for gh it would split a quoted GraphQL query.
+
+        The coarse pass exists to keep the pre-lexer git hooks' detections; gh has no earlier detector to preserve.
+        """
+        assert _invocations("gh api graphql -f query='{ a }'", "gh") == [["gh", "api", "graphql", "-f", "query={ a }"]]
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("echo 'gh pr create'", id="quoted-text"),
+            pytest.param("ls ~/.config/ghx", id="look-alike-word"),
+            pytest.param("echo a>&gh pr merge 1", id="redirection-target"),
+            pytest.param(None, id="non-string"),
+        ],
+    )
+    def test_text_naming_gh_is_no_invocation(self, command: object) -> None:
+        """Quoted text, look-alike words and a redirection target are data; a malformed command is no invocation."""
+        assert _invocations(command, "gh") == []
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("gh pr --title 'a b' create 'x", id="unbalanced-quote"),
+            pytest.param("gh pr --title 'a b' create {1..300}", id="oversized-braces"),
+            pytest.param("echo $(gh pr create", id="unterminated-substitution"),
+            pytest.param('bash -c "gh pr create \'x"', id="unbalanced-nested-source"),
+            pytest.param("python3 -c \"import os; os.system('gh pr comment 1')\"", id="interpreter-code"),
+        ],
+    )
+    def test_no_exact_argv_is_null(self, command: str) -> None:
+        """Without an exact argv the answer is null, never a guess, and the caller fails closed.
+
+        Quote-stripped or code-split words shift positionals: ``--title 'a b' create`` read without quoting puts ``b``
+        where gh reads ``create``, so a guessed argv can hide a write instead of widening the answer.
+        """
+        assert _invocations(command, "gh") is None
+
+    def test_code_not_naming_the_program_keeps_the_answer(self) -> None:
+        """Interpreter code that never names gh leaves the rest of the command exactly read."""
+        assert _invocations("python3 -c 'print(1)' && gh pr view 1", "gh") == [["gh", "pr", "view", "1"]]
+
+    def test_git_keeps_its_raw_segment_fallback(self) -> None:
+        """Git readings fail closed by widening, so the git target still answers where any other program's is null."""
+        assert ["git", "push", "x"] in _invocations("git push 'x", "git")
+
+    def test_git_keeps_its_own_target(self) -> None:
+        """Asking for git returns the git invocations the readings use, coarse pass included."""
+        assert ["git", "push", "-f"] in _invocations("bash -c 'git push -f'", "GIT")

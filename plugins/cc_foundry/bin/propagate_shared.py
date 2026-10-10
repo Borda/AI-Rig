@@ -435,6 +435,28 @@ MANIFEST: list[dict[str, object]] = [
         ],
     },
     {
+        # The hard deny for GitHub writes through gh. Every plugin ships the
+        # `gh api repos/*` and `gh api graphql:*` allows it closes, and a plugin
+        # may be installed alone, so each registers its own copy.
+        "canonical": "plugins/cc_foundry/hooks/gh-write-guard.js",
+        "copies": [
+            "plugins/cc_oss/hooks/gh-write-guard.js",
+            "plugins/cc_develop/hooks/gh-write-guard.js",
+            "plugins/cc_research/hooks/gh-write-guard.js",
+        ],
+    },
+    {
+        # The shell lexer gh-write-guard.js reads gh invocations with (foundry's
+        # commit-guard.js and rule-inject.js read git with it too). A stale copy
+        # would let one plugin's guard miss a spelling another one blocks.
+        "canonical": "plugins/cc_foundry/hooks/lib/shell-git.js",
+        "copies": [
+            "plugins/cc_oss/hooks/lib/shell-git.js",
+            "plugins/cc_develop/hooks/lib/shell-git.js",
+            "plugins/cc_research/hooks/lib/shell-git.js",
+        ],
+    },
+    {
         # Observation half of the audit log: one row per completed Bash call and
         # per session boundary. All four plugins write their own rows with nothing
         # coordinating them, so a stale copy would silently change the record

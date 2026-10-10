@@ -21,28 +21,49 @@
 //   git on macOS and Windows). Quoting and brace expansion are resolved (`git
 //   -C "dir with space" push`, `git {push,} -f`); operators, substitutions and
 //   shell source handed to another program are followed (`cd /x && git push`,
-//   `echo "$(git push)"`, `bash -c "git push"`, `eval '…'`); `python3 -c`,
-//   `perl -e`, `ruby -e` and `node -e` code naming git and push reads as a
-//   push carrying every token of that code. git's global options are stripped
-//   (`git -C /path push`), an unknown one read both as flag and as
-//   value-taking; an inline alias (`git -c alias.p=push p`, `--config-env
+//   `echo "$(git push)"`, `bash -c "git push"`, `eval '…'`, `bash <<< '…'`);
+//   `python3 -c`, `perl -e`, `ruby -e` and `node -e` code naming git and push
+//   reads as a push carrying every token of that code. git's global options
+//   are stripped (`git -C /path push`), an unknown one read both as flag and
+//   as value-taking; an inline alias (`git -c alias.p=push p`, `--config-env
 //   alias.p=VAR`) is expanded, and one whose value is set at run time reads
-//   as a force push. `send-pack` (push's plumbing) and `http-push` are pushes.
+//   as a force push, as does every subcommand under an enabling inline
+//   `help.autocorrect` (git runs its guess for a typo: `-c
+//   help.autocorrect=1 pus -f`). `send-pack` (push's plumbing), `http-push`,
+//   `subtree … push` and every `remote-<transport>` helper are pushes; the
+//   program name is matched lower-cased (macOS runs `git HTTP-PUSH`).
 //   Force spellings: a short cluster carrying f (`git push -fu`); any `--force*`
 //   and any prefix git accepts for a force option (`--mir`, `--force-w`; an
 //   ambiguous one such as `--f` git refuses anyway); a `+`-prefixed refspec
-//   (`git push origin +main`), which names no force flag at all.
+//   (`git push origin +main`, also under `subtree push`, which strips it:
+//   fail closed), which names no force flag at all; an unquoted glob argument
+//   (`git push origin -?` after `touch ./-f`), read as `--force` beside its
+//   literal reading; a `remote-<transport>` helper, whose `push +src:dst`
+//   commands arrive on stdin.
 //   Fail closed: a command whose quoting the lexer cannot follow is scanned for
-//   any `git` word, and unquoted prose naming one (`echo git push -f`) is
-//   treated as the invocation it spells. If the library itself cannot load,
-//   every command naming both `git` and a push command is blocked.
+//   any `git` word, every glob character in it counting as unquoted, and
+//   unquoted prose naming one (`echo git push -f`) is treated as the
+//   invocation it spells. Quoting bash and zsh read differently (`$"…"`, most
+//   `$'…'` escapes, bash 5.3's `${ cmd; }`, a spliced backslash-newline;
+//   lib/shell-git.js step 5) may hide
+//   the push itself, so a
+//   command holding it is blocked with its own message. If the library itself
+//   cannot load, every command naming both `git` and a push command or a
+//   `remote-` helper is blocked.
 //   LIMITS: a push assembled at run time — via a variable (`git push
 //   "$FLAGS"`), an alias or include from a config file, or a script on disk —
 //   is beyond what any string inspection can see, and some string-visible
-//   spellings are accepted limits by decision (ANSI-C strings, assigned
-//   values, commands git runs from config, Windows shells, globs, environment
-//   aliases, inline `remote.*` config, dashed programs; full list in
-//   lib/shell-git.js LIMITS). The settings.json
+//   spellings are accepted limits by decision (assigned values, commands git runs from config, Windows shells, globs naming the
+//   program or subcommand, environment aliases, inline `remote.*` config,
+//   dashed programs; full list in lib/shell-git.js LIMITS). Also outside this
+//   guard, with no guard here:
+//     * third-party `git-<name>` programs on PATH that push under their own
+//       subcommand (`git town sync`, `git machete traverse`): an unbounded set.
+//     * GitHub API force updates (`gh repo sync --force`, `gh api … -X PATCH
+//       …/git/refs/…`) run no git push; gh-write-guard.js hard-denies them.
+//     * a `!` shell alias re-lexes the arguments appended to it, so a quoted
+//       glob character there reads as unquoted: a false force block only.
+//   The settings.json
 //   deny entries do not cover it either: Claude Code matches them per
 //   subcommand after stripping a fixed wrapper set, never by path, inside
 //   `sh -c`, or behind `sudo` (permissions reference, "Wrappers").
@@ -61,7 +82,8 @@
 //
 // HOW IT WORKS
 //   1. PreToolUse(Bash): acts only on commands holding a `git push`,
-//      `git send-pack` or `git http-push`.
+//      `git send-pack`, `git http-push`, `git subtree … push` or a
+//      `git remote-<transport>` helper.
 //      Force-push forbidden unconditionally (exit 2 before any sentinel
 //      check); otherwise checks the push sentinel present and fresh.
 //   2. SessionStart: wipes all /tmp/claude-push-auth-* sentinels so
@@ -83,8 +105,9 @@ const { execSync } = require("child_process");
 // Loaded defensively: a guard that crashed on a missing module would exit 1, which Claude Code treats
 // as a non-blocking error — the push would go through. Without the parser, pushes fail closed below.
 let gitSubcommandArgs = null;
+let programInvocations = null;
 try {
-  ({ gitSubcommandArgs } = require(path.join(__dirname, "lib", "shell-git.js")));
+  ({ gitSubcommandArgs, programInvocations } = require(path.join(__dirname, "lib", "shell-git.js")));
 } catch {
   // gitSubcommandArgs stays null
 }
@@ -92,6 +115,9 @@ try {
 // git's commands that update refs on a remote: `send-pack` is push's plumbing, `http-push` its
 // WebDAV transport.
 const PUSH_SUBCOMMANDS = ["push", "send-pack", "http-push"];
+// A `git remote-<transport>` helper reads `push +src:dst` commands on stdin, which no reading sees,
+// so it reads as a force push.
+const REMOTE_HELPER_PUSH = ["push", "--force"];
 // Long options whose any prefix git accepts (`--mir` = `--mirror`). A prefix git finds ambiguous
 // (`--f`: `--follow-tags` or `--force`) is refused before anything is pushed, so counting it costs
 // nothing. `--follow-tags` itself is a prefix of none of them.
@@ -171,6 +197,21 @@ function isForcePush(pushArgs) {
   return args.some((t) => t.startsWith("+"));
 }
 
+// One reading's push arguments from `push` on, or null when it pushes nothing. git runs a program
+// that is not a builtin by file name, so on a case-insensitive file system `git HTTP-PUSH`,
+// `git SUBTREE` and `git REMOTE-HTTPS` run the push programs: the name is matched lower-cased.
+//   * `subtree … push` runs `git push`; its arguments are read for force. git-subtree strips a
+//     refspec's leading `+`, but the reading still counts it as force: fail closed.
+//   * any `remote-<transport>` helper is a force push (REMOTE_HELPER_PUSH).
+function asPush(args) {
+  const [subcommand = "", ...rest] = args;
+  const program = subcommand.toLowerCase();
+  if (PUSH_SUBCOMMANDS.includes(program)) return ["push", ...rest];
+  if (program === "subtree" && rest.includes("push")) return ["push", ...rest];
+  if (program.startsWith("remote-")) return REMOTE_HELPER_PUSH;
+  return null;
+}
+
 function checkSentinel(sentinelPath, ttlMs) {
   try {
     const stat = fs.statSync(sentinelPath);
@@ -238,7 +279,7 @@ process.stdin.on("end", () => {
 
   const command = (tool_input && tool_input.command) || "";
   if (gitSubcommandArgs === null) {
-    if (!/\bgit\b[\s\S]*\b(?:push|send-pack|http-push)\b/i.test(command)) process.exit(0);
+    if (!/\bgit\b[\s\S]*(?:\b(?:push|send-pack|http-push)\b|\bremote-\w)/i.test(command)) process.exit(0);
     process.stderr.write(
       "git push blocked — commit-guard cannot load hooks/lib/shell-git.js to inspect the command.\n" +
         "Reinstall the foundry plugin; until then every command naming git and push is blocked.\n",
@@ -248,12 +289,28 @@ process.stdin.on("end", () => {
   // Anchoring on /^\s*git push\b/ would miss `git -C /path push`, a push after
   // a shell operator, and one inside a group or behind a prefix; all reach the
   // same remote. Inspect every invocation the library finds instead.
-  const pushes = gitSubcommandArgs(command).filter((args) => PUSH_SUBCOMMANDS.includes(args[0]));
+  const pushes = gitSubcommandArgs(command)
+    .map(asPush)
+    .filter((args) => args !== null);
   if (pushes.length === 0) process.exit(0);
 
   // Force-push is forbidden on any branch, always — checked before any
   // sentinel, so a valid push sentinel never bypasses it.
   if (pushes.some(isForcePush)) {
+    const info = {};
+    programInvocations(command, "git", info);
+    if (info.unreadable) {
+      process.stderr.write(
+        "git push blocked — this command holds quoting bash and zsh read differently (lib/shell-git.js step 5: " +
+          "$\"…\", a $'…' escape other than a named one, octal or \\xHH, $$ before a quote, brace or paren, a quote " +
+          "inside a double-quoted ${…}, bash 5.3's ${ cmd; } or ${|cmd;}, a backslash-newline the shells splice " +
+          "before the lexer reads it, text with a backslash printed to a shell reading stdin), which may hide a " +
+          "push; and force-push " +
+          "is forbidden on any branch either " +
+          "way. Rewrite it without that quoting.\n",
+      );
+      process.exit(2);
+    }
     process.stderr.write(
       `git push blocked — force-push is forbidden on any branch. No override, no sentinel bypasses this.\n`,
     );

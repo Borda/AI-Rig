@@ -1,5 +1,5 @@
 {
-  "description": "foundry plugin hooks: task/agent tracking, teammate quality gates, tool preprocessing, and Bash auto-allow dispatch with audit records",
+  "description": "foundry plugin hooks: task/agent tracking, teammate quality gates, tool preprocessing, git push and gh write guards, and Bash auto-allow dispatch with audit records",
   "hooks": {
     "PostToolUse": [
       {
@@ -157,6 +157,15 @@
         "hooks": [
           {
             "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/commit-guard.js\"; done; exit 0",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/gh-write-guard.js\"; done; exit 0",
             "type": "command"
           }
         ],

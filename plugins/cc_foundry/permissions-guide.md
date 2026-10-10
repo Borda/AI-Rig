@@ -172,8 +172,8 @@ Both hooks were validated against *committed text* — the share of shipped blue
 | `Bash(gh issue list:*)` | List issues | `/analyse dupes` and health overview |
 | `Bash(gh release view:*)` | Inspect existing release's notes and assets | `/release` reads previous release as baseline |
 | `Bash(gh release list:*)` | List releases | Find most recent tag to set changelog range |
-| `Bash(gh api graphql:*)` | Execute GitHub GraphQL API queries | `/analyse discussion` mode fetches Discussion threads via GraphQL API |
-| `Bash(gh api repos/*)` | GitHub REST API calls for repo resources | `/analyse`, `/oss:review`, `/resolve` fetch PR reviews, issue data via REST |
+| `Bash(gh api graphql:*)` | Execute GitHub GraphQL API queries; the prefix also matches mutations, which `hooks/gh-write-guard.js` blocks before this allow applies | `/analyse discussion` mode fetches Discussion threads via GraphQL API |
+| `Bash(gh api repos/*)` | GitHub REST API calls for repo resources; the prefix also matches writes (`-f`/`-F` fields send a POST, `-X`), which `hooks/gh-write-guard.js` blocks before this allow applies | `/analyse`, `/oss:review`, `/resolve` fetch PR reviews, issue data via REST |
 | `Bash(gh api search/*)` | GitHub REST API search endpoint | `/resolve` searches for downstream usage of changed APIs |
 
 ## Git — read-only

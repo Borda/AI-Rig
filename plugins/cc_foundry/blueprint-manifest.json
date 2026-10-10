@@ -1444,10 +1444,6 @@
       "kind": "command",
       "src": "skills/_shared/quality-stack.md:11"
     },
-    "4407f7bc2fbde3c02c280087b75c2ba0a2988d2f712f981425d6c1547bb9e3ff": {
-      "kind": "block",
-      "src": "rules/_full/external-data.md:17"
-    },
     "44676a7f021bec8dda0a7b5e654a871a85e0396417b02be5bfe8b952b2c1f148": {
       "kind": "block",
       "src": "rules/python-testing.md:165"
@@ -2359,6 +2355,10 @@
     "6cad7abb2ee8f2098cff89a2749d4a0d60f702886f554f32df9c76294d949ec5": {
       "kind": "command",
       "src": "skills/audit/templates/checks-shared.md:113"
+    },
+    "6cbdb102776abb56fea635169e9a6dc9f00117e76633eb424e6f8d6701ff7ce6": {
+      "kind": "command",
+      "src": "rules/_full/external-data.md:17"
     },
     "6cfdc6dbd7754d7fb7207cb912589b666e9da2defafb5f5d32d1c0233798ea90": {
       "kind": "command",
@@ -4680,6 +4680,10 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-setup.md:160"
     },
+    "e156f0fe603ed4b7b225c412190c4462732b9b5b880167b484bb8a4aad4f4615": {
+      "kind": "block",
+      "src": "rules/_full/external-data.md:17"
+    },
     "e17c343c19420ffad79959e90a323a72979e801091bb6dd7df7522a7e6f8284c": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills.md:672"
@@ -5120,10 +5124,6 @@
       "kind": "command",
       "src": "skills/_shared/quality-stack.md:28"
     },
-    "f8ca000bcfcfb36e0f2ac90643989d03f2d3e5f785f7063af901237d8816d626": {
-      "kind": "command",
-      "src": "rules/_full/external-data.md:17"
-    },
     "f91210244f432cef59de990e93159065401707e87830483c84e5dabd1a0b7c20": {
       "kind": "block",
       "src": "skills/setup/SKILL.md:223"
@@ -5237,6 +5237,6 @@
       "src": "rules/claude-config.md:41"
     }
   },
-  "plugin": "cc_foundry@0.65.0",
+  "plugin": "cc_foundry@0.66.0",
   "schema": 1
 }

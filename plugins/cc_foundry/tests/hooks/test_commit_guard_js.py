@@ -15,7 +15,10 @@ Behavioural areas covered:
 * **Push gating** — force-push is blocked unconditionally on any branch
   (even with a valid sentinel); a regular push requires a fresh push
   sentinel and is never auto-armed by a ``"push"``-mentioning prompt.
-  ``send-pack``/``http-push`` are pushes; ref deletion is a regular push.
+  ``send-pack``/``http-push`` and ``subtree … push`` are pushes, any case of
+  the program name; a ``remote-<transport>`` helper, an enabling inline
+  ``help.autocorrect`` and an unquoted glob argument read as force; ref
+  deletion is a regular push.
 * **SessionStart wipe** — clears leftover push sentinels from prior runs.
 """
 
@@ -176,6 +179,34 @@ class TestCommitGuard:
         assert "force" in result.stderr
         assert "forbidden" in result.stderr
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git $'\\x{70}ush' -f origin main", id="hex-brace-escape-subcommand"),
+            pytest.param("$'\\x{67}it' push", id="hex-brace-escape-program"),
+            pytest.param('echo $"hello"', id="locale-string-without-git"),
+            pytest.param('echo "${ git push -f origin main; }"', id="bash-5-3-command-brace-in-double-quotes"),
+            pytest.param("cat <<EOF\n${ git push -f origin main; }\nEOF", id="bash-5-3-command-brace-in-heredoc"),
+            pytest.param('gh pr view "${|git push -f origin main;}"', id="bash-5-3-value-brace-as-an-argument"),
+            pytest.param("$\\\n'\\x67it' push -f origin main", id="continued-ansi-c-program"),
+            pytest.param("echo $\\\n'\\''; $'\\x67it' push -f origin main #'", id="continued-ansi-c-quote"),
+        ],
+    )
+    def test_shell_dependent_quoting_blocked_with_its_own_reason(
+        self, git_repo: Path, run_hook, push_sentinel: Path, command: str
+    ) -> None:
+        """Quoting bash and zsh read differently may hide a push, so it blocks even with a sentinel.
+
+        The reason names the quoting, not a force push: ``echo $"hello"`` pushes nothing, and a message claiming a force
+        push would send the reader looking for one.
+        """
+        push_sentinel.touch()
+
+        result = run_hook("commit-guard.js", _bash_push(cmd=command), cwd=git_repo)
+
+        assert result.returncode == 2
+        assert "bash and zsh read differently" in result.stderr
+
     def test_force_push_blocked_even_with_sentinel(self, git_repo: Path, run_hook, push_sentinel: Path) -> None:
         """A valid push sentinel does NOT bypass the force block — force check runs first → exit 2."""
         push_sentinel.touch()
@@ -288,6 +319,47 @@ class TestForcePushSpelling:
             pytest.param("python3 -c \"import os; os.system('git push -f')\"", id="python-c"),
             pytest.param("perl -e 'system(\"git push --force\")'", id="perl-e"),
             pytest.param("node -e \"require('child_process').execSync('git push -f')\"", id="node-e"),
+            # Scope D: here-strings feed shell source like heredocs, and never swallow the lines after them
+            pytest.param("bash <<< 'git push -f'", id="here-string-to-shell"),
+            pytest.param('sh <<<"git push origin +main"', id="here-string-glued-refspec"),
+            pytest.param("<<< 'git push -f' bash", id="here-string-before-runner"),
+            pytest.param("cat <<< hi\ntime git push -f\nhi", id="here-string-then-next-line"),
+            # Scope D: inline help.autocorrect runs git's guess for a typo, so any subcommand may push
+            pytest.param("git -c help.autocorrect=immediate pussh --force origin main", id="autocorrect-immediate"),
+            pytest.param("git -c help.autocorrect=1 pussh origin main", id="autocorrect-delay"),
+            pytest.param("time git -c help.autoCorrect=immediate pus -f", id="autocorrect-key-case"),
+            pytest.param("git --config-env help.autocorrect=V pussh -f", id="autocorrect-run-time-value"),
+            # Scope D: push-family programs; the name is matched lower-cased (macOS runs case variants)
+            pytest.param(
+                "printf 'push +refs/heads/main:refs/heads/main\\n\\n' | git remote-https origin https://example.invalid/r",
+                id="remote-helper-stdin",
+            ),
+            pytest.param("git remote-http origin http://example.invalid/r", id="remote-helper-http"),
+            pytest.param("git remote-ext origin 'ext::sh -c x'", id="remote-helper-ext"),
+            pytest.param("git REMOTE-HTTPS origin https://example.invalid/r", id="remote-helper-upper-case"),
+            pytest.param("git HTTP-PUSH --force https://example.invalid/repo main", id="http-push-upper-case"),
+            pytest.param("git SEND-PACK --force origin main", id="send-pack-upper-case"),
+            pytest.param("git subtree push --prefix=docs origin +main", id="subtree-plus-refspec-fails-closed"),
+            # Scope D: an unquoted glob may expand to a planted file named like a flag or refspec
+            pytest.param("git push origin -?", id="glob-flag"),
+            pytest.param("git push origin ?main", id="glob-refspec"),
+            pytest.param('git push origin "?main', id="glob-on-unbalanced-quote-fails-closed"),
+            pytest.param("git push origin ?main {1..300}", id="glob-on-oversized-braces-fails-closed"),
+            # A redirection is never an argument: one before the subcommand no longer reads as the subcommand
+            pytest.param("git 2>/dev/null push -f origin main", id="redirection-before-subcommand"),
+            pytest.param("git > x push -f origin main", id="separate-redirection-before-subcommand"),
+            pytest.param("{ git 2>/dev/null push -f origin main; }", id="grouped-redirection-before-subcommand"),
+            pytest.param("echo 'a>'&git push -f origin main", id="quoted-operator-before-background"),
+            pytest.param("git -c alias.p='push > -f' p origin main", id="plain-alias-angle-bracket-is-an-argument"),
+            # The push words reach git through another command
+            pytest.param("echo push -f origin main | xargs -n9 git", id="xargs-supplies-subcommand"),
+            pytest.param("echo -f | xargs git push origin main", id="xargs-appends-to-push"),
+            pytest.param("echo 'git push -f origin main' | sh", id="echo-piped-to-sh"),
+            pytest.param("echo 'git push -f origin main' | xargs -0 sh -c", id="xargs-supplies-sh-c-string"),
+            pytest.param("trap 'git push -f origin main' EXIT", id="trap-handler"),
+            pytest.param("source /dev/stdin <<< 'git push -f origin main'", id="source-stdin-here-string"),
+            pytest.param("printf -v 'a[$(git push -f origin main)]' x", id="printf-v-subscript"),
+            pytest.param("cat <<EOF\nEO\\\nF\n$'\\x67it' push -f origin main\nEOF", id="continued-terminator-line"),
         ],
     )
     def test_force_push_spellings_blocked_with_sentinel(
@@ -323,6 +395,14 @@ class TestForcePushSpelling:
             pytest.param(
                 "python3 -c \"import subprocess; subprocess.run(['git', 'push', 'origin', 'main'])\"", id="python-c"
             ),
+            pytest.param("cat <<<hi\nsudo GIT push origin main", id="push-after-here-string-line"),
+            pytest.param("git subtree push --prefix=docs origin main", id="subtree-push"),
+            pytest.param("git subtree -P docs push origin main", id="subtree-options-first"),
+            pytest.param("git SUBTREE push --prefix=docs origin main", id="subtree-upper-case"),
+            pytest.param("git -c alias.s=subtree s push --prefix=docs origin main", id="alias-to-subtree"),
+            pytest.param("git push origin '?main'", id="single-quoted-glob-is-literal"),
+            pytest.param('git push origin "?main"', id="double-quoted-glob-is-literal"),
+            pytest.param("git push origin \\?main", id="escaped-glob-is-literal"),
         ],
     )
     def test_non_force_push_spellings_still_need_sentinel(self, git_repo: Path, run_hook, command: str) -> None:
@@ -341,6 +421,7 @@ class TestForcePushSpelling:
         "command",
         [
             "echo hello",
+            'echo "pid $$"',
             "git log --oneline",
             "git status",
             "echo 'git push --force'",
@@ -353,6 +434,12 @@ class TestForcePushSpelling:
             ),
             pytest.param("node -e \"const a = []; a.push(1); require('./lib/shell-git.js')\"", id="array-push-in-node"),
             pytest.param("GIT status", id="upper-case-git-non-push"),
+            pytest.param("cat <<< 'git push -f'", id="here-string-to-non-runner"),
+            pytest.param("git -c help.autocorrect=never pussh origin main", id="autocorrect-never"),
+            pytest.param("git -c help.autocorrect=no status", id="autocorrect-no"),
+            pytest.param("git remote -v", id="remote-is-not-a-helper"),
+            pytest.param("git subtree split --prefix=docs", id="subtree-split"),
+            pytest.param("printf '%s\\0' a b | xargs -0 -r git add --", id="oss-resolve-xargs-git-add"),
         ],
     )
     def test_non_push_commands_still_pass(self, git_repo: Path, run_hook, command: str) -> None:
@@ -435,7 +522,9 @@ class TestMissingLibrary:
             pytest.param("{ git push; }", 2, id="grouped-push-blocked"),
             pytest.param("GIT PUSH origin main", 2, id="upper-case-push-blocked"),
             pytest.param("git send-pack origin main", 2, id="send-pack-blocked"),
+            pytest.param("git remote-https origin https://example.invalid/r", 2, id="remote-helper-blocked"),
             pytest.param("git status", 0, id="non-push-passes"),
+            pytest.param("git remote -v", 0, id="remote-listing-passes"),
         ],
     )
     def test_push_fails_closed(self, bare_hook: Path, git_repo: Path, command: str, expected: int) -> None:

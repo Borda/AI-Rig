@@ -199,6 +199,11 @@ class TestCommitRule:
             pytest.param('echo "$(git commit -m x)"', id="substitution-in-double-quotes"),
             pytest.param("GIT commit -m x", id="upper-case-git"),
             pytest.param("git -c alias.ci=commit ci -m x", id="inline-alias"),
+            pytest.param("bash <<< 'git commit -m x'", id="here-string-to-shell"),
+            pytest.param("cat <<< hi\ntime git commit -m x\nhi", id="here-string-then-next-line"),
+            pytest.param("git -c help.autocorrect=immediate cmmit -m x", id="inline-autocorrect"),
+            pytest.param("git --config-env help.autocorrect=V cmmit -m x", id="inline-autocorrect-run-time-value"),
+            pytest.param("git 2>/dev/null commit -m x", id="redirection-before-subcommand"),
         ],
     )
     def test_grouped_wrapped_or_nested_invocation_injects(self, plugin: Path, temp_dir: Path, command: str) -> None:
@@ -240,6 +245,8 @@ class TestCommitRule:
             pytest.param("git tag v1.0", id="tag-lightweight"),
             pytest.param("git tag -l 'v*'", id="tag-list"),
             pytest.param("git merge-base main HEAD", id="merge-base"),
+            pytest.param("cat <<< 'git commit -m x'", id="here-string-to-non-runner"),
+            pytest.param("git -c help.autocorrect=never cmmit -m x", id="autocorrect-never"),
         ],
     )
     def test_other_commands_stay_silent(self, plugin: Path, temp_dir: Path, command: str) -> None:
