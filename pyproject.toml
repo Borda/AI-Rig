@@ -9,6 +9,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
 ]
 
 # Dev-only tooling (PEP 735). Not project dependencies. uv used in CI; locally use plain python/pytest.

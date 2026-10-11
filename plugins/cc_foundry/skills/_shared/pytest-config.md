@@ -40,9 +40,14 @@ import numpy as np
 @pytest.fixture(autouse=True)
 def reset_random_seeds():
     np.random.seed(42)
-    import random; random.seed(42)
+    import random
+
+    random.seed(42)
     try:
-        import torch; torch.manual_seed(42); torch.cuda.manual_seed_all(42)
+        import torch
+
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
     except ImportError:
         pass
 

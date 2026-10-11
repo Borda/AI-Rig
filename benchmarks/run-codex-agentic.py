@@ -1198,7 +1198,7 @@ def _row_fresh_tokens(row: Mapping[str, Any]) -> float | None:
     return float(gross - cached)
 
 
-def _native_diagnostics(row: Mapping[str, Any]) -> dict[str, int | None | str]:
+def _native_diagnostics(row: Mapping[str, Any]) -> dict[str, int | str | None]:
     """Extract command diagnostics from raw events without treating them as requests.
 
     Native streams do not promise command start records. In that case concurrency and waves are unavailable rather than
