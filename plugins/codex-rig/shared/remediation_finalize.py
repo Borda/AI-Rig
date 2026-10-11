@@ -850,7 +850,13 @@ def _resolution_table(metadata: dict[str, Any], draft: dict[str, Any]) -> tuple[
         if item.get("selectable"):
             selectable_index += 1
         if scope.get("presentation_version") == 4:
-            rows[-1]["selected"] = bool(item.get("selectable")) and selectable_index in scope["selected_indexes"]
+            rows[-1]["selected"] = (
+                "Closed"
+                if not item.get("selectable")
+                else "Yes"
+                if selectable_index in scope["selected_indexes"]
+                else "No"
+            )
         details.extend(
             (
                 {"id": f"O{position}", "text": item.get("resolved_how")},
@@ -897,7 +903,7 @@ def derive_handoff(
         return handoff
     presentation = metadata.get("resolution_scope", {}).get("presentation_version")
     if presentation in {3, 4}:
-        handoff["presentation_version"] = 5 if presentation == 4 else presentation
+        handoff["presentation_version"] = 6 if presentation == 4 else presentation
     draft_tables = handoff.get("tables") or [{}]
     table, records = _resolution_table(metadata, draft_tables[0] if isinstance(draft_tables[0], dict) else {})
     handoff["tables"] = [table]

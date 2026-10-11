@@ -83,7 +83,8 @@ def test_commit_step_reuses_packet_answer_and_names_material_changes() -> None:
     assert "An upfront packet commit mode is such an answer" in commit
     assert "a packet `leave unstaged` answer makes the disposition `declined`" in commit
     assert "an explicit `decide after verification` answer asks here" in commit
-    assert "A new exclusion, destination change, infeasible grouping, or external-obligation commit" in commit
+    assert "A new exclusion, destination change, or infeasible grouping is a materially changed decision" in commit
+    assert "An external-obligation commit within the recorded mode and owned scope retains that authorization" in commit
     assert "`remediation-foldable-question-after-scope`" in fail_fast
 
 

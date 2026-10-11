@@ -5,11 +5,11 @@ authorization. Scope: Read or change only the versioned Bridge block in the user
 all other configuration. Usage: Run check from a skill; the operator runs grant or revoke in their own terminal after
 reading the displayed scope. There is no noninteractive approval flag. Outputs: Check emits sanitized JSON; mutations
 show only the selected path and shipped policy, never user configuration or credentials. Failure: Invalid TOML,
-unsupported placement, unsafe files, changed input, missing terminal or declined confirmation exits nonzero without
-an intended policy update. Used by: Codex Bridge setup and executable skills, install-shaped tests, and operators.
-The terminal check is an interaction requirement, not proof against another process controlled by the same user.
-Stored policy is not evidence that an active or managed host loaded it; this helper never changes reviewer selection,
-sandbox permissions, authentication or plugin installation, and never invokes a provider.
+unsupported placement, unsafe files, changed input, missing terminal or declined confirmation exits nonzero without an
+intended policy update. Used by: Codex Bridge setup and executable skills, install-shaped tests, and operators. The
+terminal check is an interaction requirement, not proof against another process controlled by the same user. Stored
+policy is not evidence that an active or managed host loaded it; this helper never changes reviewer selection, sandbox
+permissions, authentication or plugin installation, and never invokes a provider.
 """
 
 from __future__ import annotations

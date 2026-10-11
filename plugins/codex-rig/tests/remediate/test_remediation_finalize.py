@@ -91,15 +91,15 @@ def test_current_handoff_marks_selection_independently_of_outcome(valid_run: tup
 
     handoff = HELPER.derive_handoff(run, metadata, _draft_handoff(run), result["confidence"], result["artifact_path"])
 
-    assert handoff["presentation_version"] == 5
+    assert handoff["presentation_version"] == 6
     assert [(row["id"], row["selected"]) for row in handoff["tables"][0]["rows"]] == [
-        ("CLOSED", False),
-        ("OMITTED", False),
-        ("CHOSEN", True),
+        ("CLOSED", "Closed"),
+        ("OMITTED", "No"),
+        ("CHOSEN", "Yes"),
     ]
     rendered = HELPER.final_handoff.render_handoff(handoff)
     assert "| ID | Severity | Finding | Selected | Outcome |" in rendered
-    for identity, selected in [("CLOSED", "No"), ("OMITTED", "No"), ("CHOSEN", "Yes")]:
+    for identity, selected in [("CLOSED", "Closed"), ("OMITTED", "No"), ("CHOSEN", "Yes")]:
         assert f"| {identity} | {selected} | Implemented |" in rendered
     assert "| Resolution |" not in rendered
     assert "[Action items](" in rendered
@@ -109,11 +109,28 @@ def test_current_handoff_marks_selection_independently_of_outcome(valid_run: tup
         VALIDATOR._validate_code_remediate_final_handoff({"metadata": metadata}, handoff, candidate=True)
 
 
-@pytest.mark.parametrize("selection", [None, 1, "Yes"])
-def test_current_handoff_rejects_missing_or_nonboolean_selection(
+def test_historical_boolean_selection_retains_rendering(valid_run: tuple[Path, dict[str, object]]) -> None:
+    """Keep version-five reports readable without applying current three-state semantics."""
+    run, result = valid_run
+    metadata = copy.deepcopy(result["metadata"])
+    metadata["resolution_scope"]["presentation_version"] = 4
+    handoff = HELPER.derive_handoff(run, metadata, _draft_handoff(run), result["confidence"], result["artifact_path"])
+    handoff["presentation_version"] = 5
+    for row in handoff["tables"][0]["rows"]:
+        row["selected"] = row["selected"] == "Yes"
+    rendered = HELPER.final_handoff.render_handoff(handoff)
+    assert "| Selected |" in rendered
+    assert "| Closed |" not in rendered
+    VALIDATOR._validate_code_remediate_final_handoff({"metadata": metadata}, handoff)
+    with pytest.raises(SystemExit, match="remediation-current-handoff-presentation-v6-required"):
+        VALIDATOR._validate_code_remediate_final_handoff({"metadata": metadata}, handoff, candidate=True)
+
+
+@pytest.mark.parametrize("selection", [None, 1, True, "Unknown"])
+def test_current_handoff_rejects_missing_or_invalid_selection_status(
     valid_run: tuple[Path, dict[str, object]], selection: object
 ) -> None:
-    """A visible selection mark must come from an explicit boolean, never truthiness."""
+    """A current selection mark must use the explicit three-state contract."""
     run, result = valid_run
     metadata = copy.deepcopy(result["metadata"])
     metadata["resolution_scope"]["presentation_version"] = 4
@@ -140,7 +157,7 @@ def test_current_candidate_cannot_hide_selection_using_historical_handoff(
         row.pop("selected", None)
     assert "| Selected |" not in HELPER.final_handoff.render_handoff(handoff)
     VALIDATOR._validate_code_remediate_final_handoff({"metadata": metadata}, handoff)
-    with pytest.raises(SystemExit, match="remediation-current-handoff-presentation-v5-required"):
+    with pytest.raises(SystemExit, match="remediation-current-handoff-presentation-v6-required"):
         VALIDATOR._validate_code_remediate_final_handoff({"metadata": metadata}, handoff, candidate=True)
 
 
@@ -171,7 +188,7 @@ def test_public_validator_preserves_historical_handoff_but_rejects_new_candidate
     candidate.write_bytes(canonical.read_bytes())
 
     VALIDATOR.validate("code-remediate", tmp_path, canonical)
-    with pytest.raises(SystemExit, match="remediation-current-handoff-presentation-v5-required"):
+    with pytest.raises(SystemExit, match="remediation-current-handoff-presentation-v6-required"):
         VALIDATOR.validate("code-remediate", tmp_path, candidate)
 
     current = HELPER.derive_handoff(tmp_path, metadata, handoff, result["confidence"], result["artifact_path"])

@@ -53,13 +53,13 @@ def test_missing_findings_source_does_not_fail_bare_pr_route() -> None:
 
 
 def test_requested_review_does_not_replace_primary_remediation() -> None:
-    """Keep incomplete report proof open without blocking authorized source-confirmed fixes."""
+    """Require the missing-review decision before continuing authorized fixes."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     intake = skill.split("### 02: Normalize input", maxsplit=1)[1].split("### 03:", maxsplit=1)[0]
 
     assert "`+review` requests existing review evidence; it does not authorize a fresh code review" in intake
     assert "Missing requested PR review decision" in intake
-    assert "continue available findings under existing remediation authorization" in intake
+    assert "continue available findings only after explicit user confirmation" in intake
     assert "Disclose the requested review obligation as open" in intake
     assert "Remediation resumes only after the producer completes" not in intake
     assert "or switch to online-only intake" not in intake
@@ -79,16 +79,15 @@ def test_preliminary_findings_keep_source_and_completion_boundaries() -> None:
     assert "Do not manufacture an assessed JSON report" in skill
 
 
-def test_missing_report_only_blocks_an_explicit_completed_review_prerequisite() -> None:
-    """Preserve an explicit review prerequisite while allowing the ordinary available-finding route."""
+def test_missing_requested_report_blocks_continuation_until_explicit_decision() -> None:
+    """Prevent fail-fast guidance from silently bypassing a requested review."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     fail_fast = skill.split("## Fail-fast Rules", maxsplit=1)[1].split("## Quality Gates", maxsplit=1)[0]
 
     assert "ask only for the missing finding evidence or selection" in skill
     assert "run `$code-review <target>` first or provide a report path" not in fail_fast
     assert "Missing requested PR review decision" in fail_fast
-    assert "available findings continue by default with proof open" in fail_fast
-    assert "explicit completed-review prerequisite requires its bound decision before edits" in fail_fast
+    assert "available findings require explicit user confirmation before continuation" in fail_fast
 
 
 def test_missing_requested_pr_review_has_explicit_yes_no_and_pending_routes() -> None:
@@ -130,13 +129,24 @@ def test_requested_review_sibling_routes_cannot_bypass_decision() -> None:
 
 
 @pytest.mark.installed_plugin
-def test_available_findings_default_preserves_explicit_review_first_choice() -> None:
-    """Keep artifact recovery autonomous without overriding a user's explicit review-before-edit condition."""
+def test_available_findings_cannot_bypass_missing_requested_review_approval() -> None:
+    """Require a bound answer even when usable findings already exist."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     decision = skill.split("### Missing requested PR review decision", 1)[1].split("### Preliminary finding intake", 1)[
         0
     ]
-    assert "The default is available-finding continuation" in decision
-    assert "Ask the fresh-review question below only when no usable finding evidence exists" in decision
-    assert "previously selected fresh-review-first route is such a prerequisite" in decision
+    assert "Always ask for approval to run a fresh local code review before continuation" in decision
+    assert "even when usable current-online/user findings or preliminary hypotheses exist" in decision
+    assert "Continuing without a completed report requires explicit user confirmation" in decision
+    assert "Reuse an unambiguous existing answer bound to this unchanged target and decision" in decision
+    assert "A previously selected fresh-review-first route remains binding" in decision
     assert "Normal source verification and scope selection still precede edits" in decision
+    for bypass in (
+        "The default is available-finding continuation",
+        "only when no usable finding evidence exists",
+        "unless an explicit completed-review prerequisite applies",
+        "an explicit continue choice is needed only",
+        "available findings continue by default",
+        "without blocking usable findings solely on report bookkeeping",
+    ):
+        assert bypass not in skill

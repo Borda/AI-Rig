@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.35.2
+
+- Always request approval for a fresh local review when PR remediation requests `+review` or an equivalent report source and no eligible completed report exists. Available findings no longer bypass the decision; continuing without the report requires explicit user confirmation, and unanswered questions remain pending.
+- Distinguish selected, unselected, and already-closed remediation items with `Yes`, `No`, and `Closed`; preserve historical report rendering.
+- Honor recorded commit modes for completed fixes with eligible unresolved external verification or review obligations, retaining failed status and disclosing residual limits.
+- Display the local Git grant's plain-commit scope, excluded destructive and remote operations, project/worktree lifetime and revocation method in every **Approve always** question, including remediation's upfront packet and final remember question. Preserve existing authorization and grant-record semantics.
+
 ## 0.35.1
 
 - Require explicit opt-in before Code Review or Code Remediate enters Challenge Resolve or an additional iterative adversarial review-and-fix loop, including fork checkout recovery; preserve normal validation and required checks.

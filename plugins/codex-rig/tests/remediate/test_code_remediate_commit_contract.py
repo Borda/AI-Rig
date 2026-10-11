@@ -105,10 +105,16 @@ def test_explicit_commit_rechecks_external_obligation_limit_and_cites_remaining_
     assert "## Explicit Commit Request" in preparation
     assert "## Remaining Verification" in preparation
     assert "controlling rule" in preparation
+    assert "A recorded commit-mode choice authorizes committing completed fixes" in preparation
+    assert "do not downgrade it to a grouping preference" in preparation
+    assert "retains that authorization" in commit
     assert "A later explicit `commit this` request reopens a previously blocked disposition" in commit
     assert "external-obligation exception" in commit
     assert "including when the plan is prepared in response to it; do not ask again" in commit
-    assert "A failed result may permit a local commit only after an explicit user request" in shared
+    assert (
+        "A failed result may permit a local commit after an explicit user request, including a recorded commit-mode choice,"
+        in shared
+    )
     assert "explicitly requested reversible local action" in native
     assert "Never invent a blocker" in native
 

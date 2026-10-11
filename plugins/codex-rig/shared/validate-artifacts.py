@@ -484,8 +484,8 @@ def _validate_code_remediate_final_handoff(
         raise SystemExit("code-remediate-final-handoff-table-invalid")
     expected_items = resolution_table["items"]
     presentation = metadata.get("resolution_scope", {}).get("presentation_version")
-    if candidate and presentation == 4 and handoff.get("presentation_version") != 5:
-        raise SystemExit("remediation-current-handoff-presentation-v5-required")
+    if candidate and presentation == 4 and handoff.get("presentation_version") != 6:
+        raise SystemExit("remediation-current-handoff-presentation-v6-required")
     if (
         presentation in {2, 3, 4}
         and tables[0].get("layout") != {2: "grouped", 3: "concise", 4: "concise"}[presentation]
@@ -528,9 +528,13 @@ def _validate_code_remediate_final_handoff(
         )
         if item.get("selectable"):
             selectable_index += 1
-        if handoff.get("presentation_version") == 5:
+        if handoff.get("presentation_version") in {5, 6}:
             selected = metadata.get("resolution_scope", {}).get("selected_indexes", [])
             expected_rows[-1]["selected"] = bool(item.get("selectable")) and selectable_index in selected
+            if handoff.get("presentation_version") == 6:
+                expected_rows[-1]["selected"] = (
+                    "Closed" if not item.get("selectable") else "Yes" if selectable_index in selected else "No"
+                )
         expected_details.extend(
             (
                 {"id": f"O{position}", "text": item.get("resolved_how")},

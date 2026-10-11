@@ -64,7 +64,7 @@ def test_review_and_remediation_routes_remain_distinct_during_incomplete_handoff
     assert "continue current-online/user findings" in incomplete_handoff
     assert "requested report obligation open" in incomplete_handoff
     assert "missing requested pr review decision" in incomplete_handoff
-    assert "when no explicit completed-review prerequisite applies" in incomplete_handoff
+    assert "only after the user explicitly chooses to continue without a completed report" in incomplete_handoff
     assert "fresh review" in readme.lower()
     assert "requested report obligation open" in readme.lower()
     assert "silently switch to online-only remediation" not in readme.lower()
@@ -253,7 +253,10 @@ def test_execution_failure_cannot_be_reclassified_as_inapplicable() -> None:
         "rerun the full review without the explicit authorization below, or fall back to an older assessed report"
         in remediation
     )
-    assert "continue independently authorized source-verified remediation" in remediation
+    assert (
+        "For requested PR evidence, continue source-verified remediation with the report obligation open only after "
+        "the user explicitly chooses to continue without a completed report" in remediation
+    )
 
 
 def test_remediation_validates_unpromoted_candidate_read_only() -> None:
