@@ -163,7 +163,7 @@ repos:
           - mdformat-web
 
   - repo: https://github.com/lycheeverse/lychee.git
-    rev: nightly
+    rev: lychee-v0.24.2
     hooks:
       - id: lychee
         name: "🔗 lychee"
