@@ -53,14 +53,29 @@ jobs:
           uv run --no-project python plugins/codex-rig/scripts/validate_package.py
           uv run --no-project python plugins/codex-rig/shared/collect_pr.py --help
 
+      # Pre-commit regenerates these manifests; check byte-identical hashes once per OS.
+      - name: 🧾 Verify blueprint manifest freshness
+        run: |
+          uv run --only-group test \
+            python plugins/cc_foundry/bin/build_blueprint_manifest.py \
+            --scan-dir plugins --check
+
   tests:
+    name: tests (${{ matrix.scope }}, ${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
+        scope: ["codex", "claude", "shared"]
     timeout-minutes: 45
+    env:
+      PYTEST_ARGS: >-
+        -n 4 --dist worksteal
+        -W error::DeprecationWarning --durations=500 --durations-min=0.2
+        --cov-report=term-missing --cov-report=html:.reports/coverage
+        --cov-report=xml:coverage.xml
 
     steps:
       - name: 📥 Checkout
@@ -78,28 +93,38 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # Pre-commit regenerates these manifests; CI catches a contributor who bypassed it.
-      # Every OS leg matters: the manifest must hash byte-identically on Windows too.
-      - name: 🧾 Verify blueprint manifest freshness
-        run: |
-          uv run --only-group test \
-            python plugins/cc_foundry/bin/build_blueprint_manifest.py \
-            --scan-dir plugins --check
-
-      # Four workers run the complete suite, including Node, coverage, and subprocess tests; work stealing keeps the
+      # Four workers run each scope, including Node, coverage, and subprocess tests; work stealing keeps the
       # few multi-minute tests from landing last on one worker. Coverage is opt-in so local runs stay untraced, and
       # its sources stay out of pyproject's [tool.coverage], which would also configure tests that start their own
       # coverage run. The XML report feeds the informational Codecov upload below.
-      # Every test over 0.1 s is listed so per-file cost can be aggregated, not just the 500 slowest.
-      - name: 🧪 Run plugin tests (Python bin/ + JS hooks)
+      # Slow-test durations help identify scopes that need further balancing.
+      - name: 🧪 Run Codex tests
+        if: matrix.scope == 'codex'
         run: |
-          uv run --only-group test pytest -n 4 --dist worksteal \
-            -W error::DeprecationWarning --durations=500 --durations-min=0.2 \
-            --cov=plugins/codemap-py/bin --cov=plugins/codemap-py/src \
+          read -r -a pytest_args <<< "$PYTEST_ARGS"
+          uv run --only-group test pytest plugins/codex-rig "${pytest_args[@]}" \
+            --cov=plugins/codex-rig/bin --cov=plugins/codex-rig/shared \
+            --cov=plugins/codex-rig/runtime --cov=plugins/codex-rig/scripts
+
+      - name: 🧪 Run Claude tests
+        if: matrix.scope == 'claude'
+        run: |
+          read -r -a pytest_args <<< "$PYTEST_ARGS"
+          uv run --only-group test pytest \
+            plugins/cc_develop plugins/cc_foundry plugins/cc_oss plugins/cc_research \
+            "${pytest_args[@]}" \
             --cov=plugins/cc_develop/bin --cov=plugins/cc_foundry/bin \
-            --cov=plugins/cc_oss/bin --cov=plugins/cc_research/bin \
-            --cov-report=term-missing --cov-report=html:.reports/coverage \
-            --cov-report=xml:coverage.xml
+            --cov=plugins/cc_oss/bin --cov=plugins/cc_research/bin
+
+      - name: 🧪 Run shared tests
+        if: matrix.scope == 'shared'
+        run: |
+          read -r -a pytest_args <<< "$PYTEST_ARGS"
+          uv run --only-group test pytest \
+            plugins/codemap-py plugins/bridge_cc-codex benchmarks tests \
+            "${pytest_args[@]}" \
+            --cov=plugins/codemap-py/bin --cov=plugins/codemap-py/src \
+            --cov=plugins/bridge_cc-codex/bin
 
       # Coverage is informational only: an upload failure never fails the job, and codecov.yml
       # marks every status as informational so coverage changes never block a merge.
@@ -110,5 +135,5 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.xml
           disable_search: true
-          flags: ${{ runner.os }}-py${{ matrix.python-version }}
+          flags: ${{ matrix.scope }}-${{ runner.os }}-py${{ matrix.python-version }}
           fail_ci_if_error: false
