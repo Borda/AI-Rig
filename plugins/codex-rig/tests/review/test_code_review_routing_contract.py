@@ -1417,5 +1417,8 @@ def test_skill_rebuilds_a_compact_pr_snapshot_before_reporting_findings() -> Non
     assert "`pr.json.statusCheckRollup`" in skill
     assert "An absent or empty rollup is `unavailable`, never `passing`" in skill
     assert "`fix`, `feat`, `refactor`, `perf`, `docs`, `ci`, `chore`, `test`, or `mixed`" in skill
-    assert "`approve`, `minor changes`, `needs work`, `reject`, or `not aligned`" in skill
+    assert (
+        "`approve`, `minor changes`, `major revision`, `insufficient, but a good initiative`, `block`, or `no source judgment`"
+        in skill
+    )
     assert "before any findings" in skill

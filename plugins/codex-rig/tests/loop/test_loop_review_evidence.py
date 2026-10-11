@@ -688,6 +688,8 @@ def _local_reviewer_loop(
     plan_path = Path(execution["plan_path"])
     evidence_path = Path(execution["evidence_path"])
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    # This fixture adapts Code Review evidence to the unchanged challenge-only assessment contract.
+    plan.pop("source_rating_version", None)
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     manifest["passes"] = [item for item in manifest["passes"] if item["role"] == "challenger"]
     plan["nodes"] = [item for item in plan["nodes"] if item["role_id"] == "challenger"]

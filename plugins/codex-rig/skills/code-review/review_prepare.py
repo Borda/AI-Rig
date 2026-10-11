@@ -452,6 +452,28 @@ def prepare(
                 b"to exactly the separate lines `Rating: <integer>` and `Rationale: <one-line explanation>`. "
                 b"Preserve all required findings, confidence deductions and evidence; do not put them inside the assessment section.\n"
             )
+        if not challenge_only:
+            context = (
+                context.replace(
+                    b"Rating scale: 1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject.",
+                    b"Source rating legend: 1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient but a good initiative, 5 Block. "
+                    b"Stage 4 means promising but substantially incomplete source implementation, never missing hardware or process evidence. Stage 5 requires documented direction or binding-constraint conflict; fixable defects mean Major revision.",
+                )
+                .replace(
+                    b"`Rating: <integer>` and `Rationale: <explanation>`",
+                    b"`Source rating version: 1`, `Rating: <1-5|null>`, `Verification readiness: <complete|blocked|incomplete>`, and `Rationale: <explanation>`",
+                )
+                .replace(
+                    b"`Rating: <integer>` and `Rationale: <one-line explanation>`",
+                    b"`Source rating version: 1`, `Rating: <1-5|null>`, `Verification readiness: <complete|blocked|incomplete>`, and `Rationale: <one-line explanation>`",
+                )
+            )
+            context += (
+                b"\nValidate every concern at every severity against exact source, callers, contracts, tests and relevant counterevidence. "
+                b"Inspection may settle a claim; request a bounded real check when needed. Retain unverified concerns separately "
+                b"with unavailable prerequisite, owner, next check and closure condition. Feasible unperformed checks mean incomplete. "
+                b"Use null only for a returned but undecidable assessment with blocked readiness, never for a missing response.\n"
+            )
         # The page reader transports larger contexts without dropping source; cap total work at 256 KiB.
         if not batches and len(context) > MAX_REVIEW_CONTEXT_BYTES:
             raise ValueError(f"review-context-capacity-exceeded:{role}:{MAX_REVIEW_CONTEXT_BYTES}-bytes")

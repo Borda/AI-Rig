@@ -4,19 +4,46 @@
 
 - Add `Reviewers:` immediately after `Agents:`, listing actual readable role names and their scoped rating, for example `Software engineer (3), QA specialist (2), Documentation reviewer (1).`
 - Separate each role from its rating with parentheses `Role (N)` or a colon `Role: N`; never a bare space (`sw-engineer 2` is wrong).
-- Ratings: 1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject.
-- Use each reviewer's explicit rating and rationale; a reviewer that ran without stating one is 4, never inferred approval.
+- Ratings: 1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient, but a good initiative, 5 Block (source-5-v1); null means no source judgment, never rejection.
+- Use each reviewer's explicit source-5-v1 rating and rationale. Completed undecidable output has null judgment/rating with blocked readiness and inspected coverage; missing output remains a distinct coverage obligation in review-validation.json.
 - A reviewer that produced no output is not rated — record it as a missing-reviewer limitation instead.
 - Label parent substitutes explicitly; skipped roles are omitted.
 - Never average ratings or replace the overall verdict.
 - Retain all contributing roles when deduplicating.
 - Add the template's findings overview with `ID | Author | Finding | Resolution proposal | Status`; Author lists all originating reviewer roles, not the consolidator or PR author.
 - Preserve existing detailed sections and cross-reference stable IDs.
-- Immediately after the closing metadata delimiter write exactly: `Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject.`
+- Immediately after the closing metadata delimiter write exactly: `Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block.`
 - In terminal output the legend belongs immediately below the header table.
 - Terminal gate rejection retains its existing behavior; use `Reviewers: Not assessed` when no reviewer assessed the source.
 
-**Task:** Read all finding files in `$RUN_DIR/` (agent files: `foundry--sw-engineer.md`, `foundry--qa-specialist.md`, `foundry--perf-optimizer.md`, `foundry--doc-scribe.md`, `foundry--linting-expert.md`, `foundry--solution-architect.md`, `foundry--challenger.md` if present, `foundry--blind-solve.md` if present, `foundry--codex.md` if present — skip missing). `foundry--blind-solve.md` present: compare its blueprint against the diff and the other agents' findings — add a `### Design Divergence` section (taxonomy row exists, report-only — no resolve owner, exempt from section caps) listing where the independent blueprint differs from the PR's approach, ranked by impact; for each divergence mark whether it might be explained by context the blind-solve agent lacked (prior decision, incident, constraint — phrase as a question for the author) vs a genuine miss. Divergences already covered by another agent's finding: cross-reference, don't duplicate. No `foundry--blind-solve.md`: omit the section entirely, no placeholder. Load `<REVIEW_SKILL_DIR>/checklist.md` via `cat` (not Read tool — version-pinned cache path), apply consolidation rules (signal-to-noise filter, annotation completeness, section caps). Load `<_OSS_SHARED>/review-section-taxonomy.md` via `cat` for canonical section header strings, agent-to-section ownership. Include only findings passing Step 4 cross-validation (verdict=CONFIRMED or un-cross-validated medium/low). For `foundry--challenger.md`: map severity keys Blockers → critical/high, Concerns → medium, Nitpicks → low when aggregating counts.
+## Consolidation sequence
+
+1. Read all finding files in `$RUN_DIR/`: `foundry--sw-engineer.md`, `foundry--qa-specialist.md`, `foundry--perf-optimizer.md`, `foundry--doc-scribe.md`, `foundry--linting-expert.md`, `foundry--solution-architect.md`, and `foundry--challenger.md`, `foundry--blind-solve.md`, `foundry--codex.md` if present. Skip missing files only as permitted by SKILL.md's coverage rules.
+2. Load `<REVIEW_SKILL_DIR>/checklist.md` via `cat` (not Read tool — version-pinned cache path). Apply its signal-to-noise filter, annotation completeness and section caps.
+3. Load `<_OSS_SHARED>/review-section-taxonomy.md` via `cat` for canonical headers and agent-to-section ownership.
+4. Read the parent's validated candidates and assessments from `$RUN_DIR/cross-validation.md`. Include only parent-CONFIRMED candidates at every severity; critical/blocking findings additionally require independent verification. New or materially strengthened merged claims return to the parent for validation before publication.
+5. A late source REJECT cannot be published with incoming PASS/BLOCK. Return only `terminal-ground=<GROUND> | evidence=<path>` pointing at the existing documented binding conflict; publish nothing. The parent validates the ground and routes through Stage 1's terminal publisher with original reviewed SHA and provenance, reusing applicable conduct/license confirmation. If no evidenced terminal ground exists, keep fixable defects NEEDS_WORK or unfinished validation incomplete/blocked.
+6. Apply the challenger, design-comparison, issue-alignment and filtering rules below. Write evidence/finding sidecars before the report, then return only the specified summary.
+
+## Challenger and design comparison
+
+| Challenger section | Review severity |
+| -- | -- |
+| Blockers | `critical` / `high`, subject to parent validation and additional independent critical/blocking verification. |
+| Concerns | `medium` |
+| Nitpicks | `low` |
+
+Never discard challenger candidates from validation; retain uncertainty separately from confirmed findings.
+
+When `foundry--blind-solve.md` exists:
+
+- Compare its blueprint against the diff and other agents' findings.
+- Add `### Design Divergence`: taxonomy row exists, report-only, no resolve owner, exempt from section caps.
+- List differences from the PR's approach, ranked by impact.
+- For each divergence distinguish a genuine miss from context the blind-solve agent may have lacked (prior decision, incident, constraint); phrase the latter as a question for the author.
+- Cross-reference divergences already covered by another finding; do not duplicate them.
+
+No `foundry--blind-solve.md`: omit the section entirely, with no placeholder.
 
 **Filtering rules:**
 
@@ -27,29 +54,32 @@
 
 **Issue alignment (when `issue-*.md` files exist in `$RUN_DIR`):** Include `### Issue Root Cause Alignment` section placed immediately after `### [blocking] Critical`. Per linked issue: state root cause hypothesis, whether PR addresses it (yes / partially / no), whether PR description diverges from issue's stated problem, whether reproduction scenario tested. Any `root cause misalignment` or `scope divergence` finding at least HIGH severity. **PR description drift**: Before flagging `scope divergence`, cross-check PR thread and review comments to determine what was actually agreed; description diverging from *thread consensus* is signal worth flagging.
 
-**File head — MANDATORY format:** file MUST begin with a `---`-delimited YAML metadata block exactly as in `<REVIEW_SKILL_DIR>/templates/review-report.md` — opening `---` on line 1, then 15 fields in order (`Title:`, `PR:`, `Date:`, `PR Type:`, `Scope:`, `Focus:`, `Agents:`, `Reviewers:`, `CI:`, `Gate:`, `Outcome:`, `Summary:`, `Confidence:`, `Next steps:`, `Path:`), then closing `---`, then report body.
+## Report header
 
-Do NOT encode head as HTML comments (`<!-- ... -->`) or any other form — orchestrator reads `---` block verbatim as reply header; no `---` head = broken terminal output.
+The file MUST begin with the `---`-delimited YAML metadata block from `<REVIEW_SKILL_DIR>/templates/review-report.md`: opening `---` on line 1, all template fields in order (including `Review contract:`, `Rating scale:`, `Readiness:`), closing `---`, then body. Do NOT encode the head as HTML comments (`<!-- ... -->`) or any other form; the orchestrator reads the block verbatim as the reply header. Missing `---` head breaks terminal output.
 
-- `Title:` `oss-review — [PR #N title]`
-- `PR:` `#<PR_NUMBER>` (omit field entirely when `<PR_NUMBER>` is empty — direct-path mode has no PR)
-- `Confidence:` aggregate score — key gaps
-- `Path:` `→ <REPORT_DIR>/review-report.md`
+The parent supplies resolved literal input bindings in its compact Agent prompt. Interpret placeholders using those values; never require the parent to read, substitute, cat, or inline this file body. `$RUN_DIR` is self-resolved by the prepended run-dir preamble.
 
-**Header fields** (orchestrator must expand all shell vars to literal values before spawning):
-
-- `PR:` `#<PR_NUMBER>` — omit field entirely when `<PR_NUMBER>` is empty (direct-path mode)
-- `Date:` `<DATE>`
-- `PR Type:` classify from diff INTENT (not title/file-count): `fix` / `feat` / `refactor` / `perf` / `docs` / `ci` / `chore` / `test` / `mixed`
-- `Scope:` key changed files from `<CHANGED_FILES>` (skip test files if >3 source; cap ~5)
-- `Focus:` `<SCOPE>` — one-line description from diff + PR body
-- `Impact:` literal `<IMPACT>` value (`FULL · <reason>` or `LIGHT · <reason>`) — review depth came from code path, not diff size
-- `Agents:` short names of agents with output files in `$RUN_DIR/`
-- `CI:` `failing — [<CI_FAILING_CHECKS>]` when that value is non-empty, else `passing (<CI_COUNTS>)` — `<CI_COUNTS>` empty too (no checks reported): write `pending`
-- `Gate:` literal `<GATE>` value (`PASS` or `BLOCK` — reject-gate reports never reach the consolidator, that value is always one of these two here; a `BLOCK` gate does not change how you write `Outcome:` below, it's already carried in `CI:`/the findings)
-- `Outcome:` `APPROVE` / `NEEDS_WORK` / `REQUEST_CHANGES` from your own findings — verdict token only (optional leading `✓`/`⚠`/`✗`); severity counts and other detail go in `Summary:`, never after the token
-- `Summary:` 1–2 sentences
-- `Next steps:` blockers first, max 5
+| Field | Value or rule |
+| -- | -- |
+| `Title:` | `oss-review — [PR #N title]` |
+| `PR:` | `#<PR_NUMBER>`; omit entirely when `<PR_NUMBER>` is empty (direct-path mode has no PR). |
+| `Date:` | `<DATE>` |
+| `PR Type:` | Classify diff INTENT, never title/file-count: `fix` / `feat` / `refactor` / `perf` / `docs` / `ci` / `chore` / `test` / `mixed`. |
+| `Scope:` | Key changed files from `<CHANGED_FILES>`; skip test files if >3 source; cap ~5. |
+| `Focus:` | `<SCOPE>` — one-line description from diff + PR body. |
+| `Impact:` | Literal `<IMPACT>`: `FULL · <reason>` or `LIGHT · <reason>`; depth follows code path, not diff size. |
+| `Agents:` | Short names of agents with output files in `$RUN_DIR/`. |
+| `Reviewers:` | Actual scoped assessments per the additive attribution rules above. |
+| `CI:` | `failing — [<CI_FAILING_CHECKS>]` when non-empty, otherwise `passing (<CI_COUNTS>)`; no counts/checks → `pending`. |
+| `Review contract:` / `Rating scale:` | `1` / `source-5-v1` |
+| `Readiness:` | `complete`, `blocked`, or `incomplete`, matching the envelope. |
+| `Gate:` | `REVIEW_V1_<GATE>` (`REVIEW_V1_PASS` or `REVIEW_V1_BLOCK` here; terminal reject-gate reports bypass this consolidator). BLOCK does not determine source Outcome; retain CI/findings evidence separately. |
+| `Outcome:` | APPROVE / MINOR_EDITS / NEEDS_WORK / INSUFFICIENT_BUT_PROMISING / REJECT / literal null; token only, optional leading `✓`/`⚠`/`✗`. Put severity counts/detail in Summary, never after the token. |
+| `Summary:` | 1–2 sentences. |
+| `Confidence:` | Aggregate score — key gaps. |
+| `Next steps:` | Blockers first, max 5. |
+| `Path:` | `→ <REPORT_DIR>/review-report.md` |
 
 **Severity tiers:** Every finding must carry an explicit inline severity label: `[cosmetic]`, `[low]`, `[medium]`, `[high]`, or `[critical]`. Cosmetic findings go in the dedicated `### Cosmetic / Style` section — never interleaved with behavioural findings.
 
@@ -81,4 +111,12 @@ Do NOT encode head as HTML comments (`<!-- ... -->`) or any other form — orche
 
 **Source Files footnote**: after the `## Confidence` block, append `## Source Files` section. Use `Glob(pattern="*.md", path="$RUN_DIR")` to list every handover file present — lets reviewers locate raw subagent outputs without knowing the run timestamp. `$RUN_DIR` is consolidator's self-resolved run-dir (from run-dir preamble: `cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"`) — not orchestrator-substituted.
 
-**Return ONLY** one-liner summary: `verdict=<APPROVE|REQUEST_CHANGES|NEEDS_WORK> | findings=N | critical=N | high=N | file=<REPORT_DIR>/review-report.md`
+**Return ONLY** the one-line publication summary: `verdict=<APPROVE|MINOR_EDITS|NEEDS_WORK|INSUFFICIENT_BUT_PROMISING|null> | findings=N | critical=N | high=N | file=<REPORT_DIR>/review-report.md`. A late terminal conflict instead returns the step 5 routing signal without publication.
+
+## Publication validation
+
+1. Follow the loaded candidate-validation protocol and the parent's evidence in `$RUN_DIR/cross-validation.md`; never infer confirmation from confidence or severity. New or materially strengthened claims require parent validation before publication.
+2. Write `<REPORT_DIR>/review-validation.json`: contract_version=1, rating_scale=source-5-v1, aggregate source_outcome/source_rating/readiness/readiness_reason, returned/missing assessments, all candidates, durable open_concerns. Header fields mirror this envelope.
+3. `findings.jsonl` contains every confirmed actionable candidate exactly once; each row carries contract_version=1, validation_status=CONFIRMED and candidate_id referring to its matching CONFIRMED candidate. Preserve existing minted finding IDs separately. Never put unverified concerns in this collection.
+4. Report Open Concerns names each obligation ID/owner/next_check/closure. Feasible undone checks mean incomplete; actual unavailable prerequisites after feasible checks mean blocked. Neither allows unconditional approval or a merge-readiness claim.
+5. Null is absence of source judgment with returned assessment evidence, never rejection. Source REJECT requires documented binding conflict and an evidenced terminal ground; fixable defects mean NEEDS_WORK. INSUFFICIENT_BUT_PROMISING means a good initiative with substantially incomplete source implementation, never missing hardware/process evidence. Historical reports retain their original five-rating meanings.

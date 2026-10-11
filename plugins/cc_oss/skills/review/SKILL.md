@@ -75,11 +75,11 @@ AGENT_DEADLINE_S=1800  # per spawned agent, from its spawn; covers the former 90
 
 > Review presentation is additive: keep the aggregate summary as prose, all header fields, overall verdict, confidence and detailed findings.
 >
-> - Ask each actual reviewer for a scoped integer rating and rationale: 1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject.
+> - Ask each actual reviewer for a scoped integer rating and rationale: 1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient, but a good initiative, 5 Block (source-5-v1); null means no source judgment, never rejection.
 > - Add `Reviewers:` after `Agents:` in the report header, using readable `Role (rating)` or `Role: rating` entries (`sw-engineer (2)`, `sw-engineer: 2`), never a bare `Role rating` (`sw-engineer 2`); label parent substitutes and omit skipped roles.
-> - A reviewer that ran without stating a judgment is 4, never approval; a reviewer that produced no output is not rated at all — report it as a missing-reviewer limitation.
+> - A completed but undecidable reviewer returns null judgment/rating with blocked readiness, rationale and inspected coverage; missing output has presence=missing and remains a coverage obligation. Record these separately in review-validation.json; never invent rejection or approval.
 > - Never average role ratings into the final verdict.
-> - After rendering the header table, add exactly this line below it, in the same Step 5b delivery block: `Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject.`
+> - After rendering the header table, add exactly this line below it, in the same Step 5b delivery block: `Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block.`
 > - Findings overview adds `Author` after `ID`, retaining all contributing reviewer roles after deduplication.
 > - Read the summary and overview after the header rather than treating the header alone as the complete review.
 > - Terminal gate rejections preserve existing behavior and use `Reviewers: Not assessed` when no source reviewer ran.
@@ -175,11 +175,11 @@ if [[ "$CLEAN_ARGS" == *.md ]]; then
         echo "Error: plan files cannot be used as review report input. Pass a review report from .reports/review/pr-<N>/run-<NNN>/review-report.md or a PR number."
         exit 1
     fi
-    if [ -f "$CLEAN_ARGS" ] && grep -qE '(^## Summary|^verdict:|APPROVED|NEEDS_WORK|REQUEST_CHANGES)' "$CLEAN_ARGS" 2>/dev/null; then  # timeout: 5000
+    if [ -f "$CLEAN_ARGS" ] && grep -qE '(^## Summary|^verdict:|APPROVE|MINOR_EDITS|NEEDS_WORK|INSUFFICIENT_BUT_PROMISING|REJECT|REQUEST_CHANGES)' "$CLEAN_ARGS" 2>/dev/null; then  # timeout: 5000
         DIRECT_PATH_MODE=true
         REVIEW_FILE="$CLEAN_ARGS"
     else
-        echo "⚠ $CLEAN_ARGS is a .md file but lacks review-report markers (## Summary | verdict: | APPROVED|NEEDS_WORK|REQUEST_CHANGES) — refusing direct-path fast-path; continuing with normal review path which expects a PR number."
+        echo "⚠ $CLEAN_ARGS is a .md file but lacks review-report markers (## Summary | verdict: | APPROVE|MINOR_EDITS|NEEDS_WORK|INSUFFICIENT_BUT_PROMISING|REJECT|REQUEST_CHANGES) — refusing direct-path fast-path; continuing with normal review path which expects a PR number."
     fi
 fi
 {
@@ -587,8 +587,9 @@ echo "gate: ${GATE_GROUND} @${PR_HEAD_SHA}"
 
 Skip Step 2–4 entirely. Orchestrator writes `$REPORT_DIR/review-report.md` itself (Write tool, same `---` header format as `templates/review-report.md`) with:
 
-- `Gate: REJECT_<GROUND> @<PR_HEAD_SHA>` (the `@<sha>` suffix is load-bearing — `/oss:resolve` parses it to refuse restarting on an unchanged, rejected PR; never omit it, regardless of which of the 8 grounds fired)
-- `Outcome: N/A — rejected at gate`
+- `Review contract: 1`, `Rating scale: source-5-v1`, and `Readiness: complete` for the established premise judgment; disclose any unassessed source scope
+- `Gate: REVIEW_V1_REJECT_<GROUND> @<PR_HEAD_SHA>` (the `@<sha>` suffix is load-bearing — `/oss:resolve` parses it to refuse restarting on an unchanged, rejected PR; never omit it, regardless of which of the 8 grounds fired)
+- `Outcome: REJECT` and the new five-stage legend; write review-validation.json with source_outcome=REJECT/source_rating=5 and evidenced parent assessment, plus empty findings.jsonl if no actionable source defects were assessed
 - `Summary:` stating the specific evidence (factual contradiction, challenger rationale, label/issue/revert citation, doc line quoted)
 - `Next steps:` recommends closing the PR with that rationale (drafted for user, never auto-posted — `gh pr close`/comment forbidden by public-github.md read-only policy)
 
@@ -609,7 +610,7 @@ else
 fi
 ```
 
-`GATE=BLOCK` does **not** skip Step 2 — proceed to full fanout regardless, `Gate: BLOCK` is carried into the Step 5 report header alongside the normal `Outcome:` so the fixable blocker is visible immediately, not buried after N findings.
+`GATE=BLOCK` does **not** skip Step 2 — proceed to full fanout regardless, `Gate: REVIEW_V1_BLOCK` is carried into the Step 5 report header alongside the normal `Outcome:` so the fixable blocker is visible immediately, not buried after N findings.
 
 **Classification guidance for full-review agents and the consolidator** (applies once fanout runs, whichever gate state): tag a finding `[blocking]` only when it is (a) objectively fixable by more commits and (b) actually prevents merge until resolved. Design/architecture disagreements are never `[blocking]` — those are `[medium]`/`[high]` `NEEDS_WORK` findings, and a goal-level disagreement should have been caught at Stage 1, not here. Per-category default: `<notes>` §Block-tier catalogue — canonical, don't re-derive per run.
 
@@ -699,7 +700,7 @@ Follow the handoff protocol above. File absent → warn and continue without it.
 
 Template (loaded above). Substitute `<REVIEW_SKILL_DIR>` → `$REVIEW_SKILL_DIR` before using content in spawn prompts. Leave `$RUN_DIR` literal in the prompt text — agents resolve it themselves via the run-dir preamble (`cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"`); the orchestrator must NOT retype the run-dir path.
 
-**Prior resolution propagation**: when the existing-report guard recorded a prior `resolution.jsonl` (`IFS= read -r PRIOR_RESOLUTION < "${TMPDIR:-/tmp}/oss-review-prior-resolution-${CSID}"` non-empty — a re-run after `/oss:resolve` acted on the earlier report), add one line to every dimension-agent prompt and the consolidator prompt: `Prior resolution ledger: <literal path> — one record per earlier finding and resolve run, the last record per finding_id winning (finding_id, title, section, file, line, verdict fixed/rejected/skipped/self-resolved/pending, sha, why). Match a ledger record to your finding by file and claim, never by id alone: ids hash the earlier run's wording. Confirm "fixed" and "self-resolved" findings are actually fixed at the current head; a record with "shared_with_github": true was folded into a GitHub item, so its verdict covers that combined item, not the finding alone. A "rejected" record means /oss:resolve's challenger rejected it, sometimes only because it could not verify it: re-check it at the current head, report it again when the code still shows the problem, and say what the earlier rejection missed.` The consolidator template turns that line into a `Review Confidence` entry for every prior `rejected` finding it leaves out, so no omission is silent. No ledger → add nothing.
+**Prior resolution propagation**: when the existing-report guard recorded a prior `resolution.jsonl` (`IFS= read -r PRIOR_RESOLUTION < "${TMPDIR:-/tmp}/oss-review-prior-resolution-${CSID}"` non-empty — a re-run after `/oss:resolve` acted on the earlier report), add one line to every dimension-agent prompt and the consolidator prompt: `Prior resolution ledger: <literal path> — one record per earlier finding and resolve run, the last record per finding_id winning (finding_id, title, section, file, line, verdict fixed/rejected/skipped/self-resolved/pending/unverified/already-fixed, sha, why). Match a ledger record to your finding by file and claim, never by id alone: ids hash the earlier run's wording. Confirm "fixed" and "self-resolved" findings are actually fixed at the current head; a record with "shared_with_github": true was folded into a GitHub item, so its verdict covers that combined item, not the finding alone. Historical "rejected" records may include unverifiable claims; new rejected records require affirmative refutation. An "unverified" record keeps its owner/next check open, and "already-fixed" retains the original claim and fix evidence. For every earlier rejected record: re-check it at the current head, report it again when the code still shows the problem, and say what the earlier rejection missed.` The consolidator template turns that line into a `Review Confidence` entry for every prior `rejected` finding it leaves out, so no omission is silent. No ledger → add nothing.
 
 **Codemap context propagation**: rehydrate `codemap_available` from Step 1 persist file, copy staged context into `$RUN_DIR/codemap-context.md`, substitute into every dimension-agent spawn prompt per the rules in the Structural-context block above. Block omitted when `codemap_available=false`.
 
@@ -822,7 +823,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/check_oss_pr_signals.py" --cle
 cat "$OSS_SIGNALS" 2>/dev/null
 ```
 
-## Step 4: Cross-validate critical/blocking findings
+## Step 4: Validate all candidates and independently verify critical/blocking concerns
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -831,15 +832,17 @@ IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/review-oss-shared-${CSID}" 2>/dev/nu
 cat "$_OSS_SHARED/foundry--cross-validation-protocol.md"  # timeout: 5000
 ```
 
-Follow above. File absent → warn: "cross-validation protocol not found — verify foundry plugin installed (`claude plugin list`); skipping Step 4." Then skip Step 4.
+Follow the protocol above: parent validates all candidates before consolidation. File absent → record incomplete review-process coverage with owner/reinstall recovery; do not publish confirmed findings or unconditional approval from an unapplied protocol.
 
-**Independence requirement**: cross-validation must run as separate spawned agent — same type as finding's origin. Do NOT validate in orchestrator context.
+**Independence requirement**: the additional critical/blocking verification runs as a separate spawned agent of the finding's origin type; parent validation of every candidate remains mandatory.
 
 **Deadlines, no polling**: in the verifier spawn response, write `$RUN_DIR/agent-watch-verify.tsv` with the Write tool — one row per verifier, `<name><TAB><its output file per the protocol, or - when it returns only an envelope><TAB>1800` — and run the Step 2 wake-up check (it reads every `agent-watch-*.tsv` in `$RUN_DIR`) at each notification. Never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop.
 
 **Spawn cap: max 3 verifier agents.** Critical/blocking findings > 3 → group into batches of ≤2 findings per verifier; note grouped IDs in rationale.
 
-Spawn verifier agent per critical/blocking finding (or per batch when capped). Compose all verifier labels in one pass, set `name`/`description`/prompt line 1 per `templates/agent-prompts.md` §Spawn slots — finding ID is delta, leads prompt line 1; PR/repo stays in prompt line 1 only, after finding ID, never leading it. Agent reads relevant finding file from `$RUN_DIR` and referenced code. Each verifier must write full rationale to `$RUN_DIR/verify-<finding-id>.md` using Write tool, then return ONLY: `{"finding_id":"<id>","verdict":"CONFIRMED|REFUTED","rationale":"<one sentence>","file":"$RUN_DIR/verify-<finding-id>.md"}`. REFUTED → downgrade finding severity or remove before consolidation.
+Spawn verifier agent per critical/blocking finding (or per batch when capped). Compose all verifier labels in one pass, set `name`/`description`/prompt line 1 per `templates/agent-prompts.md` §Spawn slots — finding ID is delta, leads prompt line 1; PR/repo stays in prompt line 1 only, after finding ID, never leading it. Agent receives the atomic claim/revision/contract/trigger and inspects referenced code/counterevidence without reading prior conclusions. Each verifier must write full rationale to `$RUN_DIR/verify-<finding-id>.md` using Write tool, then return ONLY: `{"finding_id":"<id>","verdict":"CONFIRMED|REFUTED|ALREADY_FIXED|UNVERIFIED","rationale":"<one sentence>","file":"$RUN_DIR/verify-<finding-id>.md"}`. REFUTED requires affirmative falsification; remove that claim. ALREADY_FIXED retains fix evidence. UNVERIFIED remains a separate open concern with owner/next check, never a downgraded actionable finding.
+
+Before consolidation, persist the parent's all-severity candidate validation and reviewer assessment evidence in `$RUN_DIR/cross-validation.md` with the Write tool. Include structured envelope fields defined by the loaded protocol and retain all dispositions. Pass that literal evidence path to the consolidator. Parent rechecks new/materially strengthened claims and the final envelope before delivery; a model's confirmation label alone is not proof.
 
 ## Step 5: Consolidate findings
 
@@ -864,7 +867,7 @@ IFS= read -r IMPACT_LINE < "${TMPDIR:-/tmp}/oss-review-impact-${_PR_TAG}-${CSID}
 echo "IMPACT=$IMPACT_LINE"
 ```
 
-A reject-gate run never reaches this point (Step 5 is skipped entirely) — `GATE` here is always `PASS` or `BLOCK`.
+**Late terminal conflict:** Before consolidation, if parent validation establishes source REJECT, return to Stage 1's existing confirmed-ground block and terminal publisher. Reuse already applicable evidence and any required conduct/license confirmation; never spawn duplicate checks. Retain the original reviewed SHA, exact ground/reason and provenance, all completed assessments/candidates and open concerns; do not replace full-review evidence with an empty premise-only record. Publish `REVIEW_V1_REJECT_<GROUND> @<PR_HEAD_SHA>` and source REJECT together, then follow Stage 1's Step 5b/Step 7 route. No matching evidenced terminal ground → NEEDS_WORK for fixable defects, or incomplete/blocked for unfinished validation. A reject-gate run bypasses consolidation — `GATE` here is always `PASS` or `BLOCK`.
 
 Select consolidator agent by `PR_TYPE` (lighter model for non-logic PRs):
 
@@ -880,20 +883,42 @@ case "${PR_TYPE:-CODE}" in
 esac
 ```
 
-Spawn `$CONSOLIDATOR_AGENT` consolidator agent with prompt:
+Resolve the consolidator instruction file before spawning; keep its body out of parent context.
 
-<!-- loads: consolidator-prompt.md -->
+<!-- loads: consolidator-prompt.md — consolidator reads the literal installed path, parent passes bindings only -->
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# Reload REVIEW_SKILL_DIR (Check 41: fresh shell)
 IFS= read -r REVIEW_SKILL_DIR < "${TMPDIR:-/tmp}/review-skill-dir-${CSID}" 2>/dev/null || REVIEW_SKILL_DIR=""
-cat "$REVIEW_SKILL_DIR/templates/consolidator-prompt.md"  # timeout: 5000
+_CONSOLIDATOR_INSTRUCTIONS="$REVIEW_SKILL_DIR/templates/consolidator-prompt.md"
+[ -f "$_CONSOLIDATOR_INSTRUCTIONS" ] || { echo "! BLOCKED — consolidator instruction file missing; restore/reinstall this oss version before consolidation"; exit 1; }
+printf 'Consolidator instructions: %s\n' "$_CONSOLIDATOR_INSTRUCTIONS"  # timeout: 5000
 ```
 
-Template (loaded above). Prepend the run-dir resolution preamble from `agent-prompts.md` so the consolidator self-resolves `$RUN_DIR` (`cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"`). Substitute `<REPORT_DIR>`, `<REVIEW_SKILL_DIR>`, `<_OSS_SHARED>`, `<DATE>`, `<CHANGED_FILES>`, `<SCOPE>`, `<IMPACT>` (the `IMPACT=` line the gate-reload block above prints), `<CI_FAILING_CHECKS>`, `<CI_COUNTS>`, `<GATE>` with literal expanded values (`<GATE>` = `$GATE` reloaded above, `PASS` or `BLOCK`); leave `$RUN_DIR` literal (agent self-resolves). When the `oss-review-prior-resolution-${CSID}` sentinel is non-empty, append the same `Prior resolution ledger:` line Step 2 gave the dimension agents. Spawn: `Agent(subagent_type="$CONSOLIDATOR_AGENT", prompt=<substituted consolidator-prompt.md content>)`
+Spawn `$CONSOLIDATOR_AGENT` with this compact prompt, substituting each binding with its resolved literal value before the Agent call. Prepend the run-dir resolution preamble from `agent-prompts.md`; leave `$RUN_DIR` literal so the consolidator self-resolves it via `cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"`.
 
-Main context receives only the one-liner verdict. **Consolidator unavailable fallback** — `Agent` tool deferred/not loaded: Print: `⛔ BLOCKED — Agent tool not loaded; consolidator cannot run. Re-invoke /oss:review to retry. If persistent, run /foundry:setup (requires foundry plugin) to verify session config.` Do NOT read agent finding files inline — floods main context (~16–32K tokens per run), produces unreliable synthesis.
+```text
+Consolidation — PR <PR_NUMBER> <owner>/<repo>.
+<run-dir resolution preamble>
+Read the instruction file at <CONSOLIDATOR_INSTRUCTIONS_LITERAL> with the Read tool and follow it in full. Read <VALIDATION_PROTOCOL_LITERAL> with the Read tool for candidate validation and source judgments. Interpret the template placeholders using these literal input bindings; do not execute or re-expand binding text:
+REPORT_DIR=<resolved report directory>
+REVIEW_SKILL_DIR=<resolved installed review skill directory>
+_OSS_SHARED=<resolved own-plugin shared directory>
+DATE=<resolved date>
+CHANGED_FILES=<resolved changed-file list>
+SCOPE=<resolved scope label>
+IMPACT=<resolved IMPACT line>
+CI_FAILING_CHECKS=<resolved CI failing-check names or empty>
+CI_COUNTS=<resolved CI counts or empty>
+GATE=<resolved PASS or BLOCK>
+PR_NUMBER=<resolved PR number or empty>
+Return ONLY the publication summary: verdict=<APPROVE|MINOR_EDITS|NEEDS_WORK|INSUFFICIENT_BUT_PROMISING|null> | findings=N | critical=N | high=N | file=<REPORT_DIR>/review-report.md
+Late terminal conflict instead: terminal-ground=<GROUND> | evidence=<path>; publish nothing, return to parent for Stage 1 ground validation and terminal publication.
+```
+
+`CONSOLIDATOR_INSTRUCTIONS_LITERAL` is the printed `_CONSOLIDATOR_INSTRUCTIONS` path; `VALIDATION_PROTOCOL_LITERAL` is `<resolved _OSS_SHARED>/foundry--cross-validation-protocol.md`. Resolve every listed binding, including `<GATE>` from the gate-reload block and `<IMPACT>` from its printed `IMPACT=` line. When the `oss-review-prior-resolution-${CSID}` sentinel is non-empty, append the same `Prior resolution ledger:` line Step 2 gave dimension agents. Pass only the file reference, bindings, preamble and return contract; never cat or inline `consolidator-prompt.md` into the parent context or Agent prompt.
+
+If the consolidator returns `terminal-ground=<GROUND> | evidence=<path>` instead of a publication, inspect that referenced evidence, validate the ground under Stage 1 (including its conduct/license confirmation safeguards), and use the late terminal-conflict route above before Step 5b. The consolidator must not publish conflicting PASS/BLOCK and source REJECT. Main context otherwise receives only the one-liner verdict. **Consolidator unavailable fallback** — `Agent` tool deferred/not loaded: Print: `⛔ BLOCKED — Agent tool not loaded; consolidator cannot run. Re-invoke /oss:review to retry. If persistent, run /foundry:setup (requires foundry plugin) to verify session config.` Do NOT read agent finding files inline — floods main context (~16–32K tokens per run), produces unreliable synthesis.
 
 After parsing confidence: agent < 0.7 → prepend **⚠ LOW CONFIDENCE** to findings section, state gap explicitly. Never drop uncertain findings.
 
@@ -1061,7 +1086,7 @@ Scenarios:
 
 <notes>
 
-- **PR review acceptance criteria — canonical here**: oss:shepherd cross-references these criteria; don't duplicate in shepherd. Shepherd defers to this file for acceptance thresholds, severity definitions. Header is two-part: `Gate:` (`PASS` / `BLOCK` / `REJECT_<GROUND>` where GROUND is one of the 8 in Stage 1 — GOAL, CONDUCT, SCOPE, LICENSE, DUPLICATE, REVERTED, SPAM, PHILOSOPHY; reject is terminal and skips fanout, block isn't) and `Outcome:` (`APPROVE` / `NEEDS_WORK` / `REQUEST_CHANGES` from the full fanout, or `N/A — rejected at gate` when `Gate` is a `REJECT_*`). See Acceptance gate (Step 1).
+- **PR review acceptance criteria — canonical here**: oss:shepherd cross-references these criteria; don't duplicate in shepherd. Shepherd defers to this file for acceptance thresholds, severity definitions. Header separates `Gate:` (`REVIEW_V1_PASS` / `REVIEW_V1_BLOCK` / `REVIEW_V1_REJECT_<GROUND>` where GROUND is one of the 8 in Stage 1 — GOAL, CONDUCT, SCOPE, LICENSE, DUPLICATE, REVERTED, SPAM, PHILOSOPHY; reject is terminal and skips fanout, block isn't) and `Outcome:` (`APPROVE` / `MINOR_EDITS` / `NEEDS_WORK` / `INSUFFICIENT_BUT_PROMISING` / `REJECT` / `null`), with separate Readiness and version-one REVIEW_V1\_\* gate; historical unversioned reports retain REQUEST_CHANGES and terminal N/A. See Acceptance gate (Step 1).
 - **Block-tier catalogue** — per-category default for the `[blocking]` tag, applied by full-review agents once fanout runs (not automatic, judgment still required per row):
   | Category | Default | Nuance |
   | -- | -- | -- |

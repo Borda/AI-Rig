@@ -32,6 +32,24 @@ def _stage(run: Path, ledger: str, payload: object) -> Path:
 class TestStatusEventAppend:
     """Protect the validated, append-only status-event ledger."""
 
+    def test_append_help_exposes_executable_event_examples(
+        self, selected_run: tuple[Path, dict], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Let a caller discover and append the documented schema without inventing fields."""
+        run, _ = selected_run
+        with pytest.raises(SystemExit) as exit_info:
+            HELPER.parse_args(["append", "--help"])
+        assert exit_info.value.code == 0
+        help_text = capsys.readouterr().out
+        assert "one JSON object or a JSON array; not JSONL" in help_text
+        assert "Unknown fields are rejected" in help_text
+        examples = [json.loads(line) for line in help_text.splitlines() if line.startswith('{"kind":')]
+        assert {example["kind"] for example in examples} == {"item", "bucket"}
+        assert "resolved_how" in next(example for example in examples if example["kind"] == "item")
+        _stage(run, "resolution-events.jsonl", examples)
+        HELPER.append_record(run, "resolution-events.jsonl")
+        assert HELPER.fold_events(HELPER.read_events(run))[0] == {"B1": "verified"}
+
     def test_appends_valid_events_and_removes_the_staged_record(self, selected_run: tuple[Path, dict]) -> None:
         """A valid item and bucket event pair lands as two JSON lines and the staged file disappears.
 
@@ -64,6 +82,42 @@ class TestStatusEventAppend:
         HELPER.append_record(run, "resolution-events.jsonl")
 
         assert (run / "resolution-events.jsonl").read_bytes().startswith(first)
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            pytest.param(
+                '{"kind":"bucket","id":"B1","status":"verified"}\n{"kind":"item","id":"R1","owner_status":"resolved"}',
+                id="jsonl-staging",
+            ),
+            pytest.param(
+                [
+                    {"kind": "bucket", "id": "B1", "status": "verified"},
+                    {"kind": "item", "id": "R1", "owner_status": "resolved", "review_status": "clean"},
+                ],
+                id="unsupported-review-field-in-batch",
+            ),
+        ],
+    )
+    def test_rejected_review_update_can_recover_without_losing_history(
+        self, selected_run: tuple[Path, dict], payload: object
+    ) -> None:
+        """Keep the previous ledger intact through malformed closure attempts and a valid repair."""
+        run, _ = selected_run
+        _stage(run, "resolution-events.jsonl", {"kind": "bucket", "id": "B1", "status": "in-progress"})
+        HELPER.append_record(run, "resolution-events.jsonl")
+        before = (run / "resolution-events.jsonl").read_bytes()
+        staged = _stage(run, "resolution-events.jsonl", payload)
+        rejected = staged.read_bytes()
+        with pytest.raises(HELPER.DeriveError):
+            HELPER.append_record(run, "resolution-events.jsonl")
+        assert (run / "resolution-events.jsonl").read_bytes() == before
+        assert staged.read_bytes() == rejected
+        _stage(run, "resolution-events.jsonl", {"kind": "bucket", "id": "B1", "status": "verified"})
+        HELPER.append_record(run, "resolution-events.jsonl")
+        assert (run / "resolution-events.jsonl").read_bytes().startswith(before)
+        assert not staged.exists()
+        assert HELPER.fold_events(HELPER.read_events(run))[0] == {"B1": "verified"}
 
     @pytest.mark.parametrize(
         ("event", "code"),

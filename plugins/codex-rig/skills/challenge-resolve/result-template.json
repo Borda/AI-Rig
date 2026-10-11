@@ -26,7 +26,7 @@
     "challenge_scope": {
       "mode": "single"
     },
-    "challenge_table_contract_version": 1,
+    "challenge_table_contract_version": 2,
     "confidence_gap_closures": [],
     "confidence_gaps": [],
     "confidence_recovery": {

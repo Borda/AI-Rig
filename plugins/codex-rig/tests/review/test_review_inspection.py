@@ -43,6 +43,7 @@ def _inspection_run(
     overlaps: bool = True,
     run_dir: Path | None = None,
     parent_thread_id: str = "parent-thread",
+    source_rating_version: int | None = None,
 ) -> dict[str, object]:
     """Create a schema-five inspection run with real parent/child evidence relationships."""
     run = run_dir or tmp_path / "run"
@@ -99,6 +100,10 @@ def _inspection_run(
             f"context={context_hash} attempt=1 -->\nNo finding.\n\n"
             "## Reviewer Assessment\n\nRating: 1\nRationale: The inspected scope is clean."
         )
+        if source_rating_version == 1:
+            message = message.replace(
+                "Rating: 1\n", "Source rating version: 1\nRating: 1\nVerification readiness: complete\n"
+            )
         output_path = specialists / f"{role}.md"
         output_path.write_text(message + "\n", encoding="utf-8", newline="\n")
         thread = f"child-{index}"
@@ -863,7 +868,7 @@ def test_schema_five_result_requires_parallel_review_for_multiple_roles(tmp_path
     """Reject passing multi-role fallbacks while retaining honest failed results."""
     completion = _module(Path(__file__).with_name("test_review_completion_gate.py"))
     assessed = completion._assessed_pr.__wrapped__(tmp_path)
-    fixture = _inspection_run(tmp_path, run_dir=assessed, parent_thread_id="thread")
+    fixture = _inspection_run(tmp_path, run_dir=assessed, parent_thread_id="thread", source_rating_version=1)
     validator = _validator()
     result_path = assessed / "result.json"
     result = json.loads(result_path.read_text(encoding="utf-8"))
@@ -919,7 +924,7 @@ def test_schema_five_result_requires_parallel_review_for_multiple_roles(tmp_path
         item["mode"] = "substituted"
         output = assessed / item["output_path"]
         output.write_text(
-            f"role_id: {item['role']}\n\n## Reviewer Assessment\n\nRating: 3\n"
+            f"role_id: {item['role']}\n\n## Reviewer Assessment\n\nSource rating version: 1\nRating: 3\nVerification readiness: complete\n"
             "Rationale: Parent inspection lacks independent coverage.\n",
             encoding="utf-8",
             newline="\n",

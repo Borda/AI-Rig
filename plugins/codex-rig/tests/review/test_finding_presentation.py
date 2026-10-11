@@ -872,12 +872,40 @@ def _write_remediation_producer(tmp_path: Path, items: list[dict]) -> Path:
         )
     metadata["review_findings"] = records
     metadata["review_decision"].update(recommendation="needs-more-work", summary="Resolve the retained findings.")
-    metadata["reviewer_assessments"][0]["rating"] = 4
+    metadata["review_validation"].update(
+        source_verdict="needs-more-work",
+        candidates=[
+            {
+                "id": record["id"],
+                "severity": record["severity"],
+                "claim": record["summary"],
+                "source_revision": "head:" + json.loads((run / "pr-routing.json").read_bytes())["head_oid"],
+                "contract": record["closure_evidence"],
+                "trigger": record["summary"],
+                "confirmation_evidence": "; ".join(record["evidence"]),
+                "falsification_evidence": "Inspect the source for an existing boundary guard.",
+                "counterevidence": [],
+                "check": "Inspected the frozen source boundary and its callers.",
+                "result": record["summary"],
+                "environment": "Frozen source inspection",
+                "limits": [],
+                "disposition": "confirmed",
+                "reason": record["required_change"],
+                "feasible_checks_complete": True,
+                "missing_prerequisite": "",
+                "owner": "review owner",
+                "next_check": record["required_change"],
+                "closure_condition": record["closure_evidence"],
+            }
+            for record in records
+        ],
+    )
+    metadata["reviewer_assessments"][0]["rating"] = 3
     result["findings"] = {
         severity: sum(record["severity"] == severity for record in records) for severity in result["findings"]
     }
     notes_path = run / "review-notes.md"
-    notes = notes_path.read_text(encoding="utf-8").replace("Rating: 1", "Rating: 4")
+    notes = notes_path.read_text(encoding="utf-8").replace("Rating: 1", "Rating: 3")
     notes += "\n\n## Review Findings and Merge Blocks\n\n"
     notes += "| Finding / area | Author | Required change | Evidence | Status |\n| --- | --- | --- | --- | --- |\n"
     notes += "\n".join(
@@ -890,7 +918,7 @@ def _write_remediation_producer(tmp_path: Path, items: list[dict]) -> Path:
     handoff["outcome"]["summary"] = "Recommendation: needs-more-work."
     handoff["tables"][0]["summary"] = metadata["review_decision"]["summary"]
     handoff["tables"][0]["reviewers"] = metadata["reviewer_assessments"]
-    handoff["tables"][0]["rows"][-1]["cells"][1] = "needs work"
+    handoff["tables"][0]["rows"][-1]["cells"][1] = "major revision"
     handoff["tables"].append(
         {
             "heading": "Review Findings and Merge Blocks",

@@ -15,12 +15,13 @@
 
 ## Consolidation Rules
 
+- Parent validates every severity against exact source/contracts/callers/tests/configuration and relevant CI before publication. Static proof is sufficient when conclusive. Only confirmed actionable defects enter findings.jsonl; open concerns remain separately durable with ID/owner/next check/closure. Bad repair does not refute the defect. New consolidated claims return through validation. Feasible checks undone mean incomplete; actual unavailable prerequisites after feasible checks mean blocked. Neither supports unconditional approval or rejection. Presentation caps never discard a confirmed actionable finding from findings.jsonl or its validation record.
 - Signal-to-noise filter: classify each finding as (a) genuine defect/architectural issue or (b) style/completeness observation (unused import, print-vs-logging, missing class-level docstring on class with method-level docstrings)
 - Well-scoped modules (≤5 public APIs): max 1 style item per section
 - Target: GT+2 findings total per module — 10 nits obscure 2 critical fixes
-- Pre-flight: before writing section, count total findings; count exceeds CRITICAL/HIGH plus 2 → drop lowest-severity first; depth over breadth
-- Annotation completeness: ≥1 HIGH/CRITICAL present → omit ALL LOW type annotation, docstring nits — handled by `foundry:linting-expert` or pre-commit hooks — report-side pruning only; dropped nits never reach the report, so `_shared/review-section-taxonomy.md` §LOW Grouping Rule (never omit LOW) applies to whatever remains, not these
-- Cap each non-critical section at 5 items; note "N additional lower-priority findings omitted" if more found
+- Pre-flight: before writing section, count total findings; count exceeds CRITICAL/HIGH plus 2 → group low-priority display rows; retain every confirmed actionable candidate in findings.jsonl and the validation envelope
+- Annotation completeness: ≥1 HIGH/CRITICAL present → group LOW type annotation, docstring nits — handled by `foundry:linting-expert` or pre-commit hooks — presentation grouping only; confirmed nits stay in findings.jsonl, so `_shared/review-section-taxonomy.md` §LOW Grouping Rule (never omit LOW) still applies
+- Cap each non-critical section at 5 items; group additional lower-priority findings with stable IDs and retain every confirmed actionable record
 
 ## Actionable Findings Format
 

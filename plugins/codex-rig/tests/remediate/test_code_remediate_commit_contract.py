@@ -8,6 +8,40 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
 
 
+def test_remediation_recovers_late_baseline_from_retained_pre_edit_evidence_only() -> None:
+    """Prevent agent-created dirtiness from being called user work or silently cleared."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    assert "Late baseline capture is an agent process error" in skill
+    assert "commit-ownership-recovery.md" in skill
+    assert "retained pre-edit status and source snapshots" in skill
+    assert "Current dirtiness alone proves neither pre-existing user edits nor agent ownership" in skill
+    assert "never fabricate an empty baseline" in skill
+
+
+def test_remediation_classifies_confidence_and_prepares_backend_evidence() -> None:
+    """Keep real coverage actionable without making statistical disclaimers impossible chores."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    assert "Ephemeral Dependency Evidence" in skill
+    assert "before closing a missing-backend item as environment-blocked" in skill
+    assert "Statistical calibration disclaimer only" in skill
+    assert "not-applicable" in skill.split("Statistical calibration disclaimer only", 1)[1].split("\n", 1)[0]
+    assert "An explicitly required calibration experiment remains actionable" in skill
+    assert "resume ledger, workplan, finalization, validation and promotion" in skill
+
+
+def test_review_and_remediation_require_explicit_convergence_authorization() -> None:
+    """Keep ordinary workflow invocation from silently starting an extra review-and-fix loop."""
+    for name in ("code-review", "code-remediate"):
+        skill = (PLUGIN_ROOT / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
+        assert "Challenge Resolve is opt-in" in skill
+        assert "invocation alone does not authorize" in skill
+        assert "ask before entering that workflow or loop" in skill
+        assert "Existing explicit approval for the same scope remains valid" in skill
+    remediation = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    fork = remediation.split("- **Fork PR:**", 1)[1].split("####", 1)[0]
+    assert "separate explicit approval for the adversarial recovery loop" in fork
+
+
 def test_remediation_offers_post_gate_commit_modes() -> None:
     """Keep the commit decision after validated remediation work."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")

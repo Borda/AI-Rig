@@ -112,13 +112,20 @@ def review_result_kind(result_path: Path, *, allow_local: bool = False) -> str:
     if metadata.get("review_status") == "closed":
         return "closed"
     decision = metadata.get("review_decision")
-    if not isinstance(decision, dict) or decision.get("recommendation") not in {
-        "accept-as-is",
-        "minor-changes",
-        "needs-more-work",
-        "reject",
-        "not-aligned",
-    }:
+    if not isinstance(decision, dict) or (
+        decision.get("recommendation")
+        not in {
+            "accept-as-is",
+            "minor-changes",
+            "needs-more-work",
+            "insufficient-but-promising",
+            "reject",
+            "not-aligned",
+        }
+        and not (
+            decision.get("recommendation") is None and metadata.get("review_validation", {}).get("schema_version") == 1
+        )
+    ):
         return "invalid"
     return "assessed"
 
@@ -413,6 +420,12 @@ def complete_review_run(run_dir: Path, *, codex_home: Path | None = None, parent
     if payload.get("schema_version") != 3:
         raise LookupError("review-completion-requires-bound-schema-v3")
     metadata = payload["metadata"]
+    if metadata.get("review_status") not in {"unavailable", "closed"} and (
+        metadata.get("finding_records_version") != 2 or metadata.get("review_validation", {}).get("schema_version") != 1
+    ):
+        raise LookupError(
+            "review-source-contract-upgrade-required:rerun-code-review-or-use --archive-result for read-only access"
+        )
     if metadata.get("scope") == "pr" and review_result_kind(result_path) == "assessed":
         identity = _read_pr_identity(run_dir / "pr.json")
         if identity is None:

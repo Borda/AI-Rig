@@ -28,6 +28,18 @@ UNSANDBOXED_DISCLOSURE = (
 )
 
 
+@pytest.mark.installed_plugin
+def test_every_package_dependent_claim_prepares_its_environment_before_disposition() -> None:
+    """Require dependency preparation at candidate admission, including favorable behavior claims."""
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    admission = skill.split("### 05: Validate every candidate", 1)[1].split("### 06:", 1)[0]
+    assert "For every package-dependent behavioral claim" in admission
+    assert "including favorable claims and proposed refutations" in admission
+    assert "Ephemeral Dependency Evidence" in admission
+    assert "Package absence alone does not exhaust feasible checks" in admission
+    assert "parent owns dependency preparation" in admission
+
+
 def _contract_section(heading: str) -> str:
     """Return one second-level section of the shared contract, heading included."""
     text = SHARED_CONTRACT.read_text(encoding="utf-8")

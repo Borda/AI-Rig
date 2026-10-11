@@ -437,8 +437,9 @@ def test_results_rows_show_carried_and_new_findings_in_each_round(tmp_path: Path
         validator._validate_adversarial_loop_rows(tmp_path, ledger, summary, table_version=1)
 
 
+@pytest.mark.parametrize("table_version", [1, 2])
 def test_chunked_coordinator_reports_children_without_a_combined_score(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, table_version: int
 ) -> None:
     """Validate a stopped child-backed coordinator without inventing a parent review."""
     candidate = _write_loop(tmp_path, monkeypatch)
@@ -464,6 +465,9 @@ def test_chunked_coordinator_reports_children_without_a_combined_score(
     handoff["presentation_version"] = 3
     handoff["outcome"] = {"title": "Chunk review", "summary": "Child reviews passed; overall review is incomplete."}
     handoff["tables"][0]["rows"][0]["cells"] = ["not-run", *(["N/A"] * 7), "chunk-only", "chunks/results.json"]
+    if table_version == 2:
+        handoff["tables"][0]["layout"] = "challenge-history"
+        handoff["tables"][0]["rows"][0]["admission"] = "unavailable"
     handoff["child_runs"] = json.loads(json.dumps(summary["runs"]))
     handoff["verification"][-1] = {"check": "review", "status": "fail", "evidence": gates["checks"][-1]["stdout"]}
     handoff["remaining"] = [
@@ -481,6 +485,7 @@ def test_chunked_coordinator_reports_children_without_a_combined_score(
     )
     result = json.loads(candidate.read_text(encoding="utf-8"))
     result.update(status="fail", checks_failed=["review"])
+    result["metadata"]["challenge_table_contract_version"] = table_version
     result["metadata"].pop("adversarial_loop")
     result["metadata"]["challenge_scope"] = {
         "mode": "chunked",

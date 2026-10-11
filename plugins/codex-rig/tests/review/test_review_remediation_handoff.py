@@ -151,6 +151,30 @@ def test_malformed_closure_proof_blocks_completion_and_consumer_with_same_diagno
             "authors": ["Main reviewer"],
         }
     ]
+    result["metadata"]["review_validation"]["candidates"] = [
+        {
+            "id": "F1",
+            "severity": "high",
+            "claim": "The boundary accepts unchecked input.",
+            "source_revision": "head:" + json.loads((run / "pr-routing.json").read_bytes())["head_oid"],
+            "contract": "Reject unchecked input.",
+            "trigger": "Pass unchecked input to the boundary.",
+            "confirmation_evidence": "widget.txt:1",
+            "falsification_evidence": "Inspect existing input guards.",
+            "counterevidence": [],
+            "check": "Inspected the frozen boundary.",
+            "result": "The guard is absent.",
+            "environment": "Frozen source inspection",
+            "limits": [],
+            "disposition": "confirmed",
+            "reason": "The input must be validated.",
+            "feasible_checks_complete": True,
+            "missing_prerequisite": "",
+            "owner": "review owner",
+            "next_check": "Run the boundary regression.",
+            "closure_condition": "The boundary regression passes.",
+        }
+    ]
     result_path.write_text(json.dumps(result), encoding="utf-8", newline="\n")
     before = {path.relative_to(run): path.read_bytes() for path in run.rglob("*") if path.is_file()}
     diagnostic = "review-validation-failed:review-finding-closure_evidence-invalid:1"
@@ -205,7 +229,14 @@ def _finalize_native_review(
     metadata = {
         "scope": "working-tree",
         "risk_tier": json.loads((run / "review-routing.json").read_bytes())["risk_tier"],
-        "finding_records_version": 1,
+        "finding_records_version": 2,
+        "review_validation": {
+            "schema_version": 1,
+            "source_rating_version": 1,
+            "source_verdict": "accept-as-is",
+            "verification_readiness": "complete",
+            "candidates": [],
+        },
         "review_findings": [],
         "operational_blockers": [],
         "review_decision": {
@@ -291,6 +322,8 @@ def _finalize_native_review(
         "tables": [
             {
                 "heading": "Review Snapshot",
+                "source_rating_version": 1,
+                "verification_readiness": "complete",
                 "columns": ["Field", "Value"],
                 "reviewers": metadata["reviewer_assessments"],
                 "summary": metadata["review_decision"]["summary"],

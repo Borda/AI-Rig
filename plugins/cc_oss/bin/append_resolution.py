@@ -16,7 +16,8 @@ name, so re-running this script for the same run appends nothing new).
 ``fixed`` and ``self-resolved`` need implementation evidence, not only a challenge that accepted the item: a Phase 2
 commit, a Codex-direct item record, or a ``[resolve No.<id>]`` commit after ``--base-sha``. An item a merge conflict
 left unapplied, or one accepted but never implemented, is reported ``pending``. A ``rejected`` verdict records that
-resolve's challenger rejected the finding, which includes findings it could not verify; the next review re-checks them
+resolve's challenger affirmatively refuted the finding. Unavailable evidence stays ``unverified``; later fixes stay
+``already-fixed``. The next review re-checks them
 at the new head.
 
 Inputs are the run's own durable records, never retyped by the orchestrator: ``action-items.jsonl``,
@@ -52,6 +53,8 @@ VERDICT_BY_RESOLUTION: Final = {
     "codex-direct": "fixed",
     "self-resolved": "self-resolved",
     "rejected": "rejected",
+    "unverified": "unverified",
+    "already-fixed": "already-fixed",
 }
 #: challenge-log.txt producer format (action-item-dispatch.md append block): fixed key order, free text only in the
 #: last four fields — anchoring on the known keys keeps a reviewer's quoted ``x=1`` from splitting a field.
@@ -133,7 +136,7 @@ def implemented_ids(impl_dir: Path) -> set[int]:
 def _verdict(entry: dict[str, str], implemented: bool, sha: str) -> tuple[str, str]:
     """Combine the challenge verdict with implementation evidence into the reported ``(verdict, why)``."""
     verdict = VERDICT_BY_RESOLUTION.get(entry.get("resolution", ""), "")
-    if verdict == "rejected":
+    if verdict in ("rejected", "unverified", "already-fixed"):
         return verdict, entry.get("evidence_why", "")
     why = entry.get("suggestion_why", "")
     if verdict in ("fixed", "self-resolved") and not (implemented or sha):
@@ -162,7 +165,11 @@ def build_records(
         if not item or not item.get("finding_id"):
             continue
         entry = log.get(item_id, {})
-        closed = item_id in skipped or VERDICT_BY_RESOLUTION.get(entry.get("resolution", "")) == "rejected"
+        closed = item_id in skipped or VERDICT_BY_RESOLUTION.get(entry.get("resolution", "")) in (
+            "rejected",
+            "unverified",
+            "already-fixed",
+        )
         sha = "" if closed else commit_for(item_id, cwd, base_sha)
         verdict, why = _verdict(entry, item_id in implemented, sha)
         if item_id in skipped:
@@ -180,6 +187,8 @@ def build_records(
                 "verdict": verdict,
                 "sha": sha,
                 "why": why,
+                "follow_up": entry.get("detail", "") if verdict == "unverified" else "",
+                "closure_evidence": entry.get("detail", "") if verdict == "already-fixed" else "",
                 "run": run,
             }
         )

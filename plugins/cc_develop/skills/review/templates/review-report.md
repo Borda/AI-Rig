@@ -6,16 +6,20 @@ Change Type:  [fix | feat | refactor | perf | docs | ci | chore | test | mixed]
 Scope:        [key changed files]
 Focus:        [scope label — change summary]
 Agents:       [agents that ran]
+Review contract: 1
+Rating scale: source-5-v1
+Readiness:    [complete | blocked | incomplete]
 Reviewers:    [Role (rating), Role (rating)]
 CI:           N/A (develop:review is read-only — runs no tests)
-Outcome:      [APPROVE | NEEDS_WORK | REQUEST_CHANGES]
+Gate:         [REVIEW_V1_PASS | REVIEW_V1_BLOCK | REVIEW_V1_REJECT_<GROUND> @<sha>]
+Outcome:      [APPROVE | MINOR_EDITS | NEEDS_WORK | INSUFFICIENT_BUT_PROMISING | REJECT | null]
 Summary:      [review summary]
 Confidence:   [aggregate score] — [key gaps]
 Next steps:   [actions, blockers first]
 Path:         → .reports/review/[YYYY-MM-DDTHH-MM-SSZ]/review-report.md
 ---
 
-Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject.
+Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block.
 
 ## Code Review: [review target]
 
@@ -25,7 +29,7 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insuffic
 
 | ID | Author | Finding | Resolution proposal | Status |
 | -- | -- | -- | -- | -- |
-| [stable finding ID] | [all contributing reviewer roles] | [short problem] | [concrete proposal] | [required / minor / verify] |
+| [stable finding ID] | [all contributing reviewer roles] | [short problem] | [concrete proposal] | [required / minor] |
 
 > Keep existing sections below. Reference the same finding IDs; this overview adds attribution without removing detail.
 
@@ -77,6 +81,10 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insuffic
 - [unique findings from codex.md, not already in agent sections]
 - Duplicates (same location as agent finding): omitted — see agent section
 
+### Open Concerns
+
+[One row per open_concerns entry in review-validation.json: candidate ID, uncertainty, missing prerequisite or feasible undone check, owner, next check, observable closure. These are not confirmed defects or automatic fix requests.]
+
 ### Recommended Next Steps
 
 1. [most important action]
@@ -96,5 +104,5 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insuffic
 > - Classify `Change Type` by intent using `fix`, `feat`, `refactor`, `perf`, `docs`, `ci`, `chore`, `test`, or `mixed`; never classify by file count or commit message.
 > - List key changed files in `Scope`, comma-separated, and keep `Focus` to one line.
 > - List agent names that ran, comma-separated; list actual reviewers as readable `Role (rating)` entries.
-> - Use `APPROVE`, `NEEDS_WORK`, or `REQUEST_CHANGES` for `Outcome`; summarize key findings in 1–2 sentences.
+> - Use `APPROVE`, `MINOR_EDITS`, `NEEDS_WORK`, `INSUFFICIENT_BUT_PROMISING`, `REJECT`, or literal `null` for `Outcome`; summarize key findings in 1–2 sentences.
 > - Put blockers first in `Next steps` and list no more than five, as specified in `consolidator-prompt.md`.

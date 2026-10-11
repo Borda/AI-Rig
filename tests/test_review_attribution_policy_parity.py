@@ -9,9 +9,8 @@ That gap is not theoretical: the ``cc_oss`` copy of this very paragraph shipped 
 fence while the ``cc_develop`` copy sat correctly outside it. ``test_skill_shell_fence_prose.py`` catches that
 structural mistake; this file catches the other half — the two copies drifting in wording.
 
-The rating legend has a wider blast radius still: it is rendered by ``final_handoff.py`` and written into report
-templates, so a reader comparing a Codex handoff against a Claude review report must see one sentence, not two near-
-identical ones.
+Current reports refine five source judgments; historical reports retain their versioned wording. Each family has one
+wording across hosts; preserving historical rendering must not leave active templates on it.
 """
 
 from __future__ import annotations
@@ -30,10 +29,11 @@ CONSOLIDATOR_MARKER = "**Reviewer attribution (additive):**"
 
 # The legend is quoted inside Python string literals and test assertions as well as Markdown prose, so the
 # sentence is matched up to its terminating period rather than to end of line.
-_LEGEND = re.compile(r"Legend: 1 = Approve[^\n]*?Reject\.")
-CANONICAL_LEGEND = (
+_LEGEND = re.compile(r"Legend: 1 = Approve[^\n]*?(?:Reject|Block)\.")
+HISTORICAL_LEGEND = (
     "Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject."
 )
+CURRENT_LEGEND = "Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block."
 
 
 _LIST_ITEM = re.compile(r"^(?:>\s*)?-\s")
@@ -78,8 +78,8 @@ def test_reviewer_attribution_paragraph_is_identical_across_plugins(relative: st
     assert len(set(variants.values())) == 1, f"copies drifted: {variants}"
 
 
-def test_rating_legend_has_one_wording_everywhere() -> None:
-    """Keep one legend sentence across skills, templates, renderer and tests."""
+def test_rating_legend_has_one_wording_per_version() -> None:
+    """Preserve historical meaning and require consistent current five-stage legends."""
     found: dict[str, list[str]] = {}
     for path in sorted(PLUGINS_DIR.rglob("*")):
         if path.suffix not in {".md", ".py", ".json"} or not path.is_file():
@@ -87,4 +87,12 @@ def test_rating_legend_has_one_wording_everywhere() -> None:
         for sentence in _LEGEND.findall(path.read_text(encoding="utf-8")):
             found.setdefault(sentence, []).append(str(path.relative_to(REPO_ROOT)))
     assert found, "the rating legend is stated nowhere — the feature it belongs to was removed or renamed"
-    assert set(found) == {CANONICAL_LEGEND}, f"legend wordings diverged: {sorted(found)}"
+    assert set(found) == {HISTORICAL_LEGEND, CURRENT_LEGEND}, f"versioned legend wordings diverged: {sorted(found)}"
+
+
+@pytest.mark.parametrize("plugin", REVIEW_PLUGINS)
+def test_active_review_skill_uses_current_legend(plugin: str) -> None:
+    """An archived legend must not become the instruction for a newly produced review."""
+    text = (PLUGINS_DIR / plugin / "skills/review/SKILL.md").read_text(encoding="utf-8")
+    assert CURRENT_LEGEND in text
+    assert HISTORICAL_LEGEND not in text

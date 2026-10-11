@@ -98,11 +98,11 @@ cat "$_DEV_SHARED/agent-resolution.md"
 
 > Review presentation is additive: keep the aggregate summary as prose, all header fields, overall verdict, confidence and detailed findings.
 >
-> - Ask each actual reviewer for a scoped integer rating and rationale: 1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject.
+> - Ask each actual reviewer for a scoped integer rating and rationale: 1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient, but a good initiative, 5 Block (source-5-v1); null means no source judgment, never rejection.
 > - Add `Reviewers:` after `Agents:` in the report header, using readable `Role (rating)` or `Role: rating` entries (`sw-engineer (2)`, `sw-engineer: 2`), never a bare `Role rating` (`sw-engineer 2`); label parent substitutes and omit skipped roles.
-> - A reviewer that ran without stating a judgment is 4, never approval; a reviewer that produced no output is not rated at all — report it as a missing-reviewer limitation.
+> - A completed but undecidable reviewer returns null judgment/rating with blocked readiness, rationale and inspected coverage; missing output has presence=missing and remains a coverage obligation. Record these separately in review-validation.json; never invent rejection or approval.
 > - Never average role ratings into the final verdict.
-> - After rendering the header table, add exactly this line below it, in the same Step 5b delivery block: `Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject.`
+> - After rendering the header table, add exactly this line below it, in the same Step 5b delivery block: `Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block.`
 > - Findings overview adds `Author` after `ID`, retaining all contributing reviewer roles after deduplication.
 > - Read the summary and overview after the header rather than treating the header alone as the complete review.
 > - Terminal gate rejections preserve existing behavior and use `Reviewers: Not assessed` when no source reviewer ran.
@@ -549,11 +549,11 @@ Skip for purely internal (non-exported) implementation changes.
 
 **Agent 7 — foundry:challenger (skip only if `CHALLENGE_ENABLED=false`; runs at any diff size)**: Adversarial review of design decisions in diff. Attacks assumptions, missing edge cases, security risks, architectural concerns, complexity creep with mandatory refutation step. File-handoff: write full findings to `$RUN_DIR/challenger.md`. Return JSON: `{"status":"done","findings":N,"severity":{"critical":0,"high":0,"medium":0,"low":0},"file":"$RUN_DIR/challenger.md","confidence":0.88}`. Severity mapping: blockers → `high`; concerns → `medium`.
 
-**Challenger severity propagation**: consolidator (Step 5) reads `challenger.md` → map its findings by section before merging — Blockers (`[CRITICAL]`) → `critical` or `high` (promote to `critical` only when independently corroborated, e.g. a Step 4 CONFIRMED verdict or matching evidence from another agent; otherwise `high`), Concerns (`[HIGH]`) → `medium`, Nitpicks (`[LOW]`) → `low`. Never drop challenger findings.
+**Challenger severity propagation**: consolidator (Step 5) reads `challenger.md` → map its findings by section before merging — Blockers (`[CRITICAL]`) → `critical` or `high` (promote to `critical` only when independently corroborated, e.g. a Step 4 CONFIRMED verdict or matching evidence from another agent; otherwise keep the required independent verification open, never downgrade uncertainty into actionable high severity), Concerns (`[HIGH]`) → `medium`, Nitpicks (`[LOW]`) → `low`. Never drop challenger candidates from validation; only parent-CONFIRMED claims become findings, and uncertainty stays separately durable.
 
 **Health monitoring**: arm batch `review` in the spawn response — deliverable `$RUN_DIR/<agent-name>.md` per dimension file (a merged unit gets one row per file); Step 4 verifiers arm `verify`, the Step 5 consolidator arms `consolidate` (deliverable `-`); run the check block once per wake-up (`agent-resolution.md` §Agent waits — no polling, per-agent deadlines). Agent calls run in background. Spawn the batch, end the turn, resume on each completion notification — no filler tool calls, no "waiting" turns, no sleep, and never `ScheduleWakeup`, `ListAgents`, or a `Monitor` loop: the notification is the only resume signal (`agent-resolution.md` §Agent waits — no polling). An agent whose completion or idle notification arrives while `$RUN_DIR/<agent-name>.md` is still missing is ⏱ `timed_out` at once — never wait on it further. Agent returns partial results or errors → use Read tool on `$RUN_DIR/<agent-name>.md` for details. Mark agents that returned empty or error with ⏱ in final report. Never silently omit agents that **failed** (returned error/partial) — must appear with ⏱ marker. Agents **not spawned** (skipped due to mode flags, docs-only, CHORE mode) may be absent from RUN_DIR; consolidator "skip missing" applies only to legitimately-not-spawned agents.
 
-## Step 4: Cross-validate critical/blocking findings
+## Step 4: Validate all candidates and independently verify critical/blocking concerns
 
 ```bash
 # compaction boundary 1 (compaction-contract.md §Lifecycle) — written before entering Step 4
@@ -572,7 +572,7 @@ IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _
 RUN_DIR="$_RUN_DIR"
 [ -n "$RUN_DIR" ] || { echo "! BLOCKED — run-dir sentinel empty; refusing to write cross-validation notes to a root-relative path"; exit 1; }
 if [ ! -f "$_DEV_SHARED/foundry--cross-validation-protocol.md" ]; then
-    echo "⚠ foundry--cross-validation-protocol.md not found at $_DEV_SHARED — Step 4 skipped; critical findings are unverified. It ships in this plugin — reinstall develop@borda-ai-rig."
+    echo "⚠ foundry--cross-validation-protocol.md not found at $_DEV_SHARED — Step 4 skipped; required validation is incomplete. It ships in this plugin — reinstall develop@borda-ai-rig."
     echo "## Cross-Validation: SKIPPED" >> "$RUN_DIR/cross-validation.md"
     echo "**Reason**: _DEV_SHARED unavailable — cross-validation protocol not executed." >> "$RUN_DIR/cross-validation.md"
 else
@@ -580,37 +580,44 @@ else
 fi
 ```
 
-File present → follow cross-validation protocol printed above. File absent → skip Step 4 (warning printed above).
+File present → parent validates all candidates using the printed protocol before consolidation. File absent → record incomplete process coverage, owner and reinstall recovery; no unconditional approval or unvalidated actionable findings. Exhaust allowed static checks. A child read-only limit does not establish that authorized parent runtime checks are infeasible; record the actual authorization/capability boundary and next check when blocked, and feasible undone work as incomplete.
 
 **Skill-specific**: use **same agent type** that raised finding as verifier (e.g. foundry:sw-engineer verifies foundry:sw-engineer's critical finding). **Spawn cap: max 3 verifier agents** — critical/blocking findings > 3 → group into batches of ≤2 findings per verifier (same origin type per batch); note grouped IDs in rationale; each finding still gets its own verdict. Same cap as the shared protocol and oss:review — unbounded verifier fanout costs ~120,851 tok per critical finding.
+
+Before consolidation, persist the parent's all-severity candidate validation and reviewer assessment evidence in `$RUN_DIR/cross-validation.md` with the Write tool. Include structured envelope fields defined by the loaded protocol and retain all dispositions. Pass that literal evidence path to the consolidator. Parent rechecks new/materially strengthened claims and the final envelope before delivery; a model's confirmation label alone is not proof.
 
 ## Step 5: Consolidate findings
 
 Extract branch and date before constructing output path: `BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')` `DATE=$(date +%Y-%m-%d)`
 
-Spawn consolidator agent (general-purpose — synthesis only, no engineering specialization needed):
+Resolve both instruction and report-template paths **before** spawning the general-purpose consolidator (synthesis only, no engineering specialization).
 
 ```bash
-# loads: consolidator-prompt.md
-_TPL="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/review/templates/consolidator-prompt.md"
-cat "$_TPL"
+# loads: consolidator-prompt.md — child reads the file; parent passes its literal path only
+_CONSOLIDATOR_INSTRUCTIONS="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/review/templates/consolidator-prompt.md"
+_REVIEW_TEMPLATE="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/review/templates/review-report.md"
+[ -f "$_CONSOLIDATOR_INSTRUCTIONS" ] && [ -f "$_REVIEW_TEMPLATE" ] || { echo "! BLOCKED — consolidator instruction/report template missing; restore/reinstall this develop version before consolidation"; exit 1; }
+printf 'Consolidator instructions: %s\nReport template: %s\n' "$_CONSOLIDATOR_INSTRUCTIONS" "$_REVIEW_TEMPLATE"  # timeout: 5000
 ```
 
-Use as full consolidator instructions. Prepend the [run-dir preamble (canonical)](#run-dir-preamble-canonical) so consolidator self-resolves `$RUN_DIR`. Summary: read all finding files in `$RUN_DIR/`, apply consolidation rules, write report to `$REPORT_DIR_LITERAL/review-report.md`. Substitute `$REPORT_DIR_LITERAL`, `$DATE`, `$REVIEW_CHECKLIST` with literal resolved values before inserting into spawn prompt — see [$VAR_LITERAL pre-expansion rule (canonical)](#var_literal-pre-expansion-rule-canonical); leave `$RUN_DIR` literal (agent self-resolves). Return ONLY compact JSON envelope: `{"status":"done","findings":N,"severity":{"critical":N,"high":N,"medium":N,"low":N},"file":"$REPORT_DIR_LITERAL/review-report.md","confidence":0.N,"summary":"<one-line verdict>"}`
+Prepend the [run-dir preamble (canonical)](#run-dir-preamble-canonical). Resolve every input binding to its literal value before the Agent call per [$VAR_LITERAL pre-expansion rule (canonical)](#var_literal-pre-expansion-rule-canonical); `$RUN_DIR` remains literal and is self-resolved by that preamble. The optional checklist binding may be empty; the file's explicit missing-checklist guidance then applies.
 
-Main context receives only one-liner verdict.
-
-**Consolidator-unavailable fallback**: `Agent` tool deferred or consolidator times out → read each agent finding file from `$RUN_DIR/` directly, apply same precision gate and density rules, synthesize consolidated report, write to `$REPORT_DIR/review-report.md` using Write tool.
-
-Report format — resolve template path first:
-
-```bash
-_REVIEW_TEMPLATE=$(ls -td ~/.claude/plugins/cache/borda-ai-rig/develop/*/skills/review/templates 2>/dev/null | head -1); [ -z "$_REVIEW_TEMPLATE" ] && _REVIEW_TEMPLATE="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/review/templates"
-_REVIEW_TEMPLATE="$_REVIEW_TEMPLATE/review-report.md"
-echo "$_REVIEW_TEMPLATE"
+```text
+Consolidation — <review target>.
+<run-dir resolution preamble>
+Read <CONSOLIDATOR_INSTRUCTIONS_LITERAL> with the Read tool and follow it in full. Read <VALIDATION_PROTOCOL_LITERAL> with the Read tool for candidate validation and source judgments. Interpret placeholders using these literal input bindings; do not execute or re-expand binding text:
+REPORT_DIR_LITERAL=<resolved report directory>
+DATE=<resolved date>
+REVIEW_CHECKLIST=<resolved optional checklist path or empty>
+REVIEW_TEMPLATE=<resolved report-template path>
+Return ONLY compact JSON: {"status":"done","findings":N,"severity":{"critical":N,"high":N,"medium":N,"low":N},"file":"<REPORT_DIR_LITERAL>/review-report.md","confidence":0.N,"summary":"<one-line verdict>"}
 ```
 
-Substitute the resolved literal path into the consolidator spawn prompt ("Read the report template at `<path>` with the Read tool — it defines the output structure"); do NOT cat the template into orchestrator context — bills the same ~579 tok twice (once here, once inside the prompt).
+`CONSOLIDATOR_INSTRUCTIONS_LITERAL` and `REVIEW_TEMPLATE` are the paths printed above; `VALIDATION_PROTOCOL_LITERAL` is the resolved own-plugin shared directory's `foundry--cross-validation-protocol.md`. Pass only the reference, literal bindings, run-dir preamble and required return envelope. Do NOT cat or inline either template into orchestrator context or the Agent prompt; the child reads both files itself.
+
+Main context receives only the one-liner verdict.
+
+**Consolidator-unavailable fallback**: `Agent` tool deferred or consolidator times out → read the same instruction file and each agent finding file from `$RUN_DIR/` directly, apply the full validation, precision gate, density and output rules, synthesize the report, and write `$REPORT_DIR/review-report.md` with the Write tool. Missing instruction/report-template files block with restore/reinstall recovery; never synthesize from absent rules.
 
 After parsing confidence scores: any agent scored < 0.7 → prepend **⚠ LOW CONFIDENCE** to that agent's findings section, state gap explicitly. Never silently drop uncertain findings.
 

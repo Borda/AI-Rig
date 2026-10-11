@@ -875,3 +875,5 @@ Deliberate deviations:
 Modify any skill → update this README before finishing — unsynced change = incomplete change.
 
 Evidence and real-case acceptance: shipped `rules/quality-gates.md` requires cited proof for factual, causal and completion claims, a representative real case alongside TDD, and unchanged user-authorized behavior. Mocks are supplementary polishing after real behavior is validated; unavailable real acceptance stays explicit.
+
+`/develop:review` validates every candidate against allowed source evidence before publication and retains capped independent critical verification. Version-one `review-validation.json` separates five source judgments, nullable completed assessments, missing reviewer coverage and verification readiness; unresolved concerns retain owner/next check/closure. The workflow remains read-only: actual runtime authorization/capability boundaries are recorded, and feasible unfinished parent checks mean incomplete.

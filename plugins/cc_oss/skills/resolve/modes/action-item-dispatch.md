@@ -208,6 +208,20 @@ ITEM_CALLERS=$(awk "/^item #${item_id} /,/^[[:space:]]*$/" <<< "$BLAST_RADIUS_CO
 
 Include non-empty `$ITEM_CALLERS` in impl agent prompt — see Phase 2.
 
+**C1 evidence freshness — one batch check after the Step 7b join, before the first C1 brief.** Reuse the existing publication/head/candidate/evidence recheck helper against the checkout that C1 will edit, not a stale remote PR-head sentinel. This is one batch check, never a new reviewer wave or a repeated proof check for each item. Phase 1 retains its own recheck after C1 mutations for items that fall through. The brief compares its existing Git HEAD record with the consumed report head, disabling confirmation after any intervening commit or lost report without rerunning validation per item. Each C1 implementer still checks source/contract/environment applicability before reusing retained proof; a prior C1 edit or commit cannot confirm another item's changed claim.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
+[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing before C1 evidence recheck"; exit 1; }
+if [ -f "$REPORT_FILE" ]; then
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --recheck-verdicts --review-dir "$(dirname "$REPORT_FILE")" --current-head "" || exit 1  # timeout: 15000
+else
+    echo "→ no review report consumed — no C1 proof shortcuts"
+fi
+```
+
 **C1 — Codex-first routing for `medium` effort items** (skip Phase 1+2 when Codex handles it):
 
 C1 starts only after the Step 7b join — merge committed, tree clean — never inside the Run 2 fan beside the conflict agent.
@@ -240,15 +254,35 @@ printf '%s\n' \
 _LINE=$(jq -b -r --arg id "$_BATCH_TAG" 'select((.id|tostring)==$id) | "Item \(.id): \(.full_comment_text)  File: \(.file)  Line: \(.line)"' "$IMPL_DIR/action-items.jsonl")
 [ -n "$_LINE" ] || { echo "! BLOCKED — item $_BATCH_TAG not found in action-items.jsonl"; exit 1; }
 printf '%s\n' "$_LINE" >> "$_BRIEF"
+IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
+_C1_REVIEW_HEAD=""
+if [ -f "$REPORT_FILE" ]; then
+    IFS= read -r _C1_REVIEW_HEAD < "$(dirname "$REPORT_FILE")/head-sha.txt" 2>/dev/null || _C1_REVIEW_HEAD=""
+fi
+IFS= read -r _C1_CURRENT_HEAD < "$IMPL_DIR/c1-head-${_BATCH_TAG}.txt" || _C1_CURRENT_HEAD=""
+_C1_PROOF_FRESH=false
+[ -n "$_C1_REVIEW_HEAD" ] && [ "$_C1_REVIEW_HEAD" = "$_C1_CURRENT_HEAD" ] && _C1_PROOF_FRESH=true
+jq -b -c --arg id "$_BATCH_TAG" --argjson fresh "$_C1_PROOF_FRESH" 'select((.id|tostring)==$id) | {finding_id, candidate_id, contract_version, validation_status:(if $fresh then .validation_status else null end), parent_validation_file, parent_validation_sha256, source_file, verify_file, verify_verdict:(if $fresh then .verify_verdict else null end), type, location}' "$IMPL_DIR/action-items.jsonl" >> "$_BRIEF"
 printf '%s\n' \
     "" \
-    "Each reviewer assertion is itself an unproven claim — if it asserts a fact the file alone can't settle" \
-    "(name/identifier/version/count wrong or non-standard), verify against the actual authoritative source" \
-    "before treating it as valid; can't verify → UNCERTAIN, not DONE." \
+    "Part 1: when validation_status=CONFIRMED survived the batch recheck, read the exact candidate_id" \
+    "in parent_validation_file and its recorded checks. Before reuse, verify parent_validation_sha256" \
+    "matches the current sidecar bytes and candidate_id/finding_id still binds this exact recorded claim." \
+    "Changed/missing digest or candidate binding disables reuse; investigate that gap. Recheck source, contract" \
+    "and environment applicability;" \
+    "reuse applicable proved checks without rerunning them, citing candidate and check. Investigate only changed gaps." \
+    "The pointer without CONFIRMED is historical evidence, never automatic confirmation. Missing/stale proof" \
+    "requires checking the claim; actual unavailable evidence → UNCERTAIN, not DONE or refutation." \
+    "On a matched GitHub item, retained proof covers only finding_id, never a distinct or broader request." \
+    "Parent confirmation never supplies independent verify_verdict; preserve that separate verifier boundary." \
+    "Each reviewer assertion without applicable proof remains unproven; external facts require the actual" \
+    "authoritative source. Applicable retained authoritative evidence still counts if fresh retrieval fails." \
+    "Part 2: for every existing problem, assess whether the proposed repair is right before implementing." \
     "Tests: run only the tests covering the files you change (test files named after them or importing them)." \
     "Never run the whole test suite — the caller runs it at the final gate." \
     "Return your result in the bridge object fields: status, verdict, findings, files_touched, remaining, blockers, details." \
     "status=complete, verdict=DONE or UNCERTAIN; use DONE only when this one item's edit and checks are complete." \
+    "If already fixed or no edit is justified, return UNCERTAIN for caller disposition; never empty DONE." \
     "Put actual changed paths in files_touched and a one-sentence reason in findings[0]." \
     >> "$_BRIEF"
 echo "→ C1 brief for item $_BATCH_TAG: $_BRIEF"
@@ -410,7 +444,14 @@ Group items by `DOMAIN_CHALLENGER`, preserving each item's original priority-ord
 - `description` = 3–5 words naming that group's theme, never echoing `name` or the shared PR.
 - Compose every group's labels in one pass and confirm the prompt leads differ in their first word — FleetView prints `name` plus the leading chars of prompt line 1, so a shared prefix there yields indistinguishable rows (task-lifecycle.md §Spawn slots):
 
-Before building item lines, re-check every carried verifier verdict once. The review confirmed its findings at the head it recorded; a pushed PR, or a verifier file swept from `.temp`, voids that confirmation. The script drops `verify_verdict` from any item whose evidence no longer holds, so those items get the full Part 1 (report mode without a PR compares against the checkout's `HEAD`):
+Before building item lines, re-check every carried verifier verdict and parent-confirmation binding once against the source this wave reads. Choose the existing block by wave; do not run both for one wave:
+
+| Wave | Freshness block and source |
+| -- | -- |
+| Early wave | Run the pinned PR-head block below; challengers read that same revision with `git show <PR_HEAD_OID>:<file>` while the merge is unfinished. |
+| Late wave | Re-run the existing **C1 evidence freshness** block above, even when no C1 item ran; it uses checkout HEAD, which late challengers read after the join and any C1 commits. Do not reuse the original PR-head sentinel for this wave. |
+
+The review confirmed findings at its recorded head. The selected block drops independent verifier and parent-confirmation shortcuts when the wave's source no longer matches, retaining evidence pointers for changed-gap investigation. Report mode without a PR uses checkout HEAD. The following block is for the early wave only:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -428,25 +469,25 @@ else
 fi
 ```
 
-Build each item line from its `action-items.jsonl` record (Step 3c merge carries the reviewer's evidence through), read after the re-check above: append `[confirmed verify=<verify_file>]` only when `verify_verdict` is `CONFIRMED`, `[evidence=<source_file>]` when `source_file` is set, and `[thin]` when `thin` is true. Omit a marker whose field is absent. `[confirmed]` covers the review finding the item was built from; GitHub items never carry it.
+Build each item line from its `action-items.jsonl` record (Step 3c merge carries the reviewer's evidence through), read after the re-check above: append `[confirmed verify=<verify_file>]` only when `verify_verdict` is `CONFIRMED`, `[evidence=<source_file>]` when `source_file` is set, and `[thin]` when `thin` is true. Append `[parent-confirmed candidate=<candidate_id> validation=<parent_validation_file>]` only when `validation_status=CONFIRMED` and that pointer survived the re-check. A retained pointer without that status is historical evidence only. Parent confirmation covers only the linked review finding, never any additional GitHub request. Omit a marker whose field is absent. `[confirmed]` covers the review finding the item was built from; GitHub items never carry it.
 
 ```text
 Agent(subagent_type="${DOMAIN_CHALLENGER}", prompt="<domain>: two-part challenge for these review items.
 Spotter evidence first — an item listing evidence=/verify= paths carries the reviewer's own reasoning; read those files before the code, then confirm against the code.
-Part 1 — for each item WITHOUT [confirmed], does the stated problem exist in the code as described?
+Part 1 — does the stated problem exist in the code as described? For [parent-confirmed], read the exact candidate in validation= and its checks; recheck source, contract and environment applicability, then reuse applicable proved checks without rerunning them. Still matching → evidence=VALID citing candidate and retained check. Stale or changed claim → investigate only that gap. For a GitHub item, apply retained proof only to the linked review finding and assess any distinct request separately. This parent proof never supplies the independent [confirmed] verifier marker. Other items WITHOUT [confirmed] require the full existence check.
 The reviewer's assertion is itself an unproven claim, not evidence — 'reads like X' != 'is X'.
-When a finding asserts a fact reading the referenced file alone can't settle (a name/identifier/version/count is wrong, non-standard, or inconsistent — license names, API/symbol names, version numbers, spec IDs), verify it via WebFetch/WebSearch against the actual authoritative source for that claim (the specific project/library/spec it names — not a generic registry) before ruling VALID. Source unreachable or inconclusive → REJECT with evidence_rationale stating what couldn't be verified; never default VALID on the reviewer's word alone.
+When a finding asserts a fact reading the referenced file alone can't settle (a name/identifier/version/count is wrong, non-standard, or inconsistent — license names, API/symbol names, version numbers, spec IDs), verify it via WebFetch/WebSearch against the actual authoritative source for that claim (the specific project/library/spec it names — not a generic registry) before ruling VALID. First inspect retained authoritative evidence and its revision/contract/environment binding. Still applicable → VALID despite failed fresh retrieval. Stale/inapplicable evidence and unavailable retrieval → UNVERIFIED with missing_capability, owner, next_check and closure; never REJECT because a source is unreachable/inconclusive. REJECT requires affirmative falsification. A later evidenced fix → ALREADY_FIXED with original/current revision and fix evidence.
 [confirmed] items were already confirmed by an independent review-time verifier (its file is the verify= path). Do not re-prove them: only re-read <file:line> and check the code still matches the finding (the head may have moved). Still matching → evidence=VALID, rationale citing the verifier. No longer matching → run the full Part 1.
-[thin] items are terse GitHub comments that no review finding covers: first locate the code they refer to (PR diff, named symbols). A request about docs, changelog, tests or process has no single code target: judge the request itself. A code request whose target stays unidentifiable → evidence=REJECT, rationale saying so.
-Part 2 — for EVERY item whose problem exists, is the suggested fix the right approach?
+[thin] items are terse GitHub comments that no review finding covers: first locate the code they refer to (PR diff, named symbols). A request about docs, changelog, tests or process has no single code target: judge the request itself. A code request whose target stays unidentifiable → evidence=UNVERIFIED with owner/next_check/closure, never a fabricated refutation.
+Part 2 — for EVERY item whose problem exists, is the suggested fix the right approach? Rejecting the repair never refutes the defect. Feasible but unperformed checks remain incomplete; the parent must finish authorized checks before implementation or record an actual unavailable boundary.
 Read each referenced file at <file:line>. Read-only: run no tests. Max 4 tool calls per item (the 4th reserved for one WebFetch/WebSearch when a claim needs external verification), plus one read per evidence/verify file.
 Early wave only (omit when no file conflicts): the tree is mid-merge and 7b may commit while you read. Read every file with `git show <PR_HEAD_OID>:<file>` (substitute the sha from the `resolve-pr-head-oid` sentinel), never from disk — disk holds conflict markers, clean-merged drift and an edit in progress, and `HEAD` itself moves at the merge commit.
 Items:
-<id>: <full_comment_text> (<file>:<line>) [confirmed verify=<verify_file>] [evidence=<source_file>] [thin]
+<id>: <full_comment_text> (<file>:<line>) [confirmed verify=<verify_file>] [evidence=<source_file>] [parent-confirmed candidate=<candidate_id> validation=<parent_validation_file>] [thin]
 ...
 Write full analysis to $IMPL_DIR/challenge-domain-<domain>.md using the Write tool.
 Return ONLY compact JSON as your FINAL message (nothing after it):
-{\"items\":[{\"id\":N,\"evidence\":\"VALID\"|\"REJECT\",\"evidence_rationale\":\"<one sentence>\",\"suggestion\":\"VALID\"|\"REJECT\",\"suggestion_rationale\":\"<one sentence>\",\"alternative\":\"<brief alternative or null>\"}]}")
+{\"items\":[{\"id\":N,\"evidence\":\"VALID\"|\"REJECT\"|\"UNVERIFIED\"|\"ALREADY_FIXED\",\"evidence_rationale\":\"<one sentence>\",\"suggestion\":\"VALID\"|\"REJECT\",\"suggestion_rationale\":\"<one sentence>\",\"alternative\":\"<brief alternative or null>\",\"missing_capability\":\"<when unverified>\",\"owner\":\"<when unverified>\",\"next_check\":\"<when unverified>\",\"closure\":\"<observable closure when unverified>\",\"original_revision\":\"<when already fixed>\",\"current_revision\":\"<when already fixed>\",\"fix_evidence\":\"<evidenced change when already fixed>\"}]}")
 ```
 
 **Fire every chunk's `Agent()` call in the same response turn** — read-only (no working-tree writes), safe to run concurrently regardless of file overlap between chunks. In the early wave the Step 7a conflict agent (`foundry:sw-engineer`) sits in that same response and holds one `CAP_OPUS` slot. More chunks than a tier's pool (§Spawn wave cap: `CAP_OPUS=5` for `foundry:challenger`/`foundry:sw-engineer`, `CAP_SONNET=8` for `foundry:qa-specialist`) → fire the first wave up to each pool, the next wave as earlier chunks return. In that same response, arm the deadlines (SKILL.md §Agent wait discipline): write `$IMPL_DIR/agent-watch-challenge.tsv` with one row per fired chunk, `challenge-<domain><TAB><IMPL_DIR>/challenge-domain-<domain>.md<TAB>300` (`CHALLENGE_TIMEOUT_S`); a later wave rewrites the file with its own rows. Never poll for verdicts — no `ScheduleWakeup`, `ListAgents` or `Monitor` loop; run the watch check at each wake-up. A chunk `timed_out`, or one whose notification arrived without its JSON reply → ⏱ now, and every item in it is treated `UNCERTAIN` per the verdict rules below (one single-item retry each, armed in `agent-watch-challenge-retry.tsv`). **No item is ever dropped or implemented by a timeout alone** — the first retry is automatic; what happens after a second timeout is the user's decision.
@@ -520,7 +561,9 @@ fi
 Parse each group's per-item verdict array — same granularity as a single-item challenge, never relaxed by grouping:
 
 - Missing item id, or a present element with empty/null `evidence_rationale` or `suggestion_rationale` → treat as UNCERTAIN. Re-dispatch it alone (single-item challenge call, same domain); persist that reply via the Write tool to a **separate** file, `$IMPL_DIR/challenge-verdicts-<domain>-retry-<id>.json` — never overwrite the group's own `challenge-verdicts-<domain>.json`, which still holds every sibling item's verdict this pass hasn't appended yet. The retry prompt carries the item's `evidence=`/`verify=` markers like the group call. The append block below prefers the retry file for that id when present, and its `// "challenge agent returned no rationale after retry"` fallback covers the still-empty case exactly once, after the real retry — never before it.
-- **Ask the spotter** — the retry is still UNCERTAIN (empty rationale again) and the item carries a `finding_id` and its `author` names a real agent type (not an `@login`, not `codex`; on a GitHub item annotated by the merge, the agent type after `+`): dispatch that agent type for this item alone, as `name="caucus-<id>"`, with the same two-part prompt and JSON contract plus its `evidence=` file. This is the reviewer role that raised the finding, consulted on its own claim — a domain challenger guessing twice adds no signal. Persist the reply via the Write tool to `$IMPL_DIR/challenge-verdicts-<domain>-caucus-<id>.json`; arm `agent-watch-challenge-caucus.tsv` with a 300 s row. A caucus `evidence=VALID` counts only when its rationale cites the code it read (`file:line`); a bare restatement of the original claim falls to the no-rationale default, because the author agreeing with itself is not verification. Only then fall back to the no-rationale default. One caucus per item, never more.
+- **Ask the spotter** — the retry is still UNCERTAIN (empty rationale again) and the item carries a `finding_id` and its `author` names a real agent type (not an `@login`, not `codex`; on a GitHub item annotated by the merge, the agent type after `+`): dispatch that agent type for this item alone, as `name="caucus-<id>"`, with the same two-part prompt and JSON contract plus its `evidence=` file. This is the reviewer role that raised the finding, consulted on its own claim — a domain challenger guessing twice adds no signal. Persist the reply via the Write tool to `$IMPL_DIR/challenge-verdicts-<domain>-caucus-<id>.json`; arm `agent-watch-challenge-caucus.tsv` with a 300 s row. A caucus `evidence=VALID` counts only when its rationale cites the code it read (`file:line`); a bare restatement of the original claim falls to the no-rationale default, because the author agreeing with itself is not verification. After that bounded retry/caucus, missing rationale remains incomplete: block that item with owner/recovery and leave it pending, never default VALID or REJECT. One caucus per item, never more.
+- `evidence=UNVERIFIED` → list `<id> unverified <domain>`; exclude from SURVIVING_ITEMS, retain task pending, and carry owner/next_check/closure into the challenge log, resolution.jsonl and final Open Concerns. Do not implement or delete the obligation.
+- `evidence=ALREADY_FIXED` → list `<id> already-fixed <domain>`; exclude from implementation, retain original/current identities and fix evidence, report separately from refutation. After the validated append block prints its task id, call `TaskUpdate(status="completed")`; no implementation commit is required for this evidenced historical closure.
 - `evidence=REJECT` → print `⊘ #<id> evidence rejected: <reason from the persisted verdict file>`; set type `[challenged:reject]`; list `<id> rejected <domain>` for the shared append block below; drop from `SURVIVING_ITEMS`. The append block prints the task id to dispose (or explains why none exists in report mode); call `TaskUpdate(status="deleted")` on it.
 - `evidence=VALID` + `suggestion=VALID` → list `<id> as-suggested <domain>`; use original suggestion for implementation
 - `evidence=VALID` + `suggestion=REJECT` → list `<id> self-resolved <domain>`; self-resolve using `alternative` as guidance
@@ -528,7 +571,7 @@ Parse each group's per-item verdict array — same granularity as a single-item 
 
 ### Challenge-log append (shared — every producer in this file calls this block)
 
-**SECURITY — every free-text field (`finding`/`evidence_why`/`suggestion_why`/`detail`) is `jq`-extracted from a file persisted via the Write tool, never retyped by the orchestrator.** The only values the orchestrator supplies are the item id (numeric), the resolution (one of four fixed words) and the domain slug or C1 item id (`[a-z0-9-]+`), and it never types them into the block. It lists them in `$IMPL_DIR/challenge-log-now.txt`, created with the Write tool: one `<item id> <resolution> <domain slug, or the C1 item id for codex-direct>` line per item, space-separated — one line or many, e.g. every verdict of one chunk's reply. Then it runs the block once, unedited, so the block text stays a blueprint-manifest hit in unattended Run 2. The block shape-checks every line and confirms each line's reply, item and task id before writing anything, so a stop never leaves the log half-written: fix the named cause and rerun. Only then does it consume the list (renamed to `challenge-log-now.txt.done`), so a rerun without a fresh list adds nothing twice:
+**SECURITY — every free-text field (`finding`/`evidence_why`/`suggestion_why`/`detail`) is `jq`-extracted from a file persisted via the Write tool, never retyped by the orchestrator.** The only values the orchestrator supplies are the item id (numeric), the resolution (one of six fixed words) and the domain slug or C1 item id (`[a-z0-9-]+`), and it never types them into the block. It lists them in `$IMPL_DIR/challenge-log-now.txt`, created with the Write tool: one `<item id> <resolution> <domain slug, or the C1 item id for codex-direct>` line per item, space-separated — one line or many, e.g. every verdict of one chunk's reply. Then it runs the block once, unedited, so the block text stays a blueprint-manifest hit in unattended Run 2. The block shape-checks every line and confirms each line's reply, item and task id before writing anything, so a stop never leaves the log half-written: fix the named cause and rerun. Only then does it consume the list (renamed to `challenge-log-now.txt.done`), so a rerun without a fresh list adds nothing twice:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -550,7 +593,7 @@ while IFS=$' \t\r' read -r _ID _RESOLUTION _DOMAIN _EXTRA || [ -n "$_ID" ]; do
     [ -n "$_ID" ] || continue
     _N=$((_N + 1))
     case "$_ID" in *[!0-9]*) echo "! BLOCKED — challenge-log line $_N: item id '$_ID' not numeric"; exit 1 ;; esac
-    case "$_RESOLUTION" in codex-direct|rejected|as-suggested|self-resolved) ;; *) echo "! BLOCKED — challenge-log line $_N: resolution '$_RESOLUTION' not one of the four known values"; exit 1 ;; esac
+    case "$_RESOLUTION" in codex-direct|rejected|as-suggested|self-resolved|unverified|already-fixed) ;; *) echo "! BLOCKED — challenge-log line $_N: resolution '$_RESOLUTION' not one of the six known values"; exit 1 ;; esac
     case "$_DOMAIN" in ''|*[!a-z0-9-]*) echo "! BLOCKED — challenge-log line $_N: domain/batch-tag '$_DOMAIN' missing or invalid (lowercase/digits/hyphens)"; exit 1 ;; esac
     [ -z "$_EXTRA" ] || { echo "! BLOCKED — challenge-log line $_N: more than three fields"; exit 1; }
     _VJSON=$(_verdict_json "$_ID" "$_RESOLUTION" "$_DOMAIN")
@@ -558,6 +601,16 @@ while IFS=$' \t\r' read -r _ID _RESOLUTION _DOMAIN _EXTRA || [ -n "$_ID" ]; do
     jq -e . "$_VJSON" >/dev/null 2>&1 || { echo "! BLOCKED — $_VJSON is not valid JSON"; exit 1; }
     jq -e --argjson id "$_ID" 'select(.id == $id)' "$IMPL_DIR/action-items.jsonl" >/dev/null 2>&1 || { echo "! BLOCKED — item $_ID not found in action-items.jsonl"; exit 1; }
     [ "$_RESOLUTION" = codex-direct ] || jq -e --arg id "$_ID" 'any(.items[]?; (.id|tostring)==$id)' "$_VJSON" >/dev/null 2>&1 || { echo "! BLOCKED — item $_ID not present in $_VJSON"; exit 1; }
+    if [ "$_RESOLUTION" != codex-direct ]; then
+        jq -e --arg id "$_ID" --arg resolution "$_RESOLUTION" '
+          .items[] | select((.id|tostring)==$id) |
+          (({rejected:"REJECT", "as-suggested":"VALID", "self-resolved":"VALID", unverified:"UNVERIFIED", "already-fixed":"ALREADY_FIXED"}[$resolution]) == .evidence) and
+          (.evidence_rationale | type == "string" and length > 0) and
+          (if .evidence == "VALID" then (({"as-suggested":"VALID", "self-resolved":"REJECT"}[$resolution]) == .suggestion) and (.suggestion_rationale | type == "string" and length > 0) else true end) and
+          (if .evidence == "UNVERIFIED" then all([.missing_capability,.owner,.next_check,.closure][]; type == "string" and length > 0) else true end) and
+          (if .evidence == "ALREADY_FIXED" then all([.original_revision,.current_revision,.fix_evidence][]; type == "string" and length > 0) else true end)
+        ' "$_VJSON" >/dev/null 2>&1 || { echo "! BLOCKED — item $_ID disposition/resolution mismatch or missing open-concern handoff; finish or upgrade the challenge consumer"; exit 1; }
+    fi
     # item-tasks.tsv legitimately does not exist in report mode (Step 3e is pr/pr+report only) — a
     # missing file here is normal, not malformed input, and must never abort the loop.
     if [ "$_RESOLUTION" = rejected ] && [ -f "$IMPL_DIR/item-tasks.tsv" ]; then
@@ -580,6 +633,19 @@ while IFS=$' \t\r' read -r _ID _RESOLUTION _DOMAIN _EXTRA || [ -n "$_ID" ]; do
             _WHY=$(jq -b -r '(.findings[0] // "") | gsub("[\n\t]"; " ")' "$_VJSON")
             printf 'id=%s resolution=codex-direct evidence=VALID suggestion=VALID finding=%s evidence_why=%s suggestion_why=%s detail=%s\n' \
                 "$_ID" "$_FINDING" "$_WHY" "$_WHY" "$_WHY" >> "$IMPL_DIR/challenge-log.txt"
+            ;;
+        unverified|already-fixed)
+            _V=$(jq -b -c --arg id "$_ID" '.items[]? | select((.id|tostring)==$id)' "$_VJSON")
+            _EV=$(printf '%s' "$_V" | jq -b -r '.evidence')
+            _EV_WHY=$(printf '%s' "$_V" | jq -b -r '.evidence_rationale | gsub("[\n\t]"; " ")')
+            _FOLLOW_UP=$(printf '%s' "$_V" | jq -b -c '{missing_capability,owner,next_check,closure,original_revision,current_revision,fix_evidence}')
+            printf 'id=%s resolution=%s evidence=%s suggestion=— finding=%s evidence_why=%s suggestion_why=— detail=%s\n' \
+                "$_ID" "$_RESOLUTION" "$_EV" "$_FINDING" "$_EV_WHY" "$_FOLLOW_UP" >> "$IMPL_DIR/challenge-log.txt"
+            if [ "$_RESOLUTION" = "already-fixed" ] && [ -f "$IMPL_DIR/item-tasks.tsv" ]; then
+                _TID=$(awk -F'\t' -v id="$_ID" '$1==id{print $2}' "$IMPL_DIR/item-tasks.tsv")
+                echo "TaskUpdate target (completed): item=$_ID task=$_TID — historical fix evidence retained"
+            fi
+            echo "→ item $_ID $_RESOLUTION — no implementation; obligation and evidence retained"  # timeout: 3000
             ;;
         rejected)
             _V=$(jq -b -c --arg id "$_ID" '.items[]? | select((.id|tostring)==$id)' "$_VJSON")
@@ -612,7 +678,7 @@ done < "$_LOG_NOW.done"
 
 `item-tasks.tsv` legitimately does not exist in `report` mode (Step 3e is `pr`/`pr+report` only) — a missing file here is normal, not malformed input, so it must never abort the loop: every rejected item in a multi-item report-mode run has to be recorded, not just the first.
 
-Items with `evidence=VALID` (appended above as `as-suggested` or `self-resolved`) form `SURVIVING_ITEMS`.
+Items with `evidence=VALID` (appended above as `as-suggested` or `self-resolved`) form `SURVIVING_ITEMS`. UNVERIFIED obligations remain pending with owner/next check; ALREADY_FIXED is historical closure, not refutation. Both remain visible in the final report and resolution ledger. Unknown statuses block, never default to REJECT or implementation.
 
 ### Phase 2: Implementation — parallel, one worktree per specialist
 

@@ -1788,8 +1788,18 @@ def _validate_instruction_bounded_review(
     }
 
 
-def _text_reviewer_assessment(body: str, *, batch_response: bool) -> tuple[int, str] | None:
+def _text_reviewer_assessment(body: str, *, batch_response: bool) -> tuple[int | None, str] | None:
     """Parse a standalone ordinary pair or the strict batch body, retaining opaque one-line rationale."""
+    current = re.fullmatch(
+        r"\s*Source rating version: 1\nRating: ([1-5]|null)\nVerification readiness: (complete|blocked|incomplete)\nRationale: (\S[^\r\n]*)[ \t]*(?:\r?\n)*",
+        body,
+    )
+    if current:
+        if current[1] == "null" and current[2] != "blocked":
+            return None
+        return (None if current[1] == "null" else int(current[1]), current[3])
+    if "Source rating version:" in body:
+        return None
     if not batch_response:
         lines = body.splitlines()
         declarations = []
@@ -1833,13 +1843,16 @@ def _retained_reviewer_rating(
     preassessment_blocker: bool = False,
     incomplete_dispatch: bool = False,
     batch_response: bool = False,
-) -> int:
+    source_rating_version: int | None | str = "auto",
+    retain_assessment: bool = False,
+) -> int | None | dict[str, Any]:
     """Read a scoped rating and rationale from the retained reviewer response.
 
     Proven preassessment recovery may retain paired unavailable digests only for an empty blocking response. Completed
     inspection retains the strict digest contract. A proved partial-dispatch original may use an equivalent bold
     assessment heading; completed reviewers still require the canonical heading.
     """
+    readiness = None
     try:
         content = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
@@ -1875,6 +1888,14 @@ def _retained_reviewer_rating(
                 for key in ("source_sha256", "diff_sha256")
             ):
                 raise SystemExit(f"review-assessment-content-invalid:{role}")
+        returned_version = assessment.get("source_rating_version") if isinstance(assessment, dict) else None
+        readiness = assessment.get("verification_readiness") if isinstance(assessment, dict) else None
+        if returned_version == 1 and (
+            set(assessment) != {"source_rating_version", "rating", "verification_readiness", "rationale"}
+            or assessment["verification_readiness"] not in {"complete", "blocked", "incomplete"}
+            or (assessment["rating"] is None and assessment["verification_readiness"] != "blocked")
+        ):
+            raise SystemExit(f"review-assessment-content-invalid:{role}")
         rating = assessment.get("rating") if isinstance(assessment, dict) else None
         rationale = assessment.get("rationale") if isinstance(assessment, dict) else None
     else:
@@ -1889,10 +1910,24 @@ def _retained_reviewer_rating(
             boundary += r"|^\*\*[^*\n]+\*\*[ \t]*$"
         section = re.search(rf"(?ms)^{assessment_heading}\s*\n(?P<body>.*?)(?={boundary})", content)
         body = section.group("body") if section else ""
+        returned_version = 1 if re.match(r"\s*Source rating version: 1\n", body) else None
+        if returned_version == 1:
+            declared = re.search(r"(?m)^Verification readiness: (complete|blocked|incomplete)$", body)
+            readiness = declared[1] if declared else None
         assessment = _text_reviewer_assessment(body, batch_response=batch_response and not main)
         rating, rationale = assessment if assessment is not None else (None, None)
-    if type(rating) is not int or rating not in range(1, 6) or not isinstance(rationale, str) or not rationale.strip():
+    if source_rating_version != "auto" and returned_version != source_rating_version:
+        raise SystemExit(f"review-assessment-rating-version-mismatch:{role}")
+    valid_rating = (returned_version == 1 and rating is None) or (type(rating) is int and rating in range(1, 6))
+    if not valid_rating or not isinstance(rationale, str) or not rationale.strip():
         raise SystemExit(f"review-assessment-content-invalid:{role}")
+    if retain_assessment:
+        return {
+            "source_rating_version": returned_version,
+            "rating": rating,
+            "rationale": rationale,
+            "verification_readiness": readiness,
+        }
     return rating
 
 
@@ -2095,11 +2130,14 @@ def _closure_shape_repair(content: str, snapshot: dict[str, Any], role: str) -> 
 
 
 def _assessment_format_repair(content: str, snapshot: dict[str, Any], role: str) -> str:
-    """Insert a missing rationale label after one explicit rating without changing any response value."""
+    """Restore the final rationale label while retaining the explicit rating and any current readiness."""
     if len(re.findall(r"(?m)^## Reviewer Assessment[ \t]*$", content)) != 1:
         raise SystemExit(f"review-repair-ineligible-assessment:{role}")
     assessment = re.search(
-        r"(?m)^## Reviewer Assessment[ \t]*\n\s*Rating: [1-5](?P<separator> — )\S[^\r\n]*(?:\r?\n)*\Z",
+        r"(?m)^## Reviewer Assessment[ \t]*\n\s*"
+        r"(?:Rating: [1-5]|Source rating version: 1\nRating: (?:[1-5]|null)\n"
+        r"Verification readiness: (?:complete|blocked|incomplete))"
+        r"(?P<separator> — )\S[^\r\n]*(?:\r?\n)*\Z",
         content,
     )
     if assessment is None:

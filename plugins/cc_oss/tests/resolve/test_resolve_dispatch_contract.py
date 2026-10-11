@@ -1220,17 +1220,21 @@ class Lineage(NamedTuple):
     repo: Path
     base: str
     tip: str
-    stale: Path
 
 
 def _git(cwd: Path, *args: str) -> str:
-    """Run one git command in a fixture repository and return its stripped stdout."""
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
+    """Return fixture Git output, exposing the command, directory and captured diagnostic on failure."""
+    result = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, (
+        f"Git command {result.args!r} failed in {cwd} with exit code {result.returncode}\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    return result.stdout.strip()
 
 
 @pytest.fixture
 def lineage(tmp_path: Path) -> Lineage:
-    """Create a repo with a base and a tip commit, plus a stale worktree left on the base commit."""
+    """Create only the repository and two commits needed by proof freshness and lineage consumers."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q")
@@ -1242,9 +1246,26 @@ def lineage(tmp_path: Path) -> Lineage:
     base = _git(repo, "rev-parse", "HEAD")
     (repo / "core.py").write_text("VALUE = 2\n", encoding="utf-8", newline="\n")
     _git(repo, "commit", "-qam", "link commit")
-    stale = tmp_path / "stale"
-    _git(repo, "worktree", "add", "-q", "--detach", str(stale), base)
-    return Lineage(repo, base, _git(repo, "rev-parse", "HEAD"), stale)
+    return Lineage(repo, base, _git(repo, "rev-parse", "HEAD"))
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="The lineage fixture uses real Git repositories")
+def test_lineage_contains_only_the_worktree_its_consumers_need(lineage: Lineage) -> None:
+    """Proof freshness and commit-lineage tests must not depend on an unused detached worktree checkout."""
+    worktrees = _git(lineage.repo, "worktree", "list", "--porcelain")
+    assert worktrees.count("worktree ") == 1
+    assert _git(lineage.repo, "rev-parse", "HEAD") == lineage.tip
+    assert _git(lineage.repo, "show", f"{lineage.base}:core.py") == "VALUE = 1"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="Git diagnostic coverage uses a real command failure")
+def test_fixture_git_failure_reports_the_command_directory_and_stderr(tmp_path: Path) -> None:
+    """Expose the actual Git failure instead of a bare exit code during CI fixture setup."""
+    with pytest.raises(AssertionError, match="not a git command") as raised:
+        _git(tmp_path, "resolve-invalid-command")
+    diagnostic = str(raised.value)
+    assert "resolve-invalid-command" in diagnostic
+    assert str(tmp_path) in diagnostic
 
 
 def _envelope_fence(tmp_path: Path, marker: str, tag: str = "core\n") -> str:
@@ -1279,8 +1300,11 @@ def _run_unpinned_block(
         f"{_bash_path(tmp_path / 'impl')}\n", encoding="utf-8", newline="\n"
     )
     (tmp_path / f"resolve-base-sha-{session}").write_text(f"{base_sha}\n", encoding="utf-8", newline="\n")
+    # Long multiline recipes can truncate when passed through Windows shell command-line parsing.
+    script = tmp_path / "resolve-block.sh"
+    script.write_text(block, encoding="utf-8", newline="\n")
     return subprocess.run(
-        [shell or _BASH, "-c", block],
+        [shell or _BASH, _bash_path(script)],
         cwd=cwd,
         env=os.environ | {"CLAUDE_CODE_SESSION_ID": session, "TMPDIR": str(tmp_path)},
         capture_output=True,
@@ -1294,6 +1318,27 @@ def _write_impl_file(tmp_path: Path, name: str, content: str) -> None:
     """Write one file into the run dir ``impl`` the Phase 2 blocks read."""
     (tmp_path / "impl").mkdir(exist_ok=True)
     (tmp_path / "impl" / name).write_text(content, encoding="utf-8", newline="\n")
+
+
+@pytest.mark.parametrize("shell", _SHELLS)
+def test_resolve_block_preserves_large_quoted_script(
+    tmp_path: Path, shell: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run a complete long recipe even when shell command arguments truncate at 8191 characters."""
+    payload = "retained proof — " * 600
+    block = f"_PROOF='{payload}'\nprintf '%s\\n' \"$_PROOF\"\n"
+    run = subprocess.run
+
+    def limited_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Model the observed Windows truncation while executing the real local shell."""
+        if len(args) > 2 and args[1] == "-c":
+            args = [*args[:2], args[2][:8191], *args[3:]]
+        return run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", limited_run)
+    result = _run_resolve_block(block, tmp_path, tmp_path, "a" * 40, shell)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout == payload + "\n"
 
 
 @_skip_no_fence_tools
@@ -1375,7 +1420,10 @@ def test_ledger_fence_ends_the_lineage_when_a_link_is_off_its_base(
 
     An unpinned worktree sits on the default branch; handing its HEAD to the next link would fork a second lineage.
     """
-    worktree = {"repo": lineage.repo, "stale": lineage.stale}[worktree_key]
+    worktree = lineage.repo
+    if worktree_key == "stale":
+        worktree = tmp_path / "stale"
+        _git(lineage.repo, "worktree", "add", "-q", "--detach", str(worktree), lineage.base)
     envelope = {"worktree": _bash_path(worktree), "commits": [], "skipped": [{"item_id": 9, "reason": reason}]}
     _write_impl_file(tmp_path, "phase2-envelope-core.json", json.dumps(envelope))
     base = {"base": lineage.base, "tip": lineage.tip}[base_key]
@@ -2213,3 +2261,313 @@ def test_skipped_fence_consumes_the_tag_the_ledger_fence_reads(tmp_path: Path, l
     assert (tmp_path / "impl/phase2-fence-now.txt.done").read_text(encoding="utf-8") == "core\n"
     assert next_group.returncode == 1
     assert "phase2-fence-now.txt missing" in next_group.stdout
+
+
+@_skip_no_jq
+@pytest.mark.parametrize("shell", _SHELLS)
+def test_challenge_producer_preserves_retained_valid_evidence_and_open_obligation(tmp_path: Path, shell: str) -> None:
+    """Retain applicable proof and carry stale, unavailable proof as an open obligation."""
+    _write_challenge_inputs(tmp_path, "1 as-suggested logic\n2 unverified logic\n3 already-fixed logic\n")
+    verdicts = {
+        "items": [
+            {
+                "id": 1,
+                "evidence": "VALID",
+                "evidence_rationale": "retained authoritative spec matches current contract despite fetch failure",
+                "suggestion": "VALID",
+                "suggestion_rationale": "existing guard satisfies spec",
+            },
+            {
+                "id": 2,
+                "evidence": "UNVERIFIED",
+                "evidence_rationale": "retained spec stale; current source unavailable",
+                "suggestion": "REJECT",
+                "suggestion_rationale": "cannot select repair",
+                "missing_capability": "authoritative source retrieval",
+                "owner": "maintainer",
+                "next_check": "retrieve current spec",
+                "closure": "exact current contract established",
+            },
+            {
+                "id": 3,
+                "evidence": "ALREADY_FIXED",
+                "evidence_rationale": "earlier defect fixed in current revision by bounds guard",
+                "suggestion": "REJECT",
+                "suggestion_rationale": "repair redundant",
+                "original_revision": "earlier-head",
+                "current_revision": "current-head",
+                "fix_evidence": "bounds guard added",
+            },
+        ]
+    }
+    _write_impl_file(tmp_path, "challenge-verdicts-logic.json", json.dumps(verdicts))
+    _write_impl_file(tmp_path, "item-tasks.tsv", "1\ttask-one\n2\ttask-two\n3\ttask-three\n")
+    result = _run_resolve_block(_challenge_log_block(), tmp_path, tmp_path, "a" * 40, shell)
+    assert result.returncode == 0, result.stdout + result.stderr
+    from append_resolution import parse_challenge_log
+
+    records = parse_challenge_log((tmp_path / "impl/challenge-log.txt").read_text(encoding="utf-8"))
+    assert records[1]["resolution"] == "as-suggested"
+    assert records[2]["resolution"] == "unverified"
+    assert json.loads(records[2]["detail"])["next_check"] == "retrieve current spec"
+    assert records[3]["resolution"] == "already-fixed"
+    assert "TaskUpdate target (deleted)" not in result.stdout
+    assert "TaskUpdate target (completed): item=3" in result.stdout
+    from append_resolution import build_records
+
+    impl = tmp_path / "impl"
+    (impl / "action-items.jsonl").write_text(
+        "".join(json.dumps({"id": item, "finding_id": f"finding-{item}"}) + "\n" for item in (1, 2, 3)),
+        encoding="utf-8",
+        newline="\n",
+    )
+    (impl / "selected-items.txt").write_text("1 2 3\n", encoding="utf-8", newline="\n")
+    outcomes = {row["item_id"]: row for row in build_records(impl, "run", tmp_path)}
+    assert outcomes[2]["verdict"] == "unverified"
+    assert json.loads(outcomes[2]["follow_up"])["owner"] == "maintainer"
+    skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
+    (impl / "item-tasks.tsv").write_text("1\ttask-one\n2\ttask-two\n3\ttask-three\n", encoding="utf-8", newline="\n")
+    gate = _bash_block_containing(skill, ': > "$IMPL_DIR/straggler-check-ids.txt"')
+    consumed = _run_resolve_block(gate, tmp_path, tmp_path, "a" * 40, shell)
+    assert consumed.returncode == 0, consumed.stdout + consumed.stderr
+    assert "closed: item=3 (already-fixed)" in consumed.stdout
+    assert "pending: item=2 (unverified)" in consumed.stdout
+    assert (impl / "straggler-check-ids.txt").read_text(encoding="utf-8") == "1\n"
+    assert outcomes[3]["verdict"] == "already-fixed"
+    assert json.loads(outcomes[3]["closure_evidence"])["original_revision"] == "earlier-head"
+
+
+@_skip_no_jq
+@pytest.mark.parametrize("shell", _SHELLS)
+def test_challenge_consumer_cannot_relabel_unverified_as_rejected(tmp_path: Path, shell: str) -> None:
+    """Wrong action mapping blocks before any log append rather than silently rejecting uncertainty."""
+    _write_challenge_inputs(tmp_path, "1 rejected logic\n")
+    _write_impl_file(
+        tmp_path, "challenge-verdicts-logic.json", json.dumps({"items": [{"id": 1, "evidence": "UNVERIFIED"}]})
+    )
+    result = _run_resolve_block(_challenge_log_block(), tmp_path, tmp_path, "a" * 40, shell)
+    assert result.returncode != 0
+    assert "disposition/resolution mismatch" in result.stdout
+    assert not (tmp_path / "impl/challenge-log.txt").exists()
+
+
+@_skip_no_fence_tools
+@pytest.mark.parametrize("matched_online", [pytest.param(False, id="report"), pytest.param(True, id="github-match")])
+@pytest.mark.parametrize(
+    "proof_state",
+    [
+        pytest.param("retained", id="applicable-proof"),
+        pytest.param("moved-head", id="stale-source"),
+        pytest.param("missing-sidecar", id="lost-proof"),
+        pytest.param("moved-after-batch", id="prior-c1-commit"),
+        pytest.param("missing-report", id="lost-publication"),
+        pytest.param("phase1-early", id="phase1-early-pinned"),
+        pytest.param("phase1-late", id="phase1-late-checkout"),
+    ],
+)
+def test_c1_task_file_reuses_scoped_parent_proof_after_batch_recheck(
+    tmp_path: Path, lineage: Lineage, matched_online: bool, proof_state: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The actual C1 task file carries usable or historical proof without executing external text."""
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", _bash_path(_PLUGIN))
+    review = tmp_path / "review"
+    review.mkdir()
+    report = review / "review-report.md"
+    report.write_text(
+        "---\nTitle: Review\nPR: #7\nReview contract: 1\nRating scale: source-5-v1\n"
+        "Readiness: complete\nGate: REVIEW_V1_PASS\nOutcome: NEEDS_WORK\nSummary: decoder check\n---\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    (review / "head-sha.txt").write_text(lineage.tip + "\n", encoding="utf-8", newline="\n")
+    source = review / "source.md"
+    source.write_text("Retained authoritative contract and source proof.\n", encoding="utf-8", newline="\n")
+    verifier = review / "verify.md"
+    verifier.write_text("Independent source confirmation at reviewed head.\n", encoding="utf-8", newline="\n")
+    candidate = {
+        "id": "decoder-one",
+        "claim": "decoder loses a value",
+        "revision": lineage.tip,
+        "contract": "all values retained",
+        "trigger": "two values",
+        "counterevidence": [],
+        "limits": [],
+        "checks": [
+            {
+                "method": "authoritative contract and inspected source",
+                "result": "last value lost",
+                "revision": lineage.tip,
+                "environment": "current source and spec",
+                "limits": [],
+            }
+        ],
+        "disposition": "CONFIRMED",
+        "reason": "exact contract violation",
+        "feasible_checks_complete": True,
+    }
+    validation = review / "review-validation.json"
+    validation.write_text(
+        json.dumps(
+            {
+                "contract_version": 1,
+                "rating_scale": "source-5-v1",
+                "source_outcome": "NEEDS_WORK",
+                "source_rating": 3,
+                "readiness": "complete",
+                "readiness_reason": "source and contract inspected",
+                "candidates": [candidate],
+                "open_concerns": [],
+                "assessments": [
+                    {
+                        "role": "QA",
+                        "presence": "completed",
+                        "source_outcome": "NEEDS_WORK",
+                        "source_rating": 3,
+                        "readiness": "complete",
+                        "coverage": "core.py",
+                        "rationale": "retained proof",
+                        "evidence": ["core.py:1"],
+                        "limits": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    untrusted = "decoder drops values; $(touch c1-injection) `touch c1-backtick`"
+    findings = review / "findings.jsonl"
+    findings.write_text(
+        json.dumps(
+            {
+                "id": "finding-one",
+                "candidate_id": "decoder-one",
+                "contract_version": 1,
+                "validation_status": "CONFIRMED",
+                "section": "Architecture & Quality",
+                "severity": "medium",
+                "title": "decoder loses value",
+                "full_text": untrusted,
+                "change": "code",
+                "author": "QA",
+                "file": "core.py",
+                "line": 1,
+                "source_file": _bash_path(source),
+                "verify_file": _bash_path(verifier) if proof_state.startswith("phase1-") else "",
+                "verify_verdict": "CONFIRMED" if proof_state.startswith("phase1-") else "",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    _write_impl_file(tmp_path, "action-items.jsonl", "")
+    items = tmp_path / "impl/action-items.jsonl"
+    if matched_online:
+        items.write_text(
+            json.dumps(
+                {
+                    "id": 1,
+                    "type": "[gh][req]",
+                    "full_comment_text": "broader GitHub request",
+                    "file": "core.py",
+                    "line": 1,
+                    "location": "inline",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+    merged = subprocess.run(
+        [
+            sys.executable,
+            str(_PLUGIN / "bin/merge_action_items.py"),
+            "--items",
+            str(items),
+            "--findings",
+            str(findings),
+        ],
+        cwd=lineage.repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert merged.returncode == 0, merged.stdout + merged.stderr
+    if proof_state == "moved-head":
+        _git(lineage.repo, "commit", "-q", "--allow-empty", "-m", "new source revision")
+    elif proof_state == "missing-sidecar":
+        validation.unlink()
+    (tmp_path / "resolve-report-file-resolve-chain-link").write_text(
+        _bash_path(report) + "\n", encoding="utf-8", newline="\n"
+    )
+    _write_impl_file(tmp_path, "c1-item-now.txt", "1\n")
+    dispatch = (_RESOLVE / "modes/action-item-dispatch.md").read_text(encoding="utf-8")
+    if proof_state.startswith("phase1-"):
+        _git(lineage.repo, "commit", "-q", "--allow-empty", "-m", "C1 implementation advanced checkout")
+        (tmp_path / "resolve-pr-number-resolve-chain-link").write_text("7\n", encoding="utf-8", newline="\n")
+        (tmp_path / "resolve-pr-head-oid-resolve-chain-link").write_text(
+            lineage.tip + "\n", encoding="utf-8", newline="\n"
+        )
+        late_checkout_route = "| Late wave | Re-run the existing **C1 evidence freshness** block above" in dispatch
+        marker = (
+            "before C1 evidence recheck"
+            if proof_state == "phase1-late" and late_checkout_route
+            else "IFS= read -r PR_HEAD_OID <"
+        )
+        checked = _run_resolve_block(_bash_block_containing(dispatch, marker), tmp_path, lineage.repo, lineage.tip)
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+        current = json.loads(items.read_text(encoding="utf-8"))
+        expected_parent = "CONFIRMED" if proof_state == "phase1-early" else None
+        expected_verifier = "CONFIRMED" if proof_state == "phase1-early" and not matched_online else None
+        assert (current.get("validation_status"), current.get("verify_verdict")) == (
+            expected_parent,
+            expected_verifier,
+        ), checked.stdout
+        assert current["parent_validation_file"] == validation.resolve().as_posix()
+        assert current["candidate_id"] == "decoder-one"
+        assert current["finding_id"] == "finding-one"
+        assert current["verify_file"] == _bash_path(verifier)
+        assert "Part 2 — for EVERY item whose problem exists" in dispatch
+        return
+    if "before C1 evidence recheck" in dispatch:
+        fresh = _run_resolve_block(
+            _bash_block_containing(dispatch, "before C1 evidence recheck"), tmp_path, lineage.repo, lineage.tip
+        )
+        assert fresh.returncode == 0, fresh.stdout + fresh.stderr
+    if proof_state == "moved-after-batch":
+        _git(lineage.repo, "commit", "-q", "--allow-empty", "-m", "earlier C1 item advanced branch")
+    elif proof_state == "missing-report":
+        report.unlink()
+    briefed = _run_resolve_block(
+        _bash_block_containing(dispatch, '_C1_NOW="$IMPL_DIR/c1-item-now.txt"'), tmp_path, lineage.repo, lineage.tip
+    )
+    assert briefed.returncode == 0, briefed.stdout + briefed.stderr
+    brief = (tmp_path / "impl/c1-brief-1.md").read_text(encoding="utf-8")
+    records = [json.loads(line) for line in brief.splitlines() if line.startswith('{"finding_id":')]
+    assert len(records) == 1
+    proof = records[0]
+    assert proof["finding_id"] == "finding-one"
+    assert proof["candidate_id"] == "decoder-one"
+    assert proof["parent_validation_file"] == validation.resolve().as_posix()
+    assert proof["parent_validation_sha256"]
+    assert proof["source_file"] == _bash_path(source)
+    assert proof["validation_status"] == ("CONFIRMED" if proof_state == "retained" else None)
+    assert proof["verify_verdict"] is None
+    assert untrusted in brief
+    assert not (lineage.repo / "c1-injection").exists()
+    assert not (lineage.repo / "c1-backtick").exists()
+    assert "verify parent_validation_sha256" in brief
+    assert "candidate_id/finding_id still binds this exact recorded claim" in brief
+    assert "Changed/missing digest or candidate binding disables reuse" in brief
+    assert "reuse applicable proved checks without rerunning them" in brief
+    assert "Part 2: for every existing problem" in brief
+    assert "never a distinct or broader request" in brief
+    assert "verdict=DONE or UNCERTAIN" in brief
+    assert "never empty DONE" in brief
+    if matched_online:
+        assert proof["type"] == "[gh][req]"
+        assert "broader GitHub request" in brief
+    report_mode = (_RESOLVE / "modes/report-intelligence.md").read_text(encoding="utf-8")
+    assert "Everything else keeps the full Part 1" not in report_mode
+    assert "Parent candidate proof" in report_mode

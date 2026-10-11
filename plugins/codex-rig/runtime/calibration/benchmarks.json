@@ -541,6 +541,9 @@
       "helper-cli-contract.md"
     ],
     "code-review": [
+      "review_validation",
+      "source_rating_version",
+      "feasible_checks_complete",
       "instruction-bounded-review",
       "inspection-only",
       "static generated-schema notification names",

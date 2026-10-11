@@ -25,10 +25,43 @@ _ROWS = [
 ]
 
 
+# Authorized review contract changes retain these exact current observable equivalents.
+# Keep the historical marker inventory intact and fail if any replacement signal disappears.
+_REVIEW_VISIBLE_EQUIVALENTS = {
+    "`Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence": (
+        "Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block.",
+    ),
+    'echo "⚠ foundry--cross-validation-protocol.md not found at $_DEV_SHARED — Step 4 skipped; critical': (
+        'echo "⚠ foundry--cross-validation-protocol.md not found at $_DEV_SHARED — Step 4 skipped; required validation is incomplete.',
+        'echo "**Reason**: _DEV_SHARED unavailable — cross-validation protocol not executed."',
+    ),
+    "File present → follow cross-validation protocol printed above. File absent → skip Step 4 (warning": (
+        "File present → parent validates all candidates using the printed protocol before consolidation.",
+        "File absent → record incomplete process coverage, owner and reinstall recovery; no unconditional approval or unvalidated actionable findings.",
+    ),
+    "Use as full consolidator instructions. Prepend the [run-dir preamble": (
+        "Read <CONSOLIDATOR_INSTRUCTIONS_LITERAL> with the Read tool and follow it in full.",
+        "Pass only the reference, literal bindings, run-dir preamble and required return envelope.",
+    ),
+    "**Consolidator-unavailable fallback**: `Agent` tool deferred or consolidator times out → read each": (
+        "**Consolidator-unavailable fallback**: `Agent` tool deferred or consolidator times out → read the same instruction file and each agent finding file from `$RUN_DIR/` directly,",
+        "apply the full validation, precision gate, density and output rules, synthesize the report, and write `$REPORT_DIR/review-report.md` with the Write tool.",
+        "Missing instruction/report-template files block with restore/reinstall recovery; never synthesize from absent rules.",
+    ),
+    'echo "$_REVIEW_TEMPLATE"': (
+        'printf \'Consolidator instructions: %s\\nReport template: %s\\n\' "$_CONSOLIDATOR_INSTRUCTIONS" "$_REVIEW_TEMPLATE"',
+    ),
+}
+
+
 @pytest.mark.parametrize(("relative", "marker"), _ROWS)
 def test_head_visible_output_still_present(relative: str, marker: str) -> None:
-    """Every output line the file showed at HEAD is still there verbatim."""
-    assert marker in (_PLUGIN / relative).read_text(encoding="utf-8")
+    """Preserve each historical output verbatim or its explicitly authorized current equivalent."""
+    equivalents = (
+        _REVIEW_VISIBLE_EQUIVALENTS.get(marker, (marker,)) if relative == "skills/review/SKILL.md" else (marker,)
+    )
+    text = (_PLUGIN / relative).read_text(encoding="utf-8")
+    assert all(equivalent in text for equivalent in equivalents)
 
 
 @pytest.mark.parametrize(

@@ -46,8 +46,9 @@ import hashlib
 import json
 import re
 import sys
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
+from urllib.parse import quote
 
 #: Schema revision of the final-handoff JSON document.
 SCHEMA_VERSION = 1
@@ -93,7 +94,9 @@ STANDARD_COLUMNS = {
 #: Skills the handoff renderer and validator accept: every standard-table skill plus code-review.
 SUPPORTED_SKILLS = frozenset((*STANDARD_COLUMNS, "code-review"))
 #: Allowed overall recommendations for a code-review handoff.
-REVIEW_RECOMMENDATIONS = frozenset({"accept-as-is", "minor-changes", "needs-more-work", "reject", "not-aligned"})
+REVIEW_RECOMMENDATIONS = frozenset(
+    {"accept-as-is", "minor-changes", "needs-more-work", "insufficient-but-promising", "reject", "not-aligned"}
+)
 #: Required column headings for each named table in a code-review handoff.
 REVIEW_TABLE_COLUMNS = {
     "PR Snapshot": ("Field", "Value"),
@@ -104,6 +107,8 @@ REVIEW_TABLE_COLUMNS = {
 REVIEWER_LEGEND = (
     "Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject."
 )
+#: Self-described source judgments use a distinct source-judgment family; omitted markers retain historical semantics.
+SOURCE_REVIEWER_LEGEND = "Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block."
 #: Exact set of top-level fields a handoff document must contain.
 HANDOFF_FIELDS = {
     "schema_version",
@@ -129,6 +134,8 @@ REVIEW_PLAIN_SUMMARIES = {
     "needs-more-work": "This review needs more work before it can be accepted.",
     "reject": "This review recommends rejecting the proposed change.",
     "not-aligned": "This review is not aligned with the requested goal.",
+    "insufficient-but-promising": "This review finds a promising contribution that needs substantially more implementation.",
+    "None": "This review returned no source judgment; verification remains open.",
 }
 
 
@@ -199,6 +206,11 @@ def _validate_review_attribution(tables: list[dict[str, Any]], skill: str) -> No
             raise HandoffError("reviewers-empty")
         if "summary" in table:
             _require_string(table["summary"], "review-summary")
+        current = table.get("source_rating_version") == 1
+        if "source_rating_version" in table and not current:
+            raise HandoffError("source-rating-version-invalid")
+        if current and table.get("verification_readiness") not in {"complete", "blocked", "incomplete"}:
+            raise HandoffError("review-verification-readiness-invalid")
         for reviewer in reviewers:
             if not isinstance(reviewer, dict) or set(reviewer) != {"role", "rating", "evidence"}:
                 raise HandoffError("reviewer-fields-invalid")
@@ -206,7 +218,10 @@ def _validate_review_attribution(tables: list[dict[str, Any]], skill: str) -> No
             _require_string(reviewer["evidence"], "reviewer-evidence")
             if role in roles:
                 raise HandoffError("reviewer-role-duplicate")
-            if type(reviewer["rating"]) is not int or reviewer["rating"] not in range(1, 6):
+            if not (
+                (current and reviewer["rating"] is None and table["verification_readiness"] != "complete")
+                or (type(reviewer["rating"]) is int and reviewer["rating"] in range(1, 6))
+            ):
                 raise HandoffError("reviewer-rating-invalid")
             roles.add(role)
         if any(row["cells"][0] == "Reviewers" for row in table["rows"]):
@@ -250,13 +265,17 @@ def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[
         layout = table.get("layout", "legacy")
         if (
             not isinstance(layout, str)
-            or layout not in {"legacy", "grouped", "concise"}
+            or layout not in {"legacy", "grouped", "concise", "challenge-history"}
             or (
-                layout != "legacy"
+                layout in {"grouped", "concise"}
                 and (skill not in {"code-review", "code-remediate"} or heading in {"PR Snapshot", "Review Snapshot"})
             )
         ):
             raise HandoffError(f"table-layout-invalid:{heading}")
+        if layout == "challenge-history" and (
+            skill != "challenge-resolve" or tuple(columns) != CHALLENGE_SEVERITY_COLUMNS
+        ):
+            raise HandoffError("challenge-history-layout-invalid")
         if "overview_only" in table and (
             table["overview_only"] is not True or skill != "code-remediate" or layout != "concise"
         ):
@@ -297,6 +316,10 @@ def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[
                 for field in ("summary", "closure_evidence"):
                     if field in row:
                         _require_string(row[field], f"table-row-{field}:{row_id}")
+            if layout == "challenge-history":
+                _validate_challenge_history_row(row)
+            elif "admission" in row or "admission_reason" in row:
+                raise HandoffError("challenge-history-layout-required")
             table_cells.extend(cells)
             row_sources = _require_string_list(
                 row.get("source_ids"), f"table-row-source-ids:{row_id}", allow_empty=False
@@ -323,6 +346,58 @@ def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[
             detail_ids.add(detail_id)
     _validate_review_attribution(tables, skill)
     return row_ids, source_ids
+
+
+def _validate_challenge_history_row(row: dict[str, Any]) -> None:
+    """Separate descriptive history from evidence admitted to the canonical loop."""
+    admission = row.get("admission")
+    cells = row["cells"]
+    if admission not in {"validated", "advisory", "unavailable"}:
+        raise HandoffError("challenge-history-admission-invalid")
+    if admission == "unavailable":
+        if cells[0] != "not-run" or cells[1:8] != ["N/A"] * 7:
+            raise HandoffError("challenge-history-unavailable-row-invalid")
+    else:
+        if admission == "advisory":
+            _require_string(row.get("admission_reason"), "challenge-history-admission-reason")
+            if not re.fullmatch(r"(?:Advisory|Checkpoint) [1-9][0-9]*", cells[0]):
+                raise HandoffError("challenge-history-advisory-identity-invalid")
+        elif not re.fullmatch(r"[1-9][0-9]*", cells[0]):
+            raise HandoffError("challenge-history-validated-identity-invalid")
+        if any(not re.fullmatch(r"(?:0|[1-9][0-9]*) \+ (?:0|[1-9][0-9]*)", cell) for cell in cells[1:8]):
+            raise HandoffError("challenge-history-split-invalid")
+        splits = [tuple(map(int, cell.split(" + "))) for cell in cells[1:8]]
+        weights = (20, 10, 6, 4, 2, 1)
+        if any(
+            sum(pair[index] * weight for pair, weight in zip(splits[:6], weights)) != splits[6][index]
+            for index in (0, 1)
+        ):
+            raise HandoffError("challenge-history-weight-mismatch")
+    if admission != "advisory" and "admission_reason" in row:
+        raise HandoffError("challenge-history-reason-without-advisory")
+
+
+def challenge_report_path(report_root: Path, report: str) -> Path:
+    """Resolve a retained nonempty report inside its owning run without path escape."""
+    if (
+        not report.strip()
+        or ":" in report
+        or "\\" in report
+        or PurePosixPath(report).is_absolute()
+        or PureWindowsPath(report).is_absolute()
+        or ".." in PurePosixPath(report).parts
+    ):
+        raise HandoffError("challenge-history-report-path-invalid")
+    target = (report_root / report).resolve()
+    if not target.is_relative_to(report_root.resolve()) or not target.is_file():
+        raise HandoffError("challenge-history-report-missing-or-outside-run")
+    try:
+        text = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise HandoffError("challenge-history-report-unreadable") from error
+    if not text.strip():
+        raise HandoffError("challenge-history-report-empty")
+    return target
 
 
 def _validate_source_coverage(payload: dict[str, Any], branch: str, represented_source_ids: set[str]) -> set[str]:
@@ -402,7 +477,10 @@ def _validate_remaining(payload: dict[str, Any], row_ids: set[str], branch: str)
         _require_string(item.get("next_action"), f"remaining-next-action:{row_id}")
         if row_id in remaining_ids:
             raise HandoffError(f"remaining-row-id-duplicate:{row_id}")
-        if row_ids and row_id not in row_ids:
+        current_review = payload["skill"] == "code-review" and any(
+            table.get("source_rating_version") == 1 for table in payload["tables"]
+        )
+        if row_ids and row_id not in row_ids and not current_review:
             raise HandoffError(f"remaining-row-id-unknown:{row_id}")
         remaining_ids.add(row_id)
     next_steps = set(_require_string_list(payload.get("next_steps"), "next-steps"))
@@ -544,7 +622,7 @@ def validate_handoff(payload: object) -> dict[str, Any]:
     outcome_summary = _require_string(outcome.get("summary"), "outcome-summary")
     if skill == "code-review" and branch == "assessed":
         if outcome_title != "Review Decision" or outcome_summary not in {
-            f"Recommendation: {recommendation}." for recommendation in REVIEW_RECOMMENDATIONS
+            f"Recommendation: {recommendation}." for recommendation in (*REVIEW_RECOMMENDATIONS, None)
         }:
             raise HandoffError("review-outcome-not-canonical")
     if "child_runs" in handoff:
@@ -586,10 +664,20 @@ def _table_cell(value: str) -> str:
     return value.replace("\\", "\\\\").replace("|", "\\|").replace("\r\n", "<br>").replace("\n", "<br>")
 
 
-def _render_table(table: dict[str, Any], *, suppress_heading: bool = False, show_selection: bool = False) -> list[str]:
+def _render_table(
+    table: dict[str, Any],
+    *,
+    suppress_heading: bool = False,
+    show_selection: bool = False,
+    report_root: Path | None = None,
+) -> list[str]:
     """Render one validated table and its symbol details deterministically."""
     if table.get("layout") in {"grouped", "concise"}:
         return _render_grouped_table(table, suppress_heading=suppress_heading, show_selection=show_selection)
+    if table.get("layout") == "challenge-history":
+        if report_root is None:
+            raise HandoffError("challenge-history-report-root-required")
+        return _render_challenge_history(table, report_root, suppress_heading=suppress_heading)
     columns = list(table["columns"])
     attributed = any("authors" in row for row in table["rows"])
     if attributed:
@@ -605,14 +693,57 @@ def _render_table(table: dict[str, Any], *, suppress_heading: bool = False, show
             cells.insert(1, ", ".join(row["authors"]))
         lines.append("| " + " | ".join(_table_cell(cell) for cell in cells) + " |")
     if table.get("reviewers"):
-        reviewers = ", ".join(f"{item['role']} ({item['rating']})" for item in table["reviewers"])
-        lines.extend((f"| Reviewers | {_table_cell(reviewers)}. |", "", REVIEWER_LEGEND))
+        reviewers = ", ".join(
+            f"{item['role']} ({item['rating'] if item['rating'] is not None else 'no source judgment'})"
+            for item in table["reviewers"]
+        )
+        current = table.get("source_rating_version") == 1
+        lines.extend(
+            (f"| Reviewers | {_table_cell(reviewers)}. |", "", SOURCE_REVIEWER_LEGEND if current else REVIEWER_LEGEND)
+        )
+        if current:
+            lines.extend(("", f"Verification readiness: {table['verification_readiness']}."))
     if table.get("details"):
         lines.append("")
         lines.extend(
             f"[{detail['id']}] {detail['text'].replace(chr(13) + chr(10), '<br>').replace(chr(10), '<br>')}"
             for detail in table["details"]
         )
+    return lines
+
+
+def _render_challenge_history(table: dict[str, Any], report_root: Path, *, suppress_heading: bool) -> list[str]:
+    """Show complete labelled history with compact cells and linked resources below."""
+    display = {**table, "layout": "legacy", "rows": []}
+    resources: dict[Path, str] = {}
+    reasons = []
+    for row in table["rows"]:
+        target = challenge_report_path(report_root, row["cells"][-1])
+        resource = resources.setdefault(target, f"R{len(resources) + 1}")
+        cells = list(row["cells"])
+        cells[-1] = f"[{resource}]"
+        if row["admission"] == "advisory":
+            cells[-2] = f"advisory — {cells[-2]}"
+            reasons.append(f"- {cells[0]}: {_table_cell(row['admission_reason'])}")
+        elif row["admission"] == "validated":
+            cells[-2] = f"validated — {cells[-2]}"
+        display["rows"].append({**row, "cells": cells})
+    lines = _render_table(display, suppress_heading=suppress_heading)
+    lines.extend(("", "Counts are old + new open findings; advisory history never establishes certified completion."))
+    if not any(row["admission"] == "validated" for row in table["rows"]):
+        message = (
+            "Coordinator coverage is recorded by validated child runs."
+            if table["rows"][0]["cells"][-2] == "chunk-only"
+            else "No validated rounds; certification remains unavailable."
+        )
+        lines.extend(("", message))
+    if reasons:
+        lines.extend(("", *reasons))
+    lines.extend(("", "**Resources**", ""))
+    lines.extend(
+        f"- [{resource}] [{resource} — {_table_cell(target.name)}](<{quote(target.as_posix(), safe='/:')}>)"
+        for target, resource in resources.items()
+    )
     return lines
 
 
@@ -886,20 +1017,20 @@ def render_selection(payload: object) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_handoff(payload: object) -> str:
+def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
     """Render one validated handoff into exact final-response text."""
     handoff = validate_handoff(payload)
     if handoff["branch"] == "caller-contract":
         return handoff["caller_contract"]["output"]
 
     if handoff.get("presentation_version") in {2, 3, 4, 5}:
-        return _render_v2_handoff(handoff)
+        return _render_v2_handoff(handoff, report_root=report_root)
 
     lines = ["**Outcome**", "", f"{handoff['outcome']['title']}: {handoff['outcome']['summary']}"]
     lines.extend(("", "**Results**"))
     if handoff["tables"]:
         for table in handoff["tables"]:
-            lines.extend(("", *_render_table(table)))
+            lines.extend(("", *_render_table(table, report_root=report_root)))
     else:
         lines.extend(("", "No result table applies to this terminal branch."))
 
@@ -941,7 +1072,7 @@ def render_handoff(payload: object) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _render_v2_handoff(handoff: dict[str, Any]) -> str:
+def _render_v2_handoff(handoff: dict[str, Any], *, report_root: Path | None = None) -> str:
     """Render a plain-English-first report while retaining the validated machine fields."""
     outcome = handoff["outcome"]
     if handoff["skill"] == "code-review" and handoff["branch"] == "assessed":
@@ -964,6 +1095,7 @@ def _render_v2_handoff(handoff: dict[str, Any]) -> str:
                         table,
                         suppress_heading=table["heading"] == "Results",
                         show_selection=handoff["presentation_version"] == 5,
+                        report_root=report_root,
                     ),
                 )
             )
@@ -1051,7 +1183,7 @@ def render_files(handoff_path: Path, final_path: Path, validation_path: Path) ->
     # New writes must close this checkpoint; check_files still accepts retained historical bytes.
     if handoff["skill"] == "code-remediate" and "commit_disposition" not in handoff:
         raise HandoffError("remediation-commit-disposition-missing")
-    rendered = render_handoff(handoff).encode("utf-8")
+    rendered = render_handoff(handoff, report_root=handoff_path.parent).encode("utf-8")
     final_path.write_bytes(rendered)
     validation = {
         "schema_version": SCHEMA_VERSION,
@@ -1070,7 +1202,7 @@ def check_files(handoff_path: Path, final_path: Path, validation_path: Path) -> 
     _require_siblings(handoff_path, final_path, validation_path)
     handoff = validate_handoff(_load_json(handoff_path))
     validation = _load_json(validation_path)
-    expected_render = render_handoff(handoff).encode("utf-8")
+    expected_render = render_handoff(handoff, report_root=handoff_path.parent).encode("utf-8")
     if not final_path.is_file() or final_path.is_symlink() or final_path.read_bytes() != expected_render:
         raise HandoffError("rendered-final-mismatch")
     expected = {

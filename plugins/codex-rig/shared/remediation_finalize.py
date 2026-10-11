@@ -917,7 +917,7 @@ def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[st
     ambiguous identities or contradictory authored statuses need a decision before any presentation is changed.
     """
     records = metadata.get("review_findings", []) + metadata.get("operational_blockers", [])
-    if metadata.get("finding_records_version") != 1 or not records:
+    if metadata.get("finding_records_version") not in {1, 2} or not records:
         return
     if any(not isinstance(record, dict) or "required_change" not in record for record in records):
         return
@@ -1264,7 +1264,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     workplan = actions.add_parser("workplan", help="Rewrite the managed resolution-workplan.md sections.")
     ledger = actions.add_parser("ledger", help="Rewrite the action-items.md resolution table from items and events.")
     final = actions.add_parser("finalize", help="Derive, render, write, validate, and optionally promote a result.")
-    append = actions.add_parser("append", help="Append a staged <ledger>.rec record to a run ledger, then remove it.")
+    append = actions.add_parser(
+        "append",
+        help="Append a staged <ledger>.rec record to a run ledger, then remove it.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "resolution-events.jsonl staging: one JSON object or a JSON array; not JSONL.\n"
+            "Unknown fields are rejected. All events validate before any append.\n"
+            "schema_version is optional and must be 1 when supplied. IDs must exist in the frozen plan.\n"
+            "Item fields: kind=item, id, and one or more of the following:\n"
+            + "\n".join(f"  {field}: {'|'.join(sorted(values))}" for field, values in ITEM_EVENT_ENUMS.items())
+            + "\n  resolved_how, evidence: nonempty strings (not lists or objects).\n"
+            "Bucket fields: kind=bucket, id, status: "
+            + "|".join(sorted(BUCKET_STATUSES))
+            + "; optional note: nonempty string.\n"
+            "Examples (replace R1/B1 with retained item/bucket IDs):\n"
+            '{"kind":"item","id":"R1","resolution_status":"resolved","owner_status":"resolved",'
+            '"resolved_how":"Independent review completed.","evidence":"independent-review.json"}\n'
+            '{"kind":"bucket","id":"B1","status":"verified"}\n'
+            "closure-log.md staging: one Markdown closure block, not a status event.\n"
+            "Rejection appends nothing and retains the staged file; diagnose against this schema before repair."
+        ),
+    )
     feedback = actions.add_parser(
         "resolutions", help="Append per-finding outcomes to the admitted review run's resolution.jsonl."
     )

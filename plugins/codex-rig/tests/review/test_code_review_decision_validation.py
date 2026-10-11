@@ -358,6 +358,7 @@ def test_current_assessed_result_validates_reviewer_provenance_for_both_filename
                     "specialist_manifest": "specialist-manifest.json",
                     "specialist_passes": [qa_pass],
                     "reviewer_assessments": [{"role": "QA specialist", "rating": 1, "evidence": "qa.md"}],
+                    "finding_records_version": 2,
                     "review_run_id": "current-run",
                     "review_input_sha256": "a" * 64,
                     "fanout_substituted": False,

@@ -739,7 +739,8 @@ def test_source_only_later_clean_part_cannot_erase_earlier_original(tmp_path: Pa
     assert finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent") == path
     assert finder.finding_evidence(path, record["id"])["source_origins"] == [original]
     path = _canonical_report(run, [], {}, "accept-as-is")
-    with pytest.raises(LookupError, match="review-batch-source-findings-unresolved"):
+    # Current candidate admission rejects the missing source mapping before legacy unresolved-count checks.
+    with pytest.raises(LookupError, match="review-batch-result-source-finding-inventory-dropped"):
         finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
 
 
@@ -879,8 +880,24 @@ def _batch_output(
         + "## Reviewer Confidence\n```json\n"
         + (json.dumps(confidence) if confidence is not None else profile)
         + "\n```\n\n"
-        + f"## Reviewer Assessment\nRating: {rating}\nRationale: Assessment accounts for every declared obligation."
+        + f"## Reviewer Assessment\nSource rating version: 1\nRating: {rating}\nVerification readiness: complete\nRationale: Assessment accounts for every declared obligation."
     )
+
+
+def test_current_batch_wave_rejects_unversioned_constituent(tmp_path: Path) -> None:
+    """A current source wave cannot smuggle a historical assessment into later consolidation."""
+    run = _batch_inputs(tmp_path)
+    _in_process_step(run, "prepare")
+    wave = run / "batches/source-001"
+    response = (
+        _batch_output([], 1).replace("Source rating version: 1\n", "").replace("Verification readiness: complete\n", "")
+    )
+    _, home, _ = preparation._assembly_evidence(
+        tmp_path, prepared_run=wave, findings={"challenger": response}, blocking_counts={"challenger": 0}
+    )
+    result = _batch_command(wave, "assemble-wave", home)
+    assert result.returncode != 0
+    assert "review-assessment-rating-version-mismatch:challenger" in result.stderr
 
 
 def _build_batches(
@@ -1155,7 +1172,8 @@ def test_bounded_final_union_retains_early_adverse_part(tmp_path: Path, monkeypa
             context = (run / wave["directory"] / entry["context_path"]).read_bytes()
             assert len(context) <= 65536
             assert (
-                b"1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject" in context
+                b"1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient but a good initiative, 5 Block"
+                in context
             )
             assert b"Deductions total exactly 1 minus score" in context
     assembled = _batch_command(run, "assemble-batches", home)
@@ -1301,13 +1319,13 @@ def test_final_union_rejects_oversized_indivisible_report(tmp_path: Path) -> Non
 def test_new_batch_generation_supplies_rating_legend_to_every_final_and_interaction_part(tmp_path: Path) -> None:
     """Keep fresh bounded reviewers' rating scale explicit without changing native manifest generations."""
     run, home = _completed_batches(tmp_path)
-    assert json.loads((run / "batch-inventory.json").read_bytes())["schema_version"] == 2
+    assert json.loads((run / "batch-inventory.json").read_bytes())["schema_version"] == 3
     directories = [*sorted((run / "batches").glob("interaction-*")), run / "batches/interactions"]
     for directory in directories:
         plan = json.loads((directory / "inspection-plan.json").read_bytes())
         for entry in plan["contexts"]:
             assert (
-                b"1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject"
+                b"1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient but a good initiative, 5 Block"
                 in (directory / entry["context_path"]).read_bytes()
             )
     assert _batch_command(run, "assemble-batches", home).returncode == 0
@@ -2260,7 +2278,7 @@ def _canonical_report(
     metadata = {
         "scope": "working-tree",
         "risk_tier": "HIGH_RISK",
-        "finding_records_version": 1,
+        "finding_records_version": 2,
         "review_findings": records,
         "operational_blockers": [],
         "review_decision": {
@@ -2309,6 +2327,37 @@ def _canonical_report(
             "recovery_actions": ["Revalidated all constituent waves."],
             "remaining_limits": ["Synthetic offline receipts."],
         },
+    }
+    metadata["review_validation"] = {
+        "schema_version": 1,
+        "source_rating_version": 1,
+        "source_verdict": recommendation,
+        "verification_readiness": "complete",
+        "candidates": [
+            {
+                "id": record["id"],
+                "severity": record["severity"],
+                "claim": record["summary"],
+                "source_revision": "sha256:" + hashlib.sha256((run / "batch-inventory.json").read_bytes()).hexdigest(),
+                "contract": record["closure_evidence"],
+                "trigger": record["summary"],
+                "confirmation_evidence": "; ".join(record["evidence"]),
+                "falsification_evidence": "Inspected the retained source and witness.",
+                "counterevidence": [],
+                "check": "Parent inspected the mapped original findings and exact witnesses.",
+                "result": record["summary"],
+                "environment": "Frozen source inspection",
+                "limits": [],
+                "disposition": "confirmed",
+                "reason": record["required_change"],
+                "feasible_checks_complete": True,
+                "missing_prerequisite": "",
+                "owner": "review owner",
+                "next_check": record["required_change"],
+                "closure_condition": record["closure_evidence"],
+            }
+            for record in records
+        ],
     }
     result_path = run / "result.json"
     gate_ids = ["lint", "format", "types", "tests", "review"]
@@ -2392,8 +2441,8 @@ def _canonical_report(
             {
                 "accept-as-is": "approve",
                 "minor-changes": "minor changes",
-                "needs-more-work": "needs work",
-                "reject": "reject",
+                "needs-more-work": "major revision",
+                "reject": "block",
                 "not-aligned": "not aligned",
             }[recommendation],
         ),
@@ -2405,6 +2454,8 @@ def _canonical_report(
             "columns": ["Field", "Value"],
             "reviewers": metadata["reviewer_assessments"],
             "summary": metadata["review_decision"]["summary"],
+            "source_rating_version": 1,
+            "verification_readiness": "complete",
             "rows": [
                 {"id": "S" + str(i), "cells": list(pair), "source_ids": ["snapshot:" + pair[0]]}
                 for i, pair in enumerate(fields)

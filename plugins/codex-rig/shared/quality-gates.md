@@ -42,6 +42,8 @@ For every reported confidence gap or limitation, show its contribution as `(-0.N
 - Put shortfall no named gap explains in one explicit `residual` entry with its deduction and reason; never hide it or silently distribute it across named gaps. A score below `1.00` requires at least one gap or residual entry.
 - This is transparent judgment accounting, not an empirically calibrated probability or measured causal decomposition. Deductions remain evidence-backed estimates; arithmetic precision does not establish statistical precision.
 
+A disclaimer that a confidence score lacks empirical calibration is not itself a failed check or unfinished remediation task. Preserve it as an interpretation limit; do not invent a calibration requirement from it or from selecting all actionable items. If it arrives as a report obligation, retain its provenance and record an evidence-backed `not-applicable` disposition citing this contract. Explicitly requested calibration experiments, project-required calibration checks, actual coverage gaps, failed confidence thresholds and unsupported confidence claims still require their normal evidence and closure.
+
 Example: confidence `0.96`; `(-0.02)` unavailable target-host execution, `(-0.02)` unexercised live workflow, `(-0.00)` installation excluded from the requested scope. The two reducing limitations account for the `0.04` shortfall; the scope disclosure contributes zero.
 
 ## Fail rules

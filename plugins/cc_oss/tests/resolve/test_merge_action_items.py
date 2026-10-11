@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import merge_action_items as mai
@@ -380,6 +381,66 @@ def test_recheck_keeps_verdict_only_when_evidence_still_holds(
     argv = ["--items", str(items), "--recheck-verdicts", "--review-dir", str(review_dir)]
     assert mai.main([*argv, "--current-head", current_head]) == 0
     assert ("verify_verdict" in mfi.read_jsonl(items)[0]) is kept
+
+
+@pytest.mark.parametrize("verify_exists", [True, False])
+def test_recheck_resolves_serialized_git_bash_verifier_path_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verify_exists: bool
+) -> None:
+    """Resolve a JSON evidence pointer before testing the real verifier file, preserving its recorded spelling."""
+    review = tmp_path / "review"
+    review.mkdir()
+    (review / "head-sha.txt").write_text("abc1234\n", encoding="utf-8", newline="\n")
+    verifier = review / "verify result.md"
+    if verify_exists:
+        verifier.write_text("Independent confirmation", encoding="utf-8")
+    pointer = "/c/review dir/verify $(touch injected) `payload`.md"
+    items = _write_jsonl(tmp_path / "action-items.jsonl", [_gh(1, verify_verdict="CONFIRMED", verify_file=pointer)])
+    calls = []
+
+    def convert(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Model only the external Git Bash converter; the evidence check reads a real file."""
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout=str(verifier) + "\n")
+
+    monkeypatch.setattr(mai.sys, "platform", "win32")
+    monkeypatch.setattr(mai.subprocess, "run", convert)
+    assert (
+        mai.main(
+            ["--items", str(items), "--recheck-verdicts", "--review-dir", str(review), "--current-head", "abc1234"]
+        )
+        == 0
+    )
+    row = mfi.read_jsonl(items)[0]
+    assert row.get("verify_verdict") == ("CONFIRMED" if verify_exists else None)
+    assert row["verify_file"] == pointer
+    assert calls == [(["cygpath", "-w", pointer], {"capture_output": True, "text": True, "check": True, "timeout": 5})]
+    assert not (tmp_path / "injected").exists()
+
+
+def test_recheck_blocks_on_verifier_path_conversion_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed converter must leave the evidence ledger intact and return a blocking failure."""
+    review = tmp_path / "review"
+    review.mkdir()
+    (review / "head-sha.txt").write_text("abc1234\n", encoding="utf-8", newline="\n")
+    items = _write_jsonl(
+        tmp_path / "action-items.jsonl", [_gh(1, verify_verdict="CONFIRMED", verify_file="/c/review/verify.md")]
+    )
+    before = items.read_bytes()
+
+    def fail_conversion(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Model an external converter failure without changing filesystem state."""
+        raise subprocess.CalledProcessError(1, argv)
+
+    monkeypatch.setattr(mai.sys, "platform", "win32")
+    monkeypatch.setattr(mai.subprocess, "run", fail_conversion)
+    assert (
+        mai.main(
+            ["--items", str(items), "--recheck-verdicts", "--review-dir", str(review), "--current-head", "abc1234"]
+        )
+        == 1
+    )
+    assert items.read_bytes() == before
 
 
 def test_medium_req_sections_match_taxonomy() -> None:

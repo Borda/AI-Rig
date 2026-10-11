@@ -7,6 +7,9 @@ Scope:       [key changed files, comma-separated]
 Focus:       [SCOPE-LABEL]
 Impact:      [FULL|LIGHT] · [reason]
 Agents:      [comma-separated agent names that ran]
+Review contract: 1
+Rating scale: source-5-v1
+Readiness:   [complete | blocked | incomplete]
 Reviewers:   [Role (rating), Role (rating)]
 CI:          [CI status]
 Gate:        [gate result]
@@ -17,14 +20,14 @@ Next steps:  [next steps]
 Path:        → .reports/review/pr-<N>/run-<NNN>/review-report.md
 ---
 
-Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject.
+Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block.
 
 > - PR Type: `fix`, `feat`, `refactor`, `perf`, `docs`, `ci`, `chore`, `test`, or `mixed`, chosen by change intent rather than file count or title.
 > - Focus: one-line description of the change, labeled with its scope.
 > - Reviewers: readable role names with scoped integer ratings, such as `Software engineer (3), QA specialist (2)` or `sw-engineer: 3, qa-specialist: 2`; never a bare `sw-engineer 3`.
 > - CI: `passing (N/N)`, `failing — check-name, check-name`, or `pending`.
-> - Gate: `PASS`, `BLOCK`, or `REJECT_<GROUND> @<sha>`, where GROUND is `GOAL`, `CONDUCT`, `SCOPE`, `LICENSE`, `DUPLICATE`, `REVERTED`, `SPAM`, or `PHILOSOPHY` (review SKILL.md Stage 1). PASS/BLOCK continue to full review. The `@<sha>` suffix on a `REJECT_<GROUND>` gate carries the reviewed commit SHA so `/oss:resolve` can detect whether the PR changed.
-> - Outcome: `APPROVE`, `NEEDS_WORK`, `REQUEST_CHANGES`, or `N/A` when rejected at the gate. Write the verdict token alone, optionally after its `✓`/`⚠`/`✗` symbol; severity counts and other detail belong in Summary.
+> - Gate: `REVIEW_V1_PASS`, `REVIEW_V1_BLOCK`, or `REVIEW_V1_REJECT_<GROUND> @<sha>`, where GROUND is `GOAL`, `CONDUCT`, `SCOPE`, `LICENSE`, `DUPLICATE`, `REVERTED`, `SPAM`, or `PHILOSOPHY` (review SKILL.md Stage 1). PASS/BLOCK continue to full review. The `@<sha>` suffix on a `REJECT_<GROUND>` gate carries the reviewed commit SHA so `/oss:resolve` can detect whether the PR changed.
+> - Outcome: `APPROVE`, `MINOR_EDITS`, `NEEDS_WORK`, `INSUFFICIENT_BUT_PROMISING`, `REJECT`, or literal `null`. Write the verdict token alone, optionally after its `✓`/`⚠`/`✗` symbol; severity counts and other detail belong in Summary.
 > - Summary: 1–2 sentences describing key findings. Next steps are comma-separated actionable items, blockers first.
 
 ## Code Review: [target]
@@ -39,7 +42,7 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insuffic
 | -- | -- | -- | -- | -- |
 | [finding ID] | [reviewer roles] | [finding] | [proposal] | [status] |
 
-> Use the stable finding IDs minted into `findings.jsonl` (section slug plus a hash of file and title) across this overview and the detailed sections. Author lists all contributing reviewer roles; Resolution proposal is concrete. Status is `required`, `minor`, or `verify`.
+> Use the stable finding IDs minted into `findings.jsonl` (section slug plus a hash of file and title) across this overview and the detailed sections. Author lists all contributing reviewer roles; Resolution proposal is concrete. Status is `required` or `minor`; unverified concerns appear separately.
 
 ### [blocking] Critical (must fix before merge)
 
@@ -125,6 +128,10 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insuffic
 - Duplicate findings (same location as agent finding): omitted — see agent section
 
 > Include only unique findings from `codex.md` that are absent from the agent sections.
+
+### Open Concerns
+
+[One row per open_concerns entry in review-validation.json: candidate ID, uncertainty, missing prerequisite or feasible undone check, owner, next check, observable closure. These are not confirmed defects or automatic fix requests.]
 
 ### Recommended Next Steps
 

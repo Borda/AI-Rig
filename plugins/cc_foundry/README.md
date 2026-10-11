@@ -1140,3 +1140,5 @@ foundry = part of Borda-AI-Rig repository. Suggest improvement or report bug:
 New agent or skill: use `/foundry:manage create` — handles scaffolding, README sync, MEMORY.md updates automatically.
 
 Evidence and real-case acceptance: shipped `rules/quality-gates.md` requires cited proof for factual, causal and completion claims, a representative real case alongside TDD, and unchanged user-authorized behavior. Mocks are supplementary polishing after real behavior is validated; unavailable real acceptance stays explicit.
+
+The shared cross-validation protocol requires parent validation at every severity before findings publication, then capped independent critical verification. Version-one review envelopes distinguish source judgment, verification readiness and durable open concerns. Static proof may settle a claim; unavailable evidence never refutes it, and incomplete feasible work never becomes unconditional approval.

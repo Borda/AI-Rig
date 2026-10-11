@@ -22,6 +22,7 @@ from test_review_prepare import (
 )
 
 
+@pytest.mark.parametrize("family", ["historical", "current"])
 @pytest.mark.parametrize(
     "damage",
     [
@@ -39,14 +40,17 @@ from test_review_prepare import (
         "confidence",
     ],
 )
-def test_assessment_format_repair_changes_only_proved_missing_label(damage: str) -> None:
+def test_assessment_format_repair_changes_only_proved_missing_label(damage: str, family: str) -> None:
     """Lossless correction inserts one label while other grammar, inventory, and confidence defects reject."""
     import test_review_batches as batches
 
     record = batches._batch_finding("A", "medium", "Retain — this exact claim.")
     original = batches._batch_output([record], 3)
+    if family == "historical":
+        original = original.replace("Source rating version: 1\n", "").replace("Verification readiness: complete\n", "")
     expected = original
-    malformed = original.replace("Rating: 3\nRationale: ", "Rating: 3 — ")
+    label = "Rating: 3" if family == "historical" else "Verification readiness: complete"
+    malformed = original.replace("\nRationale: ", " — ")
     if damage == "opaque-value":
         malformed += " The label Rating: remains prose."
         expected += " The label Rating: remains prose."
@@ -63,9 +67,9 @@ def test_assessment_format_repair_changes_only_proved_missing_label(damage: str)
     elif damage == "duplicate-heading":
         malformed += "\n## Reviewer Assessment\nRating: 3 — Another explanation."
     elif damage == "ascii-dash":
-        malformed = malformed.replace("Rating: 3 — ", "Rating: 3 - ")
+        malformed = malformed.replace(f"{label} — ", f"{label} - ")
     elif damage == "bare-prose":
-        malformed = malformed.replace("Rating: 3 — ", "")
+        malformed = malformed.replace(f"{label} — ", "")
     elif damage == "closure-shape":
         malformed = malformed.replace(json.dumps(record["closure_evidence"]), '["Other shape defect."]')
     elif damage == "confidence":
@@ -142,7 +146,7 @@ def _closure_correction_base(
         record["closure_evidence"] = ["First invariant.", "Second invariant."]
     original = batches._batch_output([record], 3)
     if repair_kind == "assessment-format":
-        original = original.replace("Rating: 3\nRationale: ", "Rating: 3 — ")
+        original = original.replace("\nRationale: ", " — ")
     _, home, children = _assembly_evidence(
         tmp_path, prepared_run=run, findings={"challenger": original}, blocking_counts={"challenger": 1}
     )
@@ -439,7 +443,7 @@ def test_finding_id_namespace_correction_requires_unique_exact_origin(damage: st
     if damage == "duplicate-key":
         raw = raw.replace('"severity":', '"id": "HIDDEN", "severity":', 1)
     elif damage == "assessment":
-        raw = raw.replace("Rating: 3\nRationale: ", "Rating: 3 — ")
+        raw = raw.replace("\nRationale: ", " — ")
     elif damage == "confidence":
         raw = raw.replace('"score": 0.95', '"score": 2.0')
     if damage in {"none", "opaque-value"}:

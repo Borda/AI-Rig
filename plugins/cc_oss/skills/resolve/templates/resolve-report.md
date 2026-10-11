@@ -45,6 +45,10 @@
 
 <!-- ✓ right — every verdict cell carries flag + reason, always the Phase 1 challenge agent's actual rationale — never a filler string standing in for a missing one -->
 
+### Open Concerns
+
+[Retain review-validation.json open_concerns and resolver UNVERIFIED items with stable ID, reason, owner, next_check and observable closure. Separate ALREADY_FIXED history with original/current revision and fix evidence. These are not rejected defects or implemented changes.]
+
 ### Lint + QA
 
 [Lint summary] / [QA summary]

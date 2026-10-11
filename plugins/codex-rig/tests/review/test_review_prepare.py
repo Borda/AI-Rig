@@ -815,11 +815,9 @@ def _assembly_evidence(
             header = ""
         elif final_header == "truncated":
             header = header.replace(f"input={plan['review_input_sha256']}", f"input={plan['review_input_sha256'][:-1]}")
-        final = (
-            f"{header}\nNo finding.\n\n## Reviewer Assessment\n\nRating: 1\nRationale: The inspected scope is clean."
-        )
+        final = f"{header}\nNo finding.\n\n## Reviewer Assessment\n\nSource rating version: 1\nRating: 1\nVerification readiness: complete\nRationale: The inspected scope is clean."
         if run.parent.name == "batches":
-            final = '## Reviewer Findings\n```json\n[]\n```\n\n## Reviewer Confidence\n```json\n{"score": 0.95, "scope": "Frozen source and declared interactions.", "gaps": [{"gap": "Synthetic offline client.", "status": "unresolved", "rationale": "Fixture proves admission without a live semantic reviewer (-0.05)."}]}\n```\n\n## Reviewer Assessment\nRating: 1\nRationale: The inspected scope is clean.'
+            final = '## Reviewer Findings\n```json\n[]\n```\n\n## Reviewer Confidence\n```json\n{"score": 0.95, "scope": "Frozen source and declared interactions.", "gaps": [{"gap": "Synthetic offline client.", "status": "unresolved", "rationale": "Fixture proves admission without a live semantic reviewer (-0.05)."}]}\n```\n\n## Reviewer Assessment\nSource rating version: 1\nRating: 1\nVerification readiness: complete\nRationale: The inspected scope is clean.'
         if findings and role in findings:
             final = ("" if run.parent.name == "batches" else header + "\n") + findings[role]
         parent_rows.extend(
@@ -1798,6 +1796,7 @@ def _check_opaque_repair_damage(run: Path, home: Path, children: dict[str, Path]
     elif damage in {"changed-role", "missing-page"}:
         calls = [row for row in rows if row.get("payload", {}).get("type") == "custom_tool_call"]
         call = calls[-1]["payload"]
+        page = int(re.search(r"--page (\d+)", call["input"])[1])
         if damage == "changed-role":
             call["input"] = call["input"].replace("--role challenger", "--role qa-specialist")
         else:
@@ -1846,7 +1845,7 @@ def _check_opaque_repair_damage(run: Path, home: Path, children: dict[str, Path]
     expected = (
         "provenance-parent-spawn-mismatch:challenger:1"
         if damage in {"missing-delivery", "different-delivery", "duplicate-delivery", "changed-model"}
-        else "review-repair-dispatch-cause-unproven:challenger:3"
+        else f"review-repair-dispatch-cause-unproven:challenger:{page}"
         if damage == "changed-role"
         else "review-repair-dispatch-cause-unproven:challenger:1"
         if damage == "missing-page"
@@ -1901,6 +1900,8 @@ def _check_duplicate_interpreter_damage(
     rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
     calls = [row["payload"] for row in rows if row.get("payload", {}).get("type") == "custom_tool_call"]
     damaged = calls[-2]
+    damaged_page = int(re.search(r"--page (\d+)", damaged["input"])[1])
+    trailing_page = int(re.search(r"--page (\d+)", calls[-1]["input"])[1])
     receipt = next(
         row["payload"]
         for row in rows
@@ -1946,7 +1947,7 @@ def _check_duplicate_interpreter_damage(
         }[damage]
         damaged["input"] = damaged["input"].replace(old, new)
     elif damage == "changed-page":
-        damaged["input"] = damaged["input"].replace(f"--page {len(calls) - 1}", "--page 1")
+        damaged["input"] = damaged["input"].replace(f"--page {damaged_page}", "--page 1")
     elif damage == "changed-trailing-read":
         calls[-1]["input"] = calls[-1]["input"].replace("--role challenger", "--role qa-specialist")
     elif damage == "second-duplicate":
@@ -1996,20 +1997,20 @@ def _check_duplicate_interpreter_damage(
     assert prepared.returncode != 0
     # Pin the exact refusal: a prefix match would also accept a regression that rejects before the damage is read.
     expected = {
-        "generic-syntax": "review-repair-dispatch-cause-unproven:challenger:2",
-        "wrong-diagnostic-path": "review-repair-dispatch-cause-unproven:challenger:2",
-        "wrong-exit": "review-inspection-context-command-mismatch:challenger:2",
+        "generic-syntax": f"review-repair-dispatch-cause-unproven:challenger:{damaged_page}",
+        "wrong-diagnostic-path": f"review-repair-dispatch-cause-unproven:challenger:{damaged_page}",
+        "wrong-exit": f"review-inspection-context-command-mismatch:challenger:{damaged_page}",
         "missing-command-receipts": "review-repair-dispatch-cause-unproven:challenger",
-        "mismatched-command-output": "review-inspection-context-command-mismatch:challenger:2",
-        "changed-interpreter": "review-repair-dispatch-cause-unproven:challenger:2",
-        "changed-reader": "review-repair-dispatch-cause-unproven:challenger:2",
-        "changed-plan": "review-repair-dispatch-cause-unproven:challenger:2",
-        "changed-role": "review-repair-dispatch-cause-unproven:challenger:2",
-        "changed-attempt": "review-repair-dispatch-cause-unproven:challenger:2",
-        "changed-page": "review-repair-dispatch-cause-unproven:challenger:2",
-        "changed-trailing-read": "review-repair-dispatch-cause-unproven:challenger:3",
-        "second-duplicate": "review-repair-dispatch-cause-unproven:challenger:3",
-        "missing-trailing-page": "review-repair-dispatch-cause-unproven:challenger:2",
+        "mismatched-command-output": f"review-inspection-context-command-mismatch:challenger:{damaged_page}",
+        "changed-interpreter": f"review-repair-dispatch-cause-unproven:challenger:{damaged_page}",
+        "changed-reader": f"review-repair-dispatch-cause-unproven:challenger:{damaged_page}",
+        "changed-plan": f"review-repair-dispatch-cause-unproven:challenger:{damaged_page}",
+        "changed-role": f"review-repair-dispatch-cause-unproven:challenger:{damaged_page}",
+        "changed-attempt": f"review-repair-dispatch-cause-unproven:challenger:{damaged_page}",
+        "changed-page": f"review-repair-dispatch-cause-unproven:challenger:{damaged_page}",
+        "changed-trailing-read": f"review-repair-dispatch-cause-unproven:challenger:{trailing_page}",
+        "second-duplicate": f"review-repair-dispatch-cause-unproven:challenger:{trailing_page}",
+        "missing-trailing-page": f"review-repair-dispatch-cause-unproven:challenger:{damaged_page}",
     }[damage]
     assert prepared.stderr == expected + "\n"
     assert not (run / "repair-dispatch.challenger.json").exists()

@@ -63,6 +63,7 @@ if str(SHARED_DIRECTORY) not in sys.path:
 from adversarial_loop import SCHEMA_VERSION as LOOP_LEDGER_SCHEMA_VERSION  # noqa: E402
 from adversarial_loop import load_ledger  # noqa: E402
 from collect_pr import _github_remote_identity, _head_repository, dirty_path_record_is_consistent  # noqa: E402
+from final_handoff import challenge_report_path  # noqa: E402
 from release_evidence import validate_release_evidence  # noqa: E402
 
 #: Fields every result.json must contain regardless of skill.
@@ -653,6 +654,26 @@ def _validate_code_review_final_handoff(
             raise SystemExit("code-review-final-handoff-reviewers-mismatch")
         if reviewer_tables[0].get("summary") != metadata["review_decision"].get("summary"):
             raise SystemExit("code-review-final-handoff-review-summary-mismatch")
+        validation = metadata.get("review_validation")
+        if validation is not None and (
+            reviewer_tables[0].get("source_rating_version") != validation.get("source_rating_version")
+            or reviewer_tables[0].get("verification_readiness") != validation.get("verification_readiness")
+        ):
+            raise SystemExit("code-review-final-handoff-source-rating-version-mismatch")
+        if validation is not None:
+            remaining = {item.get("row_id"): item for item in handoff.get("remaining", [])}
+            for concern in validation.get("candidates", []):
+                if concern.get("disposition") not in {None, "unverified"}:
+                    continue
+                action = remaining.get(concern["id"], {})
+                if (
+                    action.get("owner") != concern["owner"]
+                    or concern["claim"] not in action.get("item", "")
+                    or concern["missing_prerequisite"] not in action.get("item", "")
+                    or concern["next_check"] not in action.get("next_action", "")
+                    or concern["closure_condition"] not in action.get("next_action", "")
+                ):
+                    raise SystemExit(f"code-review-final-handoff-open-concern-missing:{concern['id']}")
     if expected_branch in {"unavailable", "closed"} and tables:
         raise SystemExit("code-review-terminal-final-handoff-table-forbidden")
     if expected_branch == "assessed" and metadata.get("scope") == "pr" and "PR Snapshot" not in headings:
@@ -686,9 +707,13 @@ def _validate_code_review_final_handoff(
             "accept-as-is": "approve",
             "minor-changes": "minor changes",
             "needs-more-work": "needs work",
+            "insufficient-but-promising": "insufficient, but a good initiative",
             "reject": "reject",
             "not-aligned": "not aligned",
+            None: "no source judgment",
         }
+        if metadata.get("review_validation") is not None:
+            suggestions.update({"needs-more-work": "major revision", "reject": "block"})
         suggestion_cells = rows[-1].get("cells")
         if (
             not isinstance(suggestion_cells, list)
@@ -748,7 +773,7 @@ def _validate_code_review_final_handoff(
         blockers = metadata.get("operational_blockers", [])
         if not isinstance(records, list) or not isinstance(blockers, list):
             raise SystemExit("code-review-final-handoff-finding-records-missing")
-        if metadata.get("finding_records_version") != 1:
+        if metadata.get("finding_records_version") not in {1, 2}:
             raise SystemExit("code-review-final-handoff-records-version-missing")
         identities = [record.get("id") if isinstance(record, dict) else None for record in records + blockers]
         if any(not isinstance(identity, str) or not identity.strip() for identity in identities):
@@ -1563,6 +1588,30 @@ def report_obligation_sources(report: dict[str, Any], report_path: str | None = 
         "/metadata/review_decision/required_next_work": decision.get("required_next_work", []),
         "/metadata/confidence_recovery/remaining_limits": recovery.get("remaining_limits", []),
     }
+    validation = original.get("review_validation")
+    if validation is not None:
+        if not isinstance(validation, dict) or validation.get("schema_version") != 1:
+            raise SystemExit("code-remediate-review-validation-upgrade-required")
+        origins = original.get("source_findings", [])
+        mapping = original.get("source_finding_mapping", {})
+        if not isinstance(origins, list) or not isinstance(mapping, dict):
+            raise SystemExit("code-remediate-report-input-invalid")
+        for index, candidate in enumerate(validation.get("candidates", [])):
+            if candidate.get("disposition") in {None, "unverified"}:
+                body = "Open concern, not a confirmed defect or automatic edit request: " + json.dumps(
+                    candidate, sort_keys=True
+                )
+                # Preserve every mapped original inside this occurrence; closed dispositions add no edit obligation.
+                for origin_index, origin in enumerate(origins):
+                    if not isinstance(origin, dict):
+                        raise SystemExit("code-remediate-report-input-invalid")
+                    if origin.get("disposition") == "unresolved" and candidate["id"] in mapping.get(
+                        origin.get("finding_id"), []
+                    ):
+                        body += f"\nImmutable source origin /metadata/source_findings/{origin_index}: " + json.dumps(
+                            origin, sort_keys=True
+                        )
+                fields[f"/metadata/review_validation/candidates/{index}"] = [body]
     sources = []
     for field, values in fields.items():
         if not isinstance(values, list) or any(not isinstance(text, str) or not text.strip() for text in values):
@@ -1572,7 +1621,7 @@ def report_obligation_sources(report: dict[str, Any], report_path: str | None = 
                 raise SystemExit("code-remediate-report-input-invalid")
             if "/" not in path and "\\" not in path:
                 raise SystemExit("code-remediate-report-producer-origin-missing")
-            pointer = f"{field}/{index}"
+            pointer = field if field.startswith("/metadata/review_validation/candidates/") else f"{field}/{index}"
             sources.append(
                 {
                     "kind": "report",
@@ -3258,7 +3307,10 @@ def _validate_adversarial_loop(
         raise SystemExit("adversarial-loop-table-contract-required")
     if type(table_version) is not int:
         raise SystemExit("adversarial-loop-table-contract-version-invalid")
-    if table_version != 1:
+    if table_version not in {1, 2}:
+        raise SystemExit("adversarial-loop-table-contract-version-required")
+    tables = _load_json(out_dir / "final-handoff.json")["tables"]
+    if any((table.get("layout") == "challenge-history") != (table_version == 2) for table in tables):
         raise SystemExit("adversarial-loop-table-contract-version-required")
     scope = result["metadata"].get("challenge_scope")
     if "child_runs" in _load_json(out_dir / "final-handoff.json") and not (
@@ -3458,6 +3510,8 @@ def _validate_chunked_coordinator(
     if handoff.get("presentation_version") == 3 and handoff.get("child_runs") != checked["runs"]:
         raise SystemExit("adversarial-loop-child-scores-mismatch")
     rows = [row["cells"] for table in handoff["tables"] for row in table["rows"]]
+    if any(row.get("admission") == "advisory" for table in handoff["tables"] for row in table["rows"]):
+        raise SystemExit("adversarial-loop-coordinator-advisory-invalid")
     if rows != [["not-run", *(["N/A"] * 7), "chunk-only", "chunks/results.json"]]:
         raise SystemExit("adversarial-loop-chunk-coordinator-table-mismatch")
     if stopped and (not handoff["remaining"] or not handoff["next_steps"]):
@@ -3469,7 +3523,11 @@ def _validate_adversarial_loop_rows(
 ) -> None:
     """Keep displayed round scores and decisions equal to their ledger evidence."""
     handoff = _load_json(out_dir / "final-handoff.json")
-    rows = [row["cells"] for table in handoff["tables"] for row in table["rows"]]
+    records = [row for table in handoff["tables"] for row in table["rows"]]
+    advisory = [row for row in records if table_version == 2 and row.get("admission") == "advisory"]
+    rows = [row["cells"] for row in records if row not in advisory]
+    for row in advisory:
+        challenge_report_path(out_dir, row["cells"][-1])
     expected = []
     seen: set[str] = set()
     weights = {"security": 20, "critical": 10, "high": 6, "medium": 4, "low": 2, "nit": 1}
@@ -3477,7 +3535,7 @@ def _validate_adversarial_loop_rows(
         round_record = ledger["rounds"][item["index"] - 1]
         report = round_record["report_path"]
         counts = item["counts"]
-        if table_version == 1:
+        if table_version in {1, 2}:
             new_counts = dict.fromkeys(weights, 0)
             for finding in round_record["findings"]:
                 if (
@@ -3496,7 +3554,7 @@ def _validate_adversarial_loop_rows(
                 ]
             )
         seen.update(finding["signature"] for finding in round_record["findings"])
-    if not expected:
+    if not expected and not advisory:
         expected = [["not-run", *(["N/A"] * 7), summary["reason"], "loop-report.md"]]
     if rows != expected:
         raise SystemExit("adversarial-loop-table-mismatch")
@@ -3843,7 +3901,7 @@ def _is_chunked_coordinator(skill: str, result: dict[str, Any]) -> bool:
     scope = result["metadata"].get("challenge_scope") if skill == "challenge-resolve" else None
     return (
         skill == "challenge-resolve"
-        and result["metadata"].get("challenge_table_contract_version") == 1
+        and result["metadata"].get("challenge_table_contract_version") in {1, 2}
         and isinstance(scope, dict)
         and scope.get("mode") == "chunked"
     )

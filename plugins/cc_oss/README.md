@@ -16,6 +16,8 @@ Optional Codemap index-gate guidance ships with oss, so loading it does not depe
 
 Review prompts require fresh, successful, matching answers before skipping duplicate structural retrieval, retain each batch child's metadata, and distinguish static test/mock links from measured coverage. Source and test-quality review remains required.
 
+Resolve's evidence recheck resolves Git Bash verifier paths before native Windows file checks, preserving the recorded pointer. Conversion failures block without rewriting the item ledger; missing evidence or a changed source head disables confirmation.
+
 Resolve's caller-context pre-loop groups selected items by canonical module: one live `rdeps` query per module, or none for a fresh cached answer, including an empty caller list.
 
 - Reuse requires non-empty string Git identity and affirmative child completeness; `query_complete` takes precedence over legacy `exhaustive`, and missing metadata triggers a live query.
@@ -995,3 +997,11 @@ ______________________________________________________________________
 Editing `oss` skills or agents → update this README before commit. Rule in `plugins/CLAUDE.md`: changed trigger, scope, NOT-for, or hook behaviour → update README description. Added/removed agent/skill → update table. Unsynced change = incomplete.
 
 Evidence and real-case acceptance: cite inspected sources or recorded proof for factual, causal, and completion claims; label inference explicitly. Keep a representative real case with actual inputs, components, and environment as the acceptance oracle before and after TDD, retaining command, source/environment identity, output, and before/after evidence. If real execution is unavailable, leave that check unmet; mocks are supplementary polishing only. Never weaken tests or change user-authorized behavior to get green.
+
+`/oss:review` validates every candidate before publication and separates five source judgments (Approve, Minor changes, Major revision, Insufficient but a good initiative, Block) from verification readiness. Version-one reports retain nullable completed assessments and durable open concerns in `review-validation.json`; only confirmed findings become automatic resolve items. `/oss:resolve` preserves unavailable evidence as an open obligation and later fixes as already fixed. New REVIEW_V1\_\* gates block older resolver versions safely; archived five-rating reports keep their historical interpretation.
+
+Review intake requires the complete current contract whenever its header carries contract, scale or readiness markers; marker-free archives retain their original interpretation. Resolve carries the validated candidate and a derived evidence pointer through merging, reuses applicable parent checks after source/contract freshness checks, and keeps independent critical verification distinct. Evidenced later fixes complete their selected tasks without a new implementation commit; unverified items remain durable pending obligations. Late terminal conflicts use the existing evidenced rejection publisher and reviewed SHA.
+
+C1 bridge briefs retain the exact parent candidate and evidence pointer through the task-file boundary. A single pre-C1 batch freshness check and source/contract/environment applicability checks permit proof reuse; report-mode challenge instructions use the same proof rules and always assess the proposed repair.
+
+Phase 1 freshness follows the source each wave reads: early challengers use the pinned PR revision, while late challengers use checkout HEAD after the merge and any C1 commits. Both routes reuse existing batch checks and retain stale evidence pointers for investigation.

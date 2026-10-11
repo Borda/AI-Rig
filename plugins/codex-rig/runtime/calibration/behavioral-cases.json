@@ -2,6 +2,39 @@
   "cases": [
     {
       "expected_findings": [
+        "review-candidate-validation-incomplete",
+        "unrelated-ci-treated-as-counterevidence"
+      ],
+      "id": "code-review-feasible-native-check-unrun",
+      "prompt": "A reviewer claims a native image operation fails for an integer input. The relevant backend and exact revision are available locally, but no targeted check or conclusive static proof is obtained. Generic CI is green without demonstrated coverage of that backend, path, or assertion. The parent publishes the claim as a confirmed high finding. Assess candidate admission and readiness.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-five-stages-and-open-hardware-evidence",
+      "prompt": "A current versioned review validates every candidate. Its five source stages are approve, minor changes for required lint or minor docs, major revision for fixable substantive defects, insufficient but a good initiative for promising substantially incomplete work, and block for a cited binding project-direction or constraint conflict. One reviewer completes inspection but cannot judge a hardware-dependent property after feasible static and simulation checks. Its source rating is null, readiness blocked, and a durable open concern names missing hardware, owner, next check, and closure. Only confirmed findings enter remediation. It distinguishes this completed assessment from missing output and does not use stage 4 for a tooling gap or claim unconditional approval.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "historical-rating-reinterpreted",
+        "unsupported-review-consumer-admitted"
+      ],
+      "id": "code-review-rating-cutover-compatibility",
+      "prompt": "A review publisher refines the scope of its five source ratings using optional metadata only. An old resolver accepts the enclosing format and reads current rating 4, insufficient but a good initiative, as historical insufficient evidence. Another reader converts archived historical rating 4 into a judgment that the implementation is substantially incomplete. Assess versioned interpretation and fail-closed ordinary intake, including the recovery action for an incompatible consumer.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "unavailable-evidence-treated-as-refutation",
+        "suggestion-rejection-erases-defect"
+      ],
+      "id": "code-remediate-retained-proof-retrieval-failure",
+      "prompt": "A review retains authoritative evidence confirming a defect at the current source. During remediation the external documentation cannot be fetched and the suggested patch is unsuitable. The resolver marks the concern rejected, discards the retained proof, and closes its ledger entry. Assess defect versus repair validity, evidence applicability, and the unverified obligation required if source drift instead makes that proof inconclusive.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
         "auxiliary-work-counted-as-primary-progress",
         "unbounded-review-setup-repair"
       ],
@@ -68,7 +101,7 @@
     {
       "expected_findings": [],
       "id": "code-review-additive-reviewer-attribution",
-      "prompt": "An assessed review preserves its aggregate prose summary and overall verdict. The header includes actual reviewer roles with scoped ratings, followed immediately by the legend: 1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject. Findings include every contributing reviewer in an Author column after deduplication. Ratings and authors match retained assessments; skipped roles are omitted and judgments are not averaged.",
+      "prompt": "An archived historical five-value assessed review preserves its aggregate prose summary and overall verdict. The header includes actual reviewer roles with scoped ratings, followed immediately by its historical legend: 1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject. Findings include every contributing reviewer in an Author column after deduplication. Ratings and authors match retained assessments; skipped roles are omitted and judgments are not averaged. A current reader preserves this historical meaning rather than assigning the revised five-stage legend.",
       "target": "code-review"
     },
     {
@@ -443,7 +476,7 @@
         "progress-weighted-score-missing"
       ],
       "id": "adversarial-loop-progress-transcript",
-      "prompt": "A challenge-resolve workflow completes two independently reviewed iterations. After the first it prints only 'review complete'. After the second it prints one row containing total findings per severity, without prior rows or a score. Its JSON ledger retains both reviews and stable finding signatures. Assess the user-visible progress reporting against the workflow contract.",
+      "prompt": "A challenge-resolve workflow completes two independently reviewed iterations. After the first it prints only 'review complete'. After the second it prints one row containing total findings per severity, without prior rows or a score. Its JSON ledger retains both reviews and stable finding signatures. Assess the user-visible progress reporting against the workflow contract. The user explicitly asks for complete challenge history after additional reviews finish but cannot be admitted. The assistant substitutes the source-rating legend and then a not-run placeholder, although retained advisory reports exist. Assess the missing labelled history without promoting it to certified rounds; keep report resource links below the table.",
       "target": "challenge-resolve"
     },
     {
@@ -3492,5 +3525,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.40"
+  "version": "1.41"
 }

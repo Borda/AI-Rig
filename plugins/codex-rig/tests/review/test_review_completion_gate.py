@@ -145,7 +145,9 @@ def _assessed_pr(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     with (run / "review-notes.md").open("a", encoding="utf-8") as notes:
-        notes.write("\n\n## Main Reviewer Assessment\n\nRating: 1\nRationale: The spelling change is safe.\n")
+        notes.write(
+            "\n\n## Main Reviewer Assessment\n\nSource rating version: 1\nRating: 1\nVerification readiness: complete\nRationale: The spelling change is safe.\n"
+        )
     metadata = result["metadata"]
     del metadata["review_status"], metadata["close_decision"]
     metadata.update(
@@ -155,7 +157,14 @@ def _assessed_pr(tmp_path: Path) -> Path:
                 "summary": "Spelling corrected.",
                 "rationale": "No behavior change.",
             },
-            "finding_records_version": 1,
+            "finding_records_version": 2,
+            "review_validation": {
+                "schema_version": 1,
+                "source_rating_version": 1,
+                "source_verdict": "accept-as-is",
+                "verification_readiness": "complete",
+                "candidates": [],
+            },
             "review_findings": [],
             "operational_blockers": [],
             "reviewer_assessments": [{"role": "Main reviewer", "rating": 1, "evidence": "review-notes.md"}],
@@ -197,6 +206,8 @@ def _assessed_pr(tmp_path: Path) -> Path:
                 "columns": ["Field", "Value"],
                 "reviewers": metadata["reviewer_assessments"],
                 "summary": metadata["review_decision"]["summary"],
+                "source_rating_version": 1,
+                "verification_readiness": "complete",
                 "rows": [
                     {"id": f"S{index}", "cells": list(row), "source_ids": [f"pr:{row[0]}"]}
                     for index, row in enumerate(snapshot)
@@ -868,9 +879,12 @@ def test_failed_quality_gate_requires_nonapproval_handoff(assessed_pr: Path, rec
     next(check for check in handoff["verification"] if check["check"] == "tests")["status"] = "fail"
     if recommendation == "needs-more-work":
         result["metadata"]["review_decision"]["recommendation"] = recommendation
+        result["metadata"]["review_validation"]["source_verdict"] = recommendation
         result["metadata"]["operational_blockers"] = [{"id": "G-1", "authors": ["Main reviewer"]}]
         handoff["outcome"]["summary"] = "Recommendation: needs-more-work."
-        next(row for row in handoff["tables"][0]["rows"] if row["cells"][0] == "Suggestion")["cells"][1] = "needs work"
+        next(row for row in handoff["tables"][0]["rows"] if row["cells"][0] == "Suggestion")["cells"][1] = (
+            "major revision"
+        )
         handoff["tables"].append(
             {
                 "heading": "Review Findings and Merge Blocks",
@@ -995,7 +1009,7 @@ def _add_substituted_broad_passes(assessed_pr: Path, tier: str, *, independent_r
         retained.write_bytes(card)
         output = assessed_pr / f"{role}.md"
         output.write_text(
-            f"role_id: {role}\n## Reviewer Assessment\n\nRating: 3\n"
+            f"role_id: {role}\n## Reviewer Assessment\n\nSource rating version: 1\nRating: 3\nVerification readiness: complete\n"
             "Rationale: Bounded inline review cannot establish independence.\n",
             encoding="utf-8",
         )
@@ -1074,8 +1088,20 @@ def _finalize_parent_fallback(run: Path, *, independent_required: bool = False) 
         {"gap": gap, "status": "unresolved", "rationale": "Every selected axis was inspected by the main agent."}
     )
     metadata["confidence_recovery"]["remaining_limits"].append(gap)
+    metadata["review_validation"].update(source_verdict=None, verification_readiness="blocked")
+    for assessment in metadata["reviewer_assessments"]:
+        assessment["rating"] = None
+        response_path = run / assessment["evidence"]
+        content = response_path.read_text(encoding="utf-8")
+        content = content.replace(
+            "Rating: 1\nVerification readiness: complete", "Rating: null\nVerification readiness: blocked"
+        )
+        content = content.replace(
+            "Rating: 3\nVerification readiness: complete", "Rating: null\nVerification readiness: blocked"
+        )
+        response_path.write_text(content, encoding="utf-8")
     metadata["review_decision"].update(
-        recommendation="needs-more-work",
+        recommendation=None,
         summary="Parent inspection completed; configured type checking remains unavailable.",
         rationale="The required checker could not execute, and parent coverage is not independent.",
     )
@@ -1112,10 +1138,11 @@ def _finalize_parent_fallback(run: Path, *, independent_required: bool = False) 
         newline="\n",
     )
     handoff = json.loads((run / "final-handoff.json").read_bytes())
-    handoff["outcome"]["summary"] = "Recommendation: needs-more-work."
+    handoff["outcome"]["summary"] = "Recommendation: None."
     snapshot = handoff["tables"][0]
+    snapshot["verification_readiness"] = "blocked"
     snapshot.update(reviewers=metadata["reviewer_assessments"], summary=metadata["review_decision"]["summary"])
-    snapshot["rows"][-1]["cells"][1] = "needs work"
+    snapshot["rows"][-1]["cells"][1] = "no source judgment"
     handoff["tables"].append(
         {
             "heading": "Review Findings and Merge Blocks",

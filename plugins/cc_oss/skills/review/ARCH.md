@@ -141,3 +141,5 @@ Index of the `(step N)` tags in the schema above, one row per block.
 | FOLLOW-UP GATE | 7a |
 | CONFIDENCE BLOCK | 7b |
 | REPLY | 8 |
+
+Review Step 4 now parent-validates all candidate severities before consolidation; critical/blocking claims retain capped independent verification. `review-validation.json` version 1 carries source-5-v1 assessments, candidate dispositions, separate readiness and durable open concerns. `findings.jsonl` contains confirmed candidates exactly once; new REVIEW_V1\_\* gates block legacy resolver intake until upgraded. Late consolidated claims return through validation.

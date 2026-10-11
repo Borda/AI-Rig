@@ -30,7 +30,13 @@ judgment, and writes nothing.
 
 ``--recheck-verdicts`` runs right before the challenge phase. It drops every ``verify_verdict`` whose evidence no
 longer holds: the review's recorded head (``head-sha.txt`` in ``--review-dir``) differs from ``--current-head``, either
-is unknown, or the ``verify_file`` is gone from disk. Those items then get the full existence check again.
+is unknown, or the ``verify_file`` is gone from disk. Native Windows resolves serialized Git Bash evidence paths
+with ``cygpath`` before checking the file, preserving the recorded pointer. A failed conversion blocks the recheck
+without rewriting the item ledger. Unsupported evidence then gets the full existence check again.
+Parent candidate proof is carried separately with a derived
+``parent_validation_file`` and its SHA-256. Re-checking disables its shortcut when the publication, source head,
+candidate mapping or evidence bytes change, retaining the original pointer for bounded freshness investigation.
+A matched GitHub item receives evidence scoped only to its linked review finding, never to distinct requests.
 
 consumers: plugins/cc_oss/skills/resolve/modes/report-intelligence.md (Step 3a), plugins/cc_oss/skills/resolve/SKILL.md
 (Step 3c), plugins/cc_oss/skills/resolve/modes/action-item-dispatch.md (Phase 1 verdict re-check)
@@ -49,12 +55,13 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Final
 
 #: Sibling import: both scripts ship in the same bin/ directory, which is not a package. Putting it on the path
@@ -63,6 +70,7 @@ _BIN_DIR = str(Path(__file__).resolve().parent)
 if _BIN_DIR not in sys.path:
     sys.path.insert(0, _BIN_DIR)
 
+from find_review_report import _parse_header_fields, gate_line  # noqa: E402
 from mint_finding_ids import normalize_path, read_jsonl, section_slug  # noqa: E402
 
 #: Numeric resolve severity per review severity word.
@@ -218,7 +226,15 @@ def annotate(item: dict, finding: dict) -> None:
         f"{item.get('full_comment_text', '')}\n\n[review finding {finding['id']}] {detail}".strip()
     )
     item["severity"] = max(int(item.get("severity") or 0), SEVERITY_SCORE[finding["severity"]])
-    for key in ("source_file", "verify_file"):
+    for key in (
+        "source_file",
+        "verify_file",
+        "candidate_id",
+        "contract_version",
+        "validation_status",
+        "parent_validation_file",
+        "parent_validation_sha256",
+    ):
         if finding.get(key):
             item[key] = finding[key]
     item.pop("thin", None)
@@ -245,7 +261,17 @@ def as_report_item(finding: dict, item_id: int, *, keep_verdict: bool) -> dict:
         "origin": "posted",
         "finding_id": finding["id"],
     }
-    for key in ("source_file", "verify_file", "required_change", "codex_eligible"):
+    for key in (
+        "source_file",
+        "verify_file",
+        "required_change",
+        "codex_eligible",
+        "candidate_id",
+        "contract_version",
+        "validation_status",
+        "parent_validation_file",
+        "parent_validation_sha256",
+    ):
         if finding.get(key):
             item[key] = finding[key]
     if keep_verdict and finding.get("verify_verdict") == CONFIRMED and finding.get("verify_file"):
@@ -277,6 +303,12 @@ def _validate(items: list[dict], findings: list[dict]) -> str | None:
         missing = [name for name in FINDING_FIELDS if not str(finding.get(name) or "").strip()]
         if missing:
             return f"finding {n} missing {', '.join(missing)} — run mint_finding_ids.py and complete the record"
+        if "contract_version" in finding and (
+            finding["contract_version"] != 1 or finding.get("validation_status") != "CONFIRMED"
+        ):
+            return f"finding {finding['id']} is not confirmed under a supported review contract — upgrade or revalidate the review"
+        if finding.get("validation_status", "CONFIRMED") != "CONFIRMED":
+            return f"finding {finding['id']} is an open concern, not an actionable finding"
         if finding["severity"] not in SEVERITY_SCORE:
             return f"finding {finding['id']} has unknown severity {finding['severity']!r}"
     return None
@@ -373,8 +405,24 @@ def recheck_verdicts(items: list[dict], review_head: str, current_head: str) -> 
         if not item.get("verify_verdict"):
             continue
         verify_file = str(item.get("verify_file") or "")
-        if fresh_head and item["verify_verdict"] == CONFIRMED and verify_file and Path(verify_file).is_file():
-            continue
+        if fresh_head and item["verify_verdict"] == CONFIRMED and verify_file:
+            verify_path = Path(verify_file)
+            # Git Bash converts argv paths for native Python, but paths stored inside JSON bypass that conversion.
+            if (
+                sys.platform == "win32"
+                and PurePosixPath(verify_file).is_absolute()
+                and not PureWindowsPath(verify_file).is_absolute()
+            ):
+                converted = subprocess.run(  # noqa: S603 - argv list, no shell evaluation of the evidence pointer
+                    ["cygpath", "-w", verify_file],  # noqa: S607 - Git Bash's converter is resolved via PATH
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=5,
+                )
+                verify_path = Path(converted.stdout.strip())
+            if verify_path.is_file():
+                continue
         item.pop("verify_verdict")
         dropped += 1
     return dropped
@@ -387,11 +435,47 @@ def _run_recheck(items_path: Path, review_dir: str, current_head: str) -> int:
     review_head = head_file.read_text(encoding="utf-8").strip() if head_file and head_file.is_file() else ""
     current_head = current_head or _git_head(Path.cwd())
     dropped = recheck_verdicts(items, review_head, current_head)
-    if dropped:
+    parent_dropped = 0
+    validation_file = Path(review_dir) / "review-validation.json"
+    report = Path(review_dir) / "review-report.md"
+    fields = _parse_header_fields(report.read_text(encoding="utf-8").splitlines()) if report.is_file() else None
+    publication_valid = (
+        _same_commit(review_head, current_head)
+        and fields is not None
+        and fields.get("Review contract") == "1"
+        and bool(gate_line(report))
+    )
+    digest = hashlib.sha256(validation_file.read_bytes()).hexdigest() if publication_valid else ""
+    findings = read_jsonl(Path(review_dir) / "findings.jsonl") if publication_valid else []
+    candidate_by_finding = {finding["id"]: finding.get("candidate_id") for finding in findings}
+    for item in items:
+        if not item.get("parent_validation_file") or not item.get("validation_status"):
+            continue
+        if (
+            publication_valid
+            and item["parent_validation_file"] == validation_file.resolve().as_posix()
+            and item.get("parent_validation_sha256") == digest
+            and item["validation_status"] == CONFIRMED
+            and item.get("candidate_id") == candidate_by_finding.get(item.get("finding_id"))
+        ):
+            continue
+        # Preserve the original evidence pointer for diagnosis, while disabling automatic proof reuse.
+        item.pop("validation_status")
+        parent_dropped += 1
+    if dropped or parent_dropped:
         _write(items_path, items, [], rewrite=True)
     kept = sum(1 for item in items if item.get("verify_verdict"))
     same = _same_commit(review_head, current_head)
-    print(json.dumps({"confirmed_kept": kept, "confirmed_dropped": dropped, "head_matches_review": same}))
+    print(
+        json.dumps(
+            {
+                "confirmed_kept": kept,
+                "confirmed_dropped": dropped,
+                "head_matches_review": same,
+                "parent_confirmed_dropped": parent_dropped,
+            }
+        )
+    )
     return 0
 
 
@@ -422,7 +506,7 @@ def main(argv: list[str] | None = None) -> int:
         findings_path = Path(args.findings)
         findings = read_jsonl(findings_path)
         links = read_jsonl(Path(args.links)) if args.links and Path(args.links).exists() else []
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"! BLOCKED — cannot read merge inputs: {exc}", file=sys.stderr)
         return 1
     for finding in findings:
@@ -431,6 +515,18 @@ def main(argv: list[str] | None = None) -> int:
     if problem:
         print(f"! BLOCKED — {problem}", file=sys.stderr)
         return 1
+    current_findings = [finding for finding in findings if "contract_version" in finding]
+    if current_findings:
+        report = findings_path.with_name("review-report.md")
+        fields = _parse_header_fields(report.read_text(encoding="utf-8").splitlines()) if report.is_file() else None
+        if not fields or fields.get("Review contract") != "1" or not gate_line(report):
+            print("! BLOCKED — current findings require their validated review publication", file=sys.stderr)
+            return 1
+        validation_file = findings_path.with_name("review-validation.json")
+        digest = hashlib.sha256(validation_file.read_bytes()).hexdigest()
+        for finding in current_findings:
+            finding["parent_validation_file"] = validation_file.resolve().as_posix()
+            finding["parent_validation_sha256"] = digest
     if args.candidates:
         print(json.dumps(candidates(items, findings, exact_matches(items, findings)), ensure_ascii=False))
         return 0

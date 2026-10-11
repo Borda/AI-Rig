@@ -226,7 +226,7 @@ def test_shipped_review_header_table_preview_is_over_the_cap(tmp_path: Path, rev
     reason = _denial_reason(_run(tmp_path, _preview_payload(table)))
 
     assert reason is not None
-    assert "exceed the preview cap (option 1: 18 lines" in reason
+    assert "exceed the preview cap (option 1: 21 lines" in reason
     assert "incomplete" not in reason
 
 

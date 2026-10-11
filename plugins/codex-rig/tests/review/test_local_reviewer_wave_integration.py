@@ -55,6 +55,7 @@ def isolated_review(tmp_path: Path, text_newline_default: None) -> Path:
     result = json.loads(result_path.read_text())
     metadata = result["metadata"]
     plan = json.loads(plan_path.read_text())
+    plan["source_rating_version"] = 1
     evidence = json.loads(evidence_path.read_text())
     for node in evidence["nodes"]:
         node["started_at_ms"] = 0
@@ -69,7 +70,12 @@ def isolated_review(tmp_path: Path, text_newline_default: None) -> Path:
                 {
                     "source_sha256": plan["source_sha256"],
                     "diff_sha256": plan["review_input_sha256"],
-                    "assessment": {"rating": 1, "rationale": "The inspected scope is clean."},
+                    "assessment": {
+                        "source_rating_version": 1,
+                        "rating": 1,
+                        "verification_readiness": "complete",
+                        "rationale": "The inspected scope is clean.",
+                    },
                     "findings": [],
                 }
             ),
@@ -369,7 +375,7 @@ def test_high_risk_review_cannot_replace_one_required_thread_with_parent_text(is
             item["mode"] = "substituted"
             substitute_path = isolated_review / "qa-specialist-parent.md"
             substitute_path.write_text(
-                "role_id: qa-specialist\n## Reviewer Assessment\n\nRating: 3\n"
+                "role_id: qa-specialist\n## Reviewer Assessment\n\nSource rating version: 1\nRating: 3\nVerification readiness: complete\n"
                 "Rationale: Parent inspection cannot establish independent QA.\n",
                 encoding="utf-8",
                 newline="\n",

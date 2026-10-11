@@ -27,6 +27,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -137,6 +138,174 @@ def _parse_header_fields(lines: list[str]) -> dict[str, str] | None:
     return fields
 
 
+_SOURCE_RATINGS: Final = {"APPROVE": 1, "MINOR_EDITS": 2, "NEEDS_WORK": 3, "INSUFFICIENT_BUT_PROMISING": 4, "REJECT": 5}
+_READINESS: Final = {"complete", "blocked", "incomplete"}
+
+
+def _source_assessment(record: dict) -> bool:
+    """Check the version-one nullable source judgment without treating absence as rejection."""
+    outcome, rating = record.get("source_outcome"), record.get("source_rating")
+    if "source_outcome" not in record or "source_rating" not in record:
+        return False
+    if record.get("readiness") not in _READINESS:
+        return False
+    if outcome is None:
+        return rating is None and record["readiness"] in {"blocked", "incomplete"}
+    return outcome in _SOURCE_RATINGS and type(rating) is int and rating == _SOURCE_RATINGS[outcome]
+
+
+def _assessments_valid(data: dict) -> bool:
+    """Keep completed undecidable inspection separate from missing required coverage."""
+    assessments = data.get("assessments")
+    if not isinstance(assessments, list) or not assessments:
+        return False
+    completed_null = False
+    for assessment in assessments:
+        if not isinstance(assessment, dict) or not assessment.get("role") or not _source_assessment(assessment):
+            return False
+        if data["readiness"] == "complete" and assessment["readiness"] != "complete":
+            return False
+        if assessment.get("presence") == "completed":
+            if not all(assessment.get(key) for key in ("coverage", "rationale", "evidence")):
+                return False
+            if not isinstance(assessment.get("evidence"), list) or not isinstance(assessment.get("limits"), list):
+                return False
+            if assessment["source_outcome"] is None:
+                if assessment["readiness"] != "blocked":
+                    return False
+                completed_null = True
+        elif assessment.get("presence") == "missing":
+            if (
+                assessment["source_outcome"] is not None
+                or assessment["readiness"] != "incomplete"
+                or data["readiness"] != "incomplete"
+            ):
+                return False
+        else:
+            return False
+    return data["source_outcome"] is not None or (data["readiness"] == "blocked" and completed_null)
+
+
+def _candidates_valid(data: dict, findings: list[dict], reviewed_revision: str = "") -> bool:
+    """Require evidence-bound candidates and exact separation of actionable and open obligations."""
+    candidates, concerns = data.get("candidates"), data.get("open_concerns")
+    if not isinstance(candidates, list) or not isinstance(concerns, list):
+        return False
+    by_id, open_ids, confirmed_ids = {}, set(), set()
+    for candidate in candidates:
+        if not isinstance(candidate, dict) or not all(
+            candidate.get(key) for key in ("id", "claim", "revision", "contract", "trigger", "checks", "reason")
+        ):
+            return False
+        identifier, disposition = candidate["id"], candidate.get("disposition")
+        revision = candidate["revision"]
+        if not isinstance(revision, str) or (reviewed_revision and revision != reviewed_revision):
+            return False
+        if not isinstance(identifier, str) or identifier in by_id:
+            return False
+        if "disposition" not in candidate or disposition not in {
+            "CONFIRMED",
+            "REFUTED",
+            "ALREADY_FIXED",
+            "UNVERIFIED",
+            "OPTIONAL",
+            None,
+        }:
+            return False
+        if not isinstance(candidate.get("counterevidence"), list) or not isinstance(candidate.get("limits"), list):
+            return False
+        checks = candidate["checks"]
+        if not isinstance(checks, list) or not all(
+            isinstance(check, dict)
+            and all(check.get(key) for key in ("method", "result", "revision", "environment"))
+            and isinstance(check.get("limits"), list)
+            and check["revision"] == revision
+            for check in checks
+        ):
+            return False
+        if type(candidate.get("feasible_checks_complete")) is not bool or candidate["feasible_checks_complete"] != (
+            disposition is not None
+        ):
+            return False
+        if disposition == "ALREADY_FIXED" and not all(
+            candidate.get(key) for key in ("original_revision", "fix_evidence")
+        ):
+            return False
+        by_id[identifier] = candidate
+        if disposition == "CONFIRMED":
+            confirmed_ids.add(identifier)
+        if disposition in {None, "UNVERIFIED"}:
+            open_ids.add(identifier)
+            if disposition is None and data["readiness"] != "incomplete":
+                return False
+            if disposition == "UNVERIFIED" and not candidate.get("missing_capability"):
+                return False
+            if data["readiness"] == "complete":
+                return False
+    concern_ids = []
+    for concern in concerns:
+        if not isinstance(concern, dict) or not all(
+            concern.get(key) for key in ("candidate_id", "owner", "next_check", "closure")
+        ):
+            return False
+        concern_ids.append(concern["candidate_id"])
+    if set(concern_ids) != open_ids or len(concern_ids) != len(set(concern_ids)):
+        return False
+    finding_candidates = []
+    for finding in findings:
+        if (
+            not isinstance(finding, dict)
+            or type(finding.get("contract_version")) is not int
+            or finding["contract_version"] != 1
+            or finding.get("validation_status") != "CONFIRMED"
+        ):
+            return False
+        finding_candidates.append(finding.get("candidate_id"))
+    return set(finding_candidates) == confirmed_ids and len(finding_candidates) == len(set(finding_candidates))
+
+
+def _validation_gate(report: Path, fields: dict[str, str]) -> str:
+    """Validate the publication envelope before normalizing its legacy-incompatible gate prefix."""
+    if fields.get("Review contract") != "1" or fields.get("Rating scale") != "source-5-v1":
+        return ""
+    try:
+        data = json.loads(report.with_name("review-validation.json").read_text(encoding="utf-8"))
+        findings = [
+            json.loads(line)
+            for line in report.with_name("findings.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if (
+            not isinstance(data, dict)
+            or type(data.get("contract_version")) is not int
+            or data["contract_version"] != 1
+            or data.get("rating_scale") != "source-5-v1"
+        ):
+            return ""
+        if not _source_assessment(data) or not data.get("readiness_reason"):
+            return ""
+        outcome = _VERDICT_SYMBOL_RE.sub("", fields["Outcome"])
+        if outcome != (data["source_outcome"] or "null") or fields.get("Readiness") != data["readiness"]:
+            return ""
+        gate = fields["Gate"]
+        if not gate.startswith("REVIEW_V1_"):
+            return ""
+        gate = gate.removeprefix("REVIEW_V1_")
+        if re.fullmatch(r"(?:PASS|BLOCK)|REJECT_[A-Z]+ @[0-9a-f]{7,40}", gate) is None:
+            return ""
+        if (data["source_outcome"] == "REJECT") != gate.startswith("REJECT_"):
+            return ""
+        head_file = report.with_name("head-sha.txt")
+        reviewed_revision = head_file.read_text(encoding="utf-8").strip() if head_file.exists() else ""
+        if not _assessments_valid(data) or not _candidates_valid(data, findings, reviewed_revision):
+            return ""
+        if data["readiness"] != "complete" and not gate.startswith("REJECT_"):
+            gate = "BLOCK"
+        return f"Gate: {gate}"
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
+
+
 def gate_line(report: Path) -> str:
     """Return the decision only from a complete, unambiguous report header.
 
@@ -153,6 +322,8 @@ def gate_line(report: Path) -> str:
     fields = _parse_header_fields(lines)
     if fields is None:
         return ""
+    if {"Review contract", "Rating scale", "Readiness"} & fields.keys() or fields["Gate"].startswith("REVIEW_"):
+        return _validation_gate(report, fields)
     outcome = _VERDICT_SYMBOL_RE.sub("", fields["Outcome"])
     if fields["Gate"].startswith("REJECT_"):
         if not outcome.startswith("N/A"):
@@ -247,7 +418,9 @@ def _evaluate_gate(report: Path, pr_number: str, timeout: int, path_out: str) ->
     line = gate_line(report)
     if re.fullmatch(r"Gate: (?:PASS|BLOCK)(?:\s+.*)?|Gate: REJECT_[A-Z]+(?:\s+.*)?", line) is None:
         _write_path_out(path_out, None)
-        print(f"⛔ BLOCKED — incomplete-review-report: {report}; finish or rerun /oss:review before resolve")
+        print(
+            f"⛔ BLOCKED — incomplete-review-report: {report}; finish or rerun /oss:review; upgrade oss:resolve when the review contract is unsupported before resolve"
+        )
         return 1
     if not _write_path_out(path_out, report):
         return 1

@@ -460,7 +460,7 @@ IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null |
 [ -n "$IMPL_DIR" ] && [ -f "$IMPL_DIR/action-items.jsonl" ] || { echo "! BLOCKED — Step 3b action-items.jsonl missing"; exit 1; }
 [ -f "$REPORT_FILE" ] || { echo "! BLOCKED — report sentinel empty; run Report source resolution (Step 1) first"; exit 1; }
 FINDINGS="$(dirname "$REPORT_FILE")/findings.jsonl"
-if [ ! -s "$FINDINGS" ]; then
+if [ ! -f "$FINDINGS" ]; then
     FINDINGS="$IMPL_DIR/report-findings.jsonl"
     [ -f "$FINDINGS" ] || { echo "! BLOCKED — no findings.jsonl beside the report; write $FINDINGS from the parsed report first"; exit 1; }
     python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/mint_finding_ids.py" "$FINDINGS" || exit 1  # timeout: 5000
@@ -1090,7 +1090,7 @@ cat "$_OSS_RESOLVE/modes/action-item-dispatch.md"  # timeout: 5000
 
 `action-item-dispatch.md` has no per-pass item cap: every selected item runs in one pass, never a rerun for a remainder. It bounds load per agent instead — ≤12 items per Phase 1 challenge agent (`ceil(n/12)` chunks per domain), ≤5 per Phase 2 implementation spawn (≤8 under `per-specialist`; one file's overflow runs as sequential chained links) — and paces both in pool-capped waves.
 
-**Straggler gate — before leaving Step 8**: `action-item-dispatch.md`'s per-item close-out (REJECT, skipped, cherry-pick landed — including the C1 medium-effort Codex-direct shortcut, which never enters Phase 1/2/3 at all) should have already terminated every id in `item-tasks.tsv`; this catches whichever one didn't. Never move on to Step 9 over an open child — that hid the original leak. Fails closed on a lost `IMPL_DIR` sentinel: distinct from "no items were selected," which the file's own absence still reports safely.
+**Straggler gate — before leaving Step 8**: `action-item-dispatch.md`'s per-item close-out (REJECT, skipped, cherry-pick landed — including the C1 medium-effort Codex-direct shortcut, which never enters Phase 1/2/3 at all) should have already terminated every id in `item-tasks.tsv`; this catches whichever one didn't. UNVERIFIED tasks are durable pending obligations with owner/next_check/closure, excluded from implementation recovery and carried into Step 9/final Open Concerns. Never move on to Step 9 over any other open child — that hid the original leak. Fails closed on a lost `IMPL_DIR` sentinel: distinct from "no items were selected," which the file's own absence still reports safely.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -1102,8 +1102,12 @@ if [ -f "$IMPL_DIR/item-tasks.tsv" ]; then
     # anchored right after id= — resolution= is the field placed there, before any free-text field
     # (action-item-dispatch.md's producer template), so a reviewer's quoted text can never match it
     _REJECTED_IDS=$(grep -iE '^id[[:space:]]*=[[:space:]]*[0-9]+[[:space:]]+resolution[[:space:]]*=[[:space:]]*rejected' "$IMPL_DIR/challenge-log.txt" 2>/dev/null | sed -n 's/^id[[:space:]]*=[[:space:]]*\([0-9]*\).*/\1/p')
+    _ALREADY_FIXED_IDS=$(sed -n 's/^id=\([0-9][0-9]*\) resolution=already-fixed evidence=ALREADY_FIXED .*/\1/p' "$IMPL_DIR/challenge-log.txt")
+    _UNVERIFIED_IDS=$(sed -n 's/^id=\([0-9][0-9]*\) resolution=unverified evidence=UNVERIFIED .*/\1/p' "$IMPL_DIR/challenge-log.txt")
     while IFS=$'\t' read -r item_id task_id; do
         case "$item_id" in ''|*[!0-9]*) continue ;; esac
+        { printf '%s\n' "$_ALREADY_FIXED_IDS" | grep -qx "$item_id"; } && printf 'closed: item=%s (already-fixed)\n' "$item_id" && continue
+        { printf '%s\n' "$_UNVERIFIED_IDS" | grep -qx "$item_id"; } && printf 'pending: item=%s (unverified) — retain owner/next_check/closure; no implementation recovery\n' "$item_id" && continue
         { printf '%s\n' "$_SKIPPED_IDS" "$_REJECTED_IDS" | grep -qx "$item_id"; } && printf 'closed: item=%s (rejected/skipped)\n' "$item_id" && continue
         [ -n "$task_id" ] || { echo "! skipping — item $item_id has an empty task id in item-tasks.tsv"; continue; }
         printf 'check: item=%s task=%s\n' "$item_id" "$task_id"  # not rejected/skipped — must have landed a commit; verify below, never assume
@@ -1116,7 +1120,8 @@ fi
 ```
 
 - Bash printed `n/a` → no per-item tasks were created, proceed straight to the flip below.
-- `closed:` lines need nothing further.
+- `closed:` lines need nothing further; ALREADY_FIXED already completed its task from validated historical evidence.
+- `pending:` lines remain pending and visible in resolution.jsonl/final Open Concerns; never require an implementation commit, delete the task, or enter straggler implementation recovery for these UNVERIFIED obligations.
 - A `! skipping` line names a malformed row (empty task id) — investigate `item-tasks.tsv` directly via `TaskList`/`grep` for that item id before proceeding; never guess its status.
 - For every `check:` line: call `TaskList`; if that task is already `completed`/`deleted`, done. If it's still open, do NOT default it to `completed` — confirm independently that item's commit is actually on the branch before calling `TaskUpdate(status="completed")`. The confirmation command depends on `COMMIT_MODE` — only `each` carries a per-item attribution token; `grouped` folds several ids into one message; `all`/`stage` carry none at all (`stage` never commits — the diff stays staged, per its own contract). A lost `resolve-base-sha` sentinel degrades the confirmation to an unscoped search across the whole branch, which can false-confirm a never-implemented item against a prior run's commit on the same branch — the block below warns and treats any match with extra suspicion in that case; both reads and the mode dispatch happen inside it, not by hand:
 
@@ -1487,10 +1492,12 @@ Non-calibratable — `disable-model-invocation: true` means skill dispatches to 
 - **Thread resolution via GraphQL** — `isResolved` on `PullRequestReviewThread` (GraphQL only); REST doesn't expose it. `RESOLVED_THREAD_IDS` = root comment `databaseId`; GraphQL failure → `[]`.
 - **Discussion vs inline**: `gh pr view --comments` = discussion (`location: discussion`; no Resolve button); `gh api .../pulls/<N>/comments` = inline (`location: inline`; resolvable). `location: discussion` + `[report]` items: implement-only, no GitHub close action. Surface unresolvable rows through the Status suffix `· thread (no GH resolve)`, not a separate column.
 - **Commit attribution** — `[gh]`: `[resolve No.<id>] <reviewer> (gh):`; `[report]`: `[resolve No.<id>] /review finding by <agent> (report: <path>):`.
-- **Reference scenarios**: Mode: bare PR# → pr; `42 report` → pr+report; `report` → report mode; bare comment → comment dispatch. Classification: LGTM/emoji → `[info]`; `nit:` → `[gh][suggest]`; resolved thread → keeps `[gh][req]`/`[gh][suggest]` type, `status: resolved`; "must fix" from write-access reviewer → `[gh][req]`. Challenge: present bug → VALID; already addressed → REJECT; better alternative → REJECT with alternative.
+- **Reference scenarios**: Mode: bare PR# → pr; `42 report` → pr+report; `report` → report mode; bare comment → comment dispatch. Classification: LGTM/emoji → `[info]`; `nit:` → `[gh][suggest]`; resolved thread → keeps `[gh][req]`/`[gh][suggest]` type, `status: resolved`; "must fix" from write-access reviewer → `[gh][req]`. Challenge: present bug → VALID; evidenced later fix → ALREADY_FIXED; affirmative refutation → REJECT; better alternative → suggestion REJECT with alternative.
 - Follow-up chains:
   - After push → maintainer reviews, clicks Merge; never approve/comment on PR.
   - Unanswered `[question]` → resolve report only; do NOT post to PR.
   - After merge → `Closes #N`/`Fixes #N` in body auto-closes linked issues; absent keywords → surface gap under `### Closing Keywords` note; don't edit PR body.
 
 </notes>
+
+**Review contract cutover:** New REVIEW_V1\_\* reports require the version-one reader and UNVERIFIED/ALREADY_FIXED challenge consumer together. Run the existing find_review_report.py intake before report merging; unsupported/missing envelope blocks with upgrade/rerun recovery. Never strip the prefix to force legacy intake. Preserve review-validation.json open concerns and resolver unverified obligations in the final report with ID/owner/next_check/closure; they never become automatic source edits.

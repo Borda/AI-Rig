@@ -147,3 +147,5 @@ Index of the `(step N)` tags in the schema above, one row per block. Text order 
 | IMPLEMENT | 8 |
 | VERIFY | 9 |
 | SHIP | 10, 11, 12 |
+
+Version-one review intake validates review-validation.json before findings merge. Only confirmed findings become action items. Challenge evidence distinguishes VALID, affirmative REJECT, UNVERIFIED and ALREADY_FIXED; the ordinary challenge-log and resolution ledger preserve these meanings. Unverified obligations retain owner/next_check/closure and are never implemented or discarded as refuted.

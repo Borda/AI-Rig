@@ -168,7 +168,14 @@ REQUIRED_SECTIONS = (
     "Confidence Calibration",
 )
 #: Recommendation values a review verdict may use.
-VALID_RECOMMENDATIONS = {"accept-as-is", "minor-changes", "needs-more-work", "reject", "not-aligned"}
+VALID_RECOMMENDATIONS = {
+    "accept-as-is",
+    "minor-changes",
+    "needs-more-work",
+    "insufficient-but-promising",
+    "reject",
+    "not-aligned",
+}
 #: Reason codes that justify closing a PR at the close gate.
 CLOSE_CODES = {
     "FALSE_GOAL",
@@ -548,9 +555,9 @@ def _review_finding_identities(metadata: dict[str, Any], result: dict[str, Any])
     """Validate schema-v2 finding records and return their stable identities.
 
     Schema-v1 results retain their historical severity-count-only shape and are exempt from this check entirely.
-    Schema-v2 assessed results must declare ``finding_records_version=1`` and supply the complete canonical records that
-    make those counts actionable; omitting the marker no longer falls back to the bare id/severity shape for a new
-    candidate.
+    Assessed schema-v2/v3 results declare canonical ``finding_records_version=1`` historically or version 2 for the
+    current source-judgment family and supply the complete canonical records that make those counts actionable; omitting
+    the marker no longer falls back to the bare id/severity shape for a new candidate.
     """
     schema_version = result.get("schema_version", 1)
     if schema_version == 1:
@@ -562,7 +569,7 @@ def _review_finding_identities(metadata: dict[str, Any], result: dict[str, Any])
     records_version = metadata.get("finding_records_version")
     if records_version is None:
         raise SystemExit("review-finding-records-version-missing")
-    if type(records_version) is not int or records_version != 1:
+    if type(records_version) is not int or records_version not in {1, 2}:
         raise SystemExit("review-finding-records-version-invalid")
     if not isinstance(records, list):
         raise SystemExit("review-findings-records-missing")
@@ -588,7 +595,7 @@ def _review_finding_identities(metadata: dict[str, Any], result: dict[str, Any])
             ):
                 raise SystemExit(f"review-finding-evidence-invalid:{index}")
         identity = record["id"]
-        if records_version == 1 and "title" not in record:
+        if records_version in {1, 2} and "title" not in record:
             raise SystemExit(f"review-finding-canonical-details-missing:{index}")
         severity = record["severity"]
         if not isinstance(identity, str) or not identity.strip():
@@ -675,6 +682,7 @@ def _validate_reviewer_assessments(
         for role, item in passes_by_role.items()
     }
     specialist_outputs = {_resolve_path(out_dir, item["output_path"]) for item in passes_by_role.values()}
+    retained_readiness: list[str] = []
     seen: set[str] = set()
     for assessment in assessments:
         if not isinstance(assessment, dict) or not isinstance(assessment.get("role"), str):
@@ -707,18 +715,179 @@ def _validate_reviewer_assessments(
             if evidence_path != _resolve_path(out_dir, "review-notes.md"):
                 raise SystemExit("review-assessment-main-evidence-mismatch")
             local_reviewer_wave = False
-        rating = _retained_reviewer_rating(
+        retained = _retained_reviewer_rating(
             evidence_path,
             local_reviewer_wave=local_reviewer_wave,
             main=label == "main reviewer",
             role=role,
             batch_response=batch_response and label in expected and "reviewer_findings" in expected[label][1],
+            source_rating_version=1 if metadata.get("review_validation") is not None else None,
+            retain_assessment=True,
         )
-        if rating != assessment.get("rating"):
+        if retained["rating"] != assessment.get("rating"):
             raise SystemExit(f"review-assessment-rating-mismatch:{role}")
+        if retained["source_rating_version"] == 1:
+            retained_readiness.append(retained["verification_readiness"])
     for label, (role, _) in expected.items():
         if label not in seen:
             raise SystemExit(f"review-assessment-role-missing:{role}")
+    if metadata.get("review_validation") is not None:
+        # Aggregate selection cannot erase an earlier source or interaction review's unfinished checks.
+        manifest_path = out_dir / "specialist-manifest.json"
+        manifest = _load_json(manifest_path) if batch_response and manifest_path.is_file() else {}
+        for reference in manifest.get("batch_execution", {}).get("waves", []):
+            wave_path = _resolve_path(out_dir, reference["manifest_path"])
+            for item in _load_json(wave_path)["passes"]:
+                retained = _retained_reviewer_rating(
+                    _resolve_path(wave_path.parent, item["output_path"]),
+                    local_reviewer_wave=False,
+                    main=False,
+                    role=item["role"],
+                    batch_response=True,
+                    source_rating_version=1,
+                    retain_assessment=True,
+                )
+                retained_readiness.append(retained["verification_readiness"])
+        readiness = metadata["review_validation"]["verification_readiness"]
+        if ("incomplete" in retained_readiness and readiness != "incomplete") or (
+            "blocked" in retained_readiness and readiness == "complete"
+        ):
+            raise SystemExit("review-assessment-readiness-mismatch")
+
+
+def _validate_review_validation(metadata: dict[str, Any], result: dict[str, Any]) -> None:
+    """Admit only evidenced defects and retain every unavailable or unfinished concern separately."""
+    validation = metadata.get("review_validation")
+    if validation is None:
+        if metadata.get("finding_records_version") == 2:
+            raise SystemExit("review-validation-missing")
+        return
+    if (
+        not isinstance(validation, dict)
+        or set(validation)
+        != {"schema_version", "source_rating_version", "source_verdict", "verification_readiness", "candidates"}
+        or validation["schema_version"] != 1
+        or validation["source_rating_version"] != 1
+    ):
+        raise SystemExit("review-validation-version-invalid")
+    if metadata.get("finding_records_version") != 2:
+        raise SystemExit("review-validation-finding-records-version")
+    verdict = validation["source_verdict"]
+    if verdict not in {
+        None,
+        "accept-as-is",
+        "minor-changes",
+        "needs-more-work",
+        "insufficient-but-promising",
+        "reject",
+    }:
+        raise SystemExit("review-source-verdict-invalid")
+    if metadata.get("review_decision", {}).get("recommendation") != verdict:
+        raise SystemExit("review-source-verdict-mismatch")
+    readiness = validation["verification_readiness"]
+    if readiness not in {"complete", "blocked", "incomplete"}:
+        raise SystemExit("review-verification-readiness-invalid")
+    candidates = validation["candidates"]
+    if not isinstance(candidates, list):
+        raise SystemExit("review-candidates-invalid")
+    identities, confirmed, open_dispositions = set(), set(), set()
+    for candidate in candidates:
+        required = {
+            "id",
+            "severity",
+            "claim",
+            "source_revision",
+            "contract",
+            "trigger",
+            "confirmation_evidence",
+            "falsification_evidence",
+            "counterevidence",
+            "check",
+            "result",
+            "environment",
+            "limits",
+            "disposition",
+            "reason",
+            "feasible_checks_complete",
+            "missing_prerequisite",
+            "owner",
+            "next_check",
+            "closure_condition",
+        }
+        if not isinstance(candidate, dict) or set(candidate) != required:
+            raise SystemExit("review-candidate-shape-invalid")
+        for key in required - {
+            "counterevidence",
+            "limits",
+            "disposition",
+            "feasible_checks_complete",
+            "missing_prerequisite",
+        }:
+            if not isinstance(candidate[key], str) or not candidate[key].strip():
+                raise SystemExit(f"review-candidate-{key}-invalid")
+        for key in ("counterevidence", "limits"):
+            if not isinstance(candidate[key], list) or any(
+                not isinstance(item, str) or not item.strip() for item in candidate[key]
+            ):
+                raise SystemExit(f"review-candidate-{key}-invalid")
+        if candidate["id"] in identities or candidate["severity"] not in FINDING_SEVERITIES:
+            raise SystemExit("review-candidate-identity-invalid")
+        identities.add(candidate["id"])
+        disposition = candidate["disposition"]
+        if disposition not in {None, "confirmed", "refuted", "already-fixed", "unverified", "optional-out-of-scope"}:
+            raise SystemExit("review-candidate-disposition-invalid")
+        feasible = candidate["feasible_checks_complete"]
+        if type(feasible) is not bool:
+            raise SystemExit("review-candidate-feasibility-invalid")
+        if disposition == "unverified":
+            if not feasible:
+                raise SystemExit("review-candidate-unverified-feasible-checks")
+            if not isinstance(candidate["missing_prerequisite"], str) or not candidate["missing_prerequisite"].strip():
+                raise SystemExit("review-candidate-missing_prerequisite-invalid")
+        if disposition is None and feasible:
+            raise SystemExit("review-candidate-pending-without-feasible-check")
+        if disposition not in {None, "unverified"} and not feasible:
+            raise SystemExit("review-candidate-incomplete-validation")
+        if disposition == "confirmed":
+            confirmed.add(candidate["id"])
+        if disposition in {None, "unverified"}:
+            open_dispositions.add(disposition)
+    records = metadata.get("review_findings", [])
+    if confirmed != {record.get("id") for record in records}:
+        raise SystemExit("review-candidate-confirmed-inventory-mismatch")
+    by_id = {candidate["id"]: candidate for candidate in candidates}
+    if any(record.get("severity") != by_id[record["id"]]["severity"] for record in records):
+        raise SystemExit("review-candidate-severity-mismatch")
+    if None in open_dispositions and readiness != "incomplete":
+        raise SystemExit("review-pending-requires-incomplete")
+    if "unverified" in open_dispositions and readiness == "complete":
+        raise SystemExit("review-unverified-requires-blocked")
+    if readiness != "complete" and result.get("status") == "pass":
+        raise SystemExit(f"review-{readiness}-cannot-pass")
+    if verdict is None and readiness == "complete":
+        raise SystemExit("review-undecidable-requires-open-verification")
+    if verdict == "accept-as-is" and open_dispositions:
+        raise SystemExit("review-unconditional-approval-with-open-concerns")
+
+
+def _validate_candidate_source(out_dir: Path, metadata: dict[str, Any]) -> None:
+    """Bind candidate claims to this run's exact head or retained source-bearing snapshot."""
+    validation = metadata.get("review_validation")
+    if validation is None:
+        return
+    identities = set()
+    for name in ("pr-routing.json", "pr/pr-routing.json"):
+        path = out_dir / name
+        if path.is_file():
+            head = _load_json(path).get("head_oid")
+            if isinstance(head, str) and re.fullmatch(r"[0-9a-f]{40}", head):
+                identities.add(f"head:{head}")
+    for name in ("local-source/source-snapshot.json", "batch-inventory.json", "inspection-plan.json"):
+        path = out_dir / name
+        if path.is_file() and not path.is_symlink():
+            identities.add(f"sha256:{_sha256(path)}")
+    if any(candidate["source_revision"] not in identities for candidate in validation["candidates"]):
+        raise SystemExit("review-candidate-source-revision-mismatch")
 
 
 def _validate_review_decision(metadata: dict[str, Any], result: dict[str, Any]) -> None:
@@ -727,7 +896,9 @@ def _validate_review_decision(metadata: dict[str, Any], result: dict[str, Any]) 
     if not isinstance(decision, dict):
         raise SystemExit("result-missing-review-decision")
     recommendation = decision.get("recommendation")
-    if recommendation not in VALID_RECOMMENDATIONS:
+    _validate_review_validation(metadata, result)
+    new_ratings = metadata.get("review_validation") is not None
+    if recommendation not in VALID_RECOMMENDATIONS and not (new_ratings and recommendation is None):
         raise SystemExit(f"invalid-review-recommendation:{recommendation!r}")
     for key in ("summary", "rationale"):
         value = decision.get(key)
@@ -755,12 +926,19 @@ def _validate_review_decision(metadata: dict[str, Any], result: dict[str, Any]) 
                 or any(
                     not isinstance(assessment[key], str) or not assessment[key].strip() for key in ("role", "evidence")
                 )
-                or type(assessment["rating"]) is not int
-                or assessment["rating"] not in range(1, 6)
+                or not (
+                    (new_ratings and assessment["rating"] is None)
+                    or (type(assessment["rating"]) is int and assessment["rating"] in range(1, 6))
+                )
                 or assessment["role"] in roles
             ):
                 raise SystemExit("review-assessment-invalid")
             roles.add(assessment["role"])
+        if new_ratings and any(assessment["rating"] is None for assessment in assessments):
+            if metadata["review_validation"]["verification_readiness"] == "complete":
+                raise SystemExit("review-null-assessment-with-complete-verification")
+            if recommendation == "accept-as-is":
+                raise SystemExit("review-unconditional-approval-with-undecidable-scope")
         passes = metadata.get("specialist_passes")
         if isinstance(passes, list):
             normalized_roles = {role.casefold() for role in roles}
@@ -796,7 +974,12 @@ def _validate_review_decision(metadata: dict[str, Any], result: dict[str, Any]) 
     if recommendation in {"accept-as-is", "minor-changes"} and (
         result.get("status") != "pass" or result.get("checks_failed")
     ):
-        raise SystemExit("review-approval-with-failed-gates")
+        if not (
+            new_ratings
+            and recommendation == "minor-changes"
+            and metadata["review_validation"]["verification_readiness"] != "complete"
+        ):
+            raise SystemExit("review-approval-with-failed-gates")
 
 
 def _table_cells(line: str) -> list[str] | None:
@@ -827,7 +1010,7 @@ def _validate_action_table(notes_path: Path, result: dict[str, Any], metadata: d
     """Require actionable, evidence-backed rows for non-approval review outcomes."""
     decision = metadata["review_decision"]
     recommendation = decision["recommendation"]
-    canonical_actions = metadata.get("finding_records_version") == 1 and bool(
+    canonical_actions = metadata.get("finding_records_version") in {1, 2} and bool(
         metadata.get("review_findings") or metadata.get("operational_blockers")
     )
     if not canonical_actions and (
@@ -3041,11 +3224,14 @@ def _validate_batch_source_findings(out_dir: Path, result: dict[str, Any], manif
             raise SystemExit("review-batch-source-reconciliation-invalid")
         return
     blocking = any(item["original"]["severity"] != "low" for item in unresolved)
-    if (blocking and result.get("status") == "pass") or metadata.get("review_decision", {}).get(
-        "recommendation"
-    ) == "accept-as-is":
+    current = metadata.get("review_validation")
+    if not current and (
+        (blocking and result.get("status") == "pass")
+        or metadata.get("review_decision", {}).get("recommendation") == "accept-as-is"
+    ):
         raise SystemExit("review-batch-source-findings-unresolved")
     records = {item.get("id"): item for item in metadata.get("review_findings", [])}
+    candidates = {item["id"]: item for item in current["candidates"]} if current else {}
     mapping = metadata.get("source_finding_mapping")
     if not isinstance(mapping, dict) or set(mapping) != {item["finding_id"] for item in unresolved}:
         raise SystemExit("review-batch-result-source-finding-inventory-dropped")
@@ -3055,28 +3241,43 @@ def _validate_batch_source_findings(out_dir: Path, result: dict[str, Any], manif
         if not isinstance(identities, list) or len(identities) != 1 or not isinstance(identities[0], str):
             raise SystemExit("review-batch-result-source-findings-dropped")
         identity = identities[0]
-        finding = records.get(identity)
+        if current and identity not in candidates:
+            raise SystemExit("review-batch-candidate-validation-dropped")
         original = item["original"]
-        if (
-            not finding
-            or item["manifest_path"] not in finding.get("evidence", [])
-            or _readable_review_role(item["pass"]["role"]) not in finding.get("authors", [])
-            or any(
-                f"{entry['path']}:{entry['start_line']}-{entry['end_line']}" not in finding.get("evidence", [])
-                for entry in original["evidence"]
-            )
-            or (
-                identity not in reconciliations
-                and any(
-                    finding.get(key) != original[key]
-                    for key in ("severity", "title", "summary", "required_change", "closure_evidence")
+        if current and candidates[identity]["disposition"] != "confirmed":
+            candidate = candidates[identity]
+            # Nonconfirmed mappings retain the same concern without turning a validation record into a fix request.
+            if identity not in reconciliations and any(
+                candidate.get(key) != original[source]
+                for key, source in (
+                    ("severity", "severity"),
+                    ("claim", "summary"),
+                    ("closure_condition", "closure_evidence"),
                 )
-            )
-        ):
-            raise SystemExit("review-batch-result-source-finding-inventory-dropped")
+            ):
+                raise SystemExit("review-batch-result-source-finding-inventory-dropped")
+        else:
+            finding = records.get(identity)
+            if (
+                not finding
+                or item["manifest_path"] not in finding.get("evidence", [])
+                or _readable_review_role(item["pass"]["role"]) not in finding.get("authors", [])
+                or any(
+                    f"{entry['path']}:{entry['start_line']}-{entry['end_line']}" not in finding.get("evidence", [])
+                    for entry in original["evidence"]
+                )
+                or (
+                    identity not in reconciliations
+                    and any(
+                        finding.get(key) != original[key]
+                        for key in ("severity", "title", "summary", "required_change", "closure_evidence")
+                    )
+                )
+            ):
+                raise SystemExit("review-batch-result-source-finding-inventory-dropped")
         actions.setdefault(identity, []).append(item)
     if reconciliations:
-        _validate_batch_reconciliation(out_dir, manifest, reconciliations, actions, records)
+        _validate_batch_reconciliation(out_dir, manifest, reconciliations, actions, {**candidates, **records})
     duplicates = {}
     for identity, originals in actions.items():
         originals.sort(key=lambda item: item["finding_id"])
@@ -3451,10 +3652,17 @@ def _assessed_review_steps(
                 ),
             )
 
+    def decision() -> None:
+        """Require the current admission contract for a fresh review before interpreting any ratings."""
+        if _is_fresh_candidate(out_dir, result_path) and metadata.get("finding_records_version") != 2:
+            raise SystemExit("review-current-validation-required-rerun-code-review")
+        _validate_review_decision(metadata, result)
+        _validate_candidate_source(out_dir, metadata)
+
     notes, evidence = ("notes-sections",), ("specialist-manifest",)
     steps = [
         _ReviewStep("notes-sections", lambda: _require_notes_sections(notes_path)),
-        _ReviewStep("review-decision", lambda: _validate_review_decision(metadata, result)),
+        _ReviewStep("review-decision", decision),
         _ReviewStep("action-table", lambda: _validate_action_table(notes_path, result, metadata, scope), notes),
         _ReviewStep("confidence-gaps", lambda: _validate_confidence_gaps(result, metadata)),
         _ReviewStep("confidence-recovery", lambda: _validate_confidence_recovery(result, metadata)),

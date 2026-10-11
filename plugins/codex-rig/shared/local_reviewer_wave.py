@@ -1557,10 +1557,22 @@ def _review_output_schema(plan: Mapping[str, object]) -> dict[str, Any]:
         },
     }
     if plan.get("consumer_id") == "code-review":
+        current = plan.get("source_rating_version") == 1
+        assessment_properties = {
+            "rating": {"type": "integer", "enum": [1, 2, 3, 4, 5]},
+            "rationale": {"type": "string"},
+        }
+        if current:
+            assessment_properties = {
+                "source_rating_version": {"type": "integer", "enum": [1]},
+                "rating": {"type": ["integer", "null"], "enum": [1, 2, 3, 4, 5, None]},
+                "verification_readiness": {"type": "string", "enum": ["complete", "blocked", "incomplete"]},
+                "rationale": {"type": "string"},
+            }
         properties["assessment"] = {
             "type": "object",
-            "properties": {"rating": {"type": "integer", "enum": [1, 2, 3, 4, 5]}, "rationale": {"type": "string"}},
-            "required": ["rating", "rationale"],
+            "properties": assessment_properties,
+            "required": list(assessment_properties),
             "additionalProperties": False,
         }
     return {
@@ -1592,11 +1604,27 @@ def _validate_review_output(text: str, plan: Mapping[str, object], *, require_as
         raise ReviewRouteError("app-server-review-output-schema-mismatch")
     if "assessment" in response:
         assessment = response["assessment"]
+        current = plan.get("source_rating_version") == 1
+        expected = (
+            {"source_rating_version", "rating", "verification_readiness", "rationale"}
+            if current
+            else {"rating", "rationale"}
+        )
         if (
             not isinstance(assessment, dict)
-            or set(assessment) != {"rating", "rationale"}
-            or type(assessment["rating"]) is not int
-            or assessment["rating"] not in range(1, 6)
+            or set(assessment) != expected
+            or not (
+                (current and assessment["rating"] is None)
+                or (type(assessment["rating"]) is int and assessment["rating"] in range(1, 6))
+            )
+            or (
+                current
+                and (
+                    assessment["source_rating_version"] != 1
+                    or assessment["verification_readiness"] not in {"complete", "blocked", "incomplete"}
+                    or (assessment["rating"] is None and assessment["verification_readiness"] != "blocked")
+                )
+            )
             or not isinstance(assessment["rationale"], str)
             or not assessment["rationale"].strip()
         ):
