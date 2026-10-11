@@ -353,6 +353,8 @@ The [personal session policy](global-session-policy.md#local-test-execution) kee
 
 The project approval policy preapproves the five Bridge MCP tools when `bridge@borda-ai-rig` is verified installed and loaded, including ordinary provider inference for an already authorized task or invoked workflow. Status checks can run before binding; binding establishes the workspace through native user confirmation. Executable calls require the current workspace binding and stay within the authorized task scope; setup changes, authentication and setup `verify-live` keep separate approvals. This supplements the existing Bridge command-recipe allowance, grants no arbitrary MCP or shell access, and reaches other sessions through deliberate policy synchronization rather than editing installed configuration during a task.
 
+Repository-content transfer is a separate explicit consent stage in Bridge setup. The operator grants or revokes it through the installed `bridge_consent.py` helper; plugin installation alone grants nothing. Root policy sync preserves that existing exact approved block in `auto_review.extra_policy`, rejects edited/unsupported blocks, and cannot seed one from repository defaults or restore a revoked grant. Existing project or managed policy may override user configuration, so stored consent does not prove current-session approval.
+
 <details>
 <summary><strong>Show sync scope and cleanup boundaries</strong></summary>
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1
+
+- Fix repeated transfer-approval prompts for authorized Bridge work by recording standing repository-context consent during Codex setup, including private source and ordinary inference. The operator approves once; installation and workspace binding remain separate from consent.
+- Preserve other native reviewer settings, recheck consent before every executable Bridge skill call, and support operator revocation. Stored policy remains distinct from active host approval.
+- Ship the consent helper and policy in standalone packages; root repository policy sync preserves an existing exact grant without creating or resurrecting one.
+
 ## 0.8.0
 
 - Tell the `implement` peer, in both directions, to leave every change unstaged and uncommitted and to run no Git write, push included, so the caller reviews the diff and owns every commit. A peer still loads its own project instructions, where a local Git approval grant in the checkout would otherwise make a completion commit its default. A bridge child gains nothing from any approval grant or push token; each is the calling session's authority record.

@@ -27,7 +27,7 @@ Credential-free planner returns setup result JSON defined by `schemas/setup-resu
 
 ## Check and approved changes
 
-For `check`, report the result and stop. For `all`, `configure`, or `repair`:
+For `check`, also run the read-only Provider consent check below, report both results and stop. For `all`, `configure`, or `repair`:
 
 1. Show every planned `operations` entry and the approval digest before mutation.
 2. Obtain explicit approval for exactly that digest. State:
@@ -42,6 +42,10 @@ For `check`, report the result and stop. For `all`, `configure`, or `repair`:
 3. After approval, rerun the identical command with `--approve "<approval_digest>"`.
 
 > Host-held HMAC makes digest tamper-evident but does not grant consent; explicit operator or host approval remains required. The digest is action-bound, expires, and is consumed by its first execution attempt. Never substitute `--approve` without its digest. Denial, changed or expired digest, replay, unsupported capability, failed probe, or failed operation stops without retry.
+
+## Provider consent
+
+Read and apply [Claude provider consent](../../rules/provider-consent.md). Check standing transfer consent during setup, including when no install/repair operation remains; `action=check` stays read-only. Installation does not approve transfer. An absent grant goes through the operator-terminal approval described there, then a read-only recheck; no per-file question or model-written grant. Report stored consent separately from active host effectiveness. This operator-owned policy stage does not replace the current invocation surface or alter its permission mode.
 
 ## Authentication and session evidence
 

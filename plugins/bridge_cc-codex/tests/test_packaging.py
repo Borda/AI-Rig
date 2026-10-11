@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -231,3 +232,46 @@ def test_diagnose_payload_fingerprint_stays_inside_the_validated_package_manifes
 
     assert payload <= set(validate_package.REQUIRED_FILES)
     assert {".codex-mcp.json", "rules/cli-baseline.json"} <= payload
+
+
+@pytest.mark.integration
+@pytest.mark.packaging
+def test_packaged_consent_runtime_is_executable_and_fingerprinted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify setup consent works from its installed layout and missing runtime fails diagnosis."""
+    output = tmp_path / "bridge"
+    built = subprocess.run(
+        [sys.executable, str(BUILD_SCRIPT), "--output", str(output)], capture_output=True, text=True, check=False
+    )
+    assert built.returncode == 0, built.stderr
+    home = tmp_path / "native-home"
+    home.mkdir()
+    env = {**os.environ, "CODEX_HOME": str(home)}
+    for action in ("--help", "check"):
+        result = subprocess.run(
+            [sys.executable, str(output / "bin/bridge_consent.py"), action],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        if action == "check":
+            assert json.loads(result.stdout)["consent"] == "absent"
+    assert not (home / "config.toml").exists()
+    monkeypatch.setattr(bridge_diagnose, "__file__", str(output / "bin/bridge_diagnose.py"))
+    before = bridge_diagnose._installed_payload_identity()
+    assert before["complete"] is True
+    for relative in ("bin/bridge_consent.py", "rules/claude-transfer-policy.txt", "rules/provider-consent.md"):
+        path = output / relative
+        original = path.read_bytes()
+        path.unlink()
+        missing = bridge_diagnose._installed_payload_identity()
+        assert missing["complete"] is False
+        assert relative in missing["missing"]
+        path.write_bytes(original + b"\n")
+        changed = bridge_diagnose._installed_payload_identity()
+        assert changed["fingerprint"] != before["fingerprint"]
+        path.write_bytes(original)

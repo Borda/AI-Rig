@@ -65,6 +65,8 @@ When `live=prompt` or `live=required` and `remaining` still lists `live-verifica
 
 ## Completion boundary
 
+For Codex-to-Claude repository transfer consent, continue in a fresh Codex session with `$bridge:setup`; its [provider-consent stage](../../rules/provider-consent.md) records an explicit operator-approved policy. Installing either half does not grant that consent. Do not write Codex policy from this Claude setup flow or reuse a configuration/authentication/live-check approval for it. This stage governs the reverse Codex-to-Claude route, not Claude-to-Codex authorization.
+
 - Setup always owns one resolved peer target.
 - To prepare both integrations, finish peer lifecycle from Claude, start any required fresh session, then run `$bridge:setup` from Codex for its peer; no digest, state claim, or readiness result is shared between hosts.
 - Loaded-host branch is check/bootstrap-only, never mutates its current invocation surface.

@@ -351,6 +351,22 @@ def sync(source_config: Path, source_policy: Path, codex_home: Path, *, install_
     _parse_config(existing_config)
     desired_config = _replace_models(existing_config, models)
     if extra_policy is not None:
+        # Setup owns the explicit provider consent; routine policy sync may preserve it, never create it.
+        marker = "<!-- bridge:claude-transfer-consent:"
+        if marker in extra_policy:
+            raise SyncError("repository defaults cannot create Bridge transfer consent")
+        existing_review = _parse_config(existing_config).get("auto_review", {})
+        if not isinstance(existing_review, dict) or not isinstance(existing_review.get("extra_policy", ""), str):
+            raise SyncError("target auto_review.extra_policy must be a string")
+        existing_extra = existing_review.get("extra_policy", "")
+        if marker in existing_extra:
+            policy_file = (
+                Path(__file__).resolve().parents[1] / "plugins/bridge_cc-codex/rules/claude-transfer-policy.txt"
+            )
+            block = _read_text(policy_file, "Bridge consent policy").strip()
+            if existing_extra.count(marker) != 2 or existing_extra.count(block) != 1:
+                raise SyncError("Bridge consent block is edited or unsupported; refusing overwrite")
+            extra_policy += ("\n\n" if extra_policy else "") + block
         desired_config = _replace_extra_policy(desired_config, extra_policy)
 
     if not install_policy:

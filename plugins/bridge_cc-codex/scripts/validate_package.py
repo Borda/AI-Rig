@@ -109,6 +109,9 @@ REQUIRED_FILES = {
     "bin/bridge_mcp.py",
     "bin/user_questions_mcp.py",
     "bin/bridge_setup.py",
+    "bin/bridge_consent.py",
+    "rules/provider-consent.md",
+    "rules/claude-transfer-policy.txt",
     "claude-skills/implement/SKILL.md",
     "codex-skills/implement/SKILL.md",
 }

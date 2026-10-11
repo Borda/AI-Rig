@@ -625,3 +625,17 @@ def test_codex_setup_uses_portable_helper_launcher() -> None:
     assert 'python "${PLUGIN_ROOT}/bin/bridge_setup.py"' not in text
     assert "bin/python.cmd" in text
     assert "MCP startup still requires" in text
+
+
+@pytest.mark.parametrize("skill", ["setup", "advise", "review", "implement"])
+def test_codex_skills_consume_setup_owned_provider_consent(skill: str) -> None:
+    """Keep setup consent and every executable dispatch on the same installed rule."""
+    text = (PLUGIN_ROOT / "codex-skills" / skill / "SKILL.md").read_text(encoding="utf-8")
+    assert "../../rules/provider-consent.md" in text
+    rule = (PLUGIN_ROOT / "rules/provider-consent.md").read_text(encoding="utf-8")
+    assert "Before every" in rule
+    assert "An absent, invalid, unreadable or unsupported result stops dispatch" in rule
+    assert "Never run `grant` or `revoke` for them" in rule
+    assert "session_effective=unverified" in rule
+    assert "never treat cached consent as current" in rule
+    assert "Do not ask a duplicate native question first" in rule
