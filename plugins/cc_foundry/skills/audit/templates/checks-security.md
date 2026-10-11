@@ -56,6 +56,7 @@ Python bin/ scripts producing shell variable assignments for `eval $()` in a cal
 
 ```python
 import shlex
+
 print(f"VAR={shlex.quote(value)}")
 ```
 

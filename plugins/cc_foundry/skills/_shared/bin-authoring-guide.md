@@ -191,6 +191,7 @@ Shell variables set in one Bash tool call don't persist to next separate call �
 # script — owns output routing; prefix passed by caller when multi-consumer
 import os, sys, tempfile
 from pathlib import Path
+
 _CSID = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
 tmpdir = os.environ.get("TMPDIR") or tempfile.gettempdir()
 prefix = sys.argv[1]  # e.g. "codemap-integration"
@@ -290,6 +291,7 @@ Minimum required structure for any new Python bin/ script:
 Usage:
     python "${CLAUDE_PLUGIN_ROOT}/bin/<script-name>.py" <required-arg> [--flag]
 """
+
 from __future__ import annotations
 import argparse
 import sys
@@ -339,6 +341,7 @@ plugins/cc_foundry/
 
 ```python
 """Pytest configuration — adds bin/ to sys.path for all tests."""
+
 from __future__ import annotations
 
 import sys
@@ -387,6 +390,7 @@ import pytest
 
 SCRIPT = Path(__file__).parent.parent / "bin" / "script-name.sh"
 
+
 def sh(*args: str, env: dict | None = None, cwd: str | None = None) -> subprocess.CompletedProcess:
     e = {**os.environ, **(env or {})}
     return subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True, env=e, cwd=cwd)
@@ -404,10 +408,12 @@ Template:
 def test_missing_args() -> None:
     assert sh().returncode != 0
 
+
 def test_invalid_input_traversal() -> None:
     r = sh("../evil", "skills/_shared")
     assert r.returncode == 2
     assert "invalid" in r.stderr
+
 
 def test_happy_path(tmp_path: Path) -> None:
     env = {"HOME": str(tmp_path)}
@@ -421,10 +427,7 @@ def test_happy_path(tmp_path: Path) -> None:
 **Integration marking** — scripts requiring real git repo with history, `gh` auth, or network calls use explicit decorators on each test or an existing test class:
 
 ```python
-@pytest.mark.skipif(
-    not os.getenv("RUN_INTEGRATION"),
-    reason="requires real git/gh env — set RUN_INTEGRATION=1"
-)
+@pytest.mark.skipif(not os.getenv("RUN_INTEGRATION"), reason="requires real git/gh env — set RUN_INTEGRATION=1")
 class TestIntegration:
     """Group tests requiring the explicitly enabled integration environment."""
 

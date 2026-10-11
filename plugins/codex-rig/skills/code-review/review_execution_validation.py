@@ -1843,9 +1843,9 @@ def _retained_reviewer_rating(
     preassessment_blocker: bool = False,
     incomplete_dispatch: bool = False,
     batch_response: bool = False,
-    source_rating_version: int | None | str = "auto",
+    source_rating_version: int | str | None = "auto",
     retain_assessment: bool = False,
-) -> int | None | dict[str, Any]:
+) -> int | dict[str, Any] | None:
     """Read a scoped rating and rationale from the retained reviewer response.
 
     Proven preassessment recovery may retain paired unavailable digests only for an empty blocking response. Completed
