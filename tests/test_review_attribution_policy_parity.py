@@ -76,6 +76,10 @@ def test_reviewer_attribution_paragraph_is_identical_across_plugins(relative: st
     """Fail when one plugin's copy of the shared policy states something the other does not."""
     variants = {plugin: _paragraph(PLUGINS_DIR / plugin / relative, marker) for plugin in REVIEW_PLUGINS}
     assert len(set(variants.values())) == 1, f"copies drifted: {variants}"
+    for text in variants.values():
+        assert "Role [rating]" in text
+        assert "role names only" in text
+        assert "label parent substitutes" not in text.lower()
 
 
 def test_rating_legend_has_one_wording_per_version() -> None:

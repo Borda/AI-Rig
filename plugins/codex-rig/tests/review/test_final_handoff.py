@@ -146,11 +146,24 @@ def test_standard_handoff_renders_complete_deterministic_markdown() -> None:
 
 
 @pytest.mark.parametrize("heading", ["PR Snapshot", "Review Snapshot"])
-def test_review_attribution_preserves_summary_and_renders_ratings_and_authors(heading: str) -> None:
+@pytest.mark.parametrize(
+    ("presentation", "layout"),
+    [
+        pytest.param(2, "legacy", id="historical-v2-legacy"),
+        pytest.param(2, "concise", id="historical-v2-concise"),
+        pytest.param(3, "legacy", id="historical-v3-legacy"),
+        pytest.param(3, "concise", id="historical-v3-concise"),
+        pytest.param(7, "concise", id="current-v7-concise"),
+    ],
+)
+@pytest.mark.parametrize("suffix", ["", " (parent substitute)"])
+def test_review_attribution_preserves_summary_and_renders_ratings_and_authors(
+    tmp_path: Path, heading: str, presentation: int, layout: str, suffix: str
+) -> None:
     """Show reviewer judgments separately from the aggregate decision and deduplicated finding authors."""
     finalizer = _load_finalizer()
     payload = _handoff_payload()
-    payload.update(skill="code-review", branch="assessed", presentation_version=2)
+    payload.update(skill="code-review", branch="assessed", presentation_version=presentation)
     payload["outcome"] = {"title": "Review Decision", "summary": "Recommendation: needs-more-work."}
     payload["remaining"] = []
     payload["next_steps"] = []
@@ -161,19 +174,19 @@ def test_review_attribution_preserves_summary_and_renders_ratings_and_authors(he
             "columns": ["Field", "Value"],
             "rows": [{"id": "PR", "cells": ["PR", "#42"], "source_ids": ["report:CR-2"]}],
             "reviewers": [
-                {"role": "Software engineer", "rating": 3, "evidence": "specialists/sw-engineer.md"},
+                {"role": f"Software engineer{suffix}", "rating": 3, "evidence": "specialists/sw-engineer.md"},
                 {"role": "QA specialist", "rating": 2, "evidence": "specialists/qa-specialist.md"},
             ],
         },
         {
             "heading": "Review Findings and Merge Blocks",
-            "layout": "concise",
+            "layout": layout,
             "columns": ["Finding / area", "Required change", "Evidence", "Status"],
             "rows": [
                 {
                     "id": "CR-1",
                     "title": "Empty input fails",
-                    "authors": ["Software engineer", "QA specialist"],
+                    "authors": [f"Software engineer{suffix}", "QA specialist"],
                     "cells": ["CR-1", "Handle empty input", "config.py:12", "Required"],
                     "source_ids": ["report:CR-1"],
                 }
@@ -181,15 +194,40 @@ def test_review_attribution_preserves_summary_and_renders_ratings_and_authors(he
         },
     ]
 
-    rendered = finalizer.render_handoff(payload)
+    (tmp_path / "review-notes.md").write_text("Full finding evidence: config.py:12.\n", encoding="utf-8")
+    if presentation == 7:
+        payload["tables"][1]["overview_only"] = True
+        (tmp_path / "review-notes.md").write_text(
+            "Full finding evidence: config.py:12.\n\n" + finalizer.render_review_report_details(payload),
+            encoding="utf-8",
+        )
+    rendered = finalizer.render_handoff(payload, report_root=tmp_path)
 
     assert "This review needs more work before it can be accepted." in rendered
     assert "Configuration needs a boundary fix." in rendered
-    assert "| Reviewers | Software engineer (3), QA specialist (2). |\n\nLegend: 1 = Approve" in rendered
+    if presentation == 7:
+        assert "| Reviewers | Software engineer [3], QA specialist [2]. |\n| Report |" in rendered
+        assert "parent substitute" not in rendered
+    else:
+        assert f"| Reviewers | Software engineer{suffix} (3), QA specialist (2). |\n\nLegend: 1 = Approve" in rendered
+    assert payload["tables"][0]["reviewers"][0]["role"] == f"Software engineer{suffix}"
     assert "4 = Insufficient evidence · 5 = Block / Reject." in rendered
-    assert "| ID | Author | Finding | Resolution proposal | Status |" in rendered
-    assert "| CR-1 | Software engineer, QA specialist | Empty input fails | Handle empty input | Required |" in rendered
-    assert "config.py:12" in rendered
+    displayed_author = "Software engineer" if presentation == 7 else f"Software engineer{suffix}"
+    if layout == "concise":
+        assert "| ID | Author | Finding | Resolution proposal | Status |" in rendered
+        assert (
+            f"| CR-1 | {displayed_author}, QA specialist | Empty input fails | Handle empty input | Required |"
+            in rendered
+        )
+    else:
+        assert "| Finding / area | Author | Required change | Evidence | Status |" in rendered
+        assert (
+            f"| CR-1 | {displayed_author}, QA specialist | Handle empty input | config.py:12 | Required |" in rendered
+        )
+    if presentation != 7:
+        assert "config.py:12" in rendered
+    else:
+        assert "config.py:12" in (tmp_path / "review-notes.md").read_text()
     payload["tables"][1]["rows"][0]["authors"] = ["Skipped reviewer"]
     with pytest.raises(finalizer.HandoffError, match="finding-authors-unbound"):
         finalizer.render_handoff(payload)

@@ -1,7 +1,7 @@
 """Regression checks for consumer migration to the bridge plugin.
 
-The fixture below deliberately names retired selectors. Production files must not contain them, while this test must
-retain them to detect a regression.
+The fixture below deliberately names retired selectors. Current routing code and guidance must not contain them, while
+this test and the root historical changelog may retain them to document and detect the migration.
 """
 
 from __future__ import annotations
@@ -46,12 +46,15 @@ TEXT_SUFFIXES = {".json", ".js", ".md", ".py", ".toml", ".yaml", ".yml"}
 
 
 def _production_files(plugin: str) -> list[Path]:
-    """Return shipped text files for one consumer plugin."""
+    """Return current shipped routing surfaces, excluding tests and the historical changelog."""
     root = REPOSITORY_ROOT / "plugins" / plugin
     return [
         path
         for path in root.rglob("*")
-        if path.is_file() and "tests" not in path.parts and path.suffix in TEXT_SUFFIXES
+        if path.is_file()
+        and "tests" not in path.parts
+        and path != root / "CHANGELOG.md"
+        and path.suffix in TEXT_SUFFIXES
     ]
 
 

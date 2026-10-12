@@ -13,7 +13,8 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 
 ## Usage
 
-New remediation handoffs set ``presentation_version=6``; other workflows set ``presentation_version=3`` before
+New assessed code reviews set ``presentation_version=7``, remediation handoffs set ``presentation_version=6``, and
+other workflows set ``presentation_version=3`` before
 ``render``. Earlier presentation versions remain available
 for validating historical artifacts. Run ``render`` after gates and handoff creation, then run ``check``
 directly or through the shared artifact validator
@@ -276,8 +277,16 @@ def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[
             skill != "challenge-resolve" or tuple(columns) != CHALLENGE_SEVERITY_COLUMNS
         ):
             raise HandoffError("challenge-history-layout-invalid")
+        compact_review = skill == "code-review" and payload.get("presentation_version") == 7
+        if compact_review and heading not in {"PR Snapshot", "Review Snapshot"}:
+            if layout != "concise":
+                raise HandoffError("review-concise-layout-required")
+            if table.get("overview_only") is not True:
+                raise HandoffError("review-overview-only-required")
         if "overview_only" in table and (
-            table["overview_only"] is not True or skill != "code-remediate" or layout != "concise"
+            table["overview_only"] is not True
+            or (skill != "code-remediate" and not compact_review)
+            or layout != "concise"
         ):
             raise HandoffError(f"table-overview-only-invalid:{heading}")
         if (
@@ -347,6 +356,9 @@ def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[
             if f"[{detail_id}]" not in rendered_cells:
                 raise HandoffError(f"table-detail-unreferenced:{detail_id}")
             detail_ids.add(detail_id)
+    if skill == "code-review" and payload.get("presentation_version") == 7:
+        if len(table_headings & {"PR Snapshot", "Review Snapshot"}) != 1:
+            raise HandoffError("review-snapshot-required")
     _validate_review_attribution(tables, skill)
     return row_ids, source_ids
 
@@ -606,10 +618,13 @@ def validate_handoff(payload: object) -> dict[str, Any]:
         expected_fields = expected_fields | {"child_runs"}
     if set(handoff) != expected_fields:
         raise HandoffError("handoff-fields-mismatch")
+    presentation_versions = {2, PRESENTATION_VERSION}
+    if handoff.get("skill") == "code-remediate":
+        presentation_versions.update({4, 5, 6})
+    elif handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed":
+        presentation_versions.add(7)
     if presentation_version is not None and (
-        type(presentation_version) is not int
-        or presentation_version
-        not in ({2, 3, 4, 5, 6} if handoff.get("skill") == "code-remediate" else {2, PRESENTATION_VERSION})
+        type(presentation_version) is not int or presentation_version not in presentation_versions
     ):
         raise HandoffError("handoff-presentation-version-invalid")
     if handoff.get("schema_version") != SCHEMA_VERSION:
@@ -673,10 +688,13 @@ def _render_table(
     suppress_heading: bool = False,
     show_selection: bool = False,
     report_root: Path | None = None,
+    review_report: Path | None = None,
 ) -> list[str]:
     """Render one validated table and its symbol details deterministically."""
     if table.get("layout") in {"grouped", "concise"}:
-        return _render_grouped_table(table, suppress_heading=suppress_heading, show_selection=show_selection)
+        return _render_grouped_table(
+            table, suppress_heading=suppress_heading, show_selection=show_selection, role_only=review_report is not None
+        )
     if table.get("layout") == "challenge-history":
         if report_root is None:
             raise HandoffError("challenge-history-report-root-required")
@@ -693,19 +711,39 @@ def _render_table(
     for row in table["rows"]:
         cells = list(row["cells"])
         if attributed:
-            cells.insert(1, ", ".join(row["authors"]))
+            cells.insert(
+                1,
+                ", ".join(
+                    author.removesuffix(" (parent substitute)") if review_report is not None else author
+                    for author in row["authors"]
+                ),
+            )
         lines.append("| " + " | ".join(_table_cell(cell) for cell in cells) + " |")
+    report_row = None
+    if review_report is not None and table["heading"] in {"PR Snapshot", "Review Snapshot"}:
+        destination = quote(review_report.as_posix(), safe="/:")
+        report_row = f"| Report | [Markdown report](<{_table_cell(destination)}>) |"
     if table.get("reviewers"):
-        reviewers = ", ".join(
-            f"{item['role']} ({item['rating'] if item['rating'] is not None else 'no source judgment'})"
-            for item in table["reviewers"]
-        )
+        if review_report is not None:
+            reviewers = ", ".join(
+                f"{item['role'].removesuffix(' (parent substitute)')} "
+                f"[{item['rating'] if item['rating'] is not None else 'no source judgment'}]"
+                for item in table["reviewers"]
+            )
+        else:
+            reviewers = ", ".join(
+                f"{item['role']} ({item['rating'] if item['rating'] is not None else 'no source judgment'})"
+                for item in table["reviewers"]
+            )
         current = table.get("source_rating_version") == 1
-        lines.extend(
-            (f"| Reviewers | {_table_cell(reviewers)}. |", "", SOURCE_REVIEWER_LEGEND if current else REVIEWER_LEGEND)
-        )
+        lines.append(f"| Reviewers | {_table_cell(reviewers)}. |")
+        if report_row is not None:
+            lines.append(report_row)
+        lines.extend(("", SOURCE_REVIEWER_LEGEND if current else REVIEWER_LEGEND))
         if current:
             lines.extend(("", f"Verification readiness: {table['verification_readiness']}."))
+    elif report_row is not None:
+        lines.append(report_row)
     if table.get("details"):
         lines.append("")
         lines.extend(
@@ -751,7 +789,7 @@ def _render_challenge_history(table: dict[str, Any], report_root: Path, *, suppr
 
 
 def _render_grouped_table(
-    table: dict[str, Any], *, suppress_heading: bool = False, show_selection: bool = False
+    table: dict[str, Any], *, suppress_heading: bool = False, show_selection: bool = False, role_only: bool = False
 ) -> list[str]:
     """Render bound rows, retaining historical bytes and separating concise facts from evidence."""
     remediation = tuple(table["columns"]) == STANDARD_COLUMNS["code-remediate"]
@@ -790,7 +828,12 @@ def _render_grouped_table(
                 selection = "Yes" if selection else "No"
             overview.insert(-1, selection if show_selection else resolution)
         if attributed:
-            overview.insert(1, ", ".join(row["authors"]))
+            overview.insert(
+                1,
+                ", ".join(
+                    author.removesuffix(" (parent substitute)") if role_only else author for author in row["authors"]
+                ),
+            )
         lines.append("| " + " | ".join(_table_cell(value) for value in overview) + " |")
     if table.get("overview_only"):
         return lines
@@ -815,6 +858,35 @@ def _render_grouped_table(
         if row.get("closure_evidence"):
             lines.append(f"- Done when: {_table_cell(row['closure_evidence'])}")
     return lines
+
+
+def render_review_report_details(handoff: dict[str, Any]) -> str:
+    """Render the complete finding section that must survive compact terminal presentation.
+
+    The producer writes this section beside the existing action table; rendering checks its exact content so omission or
+    later edits cannot silently hide canonical context and closure obligations behind the report link.
+    """
+    rows = [
+        row
+        for table in handoff.get("tables", [])
+        if table.get("heading") == "Review Findings and Merge Blocks"
+        for row in table["rows"]
+    ]
+    if not rows:
+        return ""
+    lines = ["## Finding Details", "", "<!-- codex-rig:review-details -->", ""]
+    for row in rows:
+        cells = row["cells"]
+        lines.extend((f"### {_table_cell(cells[0])} — {_table_cell(row['title'])}", ""))
+        fields = (
+            ("Context", row.get("summary")),
+            ("Required change", cells[1]),
+            ("Evidence", cells[2]),
+            ("Done when", row.get("closure_evidence")),
+        )
+        lines.extend(f"- {label}: {_table_cell(value)}" for label, value in fields if value)
+        lines.append("")
+    return "\n".join(lines)
 
 
 def _report_identity(report_path: str) -> str:
@@ -1029,7 +1101,7 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
     if handoff["branch"] == "caller-contract":
         return handoff["caller_contract"]["output"]
 
-    if handoff.get("presentation_version") in {2, 3, 4, 5, 6}:
+    if handoff.get("presentation_version") in {2, 3, 4, 5, 6, 7}:
         return _render_v2_handoff(handoff, report_root=report_root)
 
     lines = ["**Outcome**", "", f"{handoff['outcome']['title']}: {handoff['outcome']['summary']}"]
@@ -1088,6 +1160,24 @@ def _render_v2_handoff(handoff: dict[str, Any], *, report_root: Path | None = No
     else:
         plain_summary, separator, technical_detail = outcome["summary"].partition(" Reason: ")
         technical_summary = f"Reason: {technical_detail}" if separator else None
+    review_report = None
+    if handoff["presentation_version"] == 7:
+        if report_root is None:
+            raise HandoffError("review-report-root-required")
+        review_report = report_root.resolve() / "review-notes.md"
+        if review_report.is_symlink() or not review_report.is_file():
+            raise HandoffError("review-report-missing")
+        try:
+            report_text = review_report.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            raise HandoffError("review-report-unreadable") from error
+        if not report_text.strip():
+            raise HandoffError("review-report-empty")
+        expected_details = render_review_report_details(handoff)
+        if expected_details:
+            sections = re.findall(r"(?ms)^## Finding Details[^\S\r\n]*\r?\n.*?(?=^## |\Z)", report_text)
+            if len(sections) != 1 or sections[0].strip() != expected_details.strip():
+                raise HandoffError("review-report-details-mismatch")
     lines = [plain_summary, "", "**Outcome**", "", outcome["title"]]
     if technical_summary:
         lines.extend(("", technical_summary))
@@ -1102,6 +1192,7 @@ def _render_v2_handoff(handoff: dict[str, Any], *, report_root: Path | None = No
                         suppress_heading=table["heading"] == "Results",
                         show_selection=handoff["presentation_version"] in {5, 6},
                         report_root=report_root,
+                        review_report=review_report,
                     ),
                 )
             )
@@ -1129,18 +1220,25 @@ def _render_v2_handoff(handoff: dict[str, Any], *, report_root: Path | None = No
         lines.extend(("", "**Next steps**", ""))
         lines.extend(
             f"- {row_id} — {item['item']} — owner: {item['owner']} — next: {item['next_action']}"
-            if handoff["presentation_version"] in {3, 4, 5, 6}
+            if handoff["presentation_version"] in {3, 4, 5, 6, 7}
             else f"- {item['item']} — owner: {item['owner']} — next: {item['next_action']}"
             for row_id, item in remaining_by_id.items()
         )
 
     confidence = handoff["confidence"]
     lines.extend(("", "**Confidence**", "", f"{confidence['score']:.2f} ({confidence['band']})."))
+    compact_review = handoff["presentation_version"] == 7
+    if compact_review and (confidence["limits"] or confidence["gaps"]):
+        lines.append("")
     if confidence["limits"]:
-        lines.append("Limits: " + "; ".join(confidence["limits"]))
+        if compact_review:
+            lines.extend(f"- Limit: {limit}" for limit in confidence["limits"])
+        else:
+            lines.append("Limits: " + "; ".join(confidence["limits"]))
     for gap in confidence["gaps"]:
         detail = gap.get("evidence") or gap.get("rationale")
-        lines.append(f"Gap [{gap['status']}]: {gap['gap']} — {detail}")
+        prefix = "- " if compact_review else ""
+        lines.append(f"{prefix}Gap [{gap['status']}]: {gap['gap']} — {detail}")
 
     lines.extend(("", "**Artifact**", ""))
     lines.extend(

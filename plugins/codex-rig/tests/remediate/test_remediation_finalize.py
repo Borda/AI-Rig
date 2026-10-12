@@ -388,6 +388,7 @@ def test_review_finalize_derives_shared_fields_and_runs_both_validators(
     promoted result must still complete through the review finder, which reruns both validators.
     """
     run = assessed_pr
+    full_report = (run / "review-notes.md").read_bytes()
     result_path = run / "result.json"
     result = json.loads(result_path.read_text(encoding="utf-8"))
     result_path.unlink()
@@ -418,6 +419,9 @@ def test_review_finalize_derives_shared_fields_and_runs_both_validators(
         "validate",
     ]
     assert finished.returncode == 0, finished.stderr.decode()
+    assert json.loads((run / "final-handoff.json").read_text())["presentation_version"] == 7
+    assert (run / "review-notes.md").read_bytes() == full_report
+    assert b"| Report | [Markdown report](<" in finished.stdout
 
 
 def test_review_finalize_stops_on_review_validator_failure(
@@ -518,7 +522,7 @@ def test_review_action_derivation_preserves_judgment_and_escaped_content(tmp_pat
         record["required_change"] = "Keep a | b\r\nand verify"
         record["evidence"] = ["first | proof", "second\nproof"]
         if attributed:
-            record["authors"] = ["Main reviewer", "QA specialist"]
+            record["authors"] = ["Main reviewer (parent substitute)", "QA specialist"]
         rows.append(
             {
                 "id": record["id"],
@@ -526,7 +530,7 @@ def test_review_action_derivation_preserves_judgment_and_escaped_content(tmp_pat
                 "source_ids": ["source:" + record["id"]],
             }
         )
-    handoff = {"tables": [{"heading": "Review Findings and Merge Blocks", "rows": rows}]}
+    handoff = {"presentation_version": 7, "tables": [{"heading": "Review Findings and Merge Blocks", "rows": rows}]}
     notes = tmp_path / "review-notes.md"
     _notes(notes, [record["id"] for record in records])
     prefix, suffix = (
@@ -537,22 +541,38 @@ def test_review_action_derivation_preserves_judgment_and_escaped_content(tmp_pat
     original_metadata = copy.deepcopy(metadata)
 
     HELPER._derive_review_actions(tmp_path, metadata, handoff)
+    for record in records:
+        for field in ("title", "summary", "closure_evidence"):
+            if record.get(field):
+                assert record[field].replace("\n", "<br>").replace("|", r"\|") in notes.read_text()
 
     _load_validator()._validate_action_table(notes, _result(), metadata, "pr")
     assert metadata == original_metadata
     assert notes.read_bytes().startswith(prefix.encode())
     assert notes.read_bytes().endswith(suffix.encode())
+    assert "parent substitute" not in notes.read_text()
     for row, record in zip(rows, records, strict=True):
         assert row["id"] == record["id"]
         assert row["source_ids"] == ["source:" + record["id"]]
         assert row["cells"] == [record["id"], record["required_change"], "; ".join(record["evidence"]), "Verify"]
+        for field in ("title", "summary", "closure_evidence", "authors"):
+            assert row.get(field) == record.get(field)
     once = notes.read_bytes()
     HELPER._derive_review_actions(tmp_path, metadata, handoff)
     assert notes.read_bytes() == once
 
 
 @pytest.mark.parametrize(
-    "defect", ["duplicate-record", "duplicate-row", "missing-row", "status", "second-table", "second-section"]
+    "defect",
+    [
+        "duplicate-record",
+        "duplicate-row",
+        "missing-row",
+        "status",
+        "second-table",
+        "second-section",
+        "authored-details",
+    ],
 )
 def test_review_action_derivation_rejects_ambiguous_authored_input(tmp_path: Path, defect: str) -> None:
     """Never repair identity/status decisions or erase an ambiguous notes table."""
@@ -572,9 +592,16 @@ def test_review_action_derivation_rejects_ambiguous_authored_input(tmp_path: Pat
         rows[0]["cells"][-1] = "Verify"
     elif defect == "second-table":
         notes.write_text(notes.read_text() + "\nOther evidence\n| Extra | Table |\n", encoding="utf-8")
-    else:
+    elif defect == "second-section":
         notes.write_text(notes.read_text() * 2, encoding="utf-8")
+    else:
+        handoff["presentation_version"] = 7
+        notes.write_text(
+            notes.read_text().replace("| Required |", "| Required | ")
+            + "\n## Finding Details\n\nKeep authored evidence.\n",
+            encoding="utf-8",
+        )
     before = notes.read_bytes()
-    with pytest.raises(HELPER.DeriveError, match="review-action-"):
+    with pytest.raises(HELPER.DeriveError, match=r"review-(action-|report-details-unowned)"):
         HELPER._derive_review_actions(tmp_path, metadata, handoff)
     assert notes.read_bytes() == before

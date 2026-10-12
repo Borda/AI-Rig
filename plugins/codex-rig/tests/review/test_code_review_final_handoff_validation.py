@@ -9,6 +9,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from test_review_completion_gate import _assessed_pr
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REVIEW_VALIDATOR = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
@@ -763,3 +764,17 @@ def test_unavailable_v2_handoff_current_checkout_states_pass_both_validators(
 
     review_validator._validate_result(tmp_path, result_path, tmp_path, "thread", tmp_path)
     VALIDATOR.validate("code-review", tmp_path, result_path)
+
+
+def test_fresh_review_requires_compact_profile_and_retains_historical_canonical(tmp_path: Path) -> None:
+    """Fresh presentation cannot bypass compact output while retained version-three reviews stay valid."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    result = json.loads((run / "result.json").read_text())
+    handoff = json.loads((run / "final-handoff.json").read_text())
+    VALIDATOR._validate_code_review_final_handoff(result, handoff, candidate=True, fresh_candidate=True, out_dir=run)
+    handoff["presentation_version"] = 3
+    VALIDATOR._validate_code_review_final_handoff(result, handoff, candidate=True, out_dir=run)
+    with pytest.raises(SystemExit, match="review-current-handoff-presentation-v7-required"):
+        VALIDATOR._validate_code_review_final_handoff(
+            result, handoff, candidate=True, fresh_candidate=True, out_dir=run
+        )

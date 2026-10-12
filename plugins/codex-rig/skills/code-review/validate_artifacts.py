@@ -1037,7 +1037,12 @@ def _validate_action_table(notes_path: Path, result: dict[str, Any], metadata: d
             for record in metadata.get("review_findings", []) + metadata.get("operational_blockers", [])
         }
         for row in rows[2:]:
-            if row[1] != ", ".join(records.get(row[0], {}).get("authors", [])):
+            authors = records.get(row[0], {}).get("authors", [])
+            # Historical notes retain provenance suffixes; current presentation shows only roles.
+            if row[1] not in {
+                ", ".join(authors),
+                ", ".join(author.removesuffix(" (parent substitute)") for author in authors),
+            }:
                 raise SystemExit("review-findings-action-table-authors-mismatch")
         rows = [[row[0], *row[2:]] for row in rows]
     if tuple(rows[0]) != ACTION_TABLE_HEADERS:

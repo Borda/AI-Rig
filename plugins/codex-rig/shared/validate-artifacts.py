@@ -605,20 +605,28 @@ def _code_review_pr_ci_snapshot(rollup: object) -> str:
 
 
 def _validate_code_review_final_handoff(
-    result: dict[str, Any], handoff: dict[str, Any], *, candidate: bool = False, out_dir: Path | None = None
+    result: dict[str, Any],
+    handoff: dict[str, Any],
+    *,
+    candidate: bool = False,
+    out_dir: Path | None = None,
+    fresh_candidate: bool = False,
 ) -> None:
-    """Bind current review branches to results while retaining historical caller contracts."""
+    """Bind review branches and retained attribution while requiring compact presentation for fresh candidates."""
     metadata = result.get("metadata")
     if not isinstance(metadata, dict):
         raise SystemExit("code-review-final-handoff-metadata-invalid")
     review_status = metadata.get("review_status")
     expected_branch = review_status if review_status in {"unavailable", "closed"} else "assessed"
-    if result.get("schema_version") == 3 and expected_branch == "assessed" and handoff.get("presentation_version") != 3:
-        raise SystemExit("review-current-handoff-presentation-v3-required")
     if handoff.get("branch") == "caller-contract" and result.get("schema_version") != 3:
         return
     if handoff.get("branch") != expected_branch:
         raise SystemExit("code-review-final-handoff-branch-mismatch")
+    if result.get("schema_version") == 3 and expected_branch == "assessed":
+        if fresh_candidate and handoff.get("presentation_version") != 7:
+            raise SystemExit("review-current-handoff-presentation-v7-required")
+        if handoff.get("presentation_version") not in {3, 7}:
+            raise SystemExit("review-current-handoff-presentation-invalid")
     if expected_branch == "assessed":
         decision = metadata.get("review_decision")
         recommendation = decision.get("recommendation") if isinstance(decision, dict) else None
@@ -978,7 +986,9 @@ def _validate_final_handoff(
                     raise SystemExit("remediation-commit-evidence-invalid")
         _validate_code_remediate_final_handoff(result, handoff, candidate=candidate)
     elif skill == "code-review":
-        _validate_code_review_final_handoff(result, handoff, candidate=current_contract, out_dir=out_dir)
+        _validate_code_review_final_handoff(
+            result, handoff, candidate=current_contract, out_dir=out_dir, fresh_candidate=candidate
+        )
 
 
 def _require_file_sections(path: Path, sections: list[str]) -> None:

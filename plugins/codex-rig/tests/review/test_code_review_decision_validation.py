@@ -98,6 +98,7 @@ def test_review_action_table_rejects_duplicate_finding_identity(tmp_path: Path) 
     [
         pytest.param("none", None, id="valid-attributed-table"),
         pytest.param("documented-template", None, id="published-skill-table-passes-consumer"),
+        pytest.param("role-only-author", None, id="role-only-author-matches-retained-provenance"),
         pytest.param("author-divider", "review-findings-action-table-divider-invalid", id="invalid-author-divider"),
         pytest.param("other-divider", "review-findings-action-table-divider-invalid", id="invalid-other-divider"),
         pytest.param("header", "review-findings-action-table-header-mismatch", id="changed-header"),
@@ -135,6 +136,10 @@ def test_attributed_review_notes_bind_authors_to_canonical_findings(
         "| --- | --- | --- | --- | --- |\n"
         "| R1 | Software engineer, QA specialist | Add a guard | config.py:12 | Required |\n"
     )
+    if damage == "role-only-author":
+        metadata["reviewer_assessments"][0]["role"] = "Software engineer (parent substitute)"
+        metadata["specialist_passes"] = [{"role": "sw-engineer", "mode": "substituted"}]
+        metadata["review_findings"][0]["authors"][0] = "Software engineer (parent substitute)"
     if damage == "documented-template":
         skill = (PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md").read_text(encoding="utf-8")
         header = "| Finding / area | Author | Required change | Evidence | Status |"

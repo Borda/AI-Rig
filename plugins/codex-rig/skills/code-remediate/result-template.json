@@ -1,5 +1,5 @@
 {
-  "artifact_path": ".reports/codex/code-remediate/<timestamp>/result.json",
+  "artifact_path": "<run-directory>/result.json",
   "checks_failed": [],
   "checks_run": [
     "lint",
@@ -43,12 +43,12 @@
     },
     "final_handoff": {
       "branch": "standard",
-      "handoff_path": ".reports/codex/code-remediate/<timestamp>/final-handoff.json",
+      "handoff_path": "<run-directory>/final-handoff.json",
       "handoff_sha256": "sha256",
-      "rendered_path": ".reports/codex/code-remediate/<timestamp>/final.md",
+      "rendered_path": "<run-directory>/final.md",
       "rendered_sha256": "sha256",
       "schema_version": 1,
-      "validation_path": ".reports/codex/code-remediate/<timestamp>/final-handoff.validation.json"
+      "validation_path": "<run-directory>/final-handoff.validation.json"
     },
     "final_resolution_table": {
       "grouped_items_total": 0,
@@ -96,7 +96,7 @@
       }
     },
     "merge_resolution": {
-      "artifact_path": ".reports/codex/code-remediate/<timestamp>/pr/merge-resolution.json",
+      "artifact_path": "<run-directory>/pr/merge-resolution.json",
       "authorization": "not-required|explicit-input|user-confirmed",
       "conflicts_detected": false,
       "status": "not-needed|completed"
@@ -127,12 +127,12 @@
     },
     "resolution_workplan": {
       "approved_plan_sha256": null,
-      "bucket_plan_path": ".reports/codex/code-remediate/<timestamp>/work-bucket-plan.json",
+      "bucket_plan_path": "<run-directory>/work-bucket-plan.json",
       "bucket_plan_sha256": "sha256 of exact work-bucket-plan.json bytes",
       "execution_mode": "parent-owned|sequential-specialists|parallel-specialists",
       "groups_total": 0,
       "max_items_per_bucket": 5,
-      "parallel_approval_path": ".reports/codex/code-remediate/<timestamp>/parallel-approval.json",
+      "parallel_approval_path": "<run-directory>/parallel-approval.json",
       "parallel_approval_required": false,
       "parallel_approval_response": "not-required|approve|parent-only",
       "parallel_approval_source": "not-required|workflow-default|explicit-input|user-prompt",
@@ -149,7 +149,7 @@
       "unassigned_selected_items": 0,
       "verifier_groups": 0,
       "work_buckets": [],
-      "workplan_path": ".reports/codex/code-remediate/<timestamp>/resolution-workplan.md"
+      "workplan_path": "<run-directory>/resolution-workplan.md"
     },
     "review_report_intake": {
       "report_items_marked_out_of_scope": 0,

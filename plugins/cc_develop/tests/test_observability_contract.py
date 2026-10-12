@@ -28,6 +28,9 @@ _ROWS = [
 # Authorized review contract changes retain these exact current observable equivalents.
 # Keep the historical marker inventory intact and fail if any replacement signal disappears.
 _REVIEW_VISIBLE_EQUIVALENTS = {
+    "> - Add `Reviewers:` after `Agents:` in the report header, using readable `Role (rating)` or `Role:": (
+        "> - Add `Reviewers:` after `Agents:` in the report header, using readable role names only and square-bracketed scores: `Role [rating]`, for example `Software engineer [2]`.",
+    ),
     "`Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence": (
         "Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block.",
     ),

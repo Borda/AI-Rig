@@ -261,3 +261,15 @@ def test_question_consumers_preserve_packaged_native_form_priority(relative: str
     assert "using async when sync is unavailable" not in text
     assert "use eligible async" not in text
     assert "ask_user" in text
+
+
+@pytest.mark.installed_plugin
+def test_pr_questions_include_the_bound_clickable_target_in_the_question() -> None:
+    """Prevent users from having to search prior commentary for a PR decision's target."""
+    guide = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+
+    assert "For PR-scoped decisions, include the PR number and canonical URL inside the question itself" in guide
+    assert "[PR #<number>](<canonical PR URL>)" in guide
+    assert "plain URL when Markdown links are unsupported" in guide
+    assert "frozen target" in guide
+    assert "unavailable" in guide

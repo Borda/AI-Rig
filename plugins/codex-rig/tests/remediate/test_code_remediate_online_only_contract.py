@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
+
+
+@pytest.mark.installed_plugin
+def test_result_template_uses_allocated_run_for_all_artifact_paths() -> None:
+    """Keep PR remediation result links bound to the promoted directory instead of a stale timestamp."""
+    template = (CODE_REMEDIATE_SKILL.parent / "result-template.json").read_text(encoding="utf-8")
+    result = json.loads(template)
+    metadata = result["metadata"]
+
+    assert result["artifact_path"] == "<run-directory>/result.json"
+    assert metadata["final_handoff"]["handoff_path"] == "<run-directory>/final-handoff.json"
+    assert metadata["final_handoff"]["rendered_path"] == "<run-directory>/final.md"
+    assert metadata["final_handoff"]["validation_path"] == "<run-directory>/final-handoff.validation.json"
+    assert ".reports/codex/code-remediate/<timestamp>" not in template
 
 
 @pytest.mark.parametrize("skill_name", ["code-review", "code-remediate"])
@@ -99,7 +114,7 @@ def test_missing_requested_pr_review_has_explicit_yes_no_and_pending_routes() ->
 
     assert "`mode=pr` and `REQUESTED_REPORT=true`" in decision
     assert "explicit PR report paths" in decision
-    assert "Run a fresh code review now before remediation?" in decision
+    assert "Run a fresh code review for [PR #<number>](<canonical PR URL>) before remediation?" in decision
     assert "Run fresh code review (Recommended)" in decision
     assert "Continue with available findings" in decision
     assert "single question/menu" in decision
@@ -150,3 +165,17 @@ def test_available_findings_cannot_bypass_missing_requested_review_approval() ->
         "without blocking usable findings solely on report bookkeeping",
     ):
         assert bypass not in skill
+
+
+@pytest.mark.installed_plugin
+def test_unavailable_pr_question_links_target_without_claiming_source_review() -> None:
+    """Keep failed collection identifiable without presenting artifact closure as a review."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    branch = skill.split("  - d. ", 1)[1].split("\n- **No /", 1)[0]
+
+    assert "[PR #<number>](<canonical PR URL>) could not be retrieved" in branch
+    assert "no source review ran" in branch
+    assert "Do not describe unavailable artifact closure as a completed review" in branch
+    assert "supersession" in branch
+    assert "Continue with available findings" in branch
+    assert "Stop remediation" in branch

@@ -196,7 +196,7 @@ def _assessed_pr(tmp_path: Path) -> Path:
     ]
     handoff = {
         "schema_version": 1,
-        "presentation_version": 3,
+        "presentation_version": 7,
         "skill": "code-review",
         "branch": "assessed",
         "outcome": {"title": "Review Decision", "summary": "Recommendation: accept-as-is."},
@@ -493,7 +493,7 @@ def test_archived_schema_two_remains_valid_but_cannot_certify_current_completion
 
 
 @pytest.mark.parametrize("filename", ["result.candidate.json", "result.json"])
-def test_current_assessed_completion_requires_presentation_three(assessed_pr: Path, filename: str) -> None:
+def test_current_assessed_completion_rejects_presentation_two(assessed_pr: Path, filename: str) -> None:
     """A current assessed result cannot complete with a row-ID-free version-two handoff."""
     handoff_path = assessed_pr / "final-handoff.json"
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
@@ -517,7 +517,12 @@ def test_current_assessed_completion_requires_presentation_three(assessed_pr: Pa
         else:
             finder.validate_review_result(result_path, parent_thread_id="thread")
 
-    with pytest.raises(LookupError, match="review-current-handoff-presentation-v3-required"):
+    error = (
+        "review-current-handoff-presentation-invalid"
+        if filename == "result.json"
+        else "review-current-handoff-presentation-v7-required"
+    )
+    with pytest.raises(LookupError, match=error):
         _run_expected_failure()
 
 
@@ -526,6 +531,7 @@ def test_current_assessed_completion_rejects_caller_contract_branch(assessed_pr:
     """A result with an assessed decision cannot choose the tableless caller-contract branch."""
     handoff_path = assessed_pr / "final-handoff.json"
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff["presentation_version"] = 3
     handoff["branch"] = "caller-contract"
     handoff["tables"] = []
     handoff["source_records"] = []
@@ -888,7 +894,8 @@ def test_failed_quality_gate_requires_nonapproval_handoff(assessed_pr: Path, rec
         handoff["tables"].append(
             {
                 "heading": "Review Findings and Merge Blocks",
-                "layout": "grouped",
+                "layout": "concise",
+                "overview_only": True,
                 "columns": ["Finding / area", "Required change", "Evidence", "Status"],
                 "rows": [
                     {
@@ -909,6 +916,12 @@ def test_failed_quality_gate_requires_nonapproval_handoff(assessed_pr: Path, rec
             "| Finding / area | Author | Required change | Evidence | Status |\n"
             "| --- | --- | --- | --- | --- |\n"
             "| G-1 | Main reviewer | Resolve test execution failure. | gates.json | Required |\n",
+            encoding="utf-8",
+        )
+        notes.write_text(
+            notes.read_text(encoding="utf-8")
+            + "\n"
+            + _module(PLUGIN_ROOT / "shared/final_handoff.py").render_review_report_details(handoff),
             encoding="utf-8",
         )
     handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
@@ -1146,7 +1159,8 @@ def _finalize_parent_fallback(run: Path, *, independent_required: bool = False) 
     handoff["tables"].append(
         {
             "heading": "Review Findings and Merge Blocks",
-            "layout": "grouped",
+            "layout": "concise",
+            "overview_only": True,
             "columns": ["Finding / area", "Required change", "Evidence", "Status"],
             "rows": [
                 {

@@ -142,6 +142,9 @@ REGISTRY: dict[str, Guard] = {
         "python-local", "develop-owned batch scanner; resolves the index in Python, not bash"
     ),
     "plugins/cc_develop/README.md": Guard("doc-prose", "user-facing description of index layout, not executable"),
+    "plugins/cc_develop/CHANGELOG.md": Guard(
+        "doc-prose", "historical description of index-directory configuration, not executable"
+    ),
     # --- cc_oss ---
     "plugins/cc_oss/bin/detect_codemap.py": Guard(
         "python-local", "oss-owned detector with its own --prefix/--strict CLI; resolves in Python, not bash"

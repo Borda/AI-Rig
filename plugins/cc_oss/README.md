@@ -1,5 +1,7 @@
 # 🌱 oss — Claude Code Plugin
 
+[Changelog](CHANGELOG.md) records version-by-version changes, including the plugin's earlier directory history.
+
 Review loops fix feasible authorized findings, investigate repeated signatures, and continue whenever the weighted score decreases; structural labels alone do not stop remediation. Completion prompts ask only for a missing decision or authorization, regardless of report length, and already-authorized next steps continue. Concrete gates for fresh scope, paid execution, sensitive or destructive actions, and remote changes remain in force.
 
 Independent challenge loops show the cumulative old/new table once after each newly validated challenge, before fixes or another review. Pending reviews and unrelated status updates do not repeat it; final handoffs retain their canonical Results table. Each open finding needs a recorded fix, escalation, or justified deferral; chat table timing has no machine-readable delivery receipt.
@@ -249,7 +251,7 @@ ______________________________________________________________________
 
 ### /oss:review
 
-Review output preserves its aggregate prose summary, verdict, confidence and detailed findings. The header table adds `Reviewers: Software engineer (3), QA specialist (2), Documentation reviewer (1).` Each rating is attached in parentheses or after a colon (`sw-engineer: 3`), never as a bare trailing number. Its legend appears immediately below: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject. Ratings describe actual reviewers' scoped judgments, never an averaged verdict. Parent substitutes are labeled; skipped roles omitted. The findings overview adds an `Author` column retaining all contributors to deduplicated findings. Terminal rejection keeps its existing gate behavior and reports `Not assessed` when no source review ran.
+Review output preserves its aggregate prose summary, verdict, confidence and detailed findings. The header table adds `Reviewers: Software engineer [3], QA specialist [2], Documentation reviewer [1].` Each rating appears in square brackets after the role name (`Software engineer [3]`). Its legend appears immediately below: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject. Ratings describe actual reviewers' scoped judgments, never an averaged verdict. Reviewer names and finding authors show roles only, without execution-origin labels; skipped roles are omitted. The findings overview adds an `Author` column retaining all contributors to deduplicated findings. Terminal rejection keeps its existing gate behavior and reports `Not assessed` when no source review ran.
 
 Scope-aware parallel review of a GitHub PR. Input is a PR number or a saved review report for reply drafting.
 

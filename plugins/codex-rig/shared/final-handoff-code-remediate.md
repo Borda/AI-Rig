@@ -1,5 +1,14 @@
 # code-remediate Handoff Supplement
 
+Before every status or final answer, reconcile the requested remediation with its retained selection, closure ledger, gates and canonical result.
+
+- A completed nested review, prepared branch receipt or passing tests proves no finding was fixed.
+- If implementation has not begun, say `Remediation remains incomplete; zero implemented`, name the first unmet checkpoint, confirmed open findings and next owner/action.
+- Distinguish evidence-only closure, rejection, user-authorized deferral and actual code changes.
+- A no-change completion needs evidence-backed dispositions for every required finding and the normal remediation closing gates; open confirmed findings cannot become rejected or resolved because checkout failed.
+- Before selection, report confirmed findings as awaiting selection rather than inventing selected counts.
+- Keep any early blocked handoff explicitly incomplete without manufacturing a completed result or final resolution ledger.
+
 Never use bare `Blocked` or a generic incomplete status as the opening outcome. Both `outcome.title` and `outcome.summary` must name the specific current blocker when remediation is blocked. In the summary, cite current-run gate or unresolved-item evidence and state the next owner/action needed to proceed; do not reuse a stale intake-review outcome or substitute a commit-only blocker for the remediation cause. For example: `Remediation is blocked because the required documentation build could not run; gates.json records the missing dependency. The environment owner must restore that dependency before verification can finish.` Keep this explanation in the existing outcome fields; historical rendering and the separate commit disposition stay unchanged.
 
 Code-remediate has one explicit continuation before promotion and final output: prepare its commit disposition and any eligible plan, render and validate the candidate, then execute its step-12 commit decision. Exception: an explicit user commit request may execute step 12 after applicable verification and shared commit checks, before final report validation; record the request and remaining report checkpoint, then return with actual hashes/disposition to complete validation and promotion. Standing approval or grouping alone does not invoke this sequencing override. A pending required authorization or explicitly deferred decision keeps commit work pending; optional grouping under standing approval uses its documented default; a blocked or inapplicable commit still needs an explicit disposition. Refresh the handoff and revalidate after an answer or execution changes that disposition, then promote and emit it. Result validation alone must never skip this continuation.

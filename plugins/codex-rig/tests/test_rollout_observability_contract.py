@@ -137,6 +137,36 @@ def test_waits_still_report_pending_and_timed_out_agents() -> None:
     assert "keep each child's terminal state" in native
 
 
+def test_empty_wait_requires_evidence_based_status_before_another_wait() -> None:
+    """Prevent silent empty-wait loops and unsupported claims that no children are running."""
+    native = _text("shared/native-skill-contract.md")
+
+    assert "Before waiting, identify at least one accepted dispatch still awaiting completion or join" in native
+    assert "If none remains, do not wait" in native
+    assert "before another wait or other tool call" in native
+    assert "role/task, elapsed time, last observed event" in native
+    assert "no new progress evidence" in native
+    assert "does not prove that a child is progressing, stalled, absent or complete" in native
+    assert "Tool-generated waiting banners do not satisfy this update" in native
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "assets/AGENTS.md",
+        "shared/specialist-orchestration.md",
+        "skills/code-review/SKILL.md",
+        "skills/challenge-resolve/SKILL.md",
+    ],
+)
+def test_wait_call_sites_keep_the_status_checkpoint_visible(relative: str) -> None:
+    """Keep notification mandatory where the workflow tells the agent to wait."""
+    assert (
+        "After every wait, including an empty return, report completed/expected counts, pending roles and elapsed time "
+        "before any next tool call" in _text(relative)
+    )
+
+
 @pytest.mark.parametrize("skill", sorted(path.parent.name for path in (PLUGIN_ROOT / "skills").glob("*/SKILL.md")))
 def test_every_skill_references_the_shared_execution_rules(skill: str) -> None:
     """Route every codex-rig skill through the shared native contract that holds the wait, plan, and test rules."""

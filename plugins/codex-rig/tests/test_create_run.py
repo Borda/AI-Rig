@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 CREATE_RUN = PLUGIN_ROOT / "shared" / "create_run.py"
 
@@ -68,6 +70,54 @@ class TestCreateRun:
 
 class TestPromotePrRun:
     """Verify safe post-collection promotion into a PR-indexed namespace."""
+
+    def test_remediation_uses_nested_identity_and_preserves_complete_runs(self, tmp_path: Path) -> None:
+        """Save consecutive remediation runs under their collected PR without losing intake evidence."""
+        for index in (1, 2):
+            created = _run_create("--skill", "code-remediate", "--root", str(tmp_path))
+            assert created.returncode == 0, created.stderr
+            source = Path(created.stdout.strip())
+            (source / "pr").mkdir()
+            identity = b'{"number": 41}\n'
+            (source / "pr/pr.json").write_bytes(identity)
+            (source / "pr.json").write_text('{"number": 99}', encoding="utf-8")
+            (source / "findings-input.txt").write_bytes(b"retained report\r\n")
+
+            completed = _run_create(
+                "--skill", "code-remediate", "--root", str(tmp_path), "--promote-pr-run", str(source)
+            )
+
+            expected = tmp_path / "code-remediate" / "pr-41" / f"run-{index:03d}"
+            assert completed.returncode == 0, completed.stderr
+            assert completed.stdout.strip() == str(expected)
+            assert not source.exists()
+            assert (expected / "pr/pr.json").read_bytes() == identity
+            assert (expected / "findings-input.txt").read_bytes() == b"retained report\r\n"
+            assert not (tmp_path / "code-remediate/pr-99").exists()
+        assert (tmp_path / "code-remediate/pr-41/run-001/findings-input.txt").read_bytes() == b"retained report\r\n"
+
+    @pytest.mark.parametrize(
+        "invalid_identity",
+        [pytest.param("missing", id="missing-nested-identity"), pytest.param("boolean", id="boolean-pr-number")],
+    )
+    def test_remediation_rejects_missing_or_invalid_nested_identity(
+        self, tmp_path: Path, invalid_identity: str
+    ) -> None:
+        """Never infer a remediation target from unrelated root-level review metadata."""
+        created = _run_create("--skill", "code-remediate", "--root", str(tmp_path))
+        assert created.returncode == 0, created.stderr
+        source = Path(created.stdout.strip())
+        (source / "pr.json").write_text('{"number": 41}', encoding="utf-8")
+        if invalid_identity == "boolean":
+            (source / "pr").mkdir()
+            (source / "pr/pr.json").write_text('{"number": true}', encoding="utf-8")
+
+        completed = _run_create("--skill", "code-remediate", "--root", str(tmp_path), "--promote-pr-run", str(source))
+
+        assert completed.returncode != 0
+        assert "authoritative pr.json" in completed.stderr or "positive integer" in completed.stderr
+        assert source.is_dir()
+        assert not (tmp_path / "code-remediate/pr-41").exists()
 
     def test_uses_authoritative_identity_and_first_index(self, tmp_path: Path) -> None:
         """Move the complete timestamp run under the PR number collected in that run."""
@@ -169,7 +219,7 @@ class TestPromotePrRun:
         assert source.is_dir()
 
     def test_rejects_unsupported_skill(self, tmp_path: Path) -> None:
-        """Keep PR-indexed promotion closed to the code-review workflow."""
+        """Keep PR-indexed promotion closed to review and remediation workflows."""
         source = _run_create("--skill", "audit", "--root", str(tmp_path))
         assert source.returncode == 0, source.stderr
         source_path = Path(source.stdout.strip())

@@ -10,7 +10,7 @@ Agents:      [comma-separated agent names that ran]
 Review contract: 1
 Rating scale: source-5-v1
 Readiness:   [complete | blocked | incomplete]
-Reviewers:   [Role (rating), Role (rating)]
+Reviewers:   Role [rating], Role [rating]
 CI:          [CI status]
 Gate:        [gate result]
 Outcome:     [review outcome]
@@ -24,7 +24,7 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficie
 
 > - PR Type: `fix`, `feat`, `refactor`, `perf`, `docs`, `ci`, `chore`, `test`, or `mixed`, chosen by change intent rather than file count or title.
 > - Focus: one-line description of the change, labeled with its scope.
-> - Reviewers: readable role names with scoped integer ratings, such as `Software engineer (3), QA specialist (2)` or `sw-engineer: 3, qa-specialist: 2`; never a bare `sw-engineer 3`.
+> - Reviewers: readable role names only with square-bracketed scores, such as `Software engineer [3], QA specialist [2]`; omit execution-origin labels.
 > - CI: `passing (N/N)`, `failing — check-name, check-name`, or `pending`.
 > - Gate: `REVIEW_V1_PASS`, `REVIEW_V1_BLOCK`, or `REVIEW_V1_REJECT_<GROUND> @<sha>`, where GROUND is `GOAL`, `CONDUCT`, `SCOPE`, `LICENSE`, `DUPLICATE`, `REVERTED`, `SPAM`, or `PHILOSOPHY` (review SKILL.md Stage 1). PASS/BLOCK continue to full review. The `@<sha>` suffix on a `REJECT_<GROUND>` gate carries the reviewed commit SHA so `/oss:resolve` can detect whether the PR changed.
 > - Outcome: `APPROVE`, `MINOR_EDITS`, `NEEDS_WORK`, `INSUFFICIENT_BUT_PROMISING`, `REJECT`, or literal `null`. Write the verdict token alone, optionally after its `✓`/`⚠`/`✗` symbol; severity counts and other detail belong in Summary.

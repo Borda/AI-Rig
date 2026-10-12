@@ -99,7 +99,7 @@ cat "$_DEV_SHARED/agent-resolution.md"
 > Review presentation is additive: keep the aggregate summary as prose, all header fields, overall verdict, confidence and detailed findings.
 >
 > - Ask each actual reviewer for a scoped integer rating and rationale: 1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient, but a good initiative, 5 Block (source-5-v1); null means no source judgment, never rejection.
-> - Add `Reviewers:` after `Agents:` in the report header, using readable `Role (rating)` or `Role: rating` entries (`sw-engineer (2)`, `sw-engineer: 2`), never a bare `Role rating` (`sw-engineer 2`); label parent substitutes and omit skipped roles.
+> - Add `Reviewers:` after `Agents:` in the report header, using readable role names only and square-bracketed scores: `Role [rating]`, for example `Software engineer [2]`. Omit execution-origin labels and skipped roles.
 > - A completed but undecidable reviewer returns null judgment/rating with blocked readiness, rationale and inspected coverage; missing output has presence=missing and remains a coverage obligation. Record these separately in review-validation.json; never invent rejection or approval.
 > - Never average role ratings into the final verdict.
 > - After rendering the header table, add exactly this line below it, in the same Step 5b delivery block: `Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block.`

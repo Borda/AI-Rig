@@ -2,12 +2,12 @@
 
 **Reviewer attribution (additive):** Preserve the aggregate prose summary, existing metadata fields, overall verdict, confidence and detailed sections.
 
-- Add `Reviewers:` immediately after `Agents:`, listing actual readable role names and their scoped rating, for example `Software engineer (3), QA specialist (2), Documentation reviewer (1).`
-- Separate each role from its rating with parentheses `Role (N)` or a colon `Role: N`; never a bare space (`sw-engineer 2` is wrong).
+- Add `Reviewers:` immediately after `Agents:`, listing actual readable role names and their scoped rating, for example `Software engineer [3], QA specialist [2], Documentation reviewer [1].`
+- Use square brackets for each score: `Role [rating]`; a null rating renders as `Role [no source judgment]`.
 - Ratings: 1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient, but a good initiative, 5 Block (source-5-v1); null means no source judgment, never rejection.
 - Use each reviewer's explicit source-5-v1 rating and rationale. Completed undecidable output has null judgment/rating with blocked readiness and inspected coverage; missing output remains a distinct coverage obligation in review-validation.json.
 - A reviewer that produced no output is not rated — record it as a missing-reviewer limitation instead.
-- Label parent substitutes explicitly; skipped roles are omitted.
+- Display role names only in reviewer lists and finding authors; omit execution-origin labels and skipped roles.
 - Never average ratings or replace the overall verdict.
 - Retain all contributing roles when deduplicating.
 - Add the template's findings overview with `ID | Author | Finding | Resolution proposal | Status`; Author lists all originating reviewer roles, not the consolidator or PR author.

@@ -1014,7 +1014,8 @@ def test_unsafe_contract_paths_fail_open(tmp_path: Path, target: str, kind: str)
         encoding="utf-8",
         cwd=project,
         env={**os.environ, "HOME": str(tmp_path), "USERPROFILE": str(tmp_path), "TMPDIR": str(tmp_path)},
-        timeout=2,
+        # Include Node startup on loaded CI runners while retaining a finite deadline for FIFO regressions.
+        timeout=15,
     )
     assert result.returncode == 0, result.stderr
     output = (project / ".claude" / "state" / "session-context.md").read_text(encoding="utf-8")

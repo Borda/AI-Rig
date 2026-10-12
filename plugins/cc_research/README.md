@@ -1,5 +1,7 @@
 # 🔬 research — Claude Code Plugin
 
+[Changelog](CHANGELOG.md) records version-by-version changes, including the plugin's earlier directory history.
+
 Review loops fix feasible authorized findings, investigate repeated signatures, and continue whenever the weighted score decreases; structural labels alone do not stop remediation. Completion prompts ask only for a missing decision or authorization, regardless of report length, and already-authorized next steps continue. Concrete gates for fresh scope, paid execution, sensitive or destructive actions, and remote changes remain in force.
 
 Independent challenge loops show the cumulative old/new table once after each newly validated challenge, before fixes or another review. Pending reviews and unrelated status updates do not repeat it; final handoffs retain their canonical Results table. Each open finding needs a recorded fix, escalation, or justified deferral; chat table timing has no machine-readable delivery receipt.

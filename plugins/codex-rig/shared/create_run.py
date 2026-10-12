@@ -5,19 +5,20 @@
 
 Give each workflow invocation an isolated, predictable evidence location without requiring shell-specific timestamp
 handling. The generated directory is the handoff point that later helpers use for all run-scoped evidence and results. A
-collected PR review can subsequently promote that complete directory into a stable PR-specific sequence.
+collected PR review or remediation can subsequently promote that complete directory into a stable PR-specific sequence.
 
 ## Scope
 
 It validates a canonical skill identifier and either creates one local directory or promotes one direct child produced
-by ``code-review``. Promotion reads the authoritative PR number from the run's ``pr.json`` and moves the whole run
-atomically; it neither changes evidence files nor starts a workflow.
+by ``code-review`` or ``code-remediate``. Promotion reads the authoritative PR number from ``pr.json`` for review or
+``pr/pr.json`` for remediation and moves the whole run atomically. It neither changes evidence files nor starts a
+workflow.
 
 ## Usage
 
 Run ``python create_run.py --skill <canonical-skill-id>`` once and use the printed path literally in later commands.
-After PR collection, run it again with ``--skill code-review --promote-pr-run <created-path>``. Pass ``--root``
-consistently when a workflow owns a different local artifact root.
+After PR collection, run it again with the same skill and ``--promote-pr-run <created-path>``. Pass ``--root``
+consistently when a workflow owns a different local artifact root; resumed runs retain their existing paths.
 
 ## Used by
 
@@ -27,8 +28,8 @@ on its stdout path rather than recomputing timestamps or assuming a shell-specif
 ## Outputs
 
 Creation prints a UTC timestamp path beneath ``.reports/codex/<skill>/`` unless an explicit root is supplied. Promotion
-prints ``<root>/code-review/pr-<number>/run-<NNN>`` using the next positive numeric index with at least three digits.
-The directory is moved as one filesystem entry, retaining every collected artifact.
+prints ``<root>/<skill>/pr-<number>/run-<NNN>`` using the next positive numeric index with at least three digits. The
+directory is moved as one filesystem entry, retaining every collected artifact.
 
 ## Failure
 
@@ -71,7 +72,7 @@ def parse_args() -> argparse.Namespace:
         "--promote-pr-run",
         type=Path,
         metavar="PATH",
-        help="Atomically move one newly created code-review run into its PR-specific sequence",
+        help="Atomically move one newly created code-review or code-remediate run into its PR-specific sequence",
     )
     arguments = parser.parse_args()
     if SKILL_ID.fullmatch(arguments.skill) is None:
@@ -80,9 +81,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def _read_pr_number(source: Path) -> int:
-    """Read the positive integer PR identity collected inside a review run."""
+    """Read the positive integer PR identity from its owning collection directory."""
     identity_path = source / "pr.json"
-    if identity_path.is_symlink() or not identity_path.is_file():
+    if source.is_symlink() or identity_path.is_symlink() or not identity_path.is_file():
         raise RunPromotionError("promotion source has no authoritative pr.json")
     try:
         payload = json.loads(identity_path.read_text(encoding="utf-8"))
@@ -110,9 +111,9 @@ def _next_run_index(pr_directory: Path) -> int:
 
 
 def promote_pr_run(root: Path, skill: str, source: Path) -> Path:
-    """Move a collected review run into its authoritative PR-specific sequence."""
-    if skill != "code-review":
-        raise RunPromotionError("PR run promotion is supported only for code-review")
+    """Move a collected review or remediation run into its authoritative PR-specific sequence."""
+    if skill not in {"code-review", "code-remediate"}:
+        raise RunPromotionError("PR run promotion is supported only for code-review and code-remediate")
 
     skill_directory = root / skill
     normalized_skill = Path(os.path.abspath(skill_directory))
@@ -124,7 +125,7 @@ def promote_pr_run(root: Path, skill: str, source: Path) -> Path:
     if source.is_symlink() or not source.is_dir():
         raise RunPromotionError("promotion source must be a safe directory")
 
-    pr_number = _read_pr_number(source)
+    pr_number = _read_pr_number(source / "pr" if skill == "code-remediate" else source)
     pr_directory = skill_directory / f"pr-{pr_number}"
     pr_directory.mkdir(parents=True, exist_ok=True)
     if pr_directory.is_symlink() or not pr_directory.is_dir():

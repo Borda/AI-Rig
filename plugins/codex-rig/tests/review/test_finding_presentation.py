@@ -7,6 +7,7 @@ import subprocess
 import sys
 from io import StringIO
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 from _platform import FILE_SYMLINKS_AVAILABLE
@@ -171,12 +172,13 @@ def test_grouped_final_remediation_keeps_evidence_without_symbols() -> None:
 
 
 def test_concise_review_states_actions_once_and_names_gate() -> None:
-    """Keep proposals in the overview and only supporting context below it."""
+    """Keep historical version-three proposals and supporting context in their original view."""
     payload = _handoff_payload()
     payload.update(
         skill="code-review",
         branch="assessed",
         outcome={"title": "Review Decision", "summary": "Recommendation: needs-more-work."},
+        presentation_version=3,
     )
     payload["tables"] = [
         {
@@ -518,7 +520,7 @@ def test_candidate_pr_snapshot_escapes_collected_title_link_syntax(tmp_path: Pat
         for child in token.children or []
         if child.type == "link_open"
     ]
-    assert links == ["https://github.com/acme/widgets/pull/123"]
+    assert links == ["https://github.com/acme/widgets/pull/123", (run / "review-notes.md").resolve().as_posix()]
 
     snapshot["rows"][0]["cells"][1] = (
         "[#123 — Fix ](https://evil.example/other) widget](https://github.com/acme/widgets/pull/123)"
@@ -534,7 +536,7 @@ def test_candidate_pr_snapshot_escapes_collected_title_link_syntax(tmp_path: Pat
 
 @pytest.mark.parametrize("candidate", [False, True])
 def test_rendered_non_pr_handoff_cannot_add_forged_pr_snapshot(tmp_path: Path, candidate: bool) -> None:
-    """Reject a fully rendered mixed snapshot before trusting its candidate or saved binding."""
+    """Reject mixed snapshots during rendering and source reconciliation for fresh or retained reports."""
     run = _assessed_pr.__wrapped__(tmp_path)
     result = json.loads((run / "result.json").read_text(encoding="utf-8"))
     result["metadata"]["scope"] = "working-tree"
@@ -562,13 +564,10 @@ def test_rendered_non_pr_handoff_cannot_add_forged_pr_snapshot(tmp_path: Path, c
     handoff["source_records"].extend({"id": f"review:{field}", "evidence": "diff.patch"} for field, _ in values)
     handoff["source_coverage"].update(source_records_total=10, represented_source_records_total=10)
     handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
-    binding = _load_finalizer().render_files(handoff_path, run / "final.md", run / "final-handoff.validation.json")
-    result["metadata"]["final_handoff"].update(
-        handoff_sha256=binding["handoff_sha256"], rendered_sha256=binding["rendered_sha256"]
-    )
-    gates = json.loads((run / "gates.json").read_text(encoding="utf-8"))
+    with pytest.raises(ValueError, match="review-snapshot-required"):
+        _load_finalizer().render_files(handoff_path, run / "final.md", run / "final-handoff.validation.json")
     with pytest.raises(SystemExit, match="code-review-final-handoff-snapshot-scope-mismatch"):
-        VALIDATOR._validate_final_handoff(result, "code-review", run, gates, candidate=candidate)
+        VALIDATOR._validate_code_review_final_handoff(result, handoff, candidate=candidate, out_dir=run)
 
 
 @pytest.mark.parametrize(
@@ -922,7 +921,8 @@ def _write_remediation_producer(tmp_path: Path, items: list[dict]) -> Path:
     handoff["tables"].append(
         {
             "heading": "Review Findings and Merge Blocks",
-            "layout": "grouped",
+            "layout": "concise",
+            "overview_only": True,
             "columns": ["Finding / area", "Required change", "Evidence", "Status"],
             "rows": [
                 {
@@ -945,7 +945,10 @@ def _write_remediation_producer(tmp_path: Path, items: list[dict]) -> Path:
         "omitted_source_records_total": 0,
     }
     handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
-    proof = _load_finalizer().render_files(handoff_path, run / "final.md", run / "final-handoff.validation.json")
+    finalizer = _load_finalizer()
+    with notes_path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write("\n\n" + finalizer.render_review_report_details(handoff))
+    proof = finalizer.render_files(handoff_path, run / "final.md", run / "final-handoff.validation.json")
     for field in ("handoff_sha256", "rendered_sha256"):
         metadata["final_handoff"][field] = proof[field]
     result_path.write_text(json.dumps(result), encoding="utf-8")
@@ -1791,3 +1794,198 @@ def test_grouped_review_binds_every_display_field(field: str, layout: str) -> No
         rows[0][field] = "Substituted content"
     with pytest.raises(SystemExit, match=r"code-review-final-handoff-finding-.*-mismatch"):
         VALIDATOR._validate_code_review_final_handoff(result, payload)
+
+
+@pytest.mark.parametrize("snapshot_heading", ["PR Snapshot", "Review Snapshot"])
+def test_compact_review_links_full_report_and_retains_machine_details(
+    tmp_path: Path, snapshot_heading: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Suppress supporting chat groups while retaining their full report and machine records."""
+    report_root = tmp_path / "review with spaces"
+    report_root.mkdir()
+    run = _assessed_pr.__wrapped__(report_root)
+    payload = json.loads((run / "final-handoff.json").read_text(encoding="utf-8"))
+    payload["presentation_version"] = 7
+    payload["tables"][0]["heading"] = snapshot_heading
+    row = {
+        "id": "boundary-check",
+        "authors": ["Main reviewer"],
+        "title": "Boundary regression unprotected",
+        "summary": "Both selectors satisfy the current assertion.",
+        "closure_evidence": "The regression fails with the wrong selector.",
+        "cells": ["boundary-check", "Use inputs that distinguish selectors.", "tests/test_parser.py:42", "Required"],
+        "source_ids": ["finding:boundary-check"],
+    }
+    payload["tables"].append(
+        {
+            "heading": "Review Findings and Merge Blocks",
+            "layout": "concise",
+            "overview_only": True,
+            "columns": ["Finding / area", "Required change", "Evidence", "Status"],
+            "rows": [row],
+        }
+    )
+    payload["source_records"].append({"id": "finding:boundary-check", "evidence": "review-notes.md"})
+    payload["source_coverage"].update(source_records_total=6, represented_source_records_total=6)
+    report = run / "review-notes.md"
+    original_open = Path.open
+
+    def open_with_windows_default(path, mode="r", buffering=-1, encoding=None, errors=None, newline=None):
+        """Exercise real report I/O with a Windows code page when encoding is omitted."""
+        if path == report and "b" not in mode and encoding in {None, "locale"}:
+            encoding = "cp1252"
+        return original_open(path, mode, buffering, encoding, errors, newline)
+
+    monkeypatch.setattr(Path, "open", open_with_windows_default)
+    with report.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(
+            "\n\n## Findings\n\n"
+            + "\n\n".join((row["title"], row["summary"], *row["cells"][1:3], row["closure_evidence"]))
+        )
+        handle.write("\n\n" + _load_finalizer().render_review_report_details(payload))
+    retained = report.read_bytes()
+    original = copy.deepcopy(payload)
+
+    rendered = _load_finalizer().render_handoff(payload, report_root=run)
+
+    assert "| ID | Author | Finding | Resolution proposal | Status |" in rendered
+    assert "| boundary-check | Main reviewer | Boundary regression unprotected |" in rendered
+    assert f"| Report | [Markdown report](<{quote(report.resolve().as_posix(), safe='/:')}>) |" in rendered
+    assert rendered.count("| Report |") == 1
+    assert rendered.index("| Reviewers |") < rendered.index("| Report |") < rendered.index("Legend:")
+    assert "**boundary-check**" not in rendered
+    for label in ("Context", "Evidence", "Done when"):
+        assert f"- {label}:" not in rendered
+    assert row["summary"] not in rendered
+    assert row["closure_evidence"] not in rendered
+    assert report.read_bytes() == retained
+    assert payload == original
+    for value in (row["title"], row["summary"], *row["cells"][1:3], row["closure_evidence"]):
+        assert value in report.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("contents", [None, "", "   "])
+def test_compact_review_rejects_missing_or_empty_full_report(tmp_path: Path, contents: str | None) -> None:
+    """Never hide details behind a missing report or substitute the compact final artifact."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    payload = json.loads((run / "final-handoff.json").read_text(encoding="utf-8"))
+    payload["presentation_version"] = 7
+    report = run / "review-notes.md"
+    if contents is None:
+        report.unlink()
+    else:
+        report.write_text(contents, encoding="utf-8", newline="\n")
+    (run / "final.md").write_text("A compact final exists, but it is not the full report.", encoding="utf-8")
+    payload["artifacts"].append({"label": "Review notes", "path": "final.md"})
+    with pytest.raises(ValueError, match=r"review-report-(missing|empty)"):
+        _load_finalizer().render_handoff(payload, report_root=run)
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [pytest.param([], id="no-limits"), pytest.param(["First limit (-0.00)", "Second limit (-0.00)"], id="two-limits")],
+)
+def test_compact_review_confidence_uses_one_bullet_per_limit_and_gap(tmp_path: Path, limits: list[str]) -> None:
+    """Separate each retained uncertainty record without changing text, evidence or order."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    payload = json.loads((run / "final-handoff.json").read_text(encoding="utf-8"))
+    payload["presentation_version"] = 7
+    gaps = [
+        {"gap": "First open gap (-0.03)", "status": "unresolved", "rationale": "First recovery."},
+        {"gap": "Second open gap (-0.02)", "status": "unresolved", "rationale": "Second recovery."},
+        {"gap": "Closed gap (-0.00)", "status": "closed", "evidence": "retained-evidence.json"},
+    ]
+    payload["confidence"].update(limits=limits, gaps=gaps)
+    rendered = _load_finalizer().render_handoff(payload, report_root=run)
+    confidence = rendered.split("**Confidence**\n\n", 1)[1].split("\n**Artifact**", 1)[0]
+    tokens = MarkdownIt("default").parse(confidence)
+    bullet_text = [token.content for token in tokens if token.type == "inline"][1:]
+    assert sum(token.type == "list_item_open" for token in tokens) == len(limits) + len(gaps)
+    assert bullet_text == [
+        *(f"Limit: {limit}" for limit in limits),
+        *(f"Gap [{gap['status']}]: {gap['gap']} — {gap.get('evidence') or gap.get('rationale')}" for gap in gaps),
+    ]
+    assert confidence.startswith("0.95 (fair).\n\n")
+    assert "\nLimits:" not in confidence
+
+
+@pytest.mark.parametrize("defect", ["overview", "layout", "no-snapshot", "terminal", "other-skill"])
+def test_compact_review_rejects_invalid_presentation_scope(tmp_path: Path, defect: str) -> None:
+    """Keep the new compact profile confined to assessed reviews with a linked snapshot."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    payload = json.loads((run / "final-handoff.json").read_text(encoding="utf-8"))
+    payload["presentation_version"] = 7
+    if defect in {"overview", "layout"}:
+        payload["tables"].append(
+            {
+                "heading": "Review Findings and Merge Blocks",
+                "layout": "concise" if defect == "overview" else "grouped",
+                "overview_only": defect != "overview",
+                "columns": ["Finding / area", "Required change", "Evidence", "Status"],
+                "rows": [],
+            }
+        )
+    elif defect == "no-snapshot":
+        payload["tables"] = []
+    elif defect == "terminal":
+        payload["branch"] = "closed"
+    else:
+        payload["skill"] = "implement"
+    with pytest.raises(
+        ValueError, match=r"review-(overview-only|concise-layout|snapshot)-required|presentation-version-invalid"
+    ):
+        _load_finalizer().render_handoff(payload, report_root=run)
+
+
+@pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="filesystem cannot create file symlinks")
+def test_compact_review_rejects_full_report_symlink(tmp_path: Path) -> None:
+    """A compact final artifact cannot stand in for the owning full Markdown report."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    payload = json.loads((run / "final-handoff.json").read_text(encoding="utf-8"))
+    report = run / "review-notes.md"
+    report.unlink()
+    report.symlink_to(run / "final.md")
+    with pytest.raises(ValueError, match="review-report-missing"):
+        _load_finalizer().render_handoff(payload, report_root=run)
+
+
+def test_compact_review_report_link_without_reviewer_display(tmp_path: Path) -> None:
+    """Keep the full report reachable even when the snapshot has no attributed reviewer row."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    payload = json.loads((run / "final-handoff.json").read_text(encoding="utf-8"))
+    payload["tables"][0].pop("reviewers")
+    rendered = _load_finalizer().render_handoff(payload, report_root=run)
+    assert "| Reviewers |" not in rendered
+    assert rendered.count("| Report | [Markdown report](<") == 1
+
+
+@pytest.mark.parametrize("field", ["title", "summary", "closure_evidence"])
+def test_completed_compact_review_rejects_missing_full_report_detail(tmp_path: Path, field: str) -> None:
+    """Completion cannot hide a canonical finding field in neither terminal nor linked report."""
+    result_path = _write_remediation_producer(tmp_path, _selection()["items"][:1])
+    run = result_path.parent
+    record = json.loads(result_path.read_text(encoding="utf-8"))["metadata"]["review_findings"][0]
+    report = run / "review-notes.md"
+    before, details = report.read_text(encoding="utf-8").split("## Finding Details", 1)
+    assert record[field] in details
+    report.write_text(
+        before + "## Finding Details" + details.replace(record[field], "Omitted detail"), encoding="utf-8", newline="\n"
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parents[2] / "shared/find-review-report.py"),
+            "--complete-run",
+            str(run),
+            "--parent-thread-id",
+            "thread",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "review-report-details-mismatch" in completed.stderr
+    assert completed.stdout == ""

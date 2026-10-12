@@ -21,7 +21,9 @@ NATIVE_CONTRACT = PLUGIN_ROOT / "shared" / "native-skill-contract.md"
 # 966 bytes for the local Git approval grant lines in Commit Authorization: commit authority is one of the rules that
 # must stay always-loaded, since a session that never reads the shared contract would otherwise commit or self-grant
 # without knowing the grant exists.
-TEMPLATE_BYTE_BUDGET = 38234
+# Raised by 324 bytes for the after-wait notification checkpoint: ordinary sessions also wait for agents without
+# loading a skill contract, so pending roles and empty-return evidence limits must stay visible in the global rule.
+TEMPLATE_BYTE_BUDGET = 38558
 
 
 @pytest.mark.packaging

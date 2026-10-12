@@ -637,7 +637,7 @@ def test_unverified_concern_survives_bound_final_handoff(tmp_path: Path) -> None
     handoff["next_steps"] = [concern["id"]]
     validator = _load_shared_validator()
     validator._validate_code_review_final_handoff(result, handoff, out_dir=run)
-    rendered = _load_finalizer().render_handoff(handoff)
+    rendered = _load_finalizer().render_handoff(handoff, report_root=run)
     for field in ("id", "missing_prerequisite", "owner", "next_check", "closure_condition"):
         assert concern[field] in rendered
     handoff["remaining"] = []

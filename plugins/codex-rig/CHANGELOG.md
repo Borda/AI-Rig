@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.35.4
+
+- Include the bound PR number and clickable canonical URL inside remediation PR decision questions, including missing-review and unavailable-PR remediation prompts. Explain collection failures as no source review performed, preserving the exact diagnostic and existing continuation choices.
+- Keep remediation active after nested review and source drift: own safe PR refresh and checkout recovery, protect existing local fixes, and report incomplete/zero implementation until finding closure is verified.
+- Group new PR-targeted remediation reports under `code-remediate/pr-<number>/run-<NNN>/`, using collected PR identity and the existing atomic promotion helper; preserve local-only, failed-collection and resumed run paths.
+- Flag closed or merged PRs before review/remediation intake, including resume and report-backed PR requests, using an identity-bound current-state read before report lookup, checkout or reviewer dispatch.
+- Keep assessed review terminal output to the findings overview, link the full Markdown report from the snapshot header, and render confidence limits and gaps as separate bullets. Derive and validate complete finding details in saved reports before hiding them from terminal output, and preserve historical presentation readers.
+- Require a visible agent status after every blocking wait, including empty returns, before another tool call: completed/expected counts, pending roles and elapsed time, last observed event, deadlines and next action. Repeat the checkpoint at review and challenge wait sites and in the global instructions; tool waiting banners are insufficient. Require an outstanding accepted dispatch, distinguish interval expiry from an agent deadline, and do not infer progress, absence or failure from an empty wait.
+- Display roles without execution-origin suffixes and scores in square brackets in new assessed review headers and finding tables. Preserve machine provenance, historical rendered bytes and review-note validation.
+
 ## 0.35.3
 
 - Label each Code Quality item in the global `AGENTS.md` template and move the code-standard, coverage and ML/AI detail into `shared/global-baseline-details.md` behind trigger lines, keeping the eager fail-before/pass-after test bullet; the template shrinks by 1,775 bytes.

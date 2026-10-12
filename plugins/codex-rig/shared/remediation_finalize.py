@@ -896,6 +896,10 @@ def derive_handoff(
     if handoff.get("skill") != "code-remediate":
         handoff["artifacts"] = _result_artifact(handoff.get("artifacts") or [], artifact_path)
         if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed":
+            handoff["presentation_version"] = 7
+            for table in handoff.get("tables", []):
+                if table.get("heading") == "Review Findings and Merge Blocks":
+                    table.update(layout="concise", overview_only=True)
             _derive_review_actions(run, metadata, handoff)
         return handoff
     handoff["artifacts"] = _artifacts(handoff.get("artifacts") or [], artifact_path)
@@ -978,6 +982,12 @@ def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[st
         raise DeriveError("review-action-notes-identity-mismatch")
     if any(len(cells) not in {4, 5} or authored_status.get(cells[0]) != cells[-1] for cells in parsed[2:]):
         raise DeriveError("review-action-notes-status-mismatch")
+    if handoff.get("presentation_version") == 7:
+        detail_sections = list(re.finditer(r"(?ms)^## Finding Details[^\S\r\n]*\r?\n.*?(?=^## |\Z)", notes))
+        if len(detail_sections) > 1:
+            raise DeriveError("review-report-details-ambiguous")
+        if detail_sections and "<!-- codex-rig:review-details -->" not in detail_sections[0][0]:
+            raise DeriveError("review-report-details-unowned")
     _write_review_action_views(
         notes_path,
         notes,
@@ -986,11 +996,30 @@ def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[st
         rows,
         by_id,
         metadata.get("reviewer_assessments") is not None,
+        role_only=handoff.get("presentation_version") == 7,
     )
+    if handoff.get("presentation_version") == 7:
+        # Keep authored prose byte-exact while owning one deterministic, complete detail section.
+        notes = notes_path.read_bytes().decode("utf-8")
+        details = final_handoff.render_review_report_details(handoff) + "\n"
+        sections = list(re.finditer(r"(?ms)^## Finding Details[^\S\r\n]*\r?\n.*?(?=^## |\Z)", notes))
+        if sections:
+            start, end = sections[0].span()
+        else:
+            start = end = notes.index(f"## {heading}")
+        notes_path.write_bytes((notes[:start] + details + notes[end:]).encode("utf-8"))
 
 
 def _write_review_action_views(
-    path: Path, notes: str, start: int, end: int, rows: list[dict[str, Any]], records: dict[str, Any], attributed: bool
+    path: Path,
+    notes: str,
+    start: int,
+    end: int,
+    rows: list[dict[str, Any]],
+    records: dict[str, Any],
+    attributed: bool,
+    *,
+    role_only: bool = False,
 ) -> None:
     """Render both action views from checked identities while preserving surrounding notes bytes."""
     columns = ["Finding / area", *(["Author"] if attributed else []), "Required change", "Evidence", "Status"]
@@ -1008,7 +1037,9 @@ def _write_review_action_views(
             authors = record.get("authors")
             if not isinstance(authors, list) or not authors or not all(isinstance(author, str) for author in authors):
                 raise DeriveError(f"review-action-record-invalid:{record['id']}:authors")
-            cells.insert(1, ", ".join(authors))
+            cells.insert(
+                1, ", ".join(author.removesuffix(" (parent substitute)") if role_only else author for author in authors)
+            )
         rendered.append(
             "| "
             + " | ".join(cell.replace("\r\n", "\n").replace("\n", "<br>").replace("|", r"\|") for cell in cells)

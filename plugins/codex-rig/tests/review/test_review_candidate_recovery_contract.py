@@ -13,6 +13,44 @@ CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
 
 
 @pytest.mark.installed_plugin
+@pytest.mark.parametrize("skill_name", ["code-review", "code-remediate"])
+def test_pr_state_preflight_precedes_workflow_intake(skill_name: str) -> None:
+    """Stop closed PRs before allocating work or offering a redundant review workflow."""
+    skill = (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+    workflow = skill.split("## Workflow (Exact Commands)", 1)[1]
+    preflight = workflow.index("#pr-state-preflight")
+
+    assert preflight < workflow.index("### 01:")
+    assert preflight < workflow.index("find-review-report.py")
+    assert "including resumed PR work" in workflow[: workflow.index("### 01:")]
+
+
+@pytest.mark.installed_plugin
+def test_pr_state_preflight_covers_identity_terminal_states_and_unknown_state() -> None:
+    """Keep PR identity, current state and early exit coupled across both caller skills."""
+    contract = (PLUGIN_ROOT / "shared" / "native-skill-contract.md").read_text(encoding="utf-8")
+    entry = contract.split("## PR State Preflight", 1)[1].split("\n## ", 1)[0]
+
+    for requirement in (
+        "--json url,state",
+        "--canonical-pr-url",
+        "current-branch",
+        "returned URL",
+        "`CLOSED` or `MERGED`",
+        "`OPEN`",
+        "missing or unknown state",
+        "prior-report lookup",
+        "run allocation",
+        "fresh-review question",
+        "checkout",
+        "specialist dispatch",
+        "Local report-only",
+        "not proof of current PR state",
+    ):
+        assert requirement in entry
+
+
+@pytest.mark.installed_plugin
 def test_review_prior_choice_precedes_run_creation() -> None:
     """Avoid superseding a reusable completed report before offering the entry choice."""
     skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
@@ -148,6 +186,53 @@ def test_dispatch_order_failure_uses_existing_fallback_without_recollection() ->
         "source drift, denied capability and exhausted retry limits",
     ):
         assert invariant in schedule
+
+
+@pytest.mark.installed_plugin
+def test_nested_review_branch_drift_keeps_remediation_owner_and_incomplete_status() -> None:
+    """Prevent a completed child review from becoming a completed no-op remediation handoff."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    handoff = (PLUGIN_ROOT / "shared/final-handoff-contract.md").read_text(encoding="utf-8")
+    supplement = (PLUGIN_ROOT / "shared/final-handoff-code-remediate.md").read_text(encoding="utf-8")
+    nested = handoff.split("## Nested review delivery", 1)[1].split("\n## ", 1)[0]
+
+    assert "#source-drift-recovery" in nested
+    assert "Remediation remains incomplete" in nested
+    for contract in (skill, supplement):
+        assert "Before every status or final answer" in contract
+        assert "prepared branch receipt" in contract
+        assert "zero implemented" in contract
+        assert "first unmet checkpoint" in contract
+        assert "evidence-only closure" in contract
+    assert "send another message" in nested
+
+
+@pytest.mark.installed_plugin
+def test_source_drift_recovery_preserves_commits_and_owns_safe_refresh() -> None:
+    """Require recovery of stale source without pulling the wrong branch or overwriting local fixes."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    recovery = skill.split("### Source drift recovery", 1)[1].split("\n### ", 1)[0]
+
+    for invariant in (
+        "destination branch ref before checkout",
+        "last recorded authorized revision",
+        "git pull --ff-only",
+        "current PR metadata",
+        "never pull the unrelated current branch",
+        "Do not recollect over local remediation commits",
+        "git switch <recorded-original-branch>",
+        "require the destination tip to equal the last recorded authorized revision",
+        "fresh attempt",
+        "source-dependent checks",
+        "active writer",
+        "first unmet checkpoint",
+        "existing authorization",
+    ):
+        assert invariant in recovery
+    assert "never automatically switch, reset" not in skill
+    legacy = skill.split("For a schema-1 legacy receipt", 1)[1].split("\n\n", 1)[0]
+    assert "[Source drift recovery](#source-drift-recovery) before `recover`" in legacy
+    assert "retained PR metadata" in legacy
 
 
 @pytest.mark.installed_plugin
