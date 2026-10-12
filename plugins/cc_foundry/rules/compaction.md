@@ -8,7 +8,7 @@ paths:
 
 ### Verbatim-file principle
 
-Must-keep details (run-dir, task IDs, key decisions, report paths) go in `.temp/state/skill-contract.md` — not relied on in prose summary. PreCompact hook (`task-log.js`) appends contract file **verbatim** to `session-context.md`; post-compaction re-read restores it losslessly.
+Must-keep details (run-dir, task IDs, key decisions, report paths) go in `.temp/state/skill-contract.md` — not relied on in prose summary. PreCompact hook (`task-log.js`) appends contract file **verbatim** to `session-context.md`; only owner-verified block is authoritative.
 
 Prose Compact Instructions remain best-effort. Don't over-promise zero loss for anything not in contract.
 
@@ -18,7 +18,7 @@ Refresh at boundary **after** expanding phase (parallel fan-out, iteration loop,
 
 Block format and placement rule: see `compaction-contract.md`.
 
-Hook rides auto-compact (85% context threshold) — no manual trigger. Compaction timing best-effort; only verbatim survival of *whatever contract exists* is deterministic.
+Hooks fire on auto or typed `/compact`; skills cannot self-compact. Compaction timing best-effort; only verbatim survival of *whatever contract exists* is deterministic.
 
 **Idle gates are the expensive boundary.** An `AskUserQuestion` the user may leave open for hours outlives the prompt-cache TTL; the next turn then rewrites the whole live context at write rate (12.5–50× read by model, more for a 1-hour write). Measured across review/resolve sessions: cold starts were 40–44% of all cache-write tokens, single rewrites of 240k–320k tokens. A skill cannot compact itself, so at every gate expected to idle it (1) refreshes the contract so a mid-wait `/compact` is lossless, and (2) appends one hint line to that `AskUserQuestion`'s `question` text: `` Long wait? `/compact` now — <state> saved at <path>, resume lossless. `` Never as reply prose before the call — on models such as Opus 5.5 and Sonnet 5.5, text written before a tool call can come back as an empty progress update, and Bash stdout is not reliably shown either; the question text is always rendered. The resumed skill re-reads its report/state files, never the transcript.
 

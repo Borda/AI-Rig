@@ -1,8 +1,8 @@
 """Pin every user ask the research skills had at HEAD before the turn-budget pass, so no question is silently removed.
 
 The pass touched only task-tracking lines and agent-wait wording in these skills. Each row is the first ~90 characters
-(cut at a word boundary) of one HEAD line naming ``AskUserQuestion`` — the question's own text or its gate. A removed
-or reworded question deletes its marker and fails here; an intentional rewording updates the row together with the
+(cut at a word boundary) of one HEAD line naming ``AskUserQuestion`` — the question's own text or its gate. A removed or
+reworded question deletes its marker and fails here; an intentional rewording updates the row together with the
 question.
 
 fortify, judge and retro asked nothing at HEAD (their only mention is ``allowed-tools``), so they have no rows.
@@ -40,12 +40,12 @@ _ASKS = [
     ),
     pytest.param(
         "skills/plan/SKILL.md",
-        "Any agent returns `ok: false` → invoke `AskUserQuestion` with the advisor suggestions",
+        "Any agent returns `ok: false` → invoke `AskUserQuestion` after Writing the proposed config",
         id="plan-5",
     ),
     pytest.param(
         "skills/plan/SKILL.md",
-        "All advisors return `ok: true` AND `OUTPUT_EXISTS`: invoke `AskUserQuestion` — (a)",
+        "All advisors return `ok: true` AND `OUTPUT_EXISTS`: invoke `AskUserQuestion` after Writing",
         id="plan-6",
     ),
     pytest.param(
@@ -123,7 +123,7 @@ _ASKS = [
     ),
     pytest.param(
         "skills/kaggle/SKILL.md",
-        "| `unauthorized` | `AskUserQuestion` with the credential instructions below as the",
+        "| `unauthorized` | Save and print the credential instructions below, then `AskUserQuestion`",
         id="kaggle-4",
     ),
     pytest.param(

@@ -152,7 +152,7 @@ Parse `<goal>`. Scan codebase to detect:
 
 ### Step P-P2: Present proposed config
 
-Present config as code block for review. Include:
+Prepare config as a code block for review. Write it to a free `.temp/research-plan-config-<session-id>.md` path first (`<session-id>` = `$CSID`; if taken, append `-2`, then `-3`, … until free). Print the saved config once as the last reply text before its confirmation question; question text carries the goal, scope-file count, metric/guard status and `→ <resolved config path>`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout, or code fence. Options carry labels and one-line descriptions, no previews; preserve order and keep the recommended option second. Include:
 
 ```yaml
 metric_cmd:      [command that prints a single numeric result]
@@ -164,7 +164,7 @@ scope_files:     [files the ideation agent may modify]
 compute:         local | colab | docker
 ```
 
-Dry-run both commands before presenting (add `# timeout: 60000` to timed bash calls — user commands may run minutes; ML pipeline data-loading steps may exceed 60s — increase timeout or use guard_cmd dry-run only when metric dry-run slow). Failure → invoke `AskUserQuestion` with the error and proposed corrections in its question text — (a) **I fixed the command — re-run dry-run** · (b) **Proceed anyway (I know this command is correct)** · (c) **Abort**. Never proceed to P-P3 without user confirmation after failure.
+Dry-run both commands before presenting (add `# timeout: 60000` to timed bash calls — user commands may run minutes; ML pipeline data-loading steps may exceed 60s — increase timeout or use guard_cmd dry-run only when metric dry-run slow). Failure → add the full error and proposed corrections to the saved config artifact, then print that content once as the last reply text before `AskUserQuestion`. Its question text carries the short error/correction summary and `→ <resolved config path>` under the limits above — (a) **I fixed the command — re-run dry-run** · (b) **Proceed anyway (I know this command is correct)** · (c) **Abort**. Never proceed to P-P3 without user confirmation after failure.
 
 ### Step P-P2b: Agent validation (pre-write)
 
@@ -219,14 +219,14 @@ test -f "$OUT_ARG" && echo "EXISTS"
 
 Record result as `OUTPUT_EXISTS`; `$OUT_ARG` is `OUTPUT_PATH` for P-P3.
 
-Any agent returns `ok: false` → invoke `AskUserQuestion` with the advisor suggestions as the `preview` of every option (not as reply text before the call — it can arrive as an empty progress update; Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full suggestions to `$PLAN_RUN_DIR/advisor-suggestions.md` first, make every option's `preview` a compact summary ending `→ full suggestions: $PLAN_RUN_DIR/advisor-suggestions.md`, and name that path in the question text), combining advisor feedback and (if `OUTPUT_EXISTS`) overwrite decision in one call:
+Any agent returns `ok: false` → invoke `AskUserQuestion` after Writing the proposed config and full advisor suggestions to `$PLAN_RUN_DIR/advisor-suggestions.md` and printing them once as the last reply text before the question call. The question text carries a plain summary of issue count, headline, and `→ $PLAN_RUN_DIR/advisor-suggestions.md`, plus the overwrite warning if `OUTPUT_EXISTS`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout, or code fence. Options carry labels and one-line descriptions, no previews; preserve order and keep the recommended option second. Combine advisor feedback and (if `OUTPUT_EXISTS`) overwrite decision in one call:
 
-- question: "Advisor flagged issues (see each option's preview). How to proceed?"
+- question: plain lines, separated by actual newlines: `Advisor flagged <N> issues: <headline>.`, the overwrite warning if applicable, `→ $PLAN_RUN_DIR/advisor-suggestions.md`, then `How to proceed?`
 - (a) **Revise config** → re-present P-P2 config block (re-enter P-P2; max 3 re-entries before forcing proceed-or-abort)
 - (b) **Proceed with current config** — if `OUTPUT_EXISTS`: warn "will overwrite `<output_path>`"; if not: proceed silently
 - (c) **Abort** — stop
 
-All advisors return `ok: true` AND `OUTPUT_EXISTS`: invoke `AskUserQuestion` — (a) Overwrite `<output_path>` — proceed; (b) Abort — stop. All advisors return `ok: true` AND NOT `OUTPUT_EXISTS`: proceed directly to writing — no AskUserQuestion needed.
+All advisors return `ok: true` AND `OUTPUT_EXISTS`: invoke `AskUserQuestion` after Writing the current config and advisory block to `$PLAN_RUN_DIR/advisor-suggestions.md` and printing them once as the last reply text before the call; question text carries the goal, scope-file count, overwrite warning and `→ $PLAN_RUN_DIR/advisor-suggestions.md`, under the limits above, no previews — (a) Overwrite `<output_path>` — proceed; (b) Abort — stop. All advisors return `ok: true` AND NOT `OUTPUT_EXISTS`: proceed directly to writing — no AskUserQuestion needed.
 
 ### Step P-P3: Write program.md
 

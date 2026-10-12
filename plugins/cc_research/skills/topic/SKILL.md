@@ -56,7 +56,7 @@ cat "$_RESEARCH_SHARED/agent-resolution.md"
 
 **Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase — paper collection, researcher analysis, report generation — all in the same response as the first real tool call. Mark in_progress/completed throughout. Every later `TaskUpdate` rides with the next real tool call — never a bookkeeping-only turn; the one standalone call is a `completed` right before a long report.
 
-- Always create **"Print report header"** as its own task (all paths — single-agent Step 3, `--team`, `plan`) — `in_progress` right after the report file is written (by the lead directly, or by a spawned consolidator's returned envelope); `completed` only once the delivery block (`---` header table + compact summary) is built from the saved report for the Follow-up gate previews — it is shown only there, never also as reply text; the hook denies a gate call whose previews lack it.
+- Always create **"Print report header"** as its own task (all paths — single-agent Step 3, `--team`, `plan`) — `in_progress` right after the report file is written (by the lead directly, or by a spawned consolidator's returned envelope); `completed` only once the delivery block (`---` header table + compact summary) is built from the saved report for the final reply after the answer. Prepare a plain summary for the Follow-up gate question text; the hook denies a gate call that lacks the report path, `Title`, or `Outcome`. The full header table is printed once after the answer, never before or inside the question.
 - This task exists because a sibling skill (oss:review) had an incident: report written correctly but terminal print step silently skipped while the hard-enforced `AskUserQuestion` fired anyway — tracking the print as its own task makes it as trackable as the tool calls around it.
 - The shared `## Follow-up gate` below must not fire while this task is `pending`/`in_progress`.
 
@@ -257,9 +257,9 @@ Write full report to `$REPORT_OUT` via Write tool (resolved by counter-suffix lo
 
 TaskUpdate "Print report header" → `in_progress`.
 
-Read the saved report and build the delivery block in this same turn: every `---` header field as a two-column `Field | Value` table in file order, then the compact summary below. Not printed here — shown only as the `preview` of every Follow-up gate option, never also as reply text, never Bash/tool stdout (on 5.5 models text before a tool call may come back as an empty progress update). **Preview cap**: ≤2000 chars and ≤12 lines per preview, every line counted — Claude Code withholds a longer preview and clips a taller one, no scroll. Block over the cap: the report file is the full copy, every option's `preview` is a compact summary — the `Title` and `Confidence` rows (those present) verbatim as a `Field | Value` table plus the Best method line — ending `→ full header + report: <report path>`, and the gate's question text names that same path. The gate always fires, so there is no reply-text path; a turn ending without it gets the table demanded as final reply text by the `Stop` hook. TaskUpdate "Print report header" → `completed` once the block is built:
+Read the saved report and build the delivery block in this same turn: every `---` header field as a two-column `Field | Value` table in file order, then the compact summary below. Prepare the plain summary for the Follow-up gate question text from the same saved report: report path, `Title`, `Outcome`, and brief confidence/gap facts. Print the full header table and compact summary once in the final reply after the answer, never before the question or in an option preview, never Bash/tool stdout. TaskUpdate "Print report header" → `completed` once the block is built; preparation does not discharge final delivery. A turn ending without the table gets it demanded as final reply text by the `Stop` hook:
 
-> **Output-Routing exemption**: the delivery block lives only in the Follow-up gate option previews, so quality-gates.md §Report File Format's table-first-in-reply rule and Output Routing step 2a do not apply to the reply here.
+> **Output-Routing exemption**: defer quality-gates.md §Report File Format's table-first-in-reply rule and Output Routing step 2a until the final reply after the answer. The Follow-up gate carries only the plain summary in question text, with no previews; the final reply opens with the full header table.
 
 ```text
 ---
@@ -273,7 +273,7 @@ Confidence:  [aggregate score] — [key gaps]
 ---
 ```
 
-**Hook-enforced**: on `Stop`, `hooks/enforce-topic-header.js` keeps a turn going once per report when it ends without the matching header table — skipping the follow-up question does not skip delivery. It also blocks only this workflow's follow-up question until the current report exists and every `---` header field appears in one matching two-column table in that question's option previews within the preview cap — or, over the cap, the question text names the report file and every option preview is a compact summary within the cap naming it — the question-time check reads only the call, so a reply-text table before it does not count (it can come back as an empty progress update). Missing delivery evidence blocks this transition; apply the placement the deny reason names, then retry. Diagnostic/recovery questions remain available; use their own question header, not `topic`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
+**Hook-enforced**: on `Stop`, `hooks/enforce-topic-header.js` keeps a turn going once per report when it ends without the matching header table in the final reply after the answer — skipping the follow-up question does not skip delivery. It also blocks only this workflow's follow-up question until the current report exists and the first question text carries its report path, `Title`, and `Outcome` as a plain summary, at most 1,500 characters. Option descriptions and previews do not supply the summary. Missing delivery evidence blocks this transition; apply the placement the deny reason names, then retry. Diagnostic/recovery questions remain available; use their own question header, not `topic`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
 
 End response with `## Confidence` block per CLAUDE.md output standards.
 
@@ -310,7 +310,7 @@ Follow `modes/plan.md` (loaded above) and execute its workflow.
 
 ## Follow-up gate
 
-**Hard gate**: check "Print report header" task status before anything else here. Not `completed` → the delivery block has not been built yet — go back and do it now (Step 3 / team.md / plan.md, whichever path ran), then mark the task `completed`, before calling `AskUserQuestion` below, which carries the block as its only copy. `hooks/enforce-topic-header.js` backs this gate structurally — the `AskUserQuestion` below is denied outright while the run's report file is absent or empty on disk.
+**Hard gate**: check "Print report header" task status before anything else here. Not `completed` → the delivery block has not been built yet — go back and do it now (Step 3 / team.md / plan.md, whichever path ran), then mark the task `completed`, before calling `AskUserQuestion` below. The question carries the plain summary; the prepared full header table opens the final reply after the answer, once. `hooks/enforce-topic-header.js` backs this gate structurally — the `AskUserQuestion` below is denied outright while the run's report file is absent or empty on disk.
 
 ```bash
 rm -f .temp/state/skill-contract.md  # clear contract — topic research complete (compaction-contract.md §Lifecycle)  # timeout: 5000
@@ -319,11 +319,11 @@ rm -f .temp/state/skill-contract.md  # clear contract — topic research complet
 Call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments:
 
 - header: `topic`
-- question: "What next? (report saved at \<report path>.)" — the run's report file: `$REPORT_OUT`, or `$PLAN_OUT` on the plan path
+- question: plain summary, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout, or code fence. Use actual newlines: "What next?", then `Title: <saved Title>`, `Outcome: <saved Outcome>`, `Confidence: <brief score and gaps>`, and `→ <report path>`, each on its own line — the run's report file: `$REPORT_OUT`, or `$PLAN_OUT` on the plan path. Preserve the saved `Title` and `Outcome`; shorten optional facts to fit.
 - (a) label: `/research:plan` — description: design a research program from these findings
 - (b) label: `/develop:feature` — description: implement based on findings (requires `develop` plugin)
 - (c) label: `skip` — description: no action
-- every option: `preview` = the delivery block (report header table, then compact summary), verbatim, table first — its only copy — or, over the preview cap, its compact summary naming the report path
+- Options carry their label and one-line description only, with no previews. Preserve their order; the recommended option stays second.
 
 </workflow>
 

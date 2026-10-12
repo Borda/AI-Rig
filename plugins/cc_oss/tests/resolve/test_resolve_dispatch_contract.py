@@ -237,14 +237,14 @@ def test_selection_gate_never_caps_or_trims_the_selection() -> None:
     skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
     selection = skill[skill.index("## Step 3d") : skill.index("## Step 7b join")]
     notice = selection[selection.index("**No per-pass item cap**") :]
-    bulk_text = skill[skill.index("**Bulk question text**") : skill.index("**ESSENTIAL — exactly these 4 options")]
+    bulk_text = skill[skill.index("\n**Bulk question text**") : skill.index("**ESSENTIAL — exactly these 4 options")]
     assert "More than 20 items were selected" not in skill
     assert "never trim a selection or defer a remainder to a rerun" in notice
     assert "rides in the ≥19 call's Q1 question text (**Bulk question text** line 4, more than 50 pending)" in notice
     assert "never in a task subject" in notice
     assert "TaskUpdate(task_id=TASK_IMPL, subject=" not in skill
     assert "4. `→ N pending items — selecting more than 50 runs them all in this pass" in bulk_text
-    assert "the ≥19 call when more than 50 items are pending" in bulk_text
+    assert "the ≥19 call with more than 50 pending" in bulk_text
     assert "print one line in the reply" not in notice
     assert "the report's summary carries Step 3d's large-selection line" in skill
     assert "No question, no trim." in notice
@@ -297,23 +297,20 @@ def test_selection_table_keeps_one_row_per_item_id() -> None:
     assert "cluster into composite rows" not in readme
 
 
-def test_large_selection_table_is_routed_to_the_table_file() -> None:
-    """Step 3d sends any table over the preview cap — always the ≥19 compressed table — to the run's table file.
-
-    The host hides a preview over 2000 characters and clips one past the terminal height with no scroll, so a 25-row
-    table in the previews would leave most rows unseen; the question text names the file and every preview a summary.
-    """
+def test_large_selection_table_is_saved_and_question_text_lists_items() -> None:
+    """Large selections keep every table row while Q1 budgets the plain item list and notices."""
     skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
-    cap = skill[skill.index("**Preview cap — MANDATORY**") : skill.index("**Cap mechanics")]
+    cap = skill[skill.index("**Question budget — MANDATORY**") : skill.index("**Cap mechanics")]
     large = skill[
         skill.index("**≥19 pending items — context-budget mode**") : skill.index("<!-- branch: main-path — commit-mode")
     ]
-    assert "**2000 characters and 12 rendered lines**" in cap
-    assert "`$IMPL_DIR/action-items-table.md` with the Write tool, before the call" in cap
-    assert "Add line 6 of the **Bulk question text**" in cap
-    assert "the same compact summary within the cap" in cap
-    assert "with every row in `$IMPL_DIR/action-items-table.md` per **Preview cap**" in large
-    assert "19+ rows never fit the `preview` of every bulk-action option" in large
+    assert "**1,500 characters**" in cap
+    assert "Reserve those fixed lines first" in cap
+    assert "pending lines that fit" in cap
+    assert "exact counts for every pending type" in cap
+    assert "with every row in `$IMPL_DIR/action-items-table.md` per **Question budget**" in large
+    assert "as the last text of the reply message that issues" in large
+    assert "options carry no preview" in large
     assert "6. `→ Full item table: <IMPL_DIR>/action-items-table.md`" in skill
 
 
@@ -773,10 +770,10 @@ def test_item_checkbox_split_never_asks_a_one_option_question(pending: int) -> N
 
 @pytest.mark.parametrize("band", ["0, closed items present", "1", "2-3", "4-6", "7-9", "10-18"])
 def test_every_selection_call_leads_with_the_bulk_question(band: str) -> None:
-    """Every Step 3d selection call asks the bulk question first, so its table preview is the first screen.
+    """Every Step 3d selection call asks the bulk question first, so its question-text item list is the first screen.
 
-    With the bulk page after the item checkboxes, the user picked items from short labels and reached the table last.
-    The two-call band checks both calls.
+    With the bulk page after the item checkboxes, the user picked short labels before reaching the item context. The
+    two-call band checks both calls.
     """
     skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
     table = skill[skill.index("| Pending | Call 1 slots |") : skill.index("Checkbox mode holds")]
@@ -793,7 +790,7 @@ def test_bulk_choice_never_discards_checked_or_typed_picks() -> None:
     """
     skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
     resolution = skill[skill.index("**Bulk-action resolution**") : skill.index("**Item checkbox questions**:")]
-    text = skill[skill.index("**Bulk question text**") : skill.index("**ESSENTIAL — exactly these 4 options")]
+    text = skill[skill.index("\n**Bulk question text**") : skill.index("**ESSENTIAL — exactly these 4 options")]
     assert "a bulk answer never discards an explicit pick" in resolution
     assert "- (a) → `SELECTED_ITEMS` = all pending `[req]` IDs ∪ checked IDs ∪ typed IDs" in resolution
     assert "- (b) → `SELECTED_ITEMS` = all pending `[suggest]` IDs ∪ checked IDs ∪ typed IDs" in resolution
@@ -802,10 +799,8 @@ def test_bulk_choice_never_discards_checked_or_typed_picks() -> None:
         "(d) with any checked or typed ID → resolve exactly as unanswered below: the explicit picks win." in resolution
     )
     assert "closed items excluded" not in resolution
-    assert (
-        "leave this unanswered and tick them on the next tabs. (a)–(c) add every item you tick or type; (d) applies"
-        " only when you tick or type none.` — every selection call carrying item-checkbox questions" in text
-    )
+    assert "leave this unanswered and tick them on the next tabs.` — only with item-checkbox questions" in text
+    assert "(a)–(c) add checked/typed IDs and (d) yields to them" in text
 
 
 def test_closed_only_branch_states_the_same_bulk_resolution() -> None:
@@ -2362,14 +2357,25 @@ def test_challenge_consumer_cannot_relabel_unverified_as_rejected(tmp_path: Path
         pytest.param("moved-after-batch", id="prior-c1-commit"),
         pytest.param("missing-report", id="lost-publication"),
         pytest.param("phase1-early", id="phase1-early-pinned"),
+        pytest.param("phase1-early-clean-merge", id="phase1-early-clean-merge-pinned"),
         pytest.param("phase1-late", id="phase1-late-checkout"),
     ],
 )
 def test_c1_task_file_reuses_scoped_parent_proof_after_batch_recheck(
     tmp_path: Path, lineage: Lineage, matched_online: bool, proof_state: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The actual C1 task file carries usable or historical proof without executing external text."""
+    """Carry scoped proof through C1 and align Phase 1 freshness with its instructed source read."""
     monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", _bash_path(_PLUGIN))
+    if proof_state == "phase1-early-clean-merge":
+        pr_branch = _git(lineage.repo, "branch", "--show-current")
+        _git(lineage.repo, "checkout", "-qb", "target-next")
+        (lineage.repo / "core.py").write_text("VALUE = 3\n", encoding="utf-8", newline="\n")
+        _git(lineage.repo, "commit", "-qam", "target changes reviewed source")
+        _git(lineage.repo, "checkout", "-q", pr_branch)
+        (lineage.repo / "notes.txt").write_text("PR documentation\n", encoding="utf-8", newline="\n")
+        _git(lineage.repo, "add", "notes.txt")
+        _git(lineage.repo, "commit", "-qm", "PR changes a separate file")
+        lineage = Lineage(lineage.repo, lineage.base, _git(lineage.repo, "rev-parse", "HEAD"))
     review = tmp_path / "review"
     review.mkdir()
     report = review / "review-report.md"
@@ -2504,7 +2510,14 @@ def test_c1_task_file_reuses_scoped_parent_proof_after_batch_recheck(
     _write_impl_file(tmp_path, "c1-item-now.txt", "1\n")
     dispatch = (_RESOLVE / "modes/action-item-dispatch.md").read_text(encoding="utf-8")
     if proof_state.startswith("phase1-"):
-        _git(lineage.repo, "commit", "-q", "--allow-empty", "-m", "C1 implementation advanced checkout")
+        if proof_state == "phase1-early-clean-merge":
+            _git(lineage.repo, "merge", "--no-commit", "--no-ff", "target-next")
+            assert _git(lineage.repo, "diff", "--name-only", "--diff-filter=U") == ""
+            _git(lineage.repo, "commit", "--no-edit")
+            assert _git(lineage.repo, "status", "--porcelain") == ""
+            assert _git(lineage.repo, "rev-parse", "HEAD") != lineage.tip
+        else:
+            _git(lineage.repo, "commit", "-q", "--allow-empty", "-m", "C1 implementation advanced checkout")
         (tmp_path / "resolve-pr-number-resolve-chain-link").write_text("7\n", encoding="utf-8", newline="\n")
         (tmp_path / "resolve-pr-head-oid-resolve-chain-link").write_text(
             lineage.tip + "\n", encoding="utf-8", newline="\n"
@@ -2518,8 +2531,9 @@ def test_c1_task_file_reuses_scoped_parent_proof_after_batch_recheck(
         checked = _run_resolve_block(_bash_block_containing(dispatch, marker), tmp_path, lineage.repo, lineage.tip)
         assert checked.returncode == 0, checked.stdout + checked.stderr
         current = json.loads(items.read_text(encoding="utf-8"))
-        expected_parent = "CONFIRMED" if proof_state == "phase1-early" else None
-        expected_verifier = "CONFIRMED" if proof_state == "phase1-early" and not matched_online else None
+        early_wave = proof_state.startswith("phase1-early")
+        expected_parent = "CONFIRMED" if early_wave else None
+        expected_verifier = "CONFIRMED" if early_wave and not matched_online else None
         assert (current.get("validation_status"), current.get("verify_verdict")) == (
             expected_parent,
             expected_verifier,
@@ -2529,6 +2543,18 @@ def test_c1_task_file_reuses_scoped_parent_proof_after_batch_recheck(
         assert current["finding_id"] == "finding-one"
         assert current["verify_file"] == _bash_path(verifier)
         assert "Part 2 — for EVERY item whose problem exists" in dispatch
+        if early_wave:
+            prompt = dispatch[dispatch.index('prompt="<domain>: two-part challenge') :]
+            source_instruction = next(line for line in prompt.splitlines() if line.startswith("Early wave only"))
+            assert source_instruction.startswith("Early wave only:"), source_instruction
+            assert "omit when no file conflicts" not in source_instruction
+            assert "the tree is mid-merge" not in source_instruction
+            command = re.search(r"Read every file with `(git show <PR_HEAD_OID>:<file>)`", source_instruction)
+            assert command is not None, source_instruction
+            source_read = command.group(1).replace("<PR_HEAD_OID>", lineage.tip).replace("<file>", "core.py")
+            assert _git(lineage.repo, *source_read.split()[1:]) == "VALUE = 2"
+            if proof_state == "phase1-early-clean-merge":
+                assert (lineage.repo / "core.py").read_text(encoding="utf-8") == "VALUE = 3\n"
         return
     if "before C1 evidence recheck" in dispatch:
         fresh = _run_resolve_block(
@@ -2571,3 +2597,18 @@ def test_c1_task_file_reuses_scoped_parent_proof_after_batch_recheck(
     report_mode = (_RESOLVE / "modes/report-intelligence.md").read_text(encoding="utf-8")
     assert "Everything else keeps the full Part 1" not in report_mode
     assert "Parent candidate proof" in report_mode
+
+
+def test_c1_candidates_cover_medium_and_high_codex_fit_items() -> None:
+    """Codex is offered every single-file Codex-fit item below xhigh, passing the item's own effort."""
+    dispatch = (_RESOLVE / "modes/action-item-dispatch.md").read_text(encoding="utf-8")
+    c1 = dispatch[dispatch.index("**C1 —") : dispatch.index("**Only `each` mode commits here.")]
+    assert "**C1 candidate**" in dispatch
+    assert (
+        "`ITEM_EFFORT` is `medium` or `high` AND the record's `change` is `code`·`test`·`docs`·`style`·`config`·`ci`"
+        in dispatch
+    )
+    assert "`xhigh` and `architecture`·`perf`·`refactor` items stay with the specialists" in dispatch
+    assert "--effort <substitute this item's ITEM_EFFORT: medium or high>" in c1
+    assert "--effort medium" not in c1
+    assert "`ITEM_EFFORT=medium` AND `CODEX_AVAILABLE=true`" not in dispatch

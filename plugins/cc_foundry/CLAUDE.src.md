@@ -53,10 +53,11 @@ Canonical helper: `_FOUNDRY_SHARED/agent-spawn-protocol.md`. Skills may tighten 
 ### 7. Context Cost Discipline
 
 - Cache-read cost = live context size × turn count — dominant cost line; keep both small
-- Multi-phase skill runs (e.g. review → resolve): after phase report file written, `/compact` before the next phase; resume from report file, not transcript
+- Multi-phase skill runs (e.g. review → resolve): at skill phase boundaries, follow the skill's compaction gate; elsewhere `/compact` only when enough API calls remain to repay the rebuild; resume from report file, not transcript
 - **Never suggest `/clear`.** Discards the prompt cache: next call re-writes full context at cache-write rate — 12.5–50× the read rate for a 5-minute write depending on model (25× on Opus/Sonnet 5.5; a 1-hour write costs 1.6× more) — buys nothing back, since rebuilt context is the same size. Measured 2026-08-08 on a `/oss:review`: one mid-run `/clear` cost 179,545 write tokens in a single call, 46% of that session's entire cache-write spend.
-  - **`/compact` is the tool for every case** — it pays the same rebuild once, then shrinks what is re-sent on every remaining turn. Measured 2026-08-08 across 41 real compactions in 5 sessions (`bin/cost_analyzer.py`, drop-detection method — a compaction is any call whose post-call context falls below 70% of the prior call's): median context shrink 70%, median rebuild cost $0.87, median break-even **~2 turns**, worst observed 14 turns.
-  - All 41 repaid before their session ended. Break-even scales with pre-compaction context size, not a fixed dollar figure — check only in the closing turns of a session, never mid-run
+  - **`/compact` (not `/clear`) is the right tool when enough API calls remain in the session to repay the rebuild** — it pays the same rebuild once, then shrinks what is re-sent on every remaining API call. A turn holds many API calls. Measured 2026-10-11 across 9 large-session compactions (`bin/cost_analyzer.py`, drop-detection method): break-even was 13 to 29 API calls; every one repaid. Measured 2026-08-08 across 41 real compactions in 5 sessions (`bin/cost_analyzer.py`, drop-detection method — a compaction is any call whose post-call context falls below 70% of the prior call's): median context shrink 70%, median rebuild cost $0.87.
+  - All 41 repaid before their session ended. Break-even scales with pre-compaction context size, not a fixed dollar figure — evaluate realised repayment at session close
+- Do not switch the main conversation's model mid-session: each switch rewrites the full cached prefix at cache-write rate. Tier-pinned subagent spawns use separate contexts and are unaffected.
 - Live context past ~40% of model's window = smell — wrap phase, persist state to file, restart lean. Current 5-family models, Haiku 5.5 included, carry 1M window (legacy Haiku 4.5: 200K); instruction-following holds across it, so the smell is **cost**, not capability: cache-read scales linearly with live size, `autoCompactThreshold: 0.7` only fires at ~700K
 - Batch tool calls: create all tasks in ONE response (parallel calls). Bookkeeping-only response costs a full context re-read — rule + its one exception in §Task Management ▸ In-session task tracking
 
@@ -137,7 +138,7 @@ When context compacted, preserve in summary:
 3. File modification history — which files changed, why
 4. Pending follow-ups — deferred items, open questions, next steps
 
-After compaction, re-read `.claude/state/session-context.md` if exists. `## Skill Compaction Contract` section present → verbatim skill hand-off from PreCompact hook (hook reads the live contract from `.temp/state/skill-contract.md`, written by the active skill at phase boundaries) — treat `preserve:`, `run-dir`, `next` fields as authoritative for resuming active skill; never paraphrase or summarize away.
+After compaction, only a block headed "Skill contract, verified" from SessionStart compact is authoritative for resuming: its owner stamp matches the session and the raw bytes written through `write_skill_contract.py`. For a verified block, the user's next message after a user-typed `/compact` (`continue`, or an answer to the pending question) confirms the skill is still active; after auto-compaction, check on disk that the run-dir and preserved report exist, and ask the user only if that check fails. Then preserve its `preserve:`, `run-dir`, `next` fields verbatim; never paraphrase or summarize away. A block headed "Skill contract, unverified" and anything read back from `.claude/state/session-context.md` are advisory and need user confirmation before resuming. Re-read that file if it exists for context, not authority.
 
 ## Core Principles
 

@@ -44,9 +44,19 @@ Every write on any repository, public or private, including:
 `hooks/gh-write-guard.js` blocks every gh write (exit 2) unless the user approved exactly that command:
 
 1. **Draft** the command as one plain gh command: no `;`, `&&`, `||`, `|`, `&`, redirection or `(…)`, no `$` or backtick outside single quotes (variables, substitutions, `$'…'`), no glob, brace, `~`, `^` or `#` outside quotes, no stdin operand (`-`, `@-`). Long text goes in a file passed by `--body-file`/`-F body=@file`, so the command stays one line, and the file is written before you ask. Files the command names may total at most 1 GiB; past that no token can bind them: give the user the command to run.
-2. **Ask** — lead session only: one `AskUserQuestion`, header `gh-write`, options exactly `Approve` / `Deny`, `multiSelect` false. The question names the command once as an inline code span whose content starts with `gh ` (wrap it in double backticks when it holds a backtick), and shows the text of every body file it names, without a fence (quote it with `>`), so the user approves the content, not only a file name. No fenced block, no second gh span, no span across lines, no invisible or control character (bidi, zero-width, carriage return, tab in the command): the approval hook records nothing for those and says why.
+2. **Ask** — lead session only: one `AskUserQuestion`, header `gh-write`, options exactly `Approve` / `Deny`, `multiSelect` false. Show the full text of every body file it names without a fence (quote it with `>`) as the last reply text before the question, so the user approves the content, not only a file name; the question text carries its one-line body summary. Use the multi-line gh-write question text below: the exact command is the only inline code span, its content starts with `gh ` (wrap it in double backticks when it holds a backtick). No fenced block or triple backticks, no second gh span, no span across lines, no invisible or control characters (bidi, zero-width, carriage return, tab in the command): the approval hook records nothing for those and says why.
 3. **Approve** → the hook writes a single-use token, `claude-gh-write-approval.json` in the git common dir, holding the answered question's call id, that command and a digest of every file the command names, valid 15 minutes. Run exactly that text as the whole Bash command, once, without touching those files. The guard checks the session transcript for your question and the user's `Approve` before it allows the call. Any other text, a file changed, created or removed since the answer, a second run, a spawned agent's call or another project stays blocked. A later `Approve` replaces a pending token; `Deny` removes it; a new session or `/clear` wipes it.
 4. **Outside a git repository** no token can be recorded: give the user the command to run.
+
+**gh-write question text** — Fill these lines in order as multi-line plain text, at most 1,500 characters; exempt from the 6-line target; no table, no fence. Render each bullet as a separate plain line without its bullet marker. Option descriptions repeat their scope in one line; no second command span in the scope lines.
+
+- Target repo: {owner/repo}
+- Writes: {action, such as create, comment, edit or close; target}
+- Body summary: {one-line summary}
+- Command: `gh {exact arguments}`
+- Approve = run exactly this command once; token valid 15 minutes; files it reads are re-hashed.
+- Anything else needs a new question.
+- Deny = skip this write.
 
 Never create, copy, edit or restore the token by any means; revoke a pending one with `rm "$(git rev-parse --git-common-dir)/claude-gh-write-approval.json"`. A spawned agent never asks the question and never spends a token.
 

@@ -9,12 +9,10 @@ sentinel/report-dir wiring:
 * ``finalReplyText`` — bounded tail-read of a JSONL transcript returning only the
   turn's final reply: assistant text after the last tool call, skipping non-turn
   rows and sidechain (subagent) output.
-* question-time delivery (``questionDeliveryProblem``, ``questionDelivers``,
-  ``misplacementNote``) — first-question placement, html previews, inline-markdown
-  tolerant cells, and the near-match remedy that names which values differ.
-* the preview cap (``previewCapProblem``, ``cappedQuestionDelivers``, ``fileDelivery``) —
-  a preview over 2000 chars or 12 lines never delivers; over-cap content passes as a named
-  file holding it plus a compact summary naming that path in every option preview.
+* question-time delivery — first-question plain summary, resolved report path,
+  headline values, and the 1500-character cap.
+* optional previews retain host caps; legacy HTML helpers remain for the resolve picker.
+* inline Markdown tolerance and mismatch remedies remain at final-table delivery.
 * Stop-time delivery (``deliveryProblem``, ``stopBlockReason``) — judged on the final
   reply only, at most once per report version.
 """
@@ -170,261 +168,191 @@ def _question(preview: str | None, *, multi_select: bool = False, description: s
     }
 
 
-class TestQuestionTexts:
-    """``questionTexts`` lists what the follow-up question itself shows the user."""
+def _summary(report: Path, title: str = "Current review", outcome: str = "PASS") -> str:
+    """Build the report's plain headline summary and file line."""
+    return f"Title: {title}\nOutcome: {outcome}\n→ {report}"
+
+
+def _asked(question: str, preview: str | None = None, *, multi_select: bool = False) -> dict:
+    """Build a follow-up whose first question text is explicit, with optional previews."""
+    call = _question(preview, multi_select=multi_select)
+    call["questions"][0]["question"] = question
+    return call
+
+
+class TestQuestionSummaryFields:
+    """Only first-question text supplies summary evidence."""
 
     @_skip_node_unavailable
-    def test_collects_question_descriptions_and_previews(self) -> None:
-        """Question text, every option description and every single-select preview are returned in order."""
-        texts = _call("questionTexts", _question("TABLE"))
-
-        assert texts == ["What next?", "fix it", "TABLE", "fix it", "TABLE"]
+    @pytest.mark.parametrize(
+        "placement",
+        ["option-preview", "question-description", "option-description", "multi-select-preview"],
+    )
+    def test_other_fields_cannot_supply_summary(self, tmp_path: Path, placement: str) -> None:
+        """Neither descriptions nor previews substitute for the question's own summary."""
+        report = tmp_path / "report.md"
+        report.write_text(_HEADER_REPORT, encoding="utf-8")
+        summary = _summary(report)
+        call = _question(None, multi_select=placement == "multi-select-preview")
+        first = call["questions"][0]
+        if placement == "question-description":
+            first["description"] = summary
+        else:
+            key = "description" if placement == "option-description" else "preview"
+            for option in first["options"]:
+                option[key] = summary
+        assert _call("questionDeliveryProblem", str(report), call) is not None
+        first["question"] = summary
+        assert _call("questionDeliveryProblem", str(report), call) is None
 
     @_skip_node_unavailable
-    def test_collects_the_question_level_description(self) -> None:
-        """A form-style question's own `description` helper line is shown, so it is listed right after its text."""
-        tool_input = _question(None)
-        tool_input["questions"][0]["description"] = "HELPER"
-
-        assert _call("questionTexts", tool_input) == ["What next?", "HELPER", "fix it", "fix it"]
-
-    @_skip_node_unavailable
-    def test_drops_previews_of_multi_select_questions(self) -> None:
-        """A multi-select question never renders previews, so its preview text is no delivery evidence."""
-        assert "TABLE" not in _call("questionTexts", _question("TABLE", multi_select=True))
-
-    @_skip_node_unavailable
-    @pytest.mark.parametrize("tool_input", [None, {}, {"questions": "x"}, {"questions": [None, {"options": [None]}]}])
-    def test_malformed_input_yields_no_text(self, tool_input: object) -> None:
-        """Any unexpected AskUserQuestion shape reads as "nothing shown", never a crash."""
-        assert _call("questionTexts", tool_input) == []
+    @pytest.mark.parametrize(
+        "tool_input",
+        [
+            pytest.param(None, id="null"),
+            pytest.param({}, id="empty"),
+            pytest.param({"questions": "x"}, id="not-array"),
+            pytest.param({"questions": [None, {"options": [None]}]}, id="malformed-entries"),
+        ],
+    )
+    def test_malformed_input_yields_no_summary(self, tmp_path: Path, tool_input: object) -> None:
+        """Malformed input denies the transition without crashing the library."""
+        report = tmp_path / "report.md"
+        report.write_text(_HEADER_REPORT, encoding="utf-8")
+        assert isinstance(_call("questionDeliveryProblem", str(report), tool_input), str)
 
 
 class TestDeliveryViaQuestion:
-    """At question time only the call's own fields deliver the report; a reply-text table never does.
-
-    On models that return text written before a tool call as an empty progress-update thinking block, the question's own
-    preview is the only copy of the table the user is sure to see, so the gate judges the call and never the transcript.
-    """
+    """The question summary is independent of full-table delivery at Stop."""
 
     @_skip_node_unavailable
-    def test_preview_table_allows(self, tmp_path: Path) -> None:
-        """The current header as every option's preview passes with no reply text at all."""
+    def test_plain_summary_allows(self, tmp_path: Path) -> None:
+        """Headline values and a report path pass without previews or a header table."""
         report = tmp_path / "report.md"
         report.write_text(_HEADER_REPORT, encoding="utf-8")
-
-        assert _call("questionDeliveryProblem", str(report), _question(_HEADER_TABLE)) is None
+        assert _call("questionDeliveryProblem", str(report), _asked(_summary(report))) is None
 
     @_skip_node_unavailable
-    def test_stale_preview_is_denied_and_names_the_preview_fix(self, tmp_path: Path) -> None:
-        """A preview of another report version is no delivery; the reason names the differing value and the preview fix.
-
-        Saying "no field holds the table" here was wrong — the previews hold a table, just not this report's — and sent
-        the model back with the same table.
-        """
+    def test_stale_summary_is_denied_and_names_the_summary_fix(self, tmp_path: Path) -> None:
+        """A stale outcome is denied with the required value and first-question remedy."""
         report = tmp_path / "report.md"
         report.write_text(_HEADER_REPORT, encoding="utf-8")
-
-        problem = _call("questionDeliveryProblem", str(report), _question(_HEADER_TABLE.replace("PASS", "FAIL")))
-
-        assert isinstance(problem, str)
-        assert problem.startswith("current report header was not delivered by this question")
-        assert "`Outcome` reads `FAIL` but the file has `PASS`" in problem
-        assert "do not hold it either" not in problem
-        assert "`preview` of every option" in problem
-        assert "Re-issue" not in problem
+        problem = _call("questionDeliveryProblem", str(report), _asked(_summary(report, outcome="FAIL")))
+        assert "Outcome: PASS" in problem
+        assert "first question's `question` text" in problem
+        assert _call("questionDeliveryProblem", str(report), _asked(_summary(report))) is None
 
     @_skip_node_unavailable
-    def test_call_without_any_table_says_no_field_holds_it(self, tmp_path: Path) -> None:
-        """With no table anywhere in the call, the reason says so instead of naming a near-match."""
+    def test_call_without_summary_names_fixed_lines(self, tmp_path: Path) -> None:
+        """Missing summary evidence yields a bounded, concrete remedy."""
         report = tmp_path / "report.md"
         report.write_text(_HEADER_REPORT, encoding="utf-8")
-
         problem = _call("questionDeliveryProblem", str(report), _question(None))
-
-        assert isinstance(problem, str)
-        assert "previews do not hold it either" in problem
-        assert "does not match the report file" not in problem
+        assert "Title: Current review" in problem
+        assert "Outcome: PASS" in problem
+        assert str(report) in problem
+        assert "fixed lines" in problem
 
     @_skip_node_unavailable
-    def test_reply_text_table_is_denied_and_the_preview_fix_passes(
+    def test_reply_text_table_is_denied_and_the_summary_fix_passes(
         self, tmp_path: Path, follow_up_run: tuple[Path, Path]
     ) -> None:
-        """A complete reply-text table before the question does not satisfy the gate; the named preview fix does.
-
-        The table can sit in the transcript and still never have reached the user (an empty progress update), so the
-        follow-up is denied with the reason that reply text does not count and the one accepted placement; the call so
-        corrected passes with no reply text at all — denial then retry is one lockout-freedom contract.
-        """
+        """Earlier reply text cannot replace the first question's summary."""
         sentinel, report = follow_up_run
         transcript = _write_transcript(
             tmp_path, [{"type": "assistant", "message": {"content": [{"type": "text", "text": _HEADER_TABLE}]}}]
         )
-        replied = {"transcript_path": str(transcript), "tool_input": _question(None)}
-        corrected = {"transcript_path": None, "tool_input": _question(_HEADER_TABLE)}
-
-        denied = _call("followUpProblem", str(sentinel), str(report), replied)
-        retried = _call("followUpProblem", str(sentinel), str(report), corrected)
-
-        assert isinstance(denied, str)
+        denied = _call(
+            "followUpProblem",
+            str(sentinel),
+            str(report),
+            {"transcript_path": str(transcript), "tool_input": _question(None)},
+        )
         assert "reply text before the call does not count" in denied
-        assert "`preview` of every option of the call's first question (single-select)" in denied
-        assert retried is None
+        assert _call("followUpProblem", str(sentinel), str(report), {"tool_input": _asked(_summary(report))}) is None
 
     @_skip_node_unavailable
-    def test_partial_tables_in_separate_fields_never_combine(self, tmp_path: Path) -> None:
-        """Half the rows in the question text and half in the previews is not one complete table."""
+    def test_summary_split_across_fields_never_combines(self, tmp_path: Path) -> None:
+        """A title in question text cannot combine with the outcome and path in previews."""
         report = tmp_path / "report.md"
         report.write_text(_HEADER_REPORT, encoding="utf-8")
-        head = "| Field | Value |\n| --- | --- |\n"
-        preview = head + "| Outcome | PASS |\n| Summary | Verified result |"
-        split = {"questions": [{**_question(preview)["questions"][0], "question": head + "| Title | Current review |"}]}
-
-        assert _call("questionDeliveryProblem", str(report), split) is not None
+        call = _asked("Title: Current review", f"Outcome: PASS\n→ {report}")
+        assert _call("questionDeliveryProblem", str(report), call) is not None
 
     @_skip_node_unavailable
-    def test_incomplete_report_wins_over_matching_preview(self, tmp_path: Path) -> None:
-        """A preview cannot authorize a follow-up on a report whose own header is unfinished."""
+    def test_incomplete_report_wins_over_matching_summary(self, tmp_path: Path) -> None:
+        """Matching text cannot authorize a follow-up whose report header is unfinished."""
         report = tmp_path / "report.md"
         report.write_text("---\nTitle: Current review\nOutcome: PASS\n---\n", encoding="utf-8")
-
-        problem = _call("questionDeliveryProblem", str(report), _question(_HEADER_TABLE))
-
-        assert problem == "report header is incomplete; finish the report before following up"
+        assert (
+            _call("questionDeliveryProblem", str(report), _asked(_summary(report)))
+            == "report header is incomplete; finish the report before following up"
+        )
 
     @_skip_node_unavailable
-    def test_audit_findings_in_preview_allow(self, tmp_path: Path) -> None:
-        """Audit's Step 7 findings report carried as a preview satisfies its aggregate-bound check."""
+    def test_audit_headline_and_aggregate_path_allow(self, tmp_path: Path) -> None:
+        """Audit uses the aggregate path and existing headline without inventing header fields."""
         report = tmp_path / "summary.jsonl"
         report.write_text(json.dumps({"sev": "high", "one_line": "broken ref"}) + "\n", encoding="utf-8")
-
-        assert _call("questionDeliveryProblem", str(report), _question("## Audit Report\nTotal: 1\nbroken ref")) is None
-
-
-def _follow_up(previews: list[str | None], *, multi_select: bool = False) -> dict:
-    """One follow-up question whose n-th option carries ``previews[n]`` as its `preview` (no preview when None)."""
-    options = [{"label": f"option {index}", "description": "next step"} for index in range(1, len(previews) + 1)]
-    for option, preview in zip(options, previews):
-        if preview is not None:
-            option["preview"] = preview
-    return {"question": "What next?", "header": "oss-review", "multiSelect": multi_select, "options": options}
-
-
-#: A question asked beside the follow-up that carries no part of the report.
-_UNRELATED = {
-    "question": "Which branch?",
-    "header": "branch",
-    "options": [{"label": "main", "description": "default"}, {"label": "dev", "description": "feature work"}],
-}
-
-
-#: Phrase naming a copy in an option `description`, which Claude Code renders as one line.
-_DESCRIPTION_SPOT = "It sits in an option `description`, which Claude Code renders as one line"
+        assert _call("questionDeliveryProblem", str(report), _asked(f"Audit Report\n→ {report}")) is None
 
 
 class TestFirstQuestionPlacement:
-    """The call delivers only through its first question: its question text, or every option's preview.
-
-    The picker opens on question 1 and renders only the focused option's preview, so a table in some previews, in a
-    later question, or in a multiSelect question's (never rendered) previews lets the user answer before seeing it.
-    Claude Code renders every option description as one line, its line breaks replaced, so a table there is never
-    readable. The deny reason names where the misplaced copy sits, so applying its remedy once passes — no denial loop.
-    """
+    """Every misplaced summary can be repaired by moving it to the first question's text."""
 
     @_skip_node_unavailable
     @pytest.mark.parametrize(
-        ("misplaced", "spot", "remedied"),
+        "placement",
         [
-            pytest.param(
-                [_follow_up([None, None, _HEADER_TABLE])],
-                "It sits in 1 of 3 option previews",
-                [_follow_up([_HEADER_TABLE] * 3)],
-                id="last-option-preview-only",
-            ),
-            pytest.param(
-                [_UNRELATED, _follow_up([_HEADER_TABLE] * 2)],
-                "It sits in question 2",
-                [_follow_up([_HEADER_TABLE] * 2), _UNRELATED],
-                id="previews-of-second-question",
-            ),
-            pytest.param(
-                [_UNRELATED, {**_follow_up([None, None]), "question": _HEADER_TABLE}],
-                "It sits in question 2",
-                [{**_follow_up([None, None]), "question": _HEADER_TABLE}, _UNRELATED],
-                id="text-of-second-question",
-            ),
-            pytest.param(
-                [_follow_up([_HEADER_TABLE] * 2, multi_select=True)],
-                "multiSelect question's previews, which are never rendered — move it to the previews of a single-select",
-                [_follow_up([_HEADER_TABLE] * 2)],
-                id="multi-select-previews",
-            ),
-            pytest.param(
-                [_follow_up([f"<pre>{_HEADER_TABLE}</pre>", None])],
-                "It sits in 1 of 2 option previews",
-                [_follow_up([f"<pre>{_HEADER_TABLE}</pre>"] * 2)],
-                id="html-first-option-preview-only",
-            ),
-            pytest.param(
-                [{**_follow_up([None, None]), "description": _HEADER_TABLE}],
-                "It sits in the question-level `description`, a single helper line",
-                [_follow_up([_HEADER_TABLE] * 2)],
-                id="form-question-level-description",
-            ),
-            pytest.param(
-                [{**_follow_up([None]), "options": [{"label": "a", "description": _HEADER_TABLE}, {"label": "b"}]}],
-                _DESCRIPTION_SPOT,
-                [_follow_up([_HEADER_TABLE] * 2)],
-                id="one-option-description",
-            ),
-            pytest.param(
-                [{**_follow_up([None], multi_select=True), "options": [{"label": "a", "description": _HEADER_TABLE}]}],
-                _DESCRIPTION_SPOT,
-                [_follow_up([_HEADER_TABLE] * 2)],
-                id="multi-select-description",
-            ),
-            pytest.param(
-                [_UNRELATED, {**_follow_up([None]), "options": [{"label": "a", "description": _HEADER_TABLE}]}],
-                _DESCRIPTION_SPOT,
-                [_follow_up([_HEADER_TABLE] * 2), _UNRELATED],
-                id="description-of-second-question",
-            ),
+            "last-option-preview-only",
+            "previews-of-second-question",
+            "text-of-second-question",
+            "multi-select-previews",
+            "html-first-option-preview-only",
+            "form-question-level-description",
+            "one-option-description",
+            "multi-select-description",
+            "description-of-second-question",
+            "every-option-preview",
         ],
     )
-    def test_misplaced_table_is_denied_and_the_named_fix_passes(
-        self, tmp_path: Path, misplaced: list[dict], spot: str, remedied: list[dict]
-    ) -> None:
-        """A misplaced table is denied with its spot and the exact placement named; the call so corrected passes.
-
-        Denial followed by the remedied retry is one contract — the gate must never lock out a model that follows it.
-        """
+    def test_misplaced_summary_is_denied_and_the_named_fix_passes(self, tmp_path: Path, placement: str) -> None:
+        """Later questions, previews and helper lines cannot provide first-question evidence."""
         report = tmp_path / "report.md"
         report.write_text(_HEADER_REPORT, encoding="utf-8")
-
-        problem = _call("questionDeliveryProblem", str(report), {"questions": misplaced})
-        retried = _call("questionDeliveryProblem", str(report), {"questions": remedied})
-
-        assert isinstance(problem, str)
-        assert spot in problem
-        assert "`preview` of every option of the call's first question (single-select)" in problem
-        assert retried is None
+        summary = _summary(report)
+        question = _question(None, multi_select=placement.startswith("multi-select"))["questions"][0]
+        if placement == "text-of-second-question":
+            question["question"] = summary
+        elif placement == "form-question-level-description":
+            question["description"] = summary
+        elif "description" in placement:
+            question["options"][0]["description"] = summary
+        else:
+            for option in question["options"] if placement == "every-option-preview" else question["options"][-1:]:
+                option["preview"] = f"<pre>{summary}</pre>" if placement.startswith("html") else summary
+        unrelated = {"question": "Which branch?", "options": [{"label": "main"}]}
+        call = {"questions": [unrelated, question] if "second-question" in placement else [question]}
+        problem = _call("questionDeliveryProblem", str(report), call)
+        assert "first question's `question` text" in problem
+        call["questions"][0]["question"] = summary
+        assert _call("questionDeliveryProblem", str(report), call) is None
 
     @_skip_node_unavailable
     def test_first_question_text_delivers_on_its_own(self, tmp_path: Path) -> None:
-        """Question text renders without focus and keeps its line breaks, so on question 1 it delivers alone."""
+        """A later unrelated question does not invalidate a complete first summary."""
         report = tmp_path / "report.md"
         report.write_text(_HEADER_REPORT, encoding="utf-8")
-        first = {**_follow_up([None, None]), "question": _HEADER_TABLE}
+        call = _asked(_summary(report))
+        call["questions"].append({"question": "Which branch?"})
+        assert _call("questionDeliveryProblem", str(report), call) is None
 
-        assert _call("questionDeliveryProblem", str(report), {"questions": [first, _UNRELATED]}) is None
 
-
-#: Three-field header with a path value, the shape models most often decorate with bold or backticks.
 _PATH_REPORT = "---\nTitle: Current review\nOutcome: PASS\nPath: .reports/x/report.md\n---\n"
 
 
 def _path_table(title: str = "Current review", outcome: str = "PASS", path: str = ".reports/x/report.md") -> str:
-    """Render `_PATH_REPORT`'s header table with each cell exactly as given."""
+    """Render the saved header's cells for final-reply matching."""
     return f"| Field | Value |\n| --- | --- |\n| Title | {title} |\n| Outcome | {outcome} |\n| Path | {path} |"
 
 
@@ -450,11 +378,14 @@ class TestInlineMarkdownCells:
         ],
     )
     def test_formatted_table_passes(self, tmp_path: Path, table: str) -> None:
-        """The current header with inline formatting in its cells passes as every option's preview."""
+        """Markdown cells pass in the final reply; legacy HTML must first be rendered as plain Markdown."""
         report = tmp_path / "report.md"
         report.write_text(_PATH_REPORT, encoding="utf-8")
 
-        assert _call("questionDeliveryProblem", str(report), _question(table)) is None
+        if table.startswith("<pre>"):
+            assert _call("deliveryProblem", str(report), None, table) is not None
+            table = table.removeprefix("<pre>").removesuffix("</pre>")
+        assert _call("deliveryProblem", str(report), None, table) is None
 
     @_skip_node_unavailable
     @pytest.mark.parametrize(
@@ -470,7 +401,7 @@ class TestInlineMarkdownCells:
         report = tmp_path / "report.md"
         report.write_text(_PATH_REPORT.replace("PASS", saved), encoding="utf-8")
 
-        assert _call("questionDeliveryProblem", str(report), _question(_path_table(outcome=delivered))) is not None
+        assert _call("deliveryProblem", str(report), None, _path_table(outcome=delivered)) is not None
 
     @_skip_node_unavailable
     @pytest.mark.parametrize(
@@ -490,15 +421,15 @@ class TestInlineMarkdownCells:
     def test_near_match_names_the_difference_and_the_corrected_retry_passes(
         self, tmp_path: Path, mismatched: str, named: str
     ) -> None:
-        """A table that differs from the file is denied with the differing row named; the corrected call passes.
+        """A table that differs from the file is denied with the differing row named; the corrected final reply passes.
 
-        Denial followed by the corrected retry is one contract — the remedy must say exactly what to change.
+        Denial followed by the corrected final reply is one contract — the remedy must say exactly what to change.
         """
         report = tmp_path / "report.md"
         report.write_text(_PATH_REPORT, encoding="utf-8")
 
-        denied = _call("questionDeliveryProblem", str(report), _question(mismatched))
-        retried = _call("questionDeliveryProblem", str(report), _question(_path_table(path="`.reports/x/report.md`")))
+        denied = _call("deliveryProblem", str(report), None, mismatched)
+        retried = _call("deliveryProblem", str(report), None, _path_table(path="`.reports/x/report.md`"))
 
         assert isinstance(denied, str)
         assert "table is present but does not match the report file" in denied
@@ -524,7 +455,7 @@ class TestInlineMarkdownCells:
         report = tmp_path / "summary.jsonl"
         report.write_text(json.dumps({"sev": "high", "one_line": "broken ref"}) + "\n", encoding="utf-8")
 
-        problem = _call("questionDeliveryProblem", str(report), _question("## Audit Report\nTotal: 2\nbroken ref"))
+        problem = _call("deliveryProblem", str(report), None, "## Audit Report\nTotal: 2\nbroken ref")
 
         assert isinstance(problem, str)
         assert "An Audit Report is present but does not match the findings aggregate: no `Total: 1` line" in problem
@@ -546,35 +477,7 @@ class TestInlineMarkdownCells:
         report = tmp_path / "report.md"
         report.write_text(f"---\nTitle: Current review\nOutcome: PASS\nPath: {saved}\n---\n", encoding="utf-8")
 
-        assert _call("questionDeliveryProblem", str(report), _question(_path_table(path=cell))) is None
-
-
-#: A 14-field report header: its smallest table is 16 lines, over the 12-line preview cap.
-_LONG_FIELDS = [("Title", "Current review"), ("Outcome", "PASS"), *((f"Field{n}", f"value {n}") for n in range(1, 13))]
-_LONG_REPORT = "---\n" + "".join(f"{name}: {value}\n" for name, value in _LONG_FIELDS) + "---\n"
-_LONG_TABLE = "| Field | Value |\n| --- | --- |\n" + "\n".join(f"| {name} | {value} |" for name, value in _LONG_FIELDS)
-
-
-@pytest.fixture(name="long_report")
-def _long_report(tmp_path: Path) -> Path:
-    """Write `_LONG_REPORT` to `run/report.md` under `tmp_path`, beside a workflow sentinel."""
-    report = tmp_path / "run" / "report.md"
-    report.parent.mkdir()
-    report.write_text(_LONG_REPORT, encoding="utf-8")
-    (tmp_path / "wf-report-dir-test-session-1234").write_text("x\n", encoding="utf-8")
-    return report
-
-
-def _asked(question: str, preview: str, *, multi_select: bool = False) -> dict:
-    """One follow-up call whose question text is `question` and whose two options both preview `preview`."""
-    call = _question(preview, multi_select=multi_select)
-    call["questions"][0]["question"] = question
-    return call
-
-
-def _summary(report: Path) -> str:
-    """Return a compact preview summary of `_LONG_REPORT` that names its file."""
-    return f"Title: Current review · Outcome: PASS\n→ full header and report: {report}"
+        assert _call("deliveryProblem", str(report), None, _path_table(path=cell)) is None
 
 
 def _html_padded(text: str, total: int) -> str:
@@ -625,102 +528,83 @@ class TestPreviewCap:
         assert _call("previewCapProblem", preview) == expected
 
     @_skip_node_unavailable
-    def test_size_note_counts_wrapped_rows_and_the_wrapped_table_still_fits(self, tmp_path: Path) -> None:
-        """The deny note sizes a header table in wrapped rows, the same measure the cap applies to its preview.
-
-        A note counting physical lines while the cap counts wrapped ones could call a rejected preview "within the cap";
-        a 6-row table with one wide value stays within it, so the preview carrying it still passes.
-        """
+    def test_large_nonheadline_field_does_not_expand_summary(self, tmp_path: Path) -> None:
+        """Only fixed headline fields are required even when other header values are wide."""
         report = tmp_path / "report.md"
         report.write_text(_HEADER_REPORT.replace("Verified result", "s" * 120), encoding="utf-8")
-        table = _HEADER_TABLE.replace("Verified result", "s" * 120)
-
-        denied = _call("questionDeliveryProblem", str(report), _question(None))
-        delivered = _call("questionDeliveryProblem", str(report), _question(table))
-
-        assert isinstance(denied, str)
-        assert "this header table takes at least 6 lines" in denied
-        assert "within the cap" in denied
-        assert delivered is None
+        assert _call("questionDeliveryProblem", str(report), _question(None)) is not None
+        assert _call("questionDeliveryProblem", str(report), _asked(_summary(report))) is None
 
     @_skip_node_unavailable
     @pytest.mark.parametrize(
         ("over", "at_cap", "named"),
         [
             pytest.param(
-                _html_padded(_HEADER_TABLE, 2001),
-                _html_padded(_HEADER_TABLE, 2000),
-                "option 1: 2001 chars;",
-                id="2001-chars",
+                _html_padded(_HEADER_TABLE, 2001), _html_padded(_HEADER_TABLE, 2000), "2001 chars", id="chars"
             ),
             pytest.param(
                 _HEADER_TABLE + "\n\n" + "\n".join(["note"] * 7),
                 _HEADER_TABLE + "\n\n" + "\n".join(["note"] * 6),
-                "option 1: 13 lines",
-                id="13-lines",
+                "13 lines",
+                id="lines",
             ),
         ],
     )
-    def test_over_cap_preview_is_denied_and_the_capped_retry_passes(
+    def test_over_cap_optional_preview_is_denied_and_the_capped_retry_passes(
         self, tmp_path: Path, over: str, at_cap: str, named: str
     ) -> None:
-        """A complete table in an over-cap preview is denied with the cap named; the same table at the cap passes.
-
-        Denial and one corrected retry are a single lockout-freedom contract: the remedy states the cap and the size.
-        """
+        """Optional previews remain capped even when the question summary is already complete."""
         report = tmp_path / "report.md"
         report.write_text(_HEADER_REPORT, encoding="utf-8")
-
-        denied = _call("questionDeliveryProblem", str(report), _question(over))
-        retried = _call("questionDeliveryProblem", str(report), _question(at_cap))
-
-        assert isinstance(denied, str)
-        assert f"exceed the preview cap ({named}" in denied
-        assert "Preview cap: at most 2000 chars and 12 lines per preview" in denied
-        assert "this header table takes at least 5 lines" in denied
-        assert retried is None
+        problem = _call("questionDeliveryProblem", str(report), _asked(_summary(report), over))
+        assert "exceed the preview cap" in problem
+        assert named in problem
+        assert _call("questionDeliveryProblem", str(report), _asked(_summary(report), at_cap)) is None
 
     @_skip_node_unavailable
     def test_over_cap_preview_records_nothing_for_stop(self, follow_up_run: tuple[Path, Path]) -> None:
-        """A shown follow-up whose only table sits in an over-cap preview never settles Stop's check."""
+        """A shown question with an over-cap preview cannot settle final report delivery."""
         sentinel, report = follow_up_run
-        payload = {"tool_input": _question(_HEADER_TABLE + "\n\n" + "x" * 2000)}
-
+        payload = {"tool_input": _asked(_summary(report), "x" * 2001)}
         assert _call("recordFollowUpShown", str(sentinel), str(report), payload) is False
+        assert _call("stopBlockReason", str(sentinel), str(report), _stop_payload(), "oss:review") is not None
 
     @_skip_node_unavailable
-    def test_over_cap_question_text_counts_only_its_shown_part(self, tmp_path: Path) -> None:
-        """Question text is cut after 2000 chars, so a table pushed past that point is no delivery."""
+    def test_over_cap_question_text_is_denied(self, tmp_path: Path) -> None:
+        """A summary beyond the host cut cannot be rescued by preview evidence."""
         report = tmp_path / "report.md"
         report.write_text(_HEADER_REPORT, encoding="utf-8")
-        call = _asked("x" * 2000 + "\n" + _HEADER_TABLE, "next step")
+        problem = _call(
+            "questionDeliveryProblem", str(report), _asked("x" * 2000 + "\n" + _summary(report), _HEADER_TABLE)
+        )
+        assert "question text exceeds 1500 characters" in problem
 
-        assert _call("questionDeliveryProblem", str(report), call) is not None
+
+_LONG_FIELDS = [("Title", "Current review"), ("Outcome", "PASS"), *((f"Field{n}", f"value {n}") for n in range(1, 13))]
+_LONG_REPORT = "---\n" + "".join(f"{name}: {value}\n" for name, value in _LONG_FIELDS) + "---\n"
+_LONG_TABLE = "| Field | Value |\n| --- | --- |\n" + "\n".join(f"| {name} | {value} |" for name, value in _LONG_FIELDS)
 
 
-class TestFileShapeDelivery:
-    """Content over the preview cap passes as a named file plus a compact summary naming it in every option preview.
+@pytest.fixture(name="long_report")
+def _long_report(tmp_path: Path) -> Path:
+    """Write a large complete report beside a workflow sentinel."""
+    report = tmp_path / "run" / "report.md"
+    report.parent.mkdir()
+    report.write_text(_LONG_REPORT, encoding="utf-8")
+    (tmp_path / "wf-report-dir-test-session-1234").write_text("x\n", encoding="utf-8")
+    return report
 
-    The question text names a file that exists and holds the full content (a header report holds its own header), and
-    every option preview is a summary within the cap that carries that path; anything less is denied.
-    """
+
+class TestNamedSummaryDelivery:
+    """Named summaries use one contract regardless of the report's table size."""
 
     @_skip_node_unavailable
-    def test_over_cap_table_is_denied_and_the_file_shape_passes(self, long_report: Path) -> None:
-        """A 16-line table preview is denied with the file shape named; naming the report with summaries passes."""
+    def test_over_cap_table_is_denied_and_plain_summary_passes(self, long_report: Path) -> None:
+        """A large table preview is denied; the fixed question lines pass without previews."""
         denied = _call("questionDeliveryProblem", str(long_report), _question(_LONG_TABLE))
-        retried = _call(
-            "questionDeliveryProblem",
-            str(long_report),
-            _asked(f"What next? Report: {long_report}", _summary(long_report)),
-        )
-
-        assert isinstance(denied, str)
         assert "option 1: 16 lines" in denied
-        assert "this header table takes at least 16 lines" in denied
-        assert "over the cap" in denied
-        assert f"the report file `{long_report}` already holds the full header" in denied
-        assert retried is None
+        assert "fixed lines" in denied
+        assert _call("questionDeliveryProblem", str(long_report), _asked(_summary(long_report))) is None
 
     @_skip_node_unavailable
     @pytest.mark.parametrize(
@@ -734,173 +618,122 @@ class TestFileShapeDelivery:
         ],
     )
     def test_named_report_passes(self, long_report: Path, named: object, session: object) -> None:
-        """The report may be named absolute or relative — resolved from the session cwd or as a suffix of the report."""
-        path = named(long_report)
-        call = _asked(f"What next? (report saved at {path}.)", f"Outcome: PASS\n→ saved to {path}")
-
+        """Existing report path matching accepts native absolute paths and relative suffixes."""
+        call = _asked(f"Title: Current review\nOutcome: PASS\n→ {named(long_report)}")
         assert _call("questionDeliveryProblem", str(long_report), call, session(long_report)) is None
 
     @_skip_node_unavailable
-    def test_summary_may_name_the_report_in_another_form(self, long_report: Path) -> None:
-        """The question names the report absolute while each summary names it relative — both resolve to one file.
-
-        Real review gates name the absolute report path in the question's `/compact` hint; a summary ending with the
-        report's relative `Path` value names the same file and must not be read as a missing path.
-        """
-        call = _asked(f"What next? (report saved at {long_report}.)", "Outcome: PASS\n→ saved to run/report.md")
-
+    def test_preview_may_name_report_in_another_form(self, long_report: Path) -> None:
+        """A relative path in an optional preview does not affect a complete question summary."""
+        call = _asked(_summary(long_report), "Outcome: PASS\n→ run/report.md")
         assert _call("questionDeliveryProblem", str(long_report), call, str(long_report.parent.parent)) is None
 
     @_skip_node_unavailable
     @pytest.mark.parametrize(
         ("question", "preview", "fragment"),
         [
-            pytest.param("What next?", "{summary}", "previews do not hold it either", id="path-only-in-previews"),
+            pytest.param("What next?", "{summary}", "name the report file", id="path-only-in-previews"),
+            pytest.param("Report: {report}", "Outcome: PASS", "Title: Current review", id="path-only-in-question"),
             pytest.param(
-                "Report: {report}", "Outcome: PASS", "previews do not hold it either", id="path-only-in-question"
-            ),
-            pytest.param(
-                "Report: {missing}",
+                "Title: Current review\nOutcome: PASS\nReport: {missing}",
                 "Outcome: PASS → {missing}",
-                "previews do not hold it either",
+                "name the report file",
                 id="named-file-missing",
             ),
             pytest.param(
-                "Report: {unrelated}",
+                "Title: Current review\nOutcome: PASS\nReport: {unrelated}",
                 "Outcome: PASS → {unrelated}",
-                "does not hold the full report header",
+                "name the report file",
                 id="named-file-unrelated",
             ),
             pytest.param(
-                "Report: {report}",
+                "{summary}",
                 "Outcome: PASS\n→ run/report.md\n" + "\n".join(["more"] * 11),
-                "exceed the preview cap (option 1: 13 lines",
-                id="summary-over-cap",
+                "exceed the preview cap",
+                id="preview-over-cap",
             ),
             pytest.param(
-                "Report: {report}",
-                "| Field | Value |\n| --- | --- |\n| Outcome | FAIL |\n\n→ {report}",
-                "The preview summary contradicts the report file: `Outcome` reads `FAIL` but the file has `PASS`",
+                "Title: Current review\nOutcome: FAIL\n→ {report}",
+                "{summary}",
+                "Outcome: PASS",
                 id="summary-contradicts-file",
             ),
-            pytest.param(
-                "Report: {report}",
-                "{report}",
-                "2 of 2 option previews are not a compact summary",
-                id="path-without-summary",
-            ),
+            pytest.param("{report}", "{report}", "Title: Current review", id="path-without-summary"),
         ],
     )
-    def test_incomplete_file_shape_is_denied(
-        self, long_report: Path, question: str, preview: str, fragment: str
-    ) -> None:
-        """Each file-shape condition is required: named in the question, held, summarized within the cap, unchanged.
-
-        Dropping any one of them would let a call pass that names no readable full copy or shows a stale summary.
-        """
+    def test_incomplete_summary_is_denied(self, long_report: Path, question: str, preview: str, fragment: str) -> None:
+        """The summary must name the correct existing report and present headline values."""
         unrelated = long_report.parent / "unrelated.md"
         unrelated.write_text("hello\n", encoding="utf-8")
-        paths = {
+        values = {
             "summary": _summary(long_report),
             "report": long_report,
             "missing": long_report.parent / "missing.md",
             "unrelated": unrelated,
         }
-
         problem = _call(
-            "questionDeliveryProblem", str(long_report), _asked(question.format(**paths), preview.format(**paths))
+            "questionDeliveryProblem", str(long_report), _asked(question.format(**values), preview.format(**values))
         )
-
         assert isinstance(problem, str)
-        assert problem.startswith("current report header was not delivered by this question")
         assert fragment in problem
 
     @_skip_node_unavailable
-    def test_file_shape_is_denied_when_the_table_fits(self, tmp_path: Path) -> None:
-        """A header table within the preview cap must be in the previews; naming its file with summaries is denied.
-
-        A five-row header passed with every preview a path plus one value, so the gate recorded a delivery while the
-        user never saw the table. The file shape exists only for content the previews cannot hold.
-        """
-        report = tmp_path / "report.md"
-        report.write_text(_HEADER_REPORT, encoding="utf-8")
-        call = _asked(f"What next? Report: {report}", f"Outcome: PASS\n→ {report}")
-
-        problem = _call("questionDeliveryProblem", str(report), call)
-        shown = _call("recordFollowUpShown", str(tmp_path / "wf-report-dir-s"), str(report), {"tool_input": call})
-
-        assert isinstance(problem, str)
-        assert "fits the preview cap, so a file named in the question does not deliver it" in problem
-        assert "this header table takes at least 5 lines" in problem
-        assert shown is False
+    def test_small_report_summary_passes_without_settling_stop(self, follow_up_run: tuple[Path, Path]) -> None:
+        """Small reports use the same question contract, but the table still belongs in the final reply."""
+        sentinel, report = follow_up_run
+        call = _asked(_summary(report))
+        assert _call("questionDeliveryProblem", str(report), call) is None
+        assert _call("recordFollowUpShown", str(sentinel), str(report), {"tool_input": call}) is False
 
     @_skip_node_unavailable
-    def test_audit_file_shape_is_denied_when_the_report_fits(self, tmp_path: Path) -> None:
-        """A three-finding Audit Report fits the cap, so naming its rendered copy instead of showing it is denied."""
+    def test_small_audit_summary_names_aggregate(self, tmp_path: Path) -> None:
+        """Small audits need the aggregate path, rather than a separate rendered copy."""
         aggregate = tmp_path / "summary.jsonl"
-        lines = [f"broken ref {n}" for n in range(3)]
-        aggregate.write_text(
-            "".join(json.dumps({"sev": "high", "one_line": x}) + "\n" for x in lines), encoding="utf-8"
-        )
-        rendered = tmp_path / "audit-report.md"
-        rendered.write_text("## Audit Report\n\nTotal: 3\n" + "\n".join(lines) + "\n", encoding="utf-8")
-
-        problem = _call(
-            "questionDeliveryProblem", str(aggregate), _asked(f"Findings: {rendered}", f"3 high\n→ {rendered}")
-        )
-
-        assert isinstance(problem, str)
-        assert "fits the preview cap" in problem
+        aggregate.write_text(json.dumps({"sev": "high", "one_line": "broken ref"}) + "\n", encoding="utf-8")
+        assert _call("questionDeliveryProblem", str(aggregate), _asked(f"Audit Report\n→ {aggregate}")) is None
 
     @_skip_node_unavailable
-    def test_multi_select_question_never_delivers_a_file(self, long_report: Path) -> None:
-        """A multiSelect question renders no previews, so its summaries cannot carry the file path."""
-        call = _asked(f"Report: {long_report}", _summary(long_report), multi_select=True)
-
-        assert _call("questionDeliveryProblem", str(long_report), call) is not None
+    def test_multi_select_summary_delivers(self, long_report: Path) -> None:
+        """Question text renders for multi-select questions too, so previews are unnecessary."""
+        assert (
+            _call("questionDeliveryProblem", str(long_report), _asked(_summary(long_report), multi_select=True)) is None
+        )
 
     @_skip_node_unavailable
-    def test_shown_file_shape_settles_stop(self, long_report: Path) -> None:
-        """A shown follow-up delivering the report as a named file records the report version for Stop."""
+    def test_shown_named_summary_leaves_stop_armed(self, long_report: Path) -> None:
+        """A large report's shown summary cannot settle full-table delivery."""
         sentinel = long_report.parent.parent / "wf-report-dir-test-session-1234"
-        payload = {"tool_input": _asked(f"Report: {long_report}", _summary(long_report)), "cwd": None}
-
-        assert _call("recordFollowUpShown", str(sentinel), str(long_report), payload) is True
-
-    @_skip_node_unavailable
-    def test_audit_file_shape_passes_with_the_rendered_report(self, audit_run: tuple[Path, Path]) -> None:
-        """Audit over the cap passes by naming the rendered Audit Report beside its aggregate."""
-        aggregate, rendered = audit_run
-        call = _asked(f"Findings: {rendered}", f"15 high\n→ {rendered}")
-
-        assert _call("questionDeliveryProblem", str(aggregate), call) is None
+        payload = {"tool_input": _asked(_summary(long_report))}
+        assert _call("recordFollowUpShown", str(sentinel), str(long_report), payload) is False
+        assert _call("stopBlockReason", str(sentinel), str(long_report), _stop_payload(), "oss:review") is not None
 
     @_skip_node_unavailable
-    def test_audit_aggregate_is_no_readable_copy(self, audit_run: tuple[Path, Path]) -> None:
-        """Naming the JSONL aggregate is denied, and the remedy names where the rendered report goes."""
+    def test_audit_rendered_report_cannot_replace_aggregate_path(self, audit_run: tuple[Path, Path]) -> None:
+        """The summary is bound to the aggregate the audit hook resolved."""
         aggregate, rendered = audit_run
-        call = _asked(f"Findings: {aggregate}", f"15 high\n→ {aggregate}")
+        problem = _call("questionDeliveryProblem", str(aggregate), _asked(f"Audit Report\n→ {rendered}"))
+        assert str(aggregate) in problem
+        assert _call("questionDeliveryProblem", str(aggregate), _asked(f"Audit Report\n→ {aggregate}")) is None
 
-        problem = _call("questionDeliveryProblem", str(aggregate), call)
+    @_skip_node_unavailable
+    def test_large_audit_aggregate_is_summary_evidence(self, audit_run: tuple[Path, Path]) -> None:
+        """The JSONL aggregate path and existing headline suffice even for many findings."""
+        aggregate, _ = audit_run
+        assert _call("questionDeliveryProblem", str(aggregate), _asked(f"Audit Report\n→ {aggregate}")) is None
 
-        assert isinstance(problem, str)
-        assert "does not hold the full Audit Report" in problem
-        assert f"to `{rendered}` first" in problem
 
-
-#: Fifteen audit finding lines — with the heading and `Total:` line, 17 lines, over the 12-line preview cap.
 _AUDIT_LINES = [f"broken ref {n}" for n in range(15)]
 
 
 @pytest.fixture(name="audit_run")
 def _audit_run(tmp_path: Path) -> tuple[Path, Path]:
-    """Write a 15-finding `summary.jsonl` aggregate and its rendered `audit-report.md` beside it."""
+    """Write a many-finding aggregate and its rendered report."""
     aggregate = tmp_path / "summary.jsonl"
     aggregate.write_text(
         "".join(json.dumps({"sev": "high", "one_line": line}) + "\n" for line in _AUDIT_LINES), encoding="utf-8"
     )
     rendered = tmp_path / "audit-report.md"
-    rendered.write_text("## Audit Report\n\nTotal: 15\n" + "\n".join(_AUDIT_LINES) + "\n", encoding="utf-8")
+    rendered.write_text("## Audit Report\nTotal: 15\n" + "\n".join(_AUDIT_LINES), encoding="utf-8")
     return aggregate, rendered
 
 
@@ -913,44 +746,34 @@ _HTML_TABLE = (
 )
 
 
-class TestHtmlPreviewText:
-    """``htmlPreviewText`` turns an html-format preview back into the text a Markdown table check can read."""
+class TestOptionalPreviewHeight:
+    """Optional previews retain host height checks after removing legacy HTML table delivery."""
 
     @_skip_node_unavailable
     @pytest.mark.parametrize(
         ("preview", "expected"),
         [
-            pytest.param("| a | b |", "| a | b |", id="no-tag-unchanged"),
-            pytest.param("a &#124; b", "a &#124; b", id="no-tag-entities-kept"),
-            pytest.param("<pre>| a | b |</pre>", "| a | b |", id="inline-pre"),
-            pytest.param('<pre class="t">\n| a |\n</pre>', "\n| a |\n", id="pre-with-attributes"),
-            pytest.param("<div><pre><code>| a |</code></pre></div>", "| a |", id="nested-wrappers"),
-            pytest.param("<div>| a |<br>| b |<br/>| c |</div>", "| a |\n| b |\n| c |", id="br-line-breaks"),
-            pytest.param("<pre>a &#124; b &vert; c &#X7C; d</pre>", "a | b | c | d", id="pipe-entities"),
-            pytest.param("<pre>| a &#124; b | c |</pre>", "| a \\| b | c |", id="in-cell-pipe-entity-kept-in-cell"),
-            pytest.param("<pre>| a \\&#124; b |</pre>", "| a \\| b |", id="escaped-in-cell-pipe-entity"),
-            pytest.param("<pre>&#124; a \\&#124; b &#124;</pre>", "| a \\| b |", id="escaped-entity-in-encoded-row"),
-            pytest.param("<pre>&amp;#124; &lt;x&gt;</pre>", "&#124; <x>", id="entities-decoded-once"),
-            pytest.param(
-                "<pre>| Path | .reports/<skill>/x |</pre>", "| Path | .reports/<skill>/x |", id="literal-angle-text"
-            ),
+            pytest.param("| a | b |", 1, id="plain-text"),
+            pytest.param("a &#124; b", 1, id="literal-entity"),
+            pytest.param("<pre>| a | b |</pre>", 1, id="inline-pre"),
+            pytest.param('<pre class="t">\n| a |\n</pre>', 2, id="pre-with-attributes"),
+            pytest.param("<div><pre><code>| a |</code></pre></div>", 1, id="nested-wrappers"),
+            pytest.param("<div>| a |<br>| b |<br/>| c |</div>", 3, id="br-line-breaks"),
+            pytest.param("<pre>a &#124; b &vert; c &#X7C; d</pre>", 1, id="pipe-entities"),
+            pytest.param("<pre>| a &#124; b | c |</pre>", 1, id="in-cell-entity"),
+            pytest.param("<pre>| a \\&#124; b |</pre>", 1, id="escaped-entity"),
+            pytest.param("<pre>&#124; a \\&#124; b &#124;</pre>", 1, id="encoded-row"),
+            pytest.param("<pre>&amp;#124; &lt;x&gt;</pre>", 1, id="entities"),
+            pytest.param("<pre>| Path | artifact/<skill>/x |</pre>", 1, id="literal-angle-text"),
         ],
     )
-    def test_unwraps_html_preview(self, preview: str, expected: str) -> None:
-        """Wrapper tags go, `<br>` becomes a line break, entities decode once; non-wrapper `<...>` text stays.
-
-        A `<placeholder>`-style value inside a `<pre>` table is report content, not markup, so removing it would turn a
-        correct preview into a mismatch; a preview with no tag at all is a Markdown-mode preview and is left as written.
-        """
-        assert _call("htmlPreviewText", preview) == expected
+    def test_optional_preview_rendered_height(self, preview: str, expected: int) -> None:
+        """Rendered height stays capped; HTML entity tables are never decoded for item delivery."""
+        assert _call("previewLineCount", preview) == expected
 
 
-class TestDeliveryViaHtmlPreview:
-    """A host with ``previewFormat: "html"`` rejects a preview holding no html tag, so the table arrives wrapped.
-
-    Before this, a `<pre>`-wrapped inline table was denied with a remedy the tool itself rejects (a bare Markdown
-    preview), so the follow-up question looped on denials.
-    """
+class TestOptionalHtmlPreviews:
+    """Optional HTML previews cannot substitute for plain question-text evidence."""
 
     @_skip_node_unavailable
     @pytest.mark.parametrize(
@@ -964,23 +787,25 @@ class TestDeliveryViaHtmlPreview:
             pytest.param("<pre>" + _HEADER_TABLE.replace("|", "&vert;") + "</pre>", id="named-pipe-entities"),
         ],
     )
-    def test_wrapped_header_table_allows(self, tmp_path: Path, preview: str) -> None:
-        """The current header table wrapped for an html preview host passes like the Markdown preview does."""
+    def test_wrapped_preview_requires_plain_question_summary(self, tmp_path: Path, preview: str) -> None:
+        """Optional HTML previews cannot substitute for plain question-text evidence."""
         report = tmp_path / "report.md"
         report.write_text(_HEADER_REPORT, encoding="utf-8")
 
-        assert _call("questionDeliveryProblem", str(report), _question(preview)) is None
+        assert _call("questionDeliveryProblem", str(report), _question(preview)) is not None
+        assert _call("questionDeliveryProblem", str(report), _asked(_summary(report), preview)) is None
 
     @_skip_node_unavailable
-    def test_html_table_markup_is_denied_with_the_pre_remedy(self, tmp_path: Path) -> None:
-        """A `<table>` element is not converted; the reason tells an html host to wrap the Markdown table in `<pre>`."""
+    def test_html_table_preview_cannot_replace_summary(self, tmp_path: Path) -> None:
+        """Optional HTML previews cannot substitute for plain question-text evidence."""
         report = tmp_path / "report.md"
         report.write_text(_HEADER_REPORT, encoding="utf-8")
 
         problem = _call("questionDeliveryProblem", str(report), _question(_HTML_TABLE))
 
         assert isinstance(problem, str)
-        assert "html preview hosts: wrap the table in `<pre>` with the table on its own lines" in problem
+        assert "first question's `question` text" in problem
+        assert _call("questionDeliveryProblem", str(report), _asked(_summary(report), _HTML_TABLE)) is None
 
     @_skip_node_unavailable
     @pytest.mark.parametrize(
@@ -998,23 +823,22 @@ class TestDeliveryViaHtmlPreview:
         ],
     )
     def test_escaped_in_cell_pipe_stays_cell_content(self, tmp_path: Path, preview: str) -> None:
-        """A header value holding a pipe matches when the `<pre>` preview escapes that pipe inside its cell.
-
-        Decoding `&#124;` to a bare `|` split the value cell into two, so a correct table was denied.
-        """
+        """Optional HTML previews cannot substitute for plain question-text evidence."""
         report = tmp_path / "report.md"
         report.write_text("---\nTitle: Current review\nOutcome: PASS\nPath: A|B\n---\n", encoding="utf-8")
 
-        assert _call("questionDeliveryProblem", str(report), _question(preview)) is None
+        assert _call("questionDeliveryProblem", str(report), _question(preview)) is not None
+        assert _call("questionDeliveryProblem", str(report), _asked(_summary(report), preview)) is None
 
     @_skip_node_unavailable
-    def test_audit_findings_in_html_preview_allow(self, tmp_path: Path) -> None:
-        """An audit finding whose text holds a pipe matches when an html preview escapes that pipe as an entity."""
+    def test_audit_html_preview_requires_aggregate_summary(self, tmp_path: Path) -> None:
+        """Optional HTML previews cannot substitute for plain question-text evidence."""
         report = tmp_path / "summary.jsonl"
         report.write_text(json.dumps({"sev": "high", "one_line": "a | b broken"}) + "\n", encoding="utf-8")
         preview = "<pre>## Audit Report\nTotal: 1\na &#124; b broken</pre>"
 
-        assert _call("questionDeliveryProblem", str(report), _question(preview)) is None
+        assert _call("questionDeliveryProblem", str(report), _question(preview)) is not None
+        assert _call("questionDeliveryProblem", str(report), _asked(f"Audit Report\n→ {report}", preview)) is None
 
 
 @pytest.fixture(name="follow_up_run")
@@ -1031,13 +855,13 @@ class TestFollowUpProblem:
     """``followUpProblem`` is the PreToolUse entry point: question text plus transcript, no Stop bookkeeping."""
 
     @_skip_node_unavailable
-    def test_preview_pass_leaves_stop_armed(self, follow_up_run: tuple[Path, Path]) -> None:
+    def test_summary_pass_leaves_stop_armed(self, follow_up_run: tuple[Path, Path]) -> None:
         """An allowed follow-up records nothing yet: another PreToolUse hook or a permission rule may still deny it.
 
         Recording at this point let a question the user never saw settle Stop, so the report went undelivered.
         """
         sentinel, report = follow_up_run
-        payload = {"transcript_path": None, "tool_input": _question(_HEADER_TABLE)}
+        payload = {"transcript_path": None, "tool_input": _asked(_summary(report))}
 
         assert _call("followUpProblem", str(sentinel), str(report), payload) is None
         assert isinstance(_call("stopBlockReason", str(sentinel), str(report), _stop_payload(), "oss:review"), str)
@@ -1053,20 +877,16 @@ class TestFollowUpProblem:
 
 
 class TestRecordFollowUpShown:
-    """``recordFollowUpShown`` is the PostToolUse step: a shown follow-up that delivered the report settles Stop."""
+    """PostToolUse summaries never settle the separate final-reply delivery check."""
 
     @_skip_node_unavailable
-    def test_shown_preview_settles_the_stop_check(self, follow_up_run: tuple[Path, Path]) -> None:
-        """A shown question whose preview carried the table records the version, so Stop does not demand it again.
-
-        The preview never becomes a transcript text block; without the record, every run delivered that way would get
-        one forced Stop continuation re-printing a table the user already saw.
-        """
+    def test_shown_summary_does_not_settle_stop(self, follow_up_run: tuple[Path, Path]) -> None:
+        """Showing the summary leaves Stop armed for the full table."""
         sentinel, report = follow_up_run
-        payload = {"transcript_path": None, "tool_input": _question(_HEADER_TABLE)}
+        payload = {"transcript_path": None, "tool_input": _asked(_summary(report))}
 
-        assert _call("recordFollowUpShown", str(sentinel), str(report), payload) is True
-        assert _call("stopBlockReason", str(sentinel), str(report), _stop_payload(), "oss:review") is None
+        assert _call("recordFollowUpShown", str(sentinel), str(report), payload) is False
+        assert _call("stopBlockReason", str(sentinel), str(report), _stop_payload(), "oss:review") is not None
 
     @_skip_node_unavailable
     def test_shown_question_without_the_report_records_nothing(self, follow_up_run: tuple[Path, Path]) -> None:
@@ -1084,7 +904,12 @@ class TestRecordFollowUpShown:
         The user may answer with another option focused and never see it, so Stop must still demand the table once.
         """
         sentinel, report = follow_up_run
-        payload = {"transcript_path": None, "tool_input": {"questions": [_follow_up([_HEADER_TABLE, None])]}}
+        payload = {
+            "transcript_path": None,
+            "tool_input": {
+                "questions": [{"question": "What next?", "options": [{"preview": _HEADER_TABLE}, {"label": "skip"}]}]
+            },
+        }
 
         assert _call("recordFollowUpShown", str(sentinel), str(report), payload) is False
         assert isinstance(_call("stopBlockReason", str(sentinel), str(report), _stop_payload(), "oss:review"), str)
@@ -1107,7 +932,7 @@ class TestRecordFollowUpShown:
     def test_missing_sentinel_records_nothing(self, follow_up_run: tuple[Path, Path]) -> None:
         """Without an active workflow sentinel there is no marker to write."""
         _, report = follow_up_run
-        payload = {"transcript_path": None, "tool_input": _question(_HEADER_TABLE)}
+        payload = {"transcript_path": None, "tool_input": _asked(_summary(report))}
 
         assert _call("recordFollowUpShown", None, str(report), payload) is False
 
@@ -1470,3 +1295,155 @@ def test_delivered_marker_keeps_session_token_terminal(tmp_path: Path) -> None:
 
     assert marker.parent == tmp_path
     assert marker.name == "report-delivered-oss-review-report-dir-abc"
+
+
+@_skip_node_unavailable
+def test_plain_question_summary_without_previews_passes(follow_up_run: tuple[Path, Path]) -> None:
+    """The first question names the resolved report and its headline values without option previews."""
+    _, report = follow_up_run
+    call = _question(None)
+    call["questions"][0]["question"] = f"Title: Current review\nOutcome: PASS\n→ {report}\nWhat next?"
+
+    assert _call("questionDeliveryProblem", str(report), call) is None
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    ("length", "allowed"), [pytest.param(1500, True, id="at-cap"), pytest.param(1501, False, id="over-cap")]
+)
+def test_question_summary_length_cap(follow_up_run: tuple[Path, Path], length: int, allowed: bool) -> None:
+    """Even a complete headline summary must leave headroom below the host's question-text cut."""
+    _, report = follow_up_run
+    summary = f"Title: Current review\nOutcome: PASS\n→ {report}\n"
+    call = _question(_HEADER_TABLE)
+    call["questions"][0]["question"] = summary + "x" * (length - len(summary))
+    problem = _call("questionDeliveryProblem", str(report), call)
+
+    if allowed:
+        assert problem is None
+    else:
+        assert isinstance(problem, str)
+        assert "1500" in problem
+        assert "fixed lines" in problem
+        assert str(report) in problem
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize("final_table", [False, True])
+def test_shown_summary_keeps_final_table_delivery_armed(follow_up_run: tuple[Path, Path], final_table: bool) -> None:
+    """A shown summary leaves Stop armed; final delivery passes and each report gets at most one nudge."""
+    sentinel, report = follow_up_run
+    call = _question(None)
+    call["questions"][0]["question"] = f"Title: Current review\nOutcome: PASS\n→ {report}"
+    assert _call("followUpProblem", str(sentinel), str(report), {"tool_input": call}) is None
+    assert _call("recordFollowUpShown", str(sentinel), str(report), {"tool_input": call}) is False
+    assert not Path(_call("deliveredMarkerPath", str(sentinel))).exists()
+    payload = _stop_payload(last_assistant_message=_HEADER_TABLE if final_table else "Done.")
+
+    reason = _call("stopBlockReason", str(sentinel), str(report), payload, "oss:review")
+
+    assert (reason is None) is final_table
+    if not final_table:
+        assert "| Field | Value |" in reason
+    assert _call("stopBlockReason", str(sentinel), str(report), _stop_payload(), "oss:review") is None
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    ("header", "summary", "allowed"),
+    [
+        pytest.param(
+            "Title: Current review\nVerdict: APPROVE\nDate: today",
+            "Current review\nAPPROVE",
+            True,
+            id="verdict-fallback",
+        ),
+        pytest.param(
+            "Title: Current review\nOutcome: PASS\nVerdict: REJECT", "Current review\nPASS", True, id="outcome-wins"
+        ),
+        pytest.param(
+            "Title: Current review\nOutcome: PASS\nVerdict: REJECT",
+            "Current review\nREJECT",
+            False,
+            id="verdict-cannot-replace-outcome",
+        ),
+        pytest.param("Title: Current review\nDate: today\nScope: hooks", "Current review", True, id="no-outcome"),
+        pytest.param("Date: today\nScope: hooks\nSummary: ready", "", True, id="path-only-without-headlines"),
+        pytest.param("Outcome: PASS\nDate: today\nScope: hooks", "PASS", True, id="outcome-without-title"),
+        pytest.param("Title: Current review\nOutcome: PASS\nDate: today", "PASS", False, id="missing-title"),
+    ],
+)
+def test_question_requires_only_present_headline_fields(
+    tmp_path: Path, header: str, summary: str, allowed: bool
+) -> None:
+    """The question contract selects existing headline fields without manufacturing missing ones."""
+    report = tmp_path / "report.md"
+    report.write_text(f"---\n{header}\n---\n", encoding="utf-8")
+    problem = _call("questionDeliveryProblem", str(report), _asked(f"{summary}\n→ {report}"))
+    assert (problem is None) is allowed
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    ("saved", "shown", "allowed"),
+    [
+        pytest.param("PASS", "**PASS**", True, id="bold-value"),
+        pytest.param("PASS", "_PASS_", True, id="italic-value"),
+        pytest.param("PASS", "**`PASS`**", True, id="nested-wrappers"),
+        pytest.param("NEEDS WORK", "NEEDS **WORK**", True, id="inline-markdown"),
+        pytest.param("__init__", "init", False, id="literal-dunder-required"),
+        pytest.param("a_b_c", "abc", False, id="literal-underscores-required"),
+        pytest.param("**PASS**", "PASS", False, id="saved-markup-required"),
+        pytest.param("plugins/*/hooks/*.js", "**plugins/*/hooks/*.js**", True, id="literal-glob-under-wrapper"),
+        pytest.param("`a` b", "`` `a` b ``", True, id="literal-code-under-wrapper"),
+    ],
+)
+def test_question_summary_preserves_saved_values(tmp_path: Path, saved: str, shown: str, allowed: bool) -> None:
+    """Summary matching shares table-cell Markdown tolerance while preserving saved literal characters."""
+    report = tmp_path / "report.md"
+    report.write_text(f"---\nTitle: Current review\nOutcome: {saved}\nDate: today\n---\n", encoding="utf-8")
+    problem = _call("questionDeliveryProblem", str(report), _asked(_summary(report, outcome=shown)))
+    assert (problem is None) is allowed
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize("shape", ["table", "html"])
+def test_question_summary_requires_plain_text(tmp_path: Path, shape: str) -> None:
+    """Putting all facts in a question's table or HTML wrapper is denied with a plain-text remedy."""
+    report = tmp_path / "report.md"
+    report.write_text(_HEADER_REPORT, encoding="utf-8")
+    summary = _summary(report)
+    text = _HEADER_TABLE + f"\n→ {report}" if shape == "table" else f"<pre>{summary}</pre>"
+    problem = _call("questionDeliveryProblem", str(report), _asked(text))
+    assert "use plain text" in problem
+    assert _call("questionDeliveryProblem", str(report), _asked(summary)) is None
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize("placement", ["multi-select", "second-question"])
+def test_optional_preview_caps_apply_wherever_present(tmp_path: Path, placement: str) -> None:
+    """An optional preview exceeding the host cap is denied regardless of its question placement."""
+    report = tmp_path / "report.md"
+    report.write_text(_HEADER_REPORT, encoding="utf-8")
+    call = _asked(_summary(report), multi_select=placement == "multi-select")
+    target = call["questions"][0]
+    if placement == "second-question":
+        target = {"question": "Which branch?", "options": [{"label": "main"}]}
+        call["questions"].append(target)
+    target["options"][0]["preview"] = "x" * 2001
+    assert "exceed the preview cap" in _call("questionDeliveryProblem", str(report), call)
+    del target["options"][0]["preview"]
+    assert _call("questionDeliveryProblem", str(report), call) is None
+
+
+@_skip_node_unavailable
+def test_question_can_name_report_relative_to_cwd_without_slash(tmp_path: Path) -> None:
+    """A report in the session cwd can be named by its filename, without an artificial path prefix."""
+    report = tmp_path / "report.md"
+    report.write_text(_HEADER_REPORT, encoding="utf-8")
+    call = _asked("Title: Current review\nOutcome: PASS\n→ report.md")
+    assert _call("questionDeliveryProblem", str(report), call, str(tmp_path)) is None
+    other_cwd = tmp_path / "other"
+    other_cwd.mkdir()
+    (other_cwd / "report.md").write_text(_HEADER_REPORT, encoding="utf-8")
+    assert _call("questionDeliveryProblem", str(report), call, str(other_cwd)) is not None

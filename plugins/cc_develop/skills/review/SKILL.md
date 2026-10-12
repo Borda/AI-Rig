@@ -118,9 +118,9 @@ After Step 1 completes (scope and `TARGET` known), create these tasks **before a
 - **"Step 3: Spawn review agents"** — mark `in_progress` before agents launch; mark `completed` when all agent output files collected (or health-monitoring cutoff reached)
 - **"Step 4: Cross-validate critical findings"** — mark `in_progress` before verifier spawns; `completed` when all verdicts received; **skip task creation when no critical/blocking findings exist after Step 3**
 - **"Step 5: Consolidate findings"** — mark `in_progress` before spawning consolidator; `completed` when consolidator returns its JSON envelope (Write to `review-report.md` done) — **do NOT mark completed for the terminal print, that's a separate task below**
-- **"Step 5b: Print report header"** — created **blockedBy** "Step 5: Consolidate findings"; mark `in_progress` immediately after consolidator's envelope returns; `completed` only in the response whose follow-up `AskUserQuestion` carries the header table in its option previews (not merely queued/intended). Exempt from task-lifecycle's TaskUpdate-before-long-output order: the table comes first, the `completed` call beside the question in the same response.
+- **"Step 5b: Print report header"** — created **blockedBy** "Step 5: Consolidate findings"; mark `in_progress` immediately after the consolidator returns. Read the report and build the header table and question summary now; keep it `in_progress` through the question. Mark `completed` only in the response that delivers the table in the final reply after the answer (or on a no-question path), beside the last tool calls immediately before that output, never merely when queued/intended.
   - Consolidator's JSON envelope is a routing signal for the orchestrator, never a substitute for reading `$REPORT_DIR/review-report.md` and rendering its header.
-  - **The follow-up gate's `AskUserQuestion` must not fire while this task is `pending`/`in_progress`** — a sibling skill (oss:review, identical consolidator+print architecture) had an incident where the hard-enforced tool call (`AskUserQuestion`) fired correctly while this prose-only print step got silently dropped; the dedicated task exists specifically to make the print step as trackable/enforceable as the tool calls around it.
+  - **The follow-up `AskUserQuestion` must not fire until the current report has been read and its header table and plain summary are built** — the dedicated task tracks final delivery separately; issuing the question does not complete it.
 
 ## Flag parsing
 
@@ -555,6 +555,8 @@ Skip for purely internal (non-exported) implementation changes.
 
 ## Step 4: Validate all candidates and independently verify critical/blocking concerns
 
+Agent phase reports must be written to the run-dir before this refresh.
+
 ```bash
 # compaction boundary 1 (compaction-contract.md §Lifecycle) — written before entering Step 4
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -566,9 +568,14 @@ IFS= read -r _CLASS < "${TMPDIR:-/tmp}/dev-review-classification-${CSID}" 2>/dev
 _FINDING_FILES=$(ls "$_RUN_DIR/"*.md 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
 _PRESERVE="run-dir=$_RUN_DIR, report-dir=$_REPORT_DIR, target=$_TARGET, classification=$_CLASS, finding-files=$_FINDING_FILES"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:review" "consolidation (after parallel review-agent fan-out)" "$_RUN_DIR" "$_PRESERVE" "cross-validate critical findings (Step 4) → consolidate → final report"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:review" "consolidation (after parallel review-agent fan-out)" "$_RUN_DIR" "$_PRESERVE" "resume: re-cat own agent-resolution.md, file-handoff-protocol.md and foundry--cross-validation-protocol.md; cross-validate critical findings (Step 4) → consolidate → final report" -- calls_ahead=20 "drop=expanded review findings"  # timeout: 5000
 IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
 [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
+_CC="$_DEV_SHARED/compaction-contract.md"; [ -f "$_CC" ] || _CC="plugins/cc_develop/skills/_shared/compaction-contract.md"
+sed -n '/^## Boundary step$/,/^## Acceptance criteria$/{/^## Acceptance criteria$/!p;}' "$_CC"
+_RS="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/resolve_shared_path.py}"
+[ -n "$_RS" ] || _RS=$(ls plugins/cc_*/bin/resolve_shared_path.py 2>/dev/null | head -1)
+[ -f "$_RS" ] && _GD=$(python "$_RS" foundry bin 2>/dev/null) && [ -f "$_GD/compact_gate.py" ] && python "$_GD/compact_gate.py" || echo "compact-gate: continue (foundry gate unavailable)"
 RUN_DIR="$_RUN_DIR"
 [ -n "$RUN_DIR" ] || { echo "! BLOCKED — run-dir sentinel empty; refusing to write cross-validation notes to a root-relative path"; exit 1; }
 if [ ! -f "$_DEV_SHARED/foundry--cross-validation-protocol.md" ]; then
@@ -579,6 +586,8 @@ else
     cat "$_DEV_SHARED/foundry--cross-validation-protocol.md"
 fi
 ```
+
+Follow the Boundary step printed above before candidate validation and consolidation; reports are the preserved finding-files in the run-dir.
 
 File present → parent validates all candidates using the printed protocol before consolidation. File absent → record incomplete process coverage, owner and reinstall recovery; no unconditional approval or unvalidated actionable findings. Exhaust allowed static checks. A child read-only limit does not establish that authorized parent runtime checks are infeasible; record the actual authorization/capability boundary and next check when blocked, and feasible undone work as incomplete.
 
@@ -623,17 +632,17 @@ After parsing confidence scores: any agent scored < 0.7 → prepend **⚠ LOW CO
 
 TaskUpdate "Step 5b: Print report header" → `in_progress`.
 
-**MANDATORY, not optional narration** — the consolidator's returned JSON envelope is a routing signal only; it is never printed to the user and never satisfies this step. Perform, in this exact order, in this same turn, before any other Step 5/6 output:
+**MANDATORY, not optional narration** — the consolidator's returned JSON envelope is a routing signal only; it is never printed to the user and never satisfies this step. Prepare items 1–3 in this exact order, in this same turn, before any other Step 5/6 output; deliver items 4–5 in the final response:
 
 1. read the top of `$REPORT_DIR/review-report.md` via the Read tool with `limit=60` — the 14-field `---` header through its closing delimiter, plus the legend, aggregate summary and findings overview below it; never a bound that stops inside the header, and never the whole file (the detailed finding sections are 5–20K tok and are read per item, later, on demand). A report whose overview runs past that bound: re-read with `offset` from the last line delivered, never the whole file.
 2. render its fields as a two-column Markdown table (`Field | Value`, one row per key, file order) per quality-gates.md §Report File Format — never the raw `---`-delimited block.
 3. complete the delivery block: the reviewer legend immediately below the table, then the aggregate summary as prose and limits, kept short: 2–3 sentences, each critical/high finding on one line, limits as at most 3 bullets. The table is the required core — its `Path` row points at the full report, where the findings overview with its Author column and the detailed review content stay; end with `→ saved to $REPORT_DIR/review-report.md`.
-4. deliver the block once: shown only as the `preview` of every follow-up gate option below — never also as reply text, never Bash/tool stdout — when it fits the preview cap: ≤2000 chars and ≤12 lines, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll). The 14-field header alone breaks the cap (16 table lines), so the usual shape is the over-cap one: the report file is the full copy, every option's `preview` is a compact summary — the `Title`, `Outcome` and `Confidence` rows verbatim as a `Field | Value` table, then `→ full header + report: $REPORT_DIR/review-report.md` — and the question text names that same path (its `/compact` hint does). On 5.5 models text before a tool call may come back as an empty progress update. The gate never skips, so there is no reply-text path; if the turn ends without the question anyway, the `Stop` hook demands the table as final reply text.
-5. TaskUpdate "Step 5b: Print report header" → `completed` in the response that carries the follow-up question, never before.
+4. Deliver the block once in the final reply after the answer, after its last tool call, never as Bash/tool stdout. Do not print the header table before the follow-up question or put it in option previews. The question carries only the plain summary defined below; the full table stays in the report file until final delivery. On a no-question path, the block still opens the final reply after all Step 6/7/8 tool calls that apply. The `Stop` hook requires the matching full header table there; the question summary does not satisfy final delivery.
+5. TaskUpdate "Step 5b: Print report header" → `completed` in the response that delivers the final block, beside the last tool calls immediately before the table text, never at the follow-up question.
 
 Report file already contains the fields — no separate prepend needed.
 
-> **Output-Routing exemption**: the delivery block lives only in the follow-up option previews, so quality-gates.md §Report File Format's table-first-in-reply rule and Output Routing step 2a do not apply to the reply here. Only a `Stop`-forced final reply opens with the table — then omit the `╔═╗` Re:Anchor box (the table IS the reply header).
+> **Output-Routing exemption**: the follow-up question carries only a plain summary; quality-gates.md §Report File Format's table-first-in-reply rule and Output Routing step 2a apply to the final reply after the answer, and to no-question paths. The table IS the final reply's header — omit the `╔═╗` Re:Anchor box (communication.md exempts quality-gates `---` report headers). Never emit both a box header and this table.
 
 ```bash
 # compaction boundary 2 (compaction-contract.md §Lifecycle)
@@ -658,9 +667,9 @@ cat "$_DEV_SHARED/codex-delegation.md"
 
 Apply the "good fit" and "don't delegate" criteria defined there (when found) — criteria only; never invoke `bridge:implement` from this step. Qualifying findings → print a `### Codex-eligible findings` section listing each finding's location and a one-line brief, and add them to the report's **Recommended Next Steps** as candidates for a `bridge:implement` call by the fix workflow or the user. None qualify → omit the section.
 
-**Hard gate**: before anything below, the Step 5b delivery block must already be built from the current report file. Not built → go back and do it now (see Step 5b); the `AskUserQuestion` below carries it and marks "Step 5b: Print report header" `completed` in the same response.
+**Hard gate**: before the follow-up question, the Step 5b header table and plain summary must already be built from the current report file. Not built → go back and do it now (see Step 5b). The question carries the summary; the full delivery block opens the final reply after the answer (or on a no-question path). Keep "Step 5b: Print report header" `in_progress` until that final delivery.
 
-**Hook-enforced**: on `Stop`, `hooks/enforce-review-header.js` keeps a turn going once per report when it ends without the matching header table — skipping the follow-up question does not skip delivery. It also blocks only this workflow's follow-up question until the current report exists and every `---` header field appears in one matching two-column table in that question's option previews within the preview cap — or, over the cap, the question text names the report file and every option preview is a compact summary within the cap naming it — the question-time check reads only the call, so a reply-text table before it does not count (it can come back as an empty progress update). Missing delivery evidence blocks this transition; apply the placement the deny reason names, then retry. Diagnostic/recovery questions remain available; use their own question header, not `dev-review`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
+**Hook-enforced**: on `Stop`, `hooks/enforce-review-header.js` keeps a turn going once per report when its final reply lacks the matching full header table — skipping the follow-up question does not skip delivery. At question time it blocks only this workflow's follow-up until the current report exists and the first question's text names the report path and its `Title`, `Outcome` values as a short plain summary, no table. Option descriptions and previews do not supply the summary. Missing evidence blocks this transition; apply the placement the deny reason names, then retry. Diagnostic/recovery questions remain available; use their own question header, not `dev-review`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
 
 **Worktree exit** — if `WORKTREE_ENABLED=true`: the report already lives in the main tree (§Deliverable). Follow `worktree-isolation.md` §Exit — capture branch, call `ExitWorktree(action="keep")`, append the `Worktree` block to the report/output. Exit **before** the follow-up gate so the `/develop:fix`/`/develop:refactor` next-step suggestions below point at the main tree. Never auto-merge.
 
@@ -679,10 +688,10 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "
 **Follow-up gate (NEVER SKIP)** — Call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments. The `/compact` hint rides in the question text, never as reply prose or Bash stdout before the call (text before a tool call can vanish on 5.5-family models):
 
 - header: `dev-review`
-- question: "What next? (Long wait? `/compact` now — report saved at \<REPORT_DIR>/review-report.md, resume lossless.)"
+- question: at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence: `Title: <report Title>`; `Outcome: <report Outcome>`; finding counts and blockers; `→ <REPORT_DIR>/review-report.md`; `What next?`; "Long wait? `/compact` now — report saved, resume lossless." Keep the `/compact` hint in the question text.
 - (a) label: `walk through findings` — description: go through each finding interactively
 - (b) label: `skip` — description: no action
-- every option: `preview` = the Step 5b delivery block, verbatim, table first — its only copy — or, over the preview cap, the Step 5b compact summary naming the report path (Step 5b item 4)
+- every option: label and one-line description only, no `preview`; never put the header table in the question or its options.
 
 **Confidence block** — emitted by consolidator agent in `$REPORT_DIR/review-report.md`, not at skill level (DMI skill: top-level model invocation disabled, so any skill-level instruction would be unreachable).
 

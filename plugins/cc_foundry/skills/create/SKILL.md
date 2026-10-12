@@ -57,7 +57,7 @@ Propose four-beat arc from topic + audience:
 
 > "Your brief suggests [X] but audience profile is [Y] — recommend adjusting [Z]. Proceed as-is or adjust?"
 
-**Arc approval + voice** (single AskUserQuestion call): the proposed arc (Hook · Journey · Insight · Action) is the `preview` of every option, never reply text before the call — within the preview cap (≤2000 chars, ≤12 lines; Claude Code withholds or clips a larger preview), so keep each beat to one or two lines; the question text asks the voice choice — option (d) redirects to arc adjustment.
+**Arc approval + voice** (single AskUserQuestion call): derive a topic slug (kebab-case, max 5 words, per Step 4), Write the proposed arc (Hook · Journey · Insight · Action) to `.temp/create/<slug>-arc.md` first, keeping each beat to one or two lines. The full arc is printed once, rendered as normal Markdown, as the last reply text before the question call. The question text carries the arc headline, four-beat count and `→ .temp/create/<slug>-arc.md`, then asks the voice choice — option (d) redirects to arc adjustment. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
 
 Options:
 
@@ -66,7 +66,7 @@ Options:
 - (c) Approve arc — conversational / approachable, informal
 - (d) Adjust the arc first (free text — describe what to change)
 
-On (d): revise arc, re-invoke this question with the revised arc as every option's `preview`. After (a)/(b)/(c): restate confirmed arc and voice in two sentences.
+On (d): revise arc, rewrite `.temp/create/<slug>-arc.md`, print the revised arc once immediately before re-invoking this question and refresh its plain summary. After (a)/(b)/(c): restate confirmed arc and voice in two sentences.
 
 ## Step 4 — Write outline file
 

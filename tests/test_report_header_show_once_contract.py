@@ -1,20 +1,20 @@
-"""Keep report-header delivery to one copy: the follow-up option previews, or the final reply when nothing is asked.
+"""Keep report-header delivery to one copy: a plain summary in the follow-up question, the table in the final reply.
 
-On models that return text written before a tool call as a progress-update thinking block (empty under the default
-``display``), a header table printed as reply text right before the follow-up ``AskUserQuestion`` never reaches the
-user. The workflow skills therefore carry the table (or the audit findings report, the session Unlanded table, the
-brainstorm tree summary) only as the ``preview`` of every single-select option. A path that asks no question prints it
-as the opening of the turn's final reply instead, and the ``Stop`` hook enforces that fallback.
+Tables render badly in ``AskUserQuestion`` option previews, and a header table printed as reply text right before the
+follow-up question can arrive as an empty progress update on some models. The report-header workflow skills therefore
+put only a short plain summary (report path, ``Title``, ``Outcome``) in the follow-up question's text and deliver the
+full header table (or the audit findings report) once, in the turn's final reply after the answer. A path that asks no
+question opens the final reply with it, and the ``Stop`` hook enforces that delivery for both paths.
 
-The previous wording asked for both copies — "print it as reply text and also pass it as the preview" — which shows the
-table twice on every model that keeps the text visible. These checks pin the single-copy contract:
+The earlier wording asked for the table in the ``preview`` of every option, or for both a reply-text print and a
+preview copy. These checks pin the single-copy contract:
 
 * no instruction sentence pairs a reply-text print with a preview copy of the same table;
-* every edited file states the preview-only rule;
+* every report-header skill file defers the table to the final reply after the answer;
 * skills with a no-question path state the final-reply fallback after the last tool call;
 * skills that cite quality-gates' table-first-in-reply rule carry their Output-Routing exemption;
-* the shared hook module and the six gate hooks name only the preview fix in their deny reasons;
-* the six gate hooks run on ``PostToolUse(AskUserQuestion)``, where a shown follow-up settles the ``Stop`` check.
+* the shared hook module and the six gate hooks name only the question-text fix in their deny reasons;
+* the six gate hooks stay registered on ``PostToolUse(AskUserQuestion)``, which records nothing for ``Stop``.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGINS_DIR = REPO_ROOT / "plugins"
 
-#: Instruction files whose follow-up question carries the delivery block in its option previews.
+#: Instruction files of the report-header workflows: a plain question-text summary, the table in the final reply.
 _SKILL_FILES = (
     "cc_oss/skills/review/SKILL.md",
     "cc_oss/skills/analyse/SKILL.md",
@@ -39,9 +39,6 @@ _SKILL_FILES = (
     "cc_foundry/skills/profile/SKILL.md",
     "cc_foundry/skills/audit/SKILL.md",
     "cc_foundry/skills/audit/modes/steps-4-5-7.md",
-    "cc_foundry/skills/session/SKILL.md",
-    "cc_foundry/skills/brainstorm/SKILL.md",
-    "cc_foundry/skills/brainstorm/modes/breakdown.md",
     "cc_research/skills/topic/SKILL.md",
     "cc_research/skills/topic/modes/team.md",
     "cc_research/skills/topic/modes/plan.md",
@@ -61,6 +58,9 @@ _HOOK_FILES = (
     "cc_foundry/hooks/enforce-audit-header.js",
 )
 
+_LIBRARY_FILES = _HOOK_FILES[:4]
+_GATE_HOOK_FILES = _HOOK_FILES[4:]
+
 #: Skills that can end without the follow-up question → the block must open the final reply, after the last tool call.
 _FALLBACK_FILES = (
     "cc_oss/skills/review/SKILL.md",
@@ -68,7 +68,7 @@ _FALLBACK_FILES = (
     "cc_foundry/skills/audit/modes/steps-4-5-7.md",
 )
 
-#: Skills that render a quality-gates report header (or audit's findings report) and so must exempt the preview path.
+#: Skills that render a quality-gates report header (or audit's findings report) and so must exempt the question path.
 _EXEMPTION_FILES = (
     "cc_oss/skills/review/SKILL.md",
     "cc_oss/skills/analyse/SKILL.md",
@@ -86,8 +86,8 @@ _DOUBLE_COPY = (
     re.compile(r"\bin the reply\b[^.;]*\band (?:also )?(?:pass|carry)\b[^.;]*\bpreview", re.IGNORECASE),
 )
 
-#: Statement that the preview is the block's only copy on the question path.
-_SINGLE_COPY = re.compile(r"never also as reply text|not as reply text|not printed here|its only copy", re.IGNORECASE)
+#: Statement that the full block is delivered in the final reply after the answer, not in the question.
+_FINAL_REPLY_COPY = re.compile(r"final reply after the answer|final reply, after|after the answer", re.IGNORECASE)
 
 
 def _read(relative: str) -> str:
@@ -115,9 +115,11 @@ def test_no_instruction_asks_for_both_copies(relative: str) -> None:
 
 
 @pytest.mark.parametrize("relative", _SKILL_FILES)
-def test_skill_states_the_preview_is_the_only_copy(relative: str) -> None:
-    """Every edited skill or mode file says the block is not also printed as reply text before the question."""
-    assert _SINGLE_COPY.search(_read(relative)), f"{relative} lacks the preview-only (single copy) statement"
+def test_skill_defers_the_table_to_the_final_reply(relative: str) -> None:
+    """Every report-header skill or mode file delivers the block in the final reply after the answer."""
+    text = _read(relative)
+
+    assert _FINAL_REPLY_COPY.search(text), f"{relative} lacks the final-reply-after-the-answer statement"
 
 
 @pytest.mark.parametrize("relative", _FALLBACK_FILES)
@@ -139,13 +141,30 @@ def test_skill_carries_its_output_routing_exemption(relative: str) -> None:
     assert "**Output-Routing exemption**" in _read(relative)
 
 
-@pytest.mark.parametrize("relative", _HOOK_FILES)
-def test_hook_deny_reason_names_only_the_preview_fix(relative: str) -> None:
-    """Deny reasons point at every option's preview and rule out a reply-text copy before the call."""
+@pytest.mark.parametrize("relative", _LIBRARY_FILES)
+def test_library_deny_reason_names_only_the_question_text_fix(relative: str) -> None:
+    """Deny reasons point at the first question's text and rule out reply text and option fields as the summary.
+
+    The question carries a short plain summary; the full table is the final reply's job, so a reason that sent the
+    author back to option previews would reintroduce the table-in-preview shape.
+    """
     text = _read(relative)
 
-    assert "`preview` of every option" in text
-    assert "not as reply text" in text
+    assert "in the first question's \\`question\\` text" in text
+    assert "Option descriptions and previews do not supply the summary" in text
+    assert "reply text before the call does not count" in text
+    assert "`preview` of every option" not in text
+
+
+@pytest.mark.parametrize("relative", _GATE_HOOK_FILES)
+def test_gate_hook_deny_reason_asks_for_a_plain_summary(relative: str) -> None:
+    """A gate's missing-report reason asks for a plain question-text summary and the table in the final reply."""
+    text = _read(relative)
+
+    assert "short plain summary in the" in text
+    assert "the final reply" in text
+    assert "`preview` of every option" not in text
+    assert "as every option's preview" not in text
 
 
 #: Gate hooks that record a shown follow-up for the ``Stop`` check: (plugin dir, hook script).
@@ -163,8 +182,8 @@ _POST_TOOL_USE_GATES = (
 def test_gate_hook_runs_after_the_follow_up_was_shown(plugin: str, script: str) -> None:
     """Each gate hook is registered once on ``PostToolUse`` with the ``AskUserQuestion`` matcher.
 
-    That step records the report version for ``Stop`` only once the question was shown; the PreToolUse pass no longer
-    does, so without this registration every preview-delivered report gets one forced ``Stop`` continuation.
+    The step records nothing for ``Stop`` (a shown summary never settles final-reply delivery); the registration stays
+    so the hook interface is unchanged.
     """
     hooks_json = json.loads((PLUGINS_DIR / plugin / "hooks" / "hooks.json").read_text(encoding="utf-8"))
     matchers = [

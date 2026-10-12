@@ -40,7 +40,7 @@ printf '%s\n' "$PR_NUMBER" > "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}"
 echo "→ Report PR: $PR_NUMBER"
 ```
 
-Sources block — it heads the `preview` of every bulk-action option of Step 3d's AskUserQuestion, above the action items table, same as `pr-intelligence.md`'s. Never as reply text before the parsing calls below: 5.5-family models may return reply text written before a tool call as an empty progress update.
+Sources block — it heads `$IMPL_DIR/action-items-table.md` and the full table printed once as the last text of the reply message that issues Step 3d’s AskUserQuestion, same as `pr-intelligence.md`’s. Q1 lists pending items as plain lines within its 1,500-character budget, or the top items, pending counts by type and table path past the budget; options carry no preview. Do not print it before the parsing calls below; print it only at the picker.
 
 ```markdown
 ## Resolve — sources
@@ -98,9 +98,9 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items
 - Zero findings leave an empty `action-items.jsonl`.
 - Render the table below from those records with the same IDs. Stop before Step 3d if the merge exits non-zero.
 - A compaction or Step 8 may reload only `action-items.jsonl`.
-- Stored items stay one per finding, so each keeps its `finding_id` and evidence paths, and the displayed table keeps one row per item id at every pending count — LOW items are never clustered into composite rows (taxonomy **LOW Grouping Rule**); past 18 pending, SKILL.md Step 3d's compressed table still lists every row, which the selection gate checks id by id.
+- Stored items stay one per finding, so each keeps its `finding_id` and evidence paths, and the displayed table keeps one row per item id at every pending count — LOW items are never clustered into composite rows (taxonomy **LOW Grouping Rule**); past 18 pending, SKILL.md Step 3d's compressed table still lists every row, while Q1 lists pending ids or the over-budget form.
 
-Render ACTION_ITEMS as a markdown table (severity descending), below the Sources block in the same preview:
+Render ACTION_ITEMS as a markdown table (severity descending), below the Sources block in the saved table and the pre-picker reply:
 
 ```markdown
 ### Action Items — report
@@ -110,7 +110,7 @@ Render ACTION_ITEMS as a markdown table (severity descending), below the Sources
 | 1 | [report][req] | code | 4 | foundry:sw-engineer | pending | rename param x to count | — |
 ```
 
-Columns exactly as above — never add `File`, `Sev`, `Loc` or any other column. Summary ≤60 chars. Notes = `—` when empty; carries commit SHA for `addressed` rows and classification verdicts (e.g. deprecation filter output) — never `file:line`, which the `file`/`line` fields already hold. Render it exactly once, as the `preview` of every bulk-action option of Step 3d's AskUserQuestion (SKILL.md Step 3d **Table in the picker preview**) — or, past the preview cap (2000 chars, 12 lines), in `$IMPL_DIR/action-items-table.md` with the Sources block on top, Q1's question text naming that file with the line `→ Full item table: <path>`, and every preview carrying the same capped summary naming it (SKILL.md Step 3d **Preview cap**) — never also as reply text before the picker, never Bash/tool stdout, never here and again at the gate.
+Columns exactly as above — never add `File`, `Sev`, `Loc` or any other column. Summary ≤60 chars. Notes = `—` when empty; carries commit SHA for `addressed` rows and classification verdicts (e.g. deprecation filter output) — never `file:line`, which the `file`/`line` fields already hold. Write every row to `$IMPL_DIR/action-items-table.md` before the call, with the Sources block on top, and print the headed table exactly once as the last text of the reply message that issues Step 3d’s AskUserQuestion (SKILL.md Step 3d **Items in the question text**). Q1 lists pending items as plain lines, or the top items, pending counts by type and the table path past the 1,500-character budget; options carry no preview. This table is shown only before the picker, never in an option’s `preview`, never Bash/tool stdout, never here and again at the gate.
 
 PR# found in report header → use the persisted `PR_NUMBER` from the block above, set `$ARGUMENTS = <N>`, go to Step 3d, skip Step 3e, then Step 4; skip Step 3b. Step 3d chooses `SELECTED_ITEMS` and commit mode before checkout. Continue through the normal post-checkout steps to Step 8.
 

@@ -3,14 +3,12 @@
 // Only PreToolUse AskUserQuestion with this workflow's header/known labels is
 // gated. Diagnostic/recovery questions remain available. The existing
 // session sentinel, path checks, and TTL define whether this run is active.
-// Require aggregate.md, valid summary.jsonl, and current-turn delivery of the
-// audit heading, exact finding total, and every finding before the fix question,
-// in the call's first question (every option preview within the preview cap, or
-// its question text — never an option description) or, over the cap, a rendered Audit
-// Report file named in the question text with a compact summary naming it in
-// every option preview (report-header-table.js); a reply-text copy before the
-// call does not count, since it can come back as an empty progress update. Stop
-// still accepts the final reply.
+// Require aggregate.md, valid summary.jsonl, and a short plain summary in the
+// fix question's first question text: the summary.jsonl path and the Audit Report
+// headline (report-header-table.js); option previews and descriptions never
+// supply it, and reply text before the call does not count, since it can come
+// back as an empty progress update. The audit heading, exact finding total and
+// every finding belong in the final reply, which Stop requires.
 // Missing/unreadable delivery evidence denies the transition with a recovery
 // reason. No active sentinel, expired/implausible state, or malformed hook
 // payload passes through. Unexpected hook failures retain the legacy fail-open
@@ -181,10 +179,9 @@ function denyReason(sentinelPath, toolInput, cwd, now) {
     `foundry:audit report gate — ${aggregateFile} does not exist, so Step 5 (aggregate and classify ` +
     "findings) has not completed and the follow-up gate's severity counts have no source. Go back: spawn " +
     `the foundry:curator consolidator and let it write aggregate.md and ${AGGREGATE_FILENAME}, then read ` +
-    "that summary and build the Step 7 report. Call AskUserQuestion only after those exist, with that report as " +
-    "the `preview` of every option of the follow-up question when it fits the preview cap (2000 chars, 12 lines), " +
-    `otherwise written to ${path.join(runDir, "audit-report.md")}, named in the question text, with a compact ` +
-    "summary naming it as every option's preview — not as reply text. If the " +
+    "that summary and build the Step 7 report. Call AskUserQuestion only after those exist, with a short plain " +
+    `summary in the question text (${path.join(runDir, AGGREGATE_FILENAME)} and the Audit Report headline; no table) — ` +
+    "the full report goes in the final reply. If the " +
     "consolidator genuinely cannot run, keep this fix transition blocked; diagnostic/recovery questions remain available."
   );
 }

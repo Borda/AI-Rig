@@ -31,7 +31,7 @@ _ASKS = [
         "No readable review report for PR #<N>",
         id="report-missing-kept",
     ),
-    pytest.param("SKILL.md", *_SELECTION, '"Or choose a bulk action:"', id="bulk-action-kept"),
+    pytest.param("SKILL.md", *_SELECTION, "Bulk-action question — multiSelect: FALSE", id="bulk-action-kept"),
     pytest.param("SKILL.md", *_SELECTION, 'header "Items to implement:"', id="item-checkboxes-kept"),
     pytest.param("SKILL.md", *_SELECTION, 'AskUserQuestion: "Commit mode for selected items:"', id="commit-mode-kept"),
     pytest.param("SKILL.md", *_SELECTION, "\"If 'By topic group' — how should items group?\"", id="topic-group-kept"),

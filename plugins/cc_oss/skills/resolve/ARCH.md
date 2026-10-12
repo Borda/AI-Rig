@@ -33,10 +33,10 @@ INTEL  (steps 3a, 3b)                   BRANCH + TRIAL MERGE  (steps 4, 5)
   |
 MERGE FINDINGS  (step 3c)
   review findings.jsonl folded in by merge_action_items.py
-  GitHub ids kept · report items appended · render ACTION_ITEMS table (shown once: picker preview, or table file past the preview cap)
+  GitHub ids kept · report items appended · render ACTION_ITEMS table (saved and printed once as the last text of the reply message that issues the picker)
   |
 ◆ SELECTION GATE  (step 3d)   single stream — no agent in flight beside the picker
-  bulk page first (table in previews or file) · which items · commit mode
+  bulk page first (plain item lines in question text) · which items · commit mode
   topic group + typed labels · dispatch width · push intent + post-PR action
   |
   +--------------------- FAN 2 ----------------------+
@@ -47,13 +47,13 @@ STREAM A: CONFLICT RESOLVE + COMMIT MERGE  STREAM B: CHALLENGE, EARLY WAVE  (ste
   ▣ 1 agent, all files  (step 7a)                            ≤12 items per chunk · one file past it → its own ordered chunks, still parallel
   resolve markers, stage                                     reviewer evidence first · verifier-confirmed → fix check only
   verify nothing unmerged · commit          pinned PR-head reads while files conflict, never disk
-    · re-point HEAD fingerprint  (step 7b)  C1 candidates held out (medium effort + bridge)
+    · re-point HEAD fingerprint  (step 7b)  C1 candidates held out (medium/high effort, Codex-fit change + bridge)
                                                              ▣ caucus: origin agent type, one item, after a failed retry
   |                                                  |
   +--------------------- JOIN -----------------------+
   |
 IMPLEMENT  (step 8, rest)
-  C1 Codex-first for medium items (clean tree, one item per call)
+  C1 Codex-first for C1 candidates (clean tree, one item per call)
   ▣ challenge, late wave  C1 fall-throughs only
   ▣ specialists    parallel, one git worktree each  (step 8 phase 2)
                    every worktree pinned at step 0 to the PR head captured right before the first wave (phase2-base-sha)
@@ -90,11 +90,11 @@ Every `▣` lane carries a deadline armed in its spawn turn (`agent-watch-<batch
 
 Both fans overlap work with no data dependency between the lanes. The first works because checkout and the trial merge need only the PR number, so it adds no spawn. The second works because conflict resolution does not depend on which items get selected (mandatory even at zero selected items) and the challenge only reads; it adds no wall-clock beyond the slower lane.
 
-**Finding collection is one stream.** No agent runs beside the SELECTION GATE: a conflict agent there once raced the picker and the table `enforce-resolve-table.js` requires failed to land often. Conflict resolution therefore starts after the gate, not beside it, trading the human-idle overlap for a reliable table.
+**Finding collection is one stream.** No agent runs beside the SELECTION GATE: a conflict agent there once raced the picker and the table `enforce-resolve-table.js` requires failed to land often. Conflict resolution therefore starts after the gate, not beside it, trading the human-idle overlap for a reliable question-text item list.
 
 **What bounds the first fan.** CONFLICT RESOLVE reads the contribution motivation INTEL synthesizes, where thread consensus outranks the PR body. It therefore cannot join the first fan, and never substitutes a git-log-only reading of intent. **What bounds the second fan.** C1 and Phase 2 need a committed merge and a clean tree, so they wait for the join; C1 candidates (medium effort with the bridge available) are held out of the early challenge wave and challenged late only if C1 hands them back. Challengers read conflicted files from the PR head, never the half-merged disk copy.
 
-`DISPATCH_MODE` sets specialist width only: `auto` (≤5 items per spawn, pool-capped waves) · `sequential` (one worktree at a time) · `per-specialist` (≤8 items per spawn, usually one worktree per specialist) · `preview` (shown as "Custom" — ask again, with the formed groups as every option's preview). Specialist routing, the file-ownership tiebreak and the import-coupling merge never change with it, and no mode lifts the per-spawn cap.
+`DISPATCH_MODE` sets specialist width only: `auto` (≤5 items per spawn, pool-capped waves) · `sequential` (one worktree at a time) · `per-specialist` (≤8 items per spawn, usually one worktree per specialist) · `preview` (shown as "Custom" — ask again, with plain group lines in question text and the saved table printed once as the last text of the reply message that issues the group question). Specialist routing, the file-ownership tiebreak and the import-coupling merge never change with it, and no mode lifts the per-spawn cap.
 
 **Chained links are not a fan.** One file holding more items than the cap becomes one group whose links run strictly one after another: link k+1 spawns after link k's envelope lands, in its own worktree pinned to link k's tip as recorded in `chain-<group_tag>.tsv`; link 1 pins to `phase2-base-sha`. The group's tag and per-link items are written once to `phase2-groups.tsv` before the first spawn, so a resumed run continues the same lineage instead of re-deriving a tag; every spawned link is recorded in `phase2-spawned.tsv`, so a resume never puts a second agent on a link still in flight, and a recorded link with no watch row (never launched) is armed as timed out and joins as ⏱ instead of being waited on. A link that reports a base mismatch, or whose tip does not descend from its base, ends the chain; its remaining items stay pending. The chain holds one pool slot for its whole life, and merge-back sees it as one group with its commit order intact.
 
@@ -104,7 +104,7 @@ Both fans overlap work with no data dependency between the lanes. The first work
 | -- | -- | -- |
 | unknown flag · missing report source · codemap index | conditional | SETUP |
 | more than 20 conflicted files | conditional | trial merge, and aborts it |
-| **SELECTION** (items, commit mode, grouping + labels, dispatch width, push intent + post-PR action; `enforce-resolve-table.js` denies it until one table holds every pending and every resolved/addressed item, in the first question's text or every option preview within the host's 2000-char / 12-line preview cap (a line over 86 chars counts as wrapped; an option description never counts) — the skill puts it in the Q1 bulk options' `preview`, the table's only copy, or past the cap in `action-items-table.md`, named in Q1's text with a capped summary in every preview) | **always** | everything past it, including the second fan |
+| **SELECTION** (items, commit mode, grouping + labels, dispatch width, push intent + post-PR action; `enforce-resolve-table.js` requires Q1’s question text to list every pending id, or top items, exact pending counts by type and `action-items-table.md` past the 1,500-character whole-question budget; closed items are named by count; options carry no preview, identical optional previews are denied and optional plain comparisons stay within 2000 characters / 12 rendered lines; the saved table is printed once as the last text of the reply message that issues the picker) | **always** | everything past it, including the second fan |
 | group preview (`DISPATCH_MODE=preview`, elected at SELECTION) | conditional | challenge → specialists |
 | challenge timed out twice (batched per wave) | conditional, error recovery | challenge → specialists |
 | unresolved item status | conditional, error recovery | final report |

@@ -83,8 +83,20 @@ Applies when the project supports more than one OS — declared by a CI OS matri
 - Keep function docstrings focused on local contracts; module docstrings explain system role.
 - Tests exempt from six-section format but still need concise module description.
 
+## Code standard details
+
+1. **Control flow.** Keep code blocks short, main path shallow. Split long/dense logic at meaningful boundaries; prefer guard clauses + early `return`, `yield`, or `continue` over nested control flow.
+2. **Purpose docstrings.** Docs concise, useful. Every new or material-changed function/method needs purpose docstring; docstrings explain intent + contract, no compensating for hard-to-read code.
+3. **Docstring style.** Resolve docstring style from project before writing: project config + contributor docs first, nearby established code style second, 6-point Google/Napoleon fallback only when no project style discoverable.
+4. **Definition documentation.** No explanatory comments immediately before function/class definition. Purpose, behavior, constraints, usage belong in that definition docstring.
+5. **Public API types.** Type annotations on all new public APIs, Python 3.10 syntax: `list[T]`, `dict[K, V]`, `X | Y`.
+6. **Executable acceptance.** Prefer doctest-driven or executable acceptance checks: define interface + failing check before implementation when behavior changes.
+7. **Imports.** Keep Python imports at module scope by default. Local import only for verified circular-import boundary, optional-dependency boundary, import-behavior test, or material startup/side-effect constraint; make reason evident from surrounding code or document when not obvious.
+8. **Internal records.** Internal records: once the current-design condition in `assets/AGENTS.md` §Code Quality, **Project hygiene**, holds, prefer dataclasses for reused, fixed-shape internal records to clarify contracts and reduce field-name mistakes. Keep dictionaries for dynamic keys, external JSON, and simple mappings. Shared types modules must reduce real complexity. Preserve runtime validation, behavior, and serialized schemas; annotations alone do not enforce types.
+
 ## Testing details
 
+- Coverage follows public contract, regression risk, blast radius. Cover applicable `None`, empty, boundary, negative, ML tensor NaN/Inf/dtype/shape cases; don't manufacture unrelated matrices.
 - Parametrize cases when only inputs/expected outputs vary and arrange/action/assert use same behavioral oracle; keep distinct behaviors in named tests. Pytest parametrization IDs and shape:
   - Keep single, simple `str`, `bool`, `int`, and `float` cases bare with pytest's default IDs; descriptive IDs alone do not justify wrappers. Use concise semantic IDs for generated oversized strings whose default IDs would be unreadable.
   - Wrap every tuple case, including multi-argument rows, as `pytest.param(..., id="meaningful-case")`: pass row arguments separately; preserve a tuple-valued single argument as `pytest.param((...), id=...)`.
@@ -100,6 +112,15 @@ Applies when the project supports more than one OS — declared by a CI OS matri
 - Fixtures return ready-to-use concrete state or cohesive tuple of related state. Don't return callable factory unless fixture-managed lifecycle requires it; use ordinary helper function for configurable construction. Keep fixture deps minimal, unpack only values test needs, avoid aliases/forwarding helpers adding no meaning.
 - Test public behavior. Mock only true external boundaries outside test's control, not system-under-test internals.
 - Use smallest test surface proving behavior; don't add framework, global fixture, or config for one local case.
+- Approximate numeric behavior: `torch.testing.assert_close(rtol=1e-4, atol=1e-6)`. Exact tensor identity may use `torch.equal()` when exactness is contract.
+
+## ML/AI details
+
+- Fix random seeds in stochastic entry points + tests; don't add seed machinery to deterministic paths.
+- Assert tensor shapes/dtypes at external, unstable, or contract-critical pipeline boundaries; avoid repeating proven checks in trusted inner layers.
+- When CUDA AMP applicable + supported by project version, use `torch.amp.autocast("cuda")` and `torch.amp.GradScaler("cuda")`, not deprecated `torch.cuda.amp`.
+- Profile before optimizing; choose profiler from suspected resource + available project tools rather than fixed tool order.
+- Avoid `.item()` or `.cpu()` in measured hot training loops — forces sync; bounded logging/metrics may use them when cost accepted/measured.
 
 ## Networked CLI and GitHub reads
 

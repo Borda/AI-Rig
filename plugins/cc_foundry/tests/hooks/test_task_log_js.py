@@ -28,12 +28,15 @@ entry.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from collections.abc import Iterator
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -601,6 +604,132 @@ class TestAgentLivenessRefresh:
         assert not (state_dir(sid) / "agents" / "a0gone999.json").exists()
 
 
+class TestCompactionLogs:
+    """Compaction telemetry is append-only, private and independent of context preservation."""
+
+    @pytest.mark.parametrize("instructions", ["private instructions", "", None])
+    def test_precompact_row(self, sid: str, tmp_home: Path, run_hook, instructions: str | None) -> None:
+        """Record only whether instructions exist, even without a transcript to snapshot."""
+        payload = {"hook_event_name": "PreCompact", "session_id": sid, "trigger": "manual"}
+        if instructions is not None:
+            payload["custom_instructions"] = instructions
+        before = datetime.now(timezone.utc)
+        result = run_hook("task-log.js", payload, home=tmp_home, cwd=tmp_home)
+        after = datetime.now(timezone.utc)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == result.stderr == ""
+        raw = (tmp_home / ".claude" / "logs" / "compactions.jsonl").read_bytes()
+        assert raw.endswith(b"\n")
+        assert len(raw.splitlines()) == 1
+        row = json.loads(raw)
+        ts = row.pop("ts")
+        assert row == {
+            "event": "precompact",
+            "session_id": sid,
+            "trigger": "manual",
+            "has_custom_instructions": bool(instructions),
+        }
+        assert isinstance(row["has_custom_instructions"], bool)
+        assert b"private instructions" not in raw
+        parsed = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+        assert before.replace(microsecond=before.microsecond // 1000 * 1000) <= parsed <= after
+        assert parsed.isoformat(timespec="milliseconds").replace("+00:00", "Z") == ts
+
+    @pytest.mark.parametrize("summary", ["private summary", "résumé 📝", "", None])
+    def test_postcompact_row(self, sid: str, tmp_home: Path, run_hook, summary: str | None) -> None:
+        """Log summary character count without retaining the summary or assuming precompact fields."""
+        payload = {"hook_event_name": "PostCompact", "session_id": sid, "trigger": "auto"}
+        if summary is not None:
+            payload["compact_summary"] = summary
+        result = run_hook("task-log.js", payload, home=tmp_home, cwd=tmp_home)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == result.stderr == ""
+        raw = (tmp_home / ".claude" / "logs" / "compactions.jsonl").read_bytes()
+        assert raw.endswith(b"\n")
+        assert len(raw.splitlines()) == 1
+        row = json.loads(raw)
+        ts = row.pop("ts")
+        assert row == {"event": "postcompact", "session_id": sid, "trigger": "auto", "summary_len": len(summary or "")}
+        assert b"private summary" not in raw
+        parsed = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+        assert parsed.isoformat(timespec="milliseconds").replace("+00:00", "Z") == ts
+
+    @pytest.mark.parametrize("log_state", ["missing", "blocked-directory", "blocked-file"])
+    def test_log_failure_preserves_snapshot(
+        self, sid: str, tmp_path: Path, tmp_home: Path, run_hook, log_state: str
+    ) -> None:
+        """Missing directories are created; deterministic write failures cannot suppress the snapshot or contract."""
+        logs = tmp_home / ".claude" / "logs"
+        if log_state == "blocked-file":
+            (logs / "compactions.jsonl").mkdir()
+        else:
+            logs.rmdir()
+            if log_state == "blocked-directory":
+                logs.write_text("not a directory", encoding="utf-8")
+        project = tmp_path / "project"
+        contract_dir = project / ".temp" / "state"
+        contract_dir.mkdir(parents=True)
+        contract = b"Keep the current contract verbatim.\r\n"
+        (contract_dir / "skill-contract.md").write_bytes(contract)
+        transcript = tmp_path / "transcript.jsonl"
+        _write_transcript(transcript, ["src/result.py"])
+
+        result = run_hook("task-log.js", _pre_compact(sid, str(transcript)), home=tmp_home, cwd=project)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == result.stderr == ""
+        snapshot = (project / ".claude" / "state" / "session-context.md").read_bytes()
+        assert b"- src/result.py\n" in snapshot
+        assert snapshot.endswith(b"## Skill Compaction Contract\nunverified at PreCompact\n" + contract)
+        if log_state == "missing":
+            assert json.loads((logs / "compactions.jsonl").read_bytes())["event"] == "precompact"
+        elif log_state == "blocked-directory":
+            assert logs.read_text(encoding="utf-8") == "not a directory"
+        else:
+            assert (logs / "compactions.jsonl").is_dir()
+            assert list((logs / "compactions.jsonl").iterdir()) == []
+        post = run_hook(
+            "task-log.js",
+            {"hook_event_name": "PostCompact", "session_id": sid, "trigger": "auto"},
+            home=tmp_home,
+            cwd=project,
+        )
+        assert post.returncode == 0, post.stderr
+        assert post.stdout == post.stderr == ""
+        assert (project / ".claude" / "state" / "session-context.md").read_bytes() == snapshot
+
+    def test_compactions_append(self, sid: str, tmp_home: Path, run_hook) -> None:
+        """Successive pre/post events preserve earlier bytes and append exactly one row each."""
+        log = tmp_home / ".claude" / "logs" / "compactions.jsonl"
+        previous = b""
+        for event in ("PreCompact", "PostCompact", "PreCompact", "PostCompact"):
+            result = run_hook(
+                "task-log.js",
+                {"hook_event_name": event, "session_id": sid, "trigger": "auto"},
+                home=tmp_home,
+                cwd=tmp_home,
+            )
+            assert result.returncode == 0, result.stderr
+            assert result.stdout == result.stderr == ""
+            current = log.read_bytes()
+            assert current.startswith(previous)
+            appended = current[len(previous) :]
+            assert appended.endswith(b"\n")
+            assert len(appended.splitlines()) == 1
+            assert json.loads(appended)["event"] == event.lower()
+            previous = current
+        assert len(previous.splitlines()) == 4
+
+    def test_postcompact_registration(self) -> None:
+        """PostCompact uses exactly the PreCompact task logger's node probe, without a matcher."""
+        hooks = json.loads((Path(__file__).parents[2] / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+        pre = next(group for group in hooks["PreCompact"] if "task-log.js" in group["hooks"][0]["command"])
+        assert hooks["PostCompact"] == [pre]
+        assert "matcher" not in hooks["PostCompact"][0]
+
+
 class TestPreCompactContract:
     """task-log.js: PreCompact writes session-context.md and preserves the skill contract verbatim.
 
@@ -646,6 +775,106 @@ class TestPreCompactContract:
         assert "## Files Modified This Session" in written
         assert "- /proj/src/bar.py" in written
         assert "## Skill Compaction Contract" not in written
+
+    def test_precompact_lists_edits_beyond_transcript_tail(
+        self, sid: str, tmp_home: Path, tmp_path: Path, run_hook
+    ) -> None:
+        """Edits older than the 50KB transcript tail are listed from timings.jsonl, scoped to this session."""
+        proj = tmp_path / "proj"
+        (proj / ".claude" / "state").mkdir(parents=True)
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text("x" * (200 * 1024) + "\n", encoding="utf-8")
+        records = [
+            {"session_id": sid, "tool": "Write", "args": "file_path=/proj/old one.py"},
+            {"session_id": sid, "tool": "MultiEdit", "args": "file_path=/proj/multi.py"},
+            {"session_id": sid, "tool": "NotebookEdit", "args": "file_path=/proj/nb.ipynb"},
+            {"session_id": sid, "tool": "Read", "args": "file_path=/proj/read_only.py"},
+            {"session_id": "other-session", "tool": "Edit", "args": "file_path=/proj/foreign.py"},
+        ]
+        log = tmp_home / ".claude" / "logs" / "timings.jsonl"
+        log.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+
+        result = run_hook("task-log.js", _pre_compact(sid, str(transcript)), home=tmp_home, cwd=proj)
+
+        assert result.returncode == 0, result.stderr
+        written = (proj / ".claude" / "state" / "session-context.md").read_text(encoding="utf-8")
+        assert "- /proj/old one.py" in written
+        assert "- /proj/multi.py" in written
+        assert "- /proj/nb.ipynb" in written
+        assert "read_only.py" not in written
+        assert "foreign.py" not in written
+
+    @pytest.mark.parametrize(
+        ("tool", "tool_input", "expected_args"),
+        [
+            pytest.param("MultiEdit", {"file_path": "/p/a.py", "edits": []}, "file_path=/p/a.py", id="multiedit"),
+            pytest.param("NotebookEdit", {"notebook_path": "/p/n.ipynb"}, "file_path=/p/n.ipynb", id="notebookedit"),
+        ],
+    )
+    def test_timing_records_edit_tool_path(
+        self, sid: str, tmp_home: Path, run_hook, tool: str, tool_input: dict, expected_args: str
+    ) -> None:
+        """MultiEdit and NotebookEdit write a ``file_path=`` args summary so PreCompact can find them."""
+        base = {"session_id": sid, "tool_name": tool, "tool_input": tool_input, "tool_use_id": f"tu-{tool}"}
+        run_hook("task-log.js", {**base, "hook_event_name": "PreToolUse"}, home=tmp_home)
+        run_hook("task-log.js", {**base, "hook_event_name": "PostToolUse"}, home=tmp_home)
+
+        rows = [
+            json.loads(line)
+            for line in (tmp_home / ".claude" / "logs" / "timings.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        assert [r["args"] for r in rows if r["tool"] == tool] == [expected_args]
+
+    @pytest.mark.parametrize(
+        ("stamp", "expected"),
+        [
+            pytest.param("verified", "verified", id="same-session"),
+            pytest.param("absent", "unverified", id="no-owner"),
+            pytest.param("stale", "unverified", id="sha-mismatch"),
+            pytest.param("foreign", None, id="matching-sha-foreign-session"),
+            pytest.param("malformed", "unverified", id="malformed-owner"),
+            pytest.param("null", "unverified", id="null-owner"),
+            pytest.param("missing-session", "unverified", id="incomplete-owner"),
+            pytest.param("unreadable", "unverified", id="owner-is-directory"),
+        ],
+    )
+    def test_precompact_owner_states(
+        self, sid: str, tmp_home: Path, tmp_path: Path, run_hook, stamp: str, expected: str | None
+    ) -> None:
+        """Save and restore share provenance states; PreCompact retains every byte of the contract text."""
+        project = tmp_path / "project"
+        state = project / ".temp" / "state"
+        state.mkdir(parents=True)
+        raw = b"  CONTRACT: keep whitespace\r\nnext: resume\n\n"
+        (state / "skill-contract.md").write_bytes(raw)
+        owner = state / "skill-contract.owner"
+        if stamp == "unreadable":
+            owner.mkdir()
+        elif stamp != "absent":
+            data = {
+                "session_id": "foreign-session" if stamp == "foreign" else sid,
+                "sha256": "0" * 64 if stamp == "stale" else hashlib.sha256(raw).hexdigest(),
+                "written_at": "2000-01-01T00:00:00Z",
+            }
+            if stamp == "missing-session":
+                del data["session_id"]
+            owner.write_text("{broken" if stamp == "malformed" else json.dumps(None if stamp == "null" else data))
+        transcript = tmp_path / "transcript.jsonl"
+        _write_transcript(transcript, ["src/result.py"])
+        result = run_hook("task-log.js", _pre_compact(sid, str(transcript)), home=tmp_home, cwd=project)
+        assert result.returncode == 0, result.stderr
+        saved = (project / ".claude" / "state" / "session-context.md").read_bytes()
+        assert b"## Files Modified This Session" in saved
+        if expected is None:
+            assert b"## Skill Compaction Contract" not in saved
+            assert raw not in saved
+        else:
+            status = (
+                f"verified for session {sid} at PreCompact" if expected == "verified" else "unverified at PreCompact"
+            )
+            assert saved.count(b"## Skill Compaction Contract") == 1
+            assert b"## Skill Compaction Contract\n" + status.encode() + b"\n" + raw in saved
+            assert saved.endswith(raw)
 
 
 _requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="git executable not available")
@@ -715,3 +944,86 @@ class TestSessionEndWorktreeCleanup:
         assert (wt_root / "agent-output" / ".temp" / "extract.md").is_file()
         assert (wt_root / "agent-fresh").is_dir()
         assert (wt_root / "agent-orphan").is_dir()
+
+
+def _contract_path_capability(kind: str) -> bool:
+    """Probe special-file creation before collection, including Windows restrictions."""
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "candidate"
+        try:
+            if kind == "fifo":
+                if not hasattr(os, "mkfifo"):
+                    return False
+                os.mkfifo(candidate)
+            else:
+                target = Path(directory) / "target"
+                target.write_bytes(b"test")
+                candidate.symlink_to(target)
+        except OSError:
+            return False
+    return True
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node executable not available")
+@pytest.mark.parametrize("target", ["contract", "owner"])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "oversize",
+        pytest.param(
+            "symlink",
+            marks=pytest.mark.skipif(not _contract_path_capability("symlink"), reason="symlink creation unavailable"),
+        ),
+        pytest.param(
+            "fifo", marks=pytest.mark.skipif(not _contract_path_capability("fifo"), reason="FIFO creation unavailable")
+        ),
+    ],
+)
+def test_unsafe_contract_paths_fail_open(tmp_path: Path, target: str, kind: str) -> None:
+    """Reject unsafe contract paths and retain advisory text for unsafe owner paths without blocking."""
+    project = tmp_path / "project"
+    state = project / ".temp" / "state"
+    state.mkdir(parents=True)
+    raw = b"CONTRACT: continue safely\n"
+    contract = state / "skill-contract.md"
+    owner = state / "skill-contract.owner"
+    stamp = json.dumps({"session_id": "safe-session", "sha256": hashlib.sha256(raw).hexdigest()}).encode()
+    contract.write_bytes(raw)
+    owner.write_bytes(stamp)
+    candidate = contract if target == "contract" else owner
+    content = raw if target == "contract" else stamp
+    candidate.unlink()
+    if kind == "symlink":
+        backing = state / "backing"
+        backing.write_bytes(content)
+        candidate.symlink_to(backing)
+    elif kind == "fifo":
+        os.mkfifo(candidate)
+    else:
+        cap = 256 * 1024 if target == "contract" else 4 * 1024
+        candidate.write_bytes(content + b" " * (cap + 1 - len(content)))
+    payload = {"session_id": "safe-session", "hook_event_name": "PreCompact", "source": "compact"}
+    transcript = project / "transcript.jsonl"
+    transcript.write_bytes(b'{"type":"user","message":{"content":"hello"}}\n')
+    payload["transcript_path"] = str(transcript)
+    result = subprocess.run(
+        ["node", str(Path(__file__).resolve().parents[2] / "hooks" / "task-log.js")],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=project,
+        env={**os.environ, "HOME": str(tmp_path), "USERPROFILE": str(tmp_path), "TMPDIR": str(tmp_path)},
+        timeout=2,
+    )
+    assert result.returncode == 0, result.stderr
+    output = (project / ".claude" / "state" / "session-context.md").read_text(encoding="utf-8")
+    if target == "contract":
+        assert "CONTRACT:" not in output
+        assert "Skill contract," not in output
+        assert "## Skill Compaction Contract" not in output
+    else:
+        assert "CONTRACT: continue safely" in output
+        assert "unverified at PreCompact" in output
+        assert "Skill contract, verified:" not in output
+        assert "verified for session" not in output

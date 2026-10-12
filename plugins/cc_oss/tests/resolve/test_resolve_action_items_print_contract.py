@@ -1,7 +1,7 @@
 """Guard that what a resolve question is about reaches the user inside that question.
 
-ACTION_ITEMS tables appear exactly once, in the picker preview; no other must-see content is written as reply text right
-before a question, where 5.5-family models can turn it into an empty progress update.
+Q1 lists items as plain lines. The full saved table is the last reply text before each selection call, printed once.
+Hints stay in question text so they remain visible when the host hides pre-call progress.
 """
 
 import re
@@ -18,13 +18,13 @@ _REPORT_INTELLIGENCE = _SKILL.parent / "modes/report-intelligence.md"
 _REPLY_BEFORE_ASK = re.compile(
     r"\b(?:[Pp]rint|[Pp]ut|[Rr]eport)\b(?P<what>[^\n]{0,200}?)"
     r"(?:\bin (?:a|an|the) (?:\*\*)?(?:assistant )?(?:user-facing )?reply\b|\bas reply text in the message\b"
-    r"|\bas the last text of the message\b|\bright before the picker\b|\bbefore Call 1\b|\bbefore the call\b"
+    r"|\bas the last text of the (?:reply )?message\b|\bright before the picker\b|\bbefore Call 1\b|\bbefore the call\b"
     r"|;\s*`AskUserQuestion`)"
 )
 #: Objects that only point at a payload quoted right after the instruction ("print this line in the reply: `...`").
 _POINTERS = ("this line", "one line")
 #: Reply-text payloads that may stay, each with the reason; every other match is must-see content that can vanish.
-#: None today: the large-selection notice rides the >=19 call's question text, and its Step 11 copy is a report line.
+#: Tables have an explicit pre-picker exception below; all notices still belong in question text.
 _ALLOWED_REPLY_LINES: dict[str, str] = {}
 
 
@@ -38,6 +38,10 @@ def _unlisted_reply_instructions() -> list[tuple[str, str]]:
     for path in sorted(_RESOLVE_DIR.rglob("*.md")):
         text = path.read_text(encoding="utf-8")
         for match in _REPLY_BEFORE_ASK.finditer(text):
+            # The table alone has a pre-picker exception; hints and arbitrary reply output still fail.
+            line = text[match.start() :].split("\n", 1)[0]
+            if "table" in match.group("what").lower() and "as the last text of the reply message that issues" in line:
+                continue
             what = match.group("what").strip(" *")
             payload = text[match.end() :].split("\n", 1)[0][:200] if what in _POINTERS else what
             if not any(marker in payload for marker in _ALLOWED_REPLY_LINES):
@@ -73,60 +77,55 @@ class TestActionItemsPrintContract:
             ),
         ],
     )
-    def test_every_selection_route_shows_the_table_only_in_the_picker_preview(
+    def test_every_selection_route_saves_the_table_and_prints_before_the_picker(
         self, source: Path, start: str, end: str
     ) -> None:
-        """Each route puts the table in the bulk options' preview and forbids a reply-text or tool-stdout copy.
-
-        On 5.5-family models reply text before a tool call can come back as an empty progress update, and a second copy
-        beside the preview would show the table twice; tool stdout never reaches the user at all.
-        """
+        """All four source routes retain the full table and expose items in Q1 before choosing."""
         route = _route(source.read_text(encoding="utf-8"), start, end)
-        assert "`preview` of every bulk-action option" in route
-        assert "never also as reply text" in route
+        assert "action-items-table.md" in route
+        assert "as the last text of the reply message that issues" in route
+        assert "before the call" in route or "before that call" in route
+        assert "plain lines" in route or "Q1’s question text listing every pending item" in route
+        assert "never in an option’s `preview`" in route
         assert "Bash/tool stdout" in route
 
     def test_table_is_shown_once_per_selection_call(self) -> None:
-        """The selection table appears once per call, in the preview, and no rule asks for a reply-text copy.
-
-        A resolve run printed the table, then reprinted it when the selection hook denied the picker; a later
-        5.5-family run printed it three times while the user saw none of them. Neither a reprint nor a retry of the
-        identical call may come back as guidance.
-        """
+        """Each picker prints its saved table first, once, and a denied retry does not repeat it."""
         skill = _SKILL.read_text(encoding="utf-8")
         picker = skill[skill.index("## Step 3d: User item selection") : skill.index("**Cap mechanics")]
-        assert "exactly once, as the `preview` of every bulk-action option" in skill
-        assert (
-            "**Show the table exactly once per selection call — in the picker preview, never as reply text**" in picker
-        )
-        assert "latest assistant user-facing reply contains every ACTION_ITEMS row" not in skill
-        assert "repeat that table in the reply now" not in skill
+        assert "**Show the table exactly once per selection call — before the picker**" in picker
+        assert "before the call" in picker
+        assert "refresh it for every selection call" in picker
+        assert "as a normal Markdown table, outside code fences" in picker
+        assert "Do not print it again after the answer" in picker
+        assert "denied call re-issues without a table reprint" in picker
+        assert "as the last text of the reply message that issues" in picker
+        assert "never in an option’s `preview`" in picker
         assert "re-issue the identical call once" not in skill
         assert "visible reply chars" not in skill
 
-    def test_every_selection_call_carries_the_table_in_bulk_previews(self) -> None:
-        """Each bulk-action option carries the full table as its preview, and a denial names that fix.
-
-        On 5.5-family models reply text before a tool call can come back as an empty progress update: a real run printed
-        a 9-row table three times and the user saw none of it. The picker's own preview is the copy that renders, so the
-        rule must cover every call carrying the bulk question, including Call 2 and the >=19 call.
-        """
+    def test_every_selection_call_lists_items_in_q1_without_previews(self) -> None:
+        """Call 1, Call 2, closed-only and large runs share the same question-text contract."""
         skill = _SKILL.read_text(encoding="utf-8")
         picker = skill[skill.index("## Step 3d: User item selection") : skill.index("**Cap mechanics")]
-        bulk = skill[skill.index("**Bulk action — hard rule**") : skill.index("**Bulk-action resolution**")]
+        bulk = skill[skill.index("**Bulk action — hard rule**") : skill.index("\n**Bulk-action resolution**")]
         call_two = skill[skill.index("- **Call 2** = ") : skill.index("- A Call 1 bulk answer that resolves to")]
         large = skill[
             skill.index("**≥19 pending items — context-budget mode**") : skill.index(
                 "<!-- branch: main-path — commit-mode"
             )
         ]
-        assert "**Table in the picker preview — MANDATORY, the gate's source of truth**" in picker
+        assert "**Items in the question text — MANDATORY, the gate's source of truth**" in picker
+        assert "Call 1, Call 2, closed-only and ≥19" in picker
+        assert "#<id> [<type>] <summary up to 50 chars>" in picker
+        assert "most severe first" in picker
         assert "every pending row plus closed rows" in picker
-        assert "empty progress update" in picker
-        assert "put the table in the bulk-option preview" in picker
-        assert "`preview` field on each of (a)-(d) carries the full ACTION_ITEMS table" in bulk
-        assert "full-table `preview` on every option" in call_two
-        assert "each Q1 option's `preview` = that compressed table" in large
+        assert "**no `preview` on any option**" in picker
+        assert "a one-line description with the applicable item count, and no `preview` field" in bulk
+        assert "recommended option second" in bulk
+        assert "pending-item list in Q1’s question text, with no option previews" in call_two
+        assert "options carry no preview" in large
+        assert "pending counts by type past the budget" in large
 
     def test_table_columns_are_fixed(self) -> None:
         """The selection table forbids improvised columns such as File or Sev."""
@@ -147,7 +146,7 @@ class TestActionItemsPrintContract:
         assert "not a decorative table" in text
         assert "never replace it with a prose count or summary line" in text
         step = text[text.index("### Sources confirmation") : text.index("## Step 3d: User item selection")]
-        assert step.index("Merge summary — heads the table in the picker preview:") < step.index(
+        assert step.index("Merge summary — heads the saved table and the pre-picker reply:") < step.index(
             "MANDATORY — render merged ACTION_ITEMS"
         )
         assert step.index("MANDATORY — render merged ACTION_ITEMS") < step.index(
@@ -162,7 +161,7 @@ class TestActionItemsPrintContract:
         """
         text = _SKILL.read_text(encoding="utf-8")
         idx = text.index("pending items — context-budget mode**:")
-        section = text[idx : idx + 900]
+        section = text[idx : text.index("<!-- branch: main-path — commit-mode", idx)]
         assert "render first, ask second" in section
         assert section.index("(1) render the compressed table") < section.index("(2) then issue ONE call")
 
@@ -192,23 +191,23 @@ class TestNoReplyTextBeforeAQuestion:
             pytest.param(
                 "SKILL.md",
                 "### Sources confirmation",
-                "Merge summary — heads the table",
-                "head the bulk-option `preview` of Step 3d's picker",
-                id="merged-sources-in-preview",
+                "Merge summary — heads the saved table",
+                "head `$IMPL_DIR/action-items-table.md`",
+                id="merged-sources-before-picker",
             ),
             pytest.param(
                 "modes/pr-intelligence.md",
                 "Read `$IMPL_DIR/pr-intelligence.md`",
                 "Later steps read per-item",
-                "Sources block + motivation at the top of the `preview` of every bulk-action option",
-                id="pr-sources-in-preview",
+                "Sources block + motivation at the top of `$IMPL_DIR/action-items-table.md`",
+                id="pr-sources-before-picker",
             ),
             pytest.param(
                 "modes/report-intelligence.md",
                 "### Report header state",
                 "<!-- loads: review-section-taxonomy.md -->",
-                "Sources block — it heads the `preview` of every bulk-action option of Step 3d's AskUserQuestion",
-                id="report-sources-in-preview",
+                "Sources block — it heads `$IMPL_DIR/action-items-table.md`",
+                id="report-sources-before-picker",
             ),
             pytest.param(
                 "SKILL.md",
@@ -285,8 +284,8 @@ class TestNoReplyTextBeforeAQuestion:
                 "modes/action-item-dispatch.md",
                 "**Group-preview gate",
                 "Derive `<group_tag>`",
-                "every option's `preview` = the step 1 table",
-                id="custom-groups-in-preview",
+                "with the step 1 group lines in the question text and no option `preview` fields",
+                id="custom-groups-in-question-text",
             ),
             pytest.param(
                 "modes/action-item-dispatch.md",
@@ -307,7 +306,76 @@ class TestNoReplyTextBeforeAQuestion:
     def test_must_see_content_rides_in_the_question_call(
         self, relative: str, start: str, end: str, marker: str
     ) -> None:
-        """Each gate's must-see content sits in a field the question renders: its text or its options' preview."""
+        """Each gate keeps its context in question text; tables also precede the picker."""
         text = (_RESOLVE_DIR / relative).read_text(encoding="utf-8")
         section = text[text.index(start) : text.index(end, text.index(start))]
         assert marker in section
+
+
+def test_bulk_text_has_only_the_ordered_fixed_lines() -> None:
+    """The fixed template excludes improvised lines and budgets the complete question."""
+    text = _SKILL.read_text(encoding="utf-8")
+    section = _route(text, "\n**Bulk question text**", "**ESSENTIAL — exactly these 4 options")
+    markers = [
+        "Pending item lines",
+        "1. `→ To pick items yourself",
+        "2. `→ N pending items",
+        "3. `→ N resolved/addressed",
+        "4. `→ N pending items",
+        "5. `` Long wait?",
+        "6. `→ Full item table:",
+    ]
+    offsets = [section.index(marker) for marker in markers]
+    assert offsets == sorted(offsets)
+    assert "the model adds no other lines" in section
+    assert "at most one short sentence" in section
+    assert "→ N/A item picking" not in text
+    assert "line 1 is always `Or choose a bulk action:`" not in text
+    assert "Reserve those fixed lines first" in text
+    assert "**1,500 characters**" in text
+    assert "always retain at least the top item and the table path" in text
+    assert "Closed items are named by count only unless their lines fit" in text
+
+
+def test_group_gate_lists_plain_groups_without_previews() -> None:
+    """Custom dispatch saves every group and shows plain lines before the width decision."""
+    text = (_RESOLVE_DIR / "modes/action-item-dispatch.md").read_text(encoding="utf-8")
+    gate = _route(text, "**Group-preview gate", "Derive `<group_tag>`")
+    for marker in (
+        "phase2-groups-table.md",
+        "about 6 lines",
+        "1,500-character whole-question budget",
+        "top groups that fit",
+        "total group count and file path",
+        "no preview",
+        "as the last text of the reply message that issues",
+        "recommended option stays second",
+    ):
+        assert marker in gate
+
+
+@pytest.mark.parametrize(
+    ("instruction", "flagged"),
+    [
+        pytest.param(
+            "Print the table once as the last text of the reply message that issues the picker.",
+            False,
+            id="table-before-picker",
+        ),
+        pytest.param(
+            "Print the hint as the last text of the reply message that issues the picker.",
+            True,
+            id="hint-needs-question-text",
+        ),
+        pytest.param("Print the table once in the reply after the answer.", True, id="wrong-timing"),
+        pytest.param("Print the table in the reply before asking.", True, id="before-answer"),
+        pytest.param("Print the table in the reply.", True, id="unspecified-timing"),
+    ],
+)
+def test_reply_scanner_allows_only_explicit_pre_picker_table_timing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, instruction: str, flagged: bool
+) -> None:
+    """Only the explicitly authorized table placement escapes the pre-question-output scan."""
+    (tmp_path / "SKILL.md").write_text(instruction, encoding="utf-8")
+    monkeypatch.setattr(__import__(__name__, fromlist=["_RESOLVE_DIR"]), "_RESOLVE_DIR", tmp_path)
+    assert bool(_unlisted_reply_instructions()) is flagged

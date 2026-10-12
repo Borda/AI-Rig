@@ -204,21 +204,20 @@ def _write_transcript(tmp_path: Path, assistant_text: str) -> Path:
 def test_current_aggregate_delivered_before_follow_up(
     tmp_path: Path, audit_run: tuple[Path, Path, str], count: int
 ) -> None:
-    """A valid empty audit or its actual findings can advance once the Step 7 report is every option's preview."""
+    """An empty or populated audit can advance with the aggregate path and existing headline in question text."""
     run_dir, _, cwd = audit_run
     finding = {"file": "a.md", "sev": "high", "one_line": "Missing reference"}
     (run_dir / "summary.jsonl").write_text(json.dumps(finding) + "\n" if count else "", encoding="utf-8")
     (run_dir / "aggregate.md").write_text("Consolidation complete.\n", encoding="utf-8")
-    report = f"## Audit Report\nTotal: {count}\n" + ("Missing reference" if count else "No findings.")
 
-    assert _run(tmp_path, _preview_payload(cwd, report)) == {}
+    assert _run(tmp_path, _summary_payload(cwd, "Audit Report")) == {}
 
 
 @_skip_node_unavailable
-def test_report_only_in_reply_text_is_denied_and_preview_passes(
+def test_report_only_in_reply_text_is_denied_and_summary_passes(
     tmp_path: Path, audit_run: tuple[Path, Path, str]
 ) -> None:
-    """The Step 7 report printed as reply text before the question is denied; the same report as every preview passes.
+    """The Step 7 report printed as reply text before the question is denied; a plain question summary passes.
 
     Reply text written before a tool call can come back as an empty progress update the user never sees, so only the
     call's own fields count at question time; the denial says so and the call corrected to it passes.
@@ -231,7 +230,7 @@ def test_report_only_in_reply_text_is_denied_and_preview_passes(
     transcript = _write_transcript(tmp_path, report)
 
     reason = _denial_reason(_run(tmp_path, _gate_payload(cwd=cwd, transcript_path=str(transcript))))
-    retried = _run(tmp_path, _preview_payload(cwd, report))
+    retried = _run(tmp_path, _summary_payload(cwd, "Audit Report"))
 
     assert reason is not None
     assert "reply text before the call does not count" in reason
@@ -494,15 +493,16 @@ def test_stop_passes_delivery_in_final_message(tmp_path: Path, audit_run: tuple[
 DELIVERED = "## Audit Report\nTotal: 1\n- broken ref\n"
 
 
-# ── Delivery via the follow-up question's option previews ────────────────────
+# ── Delivery via the follow-up question text ────────────────────
 
 
-def _preview_payload(cwd: str, preview: str | None) -> dict:
-    """Build the gate payload with `preview` on every option (none when `preview` is None) and no transcript."""
+def _summary_payload(cwd: str, summary: str | None) -> dict:
+    """Build the audit follow-up with plain question text and no previews."""
     payload = _gate_payload(cwd=cwd, transcript_path=None)
-    if preview is not None:
-        for option in payload["tool_input"]["questions"][0]["options"]:
-            option["preview"] = preview
+    report = Path(cwd) / RUN_DIR_REL / "summary.jsonl"
+    payload["tool_input"]["questions"][0]["question"] = (
+        f"{summary}\n→ {report}\nWhat next?" if summary else "What next?"
+    )
     return payload
 
 
@@ -517,35 +517,46 @@ def _aggregated_run(audit_run: tuple[Path, Path, str]) -> str:
     return cwd
 
 
-class TestPreviewDelivery:
-    """The Step 7 report carried as option previews delivers it when text before the call came back empty."""
+class TestQuestionSummaryDelivery:
+    """Follow-ups show summaries in question text and leave full delivery to Stop."""
 
     @_skip_node_unavailable
-    def test_preview_report_allows_follow_up(self, tmp_path: Path, aggregated_run: str) -> None:
-        """Every finding, the heading and the exact total in the previews allow the fix question."""
-        assert _run(tmp_path, _preview_payload(aggregated_run, DELIVERED)) == {}
+    def test_plain_summary_allows_follow_up(self, tmp_path: Path, aggregated_run: str) -> None:
+        """The matching headline and resolved report path pass without any preview."""
+        payload = _summary_payload(aggregated_run, "Audit Report")
+        assert all("preview" not in option for option in payload["tool_input"]["questions"][0]["options"])
+        assert _run(tmp_path, payload) == {}
 
     @_skip_node_unavailable
-    def test_missing_preview_denial_names_preview_fix(self, tmp_path: Path, aggregated_run: str) -> None:
-        """No report anywhere is denied, and the reason directs the report into the option previews."""
-        reason = _denial_reason(_run(tmp_path, _preview_payload(aggregated_run, None)))
-
+    def test_missing_summary_denial_names_question_fix(self, tmp_path: Path, aggregated_run: str) -> None:
+        """Missing summary evidence names the first-question remedy."""
+        reason = _denial_reason(_run(tmp_path, _summary_payload(aggregated_run, None)))
         assert reason is not None
-        assert "`preview` of every option" in reason
-        assert "Re-issue" not in reason
+        assert "first question's `question` text" in reason
+        assert "fixed lines" in reason
 
     @_skip_node_unavailable
-    def test_preview_pass_settles_the_stop_check(self, tmp_path: Path, aggregated_run: str) -> None:
-        """Once the question carrying the previews was shown (PostToolUse), the turn may end without the report."""
-        payload = _preview_payload(aggregated_run, DELIVERED)
+    def test_shown_summary_keeps_stop_armed_once(self, tmp_path: Path, aggregated_run: str) -> None:
+        """A shown summary leaves one Stop continuation for the full report."""
+        payload = _summary_payload(aggregated_run, "Audit Report")
         assert _run(tmp_path, payload) == {}
         assert _run(tmp_path, {**payload, "hook_event_name": "PostToolUse"}) == {}
-
+        assert _run(tmp_path, _stop_payload(cwd=aggregated_run)).get("decision") == "block"
+        assert _run(tmp_path, _stop_payload(cwd=aggregated_run, last_assistant_message=DELIVERED)) == {}
         assert _run(tmp_path, _stop_payload(cwd=aggregated_run)) == {}
 
     @_skip_node_unavailable
     def test_allowed_but_unshown_follow_up_leaves_stop_armed(self, tmp_path: Path, aggregated_run: str) -> None:
-        """A PreToolUse pass alone records nothing: another hook or a permission rule may still deny the question."""
-        assert _run(tmp_path, _preview_payload(aggregated_run, DELIVERED)) == {}
-
+        """An allowed but unshown question also leaves final delivery armed."""
+        assert _run(tmp_path, _summary_payload(aggregated_run, "Audit Report")) == {}
         assert _run(tmp_path, _stop_payload(cwd=aggregated_run)).get("decision") == "block"
+
+    @_skip_node_unavailable
+    def test_summary_only_in_previews_is_denied(self, tmp_path: Path, aggregated_run: str) -> None:
+        """Even every option's preview cannot replace the question's plain summary."""
+        payload = _summary_payload(aggregated_run, "Audit Report")
+        first = payload["tool_input"]["questions"][0]
+        for option in first["options"]:
+            option["preview"] = first["question"]
+        first["question"] = "What next?"
+        assert _denial_reason(_run(tmp_path, payload)) is not None

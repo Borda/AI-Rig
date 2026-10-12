@@ -118,7 +118,7 @@ Branch on `$KAGGLE_CLI`:
 | -- | -- |
 | `ready` | Run the grounding queries below |
 | `absent` | Offer install — `AskUserQuestion`: (a) skip, ground from URL/user facts · (b) `pip install kaggle` then re-probe. Never install without asking |
-| `unauthorized` | `AskUserQuestion` with the credential instructions below as the `preview` of both options: (a) skip · (b) user sets up token, then re-probe |
+| `unauthorized` | Save and print the credential instructions below, then `AskUserQuestion` with their plain summary and file path in question text, no previews: (a) skip — use URL/user facts without CLI auth · (b) user sets up token, then re-probe — authenticate outside this session |
 
 **Credential secrecy — hard constraint.** The token never enters this session's context, and never a subagent's or Codex's.
 
@@ -128,7 +128,7 @@ Branch on `$KAGGLE_CLI`:
 - If a user pastes a token into chat, do not repeat it and tell them to rotate it at kaggle.com/settings.
 - `.claude/settings.json` deny-lists the common read paths, but the deny list is a backstop, not the rule — no alternate command form is permitted either.
 
-**Credential instructions** (verbatim as both options' `preview`, never reply text before the question; the user does this, the skill never fabricates, reads, or echoes a token):
+**Credential instructions** (the user does this, the skill never fabricates, reads, or echoes a token): Write these public setup instructions verbatim to `.temp/kaggle/credential-instructions.md`, then print them once as the last reply text before the unauthorized-state question call. The question text carries a plain summary (separate fields with actual newlines): "Kaggle CLI is unauthorized.\\nSet up credentials outside this session, then re-probe, or skip CLI grounding.\\n→ .temp/kaggle/credential-instructions.md", at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout, or code fence. Options carry one-line descriptions, no previews; preserve order and keep the recommended option second. The file contains instructions only, never credential values:
 
 > 1. Open <https://www.kaggle.com/settings> → **API** → **Create New Token** — downloads `kaggle.json`.
 > 2. `mkdir -p ~/.kaggle && mv ~/Downloads/kaggle.json ~/.kaggle/ && chmod 600 ~/.kaggle/kaggle.json`
@@ -162,7 +162,7 @@ head -3 "$KAGGLE_DATA"/sample_submission.csv 2>/dev/null || echo "no sample_subm
 
 Single-file downloads may arrive zipped — unzip into `$KAGGLE_DATA` before reading the header.
 
-**Full-data gate** — never pull the whole archive unprompted; competition data reaches hundreds of GB and the user may want only the notebook. `AskUserQuestion` with the listing (file · size, total last) as the `preview` of every option, not as reply text before the call (it can arrive as an empty progress update); Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full listing to `.temp/kaggle/<slug>-files.md` first, make every option's `preview` a compact summary ending `→ full listing: .temp/kaggle/<slug>-files.md`, and name that path in the question text, the total size always in the summary: (a) skip — notebook targets Kaggle-runtime paths (`/kaggle/input/<slug>/`) · (b) download all (state total size from the listing in the option description). On (b): `kaggle competitions download "$KAGGLE_SLUG" -p "$KAGGLE_DATA"`; `-f <name>` fetches one large file instead.
+**Full-data gate** — never pull the whole archive unprompted; competition data reaches hundreds of GB and the user may want only the notebook. Write the full listing (file · size, total last) to `.temp/kaggle/<slug>-files.md` first and print it once as the last reply text before the `AskUserQuestion` call. The question text carries a plain summary with file count, total size, competition slug, and `→ .temp/kaggle/<slug>-files.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout, or code fence; the total size is always included. Options carry labels and one-line descriptions, no previews; preserve order and keep the recommended option second: (a) skip — notebook targets Kaggle-runtime paths (`/kaggle/input/<slug>/`) · (b) download all — fetch every listed file (state total size from the listing in the option description). On (b): `kaggle competitions download "$KAGGLE_SLUG" -p "$KAGGLE_DATA"`; `-f <name>` fetches one large file instead.
 
 Data downloaded locally does not change the notebook's path constants: `PATH_DATASET` stays the Kaggle-runtime path unless the user says the notebook runs locally.
 
@@ -349,7 +349,7 @@ echo "=== Bare '#' heading-spacer check (notebook-style.md) ==="
 python3 "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/fix_jupytext_blank_md.py" "$OUTFILE"  # timeout: 5000
 ```
 
-Build this summary — the `preview` of every option of the follow-up gate below, not reply text before it (text written before a tool call can arrive as an empty progress update) — one line per item, within the preview cap (≤2000 chars, ≤12 lines; Claude Code withholds or clips a larger preview):
+Build this summary — one line per item, Write the full summary to `.temp/kaggle/<name>-summary.md` first and print it once as the last reply text before the follow-up question call. The question text carries a plain summary (output path, mode, cell count, missing-section/fix counts, and `→ .temp/kaggle/<name>-summary.md`), at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout, or code fence. Options carry labels and one-line descriptions, no previews; preserve order and keep the recommended option second:
 
 - Output path (`$OUTFILE`)
 - Mode + resolved composition contracts
@@ -361,9 +361,9 @@ Build this summary — the `preview` of every option of the follow-up gate below
 Invoke `AskUserQuestion` as follow-up gate:
 
 - (a) Open in editor — `code $OUTFILE`
-- (b) Extend with additional sections
-- (c) Regenerate with different model/approach
-- (d) Done
+- (b) Extend with additional sections — add sections to this notebook
+- (c) Regenerate with different model/approach — rebuild using the requested changes
+- (d) Done — accept the current notebook
 
 On (a): run `code "$OUTFILE"` via Bash. On (b): re-enter Step 3 with extension directive. On (c): re-enter Step 2 with user-specified changes.
 

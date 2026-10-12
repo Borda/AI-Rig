@@ -2,7 +2,7 @@
 // task-log.js — multi-event lifecycle hook
 //
 // PURPOSE
-//   Central nervous system for session state tracking.  It handles seven distinct
+//   Central nervous system for session state tracking.  It handles eleven distinct
 //   Claude Code hook events and maintains four categories of runtime state that
 //   other hooks (statusline.js) read to render the live status line:
 //
@@ -32,6 +32,8 @@
 //   8. PreCompact: scan transcript tail for Write/Edit tool_use blocks and write modified
 //      file paths to state/session-context.md as a compaction breadcrumb; append the verbatim
 //      .temp/state/skill-contract.md (if present) so a per-skill compaction contract survives
+//      and append compaction metadata (never instructions) to compactions.jsonl
+//      PostCompact: append trigger and summary character count (never summary text) to compactions.jsonl
 //   9. UserPromptSubmit: write a queue marker to state/queue/ (deduplicated via 500ms lock)
 //  10. Stop: clear state/tools/ and queue markers (deduplicated); agents left intact;
 //      delete orphaned timing start markers and accumulated lock-Pre-*.lock dedup files
@@ -81,6 +83,7 @@
 //       for post-mortem debugging.
 //
 //   PreCompact
+//     • Appends trigger and instruction-presence metadata to compactions.jsonl.
 //     • Scans the tail of the transcript for Write/Edit tool_use blocks, extracts
 //       modified file paths, and writes state/session-context.md — a lightweight
 //       breadcrumb that survives context compaction and is re-read at session resume.
@@ -88,6 +91,9 @@
 //       "## Skill Compaction Contract" section so a skill's per-compaction contract
 //       survives unsummarized. Observational — a missing/unreadable contract is
 //       swallowed and never blocks compaction.
+//
+//   PostCompact
+//     • Appends trigger and summary character count to compactions.jsonl; never stores summary text.
 //
 //   UserPromptSubmit
 //     • Clears state/tools/ so the 🔧 line resets immediately at new-prompt start —
@@ -126,6 +132,7 @@
 // STATE FILES
 //   ~/.claude/logs/invocations.jsonl    — append-only audit log (agents + skills); global across all projects; includes project field
 //   ~/.claude/logs/timings.jsonl        — append-only per-tool timing log {ts, project, tool, args, tool_use_id, session_id, duration_ms, status, model}
+//   ~/.claude/logs/compactions.jsonl    — append-only PreCompact/PostCompact metadata {event, session_id, trigger, has_custom_instructions or summary_len, ts}
 //   /tmp/claude-state-<session_id>/agents/<id>.json     — one file per active subagent
 //   /tmp/claude-state-<session_id>/codex/<id>.json      — one file per active codex plugin session
 //   /tmp/claude-state-<session_id>/skills/<id>.json     — one file per in-flight Skill() call
@@ -148,7 +155,67 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const crypto = require("crypto");
 const { execFileSync, execSync } = require("child_process");
+
+const SKILL_CONTRACT_CAP = 256 * 1024;
+const SKILL_OWNER_CAP = 4 * 1024;
+
+/** Read a bounded regular file without following symlinks or blocking on special files. */
+function readContractFile(file, cap) {
+  const before = fs.lstatSync(file);
+  if (!before.isFile() || before.size > cap) return null;
+  // Nonblocking/no-follow protect the lstat-to-open race where the host supports these flags.
+  const flags = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0) | (fs.constants.O_NOFOLLOW || 0);
+  const fd = fs.openSync(file, flags);
+  try {
+    const opened = fs.fstatSync(fd);
+    if (!opened.isFile() || opened.size > cap || opened.dev !== before.dev || opened.ino !== before.ino) return null;
+    // Read at most cap + 1 bytes so growth after fstat cannot cause an unbounded allocation/read.
+    const buffer = Buffer.alloc(cap + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      const count = fs.readSync(fd, buffer, size, buffer.length - size, null);
+      if (!count) break;
+      size += count;
+    }
+    return size > cap ? null : buffer.subarray(0, size);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** Read raw contract bytes and classify ownership before decoding any text. */
+function skillContract(dir, sessionId) {
+  // The owner stamp binds session-writer bytes; it is not authentic against a writer with workspace access.
+  const file = path.join(dir, "skill-contract.md");
+  let raw;
+  try {
+    raw = readContractFile(file, SKILL_CONTRACT_CAP);
+    if (raw === null) return null;
+  } catch {
+    return null;
+  }
+  const sha256 = crypto.createHash("sha256").update(raw).digest("hex");
+  let state = "unverified";
+  try {
+    const ownerRaw = readContractFile(path.join(dir, "skill-contract.owner"), SKILL_OWNER_CAP);
+    const owner = ownerRaw === null ? null : JSON.parse(ownerRaw.toString("utf8"));
+    if (
+      owner &&
+      typeof owner.session_id === "string" &&
+      owner.session_id &&
+      typeof sessionId === "string" &&
+      sessionId &&
+      owner.sha256 === sha256
+    ) {
+      state = owner.session_id === sessionId ? "verified" : "skipped";
+    }
+  } catch {
+    // Missing, malformed or unreadable ownership leaves the contract advisory.
+  }
+  return { file, state, body: raw.toString("utf8") };
+}
 
 function getSentinelDir() {
   return process.platform === "win32" ? os.tmpdir() : "/tmp";
@@ -255,6 +322,7 @@ process.stdin.on("end", () => {
     const globalLogsDir = path.join(os.homedir(), ".claude", "logs");
     const logFile = path.join(globalLogsDir, "invocations.jsonl");
     const timingsFile = path.join(globalLogsDir, "timings.jsonl");
+    const compactionsFile = path.join(globalLogsDir, "compactions.jsonl");
     // Project slug used to tag log entries so they can be filtered by project
     const projectSlug = root.replace(/[/.]/g, "-");
 
@@ -559,6 +627,13 @@ process.stdin.on("end", () => {
         ...(lastMsg && { last_msg: lastMsg }),
       });
     } else if (hook_event_name === "PreCompact") {
+      appendLog(compactionsFile, globalLogsDir, {
+        event: "precompact",
+        session_id,
+        trigger: data.trigger,
+        has_custom_instructions: Boolean(data.custom_instructions),
+        ts,
+      });
       // Extract modified files from transcript and write context snapshot
       const transcriptPath = data.transcript_path;
       if (transcriptPath) {
@@ -577,7 +652,8 @@ process.stdin.on("end", () => {
           // Extract file paths from Write and Edit tool_use blocks
           const filePattern = /"file_path"\s*:\s*"([^"]+)"/g;
           const toolPattern = /"name"\s*:\s*"(Write|Edit)"/g;
-          const files = new Set();
+          // timings.jsonl covers the whole session; the 50KB tail only catches recent edits
+          const files = sessionEditedFiles(timingsFile, session_id);
           // Find tool_use blocks for Write/Edit and extract file_path values
           const blocks = transcriptTail.split(/"type"\s*:\s*"tool_use"/);
           for (const block of blocks) {
@@ -599,19 +675,27 @@ process.stdin.on("end", () => {
           } else {
             lines.push("- (none detected)");
           }
-          // Preserve a per-skill compaction contract verbatim, if one was staged.
-          // Observational only — a missing/unreadable contract must never block compaction.
-          try {
-            const contract = fs.readFileSync(path.join(contractDir, "skill-contract.md"), "utf8").trim();
-            if (contract) {
-              lines.push("");
-              lines.push("## Skill Compaction Contract");
-              lines.push(contract);
-            }
-          } catch (_) {}
-          fs.writeFileSync(path.join(stateDir, "session-context.md"), lines.join("\n") + "\n");
+          // Preserve the raw contract text after checking ownership; a foreign stamped session is skipped.
+          let snapshot = lines.join("\n") + "\n";
+          const contract = skillContract(contractDir, session_id);
+          if (contract && contract.body && contract.state !== "skipped") {
+            const status =
+              contract.state === "verified"
+                ? `verified for session ${session_id} at PreCompact`
+                : "unverified at PreCompact";
+            snapshot += `\n## Skill Compaction Contract\n${status}\n${contract.body}`;
+          }
+          fs.writeFileSync(path.join(stateDir, "session-context.md"), snapshot);
         } catch (_) {}
       }
+    } else if (hook_event_name === "PostCompact") {
+      appendLog(compactionsFile, globalLogsDir, {
+        event: "postcompact",
+        session_id,
+        trigger: data.trigger,
+        summary_len: Array.from(data.compact_summary || "").length,
+        ts,
+      });
     } else if (hook_event_name === "UserPromptSubmit") {
       // Deduplication lock — project and home settings.json both register this hook.
       // Guard: if a lock for UserPromptSubmit exists and is < 500ms old, skip (duplicate fire).
@@ -968,7 +1052,10 @@ function summarizeArgs(toolName, toolInput) {
       }
       case "Write":
       case "Edit":
+      case "MultiEdit":
         return "file_path=" + (toolInput.file_path || "?");
+      case "NotebookEdit":
+        return "file_path=" + (toolInput.notebook_path || "?");
       case "Bash":
         return "command=" + (toolInput.command || "").slice(0, 200);
       case "Grep":
@@ -986,6 +1073,41 @@ function summarizeArgs(toolName, toolInput) {
   } catch (_) {
     return null;
   }
+}
+
+// sessionEditedFiles — file paths a session wrote, read from timings.jsonl (complete per-session record).
+// The transcript tail is bounded and misses edits made earlier in a long session. Streams the whole log in
+// chunks; only lines naming the session are parsed.
+const EDIT_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
+function sessionEditedFiles(timingsFile, sid) {
+  const files = new Set();
+  if (!sid) return files;
+  const take = (line) => {
+    if (!line.includes(sid)) return;
+    try {
+      const rec = JSON.parse(line);
+      if (rec.session_id === sid && EDIT_TOOLS.has(rec.tool) && /^file_path=./.test(rec.args || "")) {
+        files.add(rec.args.slice("file_path=".length));
+      }
+    } catch (_) {}
+  };
+  let fd;
+  try {
+    fd = fs.openSync(timingsFile, "r");
+    const buf = Buffer.alloc(1024 * 1024);
+    let carry = "";
+    let n;
+    while ((n = fs.readSync(fd, buf, 0, buf.length, null)) > 0) {
+      const lines = (carry + buf.toString("utf8", 0, n)).split("\n");
+      carry = lines.pop();
+      lines.forEach(take);
+    }
+    take(carry);
+  } catch (_) {
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  return files;
 }
 
 // recordTiming — read start marker, compute wall-clock duration, append to timings.jsonl, delete marker.

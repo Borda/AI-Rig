@@ -74,6 +74,14 @@ class TestDedupeByMessageId:
 class TestTierAndCost:
     """Covers tier fallback and USD pricing beyond the module doctests."""
 
+    def test_overlong_model_version_prices_as_unknown(self):
+        """A model id with an absurd version run prices at the unknown rate instead of overflowing int conversion.
+
+        The digits sit inside a JSON string, so the decoder's integer digit limit never applies to them.
+        """
+        model = "claude-opus-" + "9" * 5_000
+        assert (ca.tier(model), ca.cost({"input_tokens": 100}, model) > 0) == (ca.UNKNOWN_TIER, True)
+
     def test_unrecognised_model_is_unknown_tier(self):
         """A model id naming no known family reports as its own ``unknown`` tier, never folded into a known one."""
         assert ca.tier("some-future-model") == ca.UNKNOWN_TIER
@@ -313,6 +321,25 @@ class TestLoadSession:
         assert spend.agent_type == "foundry:sw-engineer"
         assert spend.description == "fix bug"
         assert spend.calls == 1
+
+    @pytest.mark.parametrize(
+        "meta",
+        [pytest.param([], id="list-meta"), pytest.param({"agentType": ["x"], "description": 3}, id="wrong-types")],
+    )
+    def test_malformed_meta_keeps_placeholders(self, tmp_path: Path, meta: object):
+        """Malformed sidecar metadata keeps the roster placeholders instead of aborting the session load."""
+        main = self._build_session_tree(tmp_path)
+        (main.parent / "sid1" / "subagents" / "agent-x1.meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        spend = ca.load_session(main).agent_spends[0]
+        assert (spend.agent_type, spend.description) == ("?", "")
+
+    def test_non_string_tool_name_row_is_skipped(self, tmp_path: Path):
+        """A tool_use block whose name is not a string is rejected whole, keeping later valid usage."""
+        bad = _usage_row("bad", input_tokens=1)
+        bad["message"]["content"] = [{"type": "tool_use", "id": "t", "name": {}}]
+        path = _write_jsonl(tmp_path / "s.jsonl", [bad, _usage_row("good", input_tokens=1)])
+        calls, _, _, _ = ca._parse_rows(path)
+        assert list(calls) == ["good"]
 
     def test_session_with_no_subagents_dir(self, tmp_path: Path):
         """A session with no subagents/ directory loads cleanly with an empty roster."""

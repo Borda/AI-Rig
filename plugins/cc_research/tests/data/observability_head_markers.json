@@ -76,8 +76,8 @@
     "**Unsupported flag check** \u2014 scan `$ARGUMENTS` for remaining `--<token>` tokens after supported",
     "echo \"$KAGGLE_CLI\" > \"${TMPDIR:-/tmp}/kaggle-cli-state-${CSID}\"",
     "echo \"kaggle CLI: $KAGGLE_CLI \u00b7 slug: ${COMPETITION_NAME:-<unset>}\"  # timeout: 30000",
-    "| `unauthorized` | `AskUserQuestion` with the credential instructions below as the `preview` of",
-    "**Credential instructions** (verbatim as both options' `preview`, never reply text before the",
+    "| `unauthorized` | Save and print the credential instructions below, then `AskUserQuestion`",
+    "**Credential instructions** (the user does this, the skill never fabricates, reads, or echoes a token):",
     "echo \"=== files ===\"; kaggle competitions files \"$KAGGLE_SLUG\" -v --page-size 200",
     "echo \"=== leaderboard head ===\"; kaggle competitions leaderboard \"$KAGGLE_SLUG\" -s -v 2>/dev/null |",
     "head -3 \"$KAGGLE_DATA\"/sample_submission.csv 2>/dev/null || echo \"no sample_submission.csv in this",
@@ -92,7 +92,7 @@
     "echo \"=== Sections ===\";   grep \"^# %% \\[markdown\\]\" \"$OUTFILE\"  # timeout: 5000",
     "echo \"=== File size ===\";  wc -l \"$OUTFILE\"  # timeout: 5000",
     "echo \"=== Bare '#' heading-spacer check (notebook-style.md) ===\"",
-    "Build this summary \u2014 the `preview` of every option of the follow-up gate below, not reply text"
+    "Build this summary \u2014 one line per item, Write the full summary to `.temp/kaggle/<name>-summary.md`"
   ],
   "skills/plan/SKILL.md": [
     "allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdate, AskUserQuestion",
@@ -204,7 +204,7 @@
     "- Print: `sweep: applied N_FIXES fix(es) to <program path> \u2014 re-judging`",
     "| `approved` | Print `sweep: plan approved (REFINE_ITER/MAX_REFINE iteration(s)) \u2713` \u2192 proceed to S5",
     "| `blocked` | Print `sweep: judge \u2192 BLOCKED \u2717`; show all critical findings from report; print",
-    "| `unresolved` | Print `sweep: judge unresolved after MAX_REFINE iterations \u2717`; call",
+    "| `unresolved` | Print `sweep: judge unresolved after MAX_REFINE iterations \u2717`; keep the full",
     "Load fails \u2192 stop with `! sweep: cannot load run/SKILL.md \u2014 research plugin path unresolved.` Never",
     "On completion, standard R6 terminal summary printed. Also prepend:",
     "sweep: complete \u2014 plan \u2192 judge \u2192 run pipeline finished"

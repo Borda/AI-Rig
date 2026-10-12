@@ -119,14 +119,14 @@ After challenger returns: read `$EXT_RUN_DIR/challenger-review.md`. Annotate eac
 
 **Fallback when challenger is unavailable or fails** — `$EXT_RUN_DIR/challenger-review.md` doesn't exist after spawn returns, OR returned JSON envelope has `status != "done"`, OR agent itself missing (`foundry:challenger` not installed):
 
-- Add `⚠ Challenger review unavailable — proceeding without adversarial annotation. Manual review of adoption table recommended before E13 apply.` above the adoption table in E13's previews (not reply text before a tool call)
+- Add `⚠ Challenger review unavailable — proceeding without adversarial annotation. Manual review of adoption table recommended before E13 apply.` above the adoption table in E13's saved and printed content, and include the warning in its plain question summary
 - Skip per-row Verdict column and **Discarded by challenger** section
 - Continue to E13 with unannotated adoption table
 - Do NOT block workflow — challenger is advisory, not gating
 
 **E13: Gate — AskUserQuestion**
 
-Call `AskUserQuestion` tool with the source report summary + adoption table + install-as-is recommendation (when applicable) as the `preview` of every option, not as reply text before the call (text written before a tool call can arrive as an empty progress update) — do NOT write options as plain text first. Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full summary, table and recommendation to `$EXT_RUN_DIR/adoption.md` first, make every option's `preview` a compact summary ending `→ full adoption table: $EXT_RUN_DIR/adoption.md`, and name that path in the question text. Map options directly into tool call arguments:
+Write the source report summary + adoption table + install-as-is recommendation (when applicable) to `$EXT_RUN_DIR/adoption.md` first; the full content is printed once, rendered as normal Markdown, as the last reply text before the question call. Call `AskUserQuestion` tool with the plain source headline, Group A/B counts, recommendation and `→ $EXT_RUN_DIR/adoption.md` in the question text — do NOT write options as plain text first. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping. Map options directly into tool call arguments:
 
 - question: "Apply external source candidates?" When install-as-is IS recommended, include all four options:
 - (a) label: `Apply Group A candidates` — description: adopt-as-is and tweak items only

@@ -11,10 +11,13 @@ never leave ``tmp_path``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
 import subprocess
+import sys
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -97,11 +100,18 @@ def _pre_compact(**extra: str) -> str:
     return json.dumps({**payload, **extra})
 
 
-def _run(payload: str, root: Path, temp: Path, hook: Path = HOOK) -> str:
+def _run(payload: str, root: Path, temp: Path, hook: Path = HOOK, cwd: Path | None = None) -> str:
     """Run the hook, assert it exited 0, and return its stdout."""
     env = {**os.environ, "CLAUDE_PLUGIN_ROOT": str(root), "TMPDIR": str(temp)}
     result = subprocess.run(
-        ["node", str(hook)], input=payload, env=env, capture_output=True, text=True, encoding="utf-8", timeout=15
+        ["node", str(hook)],
+        input=payload,
+        env=env,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=15,
     )
     assert result.returncode == 0, result.stderr
     return result.stdout
@@ -483,3 +493,245 @@ def test_hook_is_registered_on_calls_that_ran_and_on_context_resets() -> None:
     assert matchers("PostToolUseFailure") == ["Agent|Bash"]
     assert matchers("SessionStart") == ["compact|clear"]
     assert matchers("PreCompact") == [""]
+
+
+@_requires_node
+class TestSkillContractRestore:
+    """Compact restores only a current or explicitly advisory contract, preserving its raw text."""
+
+    @pytest.mark.parametrize(
+        ("stamp", "expected"),
+        [
+            pytest.param("verified", "verified", id="same-session"),
+            pytest.param("absent", "unverified", id="no-owner"),
+            pytest.param("stale", "unverified", id="sha-mismatch"),
+            pytest.param("foreign", None, id="matching-sha-foreign-session"),
+            pytest.param("malformed", "unverified", id="malformed-owner"),
+            pytest.param("null", "unverified", id="null-owner"),
+            pytest.param("missing-session", "unverified", id="incomplete-owner"),
+            pytest.param("unreadable", "unverified", id="owner-is-directory"),
+        ],
+    )
+    def test_owner_states(self, plugin: Path, temp_dir: Path, stamp: str, expected: str | None) -> None:
+        """Both provenance and raw-byte integrity are needed for an authoritative restore."""
+        state = plugin / ".temp" / "state"
+        state.mkdir(parents=True)
+        raw = b"  CONTRACT: preserve whitespace\r\nnext: resume\n\n"
+        (state / "skill-contract.md").write_bytes(raw)
+        owner = state / "skill-contract.owner"
+        if stamp == "unreadable":
+            owner.mkdir()
+        elif stamp != "absent":
+            data = {
+                "session_id": "foreign-session" if stamp == "foreign" else SESSION_ID,
+                "sha256": "0" * 64 if stamp == "stale" else hashlib.sha256(raw).hexdigest(),
+                "written_at": "2000-01-01T00:00:00Z",
+            }
+            if stamp == "missing-session":
+                del data["session_id"]
+            owner.write_text("{broken" if stamp == "malformed" else json.dumps(None if stamp == "null" else data))
+        out = _run(_session_start("compact"), plugin, temp_dir, cwd=plugin)
+        if expected is None:
+            assert out == ""
+        else:
+            header = (
+                "Skill contract, verified: written by this session; confirm the skill is still active before resuming"
+                if expected == "verified"
+                else "Skill contract, unverified: no matching owner stamp; confirm with the user before resuming"
+            )
+            context = _context(out, "SessionStart")
+            assert context == header + "\n\n" + raw.decode("utf-8")
+            assert context.count(header) == 1
+
+    @pytest.mark.parametrize("source", ["compact", "clear", "startup"])
+    def test_absent_contract_is_silent(self, plugin: Path, temp_dir: Path, source: str) -> None:
+        """A reset without skill state emits no additional context."""
+        assert _run(_session_start(source), plugin, temp_dir, cwd=plugin) == ""
+
+    def test_clear_never_restores(self, plugin: Path, temp_dir: Path) -> None:
+        """Even a verified contract is not resumed after clear, while rule sentinels still reset."""
+        state = plugin / ".temp" / "state"
+        state.mkdir(parents=True)
+        raw = b"CONTRACT\n"
+        (state / "skill-contract.md").write_bytes(raw)
+        (state / "skill-contract.owner").write_text(
+            json.dumps({"session_id": SESSION_ID, "sha256": hashlib.sha256(raw).hexdigest()})
+        )
+        _run(_agent(), plugin, temp_dir)
+        assert _run(_session_start("clear"), plugin, temp_dir, cwd=plugin) == ""
+        assert list(temp_dir.iterdir()) == []
+
+    @pytest.mark.parametrize("verified", [True, False])
+    @pytest.mark.parametrize("body_size", [INJECT_CAP - 50, INJECT_CAP + 1])
+    def test_over_cap_restores_header_and_read_path_only(
+        self, plugin: Path, temp_dir: Path, verified: bool, body_size: int
+    ) -> None:
+        """The cap includes the header; a large contract gets its status and Read path, never a body fragment."""
+        state = plugin / ".temp" / "state"
+        state.mkdir(parents=True)
+        raw = ("CONTRACT-BODY" + "x" * body_size).encode()
+        contract = state / "skill-contract.md"
+        contract.write_bytes(raw)
+        if verified:
+            (state / "skill-contract.owner").write_text(
+                json.dumps({"session_id": SESSION_ID, "sha256": hashlib.sha256(raw).hexdigest()})
+            )
+        context = _context(_run(_session_start("compact"), plugin, temp_dir, cwd=plugin), "SessionStart")
+        assert context.startswith(f"Skill contract, {'verified' if verified else 'unverified'}:")
+        assert str(contract) in context
+        assert "Read " in context
+        assert "CONTRACT-BODY" not in context
+        assert len(context) < 1000
+
+    @pytest.mark.integration
+    def test_real_writer_restores_exact_utf8_bytes(self, plugin: Path, temp_dir: Path) -> None:
+        """The actual producer and Node consumer agree on non-ASCII content and the trailing LF."""
+        subprocess.run(
+            [
+                sys.executable,
+                str(PLUGIN_ROOT / "bin" / "write_skill_contract.py"),
+                "sample:skill",
+                "boundary",
+                "n/a",
+                "keep café → result",
+                "resume",
+            ],
+            cwd=plugin,
+            env={**os.environ, "CLAUDE_CODE_SESSION_ID": SESSION_ID},
+            check=True,
+            capture_output=True,
+            timeout=15,
+        )
+        raw = (plugin / ".temp" / "state" / "skill-contract.md").read_bytes()
+        assert raw.endswith(b"\n")
+        assert b"\r\n" not in raw
+        context = _context(_run(_session_start("compact"), plugin, temp_dir, cwd=plugin), "SessionStart")
+        assert context.startswith("Skill contract, verified:")
+        assert context.split("\n\n", 1)[1].encode("utf-8") == raw
+
+    def test_unreadable_contract_is_silent(self, plugin: Path, temp_dir: Path) -> None:
+        """An inaccessible contract fails open without a nonzero exit."""
+        (plugin / ".temp" / "state" / "skill-contract.md").mkdir(parents=True)
+        assert _run(_session_start("compact"), plugin, temp_dir, cwd=plugin) == ""
+
+    def test_sentinel_cleanup_failure_still_restores(self, plugin: Path, tmp_path: Path) -> None:
+        """A missing sentinel directory cannot suppress an advisory compact restore."""
+        state = plugin / ".temp" / "state"
+        state.mkdir(parents=True)
+        (state / "skill-contract.md").write_bytes(b"CONTRACT\n")
+        context = _context(_run(_session_start("compact"), plugin, tmp_path / "missing", cwd=plugin), "SessionStart")
+        assert context.startswith("Skill contract, unverified:")
+        assert context.endswith("CONTRACT\n")
+
+    def test_owner_uses_exact_session_id(self, plugin: Path, temp_dir: Path) -> None:
+        """Sentinel-safe session IDs can collide without turning foreign ownership into verification."""
+        state = plugin / ".temp" / "state"
+        state.mkdir(parents=True)
+        raw = b"CONTRACT\n"
+        (state / "skill-contract.md").write_bytes(raw)
+        (state / "skill-contract.owner").write_text(
+            json.dumps({"session_id": "session/one", "sha256": hashlib.sha256(raw).hexdigest()})
+        )
+        assert _run(_session_start("compact", "session_one"), plugin, temp_dir, cwd=plugin) == ""
+        context = _context(_run(_session_start("compact", "session/one"), plugin, temp_dir, cwd=plugin), "SessionStart")
+        assert context.startswith("Skill contract, verified:")
+
+
+def _contract_path_capability(kind: str) -> bool:
+    """Probe special-file creation before collection, including Windows restrictions."""
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "candidate"
+        try:
+            if kind == "fifo":
+                if not hasattr(os, "mkfifo"):
+                    return False
+                os.mkfifo(candidate)
+            else:
+                target = Path(directory) / "target"
+                target.write_bytes(b"test")
+                candidate.symlink_to(target)
+        except OSError:
+            return False
+    return True
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node executable not available")
+@pytest.mark.parametrize("target", ["contract", "owner"])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "oversize",
+        pytest.param(
+            "symlink",
+            marks=pytest.mark.skipif(not _contract_path_capability("symlink"), reason="symlink creation unavailable"),
+        ),
+        pytest.param(
+            "fifo", marks=pytest.mark.skipif(not _contract_path_capability("fifo"), reason="FIFO creation unavailable")
+        ),
+    ],
+)
+def test_unsafe_contract_paths_fail_open(tmp_path: Path, target: str, kind: str) -> None:
+    """Reject unsafe contract paths and retain advisory text for unsafe owner paths without blocking."""
+    project = tmp_path / "project"
+    state = project / ".temp" / "state"
+    state.mkdir(parents=True)
+    raw = b"CONTRACT: continue safely\n"
+    contract = state / "skill-contract.md"
+    owner = state / "skill-contract.owner"
+    stamp = json.dumps({"session_id": "safe-session", "sha256": hashlib.sha256(raw).hexdigest()}).encode()
+    contract.write_bytes(raw)
+    owner.write_bytes(stamp)
+    candidate = contract if target == "contract" else owner
+    content = raw if target == "contract" else stamp
+    candidate.unlink()
+    if kind == "symlink":
+        backing = state / "backing"
+        backing.write_bytes(content)
+        candidate.symlink_to(backing)
+    elif kind == "fifo":
+        os.mkfifo(candidate)
+    else:
+        cap = 256 * 1024 if target == "contract" else 4 * 1024
+        candidate.write_bytes(content + b" " * (cap + 1 - len(content)))
+    payload = {"session_id": "safe-session", "hook_event_name": "SessionStart", "source": "compact"}
+    transcript = project / "transcript.jsonl"
+    transcript.write_bytes(b'{"type":"user","message":{"content":"hello"}}\n')
+    payload["transcript_path"] = str(transcript)
+    result = subprocess.run(
+        ["node", str(PLUGIN_ROOT / "hooks" / "rule-inject.js")],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=project,
+        env={**os.environ, "HOME": str(tmp_path), "USERPROFILE": str(tmp_path), "TMPDIR": str(tmp_path)},
+        timeout=2,
+    )
+    assert result.returncode == 0, result.stderr
+    output = result.stdout
+    if target == "contract":
+        assert "CONTRACT:" not in output
+        assert "Skill contract," not in output
+        assert "## Skill Compaction Contract" not in output
+    else:
+        assert "CONTRACT: continue safely" in output
+        assert "Skill contract, unverified:" in output
+        assert "Skill contract, verified:" not in output
+        assert "verified for session" not in output
+
+
+@pytest.mark.parametrize("hook", ["rule-inject.js", "task-log.js"])
+def test_owner_stamp_comment_documents_workspace_writer_boundary(hook: str) -> None:
+    """Both consumers explain that matching session hashes do not authenticate against workspace writers."""
+    source = (PLUGIN_ROOT / "hooks" / hook).read_text(encoding="utf-8")
+    function = source.split("function skillContract(dir, sessionId) {", 1)[1].split("const file", 1)[0]
+    assert "owner stamp binds session-writer bytes" in function
+    assert "not authentic against a writer with workspace access" in function
+
+
+def test_owner_stamp_contract_documents_workspace_writer_boundary() -> None:
+    """The canonical ownership paragraph states the same trust boundary as both readers."""
+    contract = (PLUGIN_ROOT / "skills" / "_shared" / "compaction-contract.md").read_text(encoding="utf-8")
+    paragraph = next(line for line in contract.splitlines() if "skill-contract.owner" in line)
+    assert "binds bytes produced by the session writer" in paragraph
+    assert "does not authenticate the contract against a writer with workspace access" in paragraph

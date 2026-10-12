@@ -1,0 +1,8 @@
+{"event":"postcompact","session_id":"composition_compactions_example","trigger":"manual","summary_len":3200,"ts":"2030-01-01T00:00:04.000Z"}
+{"event":"gate","session_id":"composition_compactions_example","decision":"compact","reason":"saving exceeds rebuild cost","ctx":200000,"calls_ahead":4,"K":240000.6,"model":"claude-opus-5","ts":"2030-01-01T01:00:01+01:00"}
+{"event":"precompact","session_id":"composition_compactions_example","trigger":"auto","has_custom_instructions":false,"ts":"2030-01-01T00:00:08.000Z"}
+{"event":"precompact","session_id":"another-session","trigger":"manual","ts":"2030-01-01T00:00:02Z"}
+{"event":"gate","session_id":"composition_compactions_example","decision":"continue","reason":"no contract","ctx":null,"calls_ahead":null,"K":null,"model":null,"ts":"2030-01-01T00:00:12+00:00"}
+{"event":"future-event","session_id":"composition_compactions_example","ts":"2030-01-01T00:00:01Z"}
+{"event":"precompact","session_id":"composition_compactions_example","trigger":"manual","has_custom_instructions":true,"ts":"2030-01-01T00:00:02.000Z"}
+{"event":"gate","session_id":"composition_compactions_example","decision":"continue","reason":"saving does not exceed rebuild cost","ctx":126000,"calls_ahead":3,"K":240000,"model":"claude-opus-5","ts":"2030-01-01T00:00:07+00:00"}

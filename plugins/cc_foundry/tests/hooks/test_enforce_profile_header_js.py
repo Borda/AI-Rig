@@ -189,10 +189,10 @@ def _write_transcript(tmp_path: Path, assistant_text: str) -> Path:
 
 
 @_skip_node_unavailable
-def test_table_only_in_reply_text_is_denied_and_preview_passes(
+def test_table_only_in_reply_text_is_denied_and_summary_passes(
     tmp_path: Path, profile_run: tuple[Path, Path, str]
 ) -> None:
-    """A table printed as reply text before the question is denied; the same table as every preview passes.
+    """A table printed as reply text before the question is denied; a plain question summary passes.
 
     Reply text written before a tool call can come back as an empty progress update the user never sees, so only the
     call's own fields count at question time; the denial says so and the call corrected to it passes.
@@ -203,7 +203,7 @@ def test_table_only_in_reply_text_is_denied_and_preview_passes(
     transcript = _write_transcript(tmp_path, table)
 
     reason = _denial_reason(_run(tmp_path, _ask_payload(cwd=cwd, transcript_path=str(transcript))))
-    retried = _run(tmp_path, _preview_payload(cwd, table))
+    retried = _run(tmp_path, _summary_payload(cwd, "Title: x"))
 
     assert reason is not None
     assert "reply text before the call does not count" in reason
@@ -459,18 +459,16 @@ def test_stop_passes_delivery_in_final_message(tmp_path: Path, profile_run: tupl
 DELIVERED = "| Field | Value |\n| --- | --- |\n| Title | x |\n| PR | #1 |\n| Date | y |\n"
 
 
-# ── Delivery via the follow-up question's option previews ────────────────────
+# ── Delivery via the follow-up question text ────────────────────
 
 
-def _preview_payload(cwd: str, preview: str | None) -> dict:
-    """Build the follow-up payload, `preview` on every option (none when None), with no transcript text at all."""
-    labels = ("Drill into slowest session", "Skip — done")
-    options = [{"label": label, "description": "next step"} for label in labels]
-    if preview is not None:
-        for option in options:
-            option["preview"] = preview
-    questions = [{"question": "What next?", "header": "profile", "options": options}]
-    return _ask_payload(cwd=cwd, tool_input={"questions": questions}, transcript_path=None)
+def _summary_payload(cwd: str, summary: str | None) -> dict:
+    """Build a follow-up with fixed plain summary lines and no previews."""
+    report = Path(cwd) / REPORT_DIR_REL / "report.md"
+    options = [{"label": label, "description": "next step"} for label in ("Drill into slowest session", "Skip")]
+    text = f"{summary}\n→ {report}\nWhat next?" if summary else "What next?"
+    questions = [{"question": text, "header": "profile", "options": options}]
+    return _ask_payload(cwd=str(cwd), tool_input={"questions": questions}, transcript_path=None)
 
 
 @pytest.fixture(name="written_run")
@@ -481,55 +479,60 @@ def _written_run(profile_run: tuple[Path, Path, str]) -> str:
     return cwd
 
 
-class TestPreviewDelivery:
-    """The header table carried as option previews delivers it when text before the call came back empty."""
+class TestQuestionSummaryDelivery:
+    """Follow-ups show summaries in question text and leave full delivery to Stop."""
 
     @_skip_node_unavailable
-    def test_preview_table_allows_follow_up(self, tmp_path: Path, written_run: str) -> None:
-        """The matching table in the previews allows the follow-up with no reply text in the transcript."""
-        assert _run(tmp_path, _preview_payload(written_run, DELIVERED)) == {}
+    def test_plain_summary_allows_follow_up(self, tmp_path: Path, written_run: str) -> None:
+        """The matching headline and resolved report path pass without any preview."""
+        payload = _summary_payload(written_run, "Title: x")
+        assert all("preview" not in option for option in payload["tool_input"]["questions"][0]["options"])
+        assert _run(tmp_path, payload) == {}
 
     @_skip_node_unavailable
-    def test_missing_preview_denial_names_preview_fix(self, tmp_path: Path, written_run: str) -> None:
-        """No table anywhere is denied, and the reason directs the table into the option previews."""
-        reason = _denial_reason(_run(tmp_path, _preview_payload(written_run, None)))
-
+    def test_missing_summary_denial_names_question_fix(self, tmp_path: Path, written_run: str) -> None:
+        """Missing summary evidence names the first-question remedy."""
+        reason = _denial_reason(_run(tmp_path, _summary_payload(written_run, None)))
         assert reason is not None
-        assert "`preview` of every option" in reason
-        assert "Re-issue" not in reason
+        assert "first question's `question` text" in reason
+        assert "fixed lines" in reason
 
     @_skip_node_unavailable
-    def test_table_in_one_preview_is_denied_and_the_named_fix_passes(self, tmp_path: Path, written_run: str) -> None:
-        """A table in only one option's preview is denied with that spot named; the call so corrected passes.
-
-        The user sees only the focused option's preview, so one copy can go unseen; following the reason once must clear
-        the gate — no denial loop.
-        """
-        partial = _preview_payload(written_run, DELIVERED)
-        del partial["tool_input"]["questions"][0]["options"][1]["preview"]
-
+    def test_summary_in_one_preview_is_denied_and_question_fix_passes(self, tmp_path: Path, written_run: str) -> None:
+        """A summary in one preview must move into the first question's text."""
+        partial = _summary_payload(written_run, "Title: x")
+        first = partial["tool_input"]["questions"][0]
+        first["options"][0]["preview"] = first["question"]
+        first["question"] = "What next?"
         reason = _denial_reason(_run(tmp_path, partial))
-        retried = _run(tmp_path, _preview_payload(written_run, DELIVERED))
-
-        assert reason is not None
-        assert "It sits in 1 of 2 option previews" in reason
-        assert retried == {}
+        assert "first question's `question` text" in reason
+        assert _run(tmp_path, _summary_payload(written_run, "Title: x")) == {}
 
     @_skip_node_unavailable
-    def test_preview_pass_settles_the_stop_check(self, tmp_path: Path, written_run: str) -> None:
-        """Once the question carrying the previews was shown (PostToolUse), the turn may end without the table."""
-        payload = _preview_payload(written_run, DELIVERED)
+    def test_shown_summary_keeps_stop_armed_once(self, tmp_path: Path, written_run: str) -> None:
+        """A shown summary leaves one Stop continuation for the full report."""
+        payload = _summary_payload(written_run, "Title: x")
         assert _run(tmp_path, payload) == {}
         assert _run(tmp_path, {**payload, "hook_event_name": "PostToolUse"}) == {}
-
+        assert _run(tmp_path, _stop_payload(cwd=written_run)).get("decision") == "block"
+        assert _run(tmp_path, _stop_payload(cwd=written_run, last_assistant_message=DELIVERED)) == {}
         assert _run(tmp_path, _stop_payload(cwd=written_run)) == {}
 
     @_skip_node_unavailable
     def test_allowed_but_unshown_follow_up_leaves_stop_armed(self, tmp_path: Path, written_run: str) -> None:
-        """A PreToolUse pass alone records nothing: another hook or a permission rule may still deny the question."""
-        assert _run(tmp_path, _preview_payload(written_run, DELIVERED)) == {}
-
+        """An allowed but unshown question also leaves final delivery armed."""
+        assert _run(tmp_path, _summary_payload(written_run, "Title: x")) == {}
         assert _run(tmp_path, _stop_payload(cwd=written_run)).get("decision") == "block"
+
+    @_skip_node_unavailable
+    def test_summary_only_in_previews_is_denied(self, tmp_path: Path, written_run: str) -> None:
+        """Even every option's preview cannot replace the question's plain summary."""
+        payload = _summary_payload(written_run, "Title: x")
+        first = payload["tool_input"]["questions"][0]
+        for option in first["options"]:
+            option["preview"] = first["question"]
+        first["question"] = "What next?"
+        assert _denial_reason(_run(tmp_path, payload)) is not None
 
 
 @pytest.fixture(name="analyzed_run")
@@ -575,14 +578,14 @@ def _analyzed_run(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> tuple[
 
 
 @_skip_node_unavailable
-def test_real_analyzer_header_in_previews_allows_follow_up(tmp_path: Path, analyzed_run: tuple[str, str]) -> None:
-    """A header written by the real analyzer and carried as every option preview passes the follow-up gate.
-
-    The analyzer once opened its header with a `[Profile] —` line holding no key and no `Title`, which the gate reads as
-    an unfinished report, so every real profile follow-up was denied even with its table delivered. Its 9 fields render
-    an 11-line table; its Confidence row is wider than the 86-column preview box and wraps, so it spans 12 rows, still
-    within the preview cap.
-    """
+def test_real_analyzer_header_in_question_summary_allows_follow_up(
+    tmp_path: Path, analyzed_run: tuple[str, str]
+) -> None:
+    """The real timing analyzer's header passes as a plain summary, and its full table passes Stop."""
     cwd, table = analyzed_run
-
-    assert _run(tmp_path, _preview_payload(cwd, table)) == {}
+    summary = "Title: foundry:profile — session clock-time breakdown\nOutcome: INFORMATIONAL — data-only report"
+    payload = _summary_payload(cwd, summary)
+    assert _run(tmp_path, payload) == {}
+    assert _run(tmp_path, {**payload, "hook_event_name": "PostToolUse"}) == {}
+    assert _run(tmp_path, _stop_payload(cwd=cwd, last_assistant_message=table)) == {}
+    assert _run(tmp_path, _stop_payload(cwd=cwd)) == {}

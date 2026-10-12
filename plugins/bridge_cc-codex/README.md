@@ -14,7 +14,7 @@ A user-reported dismissed question leaves its decision pending. The root checks 
 
 The bridge is useful with either host integration installed and has no dependency on another plugin from this repository. Existing-plugin replacement and consumer migration are deliberately outside this standalone package.
 
-> Release: `0.8.1`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
+> Release: `0.9.0`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
 
 ______________________________________________________________________
 
@@ -200,7 +200,7 @@ Long-running implementation work may be detached. Use the job identifier printed
 /bridge:cancel <job-id>
 ```
 
-> Background execution and lifecycle controls are available only for Claude Code → Codex `implement`. `advise` and `review` are foreground, ephemeral calls; the Codex → Claude MCP transport does not expose reverse background requests or separate status/result/cancel skills.
+> Background execution and lifecycle controls are available only for Claude Code → Codex `implement`. `advise` and `review` are ephemeral calls without job records; the Claude skills run them as background Bash calls (`run_in_background: true`) when the budget can reach the ~10 min foreground cap or the caller has independent work, so the host shows a task row and a completion notification at no extra model cost. Every Claude skill reply ends with one usage line copied from the envelope (`codex <model>/<effort> · in … (cached …) · out … · N s`). The Codex → Claude MCP transport does not expose reverse background requests or separate status/result/cancel skills.
 
 After an implementation returns:
 

@@ -27,10 +27,14 @@ Tier cascade
 
 Cross-plugin use
 ----------------
-Consumers normally resolve their **own** plugin. The one sanctioned exception is an
-optional-provider contract — content that has no value unless the provider is
-installed (``resolve_shared_path.py codemap-py claude-skills/_shared``): the
-registry tier returns the *active* install and skips a newer orphaned cache dir;
+Consumers normally resolve their **own** plugin. The optional-provider contract
+exception permits reading content or executing a script that has no value unless
+the provider is installed. Two instances: ``resolve_shared_path.py codemap-py
+claude-skills/_shared`` reads the provider contract; ``resolve_shared_path.py foundry
+bin`` executes ``compact_gate.py`` with a same-line ``[ -f "$_GD/compact_gate.py" ]``
+presence check and the consumer's own ``compact-gate: continue (foundry gate unavailable)``
+fallback echo. Both require the consumer's feature to be a no-op without the provider.
+The registry tier returns the *active* install and skips a newer orphaned cache dir;
 the newest-cache tier is reached only when no usable registry record exists or the
 recorded install lacks ``<subdir>``, and absence degrades to the consumer's own
 fallback line. See ``plugins/CLAUDE.md``

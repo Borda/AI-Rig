@@ -1,0 +1,16 @@
+{"timestamp": "2030-01-01T00:00:00Z", "type": "session_meta", "payload": {"id": "example-parent", "session_id": "example-parent", "source": "cli", "base_instructions": {"text": "base"}}}
+{"timestamp": "2030-01-01T00:00:00Z", "type": "turn_context", "payload": {"model": "example-model"}}
+{"timestamp": "2030-01-01T00:00:00Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "# AGENTS.md instructions for example\n<INSTRUCTIONS>café</INSTRUCTIONS>"}]}}
+{"timestamp": "2030-01-01T00:00:00Z", "type": "response_item", "payload": {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "<skills_instructions>skill</skills_instructions><model_switch>model</model_switch><multi_agent_role>role</multi_agent_role><multi_agent_mode>mode</multi_agent_mode><hook_event>hook</hook_event>tail"}]}}
+{"timestamp": "2030-01-01T00:00:00Z", "type": "token_usage_record", "payload": {"response_id": "response-a", "usage": {"input_tokens": 100000, "cached_input_tokens": 80000, "output_tokens": 10, "reasoning_output_tokens": 0, "total_tokens": 100010}}}
+{"timestamp": "2030-01-01T00:00:00Z", "type": "token_usage_record", "payload": {"response_id": "response-a", "usage": {"input_tokens": 100000, "cached_input_tokens": 80000, "output_tokens": 10, "reasoning_output_tokens": 0, "total_tokens": 100010}}}
+{"timestamp": "2030-01-01T00:00:00Z", "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 100000, "output_tokens": 10}, "last_token_usage": {"input_tokens": 100000, "cached_input_tokens": 80000, "output_tokens": 10}}}}
+{"timestamp": "2030-01-01T00:00:00Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "tool-a", "output": "same"}}
+{"timestamp": "2030-01-01T00:00:00Z", "type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": "tool-b", "output": "same"}}
+{"timestamp": "2030-01-01T00:01:00Z", "type": "token_usage_record", "payload": {"response_id": "response-b", "usage": {"input_tokens": 40000, "cached_input_tokens": 20000, "output_tokens": 0, "reasoning_output_tokens": 0, "total_tokens": 40000}}}
+{"timestamp": "2030-01-01T00:02:00Z", "type": "compacted", "payload": {"message": "summary"}}
+{"timestamp": "2030-01-01T00:00:00Z", "type": "response_item", "payload": {"type": "custom_tool_call", "name": "apply_patch", "call_id": "patch-a", "input": "*** Begin Patch\n*** Add File: sample.py\n+value = 1\n*** End Patch"}}
+{"timestamp": "2030-01-01T00:02:00Z", "type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": "patch-a", "output": "same"}}
+{"timestamp": "2030-01-01T00:03:00Z", "type": "token_usage_record", "payload": {"response_id": "response-c", "usage": {"input_tokens": 60000, "cached_input_tokens": 30000, "output_tokens": 10, "reasoning_output_tokens": 0, "total_tokens": 60010}}}
+{"timestamp": "2030-01-01T00:04:00Z", "type": "turn_context", "payload": {"model": "example-model-new"}}
+{"timestamp": "2030-01-01T00:04:00Z", "type": "token_usage_record", "payload": {"response_id": "response-d", "usage": {"input_tokens": 60001, "cached_input_tokens": 30000, "output_tokens": 10, "reasoning_output_tokens": 0, "total_tokens": 60011}}}

@@ -360,9 +360,9 @@ Spawn **foundry:sw-engineer** agent to map execution path — Arm batch `scope` 
 - What invariant violated at failure point?
 - Any recent commit touching this path (from git log output)
 
-**Scope gate**: if root cause spans 3+ modules, flag complexity smell. Use `AskUserQuestion` to present scope concern before proceeding, with options: "Narrow scope (Recommended)" / "Proceed anyway".
+Carry the analysis summary in the diagnosis file. Write the full analysis to `.temp/debug/<slug>-analysis.md` first; when the next gate fires, print the analysis summary once as the last reply text before the question, as normal Markdown. The question text carries counts, headline and `→ .temp/debug/<slug>-analysis.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview`; do not repeat the same analysis at later gates.
 
-Carry the agent's analysis summary in the next question's `preview` when one fires (scope gate, Step 3 gate) and in the diagnosis file — not as standalone reply text before further tool calls (text written before a tool call can arrive as an empty progress update). Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full summary to `.temp/debug/<slug>-analysis.md` first, make every option's `preview` a compact summary ending `→ full analysis: .temp/debug/<slug>-analysis.md`, and name that path in the question text.
+**Scope gate**: if root cause spans 3+ modules, flag complexity smell. Use `AskUserQuestion` to present scope concern before proceeding, with options: "Narrow scope (Recommended)" / "Proceed anyway".
 
 **Flaky-test branch** — symptom intermittent (passes alone, fails in full suite): run binary-search isolation. `<failing-test-node-id>` is a **substitution token** — before executing this block, resolve failing test node ID from `$ARGUMENTS` or prior pytest output (captured in shell variable, e.g. `FAILING_TEST_NODE=tests/foo.py::test_bar`), then substitute literal node ID into command. Do NOT execute with literal `<failing-test-node-id>` string — bash would interpret `<` as stdin redirect:
 
@@ -413,7 +413,7 @@ Arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits
 
 Parse result — record each candidate's verdict as you parse by appending a verdict event line to the hypothesis ledger (`${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}`), one `echo` per verdict in one block, same shape as the Step 2 block — `echo "<candidate cause> :: refuted (challenger)" >> ${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}`; never rewrite earlier lines:
 
-- **Blockers found** → STOP. Invoke `AskUserQuestion` with the blocker findings (one line each: claim · file:line · evidence) as the `preview` of every option, not as reply text before the call (over the preview cap — ≤2000 chars, ≤12 lines — Write them to `.temp/debug/<slug>-blockers.md` first, preview a compact summary ending `→ full list: <that path>`, and name that path in the question text) — "Challenger raised N blocker(s) on the candidate root cause. How to proceed?" · (a) **Address blockers** — revise candidates, re-run gate · (b) **Accept risk** — proceed to Step 3 with blockers documented in the diagnosis file · (c) **Abort**. On Abort: stop. Incorporate surviving challenges into the hypothesis list before the Step 3 gate; append a `<candidate cause> :: refuted (challenger)` event line for any candidate the challenger refuted.
+- **Blockers found** → STOP. Write the blocker findings (one line each: claim · file:line · evidence) to `.temp/debug/<slug>-blockers.md` first; print them once as the last reply text before invoking `AskUserQuestion`, as normal Markdown. The question text carries the blocker count, headline and `→ .temp/debug/<slug>-blockers.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview` — "Challenger raised N blocker(s) on the candidate root cause. How to proceed?" · (a) **Address blockers** — revise candidates, re-run gate · (b) **Accept risk** — proceed to Step 3 with blockers documented in the diagnosis file · (c) **Abort**. On Abort: stop. Incorporate surviving challenges into the hypothesis list before the Step 3 gate; append a `<candidate cause> :: refuted (challenger)` event line for any candidate the challenger refuted.
 - **Concerns only** → add as alternative hypotheses in Step 3; append each new concern to ledger as `:: open (alt)`; continue.
 - **No findings / all refuted** → proceed.
 
@@ -431,7 +431,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "
 
 ## Step 3: Hypothesis and gate
 
-State the root cause hypothesis in one sentence before writing any code:
+Build the root cause hypothesis in one sentence before writing any code; present it only at the gate below, after premise grounding:
 
 ```text
 Root cause: [root cause]
@@ -449,7 +449,7 @@ cat "$_DEV_SHARED/premise-grounding.md"
 
 §Premise Grounding Gate. Apply using **debug** context from Skill contexts table. Run before presenting hypothesis — any ungrounded premise in hypothesis produces a fix that addresses wrong mechanism.
 
-**Gate**: present hypothesis to user, wait for confirmation or challenge before proceeding to Step 4 — as the turn's final reply, or in the question text/preview when asked via `AskUserQuestion`. Wrong hypothesis produces fix that passes tests but doesn't resolve underlying problem.
+**Gate**: present hypothesis to user, wait for confirmation or challenge before proceeding to Step 4 — as the turn's final reply, or, when asked via `AskUserQuestion`, Write the hypothesis and its evidence to `.temp/debug/<slug>-hypothesis.md` first and print it once as the last reply text before the question, as normal Markdown. The question text carries the root-cause headline, confidence and `→ .temp/debug/<slug>-hypothesis.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview`. Wrong hypothesis produces fix that passes tests but doesn't resolve underlying problem.
 
 If confidence low: propose targeted probe (minimal script, added log statement, single assertion) to gather missing signal — run before committing to fix. Probe rules out current hypothesis → append `<cause> :: ruled-out (probe)` to `${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}`, re-run boundary contract block above before re-hypothesizing — keeps loop guard current so ruled-out cause not revisited.
 

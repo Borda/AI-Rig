@@ -1,23 +1,25 @@
-"""Keep decision content out of reply text written right before an ``AskUserQuestion`` call.
+"""Keep a plain summary in the question whenever decision content is printed right before an ``AskUserQuestion`` call.
 
-On models that return text written before a tool call as a progress-update thinking block (empty under the default
-``display``), anything a skill prints and then follows with a question can vanish: the user sees "Challenger raised 2
-blocker(s). How to proceed?" with no blockers, or a question saying "(shown above)" with nothing above it, and decides
-blind. Decision content therefore travels in the question itself — its question text, or the ``preview`` of every option
-of a single-select question — or, when no tool call follows, in the turn's final reply.
+Rich decision content (an item table, a plan, a tree) is printed once as the last reply text before the question, so the
+user reads it before choosing. On models that return text written before a tool call as a progress-update thinking block
+(empty under the default ``display``), that printed copy can vanish: the user sees "Challenger raised 2 blocker(s). How
+to proceed?" with no blockers, or a question saying "(shown above)" with nothing above it, and decides blind. The
+question text therefore always carries a short plain summary of the content (counts, headline, file path) — or, when no
+tool call follows, the content opens the turn's final reply. Option previews never carry the content.
 
 This guard scans every Claude-facing plugin instruction file that mentions ``AskUserQuestion`` for the ordering phrases
 that put the content first and the question second: "print X, then invoke ``AskUserQuestion``", "print X,
 ``AskUserQuestion``: …", "show X, then ask Y", "show X per hit, ask: …", "write all sections inline, then invoke
 ``AskUserQuestion``", "(shown above)", "in the message that issues …", "print X before the question". A match passes
-only when the same sentence places the content in the question (``preview``, question text) or the final reply.
+only when the same sentence places a plain summary in the question text or the content in the final reply; a sentence
+that forbids the ordering ("never before the question") is not a match.
 
 Those phrases are per-line, so a second, structural check covers the same ordering split across steps: a numbered step
 or heading that opens with a display verb and a content noun ("5. Print queue as formatted table:", "3. Output ordered
 task table:"), followed — later in that step or in the next one — by an ``AskUserQuestion``. It passes when a sentence
-in either step names the placement together with that noun ("the queue table as the ``preview`` of every option"), which
-keeps a report printed for a follow-up whose previews carry it green. ``report-header`` tables have their own show-once
-contract (``test_report_header_show_once_contract.py``).
+in either step names the placement together with that noun ("the question text carries the queue headline"), which keeps
+a report printed for a follow-up whose question text summarises it green. ``report-header`` tables have their own show-
+once contract (``test_report_header_show_once_contract.py``).
 """
 
 from __future__ import annotations
@@ -72,11 +74,15 @@ _ORDERING = (
     ),
 )
 
-#: Placement that keeps the content visible: inside the question, or in the final reply after the last tool call.
-_PLACEMENT = re.compile(r"preview|question text|in its question|final reply", re.IGNORECASE)
+#: Placement that keeps the decision visible: a plain summary in the question, or the final reply after the last tool
+#: call. ``preview`` is no placement: option previews carry no content.
+_PLACEMENT = re.compile(r"question text|plain summary|in its question|question carries|final reply", re.IGNORECASE)
+
+#: A sentence that forbids the ordering instead of prescribing it.
+_FORBIDS = re.compile(r"\b(?:never|do not|does not|not require|no)\b", re.IGNORECASE)
 
 #: How far past a match its own sentence may still name the placement.
-_PLACEMENT_WINDOW = 250
+_PLACEMENT_WINDOW = 400
 
 
 def _strip_punctuation(match: re.Match[str]) -> str:
@@ -101,7 +107,7 @@ def _ordering_hits(text: str) -> list[str]:
     Examples:
         >>> _ordering_hits("Present findings, then invoke `AskUserQuestion` — (a) Revise · (b) Abort.")
         ['Present findings, then invoke AskUserQuestion']
-        >>> _ordering_hits("Show the list, then `AskUserQuestion` with it as the `preview` of every option.")
+        >>> _ordering_hits("Show the list, then `AskUserQuestion`; its question text carries the list headline.")
         []
     """
     hits = []
@@ -109,6 +115,8 @@ def _ordering_hits(text: str) -> list[str]:
         plain = _plain(line)
         for pattern in _ORDERING:
             for match in pattern.finditer(plain):
+                if _FORBIDS.search(plain[max(0, match.start() - 20) : match.end()]):
+                    continue
                 if not _PLACEMENT.search(plain[match.start() : match.end() + _PLACEMENT_WINDOW]):
                     hits.append(match.group(0))
     return hits
@@ -161,7 +169,7 @@ def _names_placement(lines: list[str], noun: str) -> bool:
     """Return whether one sentence of ``lines`` places content named ``noun`` in the question or the final reply.
 
     Examples:
-        >>> _names_placement(["6. `AskUserQuestion`, the queue table as the `preview` of every option."], "queue")
+        >>> _names_placement(["6. `AskUserQuestion`; the question text names the queue table."], "queue")
         True
         >>> _names_placement(["Carry task 1's invocation in the question text."], "table")
         False
@@ -184,7 +192,7 @@ def _cross_step_hits(text: str) -> list[str]:
     Examples:
         >>> _cross_step_hits("5. Print queue as table:\\n```\\n1 · a\\n```\\n6. Present gate via `AskUserQuestion`:")
         ['5. Print queue as table: → 6. Present gate via `AskUserQuestion`:']
-        >>> _cross_step_hits("5. Print queue as table:\\n6. `AskUserQuestion`, the queue table as every `preview`")
+        >>> _cross_step_hits("5. Print queue as table:\\n6. `AskUserQuestion`; question text has queue headline")
         []
     """
     hits = []
@@ -235,7 +243,7 @@ def test_decision_content_is_carried_by_the_question(relative: str) -> None:
     """No instruction prints decision content as reply text and only then asks about it.
 
     Each hit is a sentence that would show the user a question whose substance may have vanished as an empty progress
-    update; move the content into the question text or every option's ``preview``, or into the final reply when no tool
+    update; keep a plain summary of the content in the question text, or put the content in the final reply when no tool
     call follows.
     """
     hits = _ordering_hits((PLUGINS_DIR / relative).read_text(encoding="utf-8"))
@@ -249,8 +257,7 @@ def test_no_step_displays_content_for_a_later_question(relative: str) -> None:
 
     The per-line phrases above miss this split: "5. Print queue as formatted table:" with the gate in step 6 put a
     hypothesis queue launching paid implementation agents in front of a question that showed none of it. Carry the
-    content as every option's ``preview`` (or the question text), or deliver it in the final reply when nothing is
-    asked.
+    summary in the question text, or deliver the content in the final reply when nothing is asked.
     """
     hits = _cross_step_hits((PLUGINS_DIR / relative).read_text(encoding="utf-8"))
 
@@ -335,13 +342,13 @@ def test_cross_step_ordering_is_detected(text: str) -> None:
     "text",
     [
         pytest.param(
-            "5. Print report header table, as the `preview` of every option of the follow-up question, never also as"
-            " reply text.\n6. Follow-up: `AskUserQuestion` (a) `/develop:fix` · (b) skip\n",
-            id="report-then-follow-up-preview-in-display-step",
+            "5. Print report header table in the final reply, after the last tool call; the follow-up question text"
+            " carries a plain summary.\n6. Follow-up: `AskUserQuestion` (a) `/develop:fix` · (b) skip\n",
+            id="report-then-follow-up-summary-in-display-step",
         ),
         pytest.param(
-            "5. Print queue as formatted table:\n\n```text\n1 · a\n```\n\n6. Present user gate via `AskUserQuestion`, the"
-            " queue table from step 5 as the `preview` of every option:\n",
+            "5. Print queue as formatted table:\n\n```text\n1 · a\n```\n\n6. Present user gate via `AskUserQuestion`; the"
+            " question text carries the queue table headline from step 5:\n",
             id="placement-named-in-the-asking-step",
         ),
         pytest.param(
@@ -354,7 +361,7 @@ def test_cross_step_ordering_is_detected(text: str) -> None:
             id="question-two-steps-later-is-out-of-scope",
         ),
         pytest.param(
-            "3. Build ordered task table — shown only as the `preview` of every option of Step B3's question.\n\n"
+            "3. Build ordered task table — saved to the plan file; Step B3's question text carries its summary.\n\n"
             "#### Step B3: Post-plan prompt\n\nCall `AskUserQuestion`.\n",
             id="non-display-verb",
         ),
@@ -369,26 +376,33 @@ def test_cross_step_placements_pass(text: str) -> None:
     "sentence",
     [
         pytest.param(
-            "STOP. Invoke `AskUserQuestion` with the findings as the `preview` of every option, not as reply text.",
-            id="preview-placement",
+            "STOP. Print the findings, then invoke `AskUserQuestion` whose question text carries their plain summary.",
+            id="summary-in-question-text",
         ),
+        pytest.param("Do not print the table before the question; it opens the final reply.", id="forbidden-ordering"),
         pytest.param("Found → invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--x`. ``.", id="text"),
         pytest.param(
             "Update the plan first, then present findings as the final reply, after the last tool call.", id="final"
         ),
         pytest.param(
-            "| `unauthorized` | `AskUserQuestion` with the credential instructions below as the `preview` of both"
-            " options: (a) skip · (b) user sets up token, then re-probe |",
-            id="tool-with-preview",
+            "| `unauthorized` | Print the credential instructions below, `AskUserQuestion` with their plain summary in"
+            " the question text: (a) skip · (b) user sets up token, then re-probe |",
+            id="tool-with-summary",
         ),
         pytest.param(
-            "Collect ambiguous hits, invoke `AskUserQuestion` — one question per hit, its file:line + 5-line context as"
-            ' the `preview` of both options (real reference · false positive), question text: "Is this a real'
-            ' reference?"',
-            id="context-as-preview",
+            "Collect ambiguous hits, print each hit, invoke `AskUserQuestion` — one question per hit, its file:line in"
+            ' the question text: "Is this a real reference?"',
+            id="context-in-question-text",
         ),
     ],
 )
 def test_in_question_placements_pass(sentence: str) -> None:
-    """Sentences that carry the content in the question or the final reply are not flagged."""
+    """Sentences that carry a plain summary in the question or the content in the final reply are not flagged."""
     assert _ordering_hits(sentence) == []
+
+
+def test_preview_alone_is_no_placement() -> None:
+    """Content printed and then asked about with only option previews as the carrier is detected."""
+    sentence = "Show the list, then `AskUserQuestion` with it as the `preview` of every option."
+
+    assert _ordering_hits(sentence)

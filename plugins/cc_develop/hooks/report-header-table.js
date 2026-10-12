@@ -1,50 +1,19 @@
 // Shared report-delivery checks for six workflow follow-up hooks.
 // Active sentinels scope enforcement to their owning workflow question;
-// diagnostic/recovery questions remain usable. At question time a completed
-// report must be carried by the call's own first question (its question text,
-// or — single-select — the preview of every option; never an option
-// description, see questionDelivers). Audit uses its pre-question findings
-// aggregate instead.
-// Why only the call counts: on models that return text written before a tool
-// call as a progress-update thinking block (empty under the default display),
-// a table printed before the question can never reach the user, so a reply-text
-// table in the transcript proves nothing at question time (questionDeliveryProblem
-// does not read the transcript).
-// Missing/unreadable delivery evidence denies the transition, not the session.
-// Stop runs a separate contract (stopBlockReason → deliveryProblem): a skipped
-// follow-up question would otherwise skip delivery enforcement entirely, and the
-// turn's final reply is reliably shown, so there the final reply counts — the
-// Stop payload's last_assistant_message, else the transcript's text after the
-// turn's last tool call (finalReplyText). Text written earlier in the turn does
-// not: it was followed by a tool call, so it may be an empty progress update, and
-// focus mode shows only the final message.
-// Transcript inspection is bounded to 200 KB.
-// A follow-up the user was shown records the report version on PostToolUse
-// (recordFollowUpShown) so Stop does not re-demand it.
-// Remedies differ by path: PreToolUse names every option preview of the first
-// question (the question carries the report), where a misplaced copy sits, or
-// which values of a near-match table differ from the file; Stop names the final
-// reply text (no question to carry it).
-// Preview cap: Claude Code (2.1.294) shows a placeholder instead of any option
-// preview over 2000 chars, clips a taller one to terminal rows − 26 lines with
-// no scroll, wraps a line wider than terminal columns − 34, and cuts question
-// text and option descriptions after 2000 chars. A preview over
-// PREVIEW_MAX_CHARS, or spanning more than PREVIEW_MAX_LINES rows at
-// PREVIEW_WRAP_COLUMNS, therefore never delivers (cappedQuestionDelivers).
-// Content over the cap is delivered as a file instead (fileDelivery): the
-// question text names a file holding the full content, and every option preview
-// is a compact summary within the cap naming that path. html-preview hosts
-// render host-side, limits unverified: same cap.
-// Option descriptions: the picker renders each option row on one line,
-// replacing every line break in its description with U+FFFD (the option-row
-// mapper passes `displayDescription` through a newline-replacing helper), so a
-// table or report there reaches the user as one garbled line — no description
-// ever delivers; misplacementNote names one so the copy moves in one retry.
-// Value cells match verbatim, with whole-cell wrappers (bold, italics, code
-// span) removed, or with inline markdown removed anywhere in the cell; the
-// saved value is never altered (cellMatches).
-// Hosts with previewFormat "html" reject a preview holding no html tag, so a
-// preview is also matched with its wrapper tags removed (htmlPreviewText).
+// diagnostic/recovery questions remain usable. The first question's text must
+// show a plain summary: the resolved report path, Title, and Outcome (Verdict
+// when no Outcome exists), omitting fields absent from the header. Audit names
+// its aggregate and the existing Audit Report headline instead.
+// Question text is capped at 1500 characters, leaving headroom below the host's
+// 2000-character cut. Optional previews remain subject to the host's preview cap.
+// Stop separately requires the full header table in the final reply (the full
+// findings report for audit). A shown question never settles that check; Stop
+// checks each report version once, allowing one continuation to deliver it.
+// Final-reply evidence is the Stop payload's last_assistant_message, else text
+// after the transcript's last tool call. Earlier text may be hidden progress.
+// Transcript inspection is bounded to 200 KB. Missing/unreadable evidence denies
+// the transition, not the session. Value matching preserves saved literals while
+// tolerating the existing whole-cell wrappers and inline Markdown.
 // This is a workflow guard, not proof of UI rendering or semantic correctness.
 // Canonical copy: cc_foundry; propagate_shared.py distributes identical local
 // copies to independently installed cc_oss, cc_develop, and cc_research.
@@ -68,10 +37,8 @@ const PREVIEW_MAX_LINES = 12;
 // removed. Not measured: padding or borders the host's markdown table renderer may add, and double-width glyphs — a
 // padded table can still render wider than counted, so this bound is a floor, not a guarantee.
 const PREVIEW_WRAP_COLUMNS = 86;
-// Question text and option descriptions are cut after this many chars ("…" appended), never withheld.
-const TEXT_MAX_CHARS = 2000;
-// Largest file a question may name as the full copy of over-cap content; anything larger is not read.
-const NAMED_FILE_MAX_BYTES = 2 * 1024 * 1024;
+// The host cuts question text after 2000 characters; 1500 keeps headroom.
+const QUESTION_MAX_CHARS = 1500;
 
 // Below this many data rows a pipe-table match is treated as noise (a stray
 // `|` in prose), not a rendered report header. The smallest report this
@@ -181,97 +148,6 @@ function visibilityNote(text) {
   );
 }
 
-/**
- * Suffix for a question-time delivery problem: why reply text is no remedy, what the call holds instead (`misplaced`:
- * over-cap previews, see `previewCapNote`; a failed file-shape attempt, see `fileDelivery`; where a misplaced copy
- * sits, see `misplacementNote`; or which values a near-match table gets wrong, see `headerDeliveryCheck`'s
- * `diagnose`), the report's own size against the preview cap, and the two accepted shapes — so a single corrected
- * call passes. Re-issuing the same call cannot help; only the question's own content can.
- */
-function questionNote(misplaced, check) {
-  const { lines, chars } = check.size;
-  const fits = lines <= PREVIEW_MAX_LINES && chars <= PREVIEW_MAX_CHARS;
-  return (
-    " (reply text before the call does not count: on some models text written before a tool call comes back as an " +
-    "empty progress update the user never sees, and thinking/reasoning and tool output are never shown. " +
-    (misplaced || "This call's question text, option descriptions and previews do not hold it either. ") +
-    `Preview cap: at most ${PREVIEW_MAX_CHARS} chars and ${PREVIEW_MAX_LINES} lines per preview, a line over ` +
-    `${PREVIEW_WRAP_COLUMNS} chars counting as one line per ${PREVIEW_WRAP_COLUMNS} chars it spans since it wraps — ` +
-    "Claude Code shows a placeholder instead of a longer preview and clips a taller one, with no scroll; " +
-    `this ${check.noun} takes at least ${lines} lines and ${chars} chars, ${fits ? "within" : "over"} the cap. ` +
-    "Within the cap, pass it, complete, as the `preview` of every option of the call's first question (single-select). " +
-    `Over the cap, ${check.target}; name that path in the question text and set the \`preview\` of every option to ` +
-    "a compact summary within the cap that includes the same path. Either way not as reply text before the call; " +
-    "then call it again; html preview hosts: wrap the table in `<pre>` with the table on its own lines)"
-  );
-}
-
-// Tags an html-format preview wraps text in without changing its line structure; any attributes are allowed.
-const HTML_WRAPPER_TAG = /<\/?(?:pre|code|div|span|p|samp|kbd|tt)\b[^>]*>/gi;
-
-// Entities a model escapes inside an html preview, decoded in one pass so `&amp;#124;` never becomes `|`.
-// The optional leading backslash is captured so an escaped pipe entity (`\&#124;`) stays one cell-escape `\|`.
-const HTML_ENTITY = /(\\?)&(#124|#x7c|vert|verbar|lt|gt|quot|#39|amp);/gi;
-const HTML_ENTITY_TEXT = {
-  "#124": "|",
-  "#x7c": "|",
-  vert: "|",
-  verbar: "|",
-  lt: "<",
-  gt: ">",
-  quot: '"',
-  "#39": "'",
-  amp: "&",
-};
-
-/**
- * One line of an html preview with its entities decoded. A pipe entity on a line that also holds a bare `|` is a
- * value inside a cell whose borders are the bare pipes, so it becomes the cell-escape `\|` — decoding it to `|`
- * would split that cell. On a line with no bare `|` the entities are the table's own borders and become `|`.
- */
-function decodeLineEntities(line) {
-  const bordersAreBare = line.includes("|");
-  return line.replace(HTML_ENTITY, (_, backslash, name) => {
-    const decoded = HTML_ENTITY_TEXT[name.toLowerCase()];
-    if (decoded !== "|") return backslash + decoded;
-    return bordersAreBare || backslash ? "\\|" : "|";
-  });
-}
-
-/**
- * Plain text of an html-format option preview: wrapper tags removed, `<br>` as a line break, entities decoded.
- * With `previewFormat: "html"` the host rejects a preview holding no html tag, so a table arrives `<pre>`-wrapped,
- * possibly inline (`<pre>| … |</pre>`). Text holding no html tag is returned unchanged. A `<table>` element is not
- * converted — the deny remedy names `<pre>` instead.
- */
-function htmlPreviewText(text) {
-  if (typeof text !== "string" || !/<[a-z][^>]*>/i.test(text)) return text;
-  return text
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(HTML_WRAPPER_TAG, "")
-    .split("\n")
-    .map(decodeLineEntities)
-    .join("\n");
-}
-
-/**
- * Every string the follow-up question shows the user: question text, the question-level `description` (form-style
- * hosts; see `questionDelivers`), option descriptions, and option previews.
- * Previews count only on single-select questions, the only kind that renders them.
- */
-function questionTexts(toolInput) {
-  const texts = [];
-  for (const question of callQuestions(toolInput)) {
-    if (!question) continue;
-    texts.push(question.question, question.description);
-    for (const option of questionOptions(question)) {
-      texts.push(option.description);
-      if (question.multiSelect !== true) texts.push(option.preview);
-    }
-  }
-  return texts.filter((text) => typeof text === "string" && text.trim());
-}
-
 /** The call's `questions` array, or [] for any malformed input. */
 function callQuestions(toolInput) {
   return toolInput && Array.isArray(toolInput.questions) ? toolInput.questions : [];
@@ -280,83 +156,6 @@ function callQuestions(toolInput) {
 /** A question's options, malformed entries dropped. */
 function questionOptions(question) {
   return Array.isArray(question.options) ? question.options.filter(Boolean) : [];
-}
-
-/** True when one rendered field holds what `delivers` accepts, as written or in its html-preview form — never combined. */
-function fieldDelivers(text, delivers) {
-  return typeof text === "string" && text.trim() !== "" && (delivers(text) || delivers(htmlPreviewText(text)));
-}
-
-/**
- * True when the call's first question shows what `delivers` accepts before the user answers anything: its question
- * text on its own, or — single-select only — the `preview` of every option.
- * The picker opens on question 1 and shows only the focused option's preview, so content in a later question, in
- * some previews only, or in a multiSelect question's previews (never rendered) is no delivery.
- * An option `description` never delivers: Claude Code renders each option row on one line, every line break in the
- * description replaced (see the module header), so a multi-line table or report there is one unreadable line.
- * The question-level `description` never delivers either: it exists only in the form-style ("extended") question
- * schema a host enables when it renders forms, absent from the classic schema, and that schema describes it as an
- * "Optional single helper line shown under the question" — a one-line field is no place for a table or report.
- * `misplacementNote` names both so a copy placed there moves to the previews in one retry.
- */
-function questionDelivers(toolInput, delivers) {
-  const first = callQuestions(toolInput)[0];
-  if (!first) return false;
-  const options = questionOptions(first);
-  if (fieldDelivers(first.question, delivers)) return true;
-  return (
-    first.multiSelect !== true &&
-    options.length > 0 &&
-    options.every((option) => fieldDelivers(option.preview, delivers))
-  );
-}
-
-/**
- * Where the call holds a copy of the content outside the placement `questionDelivers` accepts, as one remedy
- * sentence — or "" when no field holds it. Naming the spot lets a denied model move that copy in one retry.
- * An option description is named before the question index: it is unreadable in any question, so a note sending a
- * later question's description copy to question 1 would only earn a second denial.
- */
-function misplacementNote(toolInput, delivers) {
-  const questions = callQuestions(toolInput);
-  const inDescription = questions.some(
-    (question) => question && questionOptions(question).some((option) => fieldDelivers(option.description, delivers)),
-  );
-  if (inDescription) {
-    return (
-      "It sits in an option `description`, which Claude Code renders as one line with its line breaks replaced, so " +
-      "it is unreadable there — move it to the `preview` of every option of the call's first question, or over the " +
-      "cap to the file named in the question text. "
-    );
-  }
-  for (let index = 0; index < questions.length; index++) {
-    const question = questions[index];
-    if (!question) continue;
-    const options = questionOptions(question);
-    const previews = options.filter((option) => fieldDelivers(option.preview, delivers)).length;
-    const helperLine = fieldDelivers(question.description, delivers);
-    const shown = helperLine || fieldDelivers(question.question, delivers);
-    if (index > 0 && (shown || previews)) {
-      return (
-        `It sits in question ${index + 1}, which the user reaches only after answering question 1 — ` +
-        "make the question carrying it the first question of the call. "
-      );
-    }
-    if (helperLine) {
-      return "It sits in the question-level `description`, a single helper line under the question on form hosts. ";
-    }
-    if (previews && question.multiSelect === true) {
-      // Never "make that question single-select": a checkbox question (an item picker) must stay multiSelect.
-      return (
-        "It sits in a multiSelect question's previews, which are never rendered — move it to the previews of a " +
-        "single-select question asked first. "
-      );
-    }
-    if (previews) {
-      return `It sits in ${previews} of ${options.length} option previews; the user sees only the focused option's preview. `;
-    }
-  }
-  return "";
 }
 
 /**
@@ -373,7 +172,11 @@ function wrappedRows(line) {
  * lines not counted. A line wider than the box wraps, so twelve wide lines can clip as surely as thirteen short ones.
  */
 function previewLineCount(text) {
-  const plain = htmlPreviewText(text).replace(/\s+$/, "");
+  // Optional HTML comparisons still need their rendered height measured; no table decoding or delivery matching.
+  const plain = text
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/?(?:pre|code|div|span|p|samp|kbd|tt)\b[^>]*>/gi, "")
+    .replace(/\s+$/, "");
   return plain ? plain.split(/\r\n|\r|\n/).reduce((rows, line) => rows + wrappedRows(line), 0) : 0;
 }
 
@@ -388,40 +191,6 @@ function previewCapProblem(text) {
   const lines = previewLineCount(text);
   if (lines > PREVIEW_MAX_LINES) over.push(`${lines} lines`);
   return over.length > 0 ? over.join(", ") : null;
-}
-
-/** `question` as the host shows it, for delivery: question text cut after TEXT_MAX_CHARS, over-cap previews gone. */
-function shownQuestion(question) {
-  return {
-    ...question,
-    question: typeof question.question === "string" ? question.question.slice(0, TEXT_MAX_CHARS) : question.question,
-    options: questionOptions(question).map((option) => ({
-      ...option,
-      preview: previewCapProblem(option.preview) ? undefined : option.preview,
-    })),
-  };
-}
-
-/**
- * `questionDelivers` judged on what the host actually shows: an option preview over the preview cap delivers nothing,
- * and question text counts only up to its first TEXT_MAX_CHARS chars.
- */
-function cappedQuestionDelivers(toolInput, delivers) {
-  const [first, ...rest] = callQuestions(toolInput);
-  if (!first) return false;
-  return questionDelivers({ questions: [shownQuestion(first), ...rest] }, delivers);
-}
-
-/** Remedy sentence naming the first question's option previews over the preview cap, or "" when none is. */
-function previewCapNote(toolInput) {
-  const first = callQuestions(toolInput)[0];
-  if (!first || first.multiSelect === true) return "";
-  const over = questionOptions(first)
-    .map((option, index) => [index + 1, previewCapProblem(option.preview)])
-    .filter(([, problem]) => problem)
-    .map(([number, problem]) => `option ${number}: ${problem}`);
-  if (over.length === 0) return "";
-  return `Its option previews exceed the preview cap (${listed(over)}), so the user would not see them whole. `;
 }
 
 // Characters that end a path token in question text: whitespace, quotes, and markdown or bracket punctuation.
@@ -480,73 +249,6 @@ function namedFiles(text, cwd, knownPaths) {
   return named;
 }
 
-/** Text of a named file, or null when it is unreadable or over NAMED_FILE_MAX_BYTES. */
-function readNamedFile(file) {
-  try {
-    if (fs.statSync(file).size > NAMED_FILE_MAX_BYTES) return null;
-    return fs.readFileSync(file, "utf8");
-  } catch (_) {
-    return null;
-  }
-}
-
-/**
- * File-shape delivery of content over the preview cap, as `{ ok, file, note }`. Passes when the call's first question
- * is single-select, its question text (as shown — the first TEXT_MAX_CHARS chars) names an existing file that
- * `rules.holds(fileText, realPath)` accepts as the full content, and every option preview is a compact summary within
- * the cap that names the same file (in any form that resolves to it — absolute, relative, `~/`) and holds more than
- * the path; `rules.conflicts(previewText)` may name a summary value contradicting the source ("" when none). Other
- * `rules`: `cwd` (session dir for relative paths), `knownPaths` (absolute paths the caller expects, matched even when
- * spelled with spaces), `content` (noun phrase for the note), `size` (`{ lines, chars }` of the content's smallest
- * complete rendering: when it fits the preview cap the shape never passes — content that fits belongs in the
- * previews, and a path-only summary would record a delivery the user never saw).
- * `note` is "" unless some preview names a file the question text names — only then was the shape attempted — and
- * then says, as one remedy sentence, what keeps that attempt from passing.
- */
-function fileDelivery(toolInput, rules) {
-  const { holds, conflicts = () => "", cwd, knownPaths = [], content = "the full content", size } = rules || {};
-  const fits = Boolean(size) && size.lines <= PREVIEW_MAX_LINES && size.chars <= PREVIEW_MAX_CHARS;
-  const first = callQuestions(toolInput)[0];
-  const options = first ? questionOptions(first) : [];
-  if (!first || first.multiSelect === true || options.length === 0) return { ok: false, file: null, note: "" };
-  const shownText = typeof first.question === "string" ? first.question.slice(0, TEXT_MAX_CHARS) : "";
-  const previews = options.map((option) => (typeof option.preview === "string" ? htmlPreviewText(option.preview) : ""));
-  const previewFiles = previews.map((text) => namedFiles(text, cwd, knownPaths).map((entry) => entry.file));
-  // Text a summary holds besides the path: whatever is left once every path-like word is gone.
-  const beyondPath = (text) =>
-    text
-      .split(/\s+/)
-      .filter((word) => !/[\\/]/.test(word))
-      .join(" ");
-  let note = "";
-  for (const { token, file } of namedFiles(shownText, cwd, knownPaths)) {
-    const names = (index) => previewFiles[index].includes(file) || previews[index].includes(token);
-    if (!previews.some((_, index) => names(index))) continue; // no preview points at this file: no file-shape attempt
-    const fileText = readNamedFile(file);
-    let problem = "";
-    if (fits) {
-      problem =
-        `${content} fits the preview cap, so a file named in the question does not deliver it — pass it, ` +
-        "complete, as the `preview` of every option instead";
-    } else if (fileText === null || typeof holds !== "function" || !holds(fileText, file)) {
-      problem = `\`${token}\`, named in the question text, does not hold ${content}`;
-    } else {
-      const summaries = options.filter((option, index) => {
-        const rest = beyondPath(previews[index].split(token).join(" "));
-        return !previewCapProblem(option.preview) && names(index) && /\w/.test(rest);
-      }).length;
-      problem =
-        summaries < options.length
-          ? `${options.length - summaries} of ${options.length} option previews are not a compact summary within ` +
-            `the cap that names \`${token}\``
-          : previews.map(conflicts).find(Boolean) || "";
-    }
-    if (!problem) return { ok: true, file, note: "" };
-    note = note || `${problem}. `;
-  }
-  return { ok: false, file: null, note };
-}
-
 module.exports = {
   finalReplyText,
   hasHeaderTable,
@@ -554,20 +256,13 @@ module.exports = {
   PREVIEW_MAX_CHARS,
   PREVIEW_MAX_LINES,
   PREVIEW_WRAP_COLUMNS,
-  TEXT_MAX_CHARS,
-  cappedQuestionDelivers,
+  QUESTION_MAX_CHARS,
   isWorkflowFollowUp,
   deliveryProblem,
-  fileDelivery,
   followUpProblem,
-  htmlPreviewText,
-  misplacementNote,
-  previewCapNote,
   previewCapProblem,
   previewLineCount,
   questionDeliveryProblem,
-  questionDelivers,
-  questionTexts,
   recordFollowUpShown,
   stopBlockReason,
   deliveredMarkerPath,
@@ -593,34 +288,14 @@ function reportStamp(reportFile) {
   }
 }
 
-/**
- * PreToolUse delivery problem for a workflow follow-up question, or null to allow it.
- * Only the call's own first question counts (`questionDeliveryProblem`); a reply-text table never does. A pass
- * records nothing: another PreToolUse hook or a permission rule may still deny the call, so Stop's marker is
- * written only once the question was shown (`recordFollowUpShown`, PostToolUse).
- */
-function followUpProblem(sentinelPath, reportFile, payload) {
+/** PreToolUse checks the first question's summary without settling final-reply delivery. */
+function followUpProblem(_sentinelPath, reportFile, payload) {
   return questionDeliveryProblem(reportFile, payload && payload.tool_input, payload && payload.cwd);
 }
 
-/**
- * PostToolUse(AskUserQuestion) step for a workflow follow-up: the question was shown, so when it delivered the
- * report, record the report version in Stop's marker. A table delivered in an option preview never reaches the
- * transcript's text blocks, so Stop would otherwise demand the already-seen table once more. Re-checks the call
- * with the same rule as PreToolUse rather than trusting that pass, so a marker always means "delivered and shown".
- * Returns true when the marker was written.
- */
-function recordFollowUpShown(sentinelPath, reportFile, payload) {
-  if (!sentinelPath || !reportFile) return false;
-  const problem = questionDeliveryProblem(reportFile, payload && payload.tool_input, payload && payload.cwd);
-  const stamp = problem ? null : reportStamp(reportFile);
-  if (!stamp) return false;
-  try {
-    fs.writeFileSync(deliveredMarkerPath(sentinelPath), stamp);
-    return true;
-  } catch (_) {
-    return false; // unrecorded — Stop re-checks this report once, never blocks the question
-  }
+/** A shown summary never records full report delivery; retain the PostToolUse caller interface. */
+function recordFollowUpShown(_sentinelPath, _reportFile, _payload) {
+  return false;
 }
 
 /**
@@ -691,29 +366,60 @@ function isWorkflowFollowUp(toolInput, skill) {
 }
 
 /**
- * Question-time delivery problem judged on the AskUserQuestion input alone, or null when its first question carries
- * the current report as shown — within the preview cap (`cappedQuestionDelivers`; each field checked on its own, never
- * combined) — or in the file shape for content over the cap (`fileDelivery`; `cwd` resolves a relative path the
- * question names). The transcript is not read: reply text written before the call can come back as an empty
- * progress update, so it is no delivery here.
+ * Match a headline value inside a plain summary line using the cell matcher’s Markdown tolerance.
+ * The expected saved value is never stripped, so literal underscores, stars and backticks survive.
  */
+function summaryContains(text, expected) {
+  return text.split(/\r?\n/).some((line) => {
+    const plain = normalize(line);
+    return (
+      edgeUnwrapped(plain).some((value) => value.includes(expected)) ||
+      normalize(inlineMarkdownText(plain)).includes(expected)
+    );
+  });
+}
+
+/** Check only the first question's plain summary; earlier reply text and option fields never count. */
 function questionDeliveryProblem(reportFile, toolInput, cwd) {
   const check = reportDeliveryCheck(reportFile);
   if (check.problem) return check.problem;
-  if (cappedQuestionDelivers(toolInput, check.delivers)) return null;
-  const file = fileDelivery(toolInput, {
-    holds: check.holdsFile,
-    conflicts: check.conflicts,
-    cwd,
-    knownPaths: check.knownPaths,
-    content: check.content,
-    size: check.size,
+  const first = callQuestions(toolInput)[0];
+  const text = first && typeof first.question === "string" ? first.question : "";
+  const problems = [];
+  if (text.length > QUESTION_MAX_CHARS)
+    problems.push(`question text exceeds ${QUESTION_MAX_CHARS} characters (${text.length})`);
+  if (tableBlocks(text).length || /<\/?[a-z][^>]*>/i.test(text))
+    problems.push("use plain text, without a table or HTML");
+  const reportReal = existingFile(reportFile);
+  // A report in cwd can be named without a slash; other path tokens require one.
+  const bareName = text.split(PATH_TOKEN_BREAK).some((token) => {
+    const name = token.replace(/^[→:]+/, "").replace(/[.:!?]+$/, "");
+    return name === path.basename(reportFile) && resolvePathToken(name, cwd) === reportReal;
   });
-  if (file.ok) return null;
-  const fields = questionTexts(toolInput).flatMap((field) => [field, htmlPreviewText(field)]);
-  const held =
-    previewCapNote(toolInput) || file.note || misplacementNote(toolInput, check.delivers) || check.diagnose(fields);
-  return `${check.undelivered} by this question` + questionNote(held, check);
+  if (!bareName && !namedFiles(text, cwd, [reportFile]).some((entry) => entry.file === reportReal)) {
+    problems.push(`name the report file \`${reportFile}\` in the first question's text`);
+  }
+  for (const [name, value] of check.headlines) {
+    if (!summaryContains(text, value)) problems.push(`include \`${name}: ${quoted(value)}\` verbatim`);
+  }
+  for (const [questionIndex, question] of callQuestions(toolInput).entries()) {
+    if (!question) continue;
+    for (const [optionIndex, option] of questionOptions(question).entries()) {
+      const cap = previewCapProblem(option.preview);
+      if (cap)
+        problems.push(
+          `Its option previews exceed the preview cap (question ${questionIndex + 1}, option ${optionIndex + 1}: ${cap})`,
+        );
+    }
+  }
+  if (problems.length === 0) return null;
+  return (
+    `${check.undelivered} by this question: ${problems.join("; ")}. ` +
+    `Keep only the fixed lines (report headline values and report path) in the first question's \`question\` text, ` +
+    `at most ${QUESTION_MAX_CHARS} characters, and name the report file \`${reportFile}\`. ` +
+    "Option descriptions and previews do not supply the summary; reply text before the call does not count. " +
+    "The full report belongs in the final reply."
+  );
 }
 
 /**
@@ -749,20 +455,7 @@ function reportDeliveryCheck(reportFile) {
   } catch (_) {
     return { problem: "report is unreadable; recover its producer before following up", unreadable: true };
   }
-  return reportFile.endsWith("summary.jsonl")
-    ? auditDeliveryCheck(content, reportFile)
-    : headerDeliveryCheck(content, reportFile);
-}
-
-/**
- * Size of the smallest complete rendering of `lines`: the rows they span in the preview box (`wrappedRows`, the
- * measure the cap applies), and their chars with one newline each.
- */
-function renderedSize(lines) {
-  return {
-    lines: lines.reduce((rows, line) => rows + wrappedRows(line), 0),
-    chars: lines.reduce((total, line) => total + line.length + 1, 0),
-  };
+  return reportFile.endsWith("summary.jsonl") ? auditDeliveryCheck(content) : headerDeliveryCheck(content);
 }
 
 /** Collapse whitespace runs, so line wrapping and table padding never decide a match. */
@@ -859,10 +552,10 @@ function tableRows(table) {
 /**
  * Audit asks before its final report exists, so delivery binds to the pre-question aggregate instead.
  * Returns `{ problem }` for an unusable aggregate, else the fields listed at `headerDeliveryCheck`. The aggregate
- * itself is JSONL, never the user-readable copy: over the cap the rendered Audit Report goes to `audit-report.md`
- * beside it, and only a named file holding that rendering counts.
+ * supplies the question's report path; the existing Audit Report heading is its summary headline.
+ * Stop still requires the heading, exact total and every finding line.
  */
-function auditDeliveryCheck(content, reportFile) {
+function auditDeliveryCheck(content) {
   let findings;
   try {
     findings = content
@@ -919,19 +612,12 @@ function auditDeliveryCheck(content, reportFile) {
     );
   };
   const undelivered = "current audit findings were not delivered";
-  const reportCopy = path.join(path.dirname(reportFile), "audit-report.md");
   return {
     delivers,
     diagnose,
     undelivered,
     missing: `${undelivered}; emit Step 7 before following up`,
-    noun: "Audit Report",
-    size: renderedSize(["## Audit Report", `Total: ${findings.length}`, ...findings.map((f) => f.one_line)]),
-    content: "the full Audit Report (heading, `Total:` line, every finding line)",
-    target: "write the full Audit Report (heading, `Total:` line, every finding line) to " + `\`${reportCopy}\` first`,
-    knownPaths: [reportCopy],
-    holdsFile: (text) => delivers(text),
-    conflicts: () => "",
+    headlines: [["headline", "Audit Report"]],
   };
 }
 
@@ -942,19 +628,16 @@ function auditDeliveryCheck(content, reportFile) {
  * - `diagnose(texts)`: near-match remedy — which rows of the closest table differ from the file, "" when no source
  *   holds a table naming any field;
  * - `undelivered` / `missing`: question-time and Stop-time reason prefixes;
- * - `noun`, `size` (smallest complete rendering, for the preview-cap remedy), `target` (where the full copy lives over
- *   the cap), `content`, `knownPaths`, `holdsFile(text, realPath)`, `conflicts(text)`: the `fileDelivery` rules. The
- *   report file itself holds the full header, so naming it is enough; a summary may quote some rows, never wrongly.
+ * - `headlines`: present Title and Outcome (Verdict only when no Outcome exists), for the question summary.
  */
-function headerDeliveryCheck(content, reportFile) {
+function headerDeliveryCheck(content) {
   const header = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   const fields = header ? Array.from(header[1].matchAll(/^([^:\r\n]+):[ \t]*(.+)$/gm)) : [];
   if (
     fields.length < MIN_TABLE_ROWS ||
     fields.length !== header[1].split(/\r?\n/).length ||
     new Set(fields.map((field) => field[1].trim())).size !== fields.length ||
-    fields.some((field) => !field[2].trim()) ||
-    !fields.some((field) => field[1].trim() === "Title")
+    fields.some((field) => !field[2].trim())
   ) {
     return { problem: "report header is incomplete; finish the report before following up" };
   }
@@ -999,34 +682,13 @@ function headerDeliveryCheck(content, reportFile) {
       "copy every field name and value verbatim from the file's `---` header. "
     );
   };
-  // A summary row naming a header field must show the file's value — a stale table never passes as a summary.
-  const conflicts = (text) => {
-    const problems = [];
-    for (const table of tableBlocks(text)) {
-      for (const row of tableRows(table) || []) {
-        const entry = row.length === 2 && entries.find(([name]) => cellMatches(row[0], name));
-        if (entry && !cellMatches(row[1], entry[1]))
-          problems.push(`\`${entry[0]}\` reads \`${quoted(row[1])}\` but the file has \`${quoted(entry[1])}\``);
-      }
-    }
-    return problems.length > 0 ? `The preview summary contradicts the report file: ${listed(problems)}` : "";
-  };
-  const reportReal = existingFile(reportFile);
+  const title = entries.find(([name]) => name === "Title");
+  const outcome = entries.find(([name]) => name === "Outcome") || entries.find(([name]) => name === "Verdict");
   return {
     delivers,
     diagnose,
     undelivered: "current report header was not delivered",
     missing: "current report header was not delivered; print every header field as a table before following up",
-    noun: "header table",
-    size: renderedSize([
-      "| Field | Value |",
-      "| --- | --- |",
-      ...entries.map(([name, value]) => `| ${name} | ${value.replace(/\|/g, "\\|")} |`),
-    ]),
-    content: "the full report header",
-    target: `the report file \`${reportFile}\` already holds the full header`,
-    knownPaths: [reportFile],
-    holdsFile: (text, file) => file === reportReal || delivers(text),
-    conflicts,
+    headlines: [title, outcome].filter(Boolean),
   };
 }

@@ -62,7 +62,7 @@ No qualifying clusters found: print `✓ No extraction candidates at current thr
 
 ## Step E3: Present candidates and gate
 
-Candidate summary table — the `preview` of every option of the question below, not reply text (text written before a tool call can arrive as an empty progress update). Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full table to `$RUN_DIR/candidates.md` first, make every option's `preview` a compact summary ending `→ full table: $RUN_DIR/candidates.md`, and name that path in the question text:
+Build the candidate summary table below and Write it to `$RUN_DIR/candidates.md` first. After capturing the before-numbers, it is printed once, rendered as normal Markdown, as the last reply text before the question call. The question text carries the extraction headline, counts by verdict and `→ $RUN_DIR/candidates.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
 
 ```text
 Bin/ extraction candidates:
@@ -79,7 +79,7 @@ Bin/ extraction candidates:
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract_code_blocks.py" "$_SCAN_DIR" --min-tokens 5 > "$RUN_DIR/blocks-before.jsonl"  # timeout: 30000
 ```
 
-Then call `AskUserQuestion`, the candidate table as every option's `preview` — do NOT write options as plain text first. Map options directly into tool call arguments:
+Then call `AskUserQuestion`, with the plain candidate summary in the question text and no `preview` — do NOT write options as plain text first. Map options directly into tool call arguments:
 
 - question: "Extract candidates to bin/ scripts?"
 - (a) label: `HIGH only` — description: extract only HIGH-verdict clusters

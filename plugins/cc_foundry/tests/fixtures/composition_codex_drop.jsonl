@@ -1,0 +1,5 @@
+{"timestamp": "2030-01-01T00:00:00Z", "type": "session_meta", "payload": {"id": "drop-example", "source": "cli"}}
+{"timestamp": "2030-01-01T00:00:00Z", "type": "turn_context", "payload": {"model": "example-model"}}
+{"timestamp": "2030-01-01T00:00:00Z", "type": "token_usage_record", "payload": {"response_id": "drop-a", "usage": {"input_tokens": 100000, "cached_input_tokens": 0, "output_tokens": 0, "reasoning_output_tokens": 0, "total_tokens": 100000}}}
+{"timestamp": "2030-01-01T00:01:00Z", "type": "token_usage_record", "payload": {"response_id": "drop-b", "usage": {"input_tokens": 70000, "cached_input_tokens": 0, "output_tokens": 0, "reasoning_output_tokens": 0, "total_tokens": 70000}}}
+{"timestamp": "2030-01-01T00:02:00Z", "type": "token_usage_record", "payload": {"response_id": "drop-c", "usage": {"input_tokens": 48999, "cached_input_tokens": 0, "output_tokens": 0, "reasoning_output_tokens": 0, "total_tokens": 48999}}}

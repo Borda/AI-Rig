@@ -1,6 +1,16 @@
 {
   "description": "foundry plugin hooks: task/agent tracking, teammate quality gates, tool preprocessing, git push and gh write guards, approval-record writer and self-grant guard, and Bash auto-allow dispatch with audit records",
   "hooks": {
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"; done; exit 0",
+            "type": "command"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "hooks": [

@@ -64,7 +64,8 @@
 //   and `custom_instructions` only and never states that PreCompact fires inside a subagent, so
 //   this branch is unverified: inert unless Claude Code sends it, and a long subagent may lose
 //   the rule after compacting. A PreCompact without agent_id (main thread) changes nothing; the
-//   SessionStart compact that follows handles it. Neither event writes stdout.
+//   SessionStart compact that follows handles it. SessionStart compact also restores the skill
+//   contract with verified or advisory ownership; clear and PreCompact write no stdout.
 //
 // EXIT CODES
 //   0  always — inject or stay silent. Every error (no session id, unreadable rule, unwritable temp
@@ -75,6 +76,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const crypto = require("crypto");
 
 // Below Claude Code's 10,000-char additionalContext cap, with room for the header line.
 const INJECT_CAP = 9500;
@@ -139,6 +141,77 @@ function ruleContext(key) {
   );
 }
 
+const SKILL_CONTRACT_CAP = 256 * 1024;
+const SKILL_OWNER_CAP = 4 * 1024;
+
+/** Read a bounded regular file without following symlinks or blocking on special files. */
+function readContractFile(file, cap) {
+  const before = fs.lstatSync(file);
+  if (!before.isFile() || before.size > cap) return null;
+  // Nonblocking/no-follow protect the lstat-to-open race where the host supports these flags.
+  const flags = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0) | (fs.constants.O_NOFOLLOW || 0);
+  const fd = fs.openSync(file, flags);
+  try {
+    const opened = fs.fstatSync(fd);
+    if (!opened.isFile() || opened.size > cap || opened.dev !== before.dev || opened.ino !== before.ino) return null;
+    // Read at most cap + 1 bytes so growth after fstat cannot cause an unbounded allocation/read.
+    const buffer = Buffer.alloc(cap + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      const count = fs.readSync(fd, buffer, size, buffer.length - size, null);
+      if (!count) break;
+      size += count;
+    }
+    return size > cap ? null : buffer.subarray(0, size);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** Read raw contract bytes and classify ownership before decoding any text. */
+function skillContract(dir, sessionId) {
+  // The owner stamp binds session-writer bytes; it is not authentic against a writer with workspace access.
+  const file = path.join(dir, "skill-contract.md");
+  let raw;
+  try {
+    raw = readContractFile(file, SKILL_CONTRACT_CAP);
+    if (raw === null) return null;
+  } catch {
+    return null;
+  }
+  const sha256 = crypto.createHash("sha256").update(raw).digest("hex");
+  let state = "unverified";
+  try {
+    const ownerRaw = readContractFile(path.join(dir, "skill-contract.owner"), SKILL_OWNER_CAP);
+    const owner = ownerRaw === null ? null : JSON.parse(ownerRaw.toString("utf8"));
+    if (
+      owner &&
+      typeof owner.session_id === "string" &&
+      owner.session_id &&
+      typeof sessionId === "string" &&
+      sessionId &&
+      owner.sha256 === sha256
+    ) {
+      state = owner.session_id === sessionId ? "verified" : "skipped";
+    }
+  } catch {
+    // Missing, malformed or unreadable ownership leaves the contract advisory.
+  }
+  return { file, state, body: raw.toString("utf8") };
+}
+
+/** Restore one contract block after compact, or point to its file when the full context exceeds the cap. */
+function skillContractContext(payload) {
+  const contract = skillContract(path.join(process.cwd(), ".temp", "state"), payload.session_id);
+  if (!contract || !contract.body || contract.state === "skipped") return "";
+  const header =
+    contract.state === "verified"
+      ? "Skill contract, verified: written by this session; confirm the skill is still active before resuming"
+      : "Skill contract, unverified: no matching owner stamp; confirm with the user before resuming";
+  const full = `${header}\n\n${contract.body}`;
+  return full.length <= INJECT_CAP ? full : `${header}\n\nRead ${contract.file} (too long to inject).`;
+}
+
 // --- sentinels ---
 
 function token(value) {
@@ -197,11 +270,25 @@ function main() {
   const payload = readPayload();
   const sid = token(payload.session_id);
   const event = payload.hook_event_name;
-  if (!sid) return;
   if (event === "SessionStart") {
-    if (CONTEXT_RESET_SOURCES.has(payload.source)) clearSession(sid);
+    if (sid && CONTEXT_RESET_SOURCES.has(payload.source)) {
+      try {
+        clearSession(sid);
+      } catch {
+        // Unavailable sentinel storage must not suppress contract restoration.
+      }
+    }
+    if (payload.source === "compact") {
+      const context = skillContractContext(payload);
+      if (context) {
+        process.stdout.write(
+          JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: context } }),
+        );
+      }
+    }
     return;
   }
+  if (!sid) return;
   if (event === "PreCompact") {
     const agent = token(payload.agent_id);
     if (agent) clearAgent(agent, sid);

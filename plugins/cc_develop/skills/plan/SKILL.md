@@ -378,7 +378,7 @@ Co-review corrections applied ([agent count] agents, omit table if none):
 
 **Write brief into `<PLAN_FILE>`**: replace `*[Generated after agent review — see below]*` placeholder in `## Brief` with composed brief. File now contains both brief and full plan.
 
-**Print to terminal**:
+**Build terminal brief** (the brief is already saved in `<PLAN_FILE>`):
 
 ```text
 Plan -> <PLAN_FILE>
@@ -388,7 +388,7 @@ Plan -> <PLAN_FILE>
 -> /develop:<classification> <goal> --plan <PLAN_FILE> when ready  [debug: -> /develop:debug <goal> first — it hands off to /develop:fix --diagnosis <path>]
 ```
 
-If unresolved items escalated, print each after brief:
+If unresolved items escalated, include each after brief and save them in `<PLAN_FILE>`:
 
 ```text
 ⚠ Issue: [one-sentence issue]
@@ -396,7 +396,7 @@ If unresolved items escalated, print each after brief:
   Recommendation: [recommended option] — [reason]
 ```
 
-Invoke `AskUserQuestion` before printing `-> /develop:<classification> ...`. Options: (a) Proceed — print handoff line, continue · (b) Revise plan — return to Step 2 with user edits. Don't print handoff line until user selects (a).
+Before invoking `AskUserQuestion`, print the saved brief and any unresolved items once as the last reply text before the question, as normal Markdown; omit the handoff line until the answer. The question text carries a short plain summary: classification, counts, headline and `→ <PLAN_FILE>`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview`: (a) Proceed — print handoff line, continue · (b) Revise plan — return to Step 2 with user edits. Don't print handoff line until user selects (a).
 
 **Handoff contract**: plan file at `<PLAN_FILE>` consumable by downstream skills. Pass via `--plan <PLAN_FILE>` when invoking `/develop:feature`, `/develop:fix`, or `/develop:refactor`. `debug` classification: no downstream plan file — invoke `/develop:debug <goal>` directly; it hands off to `/develop:fix --diagnosis <path>` on completion, never back to `/develop:plan` — re-running `/develop:plan` afterwards is a user choice, only when the fix needs its own scoped plan. Skill receives `--plan <path>` → reads plan file at Step 1 and:
 

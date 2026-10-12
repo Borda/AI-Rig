@@ -1,0 +1,5 @@
+{"type":"assistant","timestamp":"2030-01-01T00:00:00Z","message":{"id":"call-a","model":"claude-opus-5","usage":{"input_tokens":99000,"output_tokens":1000},"content":[]}}
+{"type":"assistant","timestamp":"2030-01-01T00:00:01Z","message":{"id":"call-b","model":"claude-opus-5","usage":{"input_tokens":40000,"output_tokens":1000},"content":[]}}
+{"type":"system","subtype":"compact_boundary"}
+{"type":"compact-summary","message":{"content":"Retained summary"}}
+{"type":"assistant","timestamp":"2030-01-01T00:00:02Z","message":{"id":"call-c","model":"claude-opus-5","usage":{"input_tokens":100,"cache_creation_input_tokens":60000,"output_tokens":1000},"content":[]}}

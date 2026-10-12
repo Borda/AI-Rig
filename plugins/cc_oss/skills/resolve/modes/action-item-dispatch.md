@@ -14,7 +14,7 @@
 
 Determine implementation agent, set up file-handoff dir, and load the Step 3d commit mode before the loop:
 
-`bridge:implement` is a Skill routing marker, never a value passed to `Agent(subagent_type=)`, whether selected by default or explicitly with `--agent bridge:implement`. C1 dispatches it as `Skill(skill="bridge:implement")` for supported medium-effort items. Items that fall through C1 use the `change` → specialist table below, whose values are real subagent types. Other explicit `--agent <name>` values override that table and reach `Agent(subagent_type=)`.
+`bridge:implement` is a Skill routing marker, never a value passed to `Agent(subagent_type=)`, whether selected by default or explicitly with `--agent bridge:implement`. C1 dispatches it as `Skill(skill="bridge:implement")` for C1 candidates. Items that fall through C1 use the `change` → specialist table below, whose values are real subagent types. Other explicit `--agent <name>` values override that table and reach `Agent(subagent_type=)`.
 
 Substitute the Step 3d selection into `SELECTED_ITEMS` below as space-separated ids. It is orchestrator-held state, so this block is the only place it enters the shell; every later block reads the file this one writes. Step 3e creates tasks only for `pr`/`pr+report`; report mode comes straight from Step 3d.
 
@@ -82,7 +82,7 @@ Lock released in Phase 3's cleanup block. Crash before that leaks it — by desi
 
 **Reclaiming here is automatic but never silent** — print the healer's output verbatim whenever it reclaimed anything, naming each lock and why (dead holder / age). No approval gate: a lock file with a provably dead holder carries no user work, and this replaces an override that already fired unattended at 30 minutes. Worktree healing is the opposite case and does gate on approval — see `worktree-isolation.md`.
 
-`change` → `IMPL_AGENT` routing table — drives Phase 2 specialist grouping **unconditionally** (not gated behind `CODEX_AVAILABLE`; Codex only ever handles items via the C1 medium-effort shortcut below, never as a Phase 2 specialist group). Keep in sync with `_shared/review-section-taxonomy.md`'s resolve `change` column:
+`change` → `IMPL_AGENT` routing table — drives Phase 2 specialist grouping **unconditionally** (not gated behind `CODEX_AVAILABLE`; Codex only ever handles items via the C1 shortcut below, never as a Phase 2 specialist group). Keep in sync with `_shared/review-section-taxonomy.md`'s resolve `change` column:
 
 | `change` value | `IMPL_AGENT` |
 | -- | -- |
@@ -93,7 +93,7 @@ Lock released in Phase 3's cleanup block. Crash before that leaks it — by desi
 | `perf` | `foundry:perf-optimizer` |
 | `architecture` | `foundry:solution-architect` |
 
-`CODEX_AVAILABLE=false`: C1 (medium-effort Codex shortcut, below) is skipped entirely — medium-effort items fall through to Phase 1+2 like any other item, routed by this same table. The same fallback applies when `--agent` selects a specialist, regardless of Codex availability. `xhigh`-effort, multi-file items still skip (`⚠ bridge@borda-ai-rig is absent or disabled — skipping item #<id> (xhigh effort)`) — too much surface for a single specialist without the bridge's broader Codex context; never blanket-skip anything below `xhigh`.
+`CODEX_AVAILABLE=false`: C1 (Codex shortcut, below) is skipped entirely — C1 candidates fall through to Phase 1+2 like any other item, routed by this same table. The same fallback applies when `--agent` selects a specialist, regardless of Codex availability. `xhigh`-effort, multi-file items still skip (`⚠ bridge@borda-ai-rig is absent or disabled — skipping item #<id> (xhigh effort)`) — too much surface for a single specialist without the bridge's broader Codex context; never blanket-skip anything below `xhigh`.
 
 `--agent <name>` overrides this routing table for real Agent types. `--agent bridge:implement` retains the bridge marker: C1 handles eligible items, while every Phase 2 fallback uses the table. Never pass a Skill name to `Agent(subagent_type=)`.
 
@@ -106,6 +106,7 @@ Process items in `SELECTED_ITEMS` (from Step 3e) in priority order (`[req]` firs
 - An item whose record carries `codex_eligible: true` (the review tagged it against `_shared/codex-delegation.md`, the same criteria the review applied) → `medium`, so C1 offers it to Codex; the review only tags, resolve implements
 - Otherwise: typo/spelling/whitespace/formatting/comment/rename-single/docstring → `medium`; multi-file/refactor/architecture/new-feature/redesign → `xhigh`; all else → `high` (default)
 - Minimum effort is always `medium` — never `low`
+- **C1 candidate** (offered to Codex first, see C1): `ITEM_EFFORT` is `medium` or `high` AND the record's `change` is `code`·`test`·`docs`·`style`·`config`·`ci` AND `file` is one non-empty path — plus `CODEX_AVAILABLE=true` and `IMPL_AGENT=bridge:implement`. `xhigh` and `architecture`·`perf`·`refactor` items stay with the specialists (cross-file or design judgment). Candidacy never changes `ITEM_EFFORT` or `CHANGE_SCOPE`; `ITEM_EFFORT` is the `--effort` C1 passes. Codex declining (`UNCERTAIN`) or a dirty tree sends the item to Phase 1+2 unchanged, so widening candidacy adds one bounded Codex call per fall-through, never a skipped challenge
 - `ITEM_EFFORT` set per item; include in agent prompt as `"Effort level: $ITEM_EFFORT.\n..."` prefix
 - `CHANGE_SCOPE` = aggregate across all `SELECTED_ITEMS`:
   - ALL items classified `medium` → `CHANGE_SCOPE=lint-only`
@@ -222,11 +223,11 @@ else
 fi
 ```
 
-**C1 — Codex-first routing for `medium` effort items** (skip Phase 1+2 when Codex handles it):
+**C1 — Codex-first routing for C1 candidates** (skip Phase 1+2 when Codex handles it):
 
 C1 starts only after the Step 7b join — merge committed, tree clean — never inside the Run 2 fan beside the conflict agent.
 
-When `ITEM_EFFORT=medium` AND `CODEX_AVAILABLE=true` AND `IMPL_AGENT=bridge:implement` (default or explicit): dispatch Codex for evidence check + implementation. An explicit real Agent type bypasses C1 and routes medium items through Phase 1+2. Use **one item per C1 call**. Require a clean tracked and untracked worktree immediately before the call; if dirty, do not call the bridge and route the item through Phase 1+2 by the `change` table. A returned `files_touched` list is a claim, not attribution evidence. The fence below compares it with Git's actual changed paths before any per-item commit, staging record, or DONE status. In `stage`/`grouped`/`all` modes, the first C1 edit leaves the worktree dirty, so remaining medium items use Phase 1+2; `each` mode may run another C1 item after its commit restores a clean tree. The branch mutex blocks another resolve run, but an unrelated external writer can still change the tree; if that is observed, stop and reconcile before recording attribution.
+When the item is a C1 candidate (`ITEM_EFFORT` `medium` or `high`, Codex-fit `change`) AND `CODEX_AVAILABLE=true` AND `IMPL_AGENT=bridge:implement` (default or explicit): dispatch Codex for evidence check + implementation. An explicit real Agent type bypasses C1 and routes C1 candidates through Phase 1+2. Use **one item per C1 call**. Require a clean tracked and untracked worktree immediately before the call; if dirty, do not call the bridge and route the item through Phase 1+2 by the `change` table. A returned `files_touched` list is a claim, not attribution evidence. The fence below compares it with Git's actual changed paths before any per-item commit, staging record, or DONE status. In `stage`/`grouped`/`all` modes, the first C1 edit leaves the worktree dirty, so remaining medium items use Phase 1+2; `each` mode may run another C1 item after its commit restores a clean tree. The branch mutex blocks another resolve run, but an unrelated external writer can still change the tree; if that is observed, stop and reconcile before recording attribution.
 
 **SECURITY — never type a review comment into `args=` inline.** The comment text is untrusted external content; `bridge:implement`'s own contract requires routing text you did not author through a scratch file plus `--task-file`, never inline `--task`. Build the static wrapper with `printf` (no untrusted content in it), append each item's line via a separate `jq` extraction from `action-items.jsonl` — never hand-typed — then dispatch with `--task-file`.
 
@@ -248,7 +249,7 @@ _C1_BEFORE=$(git status --porcelain=v1 --untracked-files=all) || { echo "! BLOCK
 [ -z "$_C1_BEFORE" ] || { echo "! BLOCKED — C1 requires a clean worktree; route this item through Phase 1+2"; exit 1; }
 git rev-parse HEAD > "$IMPL_DIR/c1-head-${_BATCH_TAG}.txt" || { echo "! BLOCKED — C1 cannot record HEAD"; exit 1; }
 printf '%s\n' \
-    "Effort level: medium. Review this action item and implement it if valid." \
+    "Review this action item and implement it if valid." \
     "Do not stage or commit changes; the caller checks actual Git paths before handling them." \
     "" > "$_BRIEF"
 _LINE=$(jq -b -r --arg id "$_BATCH_TAG" 'select((.id|tostring)==$id) | "Item \(.id): \(.full_comment_text)  File: \(.file)  Line: \(.line)"' "$IMPL_DIR/action-items.jsonl")
@@ -291,7 +292,7 @@ echo "→ C1 brief for item $_BATCH_TAG: $_BRIEF"
 Immediately after this Skill call returns, persist its raw public JSON object verbatim via the Write tool to `$IMPL_DIR/c1-reply-<batch_tag>.json` (`<batch_tag>` = the item id the brief block printed) — the commit fence and challenge-log append below both read it via `jq`, never by re-typing the reply's contents:
 
 ```text
-Skill(skill="bridge:implement", args="--task-file <substitute the absolute path written to _BRIEF above> --effort medium")
+Skill(skill="bridge:implement", args="--task-file <substitute the absolute path written to _BRIEF above> --effort <substitute this item's ITEM_EFFORT: medium or high>")
 ```
 
 Parse the bridge public object, using the dispatched `_BATCH_TAG` as the item identity:
@@ -399,7 +400,7 @@ mv "$IMPL_DIR/c1-item-current.txt" "$IMPL_DIR/c1-item-current.txt.done"  # timeo
 
 `c1-item-summary.tsv`/`c1-item-files.tsv` (`item_id<TAB>value`, one row per item/file) are read by the grouped-commit fence (§Site 5 below) to cover C1 items that never reach `phase2-commits.jsonl` — separate files from `c1-deferred-files.txt`, whose bare-path shape two existing consumers (the clean-run staging fence and the overlap guard's Python) already depend on unchanged.
 
-When `CODEX_AVAILABLE=false` OR `ITEM_EFFORT!=medium`: skip Codex routing; use Phase 1+2 directly. If `IMPL_AGENT=bridge:implement`, this fallback uses the `change` table, not the Skill marker as an Agent type.
+When `CODEX_AVAILABLE=false` OR the item is not a C1 candidate: skip Codex routing; use Phase 1+2 directly. If `IMPL_AGENT=bridge:implement`, this fallback uses the `change` table, not the Skill marker as an Agent type.
 
 > **Agent budget** — Phase 1 spawns at least `Σ ceil(n_d/12)` challengers over the 3 challenger domains (≤3 spawns up to 12 items per domain; whole-file packing can add a chunk, never an item past 12); `comment-dispatch` batches at `BATCH_SIZE`.
 >
@@ -429,7 +430,7 @@ echo "NO_CHALLENGE=$NO_CHALLENGE"  # timeout: 3000
 | Test coverage, assertions, regressions | `foundry:qa-specialist` |
 | Default / unclassified | `foundry:challenger` |
 
-**Early and late waves.** Phase 1 runs in two passes under the same rules. The **early wave** fires inside the Run 2 fan (SKILL.md Step 7b join), in the same response as the Step 7a conflict agent, over every selected item that is not a C1 candidate (`ITEM_EFFORT=medium` AND `CODEX_AVAILABLE=true` AND `IMPL_AGENT=bridge:implement`). The **late wave** runs after the join and C1, over every C1 candidate C1 did not complete (UNCERTAIN, dirty-tree fall-through, a second medium item in a non-`each` mode); same chunking, prompt, verdict processing and log append, `<domain>` slugs suffixed `-late` so no filename collides. An empty set skips its wave; Phase 2 starts after the late wave.
+**Early and late waves.** Phase 1 runs in two passes under the same rules. The **early wave** fires inside the Run 2 fan (SKILL.md Step 7b join), in the same response as the Step 7a conflict agent, over every selected item that is not a C1 candidate (see the effort classification). The **late wave** runs after the join and C1, over every C1 candidate C1 did not complete (UNCERTAIN, dirty-tree fall-through, a second medium item in a non-`each` mode); same chunking, prompt, verdict processing and log append, `<domain>` slugs suffixed `-late` so no filename collides. An empty set skips its wave; Phase 2 starts after the late wave.
 
 Set `DOMAIN_CHALLENGER` from routing table: architecture/API/coupling/default → `foundry:challenger`; code logic/correctness/edge-cases → `foundry:sw-engineer`; test coverage/assertions/regressions → `foundry:qa-specialist`. Use agent-resolution.md fallback if foundry absent.
 
@@ -481,7 +482,7 @@ When a finding asserts a fact reading the referenced file alone can't settle (a 
 [thin] items are terse GitHub comments that no review finding covers: first locate the code they refer to (PR diff, named symbols). A request about docs, changelog, tests or process has no single code target: judge the request itself. A code request whose target stays unidentifiable → evidence=UNVERIFIED with owner/next_check/closure, never a fabricated refutation.
 Part 2 — for EVERY item whose problem exists, is the suggested fix the right approach? Rejecting the repair never refutes the defect. Feasible but unperformed checks remain incomplete; the parent must finish authorized checks before implementation or record an actual unavailable boundary.
 Read each referenced file at <file:line>. Read-only: run no tests. Max 4 tool calls per item (the 4th reserved for one WebFetch/WebSearch when a claim needs external verification), plus one read per evidence/verify file.
-Early wave only (omit when no file conflicts): the tree is mid-merge and 7b may commit while you read. Read every file with `git show <PR_HEAD_OID>:<file>` (substitute the sha from the `resolve-pr-head-oid` sentinel), never from disk — disk holds conflict markers, clean-merged drift and an edit in progress, and `HEAD` itself moves at the merge commit.
+Early wave only: read the pinned PR revision whether or not there are file conflicts. Read every file with `git show <PR_HEAD_OID>:<file>` (substitute the sha from the `resolve-pr-head-oid` sentinel), never from disk — disk may hold conflict markers, clean-merged drift or an edit in progress, and `HEAD` itself moves at the merge commit.
 Items:
 <id>: <full_comment_text> (<file>:<line>) [confirmed verify=<verify_file>] [evidence=<source_file>] [parent-confirmed candidate=<candidate_id> validation=<parent_validation_file>] [thin]
 ...
@@ -732,6 +733,8 @@ Re-derive group membership after all reassignments (file overlap + import coupli
 
 Snapshot the worktree list before dispatch — Phase 3's cleanup accounts for worktrees via each group's own envelope, so a group that stalls and never returns (§Health monitoring below) never gets its path into `specialist-worktrees.txt`; this snapshot is what lets the cleanup fence tell "a worktree nothing ever reported" apart from "a worktree that was never created":
 
+Persist Phase 1 reports and challenge-log verdicts before this refresh.
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # boundary1: Phase 1 challenge done, before Phase 2 dispatch (compaction-contract.md §Lifecycle) —
@@ -750,17 +753,31 @@ echo "DISPATCH_MODE=$DISPATCH_MODE"  # bash state does not persist; the split + 
 IFS= read -r _PUSH_AUTH < "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}" 2>/dev/null || _PUSH_AUTH="unset"
 _PRESERVE="pr=${_PR_NUMBER}, impl-dir=${IMPL_DIR}, dispatch-mode=${DISPATCH_MODE}, push-auth=${_PUSH_AUTH} (Step 3d answer),  selected-items=${IMPL_DIR}/selected-items.txt, challenge-log=${IMPL_DIR}/challenge-log.txt, skipped-items=${IMPL_DIR}/skipped-items.txt, item-tasks=${IMPL_DIR}/item-tasks.tsv, phase2-groups=${IMPL_DIR}/phase2-groups.tsv, phase2-base=${IMPL_DIR}/phase2-base-sha, spawn-now=${IMPL_DIR}/phase2-spawn-now.txt (still present = tags declared, spawn-base block not yet run), spawned=${IMPL_DIR}/phase2-spawned.tsv (links already spawned)"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "Phase 2 dispatch (after Phase 1 challenge verdicts)" "$IMPL_DIR" "${_PRESERVE}" "resume: re-read challenge-log.txt for verdicts + item-tasks.tsv for created tasks (report mode: item-tasks.tsv does not exist — use selected-items.txt as scope instead), continue Phase 2 implementation for items not yet in phase2-commits.jsonl; group tags and per-link items come from phase2-groups.tsv, never re-derived; a chained group resumes at its next link from chain-<tag>.tsv via the spawn-base block, never re-formed; a link listed in phase2-spawned.tsv is in flight or done, never spawned again — never re-issue Step 3d, item selection already answered"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "Phase 2 dispatch (after Phase 1 challenge verdicts)" "$IMPL_DIR" "${_PRESERVE}; phase-reports=${IMPL_DIR}/challenge-domain-*.md" "resume: re-cat own agent-resolution.md, worktree-isolation.md, modes/conflict-resolution.md and modes/action-item-dispatch.md; re-read challenge-log.txt for verdicts + item-tasks.tsv for created tasks (report mode: item-tasks.tsv does not exist — use selected-items.txt as scope instead), continue Phase 2 implementation for items not yet in phase2-commits.jsonl; group tags and per-link items come from phase2-groups.tsv, never re-derived; a chained group resumes at its next link from chain-<tag>.tsv via the spawn-base block, never re-formed; a link listed in phase2-spawned.tsv is in flight or done, never spawned again — never re-issue Step 3d, item selection already answered" -- calls_ahead=40 "drop=expanded challenge analysis"  # timeout: 5000
+IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""
+[ -z "$_OSS_SHARED" ] && _OSS_SHARED="plugins/cc_oss/skills/_shared"
+_CC="$_OSS_SHARED/compaction-contract.md"; [ -f "$_CC" ] || _CC="plugins/cc_oss/skills/_shared/compaction-contract.md"
+sed -n '/^## Boundary step$/,/^## Acceptance criteria$/{/^## Acceptance criteria$/!p;}' "$_CC"
+_RS="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/resolve_shared_path.py}"
+[ -n "$_RS" ] || _RS=$(ls plugins/cc_*/bin/resolve_shared_path.py 2>/dev/null | head -1)
+[ -f "$_RS" ] && _GD=$(python "$_RS" foundry bin 2>/dev/null) && [ -f "$_GD/compact_gate.py" ] && python "$_GD/compact_gate.py" || echo "compact-gate: continue (foundry gate unavailable)"
 git worktree list --porcelain | sed -n 's/^worktree //p' > "$IMPL_DIR/worktrees-before.txt"  # timeout: 5000
 ```
 
+Follow the Boundary step printed above before Phase 2 dispatch; reports are `challenge-domain-*.md` and `challenge-log.txt` in the preserved impl-dir. On resume, continue with the persisted groups and task map.
+
 **Group-preview gate — `DISPATCH_MODE=preview` only; every other mode skips this section entirely.** The user asked at Step 3d to see the real groups before anything spawns, which is why this is the one gate the default path never pays.
 
-1. Build the formed-groups table, one row per group: `specialist · item ids · files · reassignment reason if any`. Include every group; this table is the data the answer is about, so no compression mode and no communication style replaces it with a count. It goes only into the question call, as the `preview` of each of its 4 single-select options (the same table on every option) — never as reply text before the call, never Bash stdout: 5.5-family models may return reply text written before a tool call as an empty progress update, and the user chose Custom precisely to see these groups. The host hides or clips a preview past 2000 characters or 12 lines (SKILL.md Step 3d **Preview cap**): a larger table goes to `$IMPL_DIR/phase2-groups-table.md` with the Write tool first, the question text names that path, and every option's preview carries the same short summary (group count, items per specialist) plus the path.
-2. The question text closes with this line, since the gate is human idle and the contract was refreshed immediately above — never as reply text, for the same 5.5 reason: `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. ``
-3. Invoke `AskUserQuestion` (actual tool call) — "Phase 2 groups are formed. How should they run?", every option's `preview` = the step 1 table: (a) One worktree at a time · (b) Dispatch as shown — pool-capped waves **(Recommended)** · (c) One worktree per specialist, split at ≤8 items · (d) Stop before dispatch.
+1. Build the formed-groups table, one row per group: `specialist · item ids · files · reassignment reason if any`. Include every group; no compression mode or communication style replaces it with a count. Write the full table to `$IMPL_DIR/phase2-groups-table.md` before the call. List the groups as plain lines in the question text, about 6 lines, within a 1,500-character whole-question budget; reserve the question, compact hint and file path first. Past that budget, list the top groups that fit plus the total group count and file path. Print the full table once as the last text of the reply message that issues the group question, never in an option’s `preview`, never Bash stdout. Options carry labels and one-line descriptions only, with no preview.
+
+2. The question text closes with this line and the table file path, since the gate is human idle and the contract was refreshed immediately above: `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. ``
+
+3. Invoke `AskUserQuestion` (actual tool call) — "Phase 2 groups are formed. How should they run?", with the step 1 group lines in the question text and no option `preview` fields: (a) One worktree at a time · (b) Dispatch as shown — pool-capped waves **(Recommended)** · (c) One worktree per specialist, split at ≤8 items · (d) Stop before dispatch. Each description says what the option does with those groups; the recommended option stays second. Do not print the table again after the answer; a denied call re-issues without a table reprint.
+
 4. Map the answer and **run the matching Step 3d dispatch-mode block again** so the sentinel holds a width, never `preview`: (a) → `sequential` · (b) → `auto` · (c) → `per-specialist` · unanswered → `auto`. A `preview` value surviving into Phase 3 or a post-compaction resume would re-ask a decided gate.
+
 5. The previewed groups were formed under the `auto` split, so a resolved width of `per-specialist` **re-runs the import-coupling merge at `GROUP_CAP=8`, then re-splits each specialist's items at 8** per the split rules above before any tag is derived — a pair the merge left split at 5 may now co-locate, sub-groups merge back up to 8 items, a chain re-cuts its links at 8; the shown grouping was the question, not the commitment. Then re-run the boundary-1 block: it is idempotent here (`worktrees-before.txt` is still empty, nothing spawned), and without it `skill-contract.md` keeps `dispatch-mode=preview` while the sentinel holds a width, so a compaction inside Phase 2's multi-minute window resumes from two disagreeing sources.
+
 6. (d) Stop → leave every worktree unspawned, mark no item `in_progress`, and run Phase 3's cleanup block (its worktree loop is a no-op over an empty `specialist-worktrees.txt`, and it is what releases the branch mutex this run took at the prelude — skipping it leaks the lock until the healer's 30-min cap). Report the formed groups, and the Phase 2 items as pending; items already committed by C1 in `each` mode stay resolved and are reported as such. Then jump to Step 11. Never partially dispatch a stopped run.
 
 Derive `<group_tag>` per group as a short kebab-case slug naming its shared file/theme (e.g. `tflite`, `changelog`, `tests`, `core`) — the delta between groups, reused as `name="impl-<group_tag>"`, as `description`, and as prompt line 1's lead.
@@ -1447,7 +1464,7 @@ Group items by topic label. For each unique topic group (ordered by first item I
 
 **SECURITY — file list and per-item summaries are derived from git itself, never from an LLM-typed array.** `phase2-commits.jsonl` (`{item_id, sha, group}`, written by the fence above) already has, for every Phase-2-committed item, the real commit; `git diff-tree`/`git log` against that sha gives the exact files and subject with zero risk of the specialist's self-report omitting one (the residual risk this file's own design-scope section already flags).
 
-- A **C1** item (Codex-direct, `medium` effort) skips Phase 1+2 entirely and so has no row in `phase2-commits.jsonl` — for those, fall back to `c1-item-files.tsv`/`c1-item-summary.tsv` (written by the C1 commit fence above).
+- A **C1** item (Codex-direct) skips Phase 1+2 entirely and so has no row in `phase2-commits.jsonl` — for those, fall back to `c1-item-files.tsv`/`c1-item-summary.tsv` (written by the C1 commit fence above).
 - An id in neither source (rejected, skipped, or a stalled Phase-2 group) is warned and excluded from this group rather than hard-blocking the commit:
 
 ```bash

@@ -277,7 +277,7 @@ Read the **conversation**, not the filesystem. Nothing to run — history alread
 
 Call `TaskList` for fourth row. Detection stays **behavioural** — a new top-level request without an answer to prior question — never semantic-similarity scoring.
 
-Build (not printed — the question below carries it):
+Build the Unlanded table and Write it to `.temp/session/unlanded.md` first:
 
 ```markdown
 ## Unlanded — [item count] items
@@ -287,7 +287,7 @@ Build (not printed — the question below carries it):
 | 1 | retry backoff shape | deferred | user said "later, after the bench lands" |
 ```
 
-Then `AskUserQuestion`: (a) park all · (b) park a subset (list the numbers) · (c) skip. Selecting (a) or (b) runs **Mode: park** for each chosen item in the same turn. The Unlanded table is shown only as every option's `preview`, verbatim — never also as reply text (on 5.5 models text before a tool call may come back as an empty progress update). Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full table to `.temp/session/unlanded.md` first, make every option's `preview` a compact summary ending `→ full table: .temp/session/unlanded.md`, and name that path in the question text. Zero items: no question — `## Unlanded — 0 items` opens the final reply instead.
+The saved Unlanded table is printed once, rendered as normal Markdown, as the last reply text before `AskUserQuestion`: (a) park all · (b) park a subset (list the numbers) · (c) skip. The question text carries the Unlanded headline, item count, brief item names/numbers and `→ .temp/session/unlanded.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping. Selecting (a) or (b) runs **Mode: park** for each chosen item in the same turn. Zero items: no question — `## Unlanded — 0 items` opens the final reply instead.
 
 When a `session-restore.js`-injected handover doc is present at the start of this conversation (a freshly restored session), its `## Decisions` and `## Outstanding` sections are part of the candidate set too — an item listed there and not yet re-confirmed as landed in the live turns since restore still counts as stated-but-unlanded. Do not require post-restore Edit/Write evidence for something the restored doc's own `## Files touched` table already marked `done`.
 

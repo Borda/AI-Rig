@@ -279,6 +279,8 @@ Spawn **foundry:sw-engineer** agent to analyse codebase, produce:
 - **Scope challenge**: right problem? Simpler alternatives? What already exists that could extend instead of build from scratch?
 - **Complexity smell**: proposed change touches 8+ files or introduces 2+ new classes/modules → flag explicitly, scope may need narrowing before proceeding
 
+Carry the analysis summary in the Final Report. Write the full analysis to `$DEV_DIR/analysis.md` first; when the next gate fires, print the analysis summary once as the last reply text before the question, as normal Markdown. The question text carries counts, headline and `→ $DEV_DIR/analysis.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview`; do not repeat the same analysis at later gates.
+
 **Complexity classification**: classify as `small` (≤3 files, single concern), `medium` (4–7 files, or 1 new module), or `large` (8+ files, 2+ new modules, or public API change).
 
 ```bash
@@ -291,8 +293,6 @@ cat "$_DEV_SHARED/plan-inline.md"
 §Inline Plan Generation Protocol. Apply using **feature** context from Skill contexts table. On proceed: set `PLAN_FILE=<path>`; continue to Step 2. On small complexity or `ACCEPT_NO_PLAN=true`: skip and continue to Step 2.
 
 Plan-inline skipped because `--plan` was supplied or `ACCEPT_NO_PLAN=true`, **and** complexity classified `large` → still surface the smell once: invoke `AskUserQuestion` — "Scope is large (8+ files or 2+ new modules) and the plan gate was bypassed. How to proceed?" · (a) **Narrow scope** (recommended) · (b) **Proceed** — scope accepted as-is.
-
-Carry the analysis summary in the next gate question's `preview` when one fires, and in the Final Report — not as standalone reply text before further tool calls (text written before a tool call can arrive as an empty progress update). Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full summary to `$DEV_DIR/analysis.md` first, make every option's `preview` a compact summary ending `→ full analysis: $DEV_DIR/analysis.md`, and name that path in the question text.
 
 **Goal classification gate**: after sw-engineer analysis completes, scan the goal text for mixed signals — goal contains both feature keywords (add, implement, new, support) AND refactor keywords (rename, extract, restructure, decouple, consolidate) → invoke `AskUserQuestion`: "Goal mixes feature work and refactoring — split into two runs." · (a) **Abort** — run `/develop:refactor` first, then `/develop:feature` · (b) **Continue as feature-only** — treat refactoring as out of scope.
 
@@ -357,7 +357,7 @@ Spawn `foundry:challenger` with scope analysis from Step 1 (purpose, scope, risk
 
 Parse result:
 
-- **Blockers found** → STOP. Invoke `AskUserQuestion` with the blocker findings (one line each: claim · file:line · evidence) as the `preview` of every option, not as reply text before the call (over the preview cap — ≤2000 chars, ≤12 lines — Write them to `$DEV_DIR/blockers.md` first, preview a compact summary ending `→ full list: $DEV_DIR/blockers.md`, and name that path in the question text) — "Challenger raised N blocker(s) on the implementation approach. How to proceed?" · (a) **Revise scope** — return to Step 1 analysis with the blockers as input · (b) **Accept risk** — proceed to Step 2 with each blocker documented in the Final Report Follow-up · (c) **Abort**. On Abort: stop. Never proceed to Step 2 on prose alone.
+- **Blockers found** → STOP. Write the blocker findings (one line each: claim · file:line · evidence) to `$DEV_DIR/blockers.md` first; print them once as the last reply text before invoking `AskUserQuestion`, as normal Markdown. The question text carries the blocker count, headline and `→ $DEV_DIR/blockers.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview` — "Challenger raised N blocker(s) on the implementation approach. How to proceed?" · (a) **Revise scope** — return to Step 1 analysis with the blockers as input · (b) **Accept risk** — proceed to Step 2 with each blocker documented in the Final Report Follow-up · (c) **Abort**. On Abort: stop. Never proceed to Step 2 on prose alone.
 - **Concerns only** → surface as advisory section before demo test; continue.
 - **No findings / all refuted** → proceed.
 

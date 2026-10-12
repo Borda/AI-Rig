@@ -3,14 +3,11 @@
 // Only PreToolUse AskUserQuestion with this workflow's header/known labels is
 // gated. Diagnostic/recovery questions remain available. The existing
 // session sentinel, path checks, and TTL define whether this run is active.
-// Require a nonempty report and delivery of its complete matching header table
-// in the follow-up call's first question (every option preview within the
-// preview cap, or its question text — never an option description) or, over the
-// cap, the report file named in the question text with a compact summary
-// naming it in every option preview (report-header-table.js); a reply-text
-// table before the call does not count, since it can come back as an empty
-// progress update, and an unnamed file is insufficient. Stop still accepts the
-// turn's final reply text.
+// Require a nonempty report and a short plain summary in the follow-up call's
+// first question text: the report path, Title and Outcome (report-header-table.js);
+// option previews and descriptions never supply it, and reply text before the
+// call does not count, since it can come back as an empty progress update. The
+// complete header table belongs in the turn's final reply, which Stop requires.
 // Missing/unreadable delivery evidence denies the transition with a recovery
 // reason. No active sentinel, expired/implausible state, or malformed hook
 // payload passes through. Unexpected hook failures retain the legacy fail-open
@@ -182,10 +179,9 @@ function denyReason(sentinelPath, cwd, now) {
     `foundry:profile report gate — ${reportFile} does not exist, so Step 2 (run analyzer) and Step 4 ` +
     "(emit terminal output) have not completed. Go back: run timing_analyzer.py so it writes " +
     `${REPORT_FILENAME}, then Read that file and render its \`---\` header block as a Field | Value table ` +
-    "plus the `→ <path>` line. Call AskUserQuestion only after that, with them as the " +
-    "`preview` of every option when they fit the preview cap (2000 chars, 12 lines), otherwise with " +
-    `${reportFile} named in the question text and a compact summary naming it as every option's preview — ` +
-    "not as reply text. If the analyzer found no sessions in the window (exit 1), report that " +
+    "plus the `→ <path>` line. Call AskUserQuestion only after that, with a short plain summary in the " +
+    `question text (${reportFile}, Title and Outcome; no table) — the table goes in the final reply. ` +
+    "If the analyzer found no sessions in the window (exit 1), report that " +
     "and stop — Step 2 authorises no follow-up question on that path."
   );
 }

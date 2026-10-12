@@ -365,7 +365,7 @@ If `$SKIP_CROSS_VAL` = false: follow the cross-validation protocol loaded above.
 
 ## Step 7: Report findings
 
-Execute §Step 7 of `steps-4-5-7.md` (loaded above in Steps 4–5b) — emits report, fires follow-up gate; on fix pick continues to Steps 8–10 (`modes/fix.md`); otherwise skip to Step 11.
+Execute §Step 7 of `steps-4-5-7.md` (loaded above in Steps 4–5b) — persists the full findings report, fires the follow-up gate with a plain question-text summary, and defers printing the full report to the final reply after the answer; on fix pick continues to Steps 8–10 (`modes/fix.md`); otherwise skip to Step 11.
 
 ## Steps 8–10: Fix dispatch, codex cross-file check, re-audit (mode: fix)
 
@@ -395,7 +395,7 @@ cat "$AUDIT_TPL/report-template.md"
 
 **Unscanned-plugin surfacing** (`--local`/`plugins` scope only): before assembling, read `${TMPDIR:-/tmp}/audit-state-${CSID}/unscanned-plugins` (sentinel from Step 2 coverage reconciliation). Non-empty → include an `### Unscanned Plugins` section in the report immediately after `### Files Audited`, listing every `⚠ UNSCANNED: <plugin>` line verbatim; this makes zero-coverage plugins visible in the durable artifact, not just the transient terminal output. Empty or missing → omit the section.
 
-**Step 11b — terminal output** — per quality-gates.md universal rule: read the `---` header block from the top of `$RUN_DIR/report.md` (all fields from opening `---` up to and including closing `---`) and render as a two-column Markdown table (`Field | Value`, one row per key, file order) as the FIRST content of the reply — never print the raw `---`-delimited block. Then print `→ $RUN_DIR/report.md`. Then executive summary. Omit the `╔═╗` Re:Anchor box (communication.md exempts quality-gates `---` report headers — the table IS the reply header).
+**Step 11b — terminal output** — prepare this block for the final reply after the answer (or the no-question path), after the last tool call including the completion marker and cleanup below. Per quality-gates.md universal rule: read the `---` header block from the top of `$RUN_DIR/report.md` (all fields from opening `---` up to and including closing `---`) and render as a two-column Markdown table (`Field | Value`, one row per key, file order) as the FIRST content of that final reply — never print the raw `---`-delimited block. Then print `→ $RUN_DIR/report.md`, the full Step 7 Audit Report from `$RUN_DIR/audit-report.md` (heading, exact `Total: N`, every finding's `one_line`, rendered as normal Markdown), and the executive summary. The full findings report is printed once here, never before the question or in an option. Omit the `╔═╗` Re:Anchor box (communication.md exempts quality-gates `---` report headers — the table IS the reply header).
 
 **Completion marker** — on successful completion, write `$RUN_DIR/result.jsonl` with one JSONL line summarising the run (severity totals, scope, pass count). On any abort/error path before completion, leave `result.jsonl` absent — the TTL cleanup hook (artifact-lifecycle.md) intentionally skips run directories without `result.jsonl`, preserving incomplete runs for post-mortem debugging. To force cleanup of a known-bad incomplete run, write `{"status":"incomplete","reason":"<one-line>"}` to `result.jsonl` so TTL can age it out.
 
@@ -472,9 +472,9 @@ When user picks fix option (a–c): run Steps 8–10 inline via `modes/fix.md` (
 
 - Efficiency override active: (a) + (b) + (c) + distill = 4 ✓ — (d) Skip replaced by distill label
 
-- question: "What next?" (include counts, e.g. "2 critical, 4 high, 3 medium, 1 low. What next?")
+- question: "What next?" The first question's text carries the `Audit Report` headline, exact `Total: N`, severity counts and `→ $RUN_DIR/summary.jsonl`; include `→ $RUN_DIR/audit-report.md` for the saved full findings. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence.
 
-- every option: `preview` = the Step 7 Audit Report (heading, `Total:` line, every finding row), verbatim — its only copy (`steps-4-5-7.md` §Step 7) — or, over the preview cap (≤2000 chars, ≤12 lines), the Step 7 compact summary naming `$RUN_DIR/audit-report.md`, which the question text then names too
+- Every option: label plus a one-line action description, no `preview`. Display `Fix auto-fixable (Recommended)` second while preserving all labels and answer mapping. The full Step 7 findings report is printed once in the final reply after the answer, after the last tool call, below Step 11b's header table — never before the question (`steps-4-5-7.md` §Step 7).
 
 After completing `--upgrade`, `--adversarial`, or `--efficiency`: also fire this gate. For (d) Skip: remove the mode just run from the "for other modes" list. When `--adversarial --efficiency` combined: fire gate once after both complete with merged finding counts; remove both from (d) hint. Efficiency distill override: selecting distill option invokes `/distill executables` → `foundry:sw-engineer` extraction then `/audit --efficiency` re-run to confirm savings.
 

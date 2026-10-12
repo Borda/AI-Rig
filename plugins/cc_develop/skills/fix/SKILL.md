@@ -332,7 +332,7 @@ Arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits
 
 Parse result:
 
-- **Blockers found** → STOP. Invoke `AskUserQuestion` with the blocker findings (one line each: claim · file:line · evidence) as the `preview` of every option, not as reply text before the call (over the preview cap — ≤2000 chars, ≤12 lines — Write them to `$DEV_DIR/blockers.md` first, preview a compact summary ending `→ full list: $DEV_DIR/blockers.md`, and name that path in the question text) — "Challenger raised N blocker(s) on the fix approach. How to proceed?" · (a) **Revise approach** — return to Step 1 analysis with the blockers as input · (b) **Accept risk** — proceed to Step 2 with each blocker documented in the Final Report Follow-up · (c) **Abort**. On Abort: stop. Never proceed to Step 2 on prose alone.
+- **Blockers found** → STOP. Write the blocker findings (one line each: claim · file:line · evidence) to `$DEV_DIR/blockers.md` first; print them once as the last reply text before invoking `AskUserQuestion`, as normal Markdown. The question text carries the blocker count, headline and `→ $DEV_DIR/blockers.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview` — "Challenger raised N blocker(s) on the fix approach. How to proceed?" · (a) **Revise approach** — return to Step 1 analysis with the blockers as input · (b) **Accept risk** — proceed to Step 2 with each blocker documented in the Final Report Follow-up · (c) **Abort**. On Abort: stop. Never proceed to Step 2 on prose alone.
 - **Concerns only** → surface as advisory; continue.
 - **No findings / all refuted** → proceed.
 
@@ -457,6 +457,8 @@ Issue found → revise test(s) before applying fix. Flawed reproduction = fix va
 
 **Breaking change gate**: before applying fix, assess whether fix introduces a breaking change.
 
+Before this block, in the same response, Write the reproduction verdict, failing-test evidence, active task IDs and the line `step: 2 — completed` as one record to the dev-dir’s `checkpoint.md.rec` with the Write tool; the block then appends it with `append_ledger.py` before the contract write.
+
 ```bash
 # boundary 1: after reproduction, before edit (compaction-contract.md)
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -466,11 +468,19 @@ IFS= read -r _KEEP < "${TMPDIR:-/tmp}/dev-fix-keep-items-${CSID}" 2>/dev/null ||
 IFS= read -r _PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || _PYTEST_CMD=""
 _PRESERVE="dev-dir=$_DEV_DIR, plan-file=${_PLAN_FILE:-none}, pytest-cmd=$_PYTEST_CMD"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:fix" "edit (after reproduction test written)" "$_DEV_DIR" "$_PRESERVE" "apply minimal fix (Step 3) → review+quality stack (Step 4)"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/append_ledger.py" "$_DEV_DIR/checkpoint.md"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:fix" "edit (after reproduction test written)" "$_DEV_DIR" "$_PRESERVE; phase-report=$_DEV_DIR/checkpoint.md" "resume: re-cat own agent-resolution.md and semver-rules.md before the breaking-change gate (standard SemVer fallback if unavailable); apply minimal fix (Step 3) → review+quality stack (Step 4)" -- calls_ahead=30 "drop=reproduction analysis and failing-test evidence"  # timeout: 5000
 IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
 [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
+_CC="$_DEV_SHARED/compaction-contract.md"; [ -f "$_CC" ] || _CC="plugins/cc_develop/skills/_shared/compaction-contract.md"
+sed -n '/^## Boundary step$/,/^## Acceptance criteria$/{/^## Acceptance criteria$/!p;}' "$_CC"
+_RS="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/resolve_shared_path.py}"
+[ -n "$_RS" ] || _RS=$(ls plugins/cc_*/bin/resolve_shared_path.py 2>/dev/null | head -1)
+[ -f "$_RS" ] && _GD=$(python "$_RS" foundry bin 2>/dev/null) && [ -f "$_GD/compact_gate.py" ] && python "$_GD/compact_gate.py" || echo "compact-gate: continue (foundry gate unavailable)"
 cat "$_DEV_SHARED/semver-rules.md" 2>/dev/null || echo "semver-rules.md unavailable — use standard SemVer rules"
 ```
+
+Follow the Boundary step printed above before applying the fix; report is the preserved dev-dir’s `checkpoint.md`. Keep the breaking-change gate below.
 
 `semver-rules.md` loaded → use it for semver classification; else standard SemVer rules (BREAKING = major bump, new feature = minor, fix = patch). Breaking change definition: worked before → fails/behaves differently now → no prior warning/shim. Yes → stop, call `AskUserQuestion` before any edit. State: what worked before, what will break, why this fix approach needed. Proceed only on explicit user confirmation. One question per breaking change; group only when logically one atomic change. Prose question does NOT count — `AskUserQuestion` mandatory.
 
@@ -530,14 +540,26 @@ Make minimal change to fix root cause:
 
 4. If existing tests break: fix has side effects — reconsider approach
 
+Before this block, in the same response, Write the fix summary, targeted-test results, active task IDs and the line `step: 3 — completed` as one record to the dev-dir’s `checkpoint.md.rec` with the Write tool; the block then appends it with `append_ledger.py` before the contract write.
+
 ```bash
 # boundary 2: after fix applied, before review stack (compaction-contract.md)
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEV_DIR < "${TMPDIR:-/tmp}/dev-fix-dev-dir-${CSID}" 2>/dev/null || _DEV_DIR=""
 IFS= read -r _PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || _PYTEST_CMD=""
 _CHANGED=$(git diff --name-only HEAD 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:fix" "review+quality (after fix applied)" "$_DEV_DIR" "dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD" "review and close gaps (Step 4) → Final Report"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/append_ledger.py" "$_DEV_DIR/checkpoint.md"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:fix" "review+quality (after fix applied)" "$_DEV_DIR" "dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD; phase-report=$_DEV_DIR/checkpoint.md" "resume: re-cat own agent-resolution.md; review and close gaps (Step 4) → Final Report" -- calls_ahead=40 "drop=fix analysis and targeted-test results"  # timeout: 5000
+IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
+[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
+_CC="$_DEV_SHARED/compaction-contract.md"; [ -f "$_CC" ] || _CC="plugins/cc_develop/skills/_shared/compaction-contract.md"
+sed -n '/^## Boundary step$/,/^## Acceptance criteria$/{/^## Acceptance criteria$/!p;}' "$_CC"
+_RS="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/resolve_shared_path.py}"
+[ -n "$_RS" ] || _RS=$(ls plugins/cc_*/bin/resolve_shared_path.py 2>/dev/null | head -1)
+[ -f "$_RS" ] && _GD=$(python "$_RS" foundry bin 2>/dev/null) && [ -f "$_GD/compact_gate.py" ] && python "$_GD/compact_gate.py" || echo "compact-gate: continue (foundry gate unavailable)"
 ```
+
+Follow the Boundary step printed above before the review and quality loop; report is the preserved dev-dir’s `checkpoint.md`.
 
 ## Step 4: Review and close gaps
 

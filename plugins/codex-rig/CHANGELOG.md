@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.35.3
+
+- Label each Code Quality item in the global `AGENTS.md` template and move the code-standard, coverage and ML/AI detail into `shared/global-baseline-details.md` behind trigger lines, keeping the eager fail-before/pass-after test bullet; the template shrinks by 1,775 bytes.
+- Document each role's pinned model and effort with its quality reason in the roles README routing table, and the `<model_switch>` overhead that applies when the parent session runs a different model.
+- List the approval scope in the plain local-commit question: branch, diff size and files, draft subject, and what `Approve`, `Approve always` and `Deny` cover and exclude, within 1,500 characters and above the required `Approve always` scope disclosure.
+
 ## 0.35.2
 
 - Always request approval for a fresh local review when PR remediation requests `+review` or an equivalent report source and no eligible completed report exists. Available findings no longer bypass the decision; continuing without the report requires explicit user confirmation, and unanswered questions remain pending.

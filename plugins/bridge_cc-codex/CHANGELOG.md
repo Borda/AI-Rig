@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0
+
+- End every Claude-side `advise`, `review`, and `implement` reply with one usage line copied from the envelope (model, effort, input and cached input tokens, output tokens, duration), so Codex spend is visible without a relay subagent; cost stays unreported rather than estimated.
+- Tell `advise` and `review` to run as background Bash calls when the budget can reach the foreground cap or the caller has independent work, matching `implement`; the host shows a task row and a completion notification with no extra model cost.
+
 ## 0.8.1
 
 - Fix repeated transfer-approval prompts for authorized Bridge work by recording standing repository-context consent during Codex setup, including private source and ordinary inference. The operator approves once; installation and workspace binding remain separate from consent.

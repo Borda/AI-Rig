@@ -28,7 +28,7 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "98c46317cf4c664f2261b299c06fb76ce02659cc847d03744e47d90ed842fe4c"
+      "sha256": "f1d7ed8a0e1859d78ec6ed3b9cf32edea123599166a90b0aad0cb2f323010284"
     },
     {
       "mode": "0644",
@@ -38,7 +38,7 @@
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "99c0c30eb247a621de11dce8ea24bce19c02b7f7a5eb928ecc5bf4390c8c74af"
+      "sha256": "5441e17f4fb62b2211d51abb55c69ae953656ceaf418c14d75bbd174d291d75a"
     },
     {
       "mode": "0644",
@@ -53,12 +53,12 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "b0bb3c131b6261d3f5edc61af7b77f3a9b93ae9e6fb2fa8f1388f9845813440e"
+      "sha256": "4ea948bf1612b311660a1b95d6a7d540d5ac6a80d59a40841366babef1551fae"
     },
     {
       "mode": "0644",
       "path": "assets/AGENTS.md",
-      "sha256": "613d509dca0487b06b2b812af401a79650a518d1b4c938d5e95a7b32aed40c0e"
+      "sha256": "164f42fa9642854bc38bb647c5cb858d001c4c9f4fedd2943a1754a787fc2884"
     },
     {
       "mode": "0755",
@@ -88,7 +88,7 @@
     {
       "mode": "0644",
       "path": "roles/README.md",
-      "sha256": "ebe6c53119f2e2737129ac9f31e3e0bb12e9e29b46ef5f006616af4dbbcdb0f0"
+      "sha256": "bfb82692b96de2ba5b729e0659b245f3819ddcce7d839e0ee0ec128bc0fa6492"
     },
     {
       "mode": "0644",
@@ -453,7 +453,7 @@
     {
       "mode": "0644",
       "path": "shared/global-baseline-details.md",
-      "sha256": "5e113c2c4dfb428b0710cd93a2cb470ad30e31c3c0cabea8fe7907a803606c40"
+      "sha256": "5e8691b560a5a54c589f2f3444d9c596a439cfb424afe8aa2bfc5b3b180cbe3c"
     },
     {
       "mode": "0644",
@@ -468,7 +468,7 @@
     {
       "mode": "0644",
       "path": "shared/native-skill-contract.md",
-      "sha256": "0ac787d5d6fa4ae902b8cadf622b0902584446f683bed17008a7fd71599fe6a2"
+      "sha256": "2482bc5f02d6631c7f58dfe5cb5cd0abb1dc3f84e2386a77e3123b7251836a50"
     },
     {
       "mode": "0644",
@@ -973,7 +973,7 @@
     {
       "mode": "0644",
       "path": "tests/packaging/test_global_agents_template_budget.py",
-      "sha256": "d6c14b0acbd4db518e40dff63e3cf02f0d75fecfcaef3f0f362a71caac142f65"
+      "sha256": "2c0849dee031ea78f1874add3b6b7c3d83a41128d6c895d62402a5f0139b509c"
     },
     {
       "mode": "0644",
@@ -1658,5 +1658,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.35.2"
+  "version": "0.35.3"
 }

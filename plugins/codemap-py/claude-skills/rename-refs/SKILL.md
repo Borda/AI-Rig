@@ -48,6 +48,8 @@ NOT for: index builds (`/codemap-py:scan-codebase`); query-only work (`/codemap-
 
 ## Step 0: Parse arguments
 
+**Question delivery**: every `AskUserQuestion` uses at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout, or code fence. Include the decision headline, counts and named content file path when applicable. Options carry labels and one-line descriptions, no previews; preserve existing answer mapping and keep the recommended option second. For new candidate/blast artifacts below, use `$CSID` for `<session-id>` and probe the path before Writing; if taken, append `-2`, then `-3`, … until free. Keep that resolved path for the matching question.
+
 Parse `$ARGUMENTS` in one Bash block; write tokens to project-qualified tmpfiles. Later steps read tmpfiles because shell vars die at each Bash() boundary:
 
 ```bash
@@ -151,7 +153,7 @@ printf '%s\n' "$FIND_SYMBOL_JSON" > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-find-sy
 `find-symbol` returns `matches`, each `{name, qualified_name, type, module, path, start_line, end_line, source}` (same as `query-code` `symbol`). Edits use `path`, `start_line`, `end_line`; exact filter uses `qualified_name`; Step 4e reads `.matches[0].type`.
 
 - 0 matches → print `! Symbol '$OLD_REF' not found. Verify with: codemap-py query find-symbol <pattern>`; stop.
-- Multiple → `AskUserQuestion` listing candidate name/type/module/path. After choice, narrow sentinel so every downstream `.matches[0]` is correct:
+- Multiple → Write the full candidate list (name/type/module/path) to `.temp/rename-refs-candidates-<session-id>.md` first; print it once as the last reply text before `AskUserQuestion`. The question text carries a plain candidate-count summary and `→ <candidate list path>`; options identify the candidate with a one-line description, no previews. After choice, narrow sentinel so every downstream `.matches[0]` is correct:
   ```bash
   # timeout: 5000
   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -219,7 +221,9 @@ Returns `{imported_by:[...], index:{query_complete,...}}`; extract `RDEP_COUNT`,
 
 ## Step 3: Blast-radius report + confirmation gate
 
-Print:
+Write the full report below to a free `.temp/rename-refs-blast-<session-id>.md` path first. Before each confirmation call below, print the relevant saved report once as the last reply text before the question; question text still carries the rename/deletion headline, caller/site counts and `→ <report path>`. Do not put the report or caller list in option previews.
+
+Build this report (print it at the confirmation gate, after guards and output-path selection):
 
 ```
 Rename: <OLD_REF> → <NEW_REF>
@@ -324,9 +328,9 @@ Path:       → <the resolved $DRY_OUT path>
 
 [if reached via the zero-callers delete path above] `Title` → `rename-refs dry-run — would delete <OLD_REF>`; `Outcome` → `DRY_RUN — no edits applied; would delete <OLD_REF> — zero callers, exhaustive`; body records only that one line, no caller/import/docstring counts.
 
-`AskUserQuestion` with the report path in its question text (not printed before the call): (a) Apply for real (re-invoke without --dry-run); (b) Done. Stop.
+`AskUserQuestion` after printing the saved `$DRY_OUT` report once as the last reply text before the call; question text carries the dry-run headline, caller/import/docstring counts (or only the would-delete line for the delete path), and `→ <resolved $DRY_OUT>`, no previews: (a) Apply for real — re-invoke without --dry-run; (b) Done — keep the report without edits. Stop.
 
-Otherwise `AskUserQuestion`: (a) Apply edits; (b) Abort. Abort → stop.
+Otherwise `AskUserQuestion`: print the saved blast-radius report once as the last reply text before the call; question text carries the rename headline, caller count, any cap/incomplete-index warning, and `→ <resolved blast report path>`, no previews. (a) Apply edits — rename the listed sites; (b) Abort — keep the current code. Abort → stop.
 
 ## Step 4: Apply edits — symbol rename
 

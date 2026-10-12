@@ -39,6 +39,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path, PurePath
 
 #: Directory holding this hook, put on ``sys.path`` so the shared ``_hookutil`` helper imports under any loader.
@@ -66,6 +67,8 @@ HEADER_PEEK_BYTES = 8 * 1024
 NOINDEX_TTL_MS = 30 * 60 * 1000
 #: Default lifetime in milliseconds of a sentinel flag checked by :func:`within_ttl`.
 SESSION_TTL_MS = 30 * 60 * 1000
+# Missing host identity retains a shared fallback without borrowing another runtime's session.
+SHARED_SESSION = "shared"
 #: Git freshness includes documentation as well as Python sources; the source-eligibility
 #: check below deliberately uses only the scanner's Python discovery rules.
 _INDEXED_PATHSPEC: tuple[str, ...] = ("*.py", "*.pyi", "*.rst", "docs/**/*.md")
@@ -180,11 +183,11 @@ def is_python_project(root: Path) -> bool:
     return any((root / marker).is_file() for marker in ("pyproject.toml", "setup.py"))
 
 
-def handle_missing_index(root: Path, project: str) -> None:
+def handle_missing_index(root: Path, project: str, session: str) -> None:
     """Emit the once-per-session Python-project bootstrap directive when needed."""
     if not is_python_project(root):
         return
-    flag = tmp_dir() / f"codemap-noindex-{project}-{_hookutil.runtime()}"
+    flag = tmp_dir() / f"codemap-noindex-{project}-{_hookutil.runtime()}-{session}"
     if within_ttl(flag, NOINDEX_TTL_MS):
         return
     write_timestamp(flag)
@@ -572,14 +575,32 @@ def stale_refresh_note(
     return start((record, fingerprint))
 
 
-def collapse_stale_notice(project: str, refresh_note: str) -> bool:
-    """Print the one-line stale notice when the full one already fired this session."""
-    flag = tmp_dir() / f"codemap-stale-{project}-{_hookutil.runtime()}"
-    if within_ttl(flag):
-        emit_preamble(f"[codemap] index stale{refresh_note or ' - refresh pending'}")
+def read_stale_state(path: Path) -> tuple[int, str, str] | None:
+    """Read the stale notice's timestamp and index state, treating unusable records as absent."""
+    try:
+        timestamp, git_sha, currency = json.loads(path.read_text(encoding="utf-8"))
+        if type(timestamp) is not int or not isinstance(git_sha, str) or not isinstance(currency, str):
+            return None
+        return timestamp, git_sha, currency
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def collapse_stale_notice(project: str, session: str, git_sha: str, currency: str, refresh_note: str) -> bool:
+    """Suppress unchanged state within TTL, remind on changes, and re-deliver full context after TTL."""
+    flag = tmp_dir() / f"codemap-stale-{project}-{_hookutil.runtime()}-{session}"
+    previous = read_stale_state(flag)
+    timestamp = now_ms()
+    if previous is not None and previous[1:] == (git_sha, currency) and timestamp - previous[0] < SESSION_TTL_MS:
         return True
-    write_timestamp(flag)
-    return False
+    try:
+        flag.write_text(json.dumps([timestamp, git_sha, currency]), encoding="utf-8")
+    except OSError:
+        pass
+    if previous is None or timestamp - previous[0] >= SESSION_TTL_MS:
+        return False
+    emit_preamble(f"[codemap] index stale{refresh_note or ' - refresh pending'}")
+    return True
 
 
 def stdin_payload() -> dict:
@@ -599,6 +620,7 @@ def main() -> int:
         project = root.name
         payload = stdin_payload()
         session = _hookutil.runtime_session(payload)
+        session_token = _hookutil.UNSAFE_KEY.sub("_", session) or SHARED_SESSION
         write_session_marker(root, session)
         if not has_python_source(root):
             return 0
@@ -606,7 +628,7 @@ def main() -> int:
         index_path = index_dir / f"{project}.json"
         index_stat = regular_file_stat(index_path)
         if index_stat is None:
-            handle_missing_index(root, project)
+            handle_missing_index(root, project, session_token)
             return 0
         fields = header_fields(index_path)
         git_sha = fields["git_sha"]
@@ -628,11 +650,15 @@ def main() -> int:
                     project, scan_root, cwd, session, lambda: changed_file_count(root, git_sha), record=record
                 ),
             )
-        session_flag = tmp_dir() / f"codemap-preamble-{project}-{_hookutil.runtime()}"
-        if currency == "current" and within_ttl(session_flag):
-            return 0
+        session_flag = tmp_dir() / f"codemap-preamble-{project}-{_hookutil.runtime()}-{session_token}"
+        if currency == "current":
+            # A refreshed index resets stale dedup even when the current preamble is already suppressed.
+            with suppress(OSError):
+                (tmp_dir() / f"codemap-stale-{project}-{_hookutil.runtime()}-{session_token}").unlink(missing_ok=True)
+            if within_ttl(session_flag):
+                return 0
         write_timestamp(session_flag)
-        if currency == "stale" and collapse_stale_notice(project, refresh_note):
+        if currency == "stale" and collapse_stale_notice(project, session_token, git_sha, currency, refresh_note):
             return 0
         sha_label = f" (git: {git_sha[:7]})" if currency == "current" else ""
         emit_preamble(

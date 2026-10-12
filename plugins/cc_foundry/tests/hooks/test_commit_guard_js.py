@@ -65,6 +65,7 @@ GIT_UNAVAILABLE = subprocess.run(["git", "--version"], capture_output=True, time
 #: The push token's file name in the git common dir.
 PUSH_RECORD = "claude-push-approval.json"
 APPROVED = "git push origin main"
+GIT_DIAGNOSTICS = Path(__file__).with_name("git-subprocess-diagnostics.js")
 
 
 def _symlinks_supported(probe_dir: Path) -> bool:
@@ -176,10 +177,76 @@ def _guard(
             "commit-guard.js",
             _push_payload(command, here, **fields),
             cwd=here,
-            env_extra={"CLAUDE_PROJECT_DIR": str(session)},
+            env_extra={
+                "CLAUDE_PROJECT_DIR": str(session),
+                "NODE_OPTIONS": (
+                    f"{os.environ.get('NODE_OPTIONS', '')} "
+                    f"--require {json.dumps(GIT_DIAGNOSTICS.as_posix(), ensure_ascii=False)}"
+                ),
+            },
         )
 
     return _run
+
+
+@pytest.mark.integration
+def test_git_diagnostics_preserves_failure_and_reports_process_error(tmp_path: Path) -> None:
+    """A failed real Git discovery retains its exit status and reports the error hidden by the guard."""
+    result = subprocess.run(
+        [
+            "node",
+            "--require",
+            str(GIT_DIAGNOSTICS),
+            "-e",
+            "try { require('child_process').execFileSync('git', ['rev-parse', '--show-toplevel'], "
+            "{cwd: process.argv[1], stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000}); } "
+            "catch (error) { process.exit(error.status); }",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        encoding="utf-8",
+        timeout=15,
+        env={key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")},
+    )
+
+    assert result.returncode == 128, result.stderr
+    diagnostic = json.loads(result.stderr.removeprefix("Git subprocess failed: ").strip())
+    assert diagnostic["args"] == ["rev-parse", "--show-toplevel"]
+    assert diagnostic["cwd"] == str(tmp_path)
+    assert diagnostic["status"] == 128
+    assert diagnostic["signal"] is None
+    assert diagnostic["timeout_ms"] == 5000
+    assert diagnostic["elapsed_ms"] >= 0
+    assert "not a git repository" in diagnostic["stderr"]
+
+
+@pytest.mark.parametrize("code", ["ETIMEDOUT", "ENOENT"])
+def test_git_diagnostics_preserves_spawn_error(code: str) -> None:
+    """Timeout and spawn errors keep their identity while diagnostics expose the original code."""
+    result = subprocess.run(
+        [
+            "node",
+            "-e",
+            "const cp = require('child_process'); "
+            "const failure = Object.assign(new Error('probe'), {code: process.argv[2], status: null, signal: null}); "
+            "cp.execFileSync = () => { throw failure; }; "
+            "require(process.argv[1]); "
+            "try { cp.execFileSync('git', ['rev-parse'], {timeout: 5000}); } "
+            "catch (error) { process.exit(error === failure ? 2 : 3); }",
+            str(GIT_DIAGNOSTICS),
+            code,
+        ],
+        capture_output=True,
+        encoding="utf-8",
+        timeout=15,
+    )
+
+    assert result.returncode == 2, result.stderr
+    diagnostic = json.loads(result.stderr.removeprefix("Git subprocess failed: ").strip())
+    assert diagnostic["code"] == code
+    assert diagnostic["status"] is None
+    assert diagnostic["signal"] is None
+    assert diagnostic["timeout_ms"] == 5000
 
 
 def _event(run_hook: Callable, repo: Path, payload: dict) -> subprocess.CompletedProcess:
@@ -620,7 +687,7 @@ class TestApprovedBranchOnly:
         result = guard(command)
 
         assert result.returncode == 2, f"{command!r} was allowed: {result.stdout}{result.stderr}"
-        assert reason in result.stderr
+        assert reason in result.stderr, result.stderr
         assert BY_HAND in result.stderr
         assert token.exists()
 
@@ -634,7 +701,7 @@ class TestApprovedBranchOnly:
         result = guard(command)
 
         assert result.returncode == 2
-        assert reason in result.stderr
+        assert reason in result.stderr, result.stderr
         assert BY_HAND in result.stderr
         assert "AskUserQuestion" not in result.stderr
         assert "force" not in result.stderr

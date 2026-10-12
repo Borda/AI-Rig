@@ -105,6 +105,16 @@ Otherwise, without a grant, a plain commit asks one question through [User Quest
 
 Every question offering **Approve always**, including the remember question below, must display this scope in the question body before its choices: `Covers only task-scoped, non-destructive local commits (git commit) of verified, owned changes. Applies to later sessions in every worktree of this project until revoked. Excludes push or other remote changes, history rewriting (including commit --amend), discarding work (reset --hard, clean), branch or unique-history deletion, force operations, and authentication or permission changes. Explicit no-commit or wait instructions still apply.` Do not replace this disclosure with the label "local Git" or an unrestricted subcommand allowlist: command effects and the active task determine authorization. Inspection, staging, branch/worktree preparation, task-owned non-destructive merges and cherry-picks already follow the authorized-task rules above; the grant adds standing approval only for plain commits. Explain revocation by deleting `codex-git-approval.json` from the repository's common Git directory.
 
+**Local-commit question text** — For the three-choice plain-commit question, fill these lines in order as multi-line plain text, at most 1,500 characters including the required scope disclosure above; exempt from the 6-line target; no table, no fence. Render each bullet as a separate plain line without its bullet marker. Choice descriptions repeat their scope in one line; keep the native control and the three labels above. This does not change a workflow's commit-mode or remember question.
+
+- Branch: {branch}
+- Operation: plain local commit
+- Diff: {file count}, {insertions} insertions, {deletions} deletions; files: {file names}
+- Draft subject: {subject}
+- Approve = this commit only.
+- Approve always = standing grant for verified, owned plain local commits in every worktree of this project and in later sessions; never push, force, history rewrite, discarding work, deleting unique history or auth/security changes; revoke with rm "$(git rev-parse --git-common-dir)/codex-git-approval.json".
+- Deny = skip, leave the changes.
+
 Two requests need no question: an explicit commit request is itself the approval for that commit, and a commit-summary request alone creates no commit. Claude Code applies the same rule, so both hosts treat an explicit same-turn commit request as the approval for that commit.
 
 A workflow whose own commit question already chooses among modes keeps those choices: without a grant, a mode that commits answers **Approve** for that plan and `leave unstaged` answers **Deny**. Without a grant, that workflow also asks `Remember approval for local Git in this project?` with exactly the choices `Approve always` and `This time only`, as a separate answer field in the same native control. A control with one answer field, such as the packaged `ask_user` form, asks it as its own decision right after a mode answer that commits. `Approve always` records the grant only after the chosen mode's commits complete and verify; `This time only`, `leave unstaged`, a deferred mode and an unanswered question record nothing.

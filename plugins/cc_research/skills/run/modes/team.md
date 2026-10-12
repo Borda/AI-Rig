@@ -104,13 +104,14 @@
 
 4. Assign sequential `queue_position` (1-indexed) in sorted order.
 
-5. Build queue as formatted table — shown only as the `preview` of every option of step 6's gate, never also as reply text before the call (text written before a tool call can arrive as an empty progress update, and this gate launches paid implementation agents). Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full queue table to `<RUN_DIR>/team-queue.md` first, make every option's `preview` a compact summary ending `→ full queue: <RUN_DIR>/team-queue.md`, and name that path in the question text; the summary keeps the `Total:` line and the first rows that fit. Never launch on an unseen queue — no gate call without the table or that named file:
+5. Build queue as formatted Markdown table and Write the full queue to `<RUN_DIR>/team-queue.md` first. Print it once as normal Markdown, outside code fences, as the last reply text before step 6's question call, never in an option preview. The question text carries a plain summary with the `Total:` counts, scope tiers, axis count, and `→ <RUN_DIR>/team-queue.md`, because pre-call text may arrive as an empty progress update. Never launch on an unseen queue — no gate call without the saved full table and its reply-text delivery:
 
-   ```text
-   # · Hypothesis · Axis · Scope · Expected Delta · Conf. · Agent
-   1 · Cache embeddings in forward pass · data pipeline · small · +2-4% speed · 0.90 · perf-opt
-   2 · Fuse batch-norm + conv layers · model architecture · small · +1-2% speed · 0.85 · research:scientist
-   ... · ... · ... · ... · ... · ... · ...
+   ```markdown
+   | # | Hypothesis | Axis | Scope | Expected Delta | Conf. | Agent |
+   | --- | --- | --- | --- | --- | --- | --- |
+   | 1 | Cache embeddings in forward pass | data pipeline | small | +2-4% speed | 0.90 | perf-opt |
+   | 2 | Fuse batch-norm + conv layers | model architecture | small | +1-2% speed | 0.85 | research:scientist |
+   | ... | ... | ... | ... | ... | ... | ... |
 
    Total: N hypotheses (N small, N medium, N large) across N axes
    ```
@@ -121,7 +122,7 @@ Before user gate, update `state.json` `team_mode.phase` to `"B"` — lets resume
 {"team_mode": {"phase": "B", "run_dir": "<RUN_DIR>"}}
 ```
 
-6. Present user gate via single-select `AskUserQuestion`, the queue table from step 5 as the `preview` of every option — or, over the preview cap, step 5's summary naming `<RUN_DIR>/team-queue.md`, which the question text then names too:
+6. Present user gate via single-select `AskUserQuestion` after printing the saved queue table from step 5 as the last reply text before the call. The question text carries the plain summary (total hypotheses, scope counts, axes, and `→ <RUN_DIR>/team-queue.md`) plus "Proceed with implementation?", at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout, or code fence. Options carry a label and one-line description, no previews; preserve order and keep the recommended option second:
 
    ```text
    Proceed with implementation?
@@ -269,6 +270,6 @@ After all hypotheses processed (or user stops early with Ctrl-C / user abort):
 **Resume support**: `resume` mode reads `state.json.team_mode` to determine phase:
 
 - `phase: "A"` — re-run Phase A from scratch (read-only, cheap to repeat)
-- `phase: "B"` — rebuild the queue table, re-prompt Phase B's user gate with it as the `preview` of every option (over the preview cap: rewrite `<RUN_DIR>/team-queue.md`, preview its summary, name it in the question text)
+- `phase: "B"` — rebuild the queue table, write `<RUN_DIR>/team-queue.md`, print it once as the last reply text before re-prompting Phase B's user gate; question text carries the plain counts and path, with no previews, under step 6's limits
 - `phase: "C"` — resume from `current_hypothesis + 1` (completed entries already in `team-results.jsonl`)
 - `phase: "D"` — re-generate report

@@ -264,7 +264,7 @@ Arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits
 
 Parse result:
 
-- **Blockers found** → STOP. Invoke `AskUserQuestion` with the blocker findings (one line each: claim · file:line · evidence) as the `preview` of every option, not as reply text before the call (over the preview cap — ≤2000 chars, ≤12 lines — Write them to `$DEV_DIR/blockers.md` first, preview a compact summary ending `→ full list: $DEV_DIR/blockers.md`, and name that path in the question text) — "Challenger raised N blocker(s) on the refactoring approach. How to proceed?" · (a) **Revise scope** — return to Step 1 with the blocker as a constraint · (b) **Accept risk** — proceed, record acceptance in `$DEV_DIR/checkpoint.md` · (c) **Abort**. On Abort: stop. Never proceed on prose alone.
+- **Blockers found** → STOP. Write the blocker findings (one line each: claim · file:line · evidence) to `$DEV_DIR/blockers.md` first; print them once as the last reply text before invoking `AskUserQuestion`, as normal Markdown. The question text carries the blocker count, headline and `→ $DEV_DIR/blockers.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview` — "Challenger raised N blocker(s) on the refactoring approach. How to proceed?" · (a) **Revise scope** — return to Step 1 with the blocker as a constraint · (b) **Accept risk** — proceed, record acceptance in `$DEV_DIR/checkpoint.md` · (c) **Abort**. On Abort: stop. Never proceed on prose alone.
 - **Concerns only** → surface as advisory before coverage audit; continue.
 - **No findings / all refuted** → proceed.
 

@@ -1,20 +1,19 @@
-"""Keep must-see content within Claude Code's option-preview cap, or deliver it as a named file.
+"""Keep must-see content out of option previews, and keep question text short enough for the host to show whole.
 
-Claude Code (2.1.294) shows a placeholder instead of any ``AskUserQuestion`` option preview longer than 2000 chars and
-clips a taller one to terminal rows − 26 lines, with no scroll. A skill that makes an over-cap preview the only copy
-of a report, spec, plan or queue therefore asks the user to decide on content they never saw. The rule — preview cap
-of 2000 chars and 12 lines; over it, the full content goes to a file first, every option preview carries a compact
-summary plus that path, and the question text names the file — is stated once in foundry's communication rule and at
-every skill site that carries must-see content in option previews. The workflow gate hooks enforce it
-(``report-header-table.js``).
+Tables, trees and specs render badly in ``AskUserQuestion`` option previews, the host shows only the focused option's
+preview (so options sharing one preview carry no information), and Claude Code (2.1.294) shows a placeholder instead of
+any preview longer than 2000 chars and cuts question text after 2000 chars. The contract is therefore: content the user
+must read before choosing is saved to a file and printed once as the last reply text before the question, the question
+text keeps a short plain summary (at most 1,500 chars, no table), and options carry a label plus a one-line description
+with no preview. Report-header follow-ups carry the same plain summary and deliver the table in the final reply. The
+shared hook module enforces the question-text cap and still bounds an optional preview.
 
 These checks pin:
 
-* every Claude skill or mode file carrying content in option previews states the preview cap and the question-text
-  file naming, except the listed files whose preview is short by construction or owned by another contract;
-* the shared hook module copies define the cap the rule states (2000 chars, 12 lines, a line wrapping at 86 chars);
-* every report gate hook's missing-report reason names the cap and the named-file shape;
-* foundry's communication rule (always-loaded stub and full body) states the cap and the file fallback.
+* no Claude skill or mode file instructs putting content in option previews (sentences that forbid it are fine);
+* the shared hook module copies define the question-text cap and the optional preview cap they enforce;
+* every report gate hook's missing-report reason asks for the plain question-text summary and the final-reply table;
+* foundry's communication rule (always-loaded stub and full body) states the question budget and the no-preview rule.
 """
 
 from __future__ import annotations
@@ -27,16 +26,14 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGINS_DIR = REPO_ROOT / "plugins"
 
-#: Phrases that put must-see content in option previews.
+#: Phrases that put content in option previews.
 _PREVIEW_CONTENT = re.compile(
     r"`preview` of (?:every|both)|every option's `preview`|both options' `preview`|option previews|"
-    r"every option: `preview`",
+    r"every option: `preview`|as the `preview`",
 )
 
-#: Files carrying preview content that need no cap statement, each with the reason (paths relative to ``plugins/``).
-_EXEMPT = {
-    "cc_foundry/skills/manage/modes/rename-validation.md": "file:line plus 5 context lines per hit — within the cap",
-}
+#: A sentence that forbids or removes the preview carrier instead of prescribing it.
+_FORBIDS = re.compile(r"\b(?:never|not|no|without|nor|do not|does not)\b|no `preview`", re.IGNORECASE)
 
 #: Shared hook module copies, canonical first.
 _HELPER_COPIES = (
@@ -57,74 +54,86 @@ _GATE_HOOKS = (
 )
 
 
-def _preview_files() -> list[str]:
-    """Return every Claude skill or mode file (relative to ``plugins/``) that carries content in option previews.
-
-    Examples:
-        >>> "cc_oss/skills/review/SKILL.md" in _preview_files()
-        True
-    """
-    files = sorted([*PLUGINS_DIR.glob("cc_*/skills/**/*.md"), *PLUGINS_DIR.glob("*/claude-skills/**/*.md")])
-    return [
-        path.relative_to(PLUGINS_DIR).as_posix()
-        for path in files
-        if _PREVIEW_CONTENT.search(path.read_text(encoding="utf-8"))
-    ]
-
-
 def _read(relative: str) -> str:
     """Return the text of a plugin file given its path relative to ``plugins/``."""
     return (PLUGINS_DIR / relative).read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("relative", [path for path in _preview_files() if path not in _EXEMPT])
-def test_preview_site_states_the_cap_and_the_named_file(relative: str) -> None:
-    """A file showing content in option previews states the preview cap and that the question text names the file.
+def _skill_files() -> list[str]:
+    """Return every Claude skill or mode file, relative to ``plugins/``.
 
-    Without the cap a long report, spec, plan or queue becomes a withheld or clipped preview — the user decides blind;
-    without the question-text naming, the over-cap file is easy to miss.
+    Examples:
+        >>> "cc_oss/skills/review/SKILL.md" in _skill_files()
+        True
     """
-    text = _read(relative)
-
-    assert re.search(r"preview cap", text, re.IGNORECASE), f"{relative} carries preview content without the cap"
-    assert re.search(r"question text", text, re.IGNORECASE), f"{relative} never names the file in the question text"
+    files = sorted([*PLUGINS_DIR.glob("cc_*/skills/**/*.md"), *PLUGINS_DIR.glob("*/claude-skills/**/*.md")])
+    return [path.relative_to(PLUGINS_DIR).as_posix() for path in files]
 
 
-@pytest.mark.parametrize("relative", list(_EXEMPT))
-def test_exempt_file_still_carries_preview_content(relative: str) -> None:
-    """An exemption that no longer matches preview content is stale and must be dropped from the list."""
-    assert _PREVIEW_CONTENT.search(_read(relative)), f"{relative} is exempt but carries no preview content"
+def _preview_instructions(text: str) -> list[str]:
+    """Return the lines of ``text`` that prescribe option-preview content without forbidding it.
+
+    Examples:
+        >>> _preview_instructions("Put the table as the `preview` of every option.")
+        ['Put the table as the `preview` of every option.']
+        >>> _preview_instructions("Options carry a label, no `preview`; never in every option's `preview`.")
+        []
+    """
+    return [line for line in text.splitlines() if _PREVIEW_CONTENT.search(line) and not _FORBIDS.search(line)]
+
+
+@pytest.mark.parametrize("relative", _skill_files())
+def test_no_skill_puts_content_in_option_previews(relative: str) -> None:
+    """A skill or mode file never prescribes option previews as the carrier of must-see content.
+
+    The preview shows only for the focused option and renders tables badly; the content belongs in the file printed
+    before the question, with a plain summary in the question text.
+    """
+    hits = _preview_instructions(_read(relative))
+
+    assert hits == [], f"{relative} still prescribes option-preview content: {hits}"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        pytest.param("Put the table as the `preview` of every option.", id="every-option"),
+        pytest.param("Set both options' `preview` to the plan.", id="both-options"),
+        pytest.param("Carried in option previews within the cap.", id="option-previews"),
+    ],
+)
+def test_preview_prescriptions_are_detected(line: str) -> None:
+    """Each wording that put content in previews is detected, so a regression cannot pass silently."""
+    assert _preview_instructions(line)
 
 
 @pytest.mark.parametrize("relative", _HELPER_COPIES)
-def test_hook_module_defines_the_stated_cap(relative: str) -> None:
-    """Each shipped copy of the shared hook module enforces exactly the cap the skills state."""
+def test_hook_module_defines_the_stated_caps(relative: str) -> None:
+    """Each shipped copy of the shared hook module enforces the question cap and still bounds an optional preview."""
     text = _read(relative)
 
+    assert "const QUESTION_MAX_CHARS = 1500;" in text
     assert "const PREVIEW_MAX_CHARS = 2000;" in text
     assert "const PREVIEW_MAX_LINES = 12;" in text
     assert "const PREVIEW_WRAP_COLUMNS = 86;" in text
 
 
 @pytest.mark.parametrize("relative", _GATE_HOOKS)
-def test_gate_hook_reason_names_the_cap_and_the_file_shape(relative: str) -> None:
-    """A missing-report denial names the preview cap and the over-cap shape, so the first corrected call passes."""
+def test_gate_hook_reason_asks_for_the_question_summary(relative: str) -> None:
+    """A missing-report denial asks for the plain question-text summary and the table in the final reply."""
     text = _read(relative)
 
-    assert "(2000 chars, 12 lines)" in text
-    assert "named in the question text" in text
+    assert "short plain summary" in text
+    assert "final reply" in text
+    assert "(2000 chars, 12 lines)" not in text
 
 
 @pytest.mark.parametrize("relative", ["cc_foundry/rules/communication.md", "cc_foundry/rules/_full/communication.md"])
-def test_communication_rule_states_the_cap_and_the_file_fallback(relative: str) -> None:
-    """The always-loaded rule and its full body both state the cap numbers, the wrap width and the named-file fallback.
-
-    The hook counts a line over 86 chars as wrapped rows; a rule silent on that width lets a model build 12 wide lines
-    that the hook then denies.
-    """
+def test_communication_rule_states_the_question_budget(relative: str) -> None:
+    """The always-loaded rule and its full body both state the question budget and the no-preview default."""
     text = _read(relative)
 
-    assert "2000 chars" in text
-    assert "12 lines" in text
-    assert "86 chars" in text
-    assert re.search(r"name the file in the question text|question text names the file", text)
+    assert "6 plain lines" in text
+    assert "hard cap 1,500" in text
+    assert "never table/tree in option `preview`" in text
+    assert re.search(r"no preview by default|Options: label \+ one-line effect; no preview by default", text)

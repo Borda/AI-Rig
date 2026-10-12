@@ -27,3 +27,23 @@ Always-on constraints (apply even without reading full rule):
 - Never `git add -A` / `git add .` (stage by name); never `--no-verify`; never `--no-gpg-sign` unless user asks
 - Force-push (`-f`/`--force`/`--force-with-lease`) forbidden on ANY branch, always — hook-enforced + `.claude/settings.json` deny-listed, no override; regular `git push` requires explicit AskUserQuestion confirmation every time, even from inside a skill workflow (no skill exemption, unlike commit) and even under a local Git approval grant — header `git-push`, options exactly `Approve` / `Deny`, the question showing branch, target and the command; the user's `Approve` lets foundry's hook record a single-use token (`claude-push-approval.json`, 15 min) for one push of this branch at this HEAD to a configured remote, remote and branch written out (a delete, prune, tags, other ref, URL or variable target the user runs by hand), that `commit-guard.js` spends on that push as the only git write in its Bash command — never create or edit the token yourself, no auto-arm; `lfs push` is a push too; `subtree push`, `send-pack`, `http-push` the user runs by hand
 - History safety: prefer `git revert` over `reset --hard`; prefer merge commits over rebase
+
+**git-approve question text** — Fill these lines in order as multi-line plain text, at most 1,500 characters; exempt from the 6-line target; no table, no fence. Render each bullet as a separate plain line without its bullet marker. Option descriptions repeat their scope in one line; the `Approve always` description must still name `claude-git-approval.json` and its revocation command, or the hook records nothing.
+
+- Branch: {branch}
+- Operation: plain local commit
+- Diff: {file count}, {insertions} insertions, {deletions} deletions; files: {file names}
+- Draft subject: {subject}
+- Approve = this commit only.
+- Approve always = standing grant for verified, owned plain local commits in every worktree of this project and in later sessions; never push, force, history rewrite, discarding work, deleting unique history or auth/security changes; revoke with rm "$(git rev-parse --git-common-dir)/claude-git-approval.json".
+- Deny = skip, leave the changes.
+
+**git-push question text** — Fill these lines in order as multi-line plain text, at most 1,500 characters; exempt from the 6-line target; no table, no fence. Render each bullet as a separate plain line without its bullet marker; the current branch must appear verbatim. Option descriptions repeat their scope in one line; retain header `git-push` and options exactly `Approve` / `Deny`.
+
+- Branch: {branch}; HEAD: {HEAD}
+- Target remote: {configured remote name}
+- Commits: {count}; subjects (up to 5): {subjects}
+- Command: {exact command}
+- Approve = one push of this branch at this HEAD to this remote; token valid 15 minutes.
+- Not covered: force, delete, tags, other refs, other remotes, URLs.
+- Deny = skip this push.

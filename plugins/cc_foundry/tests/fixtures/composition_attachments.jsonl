@@ -1,0 +1,12 @@
+{"type":"attachment","attachment":{"type":"instructions","content":"café"}}
+{"type":"attachment","attachment":{"type":"instructions","content":[{"type":"text","text":"rule"}]}}
+{"type":"attachment","attachment":{"type":"nested_memory","content":"memory"}}
+{"type":"user","message":{"role":"user","content":"inspect"}}
+{"type":"attachment","attachment":{"type":"hook_additional_context","hookEvent":"UserPromptSubmit","content":"one"}}
+{"type":"attachment","attachment":{"type":"hook_additional_context","hookEvent":"UserPromptSubmit","content":"second"}}
+{"type":"attachment","attachment":{"type":"hook_additional_context","hookEvent":"PreToolUse","content":"é"}}
+{"type":"assistant","message":{"id":"call-a","model":"claude-opus-5","usage":{"input_tokens":10},"content":[]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"other-tool","content":"abcd"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"continue"}]}}
+{"type":"attachment","attachment":{"type":"hook_additional_context","hookEvent":"UserPromptSubmit","content":"next"}}
+{"type":"assistant","message":{"id":"call-b","model":"claude-opus-5","usage":{"input_tokens":20},"content":[]}}

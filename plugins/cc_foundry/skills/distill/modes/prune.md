@@ -68,7 +68,7 @@ Return ONLY (one TSV line per section, no prose):
 PROJECT:<slug>  #:<n>  Section:<name>  Usage:<tier>  Impact:<tier>  Tier:P<n>  Action:<keep|drop|trim|→ rule>
 ```
 
-Collect responses from all projects. Assign sequential `#` IDs across all projects. Print one consolidated scored table (all projects, `#` as primary sort):
+Collect responses from all projects. Assign sequential `#` IDs across all projects. Build one consolidated scored table (all projects, `#` as primary sort) with the legend below; save and print it at P-eager-2:
 
 - **Usage likelihood**: High = needed every session · Moderate = occasional · Low = rare/one-off
 - **Impact if missing**: High = wrong behavior without it · Moderate = degraded output · Low = no effect
@@ -93,7 +93,7 @@ Legend:
   Action — "→ rule" entries can be promoted to rules/*.md then dropped from memory
 ```
 
-**P-eager-2**: Call `AskUserQuestion` tool — do NOT write question as plain text:
+**P-eager-2**: Write the full scored table and legend to `.temp/distill/prune/scored.md` first; it is printed once, rendered as normal Markdown, as the last reply text before the question call. Call `AskUserQuestion` tool — do NOT write question as plain text. The question text carries the prune headline, counts by tier, project count and `→ .temp/distill/prune/scored.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
 
 - question: "Which entries to prune? Select tier or type item numbers (e.g. 2, 4, 7)."
 - (a) label: `All P2` — description: drop all tier-P2 entries; apply `→ rule` conversions as proposals
@@ -147,7 +147,7 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 
 **P1**: Read all memory files (parallel for 2+ files). Analyse each for stale, redundant, and verbose entries.
 
-**P2**: Build consolidated proposed prune report across all projects — the `preview` of every P3 option, not reply text before the call (text written before a tool call can arrive as an empty progress update). Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full report to `.temp/distill/prune/proposals.md` first, make every option's `preview` a compact summary ending `→ full report: .temp/distill/prune/proposals.md`, and name that path in the question text:
+**P2**: Build consolidated proposed prune report across all projects and Write it to `.temp/distill/prune/proposals.md` first; it is printed once, rendered as normal Markdown, as the last reply text before the P3 question call. The question text carries the prune headline, project count, Drop/Trim counts and `→ .temp/distill/prune/proposals.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping. Report format:
 
 ```text
 Prune proposals (apply manually unless explicitly approved below):
@@ -160,7 +160,7 @@ Prune proposals (apply manually unless explicitly approved below):
   ...
 ```
 
-**P3**: Call `AskUserQuestion`, the P2 prune report as every option's `preview` — do NOT write question as plain text. Map options directly into tool call:
+**P3**: Call `AskUserQuestion`, with the plain P2 prune summary in the question text and no `preview` — do NOT write question as plain text. Map options directly into tool call:
 
 - question: "Apply prune edits across all N project memory files?"
 - (a) label: `Apply now` — description: apply all proposals to all memory files in parallel

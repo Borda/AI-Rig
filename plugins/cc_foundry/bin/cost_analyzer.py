@@ -70,6 +70,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
+from _context_composition import DEFAULT_RUNTIME, run_composition
+
+#: Default Claude transcript root; Codex composition uses its own default unless --projects-root is given.
+CLAUDE_PROJECTS_ROOT = "~/.claude/projects"
 #: 5-minute cache-write price as a multiple of the base input rate — the same for every model.
 CACHE_WRITE_5M_MULTIPLIER = 1.25
 #: 1-hour cache-write price as a multiple of the base input rate — the same for every model.
@@ -156,7 +160,8 @@ UNKNOWN_RATE = Rate(*(max(column) for column in zip(*_ALL_RATES)))
 
 #: Parses ``claude-<family>-<major>[-<minor>]``; a 1-2 digit minor keeps a date suffix from reading as one.
 #: The older ``claude-3-5-haiku-...`` word order never matches — those retired ids price at :data:`UNKNOWN_RATE`.
-MODEL_ID_RE = re.compile(r"claude-(?P<family>[a-z]+)-(?P<major>\d+)(?:-(?P<minor>\d{1,2})(?!\d))?")
+# Bounded major digits keep a transcript-controlled id from overflowing int conversion; longer runs do not match.
+MODEL_ID_RE = re.compile(r"claude-(?P<family>[a-z]+)-(?P<major>\d{1,3})(?!\d)(?:-(?P<minor>\d{1,2})(?!\d))?")
 
 
 def _version(key: str) -> tuple[int, ...]:
@@ -177,6 +182,12 @@ LATEST_BY_FAMILY: dict[str, str] = {
 
 #: Matches a ``<command-name>`` marker in a transcript line, capturing the slash command name.
 COMMAND_RE = re.compile(r"<command-name>([^<]+)</command-name>")
+#: Usage counters the cost and context paths sum; a non-integer value would crash that accounting.
+USAGE_COUNTERS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+#: Upper bound far beyond any real request; larger counters cannot be genuine and overflow float arithmetic.
+MAX_TOKEN_COUNT = 10**12
+#: Cache-write duration counters read from ``usage.cache_creation``.
+CACHE_SPLIT_COUNTERS = ("ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens")
 
 
 def parse_since(spec: str) -> float:
@@ -491,10 +502,71 @@ def _extract_timestamp(row: dict, ts_first: float, ts_last: float) -> tuple[floa
     return min(ts_first, ts), max(ts_last, ts)
 
 
+def _is_count(value: object) -> bool:
+    """Accept only bounded non-negative integer token counters, rejecting booleans and floats."""
+    return type(value) is int and 0 <= value <= MAX_TOKEN_COUNT
+
+
+def row_shape_error(row: object) -> str | None:
+    """Name the first malformed field a transcript row carries, or ``None`` when every field read here is well-typed.
+
+    Rows are rejected whole before any accounting reads them, so a skipped row never leaves partial state behind.
+
+    Examples:
+        >>> row_shape_error({"timestamp": "2030-01-01T00:00:00Z", "message": {"usage": {"input_tokens": 1}}}) is None
+        True
+        >>> row_shape_error({"message": "text"})
+        'message must be an object'
+        >>> row_shape_error({"message": {"usage": {"input_tokens": "1"}}})
+        'usage counters must be non-negative integers'
+    """
+    if not isinstance(row, dict):
+        return "row must be an object"
+    if row.get("timestamp") is not None and not isinstance(row["timestamp"], str):
+        return "timestamp must be a string"
+    message = row.get("message")
+    if message is None:
+        return None
+    if not isinstance(message, dict):
+        return "message must be an object"
+    for key in ("id", "model"):
+        if message.get(key) is not None and not isinstance(message[key], str):
+            return f"message.{key} must be a string"
+    content = message.get("content")
+    if content is not None and not isinstance(content, (str, list)):
+        return "message.content must be a string or list"
+    if isinstance(content, list) and any(
+        isinstance(block, dict)
+        and block.get("type") == "tool_use"
+        and "name" in block
+        and not isinstance(block["name"], str)
+        for block in content
+    ):
+        return "tool_use.name must be a string"
+    usage = message.get("usage")
+    if usage is None:
+        return None
+    if not isinstance(usage, dict):
+        return "message.usage must be an object"
+    # Null counters are valid in the Messages API schema and mean "none recorded".
+    if any(usage.get(key) is not None and not _is_count(usage[key]) for key in USAGE_COUNTERS):
+        return "usage counters must be non-negative integers"
+    split = usage.get("cache_creation")
+    if split is not None and (
+        not isinstance(split, dict)
+        or any(split.get(key) is not None and not _is_count(split[key]) for key in CACHE_SPLIT_COUNTERS)
+    ):
+        return "usage.cache_creation must hold non-negative integer counters"
+    return None
+
+
 def _row_to_call(row: dict, existing: dict[str, Call]) -> Call | None:
     """Build a :class:`Call` from one JSONL row, or ``None`` if it carries no new usage."""
     message = row.get("message") or {}
-    usage = message.get("usage") or {}
+    # Drop null counters so every ``usage.get(key, 0)`` sum treats them as zero.
+    usage = {key: value for key, value in (message.get("usage") or {}).items() if value is not None}
+    if isinstance(usage.get("cache_creation"), dict):
+        usage["cache_creation"] = {key: value for key, value in usage["cache_creation"].items() if value is not None}
     if not usage:
         return None
     message_id = message.get("id") or f"anon-{len(existing)}"
@@ -521,13 +593,18 @@ def _parse_rows(path: Path) -> tuple[dict[str, Call], dict[str, int], float, flo
     ts_first, ts_last = float("inf"), 0.0
 
     with path.open(encoding="utf-8", errors="replace") as handle:
-        for line in handle:
+        for number, line in enumerate(handle, 1):
             if "<command-name>" in line:
                 for name in COMMAND_RE.findall(line):
                     commands[name] = commands.get(name, 0) + 1
             try:
                 row = json.loads(line)
-            except json.JSONDecodeError:
+            # ValueError also covers integers past the interpreter's digit limit; RecursionError covers deep nesting.
+            except (ValueError, RecursionError):
+                continue
+            error = row_shape_error(row)
+            if error:
+                sys.stderr.write(f"warning: malformed row at {path}:{number}; skipped ({error})\n")
                 continue
             ts_first, ts_last = _extract_timestamp(row, ts_first, ts_last)
             call = _row_to_call(row, calls)
@@ -543,9 +620,13 @@ def _load_agent_spend(jf: Path, sub_calls: dict[str, Call]) -> AgentSpend:
     if meta_path.exists():
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            agent_type = meta.get("agentType") or "?"
-            desc = meta.get("description") or ""
-        except (json.JSONDecodeError, OSError):
+            # Sidecar metadata is optional evidence; anything but string fields keeps the placeholders.
+            if isinstance(meta, dict):
+                if isinstance(meta.get("agentType"), str) and meta["agentType"]:
+                    agent_type = meta["agentType"]
+                if isinstance(meta.get("description"), str):
+                    desc = meta["description"]
+        except (ValueError, RecursionError, OSError):
             pass
     spend = sum(cost(c.usage, c.model) for c in sub_calls.values())
     return AgentSpend(agent_type, desc, len(sub_calls), spend)
@@ -829,12 +910,29 @@ def render_window(sessions: list[Session], *, top_n: int, since_spec: str) -> li
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the cost and context-composition command-line interface."""
     p = argparse.ArgumentParser(description="Session token/cost analyzer.")
-    p.add_argument("--projects-root", default="~/.claude/projects")
+    p.add_argument(
+        "--projects-root",
+        default=None,
+        help="Transcript root override; defaults to ~/.claude/projects or $CODEX_HOME/sessions (~/.codex/sessions)",
+    )
     p.add_argument("--since", default="24h", help="Window: NNs|NNm|NNh|NNd")
     p.add_argument("--session-id", default=None, help="Full id or prefix; drills into one session")
     p.add_argument("--top-n", type=int, default=10)
     p.add_argument("--output", default=None)
+    p.add_argument("--composition", action="store_true", help="Report context composition per transcript window")
+    p.add_argument(
+        "--compactions-log",
+        default="~/.claude/logs/compactions.jsonl",
+        help="Claude composition event log (default: ~/.claude/logs/compactions.jsonl)",
+    )
+    p.add_argument(
+        "--runtime",
+        choices=("claude", "codex"),
+        default=DEFAULT_RUNTIME,
+        help="Transcript runtime; Codex is token-only composition. This tool ships in the Claude foundry plugin",
+    )
     return p
 
 
@@ -891,7 +989,8 @@ def _write_report(lines: list[str], output: str | None) -> Path:
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
         out = Path(f".reports/profile/{stamp}/cost.md")
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(report, encoding="utf-8")
+    # Transcript-controlled labels may carry lone surrogates; replace them rather than lose the whole report.
+    out.write_text(report, encoding="utf-8", errors="replace")
     return out
 
 
@@ -901,9 +1000,13 @@ def main(argv: list[str] | None = None) -> int:
     Writes a markdown ``## Tokens & cost`` section to ``--output``.
     """
     args = _build_parser().parse_args(argv)
-    root = Path(args.projects_root).expanduser()
+    root = Path(args.projects_root or CLAUDE_PROJECTS_ROOT).expanduser()
 
-    result = _run_session_mode(root, args) if args.session_id else _run_window_mode(root, args)
+    if args.composition or args.runtime != DEFAULT_RUNTIME:
+        explicit_root = args.projects_root is not None
+        result = run_composition(root, args, sys.modules[__name__], projects_root_explicit=explicit_root)
+    else:
+        result = _run_session_mode(root, args) if args.session_id else _run_window_mode(root, args)
     if isinstance(result, int):
         return result
 

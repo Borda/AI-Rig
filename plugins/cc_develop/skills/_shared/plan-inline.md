@@ -11,8 +11,8 @@
    - Risks: [RISK_FOCUS] — filled by calling skill context below
    - Approach: ordered steps with clear checkpoints
    - Write to `.plans/active/plan-<slug>-$(date -u +%Y-%m-%dT%H-%M-%SZ).md` where slug = first 4 words of task/goal
-3. Build the plan summary (first 10 lines of plan) — it goes in step 4's question, not as reply text before it (text written before a tool call can arrive as an empty progress update)
-4. Invoke `AskUserQuestion` with the plan summary as the `preview` of every option — within the preview cap (≤2000 chars, ≤12 lines; Claude Code withholds or clips a larger preview), so shorten long lines, and end it with `→ full plan: <path>`; the question text names that same plan path:
+3. Build a short plain summary from the saved plan: counts, headline and `→ full plan: <path>`; print the saved plan once as the last reply text before step 4's question, as normal Markdown. Never put the plan in option previews.
+4. Invoke `AskUserQuestion` with that summary in the question text, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Each option carries its label and a one-line description, no `preview`:
    - (a) **Proceed** — [PROCEED_TEXT]
    - (b) **Stop** — review/edit plan at `<path>` before continuing; re-invoke with `--plan <path>` when ready
    - (c) **Abort** — cancel

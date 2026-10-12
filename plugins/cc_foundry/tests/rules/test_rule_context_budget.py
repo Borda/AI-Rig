@@ -34,7 +34,10 @@ EAGER_GLOBS = frozenset({"**", "**/*"})
 # injected git-commit.md before that rule arrives. Raised again from 59464: the gh-write approval
 # question (public-github.md) must be seen before the first gh write, which no hook injects a
 # rule for, and untrusted-content.md states that free gh reads stay data.
-EAGER_BUDGET_BYTES = 59990
+# Raised from 59990 by 995 bytes: the gh-write question now lists approval scope and expiry,
+# with the body summary and exact command visible before approval. It must remain eager
+# because no hook injects this rule before the first write; a lazy home misses that decision.
+EAGER_BUDGET_BYTES = 60985
 #: Rules ``hooks/rule-inject.js`` injects on their activity; eager loading would duplicate them.
 HOOK_INJECTED_RULES = ("agent-spawn.md", "git-commit.md")
 

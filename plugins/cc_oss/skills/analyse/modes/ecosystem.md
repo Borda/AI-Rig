@@ -55,7 +55,7 @@ echo "[analyse] report → $REPORT_FILE"
 
 Write full report to `$REPORT_FILE` (echoed above) via Write tool — **no full analysis to terminal**.
 
-**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md Step 6a's follow-up question while `$REPORT_FILE` missing/empty. Denial `oss:analyse report gate` = write never happened — write report, render header block into the Step 6a option previews, re-issue question. Hook also checks matching header table in those previews within the preview cap (≤2000 chars, ≤12 lines) — over it, SKILL.md Step 6a's compact summary naming `$REPORT_FILE`, the question text naming it too; step below builds it.
+**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md Step 6a's follow-up while `$REPORT_FILE` is missing/empty. Denial `oss:analyse report gate` = the write never produced the report — write it, put its path and `Title`, `Outcome` values in the question text as a short plain summary, then re-issue the question. The full matching header table is required in the final reply after the answer; build it below, never put it in an option `preview`.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -64,7 +64,7 @@ IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/analyse-oss-shared-${CSID}" 2>/dev/n
 cat "$_OSS_SHARED/terminal-summaries.md"  # timeout: 5000
 ```
 
-Compact terminal summary template (loaded above). File absent → warn: "run /foundry:setup — printing plain terminal output instead." Use **Ecosystem Impact Summary** template. Replace `[skill-specific path]` with `$REPORT_FILE`. Terminal block: `---` own line, entity line next, `→ saved to <path>` at end, `---` close. Build delivery block: lines 1–6 of report file rendered as `Field | Value` table, append `→ saved to <path>`. Report already has block — no separate prepend. Not printed here — delivered once per SKILL.md Step 6a (option previews; `REPLY_MODE=true` → final reply).
+Compact terminal summary template (loaded above). File absent → warn: "run /foundry:setup — printing plain terminal output instead." Use **Ecosystem Impact Summary** template. Replace `[skill-specific path]` with `$REPORT_FILE`. Terminal block: `---` own line, entity line next, `→ saved to <path>` at end, `---` close. Build delivery block: lines 1–6 of report file rendered as `Field | Value` table, append `→ saved to <path>`. Report already has block — no separate prepend. Not printed here — delivered once in the final reply after the answer per SKILL.md Step 6a (`REPLY_MODE=true` → final reply after Step 7's last tool call).
 
 </workflow>
 

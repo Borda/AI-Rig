@@ -171,22 +171,28 @@ def _lock_file(tmpdir: Path, proj: str) -> Path:
     return tmpdir / f"codemap-refresh-{proj}"
 
 
-def _session_flag(tmpdir: Path, proj: str, runtime: str = "claude") -> Path:
-    """Return the per-runtime preamble-deduplication flag path.
+def _session_flag(tmpdir: Path, proj: str, runtime: str = "claude", session: str = "shared") -> Path:
+    """Return the per-session preamble-deduplication flag path.
 
     >>> _session_flag(Path("tmp"), "demo", "codex").name
-    'codemap-preamble-demo-codex'
+    'codemap-preamble-demo-codex-shared'
     """
-    return tmpdir / f"codemap-preamble-{proj}-{runtime}"
+    return tmpdir / f"codemap-preamble-{proj}-{runtime}-{session}"
 
 
-def _stale_flag(tmpdir: Path, proj: str, runtime: str = "claude") -> Path:
-    """Return the per-runtime stale-index sentinel path.
+def _stale_flag(tmpdir: Path, proj: str, runtime: str = "claude", session: str = "shared") -> Path:
+    """Return the per-session stale-index sentinel path.
 
     >>> _stale_flag(Path("tmp"), "demo").name
-    'codemap-stale-demo-claude'
+    'codemap-stale-demo-claude-shared'
     """
-    return tmpdir / f"codemap-stale-{proj}-{runtime}"
+    return tmpdir / f"codemap-stale-{proj}-{runtime}-{session}"
+
+
+def _write_stale_flag(path: Path, git_sha: str, *, expired: bool = False, currency: str = "stale") -> None:
+    """Seed a stale notice record with a controlled age and index state."""
+    timestamp = int(time.time() * 1000) - (_SESSION_TTL_MS + 60_000 if expired else 0)
+    path.write_text(json.dumps([timestamp, git_sha, currency]), encoding="utf-8")
 
 
 def _session_marker(repo: Path, runtime: str = "claude") -> Path:
@@ -265,6 +271,94 @@ def _run_inject_with_event(
 
 class TestInjectPreambleCurrency:
     """Currency classification and the once-per-session emit gate."""
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("runtime", ["claude", "codex"])
+    @pytest.mark.parametrize(
+        ("identity", "token"),
+        [
+            pytest.param("", "shared", id="empty-identity"),
+            pytest.param("session.a/b\\c: d?é", "session_a_b_c__d__", id="unsafe-identity"),
+        ],
+    )
+    def test_prompt_sentinels_use_safe_session_suffix(
+        self, tmp_path: Path, runtime: str, identity: str, token: str
+    ) -> None:
+        """All prompt sentinels stay in the temp directory with the sanitized terminal suffix."""
+        repo = tmp_path / "proj"
+        _init_repo(repo)
+        (repo / "pyproject.toml").write_text("")
+        idx_dir = tmp_path / "idx"
+        index_path = _write_index(idx_dir, repo.name, git_sha="0" * 40)
+        plugin_root = _fake_plugin_root(tmp_path, with_scan_bin=False, marker=tmp_path / "unused")
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+        event = {"thread_id" if runtime == "codex" else "session_id": identity}
+
+        stale = _run_inject_with_event(repo, idx_dir, plugin_root, tmpdir, event, runtime=runtime)
+        assert stale.returncode == 0, stale.stderr
+        assert "Prefer `codemap-py query`" in stale.stdout
+        assert _stale_flag(tmpdir, repo.name, runtime, token).is_file()
+        assert _session_flag(tmpdir, repo.name, runtime, token).is_file()
+        assert json.loads(_session_marker(repo, runtime).read_text())["session_id"] == identity
+        index_path.unlink()
+        missing = _run_inject_with_event(repo, idx_dir, plugin_root, tmpdir, event, runtime=runtime)
+        assert missing.returncode == 0, missing.stderr
+        assert "No structural index" in missing.stdout
+        assert (tmpdir / f"codemap-noindex-{repo.name}-{runtime}-{token}").is_file()
+        assert all(path.is_file() for path in tmpdir.iterdir())
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("runtime", ["claude", "codex"])
+    def test_missing_index_is_once_per_session_with_existing_ttl(self, tmp_path: Path, runtime: str) -> None:
+        """Each session gets one bootstrap directive, re-emitted only after its existing TTL."""
+        repo = tmp_path / "proj"
+        _init_repo(repo)
+        (repo / "pyproject.toml").write_text("")
+        idx_dir = tmp_path / "idx"
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+        for session in ("session-a", "session-b"):
+            event = {"session_id": session}
+            first = _run_inject_with_event(repo, idx_dir, tmp_path / "plugin", tmpdir, event, runtime=runtime)
+            assert first.returncode == 0, first.stderr
+            assert "ACTION (ask once):" in first.stdout
+            flag = tmpdir / f"codemap-noindex-{repo.name}-{runtime}-{session}"
+            stamped = flag.read_text()
+            repeated = _run_inject_with_event(repo, idx_dir, tmp_path / "plugin", tmpdir, event, runtime=runtime)
+            assert repeated.returncode == 0, repeated.stderr
+            assert repeated.stdout == ""
+            assert flag.read_text() == stamped
+            flag.write_text(str(int(time.time() * 1000) - _INJECT_MODULE.NOINDEX_TTL_MS - 60_000))
+            expired = _run_inject_with_event(repo, idx_dir, tmp_path / "plugin", tmpdir, event, runtime=runtime)
+            assert expired.returncode == 0, expired.stderr
+            assert expired.stdout == first.stdout
+            assert int(flag.read_text()) > int(stamped) - 1
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("runtime", ["claude", "codex"])
+    def test_current_preamble_is_per_session_and_reemits_after_ttl(self, tmp_path: Path, runtime: str) -> None:
+        """Current indexes retain full preamble re-emission and silence within each session's TTL."""
+        repo = tmp_path / "proj"
+        head = _init_repo(repo)
+        idx_dir = tmp_path / "idx"
+        _write_index(idx_dir, repo.name, git_sha=head)
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+        for session in ("session-a", "session-b"):
+            event = {"session_id": session}
+            first = _run_inject_with_event(repo, idx_dir, tmp_path / "plugin", tmpdir, event, runtime=runtime)
+            assert first.returncode == 0, first.stderr
+            assert "Prefer `codemap-py query`" in first.stdout
+            repeated = _run_inject_with_event(repo, idx_dir, tmp_path / "plugin", tmpdir, event, runtime=runtime)
+            assert repeated.returncode == 0, repeated.stderr
+            assert repeated.stdout == ""
+            _session_flag(tmpdir, repo.name, runtime, session).write_text(
+                str(int(time.time() * 1000) - _SESSION_TTL_MS - 60_000)
+            )
+            expired = _run_inject_with_event(repo, idx_dir, tmp_path / "plugin", tmpdir, event, runtime=runtime)
+            assert expired.returncode == 0, expired.stderr
+            assert expired.stdout == first.stdout
 
     @pytest.mark.integration
     @pytest.mark.parametrize("runtime", ["claude", "codex"])
@@ -760,10 +854,11 @@ class TestInjectPreambleRefreshFingerprint:
 
     @staticmethod
     def _complete_refresh(index_path: Path, tmpdir: Path, proj: str) -> None:
-        """Wait for the spawned stub to mark its record published, then let the refresh lock expire."""
+        """Wait for publication and expire the refresh lock and notice so refresh notes are observable."""
         (record,) = tmpdir.glob(f"codemap-refresh-fp-{proj}-*")
         assert _await_marker_content(record, "published")
         _lock_file(tmpdir, proj).write_text(str(int(time.time() * 1000) - _LOCK_TTL_MS - 60_000))
+        _write_stale_flag(_stale_flag(tmpdir, proj), json.loads(index_path.read_text())["git_sha"], expired=True)
 
     def test_unchanged_dirty_tree_spawns_one_refresh(self, tmp_path: Path) -> None:
         """A second prompt on the same dirty tree reports the skip and never takes the lock again.
@@ -822,6 +917,7 @@ class TestInjectPreambleRefreshFingerprint:
         later_ns = time.time_ns() + 5_000_000_000
         os.utime(index_path, ns=(later_ns, later_ns))
         _lock_file(tmpdir, repo.name).write_text(str(int(time.time() * 1000) - _LOCK_TTL_MS - 60_000))
+        _write_stale_flag(_stale_flag(tmpdir, repo.name), json.loads(index_path.read_text())["git_sha"], expired=True)
 
         result = _run_inject(repo, idx_dir, plugin_root, tmpdir)
 
@@ -1207,7 +1303,7 @@ class TestInjectPreambleSessionMarker:
         tmpdir = tmp_path / "tmp"
         tmpdir.mkdir()
         # Pre-seed a fresh session flag so the current-index turn dedups to a silent exit.
-        _session_flag(tmpdir, repo.name).write_text(str(int(time.time() * 1000)))
+        _session_flag(tmpdir, repo.name, session="sid-dedup").write_text(str(int(time.time() * 1000)))
 
         first = _run_inject_with_event(repo, idx_dir, plugin_root, tmpdir, {"prompt": "hi", "session_id": "sid-dedup"})
         first_ts = json.loads(_session_marker(repo).read_text())["ts"]
@@ -1289,14 +1385,7 @@ class TestInjectPreambleSessionMarker:
 
 
 class TestInjectPreambleStaleCollapse:
-    """The once-per-session full stale notice collapses to a single line thereafter.
-
-    A separate sentinel (``codemap-stale-<proj>``, distinct from the preamble flag)
-    tracks the stale-reminder dedup: the first still-stale prompt emits the full notice on two lines and writes the
-    sentinel; every later still-stale prompt within
-    SESSION_TTL_MS collapses to one line ``[codemap] index stale<refreshNote>`` and
-    exits before the module-count parse. Currency paths other than stale are untouched.
-    """
+    """Suppress repeated stale notices until their index state changes or their TTL expires."""
 
     def _stale_repo(self, tmp_path: Path) -> tuple[Path, Path, str]:
         """Build a repo whose committed HEAD differs from the indexed sha (→ stale)."""
@@ -1322,15 +1411,69 @@ class TestInjectPreambleStaleCollapse:
         assert "modules" in result.stdout
         assert _stale_flag(tmpdir, proj).exists(), "the stale sentinel must be written on the full notice"
 
-    def test_second_stale_collapses_to_single_line(self, tmp_path: Path) -> None:
-        """A fresh stale sentinel collapses the notice to one line with no second body line."""
+    @pytest.mark.integration
+    @pytest.mark.parametrize("runtime", ["claude", "codex"])
+    def test_expired_unchanged_stale_reemits_full_preamble(self, tmp_path: Path, runtime: str) -> None:
+        """An unchanged stale state re-delivers query context after the reminder TTL."""
+        repo, idx_dir, proj = self._stale_repo(tmp_path)
+        plugin_root = _fake_plugin_root(tmp_path, with_scan_bin=False, marker=tmp_path / "unused")
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+        first = _run_inject(repo, idx_dir, plugin_root, tmpdir, runtime=runtime)
+        assert first.returncode == 0, first.stderr
+        assert "Prefer `codemap-py query`" in first.stdout
+        flag = _stale_flag(tmpdir, proj, runtime)
+        _write_stale_flag(flag, "0" * 40, expired=True)
+
+        repeated = _run_inject(repo, idx_dir, plugin_root, tmpdir, runtime=runtime)
+
+        assert repeated.returncode == 0, repeated.stderr
+        assert "Prefer `codemap-py query`" in repeated.stdout
+        assert "modules" in repeated.stdout
+        assert json.loads(flag.read_text())[0] > int(time.time() * 1000) - _SESSION_TTL_MS
+        quiet = _run_inject(repo, idx_dir, plugin_root, tmpdir, runtime=runtime)
+        assert quiet.returncode == 0, quiet.stderr
+        assert quiet.stdout == ""
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("runtime", ["claude", "codex"])
+    def test_current_clears_stale_state_before_suppressed_preamble(self, tmp_path: Path, runtime: str) -> None:
+        """A current index resets stale dedup even when its current preamble is suppressed."""
+        repo = tmp_path / "proj"
+        head = _init_repo(repo)
+        idx_dir = tmp_path / "idx"
+        _write_index(idx_dir, repo.name, git_sha=head)
+        plugin_root = _fake_plugin_root(tmp_path, with_scan_bin=False, marker=tmp_path / "unused")
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+        source = repo / "a.py"
+        source.write_text("def f():\n    return 2\n")
+        first = _run_inject(repo, idx_dir, plugin_root, tmpdir, runtime=runtime)
+        assert first.returncode == 0, first.stderr
+        assert "Prefer `codemap-py query`" in first.stdout
+        flag = _stale_flag(tmpdir, repo.name, runtime)
+        assert json.loads(flag.read_text())[1:] == [head, "stale"]
+
+        source.write_text("def f():\n    return 1\n")
+        current = _run_inject(repo, idx_dir, plugin_root, tmpdir, runtime=runtime)
+        assert current.returncode == 0, current.stderr
+        assert current.stdout == ""
+        assert not flag.exists()
+
+        source.write_text("def f():\n    return 2\n")
+        stale = _run_inject(repo, idx_dir, plugin_root, tmpdir, runtime=runtime)
+        assert stale.returncode == 0, stale.stderr
+        assert "Prefer `codemap-py query`" in stale.stdout
+        assert json.loads(flag.read_text())[1:] == [head, "stale"]
+
+    def test_changed_stale_collapses_to_single_line(self, tmp_path: Path) -> None:
+        """A changed stale record emits one line within TTL and suppresses subsequent unchanged prompts."""
         repo, idx_dir, proj = self._stale_repo(tmp_path)
         marker = tmp_path / "spawned.marker"
         plugin_root = _fake_plugin_root(tmp_path, with_scan_bin=True, marker=marker)
         tmpdir = tmp_path / "tmp"
         tmpdir.mkdir()
-        # Pre-seed a fresh stale sentinel so the reminder collapses immediately.
-        _stale_flag(tmpdir, proj).write_text(str(int(time.time() * 1000)))
+        _write_stale_flag(_stale_flag(tmpdir, proj), "1" * 40)
         # Pre-seed a fresh refresh lock so the note reads "refresh in progress" deterministically.
         _lock_file(tmpdir, proj).write_text(str(int(time.time() * 1000)))
 
@@ -1341,13 +1484,20 @@ class TestInjectPreambleStaleCollapse:
         assert lines == ["[codemap] index stale - refresh in progress"]
         # Collapsed form exits before the module-count parse — no second "Prefer" line.
         assert "Prefer `codemap-py query`" not in result.stdout
+        stamped = _stale_flag(tmpdir, proj).read_text()
+        assert json.loads(stamped)[0] > int(time.time() * 1000) - _SESSION_TTL_MS
+        for _ in range(3):
+            repeated = _run_inject(repo, idx_dir, plugin_root, tmpdir)
+            assert repeated.returncode == 0, repeated.stderr
+            assert repeated.stdout == ""
+            assert _stale_flag(tmpdir, proj).read_text() == stamped
 
     def test_collapsed_line_refresh_pending_when_no_note(self, tmp_path: Path) -> None:
         """When neither spawn nor lock produced a note, the collapsed line reads 'refresh pending'.
 
-        A stale-but-non-git currency cannot occur here, so drive the note-less path by pre-seeding the stale sentinel
+        A stale-but-non-git currency cannot occur here, so change the stale state key within TTL
         while removing the scan bin AND holding no lock — the hook takes the lock, finds no scan bin, releases it, and
-        emits no note. The collapsed reminder then supplies its own ' · refresh pending' default.
+        emits no note. The collapsed reminder then supplies its own ' - refresh pending' default.
         """
         repo, idx_dir, proj = self._stale_repo(tmp_path)
         marker = tmp_path / "spawned.marker"
@@ -1355,7 +1505,7 @@ class TestInjectPreambleStaleCollapse:
         plugin_root = _fake_plugin_root(tmp_path, with_scan_bin=False, marker=marker)
         tmpdir = tmp_path / "tmp"
         tmpdir.mkdir()
-        _stale_flag(tmpdir, proj).write_text(str(int(time.time() * 1000)))
+        _write_stale_flag(_stale_flag(tmpdir, proj), "1" * 40)
 
         result = _run_inject(repo, idx_dir, plugin_root, tmpdir)
 
@@ -1368,7 +1518,7 @@ class TestInjectPreambleStaleCollapse:
 
         The two sentinels track independent conditions: seeding only the preamble flag
         must still yield the full stale notice, proving the stale path keys on its own
-        ``codemap-stale-<proj>`` sentinel rather than the preamble one.
+        session-scoped stale sentinel rather than the preamble one.
         """
         repo, idx_dir, proj = self._stale_repo(tmp_path)
         marker = tmp_path / "spawned.marker"
@@ -1385,6 +1535,108 @@ class TestInjectPreambleStaleCollapse:
             "stale full notice must not be suppressed by the preamble flag"
         )
         assert _stale_flag(tmpdir, proj).exists()
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("runtime", ["claude", "codex"])
+    def test_repeated_stale_prompts_are_silent(self, tmp_path: Path, runtime: str) -> None:
+        """The first stale preamble stamps its state and all unchanged prompts stay silent."""
+        repo, idx_dir, proj = self._stale_repo(tmp_path)
+        plugin_root = _fake_plugin_root(tmp_path, with_scan_bin=False, marker=tmp_path / "unused")
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+
+        first = _run_inject(repo, idx_dir, plugin_root, tmpdir, runtime=runtime)
+        assert first.returncode == 0, first.stderr
+        assert "Prefer `codemap-py query`" in first.stdout
+        stamped = _stale_flag(tmpdir, proj, runtime).read_text()
+        assert json.loads(stamped)[1:] == ["0" * 40, "stale"]
+        for _ in range(3):
+            repeated = _run_inject(repo, idx_dir, plugin_root, tmpdir, runtime=runtime)
+            assert repeated.returncode == 0, repeated.stderr
+            assert repeated.stdout == ""
+            assert _stale_flag(tmpdir, proj, runtime).read_text() == stamped
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("runtime", ["claude", "codex"])
+    @pytest.mark.parametrize("changed_field", ["git_sha", "currency"])
+    def test_changed_state_emits_immediately(self, tmp_path: Path, runtime: str, changed_field: str) -> None:
+        """Either part of the recorded state key changing emits once inside the TTL."""
+        repo, idx_dir, proj = self._stale_repo(tmp_path)
+        plugin_root = _fake_plugin_root(tmp_path, with_scan_bin=False, marker=tmp_path / "unused")
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+        flag = _stale_flag(tmpdir, proj, runtime)
+        _write_stale_flag(flag, "0" * 40, currency="current" if changed_field == "currency" else "stale")
+        if changed_field == "git_sha":
+            _write_index(idx_dir, proj, git_sha="1" * 40)
+
+        result = _run_inject(repo, idx_dir, plugin_root, tmpdir, runtime=runtime)
+        assert result.returncode == 0, result.stderr
+        context = (
+            json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+            if runtime == "codex"
+            else result.stdout.strip()
+        )
+        assert context == "[codemap] index stale - refresh pending"
+        assert json.loads(flag.read_text())[1:] == ["1" * 40 if changed_field == "git_sha" else "0" * 40, "stale"]
+        repeated = _run_inject(repo, idx_dir, plugin_root, tmpdir, runtime=runtime)
+        assert repeated.returncode == 0, repeated.stderr
+        assert repeated.stdout == ""
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("runtime", ["claude", "codex"])
+    def test_sessions_have_independent_stale_notices(self, tmp_path: Path, runtime: str) -> None:
+        """Sessions sharing a project each receive and deduplicate their own stale context."""
+        repo, idx_dir, proj = self._stale_repo(tmp_path)
+        plugin_root = _fake_plugin_root(tmp_path, with_scan_bin=False, marker=tmp_path / "unused")
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+        for session in ("session-a", "session-b"):
+            event = {"session_id": session}
+            first = _run_inject_with_event(repo, idx_dir, plugin_root, tmpdir, event, runtime=runtime)
+            assert first.returncode == 0, first.stderr
+            assert "Prefer `codemap-py query`" in first.stdout
+            flag = _stale_flag(tmpdir, proj, runtime, session)
+            assert flag.is_file()
+            assert _session_flag(tmpdir, proj, runtime, session).is_file()
+            _write_stale_flag(flag, "1" * 40)
+            reminder = _run_inject_with_event(repo, idx_dir, plugin_root, tmpdir, event, runtime=runtime)
+            assert reminder.returncode == 0, reminder.stderr
+            context = (
+                json.loads(reminder.stdout)["hookSpecificOutput"]["additionalContext"]
+                if runtime == "codex"
+                else reminder.stdout.strip()
+            )
+            assert context == "[codemap] index stale - refresh pending"
+            repeated = _run_inject_with_event(repo, idx_dir, plugin_root, tmpdir, event, runtime=runtime)
+            assert repeated.returncode == 0, repeated.stderr
+            assert repeated.stdout == ""
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param("timestamp-only", id="legacy-timestamp"),
+            "",
+            "not-json",
+            '[true, "sha", "stale"]',
+            '[1, 2, "stale"]',
+            '[1, "sha"]',
+        ],
+    )
+    def test_unusable_stale_record_emits_full_notice(self, tmp_path: Path, content: str) -> None:
+        """Legacy or corrupt records fail open and are replaced with the emitted state."""
+        repo, idx_dir, proj = self._stale_repo(tmp_path)
+        plugin_root = _fake_plugin_root(tmp_path, with_scan_bin=False, marker=tmp_path / "unused")
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+        flag = _stale_flag(tmpdir, proj)
+        flag.write_text(str(int(time.time() * 1000)) if content == "timestamp-only" else content)
+
+        result = _run_inject(repo, idx_dir, plugin_root, tmpdir)
+        assert result.returncode == 0, result.stderr
+        assert "Prefer `codemap-py query`" in result.stdout
+        assert "2 modules" in result.stdout
+        assert json.loads(flag.read_text())[1:] == ["0" * 40, "stale"]
 
 
 # ── guard-redundant-scan ─────────────────────────────────────────────────────────

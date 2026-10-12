@@ -38,7 +38,7 @@ _ASKS = [
     ),
     pytest.param(
         "skills/feature/SKILL.md",
-        "- **Blockers found** → STOP. Invoke `AskUserQuestion` with the blocker findings",
+        "- **Blockers found** → STOP. Write the blocker findings",
         id="feature-5",
     ),
     pytest.param(

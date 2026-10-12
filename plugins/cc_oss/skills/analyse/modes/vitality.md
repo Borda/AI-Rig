@@ -211,9 +211,9 @@ cat "$_OSS_SHARED/terminal-summaries.md"  # timeout: 5000
 
 Compact block format (loaded above). File absent → warn "run /foundry:setup — printing plain terminal output instead."
 
-**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md Step 6a's follow-up question while `$REPORT_FILE` written in Step 4 is missing or empty. Denial `oss:analyse report gate` = Step 4 never produced the report — write it, put the block below into the Step 6a option previews, re-issue question. Hook also checks matching header table in those previews within the preview cap (≤2000 chars, ≤12 lines) — over it, SKILL.md Step 6a's compact summary naming `$REPORT_FILE`, the question text naming it too; this step builds it.
+**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md Step 6a's follow-up while `$REPORT_FILE` is missing/empty. Denial `oss:analyse report gate` = the write never produced the report — write it, put its path and `Title`, `Outcome` values in the question text as a short plain summary, then re-issue the question. The full matching header table is required in the final reply after the answer; build it below, never put it in an option `preview`.
 
-Build compact delivery block — not printed here; delivered once per SKILL.md Step 6a (option previews; `REPLY_MODE=true` → final reply), opening with the report's `---` header as a `Field | Value` table. Then three sections: header, exec summary, simplified scorecard. Axis rows must appear in numeric order 1–9; never reorder by score, weight, or status:
+Build compact delivery block — not printed here; delivered once in the final reply after the answer per SKILL.md Step 6a (`REPLY_MODE=true` → final reply after Step 7's last tool call), opening with the report's `---` header as a `Field | Value` table. Then three sections: header, exec summary, simplified scorecard. Axis rows must appear in numeric order 1–9; never reorder by score, weight, or status:
 
 ```markdown
 # Repo Vitality — {GH_OWNER}/{GH_REPO}

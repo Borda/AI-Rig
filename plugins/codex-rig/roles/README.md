@@ -22,12 +22,12 @@ Each subdirectory under `roles/` holds one `ROLE.md` — role card that packages
 
 Every role runs on `gpt-6.1-sol` or `gpt-6-luna` with independently assigned `medium` or `high` reasoning effort. All fifteen roles share `approval_policy: on-request` and `fallback_modes: [shim, built-in-injected, inline]`; sandbox mode remains role-specific. Astra has no standing route.
 
-| Model         | Effort   | Roles                                                                               |
-| ------------- | -------- | ----------------------------------------------------------------------------------- |
-| `gpt-6.1-sol` | `medium` | `sw-engineer`, `qa-specialist`, `squeezer`                                          |
-| `gpt-6.1-sol` | `high`   | `challenger`, `data-steward`, `scientist`, `security-auditor`, `solution-architect` |
-| `gpt-6-luna`  | `medium` | `linting-expert`, `web-explorer`                                                    |
-| `gpt-6-luna`  | `high`   | `cicd-steward`, `curator`, `delegation-lead`, `doc-scribe`, `oss-shepherd`          |
+| Model         | Effort   | Roles                                                                               | Quality reason for the pin                                                                  |
+| ------------- | -------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `gpt-6.1-sol` | `medium` | `sw-engineer`, `qa-specialist`, `squeezer`                                          | Production code, tests and performance evidence need Sol at routine effort                  |
+| `gpt-6.1-sol` | `high`   | `challenger`, `data-steward`, `scientist`, `security-auditor`, `solution-architect` | Adversarial, data/ML, research, security and architecture judgment need Sol and deep review |
+| `gpt-6-luna`  | `medium` | `linting-expert`, `web-explorer`                                                    | Bounded static analysis and primary-source gathering fit normal effort                      |
+| `gpt-6-luna`  | `high`   | `cicd-steward`, `curator`, `delegation-lead`, `doc-scribe`, `oss-shepherd`          | Bounded support with deeper reasoning; the Sol parent keeps acceptance and final ownership  |
 
 ### Rationale
 
@@ -40,6 +40,12 @@ The GPT-6 assignments are an explicit user-directed rollout. `runtime/calibratio
 - `cicd-steward`, `doc-scribe`, `linting-expert`, `oss-shepherd`, and `web-explorer` used Luna by a second override for bounded support.
 - `adjudication.luna_strict_failure_preserved: true` means strict-route calibration result — Luna failed strict quality bar on its own (`luna-score.json` records `strict_status: "fail"`) — is kept on record rather than silently overwritten by human override. The override changes assignment; it does not erase evidence that produced different strict answer.
 - The adjudication rule itself only accepts evidence-derived candidate "with zero pair quality regressions and either mean F1 gain >= 0.01 or geometric-mean normalized cost ratio \<= 1.0" — human overrides above are recorded as explicit exceptions to that rule, not replacements for it.
+
+When a role's pinned model differs from the parent session's model, Codex injects a `<model_switch>` developer message repeating the full base instructions (about 21.7 KB), with measured overhead of about +4.2K tok per subagent call until compaction, about 4% of an average subagent call. Each pin is kept because its quality reason outweighs this cost.
+
+The [role schema](../scripts/generate_roles.py) requires an explicit `model`. The quality reasons in the routing table follow the [runtime effort policy](../shared/global-baseline-details.md#runtime-effort-policy) and [model routing policy](../shared/specialist-orchestration.md#delegation-lead-and-model-routing).
+
+Revisit the trade if the Luna/Sol price ratio changes materially or evidence shows the duplicate prefix is billed differently; an `inherit` schema value would be the follow-up then.
 
 `sandbox_mode` is set per role, independent of tier: `read-only` for six analysis or advisory roles — `challenger`, `security-auditor`, `solution-architect`, `squeezer`, `oss-shepherd`, `web-explorer` — and `workspace-write` for remaining nine, which are expected to produce or modify artifacts as part of their job.
 

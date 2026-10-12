@@ -96,7 +96,7 @@ Thresholds:
 
 ## Step L3: Generate proposals
 
-Produce structured proposal table. Do not apply anything yet — report first.
+Build the structured proposal table and drafts below. Do not apply anything yet — save and print the annotated proposals at L4 before asking for approval, the question text carrying their plain summary, rather than printing an earlier unannotated copy here.
 
 ````markdown
 ## Memory Distillation Proposals
@@ -166,7 +166,7 @@ echo "RUN_DIR=$RUN_DIR"  # bash vars don't persist; read from stdout
 1. **Existing content grep**: use Grep to search target file (if already exists) for section heading or key phrase delta would insert near. Hit = potential collision with existing content.
 2. **Cross-proposal collision**: two proposals both target same file and same section heading: mark both ⚠ CONFLICT.
 
-Annotate each conflicting proposal row with ⚠. If conflicts found, append this block below the table in the question's previews:
+Annotate each conflicting proposal row with ⚠. If conflicts found, append this block below the table in the saved proposals file and the reply text printed before the question (its question text keeps the plain summary):
 
 ```text
 ⚠ Conflicts detected:
@@ -175,7 +175,7 @@ Annotate each conflicting proposal row with ⚠. If conflicts found, append this
 Review conflicts manually or select (b) to inspect each change before writing.
 ```
 
-Call `AskUserQuestion` tool with the (annotated) proposal table as the `preview` of every option, not as reply text before the call (text written before a tool call can arrive as an empty progress update) — do NOT write options as plain text first. Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll) — over it, Write the full table and any conflicts block to `$RUN_DIR/proposals.md` first, make every option's `preview` a compact summary ending `→ full proposals: $RUN_DIR/proposals.md`, and name that path in the question text. Map options directly into tool call arguments:
+Call `AskUserQuestion` tool with the (annotated) proposal table saved to `$RUN_DIR/proposals.md` first and printed once, rendered as normal Markdown, as the last reply text before the call, including any conflicts block — do NOT write options as plain text first. The question text carries the proposals headline, proposal/conflict counts and `→ $RUN_DIR/proposals.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping. Map options directly into tool call arguments:
 
 - question: "Apply proposals?"
 - (a) label: `Apply non-conflicting` — description: write all `→ rule` and `→ agent/skill update` changes except ⚠ flagged proposals

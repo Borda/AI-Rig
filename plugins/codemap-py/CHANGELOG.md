@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.41.2
+
+- Scope the prompt hook's status, stale and missing-index sentinels per runtime and session, falling back to `shared` when the host supplies no session, so concurrent sessions no longer suppress each other's index status.
+- Collapse repeated stale notices: an unchanged index SHA and currency stay silent for 30 minutes after the full preamble, a changed state emits one line, an expired window re-emits the full preamble, and a refreshed index clears the stale record.
+- Ask the integration `apply`/`sync` plan, rename-refs candidate, dry-run and blast-radius confirmations with at most 6 plain lines in the question text (decision headline, counts, content file path); the saved plan or report is printed once as the last reply text before the question, and no option carries a preview.
+
 ## 0.41.1
 
 - Stop shipping the GitHub write deny entries (`gh issue`/`pr`/`release`/`gist` writes, `gh repo fork`/`create`, `gh api` with `--method`/`-X` `POST`, `PATCH`, `PUT` or `DELETE`). Claude Code applies a settings deny rule even after a hook allows a call, so they would defeat the one-time `gh-write` approval of foundry's gh write guard. The manual deny merge stays additive; run `/foundry:setup` (requires `foundry` plugin) to scrub stale denies from earlier installs. Without Foundry a gh write reaches the normal permission prompt, except through the two GitHub API calls this plugin's own allow list pre-approves (`Bash(gh api repos/*)`, `Bash(gh api graphql:*)`): a field POST or a GraphQL mutation made through them runs unprompted, a known gap kept so a codemap-only install reads GitHub without prompts.

@@ -21,7 +21,7 @@ NATIVE_CONTRACT = PLUGIN_ROOT / "shared" / "native-skill-contract.md"
 # 966 bytes for the local Git approval grant lines in Commit Authorization: commit authority is one of the rules that
 # must stay always-loaded, since a session that never reads the shared contract would otherwise commit or self-grant
 # without knowing the grant exists.
-TEMPLATE_BYTE_BUDGET = 40001
+TEMPLATE_BYTE_BUDGET = 38234
 
 
 @pytest.mark.packaging
@@ -61,3 +61,24 @@ def test_template_pointer_into_native_contract_resolves() -> None:
     """Keep the inline pytest rule's section reference valid in the shipped contract."""
     assert "§Sandboxed Test Runs" in TEMPLATE.read_text(encoding="utf-8")
     assert re.search(r"^## Sandboxed Test Runs$", NATIVE_CONTRACT.read_text(encoding="utf-8"), re.M)
+
+
+@pytest.mark.packaging
+@pytest.mark.installed_plugin
+def test_code_quality_label_references_resolve_to_one_item() -> None:
+    """Keep label-based cross-references valid, since list numbers are renumbered and cannot carry references."""
+    texts = [TEMPLATE.read_text(encoding="utf-8"), DETAILS.read_text(encoding="utf-8")]
+    labels = [label for text in texts for label in re.findall(r"^\d+\. \*\*([^*]+)\.\*\*", text, re.M)]
+    assert len(labels) == len(set(labels)), (
+        f"duplicate item labels: {sorted(label for label in labels if labels.count(label) > 1)}"
+    )
+    referenced = {
+        label
+        for text in texts
+        for line in text.splitlines()
+        if '§"Code standard details"' in line or "Code Quality, **" in line
+        for label in re.findall(r"\*\*([^*]+)\*\*", line)
+        if not label.endswith(".")
+    }
+    assert referenced, "no label references found; the reference shape changed"
+    assert referenced <= set(labels), f"label references without a matching item: {sorted(referenced - set(labels))}"

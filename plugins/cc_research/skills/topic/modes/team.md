@@ -64,9 +64,9 @@ TaskUpdate "Print report header" → `in_progress`.
 
 - (1) Read `<file>` (Read tool).
 - (2) Render its `---` header fields as a two-column Markdown table (`Field | Value`, one row per key, file order) per quality-gates.md §Report File Format — never the raw `---`-delimited block.
-- (3) Append `→ saved to <file>`. This delivery block is not printed — SKILL.md's Follow-up gate shows it only as every option's `preview`, never also as reply text; over the preview cap (≤2000 chars, ≤12 lines) its compact summary naming `<file>` takes that place (SKILL.md Step 3).
-- (4) TaskUpdate "Print report header" → `completed` once the block is built, never before.
+- (3) Append `→ saved to <file>`. Prepare a plain summary for SKILL.md's Follow-up gate question text from `<file>`: report path, `Title`, `Outcome`, and brief confidence/gap facts, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout, or code fence. Options have one-line descriptions and no previews. Print the full header table and compact summary once in the final reply after the answer, never before the question or in an option preview (SKILL.md Step 3).
+- (4) TaskUpdate "Print report header" → `completed` once the block is built, never before; preparation does not discharge final delivery.
 
 SKILL.md's Follow-up gate must not fire while this task is `pending`/`in_progress`.
 
-**Hook-enforced**: `hooks/enforce-topic-header.js` (PreToolUse on `AskUserQuestion`) denies the Follow-up gate call while `$REPORT_OUT` (sentinel path above) is missing or empty — a consolidator that never wrote its report cannot be papered over with an ad-hoc summary. The hook also checks the matching header table in the Follow-up gate's option previews within the preview cap — over it, the compact summary naming `$REPORT_OUT`, the question text naming it too; steps (1)–(4) above build it.
+**Hook-enforced**: `hooks/enforce-topic-header.js` (PreToolUse on `AskUserQuestion`) denies the Follow-up gate call while `$REPORT_OUT` (sentinel path above) is missing or empty — a consolidator that never wrote its report cannot be papered over with an ad-hoc summary. The hook also checks that the first question text carries the saved report path, `Title`, and `Outcome` as a plain summary; steps (1)–(4) above prepare it and the full header table required in the final reply after the answer.

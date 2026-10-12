@@ -159,8 +159,8 @@ def _write_transcript(tmp_path: Path, assistant_text: str) -> Path:
 
 
 @_skip_node_unavailable
-def test_table_only_in_reply_text_is_denied_and_preview_passes(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
-    """A table printed as reply text before the question is denied; the same table as every preview passes.
+def test_table_only_in_reply_text_is_denied_and_summary_passes(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
+    """A table printed as reply text before the question is denied; a plain question summary passes.
 
     Reply text written before a tool call can come back as an empty progress update the user never sees, so only the
     call's own fields count at question time; the denial says so and the call corrected to it passes.
@@ -171,7 +171,7 @@ def test_table_only_in_reply_text_is_denied_and_preview_passes(tmp_path: Path, t
     transcript = _write_transcript(tmp_path, table)
 
     reason = _denial_reason(_run(tmp_path, _ask_payload(transcript_path=str(transcript))))
-    retried = _run(tmp_path, _preview_payload(table))
+    retried = _run(tmp_path, _summary_payload(report_file, "Title: x"))
 
     assert reason is not None
     assert "reply text before the call does not count" in reason
@@ -359,58 +359,65 @@ def test_stop_passes_delivery_in_final_message(tmp_path: Path, topic_run: tuple[
 DELIVERED = "| Field | Value |\n| --- | --- |\n| Title | x |\n| PR | #1 |\n| Date | y |\n"
 
 
-# ── Delivery via the follow-up question's option previews ────────────────────
+# ── Delivery via the follow-up question text ────────────────────
 
 
-def _preview_payload(preview: str | None) -> dict:
-    """Build the follow-up payload, `preview` on every option (none when None), with no transcript text at all."""
+def _summary_payload(report: Path, summary: str | None) -> dict:
+    """Build the follow-up with a plain question summary and no previews."""
     options = [{"label": label, "description": "next step"} for label in ("/research:plan", "skip")]
-    if preview is not None:
-        for option in options:
-            option["preview"] = preview
-    questions = [{"question": "What next?", "header": "topic", "options": options}]
+    text = f"{summary}\n→ {report}\nWhat next?" if summary else "What next?"
+    questions = [{"question": text, "header": "topic", "options": options}]
     return _ask_payload(tool_input={"questions": questions}, transcript_path=None)
 
 
 @pytest.fixture(name="written_run")
-def _written_run(topic_run: tuple[Path, Path]) -> None:
+def _written_run(topic_run: tuple[Path, Path]) -> Path:
     """Stage a topic run whose report DELIVERED renders is written."""
     report_file, _ = topic_run
     report_file.write_text("---\nTitle: x\nPR: #1\nDate: y\n---\n", encoding="utf-8")
+    return report_file
 
 
-@pytest.mark.usefixtures("written_run")
-class TestPreviewDelivery:
-    """The header table carried as option previews delivers it when text before the call came back empty."""
-
-    @_skip_node_unavailable
-    def test_preview_table_allows_follow_up(self, tmp_path: Path) -> None:
-        """The matching table in the previews allows the follow-up with no reply text in the transcript."""
-        assert _run(tmp_path, _preview_payload(DELIVERED)) == {}
+class TestQuestionSummaryDelivery:
+    """Follow-ups show summaries in question text and leave full delivery to Stop."""
 
     @_skip_node_unavailable
-    def test_missing_preview_denial_names_preview_fix(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """No table anywhere is denied, and the reason directs the table into the option previews."""
-        monkeypatch.setenv("CLAUDE_GATE_FLUSH_WAIT_MS", "0")
+    def test_plain_summary_allows_follow_up(self, tmp_path: Path, written_run: Path) -> None:
+        """The matching headline and resolved report path pass without any preview."""
+        payload = _summary_payload(written_run, "Title: x")
+        assert all("preview" not in option for option in payload["tool_input"]["questions"][0]["options"])
+        assert _run(tmp_path, payload) == {}
 
-        reason = _denial_reason(_run(tmp_path, _preview_payload(None)))
-
+    @_skip_node_unavailable
+    def test_missing_summary_denial_names_question_fix(self, tmp_path: Path, written_run: Path) -> None:
+        """Missing summary evidence names the first-question remedy."""
+        reason = _denial_reason(_run(tmp_path, _summary_payload(written_run, None)))
         assert reason is not None
-        assert "`preview` of every option" in reason
-        assert "Re-issue" not in reason
+        assert "first question's `question` text" in reason
+        assert "fixed lines" in reason
 
     @_skip_node_unavailable
-    def test_preview_pass_settles_the_stop_check(self, tmp_path: Path) -> None:
-        """Once the question carrying the previews was shown (PostToolUse), the turn may end without the table."""
-        payload = _preview_payload(DELIVERED)
+    def test_shown_summary_keeps_stop_armed_once(self, tmp_path: Path, written_run: Path) -> None:
+        """A shown summary leaves one Stop continuation for the full report."""
+        payload = _summary_payload(written_run, "Title: x")
         assert _run(tmp_path, payload) == {}
         assert _run(tmp_path, {**payload, "hook_event_name": "PostToolUse"}) == {}
-
+        assert _run(tmp_path, _stop_payload()).get("decision") == "block"
+        assert _run(tmp_path, _stop_payload(last_assistant_message=DELIVERED)) == {}
         assert _run(tmp_path, _stop_payload()) == {}
 
     @_skip_node_unavailable
-    def test_allowed_but_unshown_follow_up_leaves_stop_armed(self, tmp_path: Path) -> None:
-        """A PreToolUse pass alone records nothing: another hook or a permission rule may still deny the question."""
-        assert _run(tmp_path, _preview_payload(DELIVERED)) == {}
-
+    def test_allowed_but_unshown_follow_up_leaves_stop_armed(self, tmp_path: Path, written_run: Path) -> None:
+        """An allowed but unshown question also leaves final delivery armed."""
+        assert _run(tmp_path, _summary_payload(written_run, "Title: x")) == {}
         assert _run(tmp_path, _stop_payload()).get("decision") == "block"
+
+    @_skip_node_unavailable
+    def test_summary_only_in_previews_is_denied(self, tmp_path: Path, written_run: Path) -> None:
+        """Even every option's preview cannot replace the question's plain summary."""
+        payload = _summary_payload(written_run, "Title: x")
+        first = payload["tool_input"]["questions"][0]
+        for option in first["options"]:
+            option["preview"] = first["question"]
+        first["question"] = "What next?"
+        assert _denial_reason(_run(tmp_path, payload)) is not None

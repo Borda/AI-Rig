@@ -77,27 +77,21 @@ ______________________________________________________________________
 
 ### Code Quality
 
+Before writing, editing or reviewing code, read packaged `shared/global-baseline-details.md` §"Code standard details"; it binds as if inline.
+
 Coding principles = canonical standard for implementation + review:
 
-01. Simplicity, readability, reproducibility first. Complexity = maintenance cost, never evidence of quality; unexplained layers often mask unclear problem or wrong solution. Clear structure beats long docstrings/comments. Simplicity never removes trust-boundary validation, data-loss prevention, security controls, accessibility requirements, or explicit contract behavior.
-02. Understand before minimizing. Read touched flow + callers; solve coherent root cause once. Smaller symptom patch leaving sibling paths broken not simple.
-03. Stop at first solution that satisfies contract: no change → existing project code/pattern → standard library/native platform → installed dependency → direct local code → new abstraction or dependency. Prefer maintained standard-library, native-platform, and already-installed package functionality over custom code that duplicates it.
-04. Every complexity expansion must be justified as unavoidable now. Record the required current behavior and evidence, simpler alternatives considered and why each fails, the maintenance owner/cost, and the rollback or removal path. Missing evidence or a viable simpler option rejects the expansion. New registry, factory, plugin layer, protocol/base class, configuration surface, or dependency needs current demand such as runtime discovery, third-party extension, repeated dispatch, multiple concrete variants, or substantial complexity hidden behind a small stable boundary. Hypothetical future states, risks, scale, reuse, or edge cases do not justify machinery; add it only when verified current evidence proves the simpler solution insufficient.
-05. For small closed choice, prefer explicit condition/mapping over registry. When verified boundary under rule 18 requires local import, prefer conditional/lazy import; catch only expected missing optional dependency, let nested/transitive import failures surface. Use registry when discovery/extension is actual requirement.
-06. Minimize owned concepts: files, layers, public APIs, mutable state, dependencies, dispatch points, config. Prefer deletion, local convention, boring technology, reversible changes. State what maintenance burden new machinery removes and who owns rest.
-07. Don't force DRY. Little visible duplication cheaper than premature coupling. Abstraction w/ one caller valid when creates genuinely deep boundary.
-08. Avoid low-value helpers/wrappers. Penalize functions/classes only remapping args, forwarding one call, or serving one trivial consumer. Prefer direct code, caller-local helper, or `functools.partial` for arg binding.
-09. Keep code blocks short, main path shallow. Split long/dense logic at meaningful boundaries; prefer guard clauses + early `return`, `yield`, or `continue` over nested control flow.
-10. Docs concise, useful. Every new or material-changed function/method needs purpose docstring; docstrings explain intent + contract, no compensating for hard-to-read code.
-11. Resolve docstring style from project before writing: project config + contributor docs first, nearby established code style second, 6-point Google/Napoleon fallback only when no project style discoverable.
-12. Inline comments for non-trivial implementation blocks: why block exists, what invariant/edge case it protects, how it works. No comments on obvious assignments or control flow. When a deliberately bounded simple approach has a known present ceiling, record the ceiling and observable trigger for revisiting it; do not document hypothetical limits.
-13. No explanatory comments immediately before function/class definition. Purpose, behavior, constraints, usage belong in that definition docstring.
-14. Type annotations on all new public APIs, Python 3.10 syntax: `list[T]`, `dict[K, V]`, `X | Y`.
-15. Prefer doctest-driven or executable acceptance checks: define interface + failing check before implementation when behavior changes.
-16. Python project hygiene: use project's configured `ruff`, pre-commit, packaging, export, value-object, structural-typing, deprecation conventions. Introduce `src/`, `__all__`, Protocols, or `pyDeprecate` only when project/current design requires them; dataclasses follow item 19. When the project pins lint/format tools through pre-commit, run them via `pre-commit run <hook-id> --files <paths>` (single hook, targeted files), never the bare tool: direct invocation drifts from the pinned version/config. Applies to ad-hoc checks during edits, not only the commit-time run. Use `pre-commit run --all-files` only when the task requires the repository-wide gate; preserve unrelated working-tree changes. Needed hook missing from config → add it to the pre-commit config rather than shelling around it.
-17. Abstractions must reduce cognitive load and concept count reader must follow. Extract only stable repeated behavior, genuinely shared infra, or irrelevant construction mechanics; keep behavior-defining inputs/outcomes explicit. Cover complete related behavior already present, place abstraction in narrowest shared scope, prefer small visible duplication over aliases, wrappers, factories, layers adding indirection w/o semantic value.
-18. Keep Python imports at module scope by default. Local import only for verified circular-import boundary, optional-dependency boundary, import-behavior test, or material startup/side-effect constraint; make reason evident from surrounding code or document when not obvious.
-19. Internal records: once item 16's current-design condition holds, prefer dataclasses for reused, fixed-shape internal records to clarify contracts and reduce field-name mistakes. Keep dictionaries for dynamic keys, external JSON, and simple mappings. Shared types modules must reduce real complexity. Preserve runtime validation, behavior, and serialized schemas; annotations alone do not enforce types.
+01. **Simplicity.** Simplicity, readability, reproducibility first. Complexity = maintenance cost, never evidence of quality; unexplained layers often mask unclear problem or wrong solution. Clear structure beats long docstrings/comments. Simplicity never removes trust-boundary validation, data-loss prevention, security controls, accessibility requirements, or explicit contract behavior.
+02. **Root cause.** Understand before minimizing. Read touched flow + callers; solve coherent root cause once. Smaller symptom patch leaving sibling paths broken not simple.
+03. **Solution order.** Stop at first solution that satisfies contract: no change → existing project code/pattern → standard library/native platform → installed dependency → direct local code → new abstraction or dependency. Prefer maintained standard-library, native-platform, and already-installed package functionality over custom code that duplicates it.
+04. **Complexity justification.** Every complexity expansion must be justified as unavoidable now. Record the required current behavior and evidence, simpler alternatives considered and why each fails, the maintenance owner/cost, and the rollback or removal path. Missing evidence or a viable simpler option rejects the expansion. New registry, factory, plugin layer, protocol/base class, configuration surface, or dependency needs current demand such as runtime discovery, third-party extension, repeated dispatch, multiple concrete variants, or substantial complexity hidden behind a small stable boundary. Hypothetical future states, risks, scale, reuse, or edge cases do not justify machinery; add it only when verified current evidence proves the simpler solution insufficient.
+05. **Closed choices.** For small closed choice, prefer explicit condition/mapping over registry. When verified boundary under **Imports** in packaged `shared/global-baseline-details.md` §"Code standard details" requires local import, prefer conditional/lazy import; catch only expected missing optional dependency, let nested/transitive import failures surface. Use registry when discovery/extension is actual requirement.
+06. **Owned concepts.** Minimize owned concepts: files, layers, public APIs, mutable state, dependencies, dispatch points, config. Prefer deletion, local convention, boring technology, reversible changes. State what maintenance burden new machinery removes and who owns rest.
+07. **Duplication.** Don't force DRY. Little visible duplication cheaper than premature coupling. Abstraction w/ one caller valid when creates genuinely deep boundary.
+08. **Helpers.** Avoid low-value helpers/wrappers. Penalize functions/classes only remapping args, forwarding one call, or serving one trivial consumer. Prefer direct code, caller-local helper, or `functools.partial` for arg binding.
+09. **Inline comments.** Inline comments for non-trivial implementation blocks: why block exists, what invariant/edge case it protects, how it works. No comments on obvious assignments or control flow. When a deliberately bounded simple approach has a known present ceiling, record the ceiling and observable trigger for revisiting it; do not document hypothetical limits.
+10. **Project hygiene.** Python project hygiene: use project's configured `ruff`, pre-commit, packaging, export, value-object, structural-typing, deprecation conventions. Introduce `src/`, `__all__`, Protocols, or `pyDeprecate` only when project/current design requires them; dataclasses follow **Internal records** in packaged `shared/global-baseline-details.md` §"Code standard details". When the project pins lint/format tools through pre-commit, run them via `pre-commit run <hook-id> --files <paths>` (single hook, targeted files), never the bare tool: direct invocation drifts from the pinned version/config. Applies to ad-hoc checks during edits, not only the commit-time run. Use `pre-commit run --all-files` only when the task requires the repository-wide gate; preserve unrelated working-tree changes. Needed hook missing from config → add it to the pre-commit config rather than shelling around it.
+11. **Abstractions.** Abstractions must reduce cognitive load and concept count reader must follow. Extract only stable repeated behavior, genuinely shared infra, or irrelevant construction mechanics; keep behavior-defining inputs/outcomes explicit. Cover complete related behavior already present, place abstraction in narrowest shared scope, prefer small visible duplication over aliases, wrappers, factories, layers adding indirection w/o semantic value.
 
 ### Markdown Authoring
 
@@ -133,18 +127,13 @@ Every test must pass The Suspicious Check:
 3. What edge cases remain?
 4. Assertions specific enough for subtle errors?
 
-- Coverage follows public contract, regression risk, blast radius. Cover applicable `None`, empty, boundary, negative, ML tensor NaN/Inf/dtype/shape cases; don't manufacture unrelated matrices.
-- Before writing or changing tests, read packaged `shared/global-baseline-details.md` §"Testing details": pytest parametrization and ID rules (`pytest.param` with semantic IDs, never `ids=`), marker selection, xdist parallel runs, fixture, mocking, and test-surface shape.
+- Always confirm: test FAILS before fix, test PASSES after fix.
+- Before writing, changing or reviewing tests or test coverage, read packaged `shared/global-baseline-details.md` §"Testing details": coverage scope, numeric tolerances, pytest parametrization and ID rules (`pytest.param` with semantic IDs, never `ids=`), marker selection, xdist parallel runs, fixture, mocking, and test-surface shape; it binds as if inline.
 - Benchmark task IDs, target repositories, prompt wording, expected answers, and task-specific source or symbol examples are test evidence, not production content. Never copy them into shipped plugins, Skills, templates, or user-facing docs; use neutral generic examples and encode the generalized contract in a regression test instead.
-- Approximate numeric behavior: `torch.testing.assert_close(rtol=1e-4, atol=1e-6)`. Exact tensor identity may use `torch.equal()` when exactness is contract. Always confirm: test FAILS before fix, test PASSES after fix.
 
 ### ML/AI Specifics
 
-- Fix random seeds in stochastic entry points + tests; don't add seed machinery to deterministic paths.
-- Assert tensor shapes/dtypes at external, unstable, or contract-critical pipeline boundaries; avoid repeating proven checks in trusted inner layers.
-- When CUDA AMP applicable + supported by project version, use `torch.amp.autocast("cuda")` and `torch.amp.GradScaler("cuda")`, not deprecated `torch.cuda.amp`.
-- Profile before optimizing; choose profiler from suspected resource + available project tools rather than fixed tool order.
-- Avoid `.item()` or `.cpu()` in measured hot training loops — forces sync; bounded logging/metrics may use them when cost accepted/measured.
+Before writing, editing or reviewing ML code or ML tests, or planning ML experiments or performance work, read packaged `shared/global-baseline-details.md` §"ML/AI details"; it binds as if inline.
 
 ### AI Constraints
 
@@ -197,7 +186,7 @@ ______________________________________________________________________
 
 ## Docstring Style Resolution
 
-Resolve the docstring style from the project first, as in Code Quality items 10 and 11; the fallback is the 6-point Google/Napoleon style. Read packaged `shared/global-baseline-details.md` §"Docstring style resolution" for the resolution checklist, fallback section rules, and worked example.
+Resolve the docstring style from the project first, as in packaged `shared/global-baseline-details.md` §"Code standard details", **Purpose docstrings** and **Docstring style**; the fallback is the 6-point Google/Napoleon style. Read packaged `shared/global-baseline-details.md` §"Docstring style resolution" for the resolution checklist, fallback section rules, and worked example.
 
 - A docstring's opening line must state the documented object's purpose in plain English. Move formulas, assignments, configuration literals, function-call notation, and other code-shaped details into the following description or a relevant section.
 

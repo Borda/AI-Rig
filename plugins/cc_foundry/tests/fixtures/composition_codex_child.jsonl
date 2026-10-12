@@ -1,0 +1,5 @@
+{"timestamp": "2030-01-01T00:00:00Z", "type": "session_meta", "payload": {"id": "example-child", "session_id": "example-child", "source": {"subagent": {"thread_spawn": {"parent_thread_id": "example-parent", "depth": 1}}}}}
+{"timestamp": "2030-01-01T00:00:00Z", "type": "inter_agent_communication_metadata", "payload": {"trigger_turn": true}}
+{"timestamp": "2030-01-01T00:00:00Z", "type": "turn_context", "payload": {"model": "example-model"}}
+{"timestamp": "2030-01-01T00:00:00Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "# AGENTS.md instructions for example\n<INSTRUCTIONS>note</INSTRUCTIONS>"}]}}
+{"timestamp": "2030-01-01T00:05:00Z", "type": "token_usage_record", "payload": {"response_id": "child-response", "usage": {"input_tokens": 10000, "cached_input_tokens": 5000, "output_tokens": 10, "reasoning_output_tokens": 0, "total_tokens": 10010}}}

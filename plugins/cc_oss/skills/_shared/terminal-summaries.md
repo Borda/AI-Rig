@@ -4,7 +4,7 @@
 
 Shared compact templates for `/analyse` and `/oss:review` **report files** (on-disk content only). All templates: `---` delimiters, entity identifier line, key-value fields, `→ saved to [skill-specific path]`.
 
-**Terminal-print note**: these ```` ```text ```` fences show the report file's raw on-disk format — write the file exactly as shown. Rendering a report's header for delivery (consuming skill's "print report header" step — follow-up option preview or final reply, as that skill directs; never both): do NOT show this raw `---`-delimited block verbatim. Per quality-gates.md §Report File Format's Universal terminal-print rule, render as a two-column Markdown table instead (`Field | Value`, one row per key-value line above, `→ saved to ...` as its own trailing line after the table, not a table row).
+**Terminal-print note**: these ```` ```text ```` fences show the report file's raw on-disk format — write the file exactly as shown. For report-header follow-ups, the first question's text carries only a short plain summary (report path, `Title`, `Outcome` or `Verdict`, finding counts); at most 6 plain lines (target 600 characters, hard cap 1,500), no table, no pipe layout, no code fence. Options have labels and one-line action descriptions, no `preview`. Render the full header once in the final reply after the answer, after the last tool call — never before the question; a no-question path still renders it in the final reply. Do NOT show the raw `---`-delimited block verbatim: per quality-gates.md §Report File Format's Universal terminal-print rule, render a two-column Markdown table instead (`Field | Value`, one row per key-value line above, `→ saved to ...` as its own trailing line after the table, not a table row).
 
 ## PR Summary
 

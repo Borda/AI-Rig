@@ -10,7 +10,17 @@ Claude + all agents: GitHub reads (`gh *list`, `gh *view`, `gh pr diff/checks`, 
 
 Every write on any repo (issue/PR/release/gist create-comment-edit-close-merge-delete, `gh repo fork`/`create`, `gh api` method/field/`--input`, graphql mutations) needs the user's approval of that exact command; `gh-write-guard.js` blocks the rest. curl write verbs stay denied.
 
-**gh-write approval** — lead only: draft, then one AskUserQuestion, header `gh-write`, options exactly `Approve` / `Deny`, naming the command once as an inline code span (double backticks if it holds one; one plain line, no `;`/`|`/`$`/glob; long text via `--body-file`, shown in it; no fence). `Approve` → run exactly that text, whole Bash command, once. No git repo → give the user the command. Never touch the token; agents never ask or spend it.
+**gh-write approval** — lead only: draft, then one AskUserQuestion, header `gh-write`, options exactly `Approve` / `Deny`, `multiSelect` false. Use the question text below. Its exact command is the only inline code span and starts with `gh ` (double backticks if it holds one; command on one line, no `;`/`|`/`$`/glob; no invisible or control characters; no fence or triple backticks). Long text via `--body-file`: show every body file's full text without a fence as the last reply text before the question, and carry its one-line body summary in the question text. `Approve` → run exactly that text, whole Bash command, once, within 15 minutes; files it reads are re-hashed and must be unchanged. No git repo → give the user the command. Never touch the token; agents never ask or spend it.
+
+**gh-write question text** — Fill these lines in order as multi-line plain text, at most 1,500 characters; exempt from the 6-line target; no table, no fence. Render each bullet as a separate plain line without its bullet marker. Option descriptions repeat their scope in one line; no second command span in the scope lines.
+
+- Target repo: {owner/repo}
+- Writes: {action, such as create, comment, edit or close; target}
+- Body summary: {one-line summary}
+- Command: `gh {exact arguments}`
+- Approve = run exactly this command once; token valid 15 minutes; files it reads are re-hashed.
+- Anything else needs a new question.
+- Deny = skip this write.
 
 > Full protocol in `_full/public-github.md` (read/write enumerations, token rules). Read when a command's read/write status is unclear:
 >
