@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import io
+import json
+import runpy
 import subprocess
 import sys
 from pathlib import Path
@@ -9,7 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from _bench_common import manifest_session
+from _bench_common import manifest_io, manifest_session
 
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = BENCHMARKS_DIR.parent
@@ -113,3 +116,94 @@ def test_xdist_worker_uses_controller_manifest_result_without_rebuilding_or_rest
 
     manifest_session.finish_session(session)
     assert output.read_text(encoding="utf-8") == "controller output"
+
+
+@pytest.mark.parametrize(
+    "writer_name",
+    [
+        pytest.param("build-provider-parity-methodology-manifest.py", id="methodology"),
+        pytest.param("build-codex-integration-manifest.py", id="integration"),
+        pytest.param("build-codex-agentic-manifest.py", id="agentic"),
+        pytest.param("restore", id="session-restore"),
+    ],
+)
+def test_manifest_readers_never_observe_a_truncated_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer_name: str
+) -> None:
+    """Read at the write boundary that nested pytest sessions can overlap with launcher readers."""
+    output = tmp_path / "manifest.json"
+    previous = b'{"generation": "previous"}\n'
+    replacement = b'{"generation": "replacement"}\n'
+    output.write_bytes(previous)
+    observed: list[bytes] = []
+    real_open = io.open
+
+    class ObservedWriter:
+        """Keep real file I/O while exposing the moment immediately before the bytes are written."""
+
+        def __init__(self, stream: Any) -> None:
+            self.stream = stream
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self.stream.close()
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.stream, name)
+
+        def write(self, payload: bytes) -> int:
+            observed.append(output.read_bytes())
+            return self.stream.write(payload)
+
+    def observe_open(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        stream = real_open(file, mode, *args, **kwargs)
+        return ObservedWriter(stream) if mode == "wb" else stream
+
+    monkeypatch.setattr(io, "open", observe_open)
+    if writer_name == "restore":
+        manifest_session._restore_manifests({output: replacement}, ())
+    else:
+        builder = runpy.run_path(str(BENCHMARKS_DIR / writer_name))
+        builder["_write_or_check"](output, replacement, check=False)
+
+    assert observed
+    assert all(payload == previous for payload in observed)
+    assert json.loads(output.read_bytes()) == {"generation": "replacement"}
+    assert list(tmp_path.iterdir()) == [output]
+
+
+def test_failed_manifest_publication_preserves_bytes_and_removes_temporary_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed rename must neither truncate the old manifest nor leave a stray staging file."""
+    output = tmp_path / "manifest.json"
+    output.write_bytes(b'{"generation":"previous"}')
+
+    def fail_replace(source: Path, destination: Path) -> None:
+        assert source.parent == destination.parent == tmp_path
+        assert source.read_bytes() == b'{"generation":"replacement"}'
+        assert destination.read_bytes() == b'{"generation":"previous"}'
+        raise PermissionError("publication denied")
+
+    monkeypatch.setattr(manifest_io.os, "replace", fail_replace)
+    with pytest.raises(PermissionError, match="publication denied"):
+        manifest_io.write_manifest_bytes(output, b'{"generation":"replacement"}')
+    assert output.read_bytes() == b'{"generation":"previous"}'
+    assert list(tmp_path.iterdir()) == [output]
+
+
+def test_identical_manifest_bytes_do_not_republish(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nested collection sessions must avoid replacing already-current generated coordinates."""
+    output = tmp_path / "manifest.json"
+    payload = b'{"generation":"same"}'
+    manifest_io.write_manifest_bytes(output, payload)
+
+    def unexpected_replace(*args: Any) -> None:
+        pytest.fail("unchanged manifest was republished")
+
+    monkeypatch.setattr(manifest_io.os, "replace", unexpected_replace)
+    manifest_io.write_manifest_bytes(output, payload)
+    assert output.read_bytes() == payload
+    assert list(tmp_path.iterdir()) == [output]

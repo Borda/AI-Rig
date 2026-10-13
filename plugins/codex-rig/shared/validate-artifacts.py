@@ -818,40 +818,18 @@ def _validate_code_review_final_handoff(
                     raise SystemExit("code-review-final-handoff-finding-content-mismatch")
 
 
-def _explicit_commit_with_external_limit(
-    result: dict[str, Any],
-    handoff: dict[str, Any],
-    unresolved: dict[str, Any],
-    open_items: list[dict[str, Any]],
+def _explicit_commit_with_incomplete_verification(
+    result: dict[str, Any], unresolved: dict[str, Any], open_items: list[dict[str, Any]]
 ) -> bool:
-    """Allow an explicit commit with only disclosed external verification or review open."""
-    external_counts_match = (
-        unresolved["selected_items_unresolved"]
-        == unresolved["environment_blocked_items"] + unresolved["process_gate_items_unresolved"]
-        and unresolved["process_gate_items_unresolved"] == unresolved["external_owner_items"]
-    )
-    external_owners_match = bool(unresolved["unresolved_reason_groups"]) and all(
-        (group["reason"] == "environment-blocked" and group["owner"] == "environment")
-        or (group["reason"] == "independent-review" and group["owner"] in {"external-reviewer", "maintainer"})
-        for group in unresolved["unresolved_reason_groups"]
-    )
+    """Check incomplete snapshot consistency; the caller separately requires explicit request evidence."""
+    local_open = sum(item["item_type"] not in {"review-gate", "confidence-gap"} for item in open_items)
     return (
-        result["status"] == "fail"
-        and not result["checks_failed"]
+        result["status"] in {"fail", "timeout"}
         and result["findings"]["critical"] == 0
-        and all(check["status"] in {"pass", "not-applicable"} for check in handoff["verification"])
-        and bool(open_items)
+        and not any(item.get("severity") == "critical" for item in open_items)
         and unresolved["selected_items_unresolved"] == len(open_items)
-        and unresolved["all_local_actionable_items_closed"]
-        and unresolved["local_actionable_items_unresolved"] == unresolved["user_deferred_items"] == 0
-        and all(
-            item["item_type"] in {"review-gate", "confidence-gap"}
-            and item["resolution_status"] == "unresolved"
-            and item["resolved_how"].startswith("Blocked: ")
-            for item in open_items
-        )
-        and external_counts_match
-        and external_owners_match
+        and local_open <= unresolved["local_actionable_items_unresolved"] <= len(open_items)
+        and not (local_open and unresolved["all_local_actionable_items_closed"])
     )
 
 
@@ -946,8 +924,8 @@ def _validate_final_handoff(
                     selected_items
                 ):
                     raise SystemExit("remediation-commit-closure-blocked")
-                external_limited = _explicit_commit_with_external_limit(result, handoff, unresolved, open_items)
-                if result["status"] != "pass" and not external_limited:
+                explicit_snapshot = _explicit_commit_with_incomplete_verification(result, unresolved, open_items)
+                if result["status"] != "pass" and not explicit_snapshot:
                     raise SystemExit("remediation-commit-result-blocked")
                 closure_blocked = (
                     unresolved["selected_items_unresolved"] != len(open_items)
@@ -972,12 +950,12 @@ def _validate_final_handoff(
                         for group in unresolved["unresolved_reason_groups"]
                     )
                 )
-                if closure_blocked and not external_limited:
+                if closure_blocked and not explicit_snapshot:
                     raise SystemExit("remediation-commit-closure-blocked")
                 plan = out_dir / "commit-plan.md"
                 if plan.is_symlink() or not plan.is_file():
                     raise SystemExit("remediation-commit-plan-missing")
-                if external_limited:
+                if explicit_snapshot:
                     _require_commit_plan_sections(plan)
                 evidence = _code_remediate_run_path(
                     out_dir, disposition["evidence"], "remediation-commit-evidence-invalid"

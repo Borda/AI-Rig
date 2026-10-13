@@ -13,6 +13,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from _bench_common.manifest_io import write_manifest_bytes
+
 #: Absolute path of the benchmarks directory that holds the manifest builder scripts.
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 #: Repository root, used as the working directory when the manifest builders run.
@@ -68,7 +70,7 @@ def _restore_manifests(snapshot: Mapping[Path, bytes], initially_missing: Sequen
     silently rewrote tracked working-copy state.
     """
     for path, payload in snapshot.items():
-        path.write_bytes(payload)
+        write_manifest_bytes(path, payload)
     for path in initially_missing:
         path.unlink(missing_ok=True)
 

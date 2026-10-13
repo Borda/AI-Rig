@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.35.5
+
+- Audit from a flow/dependency map through focused probes and evidence-triggered context rechecks; reconcile coverage before closing and limit composition probes to applicable flows.
+
+- Put confidence-gap deductions before their descriptions, using `(-0.NN) Description` consistently in new reports.
+
+- Cover fork PR checkout with native once/reusable GitHub approval at the verified reader or collector command boundary; disclose cross-target scope and preserve checkout recovery protections.
+
+- Prefer structured decision controls and place any required plain-text question with complete options last in terminal output; show pending remediation handoff context before asking.
+
+- Honor explicit local remediation commits despite failed checks or known regressions, retain failed verification honestly, and require zero task-owned uncommitted residue before completion.
+
+- Require announced remediation isolation and verified return delivery to the invoking checkout by default; preserve unrelated content and distinguish historical source receipts from delivery and resume evidence.
+
+- Locate remediation work in final handoffs with the recorded branch and clickable absolute checkout path, preferring recovered receipts. Require commit summaries to distinguish checkout-specific Git state, local commits, publication and report promotion.
+
 ## 0.35.4
 
 - Include the bound PR number and clickable canonical URL inside remediation PR decision questions, including missing-review and unavailable-PR remediation prompts. Explain collection failures as no source review performed, preserving the exact diagnostic and existing continuation choices.

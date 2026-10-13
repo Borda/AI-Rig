@@ -12,6 +12,33 @@ CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
 
 
 @pytest.mark.installed_plugin
+def test_remediation_delivers_to_original_checkout_after_source_checks() -> None:
+    """Prevent isolated remediation from finishing with fixes stranded outside the user's checkout."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    contract = (PLUGIN_ROOT / "shared" / "native-skill-contract.md").read_text(encoding="utf-8")
+    policy = contract.split("## Worktree lifecycle", maxsplit=1)[1].split("\n## ", maxsplit=1)[0]
+
+    assert "original invoking checkout" in policy
+    assert "before collection or source edits" in policy
+    assert "explicit worktree-only" in policy
+    assert "Review-only" in policy
+    assert "never switch or deliver changes to the invoking checkout" in policy
+    assert "staged, unstaged and untracked" in policy
+    assert "Do not merge or cherry-pick" in policy
+    assert "delivery remains incomplete" in policy
+    assert "historical source receipt" in policy
+    assert "Select the destination route before any transfer" in policy
+    assert "verify in place without detaching, copying or requiring a clean source index" in policy
+    assert "PR identity, tracking and ancestry-from-receipt checks apply only to PR mode" in policy
+    assert "### Return remediation to the invoking checkout" in skill
+    delivery = skill.split("### Return remediation to the invoking checkout", maxsplit=1)[1]
+    assert "before final promotion and output" in delivery
+    assert "no-commit and leave-unstaged" in delivery
+    assert "worktree-delivery.md" in delivery
+    assert "local fixes and optional commits remain there" not in skill
+
+
+@pytest.mark.installed_plugin
 def test_result_template_uses_allocated_run_for_all_artifact_paths() -> None:
     """Keep PR remediation result links bound to the promoted directory instead of a stale timestamp."""
     template = (CODE_REMEDIATE_SKILL.parent / "result-template.json").read_text(encoding="utf-8")

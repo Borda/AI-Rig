@@ -35,7 +35,7 @@ Optional but recommended:
 
 ## Confidence Deduction Accounting
 
-For every reported confidence gap or limitation, show its contribution as `(-0.NN)` using an ASCII minus and two decimals. Unique deductions must sum to exactly `1.00 - score` at the displayed precision; choose the displayed score and deductions consistently. Keep existing confidence bands and evidence requirements.
+For every reported confidence gap or limitation, put its contribution first, before the description: `(-0.NN) Description` using an ASCII minus and two decimals. Unique deductions must sum to exactly `1.00 - score` at the displayed precision; choose the displayed score and deductions consistently. Keep existing confidence bands and evidence requirements.
 
 - A limitation that did not reduce the score carries `(-0.00)`; retain its evidence or unresolved/deferred rationale.
 - Name any cap, floor, or band that determined the score and show its contribution. Attribute overlapping causes without double-counting; when a limit repeats a gap, reference the same label and count its deduction once.

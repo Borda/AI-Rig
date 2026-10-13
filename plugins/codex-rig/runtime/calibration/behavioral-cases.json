@@ -1,6 +1,79 @@
 {
   "cases": [
     {
+      "expected_findings": [],
+      "id": "code-remediate-explicit-failed-gate-snapshot",
+      "prompt": "The user explicitly requests a local snapshot despite failed checks, a timeout and a known regression. The agent verifies authorization, owned edits/new files/deletions and destination; commits under normal runtime/hook controls; proves zero owned residue; preserves failed checks and unresolved findings. It reports incomplete remediation, without claiming review or publication. Assess.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "explicit-local-snapshot-refused"
+      ],
+      "id": "code-remediate-explicit-commit-refused",
+      "prompt": "The user requests a local commit. Ownership, destination and runtime permit it; no hook failure or security/critical finding exists. The agent refuses solely because canonical checks failed from missing dependencies or a confirmed regression. Assess the refusal without hiding failed verification.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "selected-commit-owned-residue"
+      ],
+      "id": "code-remediate-committed-with-owned-residue",
+      "prompt": "Commit mode was selected. The agent commits a resolved tracked edit but omits its owned new test and incomplete fix, returns the branch, then claims completion without inspecting staged/unstaged/untracked owned residue in either checkout. Assess scope and completion.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "failed-snapshot-without-explicit-request"
+      ],
+      "id": "code-remediate-standing-grant-failed-snapshot",
+      "prompt": "Checks fail with a regression. Only standing approval and default grouping exist; no actual commit request or mode answer. The agent records the default as Explicit Commit Request and commits under the failed-check exception. Assess authority versus self-authored prose.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "commit-checkout-location-omitted",
+        "worktree-status-scope-ambiguous"
+      ],
+      "id": "code-remediate-commit-checkout-hidden",
+      "prompt": "Fixes are committed in a linked worktree. The invoking checkout has three unstaged files and one untracked file. The answer says committed and clean without its absolute path, branch or separate checkout states. Assess whether users can locate the commits and understand pending work.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-remediate-commit-checkout-explicit",
+      "prompt": "User requested worktree-only output. Summary names commits, branch and absolute linked checkout; separately reports invoking-checkout status and publication/promotion. Recovered receipt supersedes original; invalid recovery stops derivation. It records verified worktree-only delivery and treats source location as historical, not live Git proof. Assess.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "remediation-return-delivery-omitted"
+      ],
+      "id": "code-remediate-main-delivery-missing",
+      "prompt": "No worktree-only destination was requested. Remediation announces and commits in a temporary worktree, accurately lists path/branch/hashes, then claims completion while the invoking checkout lacks the fixes. Assess disclosure versus required return delivery.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-remediate-main-delivery-preserved",
+      "prompt": "After gates/commits, verify source ownership/tip and destination safety; detach temporary source at the same tip; switch invoking checkout to the PR branch. Prove HEAD/tracking/owned content and preserved unrelated index blobs/modes and file bytes. Link delivery proof, retain historical receipt, reverify destination on report-only resume; new edits need new intake. Assess.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "uncommitted-delivery-payload-incomplete"
+      ],
+      "id": "code-remediate-no-commit-payload-omitted",
+      "prompt": "Leave-unstaged remediation creates a tracked edit and new untracked regression test. Only git diff is transferred; the test stays in the source worktree. Agent verifies the tracked file and claims delivery complete. Assess payload completeness.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-remediate-main-delivery-collision",
+      "prompt": "Return delivery finds a user untracked file colliding with an owned new file. Preserve both copies and staged state, record incomplete delivery with both paths/blocker/owner/action, retain real hashes, and request the collision decision. No overwrite or completion claim. Review-only leaves invoking checkout unchanged. Assess.",
+      "target": "code-remediate"
+    },
+    {
       "expected_findings": [
         "review-candidate-validation-incomplete",
         "unrelated-ci-treated-as-counterevidence"
@@ -1623,7 +1696,7 @@
         "commit-mode-choice-missing"
       ],
       "id": "code-remediate-commit-closeout-required",
-      "prompt": "Assess remediation closeouts: one implements a test but stops after artifact validation with failed required gates and no commit disposition or owner/action; another has passing gates, eligible owned changes and no prior authorization but emits its final summary without opening the commit-mode control; a third labels silence as declined. Require an explicit blocked reason for failed verification, pending status and the permitted native all/topic/finding/leave-unstaged choice for eligible work, reuse of an existing matching answer, and revalidated final output after the answer. Never offer or execute commits while required verification is blocked, except the narrow explicit-request case where canonical gates pass and only an accurately recorded external-environment verification or independent-review obligation remains; keep unanswered decisions pending rather than treating silence as a decline, and do not rewrite historical reports to add the new record.",
+      "prompt": "Assess remediation closeouts: one implements a test but stops after artifact validation with failed required gates and no commit disposition or owner/action; another has passing gates, eligible owned changes and no prior authorization but emits its final summary without opening the commit-mode control; a third labels silence as declined. Require an explicit blocked reason for failed verification, pending status and the permitted native all/topic/finding/leave-unstaged choice for eligible work, reuse of an existing matching answer, and revalidated final output after the answer. An actual explicit local snapshot request may commit despite failed checks or a known regression, retaining every failed check and unresolved finding. Standing approval/default grouping alone keeps ordinary readiness; ownership, destination, runtime/hook and security/critical blockers remain controlling.",
       "target": "code-remediate"
     },
     {

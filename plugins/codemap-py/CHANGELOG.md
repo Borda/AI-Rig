@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.41.3
+
+- Keep Codex decision questions in structured controls first; plain-text fallback ends terminal output with the question and complete choices, after all context and reports.
+
 ## 0.41.2
 
 - Scope the prompt hook's status, stale and missing-index sentinels per runtime and session, falling back to `shared` when the host supplies no session, so concurrent sessions no longer suppress each other's index status.

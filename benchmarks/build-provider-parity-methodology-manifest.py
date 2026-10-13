@@ -119,6 +119,7 @@ STATIC_REFERENCE_TYPES = frozenset({"symbol_extraction", "real_issue"})
 sys.path.insert(0, str(BENCHMARKS))
 import _bench_common.provider_parity_contracts as core  # noqa: E402
 from _bench_common.artifact_hashing import module_sha256, runner_sha256  # noqa: E402
+from _bench_common.manifest_io import write_manifest_bytes  # noqa: E402
 
 
 def _sha256(path: Path) -> str:
@@ -413,8 +414,7 @@ def _write_or_check(path: Path, expected: bytes, *, check: bool) -> None:
         if not path.is_file() or path.read_bytes() != expected:
             raise ValueError(f"generated methodology record is stale: {path}; run: {REBUILD_COMMAND}")
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(expected)
+    write_manifest_bytes(path, expected)
 
 
 def main(check: bool = False) -> None:

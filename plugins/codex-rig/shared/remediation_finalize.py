@@ -18,6 +18,8 @@ Derived, never authored by hand:
 - ``merge_resolution`` path, authorization, conflict flag, and status from ``pr/merge-resolution.json``.
 - Final-handoff verification, confidence, artifacts, remediation table, source records, and source coverage from
   ``gates.json`` and the derived metadata.
+- A source-checkout link naming the absolute path and branch from the current remediation branch receipt, preferring
+  the recovered receipt when present. This is recorded location evidence, not a live Git status check.
 - Each item's latest outcome fields and each bucket's latest status from the append-only ``resolution-events.jsonl``.
   Growing ledgers (that event file, ``closure-log.md``, and the review run's ``resolution.jsonl``) are only appended,
   never rewritten; rendered tables are rebuilt from them.
@@ -77,7 +79,7 @@ import os
 import re
 import subprocess
 import sys
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import ModuleType
 from typing import Any
 
@@ -801,18 +803,37 @@ def _confidence_block(metadata: dict[str, Any], score: float) -> dict[str, Any]:
     }
 
 
-def _artifacts(existing: list[Any], artifact_path: str) -> list[dict[str, str]]:
-    """Bind the result and its action-item ledger while keeping other labelled artifacts."""
+def _artifacts(run: Path, existing: list[Any], artifact_path: str) -> list[dict[str, str]]:
+    """Bind result, ledger, and recorded source location while keeping other labelled artifacts."""
     ledger = str(PurePosixPath(artifact_path.replace("\\", "/")).with_name("action-items.md"))
     kept = [
         artifact
         for artifact in existing
         if isinstance(artifact, dict)
         and artifact.get("label") not in {"Result", "Action items"}
+        and not str(artifact.get("label", "")).startswith("Source checkout:")
         and PurePosixPath(str(artifact.get("path", "")).replace("\\", "/")).name not in {"action-items.md"}
         and artifact.get("path") != artifact_path
     ]
-    return [{"label": "Result", "path": artifact_path}, {"label": "Action items", "path": ledger}, *kept]
+    artifacts = [{"label": "Result", "path": artifact_path}, {"label": "Action items", "path": ledger}, *kept]
+    # Recovery supersedes the original receipt; a malformed recovery must never fall back to an old destination.
+    receipt = run / "remediation-branch-recovered.json"
+    if not receipt.exists() and not receipt.is_symlink():
+        receipt = run / "remediation-branch.json"
+    if receipt.exists() or receipt.is_symlink():
+        record = _load(receipt)
+        branch, worktree = record.get("branch"), record.get("worktree")
+        if (
+            record.get("schema_version") != 2
+            or record.get("status") != "prepared"
+            or not isinstance(branch, str)
+            or not branch.strip()
+            or not isinstance(worktree, str)
+            or not (PurePosixPath(worktree).is_absolute() or PureWindowsPath(worktree).is_absolute())
+        ):
+            raise DeriveError(f"checkout-receipt-invalid:{receipt.name}")
+        artifacts.append({"label": f"Source checkout: {worktree} (branch {branch})", "path": worktree})
+    return artifacts
 
 
 def _result_artifact(existing: list[Any], artifact_path: str) -> list[dict[str, str]]:
@@ -902,7 +923,7 @@ def derive_handoff(
                     table.update(layout="concise", overview_only=True)
             _derive_review_actions(run, metadata, handoff)
         return handoff
-    handoff["artifacts"] = _artifacts(handoff.get("artifacts") or [], artifact_path)
+    handoff["artifacts"] = _artifacts(run, handoff.get("artifacts") or [], artifact_path)
     if handoff.get("branch") == "caller-contract":
         return handoff
     presentation = metadata.get("resolution_scope", {}).get("presentation_version")

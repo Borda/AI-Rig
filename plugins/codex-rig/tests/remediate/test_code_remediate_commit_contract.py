@@ -89,7 +89,7 @@ def test_remediation_finalization_cannot_skip_commit_disposition() -> None:
     assert "Result validation alone must never skip this continuation" in shared
 
 
-def test_explicit_commit_rechecks_external_obligation_limit_and_cites_remaining_blockers() -> None:
+def test_explicit_commit_overrides_verification_readiness_and_discloses_failures() -> None:
     """Keep a user-requested commit actionable while making every refusal auditable."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     preparation = skill.split("### 11: Write And Validate Result Artifact", maxsplit=1)[1].split("### 12:")[0]
@@ -100,19 +100,20 @@ def test_explicit_commit_rechecks_external_obligation_limit_and_cites_remaining_
     )
     native = (PLUGIN_ROOT / "shared" / "native-skill-contract.md").read_text(encoding="utf-8")
 
-    assert "External-obligation exception" in preparation
-    assert "independent review owned by an external reviewer or maintainer" in preparation
+    assert "Explicit local snapshot exception" in preparation
+    assert "failed canonical checks" in preparation
+    assert "known regression" in preparation
     assert "## Explicit Commit Request" in preparation
     assert "## Remaining Verification" in preparation
     assert "controlling rule" in preparation
-    assert "A recorded commit-mode choice authorizes committing completed fixes" in preparation
-    assert "do not downgrade it to a grouping preference" in preparation
+    assert "an answered `all at once`" in preparation
+    assert "Do not downgrade a recorded commit-mode choice to a grouping preference" in preparation
     assert "retains that authorization" in commit
     assert "A later explicit `commit this` request reopens a previously blocked disposition" in commit
-    assert "external-obligation exception" in commit
+    assert "explicit local snapshot exception" in commit
     assert "including when the plan is prepared in response to it; do not ask again" in commit
     assert (
-        "A failed result may permit a local commit after an explicit user request, including a recorded commit-mode choice,"
+        "A failed or timed-out result may permit a local snapshot after an explicit user request, including an answered commit-mode choice,"
         in shared
     )
     assert "explicitly requested reversible local action" in native
@@ -172,9 +173,25 @@ def test_explicit_commit_sequence_override_reaches_handoff_consumer() -> None:
     handoff = (PLUGIN_ROOT / "shared/final-handoff-code-remediate.md").read_text(encoding="utf-8")
     commit = skill.split("### 12:", 1)[1].split("## Fail-fast Rules", 1)[0]
     assert "Do not wait solely for final report validation" in commit
-    assert "failed-gate and external-obligation rules in step 11 still apply" in commit
+    assert "ordinary readiness and explicit local snapshot rules in step 11 still apply" in commit
     assert "## Remaining Report Checkpoint" in commit
     assert "preserve its hashes and `committed` disposition" in skill
     assert "before final report validation" in handoff
     assert "then return with actual hashes/disposition to complete validation and promotion" in handoff
     assert "Standing approval or grouping alone does not invoke this sequencing override" in handoff
+
+
+def test_selected_commit_cannot_finish_with_owned_residue() -> None:
+    """Keep new files, incomplete fixes and late worktree changes from escaping a selected commit."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    gate = skill.split("### Selected commit completion gate", maxsplit=1)[1].split(
+        "### Return remediation", maxsplit=1
+    )[0]
+    assert "before final output" in gate
+    assert "staged, unstaged and all untracked entries" in gate
+    assert "zero task-owned uncommitted entries" in gate
+    assert "newly created files and deletions" in gate
+    assert "Unrelated pre-existing changes remain untouched" in gate
+    assert "After verified delivery, later drift fails the final recheck" in gate
+    assert "no-commit/leave-unstaged decision takes precedence" in gate
+    assert "all authorized owned edits, additions and deletions" in skill

@@ -268,7 +268,11 @@
       "Next steps",
       "Item \\| Severity / impact \\| Decision \\| Evidence \\| Next action",
       "shared frame",
-      "helper-cli-contract.md"
+      "helper-cli-contract.md",
+      "Map the system",
+      "Investigate one material uncertainty",
+      "Reassess the finding in context",
+      "Final reconciliation"
     ],
     "calibrate": [
       "## Input Schema",
@@ -509,7 +513,7 @@
       "Deferred:",
       "Verified without code changes:",
       "Blocked:",
-      "External-obligation exception",
+      "Explicit local snapshot exception",
       "## Explicit Commit Request",
       "## Remaining Verification",
       "controlling rule",

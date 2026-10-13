@@ -9,7 +9,7 @@ description: Audit Codex configuration and workflow contracts, including failure
 
 > Task-size routing follows [Proportional Execution](../../shared/native-skill-contract.md#proportional-execution); this skill's specialized lifecycle and acceptance checks remain authoritative.
 
-Run linear configuration/workflow audit.
+Audit configuration and workflows iteratively: map the system, investigate specific uncertainties, and reassess findings in context. Keep each cycle bounded to the authorized scope. The numbered lifecycle organizes artifacts and gates; analysis revisits affected flows when evidence changes their context.
 
 > Unless `skip_gate=true` or a fix level is already supplied, present ranked findings and ask which findings or severity levels should be proposed for remediation, including `No fixes`; accept existing indexes/ranges or severity syntax through User Questions. Record the bound choice in `audit-ledger.md`. Pending input stays unresolved; choosing a fix level does not turn this audit into an implementation run.
 
@@ -60,7 +60,17 @@ Write `<run-directory>/audit-ledger.md` with these sections:
 
 For a workflow-bearing target, follow its actual entrypoint through helpers, state changes, handoffs, the next ordinary user action. Read the relevant callers and consumers even when unchanged. Start from the user's intended outcome; existing instructions, accepted design decisions, green tests are evidence to question, not proof that the contract is sufficient. Keep the exploration bounded to reachable behavior, explicitly record excluded paths. For a static target with no workflow, record why this check is not applicable.
 
-Write `<run-directory>/workflow-exploration.md` with `Transitions`, `Counterexamples`, `Coverage` sections, including an explicit reason in each section when no workflow applies. Use a compact transition table: `Step / actor | Required precondition | Observed postcondition | Next consumer / user action | Evidence / gap`. For each material handoff ask:
+Write `<run-directory>/workflow-exploration.md` with `Transitions`, `Counterexamples`, `Coverage` sections, including an explicit reason in each section when no workflow applies. Keep the map, focused probes and reconciliations in these existing sections; no additional graph or report format is required.
+
+#### Map the system
+
+Before deep inspection, start `Transitions` with a compact map of the material user flows: intended outcomes, supported entrypoints and actors, producers and consumers, dependencies and shared state, and scope boundaries. Give flows stable names so findings and coverage can refer back to them. Derive connections from source or observed behavior; label assumed or unavailable links. Group by behavior rather than file layout, including interactions between flows and the next ordinary user action. For a static target, map its effective configuration/instruction dependencies without inventing runtime flows.
+
+Choose the next detail by impact on the user's outcome and strength of existing evidence: prioritize an unproven shared dependency, handoff or contradictory assumption over convenient isolated cleanup. The map bounds the audit; it does not claim exhaustive discovery.
+
+#### Investigate one material uncertainty
+
+Trace the selected flow through its relevant implementations and consumers. Use a compact transition table: `Step / actor | Required precondition | Observed postcondition | Next consumer / user action | Evidence / gap`. For each material handoff ask:
 
 - What does the producer actually guarantee, what stronger property does the consumer assume? Distinguish matching content or value from identity, ownership, authority, lifetime, and destination.
 - Can every local check succeed while the end result is wrong, temporary, unrecoverable, or misleading to the user? What retains the result after the next normal action?
@@ -69,13 +79,23 @@ Write `<run-directory>/workflow-exploration.md` with `Transitions`, `Counterexam
 
 Probe the highest-impact unproven assumption with the smallest safe executable check or source-backed counterexample. Retain its inputs, expected outcome, actual result, rejected alternative; proposed/unavailable probes remain gaps. Include a positive case to distinguish a missing guarantee from a deliberately valid alternative. Audit remains read-only: parent-owned disposable probes may write scratch data within existing authorization; production edits and external actions keep their own scope and permission boundaries.
 
+#### Reassess the finding in context
+
+After each focused investigation, recheck the conclusion against the mapped user outcome, ordinary consumer and affected sibling flows. Record what changed in `Counterexamples`: the hypothesis, evidence, conclusion, affected flow names and next inspection or stop reason. A discovered dependency, reachable state, shared cause, contradiction or invalidated assumption triggers renewed inspection of the affected context. Update priorities and mark earlier conclusions that relied on the invalidated assumption as unverified until rechecked. Source changes invalidate affected evidence; retain its history and bind fresh conclusions to the current source. Follow only evidence-backed dependencies within the authorized scope; record an out-of-scope dependency and the missing decision instead of silently expanding the task.
+
+Repeat with the next material uncertainty from the updated map. Do not use a fixed pass count or keep searching until no new findings appear. Existing recurrence and reasoning-progress stop rules still apply; a blocked probe remains a gap while independent authorized checks continue.
+
+#### Final reconciliation
+
+Before gates and again before classifying the final findings, reconcile every mapped flow and material dependency with `Coverage`: inspected with evidence, unresolved with owner/next check, excluded with scope reason, or inapplicable with evidence. Split partially inspected flows so a local passing check cannot imply full coverage. Tie findings to affected outcomes and reconcile contradictions between local detail and system behavior. Reopen affected claims when later gates reveal source drift or new evidence. Finish when the authorized scope is accounted for and each conclusion is supported or explicitly bounded by a gap; a completed assessment can retain gaps, but cannot certify untested workflows as safe.
+
 Report tested transitions separately from untested coverage. A passing inventory, schema validator, command, or existing regression suite cannot close an untested end-to-end claim. Generalize demonstrated mechanisms into recommendations; keep incident-specific names and benchmark answers out of shipped instructions.
 
 ### Instruction composition and productivity regressions
 
 Review effective instruction composition, not only each file separately: user overrides, global managed and unmanaged blocks, project siblings, installed skill names, role cards, runtime defaults, and historical evidence consumed by launchers. Distinguish source readiness from active installation. Use `scripts/install_global_agents.py --check --source <installed-package>/assets/AGENTS.md --codex-home <home>` for read-only global-state diagnosis during explicit setup/audit; never add a per-task setup gate or automatically delete custom instructions.
 
-Include positive and negative outcome probes for a small parent-only change, authorized serial fallback without redundant consent, productive multi-step investigation, useful unfinished recovery, a feasible structural fix, gradual review-score improvement, and GPT 6+ launch selection. Confirm actual delegated-write and runtime permission denials still reject. A test that only checks prescribed wording or reproduces an implementation choice cannot establish workflow quality. Record each tested invariant, the check that would fail on its counterexample, and residual untested behavior. Review added obligations for current necessity; remove superseded active rules instead of layering another exception over them. Preserve explicitly labeled historical records without treating them as executable routing authority.
+Use the map to select applicable positive and negative outcome probes for a small parent-only change, authorized serial fallback without redundant consent, productive multi-step investigation, useful unfinished recovery, a feasible structural fix, gradual review-score improvement, and GPT 6+ launch selection. Record why other listed cases are outside the audited composition instead of running unrelated workflows. Where delegation or runtime permissions apply, confirm actual delegated-write and runtime permission denials still reject. A test that only checks prescribed wording or reproduces an implementation choice cannot establish workflow quality. Record each tested invariant, the check that would fail on its counterexample, and residual untested behavior. Review added obligations for current necessity; remove superseded active rules instead of layering another exception over them. Preserve explicitly labeled historical records without treating them as executable routing authority.
 
 ### 04: Audit prompt efficiency without using length as quality
 
@@ -171,7 +191,7 @@ Use shared lifecycle/authoritative help. Write `AUDIT_METADATA`, validate `audit
 
 Required checks:
 
-- `review`: inventory, contract ledger, workflow-exploration transitions/counterexamples or explicit inapplicability, prompt-efficiency evidence, reference scan, overlap decisions, `git diff --check`.
+- `review`: inventory, contract ledger, workflow-exploration map and transitions, focused counterexamples, evidence-triggered context rechecks and final coverage reconciliation (or explicit inapplicability), prompt-efficiency evidence, reference scan, overlap decisions, `git diff --check`.
 - `calibration`: run owning project's declared calibration command when audited workflow behavior changes; for Codex Rig source, use `runtime/calibration/run.py --layout plugin`.
 
 Conditional checks:
@@ -184,7 +204,7 @@ Conditional checks:
 Update calibration when audit scope, contract requirements, or routing checks change:
 
 - benchmark patterns: `audit`, every configured skill, every configured agent
-- behavioral cases: runtime leak detection, stale reference handling, overlap classification, unsafe sync recommendation, length-only compression, missing loaded-reference cost, missing paired evidence, critical behavior regression, and below-threshold cost reduction
+- behavioral cases: mapped-flow coverage, invalidated assumptions revisited in affected consumers, bounded static-target inapplicability, runtime leak detection, stale reference handling, overlap classification, unsafe sync recommendation, length-only compression, missing loaded-reference cost, missing paired evidence, critical behavior regression, and below-threshold cost reduction
 
 ## Output Contract
 

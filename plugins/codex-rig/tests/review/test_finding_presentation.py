@@ -1989,3 +1989,115 @@ def test_completed_compact_review_rejects_missing_full_report_detail(tmp_path: P
     assert completed.returncode != 0
     assert "review-report-details-mismatch" in completed.stderr
     assert completed.stdout == ""
+
+
+@pytest.mark.parametrize("commit_status", ["pending", "committed"])
+@pytest.mark.parametrize("gate_status", ["fail", "timeout", "missing-command"])
+def test_explicit_local_snapshot_survives_failed_gate_pipeline(
+    tmp_path: Path, commit_status: str, gate_status: str
+) -> None:
+    """Honor explicit local snapshots while preserving failed checks and an unresolved regression end to end."""
+    result_path = _write_remediation_candidate(tmp_path, "code", ("unresolved", "Blocked: known input regression."))
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result_status = "timeout" if gate_status == "timeout" else "fail"
+    result.update(status=result_status, checks_failed=["tests"])
+    metadata = result["metadata"]
+    metadata["unresolved_summary"].update(
+        selected_items_total=1,
+        selected_items_unresolved=1,
+        local_actionable_items_unresolved=1,
+        all_local_actionable_items_closed=False,
+        unresolved_reason_groups=[
+            {
+                "reason": "local-code-or-doc",
+                "count": 1,
+                "owner": "codex",
+                "next_action": "Correct the known regression after preserving the requested snapshot.",
+                "evidence_path": "unresolved.txt",
+            }
+        ],
+    )
+    (tmp_path / "unresolved.txt").write_text(
+        "## Unresolved Work Summary\n\nOne local regression remains.\n\n"
+        "## Why Selected Items Remain Unresolved\n\n"
+        "| Closure class | Next owner | Attempted evidence |\n| --- | --- | --- |\n"
+        "| local-code-or-doc | codex | tests failed |\n\n## Next Action\n\nFix the regression.\n",
+        encoding="utf-8",
+    )
+    plan = tmp_path / "commit-plan.md"
+    plan.write_text(
+        "## Explicit Commit Request\n\nUser requested commit this, including the known regression.\n\n"
+        "## Remaining Verification\n\nTests remain failed; no passing remediation claim.\n",
+        encoding="utf-8",
+    )
+    gates_path = tmp_path / "gates.json"
+    gates = json.loads(gates_path.read_text(encoding="utf-8"))
+    gates.update(status=result_status, checks_failed=["tests"])
+    gates["checks"][3].update(
+        status=gate_status,
+        exit_code={"fail": 1, "timeout": 124, "missing-command": 127}[gate_status],
+        reason="The recorded test attempt remains incomplete or failed.",
+    )
+    gates_path.write_text(json.dumps(gates), encoding="utf-8")
+    (tmp_path / "tests.stdout.txt").write_text("Known input regression remains.\n", encoding="utf-8")
+    handoff_path = tmp_path / "final-handoff.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff["verification"][3]["status"] = gate_status
+    handoff["outcome"] = {"title": "Local snapshot", "summary": "Remediation remains incomplete: known regression."}
+    handoff["commit_disposition"] = {
+        "status": commit_status,
+        "reason": "Explicit local snapshot; the regression and failed checks remain open.",
+        "evidence": "commit-plan.md",
+    }
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    binding = _load_finalizer().render_files(
+        handoff_path, tmp_path / "final.md", tmp_path / "final-handoff.validation.json"
+    )
+    for field in ("handoff_sha256", "rendered_sha256"):
+        metadata["final_handoff"][field] = binding[field]
+    written = subprocess.run(
+        [
+            sys.executable,
+            str(FINALIZER.with_name("write-result.py")),
+            "--out",
+            str(result_path),
+            "--gates",
+            str(gates_path),
+            "--status",
+            result_status,
+            "--checks-run",
+            ",".join(result["checks_run"]),
+            "--checks-failed",
+            "tests",
+            "--confidence",
+            str(result["confidence"]),
+            "--artifact-path",
+            result["artifact_path"],
+            "--metadata",
+            json.dumps(metadata),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert written.returncode == 0, written.stderr
+    VALIDATOR.validate("code-remediate", tmp_path, result_path)
+    canonical = tmp_path / "result.json"
+    result_path.replace(canonical)
+    VALIDATOR.validate("code-remediate", tmp_path, canonical)
+    saved = json.loads(canonical.read_text(encoding="utf-8"))
+    assert saved["status"] == result_status
+    assert saved["checks_failed"] == ["tests"]
+    assert saved["metadata"]["final_resolution_table"]["items"][0]["resolution_status"] == "unresolved"
+    assert f"tests: {gate_status}" in (tmp_path / "final.md").read_text(encoding="utf-8")
+
+    saved["metadata"]["unresolved_summary"]["local_actionable_items_unresolved"] = 2
+    canonical.write_text(json.dumps(saved), encoding="utf-8")
+    with pytest.raises(SystemExit, match="remediation-commit-result-blocked"):
+        VALIDATOR.validate("code-remediate", tmp_path, canonical)
+    saved["metadata"]["unresolved_summary"]["local_actionable_items_unresolved"] = 1
+    canonical.write_text(json.dumps(saved), encoding="utf-8")
+
+    plan.write_text("## Standing approval\n\nApprove always; default grouping only.\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="remediation-commit-plan-section-missing:Explicit Commit Request"):
+        VALIDATOR.validate("code-remediate", tmp_path, canonical)

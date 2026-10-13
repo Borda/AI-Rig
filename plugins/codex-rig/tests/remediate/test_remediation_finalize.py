@@ -11,6 +11,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from _platform import FILE_SYMLINKS_AVAILABLE
 from test_finding_presentation import VALIDATOR, _write_remediation_candidate
 
 # Importing the fixture function registers the shared `assessed_pr` fixture in this module.
@@ -67,6 +68,78 @@ def _draft_handoff(run: Path) -> dict[str, object]:
     for field in DERIVED_HANDOFF_FIELDS:
         handoff.pop(field)
     return handoff
+
+
+@pytest.mark.parametrize(
+    ("receipt_name", "worktree"),
+    [
+        pytest.param("remediation-branch.json", "/workspace/project fix", id="original-posix"),
+        pytest.param("remediation-branch-recovered.json", "C:/workspace/project fix", id="recovered-windows"),
+    ],
+)
+def test_handoff_locates_recorded_checkout(
+    valid_run: tuple[Path, dict[str, object]], receipt_name: str, worktree: str
+) -> None:
+    """Show the receipt's branch and exact checkout even when finalization runs elsewhere."""
+    run, result = valid_run
+    result["metadata"]["resolution_scope"]["presentation_version"] = 4
+    receipt = {"schema_version": 2, "status": "prepared", "branch": "fix/selection", "worktree": worktree}
+    (run / "remediation-branch.json").write_text(
+        json.dumps({**receipt, "branch": "old-branch", "worktree": "/old/checkout"}), encoding="utf-8"
+    )
+    (run / receipt_name).write_text(json.dumps(receipt), encoding="utf-8")
+    handoff = _draft_handoff(run)
+    handoff["artifacts"] = [{"label": "Source checkout: stale", "path": "/old/checkout"}]
+
+    handoff = HELPER.derive_handoff(run, result["metadata"], handoff, result["confidence"], result["artifact_path"])
+    repeated = HELPER.derive_handoff(
+        run, result["metadata"], copy.deepcopy(handoff), result["confidence"], result["artifact_path"]
+    )
+    rendered = HELPER.final_handoff.render_handoff(handoff)
+
+    assert repeated == handoff
+    assert [item for item in handoff["artifacts"] if item["label"].startswith("Source checkout:")] == [
+        {"label": f"Source checkout: {worktree} (branch fix/selection)", "path": worktree}
+    ]
+    assert f"[Source checkout: {worktree} (branch fix/selection)](<{worktree}>)" in rendered
+    assert "/old/checkout" not in rendered
+
+
+@pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="file symlink capability unavailable")
+def test_handoff_rejects_dangling_recovered_receipt(valid_run: tuple[Path, dict[str, object]]) -> None:
+    """A broken recovery link must not resurrect the old source checkout."""
+    run, result = valid_run
+    receipt = {"schema_version": 2, "status": "prepared", "branch": "fix/selection", "worktree": "/old/checkout"}
+    (run / "remediation-branch.json").write_text(json.dumps(receipt), encoding="utf-8")
+    (run / "remediation-branch-recovered.json").symlink_to(run / "missing-receipt.json")
+
+    with pytest.raises(HELPER.DeriveError, match=r"unreadable-json:remediation-branch-recovered\.json"):
+        HELPER.derive_handoff(
+            run, result["metadata"], _draft_handoff(run), result["confidence"], result["artifact_path"]
+        )
+
+
+@pytest.mark.parametrize("defect", ["legacy", "relative", "empty-branch", "malformed"])
+def test_handoff_does_not_fall_back_from_invalid_recovered_checkout(
+    valid_run: tuple[Path, dict[str, object]], defect: str
+) -> None:
+    """An unusable recovery receipt must not silently show the original checkout."""
+    run, result = valid_run
+    receipt = {"schema_version": 2, "status": "prepared", "branch": "fix/selection", "worktree": "/workspace/project"}
+    (run / "remediation-branch.json").write_text(json.dumps(receipt), encoding="utf-8")
+    if defect == "legacy":
+        receipt["schema_version"] = 1
+    elif defect == "relative":
+        receipt["worktree"] = "project"
+    elif defect == "empty-branch":
+        receipt["branch"] = ""
+    recovered = run / "remediation-branch-recovered.json"
+    recovered.write_text("{" if defect == "malformed" else json.dumps(receipt), encoding="utf-8")
+
+    with pytest.raises(HELPER.DeriveError, match=r"unreadable-json|checkout-receipt-invalid"):
+        HELPER.derive_handoff(
+            run, result["metadata"], _draft_handoff(run), result["confidence"], result["artifact_path"]
+        )
 
 
 def test_current_handoff_marks_selection_independently_of_outcome(valid_run: tuple[Path, dict[str, object]]) -> None:

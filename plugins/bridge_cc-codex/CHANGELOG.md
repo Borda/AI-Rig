@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.1
+
+- Keep Codex decision questions in structured controls first; plain-text fallback ends terminal output with the question and complete choices, after all context and reports.
+
 ## 0.9.0
 
 - End every Claude-side `advise`, `review`, and `implement` reply with one usage line copied from the envelope (model, effort, input and cached input tokens, output tokens, duration), so Codex spend is visible without a relay subagent; cost stays unreported rather than estimated.

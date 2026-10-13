@@ -69,7 +69,8 @@ def test_reusable_pytest_approval_is_narrow_upfront_and_disclosed() -> None:
         assert required in section
     networked = _section(NATIVE_CONTRACT, "## Networked CLI Approval", "## GitHub Read Execution")
     assert "request broad interpreter prefix" in networked
-    assert "The only interpreter-family reusable prefix permitted is the pinned test-runner prefix" in networked
+    assert "Permitted interpreter-family reusable prefixes are the pinned test-runner prefix" in networked
+    assert "and the audited helper prefixes in [Reusable GitHub approval](#reusable-github-approval)" in networked
 
 
 def test_code_remediate_applies_sandboxed_test_runs_at_each_checkpoint() -> None:

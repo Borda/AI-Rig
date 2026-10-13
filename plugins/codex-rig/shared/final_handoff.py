@@ -601,10 +601,6 @@ def _validate_commit_disposition(handoff: dict[str, Any]) -> None:
         raise HandoffError("commit-disposition-status-invalid")
     _require_string(disposition["reason"], "commit-disposition-reason")
     _require_string(disposition["evidence"], "commit-disposition-evidence")
-    if status in {"pending", "committed"} and any(
-        check["status"] not in {"pass", "not-applicable"} for check in handoff["verification"]
-    ):
-        raise HandoffError("remediation-commit-verification-blocked")
 
 
 def validate_handoff(payload: object) -> dict[str, Any]:

@@ -25,6 +25,7 @@ BENCHMARKS = ROOT / "benchmarks"
 
 sys.path.insert(0, str(BENCHMARKS))
 from _bench_common.artifact_hashing import module_sha256, runner_sha256  # noqa: E402
+from _bench_common.manifest_io import write_manifest_bytes  # noqa: E402
 
 #: Self-named so a rename cannot leave the stale-output hint pointing at a missing script.
 REBUILD_COMMAND = f"uv run python {Path(__file__).resolve().relative_to(ROOT).as_posix()}"
@@ -673,8 +674,7 @@ def _write_or_check(path: Path, expected: bytes, check: bool) -> None:
         if not path.is_file() or path.read_bytes() != expected:
             raise ValueError(f"generated record is stale: {path}; run: {REBUILD_COMMAND}")
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(expected)
+    write_manifest_bytes(path, expected)
 
 
 def main(check: bool = False) -> None:

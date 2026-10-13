@@ -35,6 +35,7 @@ EXPERIMENT_ID = "codex-agentic"
 EXPERIMENT_REVISION = "codex-agentic-nested-package-imports-2026-09-09"
 sys.path.insert(0, str(BENCHMARKS))
 from _bench_common.agentic_contracts import AGENTIC_ARMS, DEFAULT_REPETITIONS, materialize_agentic_prompt  # noqa: E402
+from _bench_common.manifest_io import write_manifest_bytes  # noqa: E402
 from _bench_common.provider_parity_contracts import canonical_task_hash, semantic_suite_hash  # noqa: E402
 
 #: Arms recorded for the experiment, in cycle order; the shared agentic arm set.
@@ -387,8 +388,7 @@ def _write_or_check(path: Path, expected: bytes, *, check: bool) -> None:
         if not path.is_file() or path.read_bytes() != expected:
             raise ValueError(f"generated manifest is stale: {path}; run: {REBUILD_COMMAND}")
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(expected)
+    write_manifest_bytes(path, expected)
 
 
 def main(check: bool = False) -> None:
