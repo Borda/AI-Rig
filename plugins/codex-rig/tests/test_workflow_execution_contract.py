@@ -256,6 +256,80 @@ def test_commit_transport_requires_syntax_check_and_bounded_recovery() -> None:
         assert required in contract
 
 
+def test_hook_failure_recovery_repairs_root_cause_before_resuming_commit() -> None:
+    """Prevent a failing configured hook from becoming a permanent read-only handoff or a bypass."""
+    contract = (PLUGIN_ROOT / "shared/commit-response-template.md").read_text(encoding="utf-8")
+    recovery = contract.split("## Hook Failure Recovery", 1)[1].split("\n## ", 1)[0]
+    for required in (
+        "falsification check",
+        "rejected alternative",
+        "declared dependency compatibility",
+        "within the existing authorized scope",
+        "same configured hook",
+        "affected gates",
+        "fresh independent review",
+        "exact owned paths and message",
+        "existing commit authorization",
+        "Never skip or disable",
+        "unrelated staged entries",
+        "recurrence",
+        "protected-state",
+    ):
+        assert required in recovery
+    assert (
+        "hook failure, concurrent changes, or mismatch, stop the affected mutation and diagnose read-only"
+        not in contract
+    )
+
+
+@pytest.mark.parametrize("relative", ["shared/native-skill-contract.md", "skills/code-remediate/SKILL.md"])
+def test_hook_failure_consumers_link_the_canonical_recovery(relative: str) -> None:
+    """Keep global, ordinary commit and snapshot workflows on the same root-cause repair route."""
+    text = (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+    assert "commit-response-template.md#hook-failure-recovery" in text
+
+
+def test_installed_global_hook_recovery_uses_packaged_alias() -> None:
+    """Keep the copied global template independent of its Codex-home directory depth."""
+    template = (PLUGIN_ROOT / "assets/AGENTS.md").read_text(encoding="utf-8")
+    instruction = next(
+        line for line in template.splitlines() if "Use Codex Rig's packaged `shared/commit-response" in line
+    )
+    assert "`shared/commit-response-template.md` exactly for commit + summary messages" in instruction
+    assert "../shared/" not in instruction
+    assert "every `shared/<file>` this file names is `PLUGIN_ROOT/shared/<file>`" in template
+    contract = (PLUGIN_ROOT / "shared/commit-response-template.md").read_text(encoding="utf-8")
+    assert "[Hook Failure Recovery](#hook-failure-recovery)" in contract
+    assert "## Hook Failure Recovery" in contract
+
+
+def test_hook_comparison_and_owned_staged_resume_preserve_boundaries() -> None:
+    """Require comparable regression evidence and permit only evidenced owned-index recovery."""
+    template = (PLUGIN_ROOT / "shared/commit-response-template.md").read_text(encoding="utf-8")
+    comparison = template.split("### PR and target hook comparison", 1)[1].split("\n## ", 1)[0]
+    for required in (
+        "exact collected target revision",
+        "per-hook PR/target results",
+        "each revision's declared configuration",
+        "equivalent file-selection rules",
+        "before/after changes",
+        "Target pass plus PR fail",
+        "Both fail",
+        "neither failure is waived",
+        "causal attribution inconclusive",
+    ):
+        assert required in comparison
+    remediation = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    preflight = remediation.split("Before staging each chosen unit", 1)[1].split("The resulting commit", 1)[0]
+    assert "on initial entry" in preflight
+    assert "only this unit's proven staged content" in preflight
+    assert "paths, blobs and modes" in preflight
+    assert "Unrelated or uncertain entries stop execution" in preflight
+    review = (PLUGIN_ROOT / "skills/code-review/SKILL.md").read_text(encoding="utf-8")
+    assert "commit-response-template.md#pr-and-target-hook-comparison" in review
+    assert "read-only review does not authorize source/config repairs" in review
+
+
 def test_required_gate_and_review_do_not_invent_consent_holds() -> None:
     """Keep required checks authorized while retaining real runtime capability boundaries."""
     contract = (PLUGIN_ROOT / "shared/native-skill-contract.md").read_text(encoding="utf-8")
@@ -322,7 +396,7 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
     assert "A local Git approval grant covers plain commits." in native
     assert "ordinary finding-fix commits" in native
     assert "leave unstaged" in native
-    assert "Remote publication asks every time" in native
+    assert "Codex never performs remote mutations" in native
     assert "Ordinary finding-fix commits need no per-commit question" in assets
     assert "leave unstaged" in assets
     assert "the grant supplies consent once the owned plan and checks match" in template
@@ -503,8 +577,8 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
         ),
         pytest.param(
             "shared/native-skill-contract.md",
-            "Remote publication asks every time and force operations are forbidden",
-            id="native-push-asks-force-forbidden",
+            "Codex never performs remote mutations or requests approval for them; publication remains human-owned and force operations are forbidden",
+            id="native-remote-mutations-forbidden",
         ),
         pytest.param(
             "shared/native-skill-contract.md",
@@ -742,8 +816,8 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
         ),
         pytest.param(
             "shared/native-skill-contract.md",
-            "Push stays prose-only on Codex. Codex Rig ships no push token and no push hook: every push asks the user",
-            id="native-push-prose-only",
+            "Codex never performs remote mutations or requests approval for them; push, remote branch deletion, comments, merges and publication remain human-owned.",
+            id="native-remote-boundary",
         ),
         pytest.param(
             "shared/native-skill-contract.md",
@@ -763,7 +837,7 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
         ),
         pytest.param(
             "README.md",
-            "**Push** asks every time on Codex, with no token and no hook",
+            "**Codex never performs remote mutations** or requests approval for them",
             id="readme-push-asymmetry",
         ),
         pytest.param(

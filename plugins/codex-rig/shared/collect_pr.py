@@ -460,7 +460,12 @@ def _normalized_public_pr(payload: dict[str, Any], target: PRTarget) -> dict[str
         returned_target = _parse_pr_target(html_url) if isinstance(html_url, str) else None
     except CollectionError as error:
         raise CollectionError("public-pr-identity-mismatch") from error
-    if returned_target != target:
+    if (
+        returned_target is None
+        or returned_target.number != target.number
+        or returned_target.owner.casefold() != target.owner.casefold()
+        or returned_target.repository.casefold() != target.repository.casefold()
+    ):
         raise CollectionError("public-pr-identity-mismatch")
     body = payload.get("body")
     if body is None:

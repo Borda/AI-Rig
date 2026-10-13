@@ -696,7 +696,7 @@ def test_commit_contract_stages_and_commits_reviewed_paths_in_one_command() -> N
         "`git --no-pager show --no-renames --name-only -z --format= head`",
         "equal the reviewed path list exactly as a set",
         "a mismatch includes a committed file set that differs from the reviewed paths",
-        "do not amend, reset, unstage, re-stage, or create a repair commit",
+        "do not amend, reset, unstage, blindly re-stage, or create a repair commit",
     ):
         assert required in contract
     assert "finish authorized staging separately" not in contract

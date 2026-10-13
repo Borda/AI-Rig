@@ -254,7 +254,7 @@ Deprecation wrapper: <OLD_REF> kept as @deprecated alias → <NEW_REF>
 ```bash
 # timeout: 3000
 BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-'); BRANCH="${BRANCH:-main}"
-# never overwrite — only record of callers 51–N; same-day re-run would destroy manual-edit list
+# never overwrite — preserve the complete planning record across same-day runs
 BLAST_OUT=".temp/output-rename-refs-blast-${BRANCH}-$(date +%Y-%m-%d).md"; _n=1
 while [ -e "$BLAST_OUT" ]; do _n=$((_n+1)); BLAST_OUT=".temp/output-rename-refs-blast-${BRANCH}-$(date +%Y-%m-%d)-${_n}.md"; done
 printf '%s\n' "$BLAST_OUT"
@@ -267,16 +267,18 @@ Write all callers to printed `$BLAST_OUT`, beginning with YAML header:
 Title:      rename-refs blast-radius — <OLD_REF>
 Date:       <YYYY-MM-DD>
 Scope:      <project name>
-Focus:      caller enumeration (capped at 50 for edit pass)
+Focus:      complete caller enumeration; edit budget exceeded
 Agents:     codemap-py:rename-refs
 Outcome:    <N callers found; exhaustive: true/false>
 Confidence: <exhaustive|partial>
-Next steps: apply edits for callers 1–50; callers 51–N in this file require manual edit
+Next steps: stop before edits; plan a complete migration covering every known caller
 Path:       → <the resolved $BLAST_OUT path>
 ---
 ```
 
-Print path + count, then `⚠ >50 callers — capping edit pass at first 50. Callers 51–N listed in blast file as manual advisories.` Edit first 50 only. Step 7 labels residual old-name hits for 51–N "skipped callers"; expected, not missed dynamics.
+Print path + count, then stop before any source edit. Do not rename the definition or module, even with `--deprecate`; a larger migration requires a separately bounded plan covering every known caller. The report is planning evidence, not permission for a partial migration.
+
+Before apply confirmation, resolve every known caller before any source edit: for symbols, query every caller and verify its unique source range and expected imports/calls; for modules, inspect every dependent file and matching import. A missing, ambiguous or stale site stops the operation with source unchanged. Retain these locations for apply; recheck them before mutation. The caller budget and preflight apply to both subcommands.
 
 **`--remove-if-no-callers` guards** — evaluated before any rename edits:
 
@@ -405,14 +407,13 @@ For each `__all__` hit, Edit `"old_name"` → `"new_name"`.
 
 **4c — Import call sites** (per caller from `called_by`):
 
-Track import-edited files in `PROCESSED_IMPORT_FILES` tmpfile, and skipped callers (query miss) in a sibling tmpfile — Step 7 reads it for the completion summary; three callers in one file still need one import edit. Initialize both before loop:
+Track import-edited files in `PROCESSED_IMPORT_FILES` tmpfile; three callers in one file still need one import edit. Initialize it before the loop:
 
 ```bash
 # timeout: 3000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 printf '' > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-processed-import-files-${CSID}"
-printf '' > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-skipped-callers-${CSID}"
 ```
 
 Before each caller-file import edit, check + mark:
@@ -431,8 +432,8 @@ Edit imports only when `SKIP_IMPORT=false`.
 Per caller (`called_by[i].caller` already `module::function`; pass directly to `codemap-py query`):
 
 1. Run `codemap-py query symbol "<caller_qname>"` — timeout: 10000; result `{symbols:[{path, start_line, end_line, qualified_name, ...}]}`
-   - 0 matches → log `⚠ symbol not found for caller <caller_qname> — skipping caller`, append `<caller_qname>` to the skipped-callers tmpfile (`echo "<caller_qname>" >> "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-skipped-callers-${CSID}"`), and continue
-   - Filter `symbols[]` by `qualified_name`: exact preferred, else first
+   - 0 matches → stop; the preflight must resolve every known caller before edits. Unexpected drift after edits means an incomplete migration; report the partial state, never skip the caller or claim success
+   - Filter `symbols[]` by exact `qualified_name`; missing or ambiguous matches stop the operation
    - Use matched entry's `path`, `start_line`, `end_line` for step 2
 2. Within caller's line range in `path`:
    - **Priority**: (1) module-level imports (whole-file, once/file, may precede `start_line`); (2) qualified `X.old_name(` within start_line–end_line; (3) bare `old_name(` only within start_line–end_line
@@ -693,15 +694,15 @@ Expected: old name absent, except deprecated alias with `--deprecate`.
 
 Old name outside deprecated alias → list residual files in Step 7 advisory. Hard-limit cases: dynamic refs, template strings, out-of-scope config strings.
 
-## Step 7: Summary
+Before claiming completion, verify the renamed provider and every known caller with the relevant import and call checks. An unresolved known caller, failed check or unavailable verification leaves the migration incomplete; list the exact remaining consumer and next action. Index results alone do not establish that consumers still work.
 
-Read the skipped-callers tmpfile (`${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-skipped-callers-${CSID}`, from 4c) before printing — its content plus the Step 3 cap decide the header below.
+## Step 7: Summary
 
 Print:
 
 ```
-[if cap hit at Step 3, OR skipped-callers tmpfile non-empty]
-⚠ Renamed (PARTIAL) — M of N callers updated; <cap residual + skipped-caller count> require manual edit
+[if any known consumer remains unresolved or verification failed/unavailable]
+⚠ Rename incomplete — M of N callers verified; <remaining consumers, failed checks and next actions>
 [else]
 ✓ Renamed: <OLD_REF> → <NEW_REF>
   Files changed: N
@@ -713,10 +714,6 @@ Advisory — check manually (outside static analysis coverage):
   - getattr("<old_name>") dynamic dispatch: grep -rn '"<old_name>"' src/
   [if cross-repo public API and DEPRECATE not used]
   - External consumers: update CHANGELOG; use --deprecate alias until next major release
-  [if caller count was capped at 50]
-  - Skipped callers (51–N): edit these manually — listed in .temp/output-rename-refs-blast-* file (see blast-radius report from Step 3)
-  [if skipped-callers tmpfile non-empty]
-  - Skipped callers (symbol not found at rename time): <caller_qname list from tmpfile> — edit these manually
   [if residual hits from Step 6 re-scan]
   - Residual index hits (likely dynamic/string refs):
       <file>:<line>

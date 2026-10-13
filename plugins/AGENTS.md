@@ -40,8 +40,7 @@ Root `AGENTS.md` and the shipped Codex Rig global template (`plugins/codex-rig/a
 - Do not hardcode sibling-plugin paths, `plugins/<name>/` directories, or absolute user or temporary paths.
 - Use `~/`, `$(git rev-parse --show-toplevel)`, or `$CLAUDE_PLUGIN_ROOT` as appropriate.
 - Use a bare `plugins/` path only as the final fallback after resolving the installed cache path.
-- Every agent spawn runs in the background: the skill spawns, ends its turn, and resumes on the harness completion notification. Never hold a turn open with a no-op call, a text-only waiting line, a sleep, or a fixed-interval poll.
-- A skill that spawns agents must arm a per-agent deadline (default fifteen minutes) in the spawn response, check it with `agent_watch.py` at each wake-up, and mark a missed deadline or a notification without output as timed out at once, as the shared agent-spawn protocol requires. Never wait with ScheduleWakeup, ListAgents, or Monitor.
+- Codex agent waits follow [Agent Waits](codex-rig/shared/native-skill-contract.md#agent-waits), including blocking waits, status reporting and the owning workflow's deadline. Claude `Agent()` background notifications and health monitoring follow [Claude installability](CLAUDE.md#installability); they do not govern Codex waits.
 
 ## Independent Plugins and Cross-References
 

@@ -605,8 +605,8 @@ def test_codex_readme_states_projected_git_scope(marker: str) -> None:
         ),
         pytest.param(
             "Codex has no such token: the `extra_policy` above never approves `git push`, force-push or another remote "
-            "mutation, so every push asks you each time",
-            id="codex-asks-every-push",
+            "mutation; Codex leaves those actions to the human and never asks approval for them",
+            id="codex-remote-mutations-human-owned",
         ),
         pytest.param("Force operations are forbidden on both hosts.", id="force-forbidden"),
         pytest.param(

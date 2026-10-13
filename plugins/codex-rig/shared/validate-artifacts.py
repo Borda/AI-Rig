@@ -3053,10 +3053,18 @@ def _validate_code_remediate_pr_identity(
     expected_identity = remote_selection.get("expected")
     if not isinstance(expected_identity, dict):
         raise SystemExit("code-remediate-pr-remote-selection-expected-missing")
-    if expected_identity.get("host") != routing.get("base_host"):
-        raise SystemExit("code-remediate-pr-remote-selection-host-mismatch")
-    if expected_identity.get("repository") != routing.get("base_repo"):
-        raise SystemExit("code-remediate-pr-remote-selection-repository-mismatch")
+    # The selector normalizes identity while collector receipts preserve GitHub's spelling.
+    for field, routing_field in (("host", "base_host"), ("repository", "base_repo")):
+        expected = expected_identity.get(field)
+        observed = routing.get(routing_field)
+        if (
+            not isinstance(expected, str)
+            or not expected.strip()
+            or not isinstance(observed, str)
+            or not observed.strip()
+            or expected.casefold() != observed.casefold()
+        ):
+            raise SystemExit(f"code-remediate-pr-remote-selection-{field}-mismatch")
     if target_branch.get("remote") != remote_selection.get("remote"):
         raise SystemExit("code-remediate-pr-target-branch-remote-mismatch")
     if target_branch.get("remote_url") != remote_selection.get("remote_url"):

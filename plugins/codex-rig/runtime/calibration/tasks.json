@@ -83,6 +83,12 @@
       "id": "research-001",
       "skill": "research",
       "success": "citations and actionable guidance are present"
+    },
+    {
+      "goal": "Ground notebook generation in inspected schema and the requested execution mode",
+      "id": "kaggle-001",
+      "skill": "kaggle",
+      "success": "schema evidence, mode isolation, submission checks and honest runtime status are present; no unapproved full archive download"
     }
   ]
 }

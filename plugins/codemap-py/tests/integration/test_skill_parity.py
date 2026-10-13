@@ -786,6 +786,20 @@ def test_rename_refs_reads_completeness_forward_first(runtime_dir: Path) -> None
 @pytest.mark.parametrize(
     "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
 )
+def test_rename_refs_never_applies_a_partial_known_caller_migration(runtime_dir: Path) -> None:
+    """Prevent a renamed provider from breaking capped or unresolved known callers."""
+    flat = _flat(_skill_text(runtime_dir, "rename-refs"))
+
+    assert "stop before any source edit" in flat.lower()
+    assert "resolve every known caller before any source edit" in flat.lower()
+    assert "edit first 50 only" not in flat.lower()
+    assert "warn/skip a caller absent" not in flat.lower()
+    assert "warn and skip this caller" not in flat.lower()
+
+
+@pytest.mark.parametrize(
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
+)
 @pytest.mark.parametrize("skill_name", _OUTPUT_WRITING_SKILLS)
 def test_report_paths_are_branch_scoped_and_never_overwritten(runtime_dir: Path, skill_name: str) -> None:
     """A same-day re-run must not clobber a prior report — including the >50-caller manual-edit record."""

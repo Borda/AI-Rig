@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.35.6
+
+- Repair configured-hook root causes within authorized scope, compare PR/target hook results and resume verified original commits, including proven owned staged content; preserve hook enforcement and read-only boundaries.
+
+- Match GitHub host and repository identities case insensitively across PR collection, review, remediation and report lookup; reject malformed identities without rewriting source receipts or weakening exact checkout evidence.
+
+- Reconcile Codex remote-action prohibitions with shared approval prose while preserving Claude-specific approval records.
+
+- Cover Kaggle in required workflow calibration, with grounded-schema, mode-isolation, submission, runtime-evidence and download-boundary cases.
+
+- Correct xdist source-receipt documentation and remove the implicit three-review cap from explicit convergence loops; retain explicit caller budgets.
+
 ## 0.35.5
 
 - Audit from a flow/dependency map through focused probes and evidence-triggered context rechecks; reconcile coverage before closing and limit composition probes to applicable flows.

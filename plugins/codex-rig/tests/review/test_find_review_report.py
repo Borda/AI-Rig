@@ -257,6 +257,84 @@ def _write_nested_report(
 class TestPrScopedReviewRuns:
     """Protect discovery and terminal ordering for PR-scoped review runs."""
 
+    @pytest.mark.parametrize(
+        ("stored_url", "target"),
+        [
+            pytest.param(
+                "https://github.com/Acme/Widgets/pull/123",
+                "https://github.com/acme/widgets/pull/123",
+                id="collected-name-casing",
+            ),
+            pytest.param(
+                "https://github.com/acme/widgets/pull/123",
+                "HTTPS://GITHUB.COM/ACME/WIDGETS/pull/123",
+                id="requested-url-casing",
+            ),
+        ],
+    )
+    def test_url_casing_selects_newest_same_pr(self, tmp_path: Path, stored_url: str, target: str) -> None:
+        """GitHub identity casing cannot hide the latest assessed review."""
+        finder = _load_finder()
+        _write_nested_report(tmp_path, "run-001")
+        newest = _write_nested_report(tmp_path, "run-002")
+        (newest.parent / "pr.json").write_text(json.dumps({"number": 123, "url": stored_url}), encoding="utf-8")
+
+        assert finder.find_latest_review_report(target, [tmp_path]) == newest
+
+    @pytest.mark.parametrize("pending_kind", ["identity", "partial-identity", "candidate", "flat-target"])
+    def test_url_casing_keeps_newer_pending_run_blocking(self, tmp_path: Path, pending_kind: str) -> None:
+        """Equivalent URL spelling cannot revive findings after a newer review starts."""
+        finder = _load_finder()
+        target = "https://GITHUB.COM/ACME/WIDGETS/pull/123"
+        if pending_kind == "flat-target":
+            _write_report(tmp_path, "2026-08-10T10-00-00Z", unavailable=False)
+            pending = tmp_path / "2026-08-10T11-00-00Z"
+            pending.mkdir()
+            (pending / "pr-target.txt").write_text("https://github.com/acme/widgets/pull/123", encoding="utf-8")
+        else:
+            _write_nested_report(tmp_path, "run-001")
+            pending = tmp_path / "pr-123" / "run-002"
+            pending.mkdir()
+            identity = {"number": 123}
+            if pending_kind != "partial-identity":
+                identity["url"] = "https://github.com/Acme/Widgets/pull/123"
+            (pending / "pr.json").write_text(json.dumps(identity), encoding="utf-8")
+            if pending_kind == "candidate":
+                (pending / "result.candidate.json").write_text("{}", encoding="utf-8")
+        diagnostic = (
+            "matching-review-candidate-unpromoted:" if pending_kind == "candidate" else "matching-review-incomplete:"
+        )
+
+        with pytest.raises(LookupError, match=diagnostic) as error:
+            finder.find_latest_review_report(target, [tmp_path])
+
+        assert str(pending) in str(error.value)
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "https://example.com/acme/widgets/pull/123",
+            "https://github.com/other/widgets/pull/123",
+            "https://github.com/acme/other/pull/123",
+            "https://github.com/acme/widgets/pull/456",
+            "https://github.com/acme/widgets/PULL/123",
+            "https://github.com/acme/widgets/pull/0123",
+            "https://github.com/acme/widgets/pull/123?query=1",
+            "https://github.com/acme/widgets/pull/123#fragment",
+            "https://github.com:443/acme/widgets/pull/123",
+            "https://user@github.com/acme/widgets/pull/123",
+            "https://github.com/ac%6de/widgets/pull/123",
+            "https://github.com/acme/widgets/pull/123/extra",
+        ],
+    )
+    def test_url_identity_rejects_different_or_noncanonical_target(self, tmp_path: Path, target: str) -> None:
+        """Casing tolerance preserves canonical URL structure and repository identity."""
+        finder = _load_finder()
+        _write_nested_report(tmp_path, "run-001")
+
+        with pytest.raises(LookupError, match="missing-matching-review-report"):
+            finder.find_latest_review_report(target, [tmp_path])
+
     def test_selects_nested_assessed_result(self, tmp_path: Path) -> None:
         """Discover assessed output below the explicit PR and run directories."""
         finder = _load_finder()
@@ -618,6 +696,53 @@ def test_newer_flat_collection_before_result_blocks_stale_assessment(
         finder.find_latest_review_report(target, [tmp_path])
 
     assert str(pending) in str(error.value)
+
+
+@pytest.mark.parametrize("pending_file", ["pr-target.txt", "pr.json"])
+@pytest.mark.parametrize(
+    "target",
+    ["malformed-target", "https://example.com/acme/widgets/pull/123", "https://github.com/acme/widgets/PULL/123"],
+)
+def test_malformed_target_cannot_match_unrelated_flat_pending_run(
+    tmp_path: Path, pending_file: str, target: str
+) -> None:
+    """Missing parsed identity cannot equal a flat report's missing directory identity."""
+    finder = _load_finder()
+    pending = tmp_path / "2026-08-10T11-00-00Z"
+    pending.mkdir()
+    payload = "https://github.com/acme/widgets/pull/456" if pending_file == "pr-target.txt" else '{"number": 456}'
+    (pending / pending_file).write_text(payload, encoding="utf-8")
+
+    with pytest.raises(LookupError, match="missing-matching-review-report"):
+        finder.find_latest_review_report(target, [tmp_path])
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["malformed-target", "https://example.com/acme/widgets/pull/123", "https://github.com/acme/widgets/PULL/123"],
+)
+def test_matching_malformed_flat_target_is_not_pr_identity(tmp_path: Path, target: str) -> None:
+    """An identical retained malformed string cannot bypass canonical URL validation."""
+    finder = _load_finder()
+    pending = tmp_path / "2026-08-10T11-00-00Z"
+    pending.mkdir()
+    (pending / "pr-target.txt").write_text(target, encoding="utf-8")
+
+    with pytest.raises(LookupError, match="missing-matching-review-report"):
+        finder.find_latest_review_report(target, [tmp_path])
+
+
+@pytest.mark.parametrize("target", ["0", "#0"])
+@pytest.mark.parametrize("stored_target", ["0", "malformed-target"])
+def test_zero_pr_target_cannot_match_flat_pending_run(tmp_path: Path, target: str, stored_target: str) -> None:
+    """Neither numeric text nor two missing parsed numbers can admit a zero PR identity."""
+    finder = _load_finder()
+    pending = tmp_path / "2026-08-10T11-00-00Z"
+    pending.mkdir()
+    (pending / "pr-target.txt").write_text(stored_target, encoding="utf-8")
+
+    with pytest.raises(LookupError, match="missing-matching-review-report"):
+        finder.find_latest_review_report(target, [tmp_path])
 
 
 @pytest.mark.parametrize("intake", ["explicit", "target"])

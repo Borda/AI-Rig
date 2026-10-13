@@ -12,8 +12,9 @@ reached an assessed verdict, or a terminal close disposition.
 It scans local report directories and JSON identity files without querying GitHub or changing report content. Completion
 mode runs both packaged artifact validators before allowing final text to leave the producer boundary. Explicit local
 and PR intake reuse that same validation, including source and applicable final-handoff bindings, before returning the
-artifact path. Matching accepts a PR number, ``#number``, or exact normalized URL and checks ``pr.json`` identity and
-result metadata.
+artifact path. Matching accepts a PR number, ``#number``, or canonical GitHub URL and checks ``pr.json`` identity and
+result metadata. GitHub scheme, host, owner, and repository casing do not change PR identity; the canonical URL
+structure and PR number remain exact.
 
 ## Usage
 
@@ -92,7 +93,20 @@ def _read_pr_identity(pr_path: Path) -> tuple[str, str] | None:
 
 def _matches_target(target: str, number: str, url: str) -> bool:
     """Return whether a canonical PR identity matches a user target string."""
-    return bool(target and (number == target.lstrip("#") or url == target))
+    if not target:
+        return False
+    numeric_target = target.lstrip("#")
+    if numeric_target.isdecimal() and int(numeric_target) > 0 and number == numeric_target:
+        return True
+    requested = PR_URL_PATTERN.fullmatch(target)
+    collected = PR_URL_PATTERN.fullmatch(url)
+    return bool(
+        requested
+        and collected
+        and requested.group("owner").casefold() == collected.group("owner").casefold()
+        and requested.group("repository").casefold() == collected.group("repository").casefold()
+        and requested.group("number") == collected.group("number")
+    )
 
 
 def review_result_kind(result_path: Path, *, allow_local: bool = False) -> str:
@@ -193,8 +207,11 @@ CANDIDATE_RESULT_NAME = "result.candidate.json"
 PR_DIRECTORY_PATTERN = re.compile(r"pr-([1-9][0-9]*)")
 #: Pattern for a `run-NNN` report directory; the capture group is the run sequence number.
 RUN_DIRECTORY_PATTERN = re.compile(r"run-([0-9]{3,})")
-#: Pattern for a GitHub pull-request URL; the capture group is the pull-request number.
-PR_URL_PATTERN = re.compile(r"https://github[.]com/[^/]+/[^/]+/pull/([1-9][0-9]*)")
+#: Canonical GitHub PR URL grammar; only scheme/host casing is ignored by the pattern.
+PR_URL_PATTERN = re.compile(
+    r"(?i:https://github[.]com)/(?P<owner>[A-Za-z0-9][A-Za-z0-9._-]*)/"
+    r"(?P<repository>[A-Za-z0-9][A-Za-z0-9._-]*)/pull/(?P<number>[1-9][0-9]*)"
+)
 
 
 class ReviewArtifact(NamedTuple):
@@ -258,22 +275,26 @@ def _target_pr_number(target: str) -> str | None:
     if numeric.isdecimal() and int(numeric) > 0:
         return str(int(numeric))
     match = PR_URL_PATTERN.fullmatch(target)
-    return match.group(1) if match else None
+    return match.group("number") if match else None
 
 
 def _artifact_matches_target(
     artifact: ReviewArtifact, target: str, *, allow_target_file: bool = False, allow_unverified_directory: bool = False
 ) -> bool:
     """Match verified PR identity or conservatively identify a pending run."""
+    target_number = _target_pr_number(target)
+    directory_matches = (
+        allow_unverified_directory and target_number is not None and artifact.pull_number == target_number
+    )
     identity = _read_pr_identity(artifact.path.parent / "pr.json")
     if identity is not None:
         number, url = identity
         if artifact.pull_number is not None and artifact.pull_number != number:
-            return allow_unverified_directory and artifact.pull_number == _target_pr_number(target)
+            return directory_matches
         if _matches_target(target, number, url):
             return True
-        return allow_unverified_directory and not url and artifact.pull_number == _target_pr_number(target)
-    if allow_unverified_directory and artifact.pull_number == _target_pr_number(target):
+        return directory_matches and not url
+    if directory_matches:
         return True
     if not allow_target_file:
         return False
@@ -281,7 +302,11 @@ def _artifact_matches_target(
     stored_target = target_path.read_text(encoding="utf-8").strip() if target_path.is_file() else ""
     if _matches_target(target, stored_target, stored_target):
         return True
-    return target.lstrip("#").isdecimal() and _target_pr_number(target) == _target_pr_number(stored_target)
+    return (
+        target.lstrip("#").isdecimal()
+        and target_number is not None
+        and target_number == _target_pr_number(stored_target)
+    )
 
 
 def find_latest_review_report(target: str, reports_dirs: list[Path]) -> Path:

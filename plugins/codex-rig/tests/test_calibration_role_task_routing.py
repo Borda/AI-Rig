@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import shutil
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -47,6 +49,66 @@ def test_every_role_owns_one_related_task_cue() -> None:
     cards = {role: (PLUGIN_ROOT / "roles" / role / "ROLE.md").read_text(encoding="utf-8") for role in runner.AGENTS}
 
     assert runner.validate_role_task_routing(cards) == []
+
+
+def test_required_calibration_roster_covers_packaged_workflows() -> None:
+    """Prevent a new artifact skill from silently escaping all required calibration."""
+    runner = _load_runner()
+    packaged = {path.parent.name for path in (PLUGIN_ROOT / "skills").glob("*/SKILL.md")}
+
+    assert set(runner.SKILLS) == packaged - {"agent-shims"}
+
+
+@pytest.mark.parametrize("missing", ["task", "behavior"])
+def test_missing_kaggle_calibration_fails_roster_gate(tmp_path: Path, missing: str) -> None:
+    """Require the ordinary roster consumer to reject either missing Kaggle input."""
+    runner = _load_runner()
+    paths = runner.Paths.create("plugin", tmp_path)
+    source = paths.tasks if missing == "task" else paths.behavioral_cases
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    key, target = ("tasks", "skill") if missing == "task" else ("cases", "target")
+    payload[key] = [item for item in payload[key] if item[target] != "kaggle"]
+    broken = tmp_path / source.name
+    broken.write_text(json.dumps(payload), encoding="utf-8")
+    paths = replace(paths, **{("tasks" if missing == "task" else "behavioral_cases"): broken})
+    run = runner.CalibrationRun(paths=paths)
+
+    runner.check_fixed_task_and_behavioral_rosters(run)
+
+    assert run.checks_failed == ["fixed-task-set"]
+    assert "kaggle" in run.paths.leaks.read_text(encoding="utf-8")
+
+
+def test_complete_workflow_calibration_roster_passes(tmp_path: Path) -> None:
+    """Keep the valid task-and-case producer accepted by the ordinary consumer."""
+    runner = _load_runner()
+    run = runner.CalibrationRun(paths=runner.Paths.create("plugin", tmp_path))
+
+    runner.check_fixed_task_and_behavioral_rosters(run)
+
+    assert run.checks_failed == []
+    assert "fixed-task-roster=ok" in run.paths.checks.read_text(encoding="utf-8")
+
+
+def test_kaggle_cases_cover_grounding_modes_runtime_and_authority() -> None:
+    """Keep Kaggle's required negative scenarios and valid-mode controls in the scored case set."""
+    payload = json.loads((PLUGIN_ROOT / "runtime/calibration/behavioral-cases.json").read_text(encoding="utf-8"))
+    cases = [case for case in payload["cases"] if case["target"] == "kaggle"]
+    findings = {finding for case in cases for finding in case["expected_findings"]}
+
+    assert findings == {
+        "kaggle-invented-schema",
+        "kaggle-submission-unvalidated",
+        "kaggle-eda-mode-leak",
+        "kaggle-inference-retraining",
+        "kaggle-unverified-runtime",
+        "kaggle-unapproved-download",
+    }
+    assert {case["id"] for case in cases if not case["expected_findings"]} == {
+        "kaggle-grounded-full",
+        "kaggle-eda-only-valid",
+        "kaggle-inference-only-valid",
+    }
 
 
 def test_plugin_calibration_records_the_role_task_gate(tmp_path: Path) -> None:

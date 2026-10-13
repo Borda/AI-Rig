@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.41.4
+
+- Stop symbol and module rename before source edits when the known-caller budget is exceeded or a caller cannot be resolved; neither host applies a partial known-caller migration. Preserve full planning reports and require caller verification before reporting success.
+
 ## 0.41.3
 
 - Keep Codex decision questions in structured controls first; plain-text fallback ends terminal output with the question and complete choices, after all context and reports.

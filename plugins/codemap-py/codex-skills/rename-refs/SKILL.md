@@ -60,17 +60,19 @@ Read completeness identically. Honor `--remove-if-no-callers` only when passed a
 
 Print old→new, type/definition (symbol), static caller count/files, Step 4 doc-ref search, and `getattr`/cross-repo limits. If incomplete: "index non-exhaustive — some callers may not appear above."
 
-With >50 callers, write full list to `.reports/codex/codemap-py/rename-refs-blast-<branch>-<YYYY-MM-DD>.md`, print it, edit first 50 only, and call 51–N "skipped callers" in Step 6. `<branch>` is `git branch --show-current | tr '/' '-'` (`main` if empty/detached). Never overwrite: append `-2`, `-3`, … until free; this file is the manual-edit record.
+With >50 callers, write full list to `.reports/codex/codemap-py/rename-refs-blast-<branch>-<YYYY-MM-DD>.md`, print it, and stop before any source edit. Do not rename the definition or module, even with `--deprecate`; a larger migration requires a separately bounded plan covering every known caller. `<branch>` is `git branch --show-current | tr '/' '-'` (`main` if empty/detached). Never overwrite: append `-2`, `-3`, … until free; this file is the complete planning record, not permission for a partial migration.
 
 For `--remove-if-no-callers`, before edits: callers found → report count and stop (remove callers first or drop the flag); incomplete/missing completeness → report `$codemap-py:scan-codebase` required and stop; zero with a `hint` → report that zero static callers is not proof for a method or constructor, print the hint's search, and stop (delete manually only if it finds no reference); a protocol-method (dunder) hint names no search — Python calls it implicitly, so report it is never deleted on zero callers and stop; complete zero without a `hint` → ask delete/abort. Before deletion, verify `start_line` names the expected symbol; mismatch aborts. Delete definition plus preceding decorators, skip Step 4, and continue at Step 6.
 
 For `--dry-run`, write would-change sites to `.reports/codex/codemap-py/rename-refs-dry-<branch>-<YYYY-MM-DD>.md` using the same branch and never-overwrite rule; print path, ask for re-invocation without `--dry-run` or stop. Otherwise ask apply/abort and stop on abort.
 
+Before apply confirmation, resolve every known caller before any source edit: for symbols, query every caller and verify its unique source range and expected imports/calls; for modules, inspect every dependent file and matching import. A missing, ambiguous or stale site stops the operation with source unchanged. Retain these locations for apply; recheck them before mutation. The caller budget and preflight apply to both subcommands.
+
 ### 4. Apply symbol edits
 
 1. At `start_line`, rename `def old_name(` / `class OldName(...)` / `class OldName:`; for methods, match inside class. Rename `@old_name.setter`/`.deleter` too: an orphaned descriptor raises `AttributeError` at class definition. Rename `@typing.overload def old_name(` in the file and sibling `.pyi`; `find-symbol` omits these.
 2. In package `__init__.py`, rename quoted old names in `__all__`.
-3. For each `called_by`, run `PLUGIN_ROOT/bin/codemap-py query symbol "<caller_qname>"`; within its range, fix each file's module import once, then qualified `X.old_name(` and bare `old_name(`. Never bare-replace outside the confirmed range. Warn/skip a caller absent from the index.
+3. For each `called_by`, run `PLUGIN_ROOT/bin/codemap-py query symbol "<caller_qname>"`; within its range, fix each file's module import once, then qualified `X.old_name(` and bare `old_name(`. Never bare-replace outside the confirmed range. Use the complete preflight inventory; never skip a known caller. Unexpected drift stops the operation; report any partial edits as incomplete, not a successful rename.
 4. Search `.py`/`.rst` Sphinx `:func:`/`:class:`/`:meth:`/`:mod:`/`:attr:` old-name roles; edit only matching module context.
 5. For `--deprecate`, after definition rename run `PLUGIN_ROOT/bin/gen_deprecation_wrapper.py`; insert after new definition. It maps class to `@deprecated_class(target=NewName, ...)` (keeps `isinstance`) and function/method to `@deprecated(target=new_fn, ...)`. Missing pyDeprecate makes target import fail; report advisory in Step 6.
 
@@ -90,4 +92,4 @@ PLUGIN_ROOT/bin/codemap-py query find-symbol "<old_ref>" --limit 0    # symbol
 PLUGIN_ROOT/bin/codemap-py query rdeps "<old_ref>"                     # module
 ```
 
-If re-scan fails, report it; results are advisory, not authoritative. Expect old name absent except deprecated alias. List other residual files as advisory (dynamic/string/template/out-of-scope refs). Report renamed pair, files, calls, doc refs, alias path/line when used; always flag `getattr` literal search, external consumers without alias, skipped callers, and residual hits when applicable.
+Verify the renamed provider and every known caller with the project's relevant import/call checks; unresolved known callers or failing checks mean incomplete migration, never success. If re-scan fails, report it; results are advisory, not authoritative. Expect old name absent except deprecated alias. List other residual files as advisory (dynamic/string/template/out-of-scope refs). Report renamed pair, files, calls, doc refs, alias path/line when used; always flag `getattr` literal search, external consumers without alias, skipped callers, and residual hits when applicable.

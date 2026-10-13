@@ -2688,10 +2688,18 @@ def _validate_pr_routing_identity(routing: dict[str, Any], remote_selection: dic
     expected_identity = remote_selection.get("expected")
     if not isinstance(expected_identity, dict):
         raise SystemExit("pr-remote-selection-expected-missing")
-    if expected_identity.get("host") != routing.get("base_host"):
-        raise SystemExit("pr-remote-selection-host-mismatch")
-    if expected_identity.get("repository") != routing.get("base_repo"):
-        raise SystemExit("pr-remote-selection-repository-mismatch")
+    # The selector normalizes identity while collector receipts preserve GitHub's spelling.
+    for field, routing_field in (("host", "base_host"), ("repository", "base_repo")):
+        expected = expected_identity.get(field)
+        observed = routing.get(routing_field)
+        if (
+            not isinstance(expected, str)
+            or not expected.strip()
+            or not isinstance(observed, str)
+            or not observed.strip()
+            or expected.casefold() != observed.casefold()
+        ):
+            raise SystemExit(f"pr-remote-selection-{field}-mismatch")
     if routing.get("local_checkout_required") is not True:
         raise SystemExit("pr-routing-local-checkout-not-required")
     if "--force" in str(routing.get("local_checkout_command", "")):

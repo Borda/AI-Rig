@@ -28,6 +28,7 @@ def repository_template(tmp_path_factory: pytest.TempPathFactory) -> RepositoryT
 
 
 @pytest.mark.parametrize("cross_repository", [False, True])
+@pytest.mark.parametrize("host", ["github.com", "GITHUB.COM"])
 @pytest.mark.parametrize(
     "invalid",
     [
@@ -45,7 +46,7 @@ def repository_template(tmp_path_factory: pytest.TempPathFactory) -> RepositoryT
     ],
 )
 def test_legacy_recovery_preserves_work_and_enables_topic_commits(
-    tmp_path: Path, repository_template: RepositoryTemplate, cross_repository: bool, invalid: str
+    tmp_path: Path, repository_template: RepositoryTemplate, cross_repository: bool, host: str, invalid: str
 ) -> None:
     """Resume legacy runs only on the verified original destination without replaying checkout."""
     source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
@@ -67,6 +68,11 @@ def test_legacy_recovery_preserves_work_and_enables_topic_commits(
     legacy = tmp_path / "legacy.json"
     checkout_path = pr_dir / "local-checkout.json"
     checkout = json.loads(checkout_path.read_text(encoding="utf-8"))
+    pr_path = pr_dir / "pr.json"
+    pr = json.loads(pr_path.read_text(encoding="utf-8"))
+    pr["url"] = f"https://{host}/example/project/pull/17"
+    pr_path.write_text(json.dumps(pr), encoding="utf-8")
+    checkout["pr_url"] = pr["url"]
     checkout.pop("checkout_mode", None)
     checkout.pop("checkout_method", None)
     checkout["command"] = "not-run: already at expected PR head"
@@ -75,7 +81,7 @@ def test_legacy_recovery_preserves_work_and_enables_topic_commits(
         "schema_version": 1,
         "status": "prepared",
         "pr_number": 17,
-        "pr_url": "https://github.com/example/project/pull/17",
+        "pr_url": pr["url"],
         "initial_head": head,
         "branch": "codex/pr-17-0123456789ab",
         "worktree": worktree.resolve().as_posix(),

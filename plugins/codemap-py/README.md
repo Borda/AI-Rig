@@ -166,7 +166,7 @@ The shared Claude context contract v4 reports partial pre-flight retrieval when 
 
 ## 🧭 Honest limits
 
-The graph is static AST evidence. It can miss dynamic dispatch, hook and callback registration, string-based dispatch, `getattr` lookups, `importlib.import_module`, `__import__`, and lazy-loading patterns. Import and call results therefore do not establish runtime behavior, external consumers, test pass status, or inheritance correctness. `rename-refs` calls out dynamic references, cross-repository callers, ABC/Protocol overrides, and caller lists above its edit cap as manual review items.
+The graph is static AST evidence. It can miss dynamic dispatch, hook and callback registration, string-based dispatch, `getattr` lookups, `importlib.import_module`, `__import__`, and lazy-loading patterns. Import and call results therefore do not establish runtime behavior, external consumers, test pass status, or inheritance correctness. `rename-refs` calls out dynamic references, cross-repository callers, ABC/Protocol overrides, as manual review items. Caller lists above the 50-caller edit budget stop before source changes. Both hosts preflight every known caller; missing or ambiguous sites stop the rename, and known callers are never silently skipped.
 
 Files that fail to parse are marked degraded rather than silently treated as complete. Untracked files, root mismatches, collisions, stale hashes, and list caps can all reduce confidence. Review the returned coverage metadata and inspect the relevant source and tests before making a behavior or deletion decision.
 

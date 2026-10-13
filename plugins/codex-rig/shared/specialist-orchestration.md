@@ -43,7 +43,7 @@ Code Review schema-eight native waves follow these rules:
 
 Never add fan-out, bypass required authorization, or start dependencies. Code-remediate alone may declare exact shared-file ownership across isolated child worktrees under its schema-v2 reconciliation lifecycle; no other parallel writer may overlap ownership. When parallelism is unavailable, code-remediate asks for sequential fallback and stops if the user denies or does not answer; other consumers keep their own equal-gate serial fallback rules.
 
-An explicitly requested [adversarial convergence loop](adversarial-loop.md) may pre-plan up to three serial independent review rounds, with complete join, parent-owned local fixes, and a freshly frozen context before the next reviewer. This is a bounded sequential-review exception, not another parallel wave or write delegation. Existing consumer admission, source/provenance checks, stop rules, and approvals still apply; new scope or authority still requires re-planning with the user.
+An explicitly requested [adversarial convergence loop](adversarial-loop.md) may pre-plan serial independent review rounds under the shared strictly decreasing nonnegative integer score rule, with complete join, parent-owned local fixes, and a freshly frozen context before the next reviewer. There is no implicit three-round cap; stricter explicit caller reviewer or retry budgets remain binding. This is a bounded sequential-review exception, not another parallel wave or write delegation. Existing consumer admission, source/provenance checks, stop rules, and approvals still apply; new scope or authority still requires re-planning with the user.
 
 ## Executable Wave Evidence
 

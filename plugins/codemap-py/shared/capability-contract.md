@@ -119,7 +119,7 @@ Complete-query paths are caller-repo-relative, never Skill-relative; do not re-q
 - `getattr(obj, "old_name")` string-bound dispatch — not statically tracked; grep advisory emitted.
 - Cross-repo callers — out of scope; recommend `--deprecate` + semver bump for public APIs.
 - ABC/Protocol subclass overrides — not tracked by static import analysis; must be reviewed and renamed manually via `fn-rdeps` inspection.
-- Caller count > 50 → edit pass capped at first 50; the remainder is written to a full-list report file, never silently dropped.
+- Caller count > 50 → retain the full caller report and stop before any source edit on either host, including deprecation mode. At or below the budget, resolve every known caller before any source edit; missing, ambiguous or stale sites stop with source unchanged. Both symbol and module migrations must cover every known caller; unexpected drift or failed consumer checks leaves migration incomplete, never successful.
 
 **NOT for**: building the index (`scan-codebase`); querying without rename intent (`query-code`); non-Python files; 1:N symbol splits; package-directory rename (use `git mv` directly). No `--index <path>` override — always operates against the default project index.
 

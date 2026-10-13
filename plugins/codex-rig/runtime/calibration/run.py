@@ -71,6 +71,7 @@ SKILLS = (
     "assess",
     "optimize",
     "research",
+    "kaggle",
 )
 #: Role names the calibration run requires as the complete packaged role roster.
 AGENTS = (
@@ -2948,6 +2949,8 @@ def selftest_code_remediate_pr_identity(run: CalibrationRun) -> None:
         "diff_command": "git diff --binary base-oid...head-oid --",
     }
     module._validate_code_remediate_pr_identity(routing, remote, target, checkout)
+    mixed_case_routing = {**routing, "base_host": "GitHub.COM", "base_repo": "Owner/Repo"}
+    module._validate_code_remediate_pr_identity(mixed_case_routing, remote, target, checkout)
     advanced_target = {
         **target,
         "local_head": "new-base-oid",

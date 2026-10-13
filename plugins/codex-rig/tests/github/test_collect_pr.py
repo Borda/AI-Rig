@@ -585,6 +585,32 @@ def test_public_pr_metadata_normalizes_an_absent_optional_body() -> None:
 
 
 @pytest.mark.parametrize(
+    ("owner", "repository", "number", "accepted"),
+    [
+        pytest.param("borda", "ai-rig", 17, True, id="same-identity-lowercase"),
+        pytest.param("BORDA", "AI-RIG", 17, True, id="same-identity-uppercase"),
+        pytest.param("other", "ai-rig", 17, False, id="different-owner"),
+        pytest.param("borda", "other", 17, False, id="different-repository"),
+        pytest.param("borda", "ai-rig", 18, False, id="different-number"),
+    ],
+)
+def test_public_pr_identity_case_equivalence(owner: str, repository: str, number: int, accepted: bool) -> None:
+    """Public metadata must match the requested PR independent of repository capitalization."""
+    module = _load_collector()
+    payload = _public_pr_payload()
+    original = json.dumps(payload, sort_keys=True)
+    target = module.PRTarget(owner, repository, number)
+    if accepted:
+        normalized = module._normalized_public_pr(payload, target)
+        assert normalized["url"] == target.url
+        assert normalized["number"] == number
+    else:
+        with pytest.raises(module.CollectionError, match=r"public-pr-(base-repository|identity)-mismatch"):
+            module._normalized_public_pr(payload, target)
+    assert json.dumps(payload, sort_keys=True) == original
+
+
+@pytest.mark.parametrize(
     "target",
     ["https://github.com/Borda/AI-Rig/pull/17", "https://github.com/borda/ai-rig/pull/17", "17"],
 )

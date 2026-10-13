@@ -161,7 +161,7 @@ def recover(legacy_receipt: Path, pr_dir: Path, receipt: Path, expected_head: st
         or type(number) is not int
         or number <= 0
         or not isinstance(url, str)
-        or not re.fullmatch(rf"https://github\.com/[^/]+/[^/]+/pull/{number}", url)
+        or not re.fullmatch(rf"(?i:https://github\.com)/[^/]+/[^/]+/pull/{number}", url)
         or legacy.get("pr_number") != number
         or legacy.get("pr_url") != url
         or legacy.get("initial_head") != head
