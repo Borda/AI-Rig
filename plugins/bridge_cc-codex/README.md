@@ -1,6 +1,6 @@
 # 🌉 bridge_CC-Codex — Claude Code ↔ Codex
 
-After installation, run `$bridge:setup` in Codex to configure [Claude provider consent](rules/provider-consent.md) once. Setup checks `bin/bridge_consent.py`; when absent, the operator approves the displayed repository-context transfer policy in their own terminal. It covers task-relevant private code Claude reads in confirmed projects and ordinary inference, with explicit exclusions; installation alone grants nothing. Later calls check and reuse the grant without per-file prompts. The operator can revoke it with `bridge_consent.py revoke`. Stored user policy does not prove the active host loaded it: a fresh session may be needed, and project/managed restrictions remain authoritative. Python 3.10 needs an existing `tomli` for this optional policy stage.
+After installation, run `$bridge:setup` in Codex to configure [Claude provider consent](rules/provider-consent.md) once. To explicitly approve that consent without a terminal question, use `$bridge:setup --approve-claude-consent`; plain setup retains operator-terminal confirmation. The approval covers task-relevant private code Claude reads in confirmed projects and ordinary inference, with explicit exclusions; installation alone grants nothing. Later calls check and reuse the grant without per-file prompts. The operator can revoke it with `bridge_consent.py revoke`. Stored user policy does not prove the active host loaded it: a fresh session may be needed, and project/managed restrictions remain authoritative. Python 3.10 needs an existing `tomli` for this optional policy stage.
 
 Codex setup helper recipes use the quoted packaged Python launcher (`bin/python`, or `bin/python.cmd` on native Windows). Direct MCP startup retains its separate Python 3.10+ host-PATH prerequisite.
 
@@ -16,7 +16,7 @@ A user-reported dismissed question leaves its decision pending. The root checks 
 
 The bridge is useful with either host integration installed and has no dependency on another plugin from this repository. Existing-plugin replacement and consumer migration are deliberately outside this standalone package.
 
-> Release: `0.9.0`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
+> Release: `0.10.0`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
 
 ______________________________________________________________________
 

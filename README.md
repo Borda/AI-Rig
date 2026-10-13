@@ -358,12 +358,16 @@ Artifacts are reviewable evidence, not authority. Read the commands, source, tes
 Direct marketplace installation is the normal public path. A source checkout adds maintainer tooling and the broader, deliberate `Makefile` restore flow:
 
 ```bash
-make sync-all         # Claude + Codex scopes (default target)
+make sync-all         # Claude + Codex scopes, including standing Claude consent (default target)
+make sync-all APPROVE_CLAUDE_CONSENT=0  # leave standing consent unchanged
 make sync-claude      # Claude scope only
 make sync-codex       # Codex scope only
+make sync-codex APPROVE_CLAUDE_CONSENT=1  # also approve standing Claude transfer consent
 ```
 
 The `Makefile` installs from the pushed GitHub remote, not uncommitted local files. Commit and push first if you intentionally want a checkout change to become installable; never use sync as a preview of a dirty worktree.
+
+`make sync-all` (also plain `make`) approves the Bridge's standing transfer policy by default, without a consent prompt. Set `APPROVE_CLAUDE_CONSENT=0` on the command line or in the environment to leave consent unchanged. Direct `make sync-codex` still requires `APPROVE_CLAUDE_CONSENT=1` to grant consent. After plugin installation and personal-policy sync succeed, Make invokes this checkout's Bridge consent helper with `grant --approve`, then checks the stored grant in `CODEX_HOME` (default `~/.codex`). This local policy step uses checkout files, as personal-policy sync does; plugin installation still uses the remote. The approval covers task-relevant private repository context and ordinary inference through the provider configured in Claude Code until revoked. Values other than `0` or `1` fail before sync begins. Login, live setup probes, folder binding and host permission checks retain their own approvals. This option does not run a provider call or setup skill; an active host may need restarting to load the recorded policy.
 
 A Claude Code session keeps the plugin versions it loaded at start, so restart open sessions after a sync. `sync-claude` fails when any managed plugin's install record (user scope, or any project or local scope) differs from the version the freshly registered marketplace declares, and it ends by listing the Claude Code processes started before the install, with their working directories. Foundry, oss, develop and research each also warn at session start when that session runs a replaced copy of the plugin, naming it with both versions and the `claude --resume <session-id>` step. `sync-claude` also deletes replaced plugin versions (cache dirs Claude Code marked `.orphaned_at`) once their marker is at least 24 hours old — override with `make sync-claude ORPHAN_MIN_AGE_HOURS=<n>`. A session still running such a version loses its skill files after that point.
 

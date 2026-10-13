@@ -2,14 +2,15 @@
 
 Purpose: Give Bridge setup a durable, reviewer-visible consent boundary without treating plugin installation as
 authorization. Scope: Read or change only the versioned Bridge block in the user's auto_review.extra_policy; preserve
-all other configuration. Usage: Run check from a skill; the operator runs grant or revoke in their own terminal after
-reading the displayed scope. There is no noninteractive approval flag. Outputs: Check emits sanitized JSON; mutations
-show only the selected path and shipped policy, never user configuration or credentials. Failure: Invalid TOML,
-unsupported placement, unsafe files, changed input, missing terminal or declined confirmation exits nonzero without an
-intended policy update. Used by: Codex Bridge setup and executable skills, install-shaped tests, and operators. The
-terminal check is an interaction requirement, not proof against another process controlled by the same user. Stored
-policy is not evidence that an active or managed host loaded it; this helper never changes reviewer selection, sandbox
-permissions, authentication or plugin installation, and never invokes a provider.
+all other configuration. Usage: Run check from a skill; grant or revoke asks for operator-terminal confirmation. An
+explicitly authorized grant --approve records consent without a terminal or further question; the caller owns approval
+provenance. Outputs: Check emits sanitized JSON; mutations show only the selected path and shipped policy, never user
+configuration or credentials. Failure: Invalid TOML, unsupported placement, unsafe files, changed input, missing
+required terminal or declined confirmation exits nonzero without a policy update. Used by: Codex Bridge setup, dispatch
+skills, package tests, and operators. The terminal check is an interaction requirement, not proof against another
+process controlled by the same user. Stored policy is not evidence that an active or managed host loaded it; this helper
+never changes reviewer selection, sandbox permissions, authentication or plugin installation, and never invokes a
+provider.
 """
 
 from __future__ import annotations
@@ -198,10 +199,17 @@ def _write(path: Path, content: str, original: bytes, identity: os.stat_result |
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Check consent or let the operator approve one displayed grant or revocation."""
+    """Check consent or apply a grant or revocation with explicit approval."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("check", "grant", "revoke"))
+    parser.add_argument(
+        "--approve",
+        action="store_true",
+        help="approve persistent Claude repository-context transfer and ordinary inference consent without prompting (grant only)",
+    )
     args = parser.parse_args(argv)
+    if args.approve and args.action != "grant":
+        parser.error("--approve is supported only with grant")
     try:
         value = os.environ.get("CODEX_HOME")
         home = Path(value) if value else Path.home() / ".codex"
@@ -237,8 +245,8 @@ def main(argv: list[str] | None = None) -> int:
         if present == (args.action == "grant"):
             print("Consent already configured." if present else "Consent already absent.")
             return 0
-        if not sys.stdin.isatty() or not sys.stdout.isatty():
-            raise ValueError("grant and revoke require the operator terminal; no piped or agent-supplied approval")
+        if not args.approve and (not sys.stdin.isatty() or not sys.stdout.isatty()):
+            raise ValueError("interactive grant and revoke require the operator terminal; piped input is not approval")
         # Only this exact marked text is added or removed; surrounding user policy survives.
         if args.action == "grant":
             updated = extra + ("\n\n" if extra else "") + block
@@ -252,11 +260,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(block)
         print(
-            "\nThis applies to later authorized tasks in native-confirmed project folders until revoked. It includes ordinary inference quota/cost through your existing Claude configuration; no credential is requested, displayed or changed by this helper. No provider call runs now.\nA fresh Codex session may be needed; project or managed policy can override user defaults. Revoke removes only this block and does not cancel running calls.\nType Approve to apply this exact change, or anything else to leave configuration unchanged:"
+            "\nThis applies to later authorized tasks in native-confirmed project folders until revoked. It includes ordinary inference quota/cost through your existing Claude configuration; no credential is requested, displayed or changed by this helper. No provider call runs now.\nA fresh Codex session may be needed; project or managed policy can override user defaults. Revoke removes only this block and does not cancel running calls."
         )
-        if input() != "Approve":
-            print("Consent unchanged.")
-            return 2
+        if args.approve:
+            print("Explicit approval supplied by --approve.")
+        else:
+            print("Type Approve to apply this exact change, or anything else to leave configuration unchanged:")
+            if input() != "Approve":
+                print("Consent unchanged.")
+                return 2
         _write(path, replacement, original, identity, home_identity)
         print(
             "Consent configured; active-session effectiveness unverified."

@@ -3,9 +3,11 @@
 # Remote installs use pushed state — commit and push before running.
 #
 # Run from the project root:
-#   make sync-all            # Claude + Codex scopes (default target)
+#   make sync-all            # Claude + Codex scopes, including standing Claude consent (default target)
+#   make sync-all APPROVE_CLAUDE_CONSENT=0  # leave standing consent unchanged
 #   make sync-claude         # Claude scope only
 #   make sync-codex          # Codex scope only
+#   make sync-codex APPROVE_CLAUDE_CONSENT=1  # explicitly record standing Claude transfer consent
 #   make clear-all           # teardown both scopes
 #   make clear-claude        # teardown Claude scope only
 #   make clear-codex         # teardown Codex scope only
@@ -39,6 +41,18 @@ PROJECT_DIR := $(shell pwd)
 MARKETPLACE_REMOTE := $(shell git -C $(PROJECT_DIR) remote get-url origin 2>/dev/null | sed 's/\.git$$//')
 CODEX_SYNC_SCRIPT := $(PROJECT_DIR)/plugins/codex-rig/scripts/sync_codex.py
 CODEX_HOME_SYNC_SCRIPT := $(PROJECT_DIR)/scripts/sync_codex_session_policy.py
+BRIDGE_CONSENT_SCRIPT := $(PROJECT_DIR)/plugins/bridge_cc-codex/bin/bridge_consent.py
+BRIDGE_CONSENT_LAUNCHER := $(PROJECT_DIR)/plugins/bridge_cc-codex/bin/python
+# Full sync approves standing consent by default; respect command-line and environment overrides.
+ifeq ($(origin APPROVE_CLAUDE_CONSENT),undefined)
+sync-all: APPROVE_CLAUDE_CONSENT = 1
+endif
+APPROVE_CLAUDE_CONSENT ?= 0
+ifneq ($(APPROVE_CLAUDE_CONSENT),0)
+ifneq ($(APPROVE_CLAUDE_CONSENT),1)
+$(error APPROVE_CLAUDE_CONSENT must be 0 or 1)
+endif
+endif
 TIMEOUT_RUNNER := $(PROJECT_DIR)/scripts/run_with_timeout.py
 VERIFY_PLUGINS_SCRIPT := $(PROJECT_DIR)/scripts/verify_claude_plugins.py
 EXTERNAL_PLUGIN_TIMEOUT_SECONDS ?= 120
@@ -68,14 +82,14 @@ endef
         migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace \
         update-ext-plugins register-marketplace install-claude-plugins prune-claude-cache \
         verify-claude-plugins warn-stale-claude-sessions \
-        install-codex-plugins sync-codex-home-policy \
+        install-codex-plugins sync-codex-home-policy sync-codex-bridge-consent \
         banner-claude banner-codex \
         prune-benchmarks prune-benchmarks-apply
 
 ## Meta targets ---------------------------------------------------------------
 
-# sync-claude/sync-codex are hard sequential fail-fast chains, matching sync.sh's
-# original `set -e` behavior exactly. sync-all deliberately deviates: it runs both
+# Codex sync uses an explicit success chain, including under make -k; Claude stages
+# retain ordered prerequisites. sync-all deliberately runs both
 # phases regardless of either's outcome and aggregates the failure at the end,
 # instead of a codex-phase failure silently discarding an earlier claude-phase
 # failure count (which is what sync.sh's bare `set -e` does today).
@@ -95,7 +109,7 @@ sync-all:
 	@$(call workflow,Full sync - Claude + Codex scopes); \
 	status=0; \
 	$(MAKE) sync-claude || status=1; \
-	$(MAKE) sync-codex || status=1; \
+	$(MAKE) sync-codex APPROVE_CLAUDE_CONSENT=$(APPROVE_CLAUDE_CONSENT) || status=1; \
 	if [ $$status -ne 0 ]; then \
 		echo "⚠ sync-all finished with failures — see output above"; \
 	else \
@@ -106,8 +120,11 @@ sync-all:
 sync-claude: banner-claude migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace update-ext-plugins register-marketplace install-claude-plugins verify-claude-plugins prune-claude-cache warn-stale-claude-sessions
 	@echo "✓ Claude sync complete"
 
-sync-codex: banner-codex install-codex-plugins sync-codex-home-policy
-	@echo "✓ Codex sync complete"
+sync-codex: banner-codex
+	@$(MAKE) install-codex-plugins && \
+	$(MAKE) sync-codex-home-policy && \
+	$(MAKE) sync-codex-bridge-consent && \
+	echo "✓ Codex sync complete"
 
 clear-all:
 	@$(call workflow,Full teardown - Claude + Codex scopes); \
@@ -383,6 +400,16 @@ sync-codex-home-policy:
 		--source-config "$(PROJECT_DIR)/.codex/config.toml" \
 		--source-policy "$(PROJECT_DIR)/.codex/global-session-policy.md" \
 		--codex-home "$${CODEX_HOME:-$$HOME/.codex}"
+
+# Consent follows policy sync so its exact block survives the next ordinary sync.
+sync-codex-bridge-consent:
+	@if [ "$(APPROVE_CLAUDE_CONSENT)" = "0" ]; then \
+		echo "  – Claude transfer consent unchanged (opt in with APPROVE_CLAUDE_CONSENT=1)"; \
+		exit 0; \
+	fi; \
+	$(call stage,Record explicit Claude transfer consent); \
+	"$(BRIDGE_CONSENT_LAUNCHER)" "$(BRIDGE_CONSENT_SCRIPT)" grant --approve && \
+	"$(BRIDGE_CONSENT_LAUNCHER)" "$(BRIDGE_CONSENT_SCRIPT)" check
 
 ## Benchmark retention -------------------------------------------------------
 

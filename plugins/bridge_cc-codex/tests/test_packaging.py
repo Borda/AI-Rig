@@ -261,6 +261,26 @@ def test_packaged_consent_runtime_is_executable_and_fingerprinted(
         if action == "check":
             assert json.loads(result.stdout)["consent"] == "absent"
     assert not (home / "config.toml").exists()
+    granted = subprocess.run(
+        [sys.executable, str(output / "bin/bridge_consent.py"), "grant", "--approve"],
+        cwd=tmp_path,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert granted.returncode == 0, granted.stderr
+    checked = subprocess.run(
+        [sys.executable, str(output / "bin/bridge_consent.py"), "check"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert checked.returncode == 0, checked.stderr
+    assert json.loads(checked.stdout)["consent"] == "configured"
     monkeypatch.setattr(bridge_diagnose, "__file__", str(output / "bin/bridge_diagnose.py"))
     before = bridge_diagnose._installed_payload_identity()
     assert before["complete"] is True

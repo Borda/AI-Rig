@@ -97,6 +97,70 @@ def test_check_and_noninteractive_grant_never_write(consent_home: Path) -> None:
     assert (consent_home / "config.toml").read_bytes() == original
 
 
+@pytest.mark.integration
+def test_explicit_approval_grants_without_terminal_and_reuses_consent(consent_home: Path) -> None:
+    """Let unattended setup explicitly grant once and prove the next dispatch check recognizes it."""
+    config = consent_home / "config.toml"
+    original = tomllib.loads(config.read_text(encoding="utf-8"))
+    block = (PLUGIN / "rules/claude-transfer-policy.txt").read_text(encoding="utf-8").strip()
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "grant", "--approve"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Explicit approval supplied by --approve" in result.stdout
+    assert block in result.stdout
+    assert "Type Approve" not in result.stdout
+    expected = {
+        **original,
+        "auto_review": {**original["auto_review"], "extra_policy": "Existing user rule\n\n" + block},
+    }
+    assert tomllib.loads(config.read_text(encoding="utf-8")) == expected
+    granted = config.read_bytes()
+    for arguments in (["grant", "--approve"], ["grant"]):
+        repeated = subprocess.run(
+            [sys.executable, str(SCRIPT), *arguments],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert repeated.returncode == 0, repeated.stderr
+        assert config.read_bytes() == granted
+    checked = subprocess.run([sys.executable, str(SCRIPT), "check"], capture_output=True, text=True, check=False)
+    assert checked.returncode == 0, checked.stderr
+    assert json.loads(checked.stdout) == {
+        "consent": "configured",
+        "configured_reviewer": "auto_review",
+        "session_effective": "unverified",
+    }
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("action", ["check", "revoke"])
+@pytest.mark.parametrize("configured", [False, True])
+def test_approval_flag_is_grant_only(consent_home: Path, action: str, configured: bool) -> None:
+    """Reject a mutating flag on read-only or revoke actions, even when consent already exists."""
+    config = consent_home / "config.toml"
+    if configured:
+        block = (PLUGIN / "rules/claude-transfer-policy.txt").read_text(encoding="utf-8").strip()
+        config.write_text("[auto_review]\nextra_policy = " + json.dumps(block) + "\n", encoding="utf-8")
+    original = config.read_bytes()
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), action, "--approve"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "--approve is supported only with grant" in result.stderr
+    assert config.read_bytes() == original
+
+
 @pytest.mark.parametrize(
     "original",
     [
@@ -147,6 +211,8 @@ def test_unrecognized_grant_is_never_reused_or_overwritten(
     for action in ("check", "grant", "revoke"):
         assert namespace["main"]([action]) == 2
         assert config.read_bytes() == original
+    assert namespace["main"](["grant", "--approve"]) == 2
+    assert config.read_bytes() == original
 
 
 def test_config_change_during_confirmation_is_preserved(consent_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -177,6 +243,7 @@ def test_hardlinked_config_is_not_read_or_changed(consent_home: Path, tmp_path: 
     alias.hardlink_to(config)
     original = alias.read_bytes()
     assert namespace["main"](["check"]) == 2
+    assert namespace["main"](["grant", "--approve"]) == 2
     assert config.read_bytes() == original == alias.read_bytes()
 
 

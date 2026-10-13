@@ -13,7 +13,8 @@ description: Configure, authenticate, repair, and verify the Codex to Claude Cod
 - Loaded Codex plugin, Codex trust, Codex authentication, and current session are external bootstrap prerequisites. Never replace or restart current invocation surface.
 - Reject a model-controlled workspace override. The deterministic setup CLI uses its trusted host-selected workspace; installed MCP execution separately requires native user-confirmed binding and a current `binding_id`.
 - Resolve the active installed plugin root and substitute it for `PLUGIN_ROOT`. Setup helpers use the packaged launcher; on native Windows use `bin/python.cmd` with host-shell quoting. MCP startup still requires Python 3.10+ as `python` on the host's PATH; the helper launcher does not satisfy or change that separate prerequisite.
-- Parse only `action=all|check|configure|authenticate|repair|verify-live`, `target=peer|codex|claude`, `scope=auto|user|project|local`, and `live=prompt|skip|required`, plus one-release compatibility forms `--live` and `--direction codex|claude`; reject ambiguous or unknown arguments.
+- Parse only `action=all|check|configure|authenticate|repair|verify-live`, `target=peer|codex|claude`, `scope=auto|user|project|local`, `live=prompt|skip|required`, and the optional `--approve-claude-consent` flag, plus one-release compatibility forms `--live` and `--direction codex|claude`; reject ambiguous or unknown arguments.
+- Accept `--approve-claude-consent` only when explicitly supplied in the current user invocation with `action=all|configure|repair`. Reject it with `check`, `authenticate`, or `verify-live` before any setup operation. Consume this skill-only argument here; do not pass it to `bridge_setup.py` or infer it from generic setup approval.
 
 For one resolved target, invoke:
 
@@ -45,7 +46,7 @@ For `check`, also run the read-only Provider consent check below, report both re
 
 ## Provider consent
 
-Read and apply [Claude provider consent](../../rules/provider-consent.md). Check standing transfer consent during setup, including when no install/repair operation remains; `action=check` stays read-only. Installation does not approve transfer. An absent grant goes through the operator-terminal approval described there, then a read-only recheck; no per-file question or model-written grant. Report stored consent separately from active host effectiveness. This operator-owned policy stage does not replace the current invocation surface or alter its permission mode.
+Read and apply [Claude provider consent](../../rules/provider-consent.md). Check standing transfer consent during setup, including when no install/repair operation remains; `action=check` stays read-only. Installation does not approve transfer. For an absent grant, an explicit user-supplied `--approve-claude-consent` authorizes the packaged helper's `grant --approve` path without another consent question; otherwise use the operator-terminal approval described there. Follow either grant with a read-only recheck. Never synthesize consent, edit the policy directly, or use the flag to bypass a host denial. Report stored consent separately from active host effectiveness. This stage does not replace the current invocation surface or alter its permission mode.
 
 ## Authentication and session evidence
 

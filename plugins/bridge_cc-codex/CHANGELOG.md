@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.0
+
+- Add explicit `$bridge:setup --approve-claude-consent` and `bridge_consent.py grant --approve` for recording standing Claude transfer consent without a terminal question, including unattended installation scripts.
+- Retain interactive consent by default, read-only checks, configuration validation, and separate installation, authentication, live-verification, workspace-binding and host approval boundaries.
+
 ## 0.9.1
 
 - Keep Codex decision questions in structured controls first; plain-text fallback ends terminal output with the question and complete choices, after all context and reports.

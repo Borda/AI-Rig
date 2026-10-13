@@ -635,7 +635,23 @@ def test_codex_skills_consume_setup_owned_provider_consent(skill: str) -> None:
     rule = (PLUGIN_ROOT / "rules/provider-consent.md").read_text(encoding="utf-8")
     assert "Before every" in rule
     assert "An absent, invalid, unreadable or unsupported result stops dispatch" in rule
-    assert "Never run `grant` or `revoke` for them" in rule
+    assert "Never run interactive `grant` or `revoke` for them" in rule
     assert "session_effective=unverified" in rule
     assert "never treat cached consent as current" in rule
     assert "Do not ask a duplicate native question first" in rule
+
+
+def test_setup_consent_flag_retains_explicit_authority_and_separate_approvals() -> None:
+    """Keep unattended consent opt-in and outside the action-bound setup planner."""
+    skill = (PLUGIN_ROOT / "codex-skills/setup/SKILL.md").read_text(encoding="utf-8")
+    rule = (PLUGIN_ROOT / "rules/provider-consent.md").read_text(encoding="utf-8")
+    assert "explicitly supplied in the current user invocation" in skill
+    assert "Reject it with `check`, `authenticate`, or `verify-live` before any setup operation" in skill
+    assert "do not pass it to `bridge_setup.py`" in skill
+    assert "grant --approve" in skill
+    assert "otherwise use the operator-terminal approval" in skill
+    assert "Follow either grant with a read-only recheck" in skill
+    assert "Never invent the flag" in rule
+    assert "request to implement this feature" in rule
+    assert "Do not use it to bypass a host denial" in rule
+    assert "`--approve <digest>` does not imply provider consent" in rule

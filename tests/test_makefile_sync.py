@@ -379,6 +379,142 @@ class TestSyncCodexHomePolicy:
 
 @pytest.mark.integration
 @pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
+@pytest.mark.parametrize("approve", ["0", "1", "omitted", "environment"])
+@pytest.mark.parametrize("target", ["sync-codex", "sync-all"])
+def test_sync_consent_defaults_and_overrides(
+    fake_codex_sync_script: FakeScript,
+    fake_codex_home_sync_script: FakeScript,
+    tmp_path: Path,
+    approve: str,
+    target: str,
+) -> None:
+    """Exercise real sync ordering and consent writes without native installation or user-home access."""
+    home = tmp_path / "consent home"
+    home.mkdir()
+    config = home / "config.toml"
+    original = 'model = "retained"\n'
+    config.write_text(original, encoding="utf-8")
+    env = {**os.environ, "CODEX_HOME": str(home)}
+    env.pop("APPROVE_CLAUDE_CONSENT", None)
+    variables = {
+        "CODEX_SYNC_SCRIPT": str(fake_codex_sync_script.path),
+        "CODEX_HOME_SYNC_SCRIPT": str(fake_codex_home_sync_script.path),
+    }
+    # Stub only the unrelated Claude installation; retain actual recursive Codex recipes.
+    dispatcher = tmp_path / "make_dispatch.py"
+    dispatcher.write_text(
+        "import subprocess, sys\n"
+        "if sys.argv[1:] == ['sync-claude']: raise SystemExit(0)\n"
+        f"raise SystemExit(subprocess.call([{GNU_MAKE!r}, *sys.argv[1:]]))\n",
+        encoding="utf-8",
+    )
+    variables["MAKE"] = f"{shlex.quote(Path(sys.executable).as_posix())} {shlex.quote(dispatcher.as_posix())}"
+    if approve == "environment":
+        env["APPROVE_CLAUDE_CONSENT"] = "0" if target == "sync-all" else "1"
+    elif approve != "omitted":
+        variables["APPROVE_CLAUDE_CONSENT"] = approve
+    result = _run_make(
+        target,
+        env=env,
+        extra_vars=variables,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert fake_codex_sync_script.log.read_text(encoding="utf-8") == "install"
+    assert fake_codex_home_sync_script.log.exists()
+    if (
+        approve == "1"
+        or (approve == "omitted" and target == "sync-all")
+        or (approve == "environment" and target == "sync-codex")
+    ):
+        assert "bridge:claude-transfer-consent:v1 begin" in config.read_text(encoding="utf-8")
+        assert '"consent": "configured"' in result.stdout
+        assert "Type Approve" not in result.stdout
+    else:
+        assert config.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
+@pytest.mark.parametrize("approve", ["yes", "", "2"])
+def test_invalid_consent_opt_in_stops_before_sync(
+    fake_codex_sync_script: FakeScript, fake_codex_home_sync_script: FakeScript, tmp_path: Path, approve: str
+) -> None:
+    """Reject a mistyped opt-in before invoking even the installer."""
+    result = _run_make(
+        "sync-codex",
+        env={**os.environ, "CODEX_HOME": str(tmp_path / "unused-home")},
+        extra_vars={
+            "CODEX_SYNC_SCRIPT": str(fake_codex_sync_script.path),
+            "CODEX_HOME_SYNC_SCRIPT": str(fake_codex_home_sync_script.path),
+            "APPROVE_CLAUDE_CONSENT": approve,
+        },
+    )
+    assert result.returncode != 0
+    assert "APPROVE_CLAUDE_CONSENT must be 0 or 1" in result.stderr
+    assert not fake_codex_sync_script.log.exists()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
+@pytest.mark.parametrize("failed_stage", ["install", "policy", "grant"])
+@pytest.mark.parametrize("keep_going", [False, True])
+def test_codex_sync_failure_never_advances_to_later_consent_stages(
+    tmp_path: Path, failed_stage: str, keep_going: bool
+) -> None:
+    """Keep a failed install, policy sync or grant from reaching a later successful stage."""
+    script = tmp_path / "stage.py"
+    log = tmp_path / "stages.jsonl"
+    script.write_text(
+        "import json, os, sys\n"
+        f"with open({str(log)!r}, 'a', encoding='utf-8') as stream:\n"
+        "    stream.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "stage = sys.argv[1] if sys.argv[1] in ('install', 'grant', 'check') else 'policy'\n"
+        "raise SystemExit(7 if stage == os.environ['FAILED_STAGE'] else 0)\n",
+        encoding="utf-8",
+    )
+    result = _run_make(
+        "sync-codex",
+        env={**os.environ, "FAILED_STAGE": failed_stage, "MAKEFLAGS": "-k" if keep_going else ""},
+        extra_vars={
+            "CODEX_SYNC_SCRIPT": str(script),
+            "CODEX_HOME_SYNC_SCRIPT": str(script),
+            "BRIDGE_CONSENT_SCRIPT": str(script),
+            "APPROVE_CLAUDE_CONSENT": "1",
+        },
+    )
+    assert result.returncode != 0
+    calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    expected = {"install": 1, "policy": 2, "grant": 3}[failed_stage]
+    assert len(calls) == expected
+    assert calls[0] == ["install"]
+    if failed_stage == "grant":
+        assert calls[-1] == ["grant", "--approve"]
+    assert "Codex sync complete" not in result.stdout
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
+@pytest.mark.parametrize("target", ["sync-all", "default"])
+def test_sync_all_approves_consent_by_default_in_dry_run(target: str) -> None:
+    """Trace both full-sync entrypoints without executing installers or touching native state."""
+    env = dict(os.environ)
+    env.pop("APPROVE_CLAUDE_CONSENT", None)
+    result = subprocess.run(
+        [GNU_MAKE, "-n", "-f", str(MAKEFILE), *([] if target == "default" else [target])],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'if [ "1" = "0" ]; then' in result.stdout
+    assert 'bridge_consent.py" grant --approve &&' in result.stdout
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
 @pytest.mark.parametrize(
     "target",
     [

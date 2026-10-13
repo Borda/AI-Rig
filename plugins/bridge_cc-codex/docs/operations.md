@@ -88,4 +88,13 @@ The bridge stores bounded transcripts at `.temp/bridge/raw-<timestamp>.txt`, det
 
 ## Configure repository-transfer consent once
 
-After installation, use `$bridge:setup` from Codex and follow [provider consent](../rules/provider-consent.md). Setup checks the native user policy; the operator alone runs `bin/bridge_consent.py grant` and approves the displayed scope in their terminal. Repeated setup reuses an exact configured grant. Use `check` for read-only status and `revoke` for operator-approved removal. No provider call occurs during this stage, and installation/binding alone grants nothing. A new host session may be needed for policy reload; project or managed policy remains authoritative.
+After installation, use `$bridge:setup` from Codex and follow [provider consent](../rules/provider-consent.md). Plain setup checks the native user policy and asks the operator to run `bin/bridge_consent.py grant` in their terminal. To explicitly consent without that question, invoke `$bridge:setup --approve-claude-consent` with `action=all|configure|repair`; the skill calls the grant helper and checks its result. The flag is invalid with read-only `check`, authentication, or live verification. Repeated setup reuses an exact configured grant. Use `check` for read-only status and `revoke` for operator-approved removal. No provider call occurs during this stage, and installation/binding alone grants nothing. A new host session may be needed for policy reload; project or managed policy remains authoritative.
+
+An unattended installation script can explicitly grant consent after installing the plugin, using its resolved installed root in place of `PLUGIN_ROOT`:
+
+```bash
+"PLUGIN_ROOT/bin/python" "PLUGIN_ROOT/bin/bridge_consent.py" grant --approve
+"PLUGIN_ROOT/bin/python" "PLUGIN_ROOT/bin/bridge_consent.py" check
+```
+
+On native Windows use `bin/python.cmd` with host-shell quoting. `--approve` applies only to this helper's `grant` action; it records the same persistent transfer policy as interactive approval. It does not approve installation/configuration operations, provider login, paid setup probes, or folder binding. Those stages can still require input, and actual host restrictions still apply. The setup planner's separate `--approve <digest>` keeps its existing exact-action meaning.

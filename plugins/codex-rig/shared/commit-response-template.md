@@ -35,6 +35,7 @@ Rules:
 - `<type>` lowercase: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`, or `perf`.
 - Prefer specific lowercase `<scope>`: `api`, `cli`, `config`, `tests`, `docs`, `ci`, `deps`, `packaging`, `models`, `data`, or `utils`.
 - `<title>` imperative, concise, under 72 characters when practical.
+- Never hard-wrap commit messages. Keep each prose paragraph and each list item on one physical line regardless of length; preserve intentional breaks between the subject, section headings, separate list items, blank lines, and trailers. The title-length guideline does not impose a body line-width limit. Apply this rule to both the displayed draft and the exact message passed to Git.
 - Body: always include four exact headings `Changes:`, `Impact:`, `Verification:`, and `Residual limits:` in that order.
 - `Changes:` must list every meaningful behavioral, interface, workflow, policy, test, documentation, packaging, or operational change included in commit. Name affected surface and describe resulting behavior; filename-only inventory is insufficient.
 - `Impact:` must state the concrete user, developer, runtime, compatibility, or maintenance effect for each change or tightly related group of changes. Generic impact claims such as "improves UX" or "makes things better" are insufficient.
