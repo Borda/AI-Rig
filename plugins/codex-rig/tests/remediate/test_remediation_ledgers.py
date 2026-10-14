@@ -361,8 +361,8 @@ def test_finalize_derives_item_outcomes_from_events(
 ) -> None:
     """A run whose outcome changed only through an appended event finalizes into one consistent, valid result.
 
-    The durable table, metadata items, and final handoff must all show the event's value; a stale draft value must not
-    survive in any of them.
+    The durable ledger and metadata items must show the event's value; the compact terminal handoff shows the bound
+    disposition while preserving the concrete reason in the linked resolution ledger.
     """
     from test_remediation_finalize import _draft_handoff, _stale_metadata
 
@@ -383,4 +383,4 @@ def test_finalize_derives_item_outcomes_from_events(
     promoted = json.loads((run / "result.json").read_text(encoding="utf-8"))
     assert (exit_code, summary["errors"]) == (0, [])
     assert promoted["metadata"]["final_resolution_table"]["items"][0]["resolved_how"] == "Guard added after review."
-    assert "Guard added after review." in (run / "final.md").read_text(encoding="utf-8")
+    assert "Guard added after review." in (run / "action-items.md").read_text(encoding="utf-8")

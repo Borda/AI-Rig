@@ -8,6 +8,9 @@ because the diff source is ``git diff --name-only``.
 from __future__ import annotations
 
 import json
+import os
+import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -477,3 +480,91 @@ class TestQuotedPaths:
         data = _query(scan_query, root, index_path, "--no-heal", "diff-impact", "--diff-file", str(diff_path))
         assert [entry["path"] for entry in data["changed_modules"]] == [_NON_ASCII_MODULE]
         assert data["changed_modules"][0]["changed_symbols"] == ["pkg.modé::helper"]
+
+
+@pytest.mark.parametrize("verb", ["test-impact", "diff-impact"])
+@pytest.mark.integration
+def test_impact_command_preserves_shell_sensitive_paths(git_project, scan_index, scan_query, verb):
+    """Execute the delivered command against real pytest files whose directory needs shell quoting."""
+    root, index_path = git_project
+    tests_dir = root / "tests space & literal'$value"
+    tests_dir.mkdir()
+    test_file = tests_dir / "test_extra.py"
+    test_file.write_text("import lib\n\ndef test_extra():\n    assert lib.helper(1) == 3\n")
+    _git(root, "add", ".")
+    _git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "extra test")
+    _scan(scan_index, root)
+    (root / "lib.py").write_text("def helper(x):\n    return x + 2\n\n\ndef untouched(y):\n    return y\n")
+    # Existing test must agree with the changed provider so this check isolates delivery.
+    (root / "tests" / "test_lib.py").write_text("import lib\n\ndef test_helper():\n    assert lib.helper(1) == 3\n")
+    args = [verb, "lib::helper"] if verb == "test-impact" else [verb]
+    data = _query(scan_query, root, index_path, "--no-heal", *args)
+    impact = data if verb == "test-impact" else data["test_impact"]
+    assert impact["test_files"] == sorted(["tests/test_lib.py", test_file.relative_to(root).as_posix()])
+    env = dict(os.environ, PYTEST_ADDOPTS="", PYTHONPATH=str(root))
+    if sys.platform == "win32":
+        shell = shutil.which("pwsh") or shutil.which("powershell")
+        assert shell, "native Windows acceptance requires PowerShell"
+        python = "'" + sys.executable.replace("'", "''") + "'"
+        command = "& " + python + " -m " + impact["pytest_cmd"] + " -p no:xdist -q"
+        argv = [shell, "-NoProfile", "-NonInteractive", "-Command", command]
+    else:
+        command = shlex.quote(sys.executable) + " -m " + impact["pytest_cmd"] + " -p no:xdist -q"
+        argv = ["/bin/sh", "-c", command]
+    result = subprocess.run(argv, cwd=root, capture_output=True, text=True, env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 passed" in result.stdout
+
+
+@pytest.mark.integration
+def test_tracked_module_move_preserves_staged_and_unstaged_user_bytes(tmp_path: Path) -> None:
+    """The tracked-file move allowed by rename-refs needs no stash or source commit."""
+    root = tmp_path / "dirty module"
+    root.mkdir()
+    source = root / "old.py"
+    source.write_bytes(b"base = 1\n")
+    _git(root, "init", "-q")
+    _git(root, "add", "old.py")
+    _git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base")
+    source.write_bytes(b"base = 1\nstaged = 2\n")
+    _git(root, "add", "old.py")
+    source.write_bytes(b"base = 1\nstaged = 2\nuser_edit = 3\n")
+    _git(root, "mv", "--", "old.py", "new.py")
+    assert not source.exists()
+    assert (root / "new.py").read_bytes() == b"base = 1\nstaged = 2\nuser_edit = 3\n"
+    staged = subprocess.run(["git", "show", ":new.py"], cwd=root, capture_output=True)
+    assert staged.returncode == 0
+    assert staged.stdout == b"base = 1\nstaged = 2\n"
+
+
+@pytest.mark.integration
+def test_complete_caller_inventory_above_fifty_remains_queryable(tmp_path, scan_index, scan_query):
+    """Large caller sets are complete input to rename preflight rather than a truncated migration."""
+    root = tmp_path / "many_callers"
+    root.mkdir()
+    (root / "provider.py").write_text("def old_name():\n    return 7\n")
+    for number in range(51):
+        (root / f"caller_{number}.py").write_text(
+            "from provider import old_name\n\ndef run():\n    return old_name()\n"
+        )
+    _scan(scan_index, root)
+    index_path = root / ".cache" / "codemap" / f"{root.name}.json"
+    data = _query(scan_query, root, index_path, "--no-heal", "fn-rdeps", "provider::old_name")
+    assert data["count"] == 51
+    assert {row["path"] for row in data["called_by"]} == {f"caller_{number}.py" for number in range(51)}
+    # Apply the complete current inventory, then exercise every changed caller with its provider.
+    (root / "provider.py").write_text("def new_name():\n    return 7\n")
+    for row in data["called_by"]:
+        caller = root / row["path"]
+        caller.write_text(caller.read_text().replace("old_name", "new_name"))
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import importlib; assert all(importlib.import_module(f'caller_{n}').run() == 7 for n in range(51))",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr

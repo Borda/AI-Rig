@@ -36,7 +36,7 @@ If index missing and `SCAN_NO_AUTOBUILD=1`, report `codemap index missing and SC
 
 ### 2. Parse
 
-Read JSON from CLI stdout; never assume first line is JSON — logs can surround it. Use `test_files`, `pytest_cmd`, `via_call`, `via_mock`, `index.not_covered`, `index.hint`.
+Read JSON from CLI stdout; never assume first line is JSON — logs can surround it. Treat `test_files` as the authoritative argv list. `pytest_cmd` is quoted for a POSIX shell on POSIX hosts and PowerShell on native Windows; for another shell, build its command from `test_files` with that shell's quoting, never reuse incompatible escaping. Use `test_files`, `pytest_cmd`, `via_call`, `via_mock`, `index.not_covered`, `index.hint`.
 
 ### 3. Output
 

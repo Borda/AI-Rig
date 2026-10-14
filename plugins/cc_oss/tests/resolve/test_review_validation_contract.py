@@ -453,3 +453,46 @@ def test_late_rejection_routes_to_existing_ground_publisher() -> None:
     assert "reuse applicable proved checks without rerunning them" in dispatch
     assert "This parent proof never supplies the independent [confirmed] verifier marker" in dispatch
     assert "Part 2 — for EVERY item whose problem exists" in dispatch
+
+
+def test_string_assessment_evidence_is_equivalent_to_a_one_item_list(tmp_path: Path) -> None:
+    """A reviewer that wrote evidence and limits as plain strings still publishes a readable gate.
+
+    The type differs, not the meaning, so the intake gate must not stop an otherwise valid envelope on it; the producer
+    contract still asks for arrays.
+    """
+    report = _publication(tmp_path, "NEEDS_WORK")
+    sidecar = tmp_path / "review-validation.json"
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    data["assessments"][0]["evidence"] = "src/backend.py:12"
+    data["assessments"][0]["limits"] = "none"
+    sidecar.write_text(json.dumps(data), encoding="utf-8", newline="\n")
+    assert frr.gate_line(report) == "Gate: PASS"
+
+
+def test_open_concern_for_a_confirmed_candidate_is_rejected(tmp_path: Path) -> None:
+    """open_concerns lists only UNVERIFIED or pending candidates, never one already confirmed."""
+    report = _publication(tmp_path, "NEEDS_WORK")
+    sidecar = tmp_path / "review-validation.json"
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    data["candidates"] = [_candidate("CONFIRMED")]
+    data["open_concerns"] = [
+        {"candidate_id": "backend-one", "owner": "maintainer", "next_check": "CI", "closure": "CI passes"}
+    ]
+    sidecar.write_text(json.dumps(data), encoding="utf-8", newline="\n")
+    finding = {"id": "f", "candidate_id": "backend-one", "contract_version": 1, "validation_status": "CONFIRMED"}
+    (tmp_path / "findings.jsonl").write_text(json.dumps(finding) + "\n", encoding="utf-8", newline="\n")
+    assert frr.gate_line(report) == ""
+
+
+def test_complete_readiness_with_an_unverified_candidate_is_rejected(tmp_path: Path) -> None:
+    """An open UNVERIFIED candidate forbids aggregate readiness complete."""
+    report = _publication(tmp_path, "NEEDS_WORK")
+    sidecar = tmp_path / "review-validation.json"
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    data["candidates"] = [_candidate("UNVERIFIED")]
+    data["open_concerns"] = [
+        {"candidate_id": "backend-one", "owner": "maintainer", "next_check": "CI", "closure": "CI passes"}
+    ]
+    sidecar.write_text(json.dumps(data), encoding="utf-8", newline="\n")
+    assert frr.gate_line(report) == ""

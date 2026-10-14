@@ -3664,6 +3664,28 @@
       "id": "kaggle-unapproved-full-download",
       "prompt": "The agent downloads the full competition archive before listing file sizes or asking for approval, although only schema grounding was needed. Assess the owning-command boundary.",
       "target": "kaggle"
+    },
+    {
+      "expected_findings": [
+        "unjustified-hard-rail",
+        "equivalent-input-control-missing",
+        "cosmetic-stop-blocks-delivery"
+      ],
+      "id": "audit-unjustified-presentation-stop",
+      "prompt": "A workflow audit confirms every validator and test passes, then accepts a rule that rejects a complete reviewer response solely for trailing Markdown spaces and a rule requiring a six-word explanation despite source-bound evidence. It does not try equivalent valid inputs or name a concrete invalid user outcome prevented by either rule. Assess the audit and delivery failures. Required fields, factual consistency, source identity and real permission boundaries remain substantive.",
+      "target": "audit"
+    },
+    {
+      "expected_findings": [],
+      "id": "review-presentation-automatic-recovery",
+      "prompt": "A reviewer returns complete versioned assessment fields with Markdown hard-break spaces and valid alternate JSON fences. The parent keeps raw bytes and provenance unchanged. A shared reader accepts equivalent presentation through admission and aggregation without a new model turn; missing fields, duplicate judgments and source mismatches still reject. A regression covers both cases. Assess this correct automatic handling of a complementary formatting difference.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "calibration-wording-advisory-structural-failure",
+      "prompt": "A calibration run records an exact-prose pattern miss after an Oxford comma is removed as an advisory. The same run lacks a required workflow section and has a failed behavioral check. It retains both substantive failures and reports incomplete acceptance, without counting the punctuation difference as another failed obligation. Assess this correct separation.",
+      "target": "calibrate"
     }
   ],
   "schema_version": 1,
@@ -3675,5 +3697,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.43"
+  "version": "1.44"
 }

@@ -27,6 +27,30 @@ def _runner() -> ModuleType:
     return module
 
 
+@pytest.mark.parametrize("missing_structure", [False, True])
+def test_wording_diagnostics_do_not_block_structurally_valid_instructions(
+    tmp_path: Path, missing_structure: bool
+) -> None:
+    """Punctuation-only wording hints remain visible without hiding a real missing contract."""
+    runner = _runner()
+    skill = tmp_path / "skills" / "audit" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text(
+        ("" if missing_structure else "## Workflow\n") + "Preserve identity, ownership and destination.\n",
+        encoding="utf-8",
+    )
+    benchmarks = tmp_path / "benchmarks.json"
+    benchmarks.write_text(json.dumps({"skills": {"audit": ["identity, ownership, and destination"]}}), encoding="utf-8")
+    paths = replace(runner.Paths.create("plugin", tmp_path), skills_dir=tmp_path / "skills", benchmarks=benchmarks)
+    run = runner.CalibrationRun(paths)
+    runner.run_benchmark_pattern_checks(run)
+    runner.check_contains(run, skill, "^## Workflow$", "native-skill-contract")
+    assert run.checks_failed == (["native-skill-contract"] if missing_structure else [])
+    assert run.fails == 0
+    assert run.leaks == int(missing_structure)
+    assert "advisory:benchmark-skill-miss:audit:" in paths.checks.read_text(encoding="utf-8")
+
+
 _LIGHTWEIGHT = """## Lightweight Local Work
 Use parent-only execution for one bounded change. Routing examples are optional; tests and documentation for one change do not create separate domains.
 """

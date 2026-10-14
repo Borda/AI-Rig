@@ -107,7 +107,7 @@ def test_batch_native_prefix_preserves_raw_and_strict_body(tmp_path: Path, prefi
     )
     before = children["challenger"].read_bytes()
     result = _batch_command(wave, "assemble-wave", home)
-    if prefix in {"none", "exact"}:
+    if prefix in {"none", "exact", "leading-newline", "trailing-prose"}:
         assert result.returncode == 0, result.stderr
         manifest = json.loads((wave / "specialist-manifest.json").read_bytes())
         item = next(p for p in manifest["passes"] if p["role"] == "challenger")
@@ -1927,8 +1927,9 @@ def test_large_interactions_complete_bounded_serial_native_waves(tmp_path: Path)
     "evidence",
     [
         "widget.py:1-1 - Existing behavior: frozen value already satisfies the original source contract",
+        "widget.py:1-1 - Returns two.",
         "widget.py:999-999 - Existing behavior: frozen value already satisfies the original source contract",
-        "widget.py:1-1 - Applied a new fix after review",
+        "unread.py:1-1 - Existing behavior: frozen value already satisfies the original source contract",
     ],
 )
 def test_source_disposition_requires_receipt_bound_existing_evidence(tmp_path: Path, evidence: str) -> None:
@@ -1941,7 +1942,7 @@ def test_source_disposition_requires_receipt_bound_existing_evidence(tmp_path: P
         item for item in manifest["source_findings"] if item["finding_id"] == "source-001.qa-specialist.F_SOURCE"
     )
     assert finding["original"]["summary"] == "Correct the broken caller contract."
-    if evidence.startswith("widget.py:1-1 - Existing behavior:"):
+    if evidence.startswith("widget.py:1-1 - "):
         assert finding["disposition"] == "rejected"
         assert (
             finding["disposition_evidence"]["attempt"]["agent_thread_id"]
@@ -2681,15 +2682,17 @@ def test_batch_raw_inventory_rejects_malformed_or_unbound_obligations(
             assert not (directory / "specialist-manifest.json").exists()
 
 
-@pytest.mark.parametrize("case", ["supported", "self", "wrong-id", "missing-range", "unsupported-fix"])
+@pytest.mark.parametrize("case", ["supported", "concise", "self", "wrong-id", "missing-range", "unbound-source"])
 def test_intermediate_disposition_uses_later_independent_frozen_source(tmp_path: Path, case: str) -> None:
     """An admitted intermediate false claim closes only with exact later independent source witness."""
     identity = "interaction-001.qa-specialist.F_INTERACTION"
     witness_id = "interaction-999.qa-specialist.F_INTERACTION" if case == "wrong-id" else identity
     evidence = "widget.py:999-999" if case == "missing-range" else "widget.py:1-1"
+    if case == "unbound-source":
+        evidence = "unknown.py:1-1"
     rationale = (
-        "Applied a new fix after review"
-        if case == "unsupported-fix"
+        "Returns two."
+        if case == "concise"
         else "False positive: frozen source actually returns value two rather than value one"
     )
     role = "qa-specialist" if case == "self" else "challenger"
@@ -2702,9 +2705,9 @@ def test_intermediate_disposition_uses_later_independent_frozen_source(tmp_path:
     assert result.returncode == 0, result.stderr
     manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
     original = next(item for item in manifest["source_findings"] if item["finding_id"] == identity)
-    assert original["disposition"] == ("rejected" if case == "supported" else "unresolved")
+    assert original["disposition"] == ("rejected" if case in {"supported", "concise"} else "unresolved")
     context = (run / f"batches/interactions/specialists/{role}-context.md").read_text(encoding="utf-8")
-    if case == "supported":
+    if case in {"supported", "concise"}:
         assert f"Source finding ID: {identity}\n" in context
         assert "value = 2\n" in context
         assert "### widget.py:1-1, source SHA-256 " in context

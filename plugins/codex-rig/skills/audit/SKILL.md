@@ -11,7 +11,7 @@ description: Audit Codex configuration and workflow contracts, including failure
 
 Audit configuration and workflows iteratively: map the system, investigate specific uncertainties, and reassess findings in context. Keep each cycle bounded to the authorized scope. The numbered lifecycle organizes artifacts and gates; analysis revisits affected flows when evidence changes their context.
 
-> Unless `skip_gate=true` or a fix level is already supplied, present ranked findings and ask which findings or severity levels should be proposed for remediation, including `No fixes`; accept existing indexes/ranges or severity syntax through User Questions. Record the bound choice in `audit-ledger.md`. Pending input stays unresolved; choosing a fix level does not turn this audit into an implementation run.
+> Deliver ranked findings and concrete remediation proposals without requiring a fix-selection answer. Apply any already supplied remediation preferences to the recommendations; `skip_gate` remains a compatible legacy input and never adds a selection checkpoint. Audit stays read-only. Ask only for genuinely missing scope, evidence or a consequential decision needed to assess the target; proposing fixes does not authorize implementation.
 
 ## Input Schema
 
@@ -23,7 +23,7 @@ Audit configuration and workflows iteratively: map the system, investigate speci
   "axis": "standard|value-per-token",
   "min_cost_reduction": "optional fraction; default 0.05 for value-per-token acceptance",
   "skip_gate": false,
-  "done_when": "drift and broken references are ranked with gate result; fix level chosen interactively unless skip_gate=true"
+  "done_when": "drift and broken references are ranked with gate result, evidence-backed remediation proposals and explicit coverage limits"
 }
 ```
 
@@ -76,6 +76,9 @@ Trace the selected flow through its relevant implementations and consumers. Use 
 - Can every local check succeed while the end result is wrong, temporary, unrecoverable, or misleading to the user? What retains the result after the next normal action?
 - What happens when the same flow starts from another currently supported state, resumes, retries, or encounters a change between verification and use? Check those states that the implementation or documented use makes reachable; avoid invented risk matrices.
 - What observable example would disprove the claimed safety or completion? Does the existing test assert the user's outcome or merely repeat the implementation's chosen operation?
+- For each reached failure, pause, retry or approval gate, what concrete invalid result does it prevent? Test a semantically equivalent valid input as well as that invalid case. Existing policy, exact wording, minimum prose length and green conformance tests are not justification. Classify the check by its effect on structure, factual evidence or actual authority under [Acceptance and recovery](../../shared/native-skill-contract.md#acceptance-and-recovery).
+
+Record gate necessity and the valid/invalid controls in the existing `Counterexamples` section. Prefer deleting an unjustified stop or correcting interpretation at its owning boundary over adding another exception, retry or approval stage. Complementary presentation and generated bookkeeping should recover deterministically within existing authority, preserving original evidence; add a regression through the next consumer. A real evidence gap or unavailable permission remains explicit. Account for stops that were inspected, untested or excluded in `Coverage`; do not claim every workflow is lean from a narrow passing check.
 
 Probe the highest-impact unproven assumption with the smallest safe executable check or source-backed counterexample. Retain its inputs, expected outcome, actual result, rejected alternative; proposed/unavailable probes remain gaps. Include a positive case to distinguish a missing guarantee from a deliberately valid alternative. Audit remains read-only: parent-owned disposable probes may write scratch data within existing authorization; production edits and external actions keep their own scope and permission boundaries.
 
@@ -140,7 +143,9 @@ Run two separate `rg -n` argv scans: `delegat|specialist|spawn|role|\[agents\.` 
 
 ### 09: Review native skill and agent contract consistency
 
-Each configured skill has:
+Audit each plugin against its own declared skill and role contracts, read from its shipped instructions and authoritative local configuration. Do not impose Codex Rig's section names, artifact lifecycle or calibration roster on another plugin merely because it is audited here. Missing an applicable declared contract is substantive; a different supported heading or workflow format is not drift. Record the owning contract and any genuine unmet obligation in the audit ledger.
+
+Codex Rig artifact skills declare:
 
 - `Input Schema`
 - `Workflow`
@@ -149,7 +154,7 @@ Each configured skill has:
 - `Calibration Hooks`
 - `Output Contract`
 
-Each configured role or agent has:
+Codex Rig configured roles or agents declare:
 
 - `## Scope` or clear role boundary text
 - `## Evidence Standard`
@@ -204,7 +209,7 @@ Conditional checks:
 Update calibration when audit scope, contract requirements, or routing checks change:
 
 - benchmark patterns: `audit`, every configured skill, every configured agent
-- behavioral cases: mapped-flow coverage, invalidated assumptions revisited in affected consumers, bounded static-target inapplicability, runtime leak detection, stale reference handling, overlap classification, unsafe sync recommendation, length-only compression, missing loaded-reference cost, missing paired evidence, critical behavior regression, and below-threshold cost reduction
+- behavioral cases: unjustified stops, equivalent-input continuation, automatic complementary recovery with substantive negative controls, mapped-flow coverage, invalidated assumptions revisited in affected consumers, bounded static-target inapplicability, runtime leak detection, stale reference handling, overlap classification, unsafe sync recommendation, length-only compression, missing loaded-reference cost, missing paired evidence, critical behavior regression, and below-threshold cost reduction
 
 ## Output Contract
 

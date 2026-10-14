@@ -1,7 +1,7 @@
 """Guard that what a resolve question is about reaches the user inside that question.
 
-Q1 lists items as plain lines. The full saved table is the last reply text before each selection call, printed once.
-Hints stay in question text so they remain visible when the host hides pre-call progress.
+Q1 never restates items the table and options already show. The full saved table is the last reply text before each
+selection call, printed once. Hints stay in question text so they remain visible when the host hides pre-call progress.
 """
 
 import re
@@ -80,12 +80,12 @@ class TestActionItemsPrintContract:
     def test_every_selection_route_saves_the_table_and_prints_before_the_picker(
         self, source: Path, start: str, end: str
     ) -> None:
-        """All four source routes retain the full table and expose items in Q1 before choosing."""
+        """All four source routes retain the full table and keep Q1 from restating it."""
         route = _route(source.read_text(encoding="utf-8"), start, end)
         assert "action-items-table.md" in route
         assert "as the last text of the reply message that issues" in route
         assert "before the call" in route or "before that call" in route
-        assert "plain lines" in route or "Q1’s question text listing every pending item" in route
+        assert "never repeats" in route or "never the item rows" in route
         assert "never in an option’s `preview`" in route
         assert "Bash/tool stdout" in route
 
@@ -104,8 +104,8 @@ class TestActionItemsPrintContract:
         assert "re-issue the identical call once" not in skill
         assert "visible reply chars" not in skill
 
-    def test_every_selection_call_lists_items_in_q1_without_previews(self) -> None:
-        """Call 1, Call 2, closed-only and large runs share the same question-text contract."""
+    def test_no_selection_call_restates_items_in_q1_or_previews(self) -> None:
+        """Call 1, Call 2, closed-only and large runs share the same no-restating contract."""
         skill = _SKILL.read_text(encoding="utf-8")
         picker = skill[skill.index("## Step 3d: User item selection") : skill.index("**Cap mechanics")]
         bulk = skill[skill.index("**Bulk action — hard rule**") : skill.index("\n**Bulk-action resolution**")]
@@ -115,17 +115,17 @@ class TestActionItemsPrintContract:
                 "<!-- branch: main-path — commit-mode"
             )
         ]
-        assert "**Items in the question text — MANDATORY, the gate's source of truth**" in picker
+        assert "**Question text — no restating — MANDATORY**" in picker
         assert "Call 1, Call 2, closed-only and ≥19" in picker
-        assert "#<id> [<type>] <summary up to 50 chars>" in picker
-        assert "most severe first" in picker
+        assert "No `#<id> [<type>] <summary>` item lines, no `Pending:` count line" in picker
+        assert "checkbox questions carry the same items as options" in picker
         assert "every pending row plus closed rows" in picker
         assert "**no `preview` on any option**" in picker
         assert "a one-line description with the applicable item count, and no `preview` field" in bulk
         assert "recommended option second" in bulk
-        assert "pending-item list in Q1’s question text, with no option previews" in call_two
+        assert "its table path in Q1’s question text, with no option previews" in call_two
         assert "options carry no preview" in large
-        assert "pending counts by type past the budget" in large
+        assert "only the fixed lines including the table path" in large
 
     def test_table_columns_are_fixed(self) -> None:
         """The selection table forbids improvised columns such as File or Sev."""
@@ -284,7 +284,7 @@ class TestNoReplyTextBeforeAQuestion:
                 "modes/action-item-dispatch.md",
                 "**Group-preview gate",
                 "Derive `<group_tag>`",
-                "with the step 1 group lines in the question text and no option `preview` fields",
+                "with the step 1 group count and table path in the question text and no option `preview` fields",
                 id="custom-groups-in-question-text",
             ),
             pytest.param(
@@ -317,7 +317,6 @@ def test_bulk_text_has_only_the_ordered_fixed_lines() -> None:
     text = _SKILL.read_text(encoding="utf-8")
     section = _route(text, "\n**Bulk question text**", "**ESSENTIAL — exactly these 4 options")
     markers = [
-        "Pending item lines",
         "1. `→ To pick items yourself",
         "2. `→ N pending items",
         "3. `→ N resolved/addressed",
@@ -331,22 +330,19 @@ def test_bulk_text_has_only_the_ordered_fixed_lines() -> None:
     assert "at most one short sentence" in section
     assert "→ N/A item picking" not in text
     assert "line 1 is always `Or choose a bulk action:`" not in text
-    assert "Reserve those fixed lines first" in text
     assert "**1,500 characters**" in text
-    assert "always retain at least the top item and the table path" in text
-    assert "Closed items are named by count only unless their lines fit" in text
+    assert "Pending item lines" not in section
+    assert "the closed rows are in the table, never listed here" in section
 
 
-def test_group_gate_lists_plain_groups_without_previews() -> None:
-    """Custom dispatch saves every group and shows plain lines before the width decision."""
+def test_group_gate_prints_groups_once_without_restating_them() -> None:
+    """Custom dispatch saves every group and prints them once; the question keeps count and path only."""
     text = (_RESOLVE_DIR / "modes/action-item-dispatch.md").read_text(encoding="utf-8")
     gate = _route(text, "**Group-preview gate", "Derive `<group_tag>`")
     for marker in (
         "phase2-groups-table.md",
-        "about 6 lines",
         "1,500-character whole-question budget",
-        "top groups that fit",
-        "total group count and file path",
+        "group count and file path, never the group rows",
         "no preview",
         "as the last text of the reply message that issues",
         "recommended option stays second",

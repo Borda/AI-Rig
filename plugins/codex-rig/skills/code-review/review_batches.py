@@ -1104,9 +1104,6 @@ def _role_passes(
                 for key in ("context_path", "output_path", "raw_output_path"):
                     attempt[key] = prefix + attempt[key]
             content = validator._resolve_path(out, item["output_path"]).read_text(encoding="utf-8")
-            rating, rationale = validator._text_reviewer_assessment(
-                re.search(r"(?ms)^## Reviewer Assessment\s*\n(.*?)\Z", content)[1], batch_response=True
-            )
             assessment = validator._retained_reviewer_rating(
                 out / item["output_path"],
                 local_reviewer_wave=False,
@@ -1115,15 +1112,16 @@ def _role_passes(
                 batch_response=True,
                 retain_assessment=True,
             )
-            confidence = json.loads(re.search(r"(?ms)^## Reviewer Confidence\s*\n```json\n(.*?)\n```", content)[1])
+            parts = validator._batch_response_parts(content, item["role"])
+            confidence = json.loads(content[slice(*parts["Reviewer Confidence"])])
             part = {
                 "manifest_path": prefix + "specialist-manifest.json",
                 "manifest_sha256": validator._sha256(directory / "specialist-manifest.json"),
                 "role": item["role"],
                 "output_path": item["output_path"],
                 "output_sha256": validator._sha256(out / item["output_path"]),
-                "rating": rating,
-                "rationale": rationale,
+                "rating": assessment["rating"],
+                "rationale": assessment["rationale"],
                 "confidence": confidence,
             }
             if assessment["source_rating_version"] == 1:
@@ -1222,11 +1220,7 @@ def _source_ledger(
                     source = next(
                         (entry for entry in inventory["source_snapshot"]["files"] if entry["path"] == path), None
                     )
-                    if (
-                        source is None
-                        or len(rationale.split()) < 6
-                        or not rationale.startswith(("Existing behavior: ", "False positive: "))
-                    ):
+                    if source is None or not rationale.strip():
                         continue
                     start, end = int(start), int(end)
                     lines = source["content"].splitlines(keepends=True)

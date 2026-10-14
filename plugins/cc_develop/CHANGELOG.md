@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.40.2
+
+- Sync the cross-validation protocol: assessment evidence and limits are string arrays, open concerns cover only UNVERIFIED or pending candidates, and an open candidate forbids complete readiness.
+
 ## 0.40.1
 
 - Render reviewer attribution with readable role names and square-bracketed ratings, omit execution-origin labels, and display null judgments as “no source judgment.”

@@ -2,6 +2,8 @@
 
 Detailed codex-native workflows emit the same gate fields. Documented lightweight local paths run applicable project checks directly and report their evidence without creating this bundle.
 
+Apply [Acceptance and recovery](native-skill-contract.md#acceptance-and-recovery): reviewer/report formatting and wording hints do not become failed acceptance checks. Preserve semantic structure and factual evidence; automatically handle equivalent presentation at the owning reader and retain raw evidence. Calibration benchmark wording misses are advisory entries in `checks.txt`; structural contract and behavioral failures retain their normal failed-check accounting. Configured project checks still run, with authorized automatic formatting/correction and relevant reruns; a tool's diagnostic alone does not establish its impact on delivery.
+
 ## Required checks
 
 1. `lint`: `ruff check` (or project lint command)
@@ -115,3 +117,5 @@ Configured agents require:
 Codex behavior changes must also update registrations, docs, calibration in same patch. Prefer existing agent/skill unless new role/workflow has distinct triggers, acceptance criteria, measurable gates.
 
 A passing assessed `audit` result additionally requires an executed passing `review` gate. The generic runner still permits all `not-applicable` diagnostics; skill applicability checks decide whether those records can certify workflow completion.
+
+New terminal handoffs use presentation version 8. Keep full evidence in machine records; display file paths outside every table as `- Item: file-path` lists. Presentation normalization is automatic; factual bindings, source coverage and authority checks retain their existing meaning.

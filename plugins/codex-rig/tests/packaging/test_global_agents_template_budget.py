@@ -23,7 +23,9 @@ NATIVE_CONTRACT = PLUGIN_ROOT / "shared" / "native-skill-contract.md"
 # without knowing the grant exists.
 # Raised by 324 bytes for the after-wait notification checkpoint: ordinary sessions also wait for agents without
 # loading a skill contract, so pending roles and empty-return evidence limits must stay visible in the global rule.
-TEMPLATE_BYTE_BUDGET = 38558
+# Raised by 464 bytes for the user-required table/path display rule: it applies to all terminal messages, including
+# sessions that load no workflow skill, so a skill-local pointer cannot establish the requested default.
+TEMPLATE_BYTE_BUDGET = 39022
 
 
 @pytest.mark.packaging

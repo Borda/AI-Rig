@@ -98,3 +98,5 @@ An unattended installation script can explicitly grant consent after installing 
 ```
 
 On native Windows use `bin/python.cmd` with host-shell quoting. `--approve` applies only to this helper's `grant` action; it records the same persistent transfer policy as interactive approval. It does not approve installation/configuration operations, provider login, paid setup probes, or folder binding. Those stages can still require input, and actual host restrictions still apply. The setup planner's separate `--approve <digest>` keeps its existing exact-action meaning.
+
+Health telemetry is optional. Nonregular health members are rejected before open; nonblocking POSIX opens prevent a FIFO replacement from stalling before descriptor validation. When its record cannot be written safely, the returned `findings` append a nonblocking health telemetry warning; the original status, verdict, decision fields, and incident remain available, and the child is not replayed. Required peer fields and string/list types are validated without presentation-length or item-count limits; the existing child-record, output-capture, and transcript byte budgets remain enforced.

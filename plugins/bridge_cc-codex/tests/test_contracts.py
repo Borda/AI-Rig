@@ -315,12 +315,10 @@ class TestModelCoreSchema:
         assert set(schema["properties"]) == PEER_FIELDS
         assert schema["properties"]["status"]["enum"] == ["complete", "partial", "blocked"]
         assert PEER_FIELDS.isdisjoint(HARNESS_ONLY_FIELDS)
-        assert schema["properties"]["verdict"]["maxLength"] == 500
-        for field in ("findings", "files_touched", "remaining", "blockers"):
-            assert schema["properties"][field]["maxItems"] == 8
-            assert schema["properties"][field]["items"]["maxLength"] == 500
-        assert schema["properties"]["details"]["maxItems"] == 32
-        assert schema["properties"]["details"]["items"]["maxLength"] == 2000
+        assert "maxLength" not in schema["properties"]["verdict"]
+        for field in ("findings", "files_touched", "remaining", "blockers", "details"):
+            assert "maxItems" not in schema["properties"][field]
+            assert schema["properties"][field]["items"] == {"type": "string"}
 
     def test_accepts_a_well_formed_peer_result(self, schema: dict[str, object]) -> None:
         """A partial-status result carrying only peer fields, including bounded details, validates.

@@ -102,6 +102,7 @@ from review_execution_validation import LEGACY_WORKDIR_READER_SHA256S as LEGACY_
 from review_execution_validation import REQUIRED_ROLES as REQUIRED_ROLES  # noqa: E402
 from review_execution_validation import TRANSIENT_RETRY_ERRORS as TRANSIENT_RETRY_ERRORS  # noqa: E402
 from review_execution_validation import _assessment_format_repair as _assessment_format_repair  # noqa: E402
+from review_execution_validation import _batch_response_parts as _batch_response_parts  # noqa: E402
 from review_execution_validation import _batch_reviewer_findings as _batch_reviewer_findings  # noqa: E402
 from review_execution_validation import _binary_source_diagnostic as _binary_source_diagnostic  # noqa: E402
 from review_execution_validation import _child_controls as _child_controls  # noqa: E402
@@ -1252,7 +1253,7 @@ def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any])
     if not handoff_path.is_file():
         return
     handoff = _load_json(handoff_path)
-    if handoff.get("presentation_version") not in {2, 3}:
+    if handoff.get("presentation_version") not in {2, 3, 8}:
         return
     failure = metadata["collection_failure"]
     code = failure["code"]

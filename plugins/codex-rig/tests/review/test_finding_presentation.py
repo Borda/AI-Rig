@@ -482,7 +482,7 @@ def test_candidate_pr_snapshot_values_match_collected_evidence(tmp_path: Path, f
 
 
 def test_candidate_pr_snapshot_escapes_collected_title_link_syntax(tmp_path: Path) -> None:
-    """Keep a collected title's bracket syntax inside the canonical PR link."""
+    """Keep title syntax inert while moving canonical destinations into resource lists."""
     run = _assessed_pr.__wrapped__(tmp_path)
     result = json.loads((run / "result.json").read_text(encoding="utf-8"))
     pr = json.loads((run / "pr.json").read_text(encoding="utf-8"))
@@ -514,13 +514,19 @@ def test_candidate_pr_snapshot_escapes_collected_title_link_syntax(tmp_path: Pat
     )
     gates = json.loads((run / "gates.json").read_text(encoding="utf-8"))
     VALIDATOR._validate_final_handoff(result, "code-review", run, gates, candidate=True)
+    rendered = (run / "final.md").read_text(encoding="utf-8")
     links = [
         child.attrs["href"]
-        for token in MarkdownIt("default").parse((run / "final.md").read_text(encoding="utf-8"))
+        for token in MarkdownIt("default").parse(rendered)
         for child in token.children or []
         if child.type == "link_open"
     ]
-    assert links == ["https://github.com/acme/widgets/pull/123", (run / "review-notes.md").resolve().as_posix()]
+    assert links == ["https://github.com/acme/widgets/pull/123"]
+    assert f"- PR (Value): {values['PR']}" in rendered
+    table = "\n".join(line for line in rendered.splitlines() if line.startswith("|"))
+    assert "https://evil.example/other" not in table
+    assert f"- Report: {(run / 'review-notes.md').resolve().as_posix()}" in rendered
+    assert "Fix &#93;(https://evil.example/other) widget" in rendered
 
     snapshot["rows"][0]["cells"][1] = (
         "[#123 — Fix ](https://evil.example/other) widget](https://github.com/acme/widgets/pull/123)"
@@ -1135,7 +1141,8 @@ def _write_remediation_candidate(
         tables=[
             {
                 "heading": "Final Outcome Table",
-                "layout": "grouped",
+                "layout": "concise",
+                "overview_only": True,
                 "columns": ["Item", "Severity", "Finding", "Sources", "Outcome", "Evidence / next action"],
                 "rows": rows,
                 "details": details,
@@ -1148,6 +1155,21 @@ def _write_remediation_candidate(
             "omitted_source_records_total": 0,
         },
     )
+    for position, row in enumerate(rows, 1):
+        item = table["items"][position - 1]
+        row["selected"] = "Closed" if not item["selectable"] else "Yes"
+    handoff["artifacts"].append({"label": "Item ledger", "path": str(tmp_path / "action-items.md")})
+    handoff["remaining"] = [
+        {
+            "row_id": item["input_item_id"],
+            "item": item["item_name"],
+            "owner": item["owner_status"],
+            "next_action": item["resolved_how"],
+        }
+        for item in table["items"]
+        if item["resolution_status"] in {"unresolved", "deferred", "blocked", "needs-clarification"}
+    ]
+    handoff["next_steps"] = [item["row_id"] for item in handoff["remaining"]]
     handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
     binding = _load_finalizer().render_files(
         handoff_path, tmp_path / "final.md", tmp_path / "final-handoff.validation.json"
@@ -1796,16 +1818,17 @@ def test_grouped_review_binds_every_display_field(field: str, layout: str) -> No
         VALIDATOR._validate_code_review_final_handoff(result, payload)
 
 
+@pytest.mark.parametrize("presentation", [pytest.param(7, id="historical"), pytest.param(8, id="current")])
 @pytest.mark.parametrize("snapshot_heading", ["PR Snapshot", "Review Snapshot"])
 def test_compact_review_links_full_report_and_retains_machine_details(
-    tmp_path: Path, snapshot_heading: str, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, snapshot_heading: str, monkeypatch: pytest.MonkeyPatch, presentation: int
 ) -> None:
     """Suppress supporting chat groups while retaining their full report and machine records."""
     report_root = tmp_path / "review with spaces"
     report_root.mkdir()
     run = _assessed_pr.__wrapped__(report_root)
     payload = json.loads((run / "final-handoff.json").read_text(encoding="utf-8"))
-    payload["presentation_version"] = 7
+    payload["presentation_version"] = presentation
     payload["tables"][0]["heading"] = snapshot_heading
     row = {
         "id": "boundary-check",
@@ -1850,9 +1873,15 @@ def test_compact_review_links_full_report_and_retains_machine_details(
 
     assert "| ID | Author | Finding | Resolution proposal | Status |" in rendered
     assert "| boundary-check | Main reviewer | Boundary regression unprotected |" in rendered
-    assert f"| Report | [Markdown report](<{quote(report.resolve().as_posix(), safe='/:')}>) |" in rendered
-    assert rendered.count("| Report |") == 1
-    assert rendered.index("| Reviewers |") < rendered.index("| Report |") < rendered.index("Legend:")
+    destination = quote(report.resolve().as_posix(), safe="/:")
+    if presentation == 7:
+        assert f"| Report | [Markdown report](<{destination}>) |" in rendered
+        assert rendered.count("| Report |") == 1
+        assert rendered.index("| Reviewers |") < rendered.index("| Report |") < rendered.index("Legend:")
+    else:
+        assert f"- Report: {destination}" in rendered
+        assert "| Report |" not in rendered
+        assert all(destination not in line for line in rendered.splitlines() if line.startswith("|"))
     assert "**boundary-check**" not in rendered
     for label in ("Context", "Evidence", "Done when"):
         assert f"- {label}:" not in rendered
@@ -1864,12 +1893,15 @@ def test_compact_review_links_full_report_and_retains_machine_details(
         assert value in report.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("presentation", [pytest.param(7, id="historical"), pytest.param(8, id="current")])
 @pytest.mark.parametrize("contents", [None, "", "   "])
-def test_compact_review_rejects_missing_or_empty_full_report(tmp_path: Path, contents: str | None) -> None:
+def test_compact_review_rejects_missing_or_empty_full_report(
+    tmp_path: Path, contents: str | None, presentation: int
+) -> None:
     """Never hide details behind a missing report or substitute the compact final artifact."""
     run = _assessed_pr.__wrapped__(tmp_path)
     payload = json.loads((run / "final-handoff.json").read_text(encoding="utf-8"))
-    payload["presentation_version"] = 7
+    payload["presentation_version"] = presentation
     report = run / "review-notes.md"
     if contents is None:
         report.unlink()
@@ -1956,7 +1988,7 @@ def test_compact_review_report_link_without_reviewer_display(tmp_path: Path) -> 
     payload["tables"][0].pop("reviewers")
     rendered = _load_finalizer().render_handoff(payload, report_root=run)
     assert "| Reviewers |" not in rendered
-    assert rendered.count("| Report | [Markdown report](<") == 1
+    assert rendered.count("- Report: ") == 1
 
 
 @pytest.mark.parametrize("field", ["title", "summary", "closure_evidence"])

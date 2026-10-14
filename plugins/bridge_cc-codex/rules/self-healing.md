@@ -2,7 +2,7 @@
 
 > Write-capable `implement` calls are reported with their partial transcript and workspace delta after a timeout; they are never automatically retried.
 
-> A bridge call performs at most one remedy. It writes one incident record for every fault and appends one health.jsonl line for every completed call, including unsuccessful calls.
+> A bridge call performs at most one remedy. It writes one incident record for every fault and attempts one optional health.jsonl append for every completed call, including unsuccessful calls; unsafe telemetry paths or health I/O failures preserve the original result and add a sanitized nonblocking warning to public findings.
 
 > `turn.failed` with `reasoning.effort` or an equivalent structured Claude error may trigger one supported-effort substitution. A missing or unauthenticated CLI, a permission refusal, an unknown fault, or a repeated substitution is reported without retry. Timeout retry is limited to read-only verbs; implement is reported with its partial transcript and workspace delta. An unavailable model and a stale resume session are also reported without remedy: bridge does not maintain a model fallback ladder, and no verified structured signal distinguishes a stale session from other resume faults.
 

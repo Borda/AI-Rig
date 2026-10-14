@@ -4,10 +4,8 @@
   "properties": {
     "blockers": {
       "items": {
-        "maxLength": 500,
         "type": "string"
       },
-      "maxItems": 8,
       "type": "array"
     },
     "cost": {
@@ -61,18 +59,14 @@
     },
     "files_touched": {
       "items": {
-        "maxLength": 500,
         "type": "string"
       },
-      "maxItems": 8,
       "type": "array"
     },
     "findings": {
       "items": {
-        "maxLength": 500,
         "type": "string"
       },
-      "maxItems": 8,
       "type": "array"
     },
     "incident": {
@@ -87,10 +81,8 @@
     },
     "remaining": {
       "items": {
-        "maxLength": 500,
         "type": "string"
       },
-      "maxItems": 8,
       "type": "array"
     },
     "run_id": {
@@ -133,7 +125,6 @@
       "type": "string"
     },
     "verdict": {
-      "maxLength": 500,
       "minLength": 1,
       "type": "string"
     }

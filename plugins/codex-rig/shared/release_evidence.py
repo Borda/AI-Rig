@@ -43,11 +43,14 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import html
 import json
 import os
 import re
+import string
 import subprocess
 import sys
+import unicodedata
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -180,14 +183,322 @@ def _changed_paths(repository: Path, sha: str) -> set[str]:
     return set(paths)
 
 
+def release_sections(text: str) -> list[tuple[str, int, int, int]]:
+    """Locate level-two ATX or Setext sections outside fences with original character offsets."""
+    sections = []
+    paragraph = []
+    fence = None
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        marker = re.fullmatch(r" {0,3}(`{3,}|~{3,})(.*)", content)
+        if fence is not None:
+            if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence) and not marker[2].strip():
+                fence = None
+        elif marker:
+            fence = marker[1]
+            paragraph = []
+        else:
+            heading = re.fullmatch(r" {0,3}##[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*", content)
+            if heading:
+                sections.append((heading[1], offset, offset + len(line)))
+                paragraph = []
+            elif re.fullmatch(r" {0,3}(?:-+|=+)[ \t]*", content) and paragraph:
+                if content.lstrip().startswith("-"):
+                    sections.append(
+                        (" ".join(value.strip() for value, _start in paragraph), paragraph[0][1], offset + len(line))
+                    )
+                paragraph = []
+            elif not content.strip() or re.match(
+                r"^(?: {4}|\t| {0,3}(?:#{1,6}[ \t]|>|[-*+][ \t]|\d+[.)][ \t]))", content
+            ):
+                paragraph = []
+            else:
+                paragraph.append((content, offset))
+        offset += len(line)
+    return [
+        (title, start, body, sections[index + 1][1] if index + 1 < len(sections) else len(text))
+        for index, (title, start, body) in enumerate(sections)
+    ]
+
+
 def _nonempty_section(text: str, heading: str) -> bool:
-    """Return whether an exact Markdown heading has content before the next peer heading."""
-    match = re.search(rf"(?m)^{re.escape(heading)}\s*$", text)
-    if match is None:
+    """Return whether one equivalent level-two Markdown section contains substantive content."""
+    declared = release_sections(heading + "\n")
+    if len(declared) != 1:
         return False
-    following = re.search(r"(?m)^##\s+", text[match.end() :])
-    body = text[match.end() : match.end() + following.start() if following else len(text)]
-    return bool(body.strip())
+    matches = [section for section in release_sections(text) if section[0] == declared[0][0]]
+    return len(matches) == 1 and bool(text[matches[0][2] : matches[0][3]].strip())
+
+
+def _credit_lines(text: str) -> list[str]:
+    """Read rendered credit lines outside fences without treating Unicode content as line endings."""
+    lines = []
+    fence = None
+    # Markdown normalizes CR/LF and NUL for rendering. Receipt and excerpt bytes stay untouched;
+    # other controls and Unicode separators remain data rather than invented paragraph boundaries.
+    for line in re.split(r"\r\n?|\n", text.replace("\x00", "\ufffd")):
+        marker = re.fullmatch(r" {0,3}(`{3,}|~{3,})(.*)", line)
+        if fence is not None:
+            if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence) and not marker[2].strip(" \t"):
+                fence = None
+        elif marker:
+            fence = marker[1]
+            lines.append("")
+        else:
+            lines.append(line)
+    return lines
+
+
+def _credit_closing(text: str, start: int, opener: str, closer: str) -> int | None:
+    """Find a balanced label or destination boundary without treating escaped delimiters as syntax."""
+    depth = 1
+    index = start + 1
+    while index < len(text):
+        if text[index] == "\\":
+            index += 2
+            continue
+        if text[index] == opener:
+            depth += 1
+        elif text[index] == closer:
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    return None
+
+
+def _credit_link_end(text: str, start: int, *, inline: bool) -> int | None:
+    """Read a complete link destination and optional title, rejecting malformed trailing text."""
+    index = start
+    # Unicode whitespace can be URL data; only Markdown separators split destination/title tokens.
+    syntax_whitespace = " \t\r\n"
+    while index < len(text) and text[index] in syntax_whitespace:
+        index += 1
+    if re.search(r"\n[ \t]*\n", text[start:index]):
+        return None
+    if inline and text[index : index + 1] == ")":
+        return index + 1
+    if text[index : index + 1] == "<":
+        index += 1
+        while index < len(text) and text[index] != ">":
+            if text[index] == "\\" and index + 1 < len(text) and text[index + 1] in string.punctuation:
+                index += 2
+            elif text[index] in "<\r\n":
+                return None
+            else:
+                index += 1
+        if index == len(text):
+            return None
+        index += 1
+    else:
+        destination = index
+        depth = 0
+        while index < len(text) and text[index] not in syntax_whitespace:
+            character = text[index]
+            if character == "\\" and index + 1 < len(text) and text[index + 1] in string.punctuation:
+                index += 2
+                continue
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif ord(character) < 32 or ord(character) == 127:
+                return None
+            index += 1
+        if index == destination or depth:
+            return None
+    destination_end = index
+    while index < len(text) and text[index] in syntax_whitespace:
+        index += 1
+    if re.search(r"\n[ \t]*\n", text[destination_end:index]):
+        return None
+    if inline and text[index : index + 1] == ")":
+        return index + 1
+    if not inline and index == len(text):
+        return index
+    if index == destination_end or text[index : index + 1] not in {'"', "'", "("}:
+        return None
+    opener = text[index]
+    closer = ")" if opener == "(" else opener
+    title_start = index
+    index += 1
+    while index < len(text) and text[index] != closer:
+        if text[index] == "\\" and index + 1 < len(text) and text[index + 1] in string.punctuation:
+            index += 2
+        elif opener == "(" and text[index] == "(":
+            return None
+        else:
+            index += 1
+    if index == len(text) or re.search(r"\n[ \t]*\n", text[title_start:index]):
+        return None
+    index += 1
+    title_end = index
+    while index < len(text) and text[index] in syntax_whitespace:
+        index += 1
+    if re.search(r"\n[ \t]*\n", text[title_end:index]):
+        return None
+    if inline and text[index : index + 1] == ")":
+        return index + 1
+    return index if not inline and index == len(text) else None
+
+
+def _credit_references(text: str) -> set[str]:
+    """Resolve complete reference definitions at paragraph boundaries outside fenced examples."""
+    lines = _credit_lines(text)
+    references = set()
+    index = 0
+    boundary = True
+    while index < len(lines):
+        line = lines[index]
+        definition = re.match(r"^ {0,3}\[((?:\\[^\r\n]|[^\[\]\\])+)\]:", line) if boundary else None
+        if definition and definition[1].strip() and len(definition[1]) <= 999:
+            candidate = line
+            end = index
+            valid_end = None
+            while True:
+                if _credit_link_end(candidate, definition.end(), inline=False) is not None:
+                    valid_end = end
+                end += 1
+                if end == len(lines) or not lines[end].strip(" \t"):
+                    break
+                candidate += "\n" + lines[end]
+            if valid_end is not None:
+                references.add(" ".join(definition[1].split()).casefold())
+                boundary = True
+                index = valid_end + 1
+            else:
+                boundary = False
+                index += 1
+            continue
+        boundary = not line.strip(" \t") or bool(re.match(r"^ {0,3}(?:#{1,6}[ \t]|[-=]+[ \t]*$)", line))
+        index += 1
+    return references
+
+
+def _credit_link_span(text: str, index: int, references: set[str]) -> tuple[str, int] | None:
+    """Recognize one complete supported link candidate before applying the no-nested-links rule."""
+    if text[index] != "[" or (index and text[index - 1] == "!"):
+        return None
+    close = _credit_closing(text, index, "[", "]")
+    if close is None:
+        return None
+    label = text[index + 1 : close]
+    key = " ".join(label.split()).casefold()
+    end = close
+    linked = key in references
+    if text[close + 1 : close + 2] == "(":
+        destination = _credit_link_end(text, close + 2, inline=True)
+        linked = destination is not None
+        end = destination - 1 if destination is not None else close
+    elif text[close + 1 : close + 2] == "[":
+        reference = _credit_closing(text, close + 1, "[", "]")
+        reference_key = text[close + 2 : reference] if reference is not None else ""
+        linked = reference is not None and " ".join((reference_key or label).split()).casefold() in references
+        end = reference if reference is not None else close
+    return (label, end) if linked else None
+
+
+def _credit_label_text(text: str, references: set[str], *, stop_at_description: bool = False) -> str:
+    """Read a complete visible label, resolving supported links and balanced emphasis before comparison."""
+    output = []
+    delimiters = []
+    index = 0
+    while index < len(text):
+        if stop_at_description and re.match(r"(?:[ \t]+[—–-][ \t]+|:[ \t]+)", text[index:]):
+            break
+        if stop_at_description and text[index : index + 2] == " (":
+            annotation = _credit_closing(text, index + 1, "(", ")")
+            if annotation is not None:
+                handle = _credit_label_text(text[index + 2 : annotation], references)
+                tail = text[annotation + 1 :]
+                if re.fullmatch(r"@[A-Za-z0-9_-]+", handle) and (
+                    not tail.strip() or re.match(r"(?:[ \t]+[—–-][ \t]+|:[ \t]+)", tail)
+                ):
+                    break
+        character = text[index]
+        if character == "\\" and index + 1 < len(text) and text[index + 1] in string.punctuation:
+            output.append(text[index + 1])
+            index += 2
+            continue
+        link = _credit_link_span(text, index, references)
+        if link is not None:
+            label, end = link
+            inner = 0
+            while inner < len(label):
+                if label[inner] == "\\":
+                    inner += 2
+                elif _credit_link_span(label, inner, references) is not None:
+                    break
+                else:
+                    inner += 1
+            # An active inner link deactivates its outer link. Leave the outer syntax in the ordinary
+            # text stream so its brackets and destination remain part of the complete visible identity.
+            if inner >= len(label):
+                output.append(_credit_label_text(label, references))
+                index = end + 1
+                continue
+        if character in "*_":
+            run = re.match(r"\*+|_+", text[index:])[0]
+            end = index + len(run)
+            before = text[index - 1] if index else "\n"
+            after = text[end] if end < len(text) else "\n"
+            before_punctuation = before in string.punctuation or unicodedata.category(before)[0] in "PS"
+            after_punctuation = after in string.punctuation or unicodedata.category(after)[0] in "PS"
+            left = not after.isspace() and (not after_punctuation or before.isspace() or before_punctuation)
+            right = not before.isspace() and (not before_punctuation or after.isspace() or after_punctuation)
+            can_open = left and (character == "*" or not right or before_punctuation)
+            can_close = right and (character == "*" or not left or after_punctuation)
+            delimiters.append((len(output), character, can_open, can_close))
+            output.append(run)
+            index = end
+            continue
+        output.append(character)
+        index += 1
+    # Shared closing runs can close inner emphasis and outer strong emphasis. Pair only flanking runs,
+    # preserve every unmatched marker, and forbid crossing pairs or ambiguous multiples of three.
+    openers = []
+    for position, marker, can_open, can_close in delimiters:
+        if can_close:
+            while output[position]:
+                match = None
+                for opener_index in range(len(openers) - 1, -1, -1):
+                    opener, opener_marker, opener_closes = openers[opener_index]
+                    if opener_marker != marker:
+                        continue
+                    opening = len(output[opener])
+                    closing = len(output[position])
+                    if (opener_closes or can_open) and (opening + closing) % 3 == 0 and (opening % 3 or closing % 3):
+                        continue
+                    match = opener_index
+                    break
+                if match is None:
+                    break
+                opener = openers[match][0]
+                used = 2 if len(output[opener]) >= 2 and len(output[position]) >= 2 else 1
+                output[opener] = output[opener][used:]
+                output[position] = output[position][used:]
+                del openers[match + 1 :]
+                if not output[opener]:
+                    openers.pop()
+        if can_open and output[position]:
+            openers.append((position, marker, can_close))
+    return " ".join(html.unescape("".join(output)).split())
+
+
+def _visible_credit_name(text: str, name: str, *, context: str | None = None) -> bool:
+    """Compare complete rendered credit labels with the verified identity, never marked substrings."""
+    definition = re.compile(r"^ {0,3}\[(.+)\]:")
+    references = _credit_references(context if context is not None else text)
+    for line in _credit_lines(text):
+        if definition.match(line):
+            continue
+        label = re.sub(r"^[ \t]*[-*+][ \t]+", "", line).strip()
+        if _credit_label_text(label, references, stop_at_description=True) == " ".join(name.split()):
+            return True
+    return False
 
 
 def _identity_hash(name: str, email: str) -> str:
@@ -420,7 +731,7 @@ def _validate_artifacts(receipt: dict[str, Any], out_dir: Path, requested: set[s
             _nonempty_section(text, "## Actions") or _nonempty_section(text, "## No migration required")
         ):
             _fail("migration-role")
-        if name == "CHANGELOG.md" and not re.search(r"^#+\s+.+", text, re.MULTILINE):
+        if name == "CHANGELOG.md" and not release_sections(text):
             _fail("changelog-role")
     return paths
 
@@ -495,11 +806,22 @@ def _validate_bots(
     # Only the draft owns public contributor credits; audit/demo record them privately.
     target = artifacts.get("DRAFT.md", out_dir / "contributors.md")
     text = target.read_text(encoding="utf-8")
-    lines = [line.strip() for line in text.splitlines() if line.strip().startswith("*Automated contributions:")]
-    expected = "*Automated contributions: " + ", ".join(sorted(labels)) + "*"
-    if lines != ([expected] if identities else []):
+    lines = [re.sub(r"^(\*{1,2}|_{1,2})(.*)\1$", r"\2", line.strip()) for line in re.split(r"\r\n?|\n", text)]
+    aggregate_credits = [
+        line.removeprefix("Automated contributions:").strip()
+        for line in lines
+        if line.startswith("Automated contributions:")
+    ]
+    declared = [label.strip() for label in aggregate_credits[0].split(",")] if len(aggregate_credits) == 1 else []
+    if (identities and (len(aggregate_credits) != 1 or len(declared) != len(labels) or set(declared) != labels)) or (
+        not identities and aggregate_credits
+    ):
         _fail("bot-aggregate-credit")
-    if any(re.search(rf"(?m)^\s*[-*]\s+\*\*{re.escape(eligible[identity])}\*\*", text) for identity in identities):
+    if any(
+        re.match(r"^[ \t]*[-*+][ \t]+", line) and _visible_credit_name(line, eligible[identity], context=text)
+        for identity in identities
+        for line in re.split(r"\r\n?|\n", text)
+    ):
         _fail("bot-individual-credit")
     return identities
 
@@ -526,8 +848,7 @@ def _validate_contributors(
         if identity in recorded or disposition not in {"credited", "excluded"}:
             _fail("contributor-row")
         if disposition == "credited" and (
-            not isinstance(row.get("credit_excerpt"), str)
-            or f"**{row['display_name'].strip()}**" not in row["credit_excerpt"]
+            not isinstance(row.get("credit_excerpt"), str) or not row["credit_excerpt"].strip()
         ):
             _fail("contributor-credit")
         if disposition == "excluded" and (
@@ -552,13 +873,19 @@ def _validate_contributors(
         _fail("bot-human-overlap")
     if recorded != set(eligible) - bots:
         _fail("contributor-coverage")
-    public = "\n".join(path.read_text(encoding="utf-8") for name, path in artifacts.items() if name != "demo.py")
+    public_documents = [path.read_text(encoding="utf-8") for name, path in artifacts.items() if name != "demo.py"]
+    public = "\n".join(public_documents)
     exclusions = (out_dir / "contributors.md").read_text(encoding="utf-8")
-    credit_text = public if public else exclusions
+    credit_documents = public_documents or [exclusions]
     for row in rows:
         if row["display_name"].strip() != eligible[row["identity_hash"]]:
             _fail("contributor-display-name")
-        if row["disposition"] == "credited" and row["credit_excerpt"] not in credit_text:
+        if row["disposition"] == "credited" and not any(
+            row["credit_excerpt"] in document
+            and _visible_credit_name(row["credit_excerpt"], row["display_name"].strip(), context=document)
+            and _visible_credit_name(document, row["display_name"].strip())
+            for document in credit_documents
+        ):
             _fail("contributor-credit")
         if row["disposition"] == "excluded" and row["exclusion"] not in exclusions:
             _fail("contributor-exclusion")
@@ -582,14 +909,13 @@ def _validate_contributors(
 
 def _changelog_sections(data: bytes) -> dict[bytes, bytes]:
     """Split canonical level-two version sections without normalizing their bytes."""
-    starts = list(re.finditer(rb"(?m)^##[ \t]+[^\r\n]+", data))
+    text = data.decode("utf-8")
     sections: dict[bytes, bytes] = {}
-    for index, start in enumerate(starts):
-        heading = start.group()
+    for title, start, _body, end in release_sections(text):
+        heading = ("## " + title).encode("utf-8")
         if heading in sections:
             _fail("changelog-duplicate-heading")
-        end = starts[index + 1].start() if index + 1 < len(starts) else len(data)
-        section = data[start.start() : end]
+        section = text[start:end].encode("utf-8")
         # Reference definitions are validated separately and included in the release excerpt below.
         lines = section.splitlines(keepends=True)
         while lines and (not lines[-1].strip() or re.match(rb"^\[[^]\r\n]+\]:[ \t]+", lines[-1])):
@@ -613,7 +939,7 @@ def _validate_changelog(receipt: dict[str, Any], artifacts: dict[str, Path]) -> 
         if "CHANGELOG.md" in artifacts:
             text = artifacts["CHANGELOG.md"].read_text(encoding="utf-8")
             heading = changelog.get("target_heading")
-            if not isinstance(heading, str) or not heading.startswith("## ") or not _nonempty_section(text, heading):
+            if not isinstance(heading, str) or not _nonempty_section(text, heading):
                 _fail("changelog-target")
         return
     for key in ("backup", "destination"):
@@ -625,27 +951,21 @@ def _validate_changelog(receipt: dict[str, Any], artifacts: dict[str, Path]) -> 
         _fail("changelog-digest")
     old, current = backup.read_bytes(), final.read_bytes()
     heading = changelog.get("target_heading")
-    if not isinstance(heading, str) or not heading.startswith("## "):
+    declared = release_sections(heading + "\n") if isinstance(heading, str) else []
+    if len(declared) != 1:
         _fail("changelog-target")
-    target = heading.encode("utf-8")
+    target = ("## " + declared[0][0]).encode("utf-8")
     before, after = _changelog_sections(old), _changelog_sections(current)
     if target not in after or not _nonempty_section(after[target].decode("utf-8"), heading):
         _fail("changelog-target")
     mutable = {target, b"## Unreleased", b"## [Unreleased]"}
-    old_detail = Counter(
-        line
-        for key, section in before.items()
-        if key in mutable
-        for line in section.splitlines(keepends=True)[1:]
-        if line.strip()
-    )
-    new_detail = Counter(
-        line
-        for key, section in after.items()
-        if key in mutable
-        for line in section.splitlines(keepends=True)[1:]
-        if line.strip()
-    )
+    old_detail, new_detail = Counter(), Counter()
+    for entries, details in ((before, old_detail), (after, new_detail)):
+        for key, section in entries.items():
+            if key in mutable:
+                text = section.decode("utf-8")
+                body = release_sections(text)[0][2]
+                details.update(line for line in text[body:].encode("utf-8").splitlines(keepends=True) if line.strip())
     if old_detail - new_detail:
         _fail("changelog-target-detail")
     for key, section in before.items():

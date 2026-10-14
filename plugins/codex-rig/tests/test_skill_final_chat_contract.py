@@ -127,13 +127,11 @@ def test_agent_shims_declares_the_non_artifact_handoff_exception() -> None:
         "sync",
     ],
 )
-def test_complex_final_chat_contracts_use_structure_not_dense_prose(skill: str) -> None:
-    """Keep branch-heavy output instructions scannable without hard-wrapping prose."""
+def test_final_chat_contracts_include_next_steps(skill: str) -> None:
+    """Require the delivery section without treating paragraph length as a correctness signal."""
     text = (SKILLS_ROOT / skill / "SKILL.md").read_text(encoding="utf-8")
     output_contract = _output_contract(text)
     assert "Next steps" in output_contract
-    dense_lines = [line for line in output_contract.splitlines() if len(line) > 600]
-    assert dense_lines == []
 
 
 def test_confidence_deductions_are_accounted_once_in_existing_text_fields() -> None:

@@ -3764,11 +3764,11 @@ def test_assemble_rejects_unparseable_rating_before_promoting_manifest(tmp_path:
         pytest.param(
             "Rating: 1\nRationale: Clean.\n\nRationale: Conflicting.", None, id="duplicate-rationale-paragraph"
         ),
-        pytest.param("Rating: 1\nRationale: Clean.\nContinuation of rationale.", None, id="multiline-rationale"),
-        pytest.param("No findings.\nRating: 1\nRationale: Clean.", None, id="ambiguous-pair-paragraph"),
+        pytest.param("Rating: 1\nRationale: Clean.\nContinuation of rationale.", 1, id="multiline-rationale"),
+        pytest.param("No findings.\nRating: 1\nRationale: Clean.", 1, id="adjacent-explicit-fields"),
         pytest.param("Rating: 1\n\nRationale: ", None, id="blank-rationale"),
         pytest.param("Rating: 1/5\nRationale: Fraction.", None, id="fraction-rating"),
-        pytest.param("Rating: 1. Rationale: Clean.", None, id="ordinary-inline"),
+        pytest.param("Rating: 1. Rationale: Clean.", 1, id="ordinary-inline"),
         pytest.param("```text\n\nRating: 1\nRationale: Example.\n\n```", None, id="fenced-pair"),
     ],
 )
@@ -3850,8 +3850,8 @@ def test_retained_reviewer_rating_rejects_noncanonical_assessment(tmp_path: Path
         pytest.param("Rating: 2\nRationale: One obligation remains.", 2, id="canonical-lines"),
         pytest.param("Rating: 2. Rationale: One obligation remains.", 2, id="same-sentence"),
         pytest.param("Rating: 2 Rationale: One obligation remains.", 2, id="same-line"),
-        pytest.param("Rating: 2; Rationale: One obligation remains.", None, id="unsupported-semicolon"),
-        pytest.param("Rating: 2, Rationale: One obligation remains.", None, id="unsupported-comma"),
+        pytest.param("Rating: 2; Rationale: One obligation remains.", 2, id="semicolon-separator"),
+        pytest.param("Rating: 2, Rationale: One obligation remains.", 2, id="comma-separator"),
         pytest.param("Rating: 2\r\nRationale: One obligation remains.", 2, id="crlf"),
         pytest.param("Rating: 2. Rationale: ", None, id="empty-rationale"),
         pytest.param("Rating: 2. Rationale:   ", None, id="blank-rationale"),
@@ -3885,8 +3885,6 @@ def test_retained_assessment_preserves_unambiguous_fields(
     spec.loader.exec_module(module)
     response = tmp_path / "response.md"
     main = profile == "main"
-    if profile != "batch" and assessment.startswith(("Rating: 2. Rationale:", "Rating: 2 Rationale:")):
-        expected = None
     heading = "Main Reviewer Assessment" if main else "Reviewer Assessment"
     content = f"## {heading}\n\n{assessment}\n"
     if profile == "batch":
@@ -3934,10 +3932,10 @@ def test_assemble_preserves_opaque_rationale_label_prose(tmp_path: Path) -> None
 
 @pytest.mark.parametrize("batch_response", [False, True])
 @pytest.mark.parametrize("claimed_batch_findings", [False, True])
-def test_inline_metadata_assessment_requires_validated_batch_profile(
+def test_inline_metadata_assessment_preserves_meaning_in_every_profile(
     tmp_path: Path, batch_response: bool, claimed_batch_findings: bool
 ) -> None:
-    """An arbitrary pass marker cannot widen ordinary assessment parsing without validated batch admission."""
+    """A formatting-only difference preserves the same explicit judgment in every text profile."""
     spec = importlib.util.spec_from_file_location("metadata_assessment_validator", SKILL / "validate_artifacts.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -3948,15 +3946,12 @@ def test_inline_metadata_assessment_requires_validated_batch_profile(
     if claimed_batch_findings:
         item["reviewer_findings"] = []
     metadata = {"reviewer_assessments": [{"role": "QA specialist", "rating": 2, "evidence": "qa.md"}]}
-    if batch_response and claimed_batch_findings:
+    module._validate_reviewer_assessments(tmp_path, metadata, {"qa-specialist": item}, batch_response=batch_response)
+    metadata["reviewer_assessments"][0]["rating"] = 1
+    with pytest.raises(SystemExit, match="review-assessment-rating-mismatch:qa-specialist"):
         module._validate_reviewer_assessments(
             tmp_path, metadata, {"qa-specialist": item}, batch_response=batch_response
         )
-    else:
-        with pytest.raises(SystemExit, match="review-assessment-content-invalid:qa-specialist"):
-            module._validate_reviewer_assessments(
-                tmp_path, metadata, {"qa-specialist": item}, batch_response=batch_response
-            )
 
 
 def test_pr_pass_import_proof_rejects_missing_test_origins(tmp_path: Path) -> None:

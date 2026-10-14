@@ -476,10 +476,21 @@ def _drop_loaded_index_path(node: object) -> object:
     return node
 
 
+def _restore_legacy_impact_command(legacy: dict, current: dict) -> None:
+    """Validate the fixture's targets and shell dialect before restoring its historical command."""
+    # This fixture has exactly one affected test. Pin both shell commands independently
+    # before restoring the frozen oracle's pre-quoting representation for full equality.
+    assert legacy["test_files"] == current["test_files"] == ["tests/test_alpha.py"]
+    assert legacy["pytest_cmd"] == "pytest tests/test_alpha.py"
+    expected = "pytest 'tests/test_alpha.py'" if sys.platform == "win32" else "pytest tests/test_alpha.py"
+    assert current["pytest_cmd"] == expected
+    current["pytest_cmd"] = legacy["pytest_cmd"]
+
+
 def _assert_golden_query_parity(
     old: subprocess.CompletedProcess[str], new: subprocess.CompletedProcess[str], case: list[str]
 ) -> None:
-    """Assert byte parity except the fixed additive metadata on two quality commands."""
+    """Assert legacy payload parity with explicit checks for subsequent contract changes."""
     assert old.returncode == new.returncode
     assert old.stderr == new.stderr
     command = case[0]
@@ -506,7 +517,13 @@ def _assert_golden_query_parity(
     if command not in _COUNT_SEMANTIC_KEYS:
         legacy = json.loads(old.stdout)
         current = _drop_loaded_index_path(json.loads(new.stdout))
-        _restore_v13_not_covered(legacy, current)
+        if command != "diff-impact":
+            _restore_v13_not_covered(legacy, current)
+        if command in {"test-impact", "diff-impact"}:
+            _restore_legacy_impact_command(
+                legacy if command == "test-impact" else legacy["test_impact"],
+                current if command == "test-impact" else current["test_impact"],
+            )
         assert current == legacy
         return
 
@@ -534,6 +551,44 @@ def _assert_golden_query_parity(
     assert isinstance(semantics, dict)
     assert set(semantics) == _COUNT_SEMANTIC_KEYS[command]
     assert all(isinstance(value, str) and value for value in semantics.values())
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32"])
+@pytest.mark.parametrize("command", ["test-impact", "diff-impact"])
+@pytest.mark.parametrize("corruption", [None, "command-target", "unquoted", "test-files", "total", "legacy-command"])
+def test_golden_impact_parity_checks_shell_command_and_targets(
+    monkeypatch: pytest.MonkeyPatch, platform: str, command: str, corruption: str | None
+) -> None:
+    """Allow the documented shell dialect without accepting wrong targets or other payload drift."""
+    legacy_impact = {"test_files": ["tests/test_alpha.py"], "pytest_cmd": "pytest tests/test_alpha.py", "total": 1}
+    current_impact = {
+        "test_files": ["tests/test_alpha.py"],
+        "pytest_cmd": "pytest 'tests/test_alpha.py'" if platform == "win32" else "pytest tests/test_alpha.py",
+        "total": 1,
+    }
+    if corruption == "command-target":
+        current_impact["pytest_cmd"] = "pytest 'tests/test_wrong.py'"
+    elif corruption == "unquoted":
+        current_impact["pytest_cmd"] = (
+            "pytest tests/test_alpha.py" if platform == "win32" else "pytest tests/test_alpha.py; echo unexpected"
+        )
+    elif corruption == "test-files":
+        current_impact["test_files"] = ["tests/test_wrong.py"]
+    elif corruption == "total":
+        current_impact["total"] = 2
+    elif corruption == "legacy-command":
+        legacy_impact["pytest_cmd"] = "pytest tests/test_wrong.py"
+    legacy = legacy_impact if command == "test-impact" else {"test_impact": legacy_impact, "base": "HEAD"}
+    current = current_impact if command == "test-impact" else {"test_impact": current_impact, "base": "HEAD"}
+    old = subprocess.CompletedProcess([], 0, json.dumps(legacy), "")
+    new = subprocess.CompletedProcess([], 0, json.dumps(current), "")
+    monkeypatch.setattr(sys, "platform", platform)
+
+    if corruption is None:
+        _assert_golden_query_parity(old, new, [command])
+    else:
+        with pytest.raises(AssertionError):
+            _assert_golden_query_parity(old, new, [command])
 
 
 class TestOldVsNewBinParity:
@@ -723,10 +778,7 @@ class TestDiffImpactParity:
         old = _run_old(old_scan_query, ["diff-impact", "--base", "HEAD"], diff_impact_project)
         new = _run_new_bin(["diff-impact", "--base", "HEAD"], diff_impact_project)
         assert old.returncode == new.returncode == 0
-        # Compared as parsed JSON rather than as bytes, so the one deliberately additive
-        # field (the loaded index path, absent from the frozen oracle) can be dropped.
-        assert _drop_loaded_index_path(json.loads(new.stdout)) == json.loads(old.stdout)
-        assert old.stderr == new.stderr
+        _assert_golden_query_parity(old, new, ["diff-impact"])
 
     def test_diff_impact_matches_module_dispatch(self, diff_impact_project: Path) -> None:
         """Match bin-vs-module-dispatch."""

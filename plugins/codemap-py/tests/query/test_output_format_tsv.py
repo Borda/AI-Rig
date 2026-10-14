@@ -203,3 +203,23 @@ class TestEmit:
         captured = capsys.readouterr()
         assert captured.out == ""
         assert '"stale": false' in captured.err
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32"])
+def test_pytest_command_quotes_each_literal_target(monkeypatch, platform):
+    """Both shell dialects retain literal spaces, apostrophes, variables, and backslashes."""
+    from codemap_py.query.output import _pytest_command
+
+    monkeypatch.setattr(sys, "platform", platform)
+    files = ["tests/plain.py", "tests space & literal'$value/test_extra.py", r"C:\project space\test_more.py"]
+    command = _pytest_command(files)
+    if platform == "win32":
+        assert (
+            command
+            == "pytest 'tests/plain.py' 'tests space & literal''$value/test_extra.py' 'C:\\project space\\test_more.py'"
+        )
+    else:
+        import shlex
+
+        assert shlex.split(command) == ["pytest", *files]
+    assert _pytest_command([]) == ""

@@ -176,7 +176,7 @@ for name, value in fields.items():
 Parse `$RESULT` JSON:
 
 - `test_files` — list of test file paths
-- `pytest_cmd` — ready-to-run command
+- `pytest_cmd` — ready-to-run command for POSIX shells on POSIX hosts or PowerShell on native Windows. `test_files` is the authoritative argv list; for another shell, rebuild with its quoting rather than reuse incompatible escaping.
 - `via_call` / `via_mock` — breakdown of how tests were found
 - `index.not_covered` — surface as caveat if non-empty
 - `index.hint` — include as suggestion

@@ -13,8 +13,8 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 
 ## Usage
 
-New assessed code reviews set ``presentation_version=7``, remediation handoffs set ``presentation_version=6``, and
-other workflows set ``presentation_version=3`` before
+New handoffs set ``presentation_version=8`` to keep paths outside terminal tables; historical versions retain their
+exact presentation before
 ``render``. Earlier presentation versions remain available
 for validating historical artifacts. Run ``render`` after gates and handoff creation, then run ``check``
 directly or through the shared artifact validator
@@ -127,7 +127,7 @@ HANDOFF_FIELDS = {
     "caller_contract",
 }
 #: Current presentation layout revision for rendered handoffs, written into new handoff documents.
-PRESENTATION_VERSION = 3
+PRESENTATION_VERSION = 8
 #: One-sentence plain-English summary shown for each code-review recommendation.
 REVIEW_PLAIN_SUMMARIES = {
     "accept-as-is": "This review found no blocking change requests.",
@@ -607,6 +607,13 @@ def validate_handoff(payload: object) -> dict[str, Any]:
     """Validate and return one canonical final-handoff payload."""
     handoff = _require_object(payload, "handoff")
     presentation_version = handoff.get("presentation_version")
+    if presentation_version == 8:
+        # Only terminal layout changes; use the existing branch's complete factual contract.
+        previous = 7 if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed" else 3
+        if handoff.get("skill") == "code-remediate":
+            previous = 6
+        validate_handoff({**handoff, "presentation_version": previous})
+        return handoff
     expected_fields = HANDOFF_FIELDS if presentation_version is None else HANDOFF_FIELDS | {"presentation_version"}
     if "commit_disposition" in handoff:
         expected_fields = expected_fields | {"commit_disposition"}
@@ -614,7 +621,7 @@ def validate_handoff(payload: object) -> dict[str, Any]:
         expected_fields = expected_fields | {"child_runs"}
     if set(handoff) != expected_fields:
         raise HandoffError("handoff-fields-mismatch")
-    presentation_versions = {2, PRESENTATION_VERSION}
+    presentation_versions = {2, 3}
     if handoff.get("skill") == "code-remediate":
         presentation_versions.update({4, 5, 6})
     elif handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed":
@@ -1008,6 +1015,8 @@ def _validate_selection(payload: object) -> tuple[dict[str, Any], list[dict[str,
 
 def render_selection(payload: object) -> str:
     """Render a validated inventory as a short overview with named evidence groups."""
+    if isinstance(payload, dict) and payload.get("presentation_version") == 5:
+        return _externalize_table_paths(render_selection({**payload, "presentation_version": 4}))
     inventory, selectable, counts = _validate_selection(payload)
     items = inventory["items"]
     selected = inventory.get("selected_indexes")
@@ -1091,11 +1100,182 @@ def render_selection(payload: object) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _externalize_table_paths(markdown: str) -> str:
+    """Move table destinations into item-labelled lists, retaining surrounding action text.
+
+    Input is our deterministic table renderer, not an arbitrary Markdown parser. Historical renderings never enter this
+    boundary. Explicit links and recognized quoted paths have known boundaries. Ambiguous plain or quoted cells move
+    verbatim to labelled details instead of guessing path boundaries or classifying code as a filename.
+    """
+    # Complex inline targets stay in the lossless detail fallback; never extract a balanced target's prefix.
+    link = re.compile(r"\[([^\]]+)\]\((<[^>]+>|[^\s()]+)\)")
+    filename = re.compile(r"[\w.-]+\.[A-Za-z][A-Za-z0-9]{0,11}(?::\d+){0,2}")
+    reference = re.compile(
+        r"`(?P<quoted>[^`]+)`|(?P<plain>(?<![\w])(?:[A-Za-z]:)?[^\s`<>|()\[\]]*[/\\][^\s`<>|()\[\]]+"
+        r"|(?<![\w.])[\w.-]+\.[A-Za-z][A-Za-z0-9]{0,11}(?::\d+){0,2})"
+    )
+
+    def is_path(value: str, *, quoted: bool = False) -> bool:
+        """Distinguish path references from ordinary slash-separated prose."""
+        basename = value.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1]
+        return bool(
+            filename.fullmatch(basename)
+            or value.startswith(("/", "./", "../", "~/", "\\"))
+            or re.match(r"[A-Za-z]:[/\\]", value)
+            or (quoted and ("/" in value or "\\" in value))
+        )
+
+    def whole_path(value: str) -> bool:
+        """Recognize an unambiguous plain path with no prose or whitespace boundary."""
+        return (
+            is_path(value)
+            and not any(character.isspace() for character in value)
+            and not any(marker in value for marker in (";", ",", "<br>", "[", "`"))
+        )
+
+    lines = markdown.splitlines()
+    rendered: list[str] = []
+    resource_items: dict[str, list[str]] = {}
+    index = 0
+    while index < len(lines):
+        if not lines[index].startswith("|"):
+            resource = re.fullmatch(r"- \[(R\d+)\] \[.*\]\(<(.*)>\)", lines[index])
+            if resource and resource[1] in resource_items:
+                rendered.extend(f"- {item}: {resource[2]}" for item in resource_items[resource[1]])
+            else:
+                rendered.append(lines[index])
+            index += 1
+            continue
+        table: list[list[str]] = []
+        while index < len(lines) and lines[index].startswith("|"):
+            table.append(
+                [
+                    cell.strip().replace(r"\|", "|").replace("\\\\", "\\")
+                    for cell in re.split(r"(?<!\\)\|", lines[index][1:-1])
+                ]
+            )
+            index += 1
+        if len(table) < 2:
+            rendered.extend("| " + " | ".join(_table_cell(cell) for cell in row) + " |" for row in table)
+            continue
+        # Evidence-only columns disappear; mixed cells retain a reference to their complete detail.
+        removed = {
+            column
+            for column, heading in enumerate(table[0])
+            if heading.casefold() == "evidence"
+            and all(
+                link.fullmatch(row[column])
+                or whole_path(row[column])
+                or filename.fullmatch(row[column])
+                or re.fullmatch(r"\[R\d+\]", row[column])
+                for row in table[2:]
+            )
+        }
+        resources: list[tuple[str, str]] = []
+        display = table[:2]
+        for row_number, row in enumerate(table[2:], 1):
+            destinations: list[str] = []
+            details: list[tuple[str, str]] = []
+            cells = []
+
+            def shorten_plain(value: str, *, record: bool = True) -> str:
+                """Compact references once, without interpreting rendered labels as new evidence."""
+
+                def shorten(match: re.Match[str]) -> str:
+                    quoted = match["quoted"] is not None
+                    raw = match["quoted"] if quoted else match["plain"]
+                    destination = raw if quoted else raw.rstrip(",;.")
+                    if not is_path(destination, quoted=quoted):
+                        return match[0]
+                    if record:
+                        destinations.append(destination)
+                    suffix = "" if quoted else raw[len(destination) :]
+                    return destination.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1] + suffix
+
+                return reference.sub(shorten, value)
+
+            for column, value in enumerate(row):
+                # Visible link labels need the same path checks as prose; destinations alone cannot preserve them.
+                plain = link.sub(lambda match: match[1], value)
+                ambiguous_quote = "``" in plain or any(
+                    not is_path(match[1], quoted=True) for match in re.finditer(r"`([^`]+)`", plain)
+                )
+                plain = re.sub(r"`[^`]+`", "", plain)
+                # Classify complete tokens before extracting references; a filename prefix is never evidence.
+                ambiguous_name = any("." in token.rstrip(",;.") and not is_path(token) for token in plain.split())
+                references = [
+                    match["plain"].rstrip(",;.") for match in reference.finditer(plain) if match["plain"] is not None
+                ]
+                if (
+                    ambiguous_quote
+                    or ambiguous_name
+                    or "](" in plain
+                    or any(
+                        (is_path(candidate) and re.search(r"[^\w./:\\-]", value))
+                        or (not is_path(candidate) and ("/" in candidate or "\\" in candidate))
+                        for candidate in references
+                    )
+                ):
+                    details.append((table[0][column], value))
+                    cells.append(f"Item {row_number}" if column == 0 else "See detail")
+                    continue
+                if (
+                    table[0][column].casefold() in {"surface", "artifact", "path", "evidence"}
+                    and whole_path(value)
+                    and ("/" in value or "\\" in value)
+                ):
+                    destinations.append(value)
+                    cells.append(value.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1])
+                    continue
+                parts: list[str] = []
+                cursor = 0
+                for match in link.finditer(value):
+                    parts.append(shorten_plain(value[cursor : match.start()]))
+                    destinations.append(match[2].removeprefix("<").removesuffix(">"))
+                    parts.append(shorten_plain(match[1], record=False))
+                    cursor = match.end()
+                parts.append(shorten_plain(value[cursor:]))
+                cells.append("".join(parts))
+            item = cells[0]
+            for destination in destinations:
+                pair = (item, destination)
+                if pair not in resources:
+                    resources.append(pair)
+            resources.extend((f"{item} ({column})", value) for column, value in details)
+            if row[-1].startswith("[R") and row[-1].endswith("]"):
+                resource_items.setdefault(row[-1][1:-1], []).append(item)
+            # Only the generated two-column snapshot pointer contains no work-row facts to retain.
+            report_pointer = (
+                table[0] == ["Field", "Value"]
+                and len(row) == 2
+                and row[0] == "Report"
+                and (report_link := link.fullmatch(row[1])) is not None
+                and report_link[1] == "Markdown report"
+            )
+            if not report_pointer:
+                display.append(cells)
+        rendered.extend(
+            "| " + " | ".join(_table_cell(cell) for column, cell in enumerate(row) if column not in removed) + " |"
+            for row in display
+        )
+        if resources:
+            rendered.extend(("", *(f"- {item}: {destination}" for item, destination in resources)))
+    return "\n".join(rendered) + "\n"
+
+
 def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
     """Render one validated handoff into exact final-response text."""
     handoff = validate_handoff(payload)
     if handoff["branch"] == "caller-contract":
         return handoff["caller_contract"]["output"]
+
+    if handoff.get("presentation_version") == 8:
+        previous = 7 if handoff["skill"] == "code-review" and handoff["branch"] == "assessed" else 3
+        if handoff["skill"] == "code-remediate":
+            previous = 6
+        return _externalize_table_paths(
+            _render_v2_handoff({**handoff, "presentation_version": previous}, report_root=report_root)
+        )
 
     if handoff.get("presentation_version") in {2, 3, 4, 5, 6, 7}:
         return _render_v2_handoff(handoff, report_root=report_root)

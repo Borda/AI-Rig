@@ -25,7 +25,7 @@ if str(_BIN) not in sys.path:
 from .coverage import _cmd_coverage  # noqa: E402
 from .errors import _EXIT_BAD_INPUT, _EXIT_GENERIC, _die_json  # noqa: E402
 from .index_io import _GIT_TIMEOUT_S  # noqa: E402
-from .output import _print  # noqa: E402
+from .output import _print, _pytest_command  # noqa: E402
 
 # Reverse-dependency count thresholds mapping a module to a blast-radius risk tier.
 # Matches the develop plugin's convention so a diff-impact tier reads the same as the
@@ -536,7 +536,7 @@ def _diff_impact_tests(
     return {
         "test_files": files,
         "total": len(files),
-        "pytest_cmd": ("pytest " + " ".join(files)) if files else "",
+        "pytest_cmd": _pytest_command(files),
     }
 
 

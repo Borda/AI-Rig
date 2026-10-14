@@ -40,7 +40,7 @@ printf '%s\n' "$PR_NUMBER" > "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}"
 echo "→ Report PR: $PR_NUMBER"
 ```
 
-Sources block — it heads `$IMPL_DIR/action-items-table.md` and the full table printed once as the last text of the reply message that issues Step 3d’s AskUserQuestion, same as `pr-intelligence.md`’s. Q1 lists pending items as plain lines within its 1,500-character budget, or the top items, pending counts by type and table path past the budget; options carry no preview. Do not print it before the parsing calls below; print it only at the picker.
+Sources block — it heads `$IMPL_DIR/action-items-table.md` and the full table printed once as the last text of the reply message that issues Step 3d’s AskUserQuestion, same as `pr-intelligence.md`’s. Q1 never repeats the items: it carries counts, notices and the table path within its 1,500-character budget; options carry no preview. Do not print it before the parsing calls below; print it only at the picker.
 
 ```markdown
 ## Resolve — sources
@@ -110,7 +110,7 @@ Render ACTION_ITEMS as a markdown table (severity descending), below the Sources
 | 1 | [report][req] | code | 4 | foundry:sw-engineer | pending | rename param x to count | — |
 ```
 
-Columns exactly as above — never add `File`, `Sev`, `Loc` or any other column. Summary ≤60 chars. Notes = `—` when empty; carries commit SHA for `addressed` rows and classification verdicts (e.g. deprecation filter output) — never `file:line`, which the `file`/`line` fields already hold. Write every row to `$IMPL_DIR/action-items-table.md` before the call, with the Sources block on top, and print the headed table exactly once as the last text of the reply message that issues Step 3d’s AskUserQuestion (SKILL.md Step 3d **Items in the question text**). Q1 lists pending items as plain lines, or the top items, pending counts by type and the table path past the 1,500-character budget; options carry no preview. This table is shown only before the picker, never in an option’s `preview`, never Bash/tool stdout, never here and again at the gate.
+Columns exactly as above — never add `File`, `Sev`, `Loc` or any other column. Summary ≤60 chars. Notes = `—` when empty; carries commit SHA for `addressed` rows and classification verdicts (e.g. deprecation filter output) — never `file:line`, which the `file`/`line` fields already hold. Write every row to `$IMPL_DIR/action-items-table.md` before the call, with the Sources block on top, and print the headed table exactly once as the last text of the reply message that issues Step 3d’s AskUserQuestion (SKILL.md Step 3d **Question text — no restating**). Q1 never repeats the items: it carries counts, notices and the table path within the 1,500-character budget; options carry no preview. This table is shown only before the picker, never in an option’s `preview`, never Bash/tool stdout, never here and again at the gate.
 
 PR# found in report header → use the persisted `PR_NUMBER` from the block above, set `$ARGUMENTS = <N>`, go to Step 3d, skip Step 3e, then Step 4; skip Step 3b. Step 3d chooses `SELECTED_ITEMS` and commit mode before checkout. Continue through the normal post-checkout steps to Step 8.
 

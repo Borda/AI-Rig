@@ -249,36 +249,9 @@ Deprecation wrapper: <OLD_REF> kept as @deprecated alias → <NEW_REF>
 ⚠ <RDEP_HINT>
 ```
 
-**Budget gate**: caller count > 50 → derive BRANCH and a free (non-colliding) output path first:
+Caller count alone never blocks a complete migration. Enumerate and preflight every known caller; for a long list, save the complete inventory to a free branch-scoped `.temp/output-rename-refs-blast-<branch>-<YYYY-MM-DD>.md` path and print its path. Derive `<branch>` from `git branch --show-current`, replacing `/` with `-` (`main` if empty/detached). Never overwrite: probe before Writing and append `-2`, `-3`, … until free. The inventory supports confirmation and complete execution; it never permits a partial migration.
 
-```bash
-# timeout: 3000
-BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-'); BRANCH="${BRANCH:-main}"
-# never overwrite — preserve the complete planning record across same-day runs
-BLAST_OUT=".temp/output-rename-refs-blast-${BRANCH}-$(date +%Y-%m-%d).md"; _n=1
-while [ -e "$BLAST_OUT" ]; do _n=$((_n+1)); BLAST_OUT=".temp/output-rename-refs-blast-${BRANCH}-$(date +%Y-%m-%d)-${_n}.md"; done
-printf '%s\n' "$BLAST_OUT"
-```
-
-Write all callers to printed `$BLAST_OUT`, beginning with YAML header:
-
-```yaml
----
-Title:      rename-refs blast-radius — <OLD_REF>
-Date:       <YYYY-MM-DD>
-Scope:      <project name>
-Focus:      complete caller enumeration; edit budget exceeded
-Agents:     codemap-py:rename-refs
-Outcome:    <N callers found; exhaustive: true/false>
-Confidence: <exhaustive|partial>
-Next steps: stop before edits; plan a complete migration covering every known caller
-Path:       → <the resolved $BLAST_OUT path>
----
-```
-
-Print path + count, then stop before any source edit. Do not rename the definition or module, even with `--deprecate`; a larger migration requires a separately bounded plan covering every known caller. The report is planning evidence, not permission for a partial migration.
-
-Before apply confirmation, resolve every known caller before any source edit: for symbols, query every caller and verify its unique source range and expected imports/calls; for modules, inspect every dependent file and matching import. A missing, ambiguous or stale site stops the operation with source unchanged. Retain these locations for apply; recheck them before mutation. The caller budget and preflight apply to both subcommands.
+Before apply confirmation, resolve every known caller before any source edit: for symbols, query every caller and verify its unique source range and expected imports/calls; for modules, inspect every dependent file and matching import. For a missing, ambiguous or stale site, stop before any source edit with source unchanged. Retain these locations for apply; recheck them before mutation. The complete preflight applies to both subcommands regardless of caller count.
 
 **`--remove-if-no-callers` guards** — evaluated before any rename edits:
 
@@ -524,7 +497,7 @@ Type→decorator mapping:
 # timeout: 3000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
-git rev-parse --is-inside-work-tree 2>/dev/null || { printf "⚠ not a git repo — cannot use git mv; rename file manually\n" >&2; exit 1; }
+git rev-parse --is-inside-work-tree 2>/dev/null || { printf "⚠ non-git source — tracked-file module moves require Git tracking; stop before edits\n" >&2; exit 1; }
 IFS= read -r OLD_MODULE_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_MODULE_PATH-${CSID}" 2>/dev/null || OLD_MODULE_PATH=""
 # index path preferred — avoids dotted-path errors on src/ layouts
 IFS= read -r SMOKE_INDEX < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-index-${CSID}" 2>/dev/null || SMOKE_INDEX=""
@@ -551,12 +524,13 @@ case "$old_file_path" in
 esac
 [ -f "$old_file_path" ] || { printf "! File not found: %s\n" "$old_file_path" >&2; exit 1; }
 printf '%s\n' "$old_file_path" > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-old-file-path-${CSID}"
-git status --porcelain "$old_file_path"
+git ls-files --error-unmatch -- "$old_file_path" >/dev/null 2>&1 || { printf "! Untracked source — tracked-file module moves require Git tracking\n" >&2; exit 1; }
+git status --porcelain -- "$old_file_path"
 ```
 
-- Output prefix `??`: print `! File is untracked — add to git first: git add "<old_file_path>"`; stop.
-- Any other non-empty prefix (M, A, D, R, C, U): print `! File has uncommitted changes — commit or stash before module rename.`; stop.
-- Output empty (clean tracked file): proceed.
+- Output prefix `??` (untracked source): stop before edits and report that tracked-file module moves require Git tracking. Never add, commit, or stash automatically.
+- Unmerged/conflicted paths: stop before edits; report the conflict.
+- Otherwise, preserve uncommitted user edits and proceed with the tracked source. `git mv` retains its current bytes; a dirty status alone is not a stop condition.
 
 ```bash
 # timeout: 5000
@@ -588,8 +562,9 @@ case "$new_file_path" in
     *) printf "! Invalid rename target: '%s' does not end in .py\n" "$new_file_path" >&2; exit 1 ;;
 esac
 # explicit guard, not an accident of git mv's refusal — also catches a stale-index phantom new_file_path
-[ -e "$new_file_path" ] && { printf "! Rename target already exists: %s\n" "$new_file_path" >&2; exit 1; }
-git mv "$old_file_path" "$new_file_path" || { printf "! git mv failed: %s -> %s\n" "$old_file_path" "$new_file_path" >&2; exit 1; }
+[ -e "$new_file_path" ] || [ -L "$new_file_path" ] && { printf "! Rename target already exists: %s\n" "$new_file_path" >&2; exit 1; }
+git ls-files --error-unmatch -- "$new_file_path" >/dev/null 2>&1 && { printf "! Rename target already tracked: %s\n" "$new_file_path" >&2; exit 1; }
+git mv -- "$old_file_path" "$new_file_path" || { printf "! git mv failed: %s -> %s\n" "$old_file_path" "$new_file_path" >&2; exit 1; }
 ```
 
 **5b — Direct imports**:

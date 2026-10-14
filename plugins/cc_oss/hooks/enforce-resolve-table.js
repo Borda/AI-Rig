@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Enforce oss:resolve's Step 3d boundary: Q1 lists pending items as plain lines,
-// or lists top items and type counts beside the full table file past its budget.
+// Enforce oss:resolve's Step 3d boundary: Q1 never restates the items the printed
+// table and the item options already show. It names the saved table file, which must
+// hold every pending and closed id as its own cell, and stays within the budget.
 // Options normally have no preview; optional plain comparisons must be distinct
 // and within the host cap. The full table is printed once before the picker.
 // Scope and fail-open behavior remain workflow guards, not a security boundary.
@@ -153,37 +154,6 @@ function delivers(ids, text) {
   return tableCellSets(text).some((cells) => ids.every((id) => cells.has(id)));
 }
 
-/** Plain item lines shown by Q1, never mentions in descriptions, tables or later questions. */
-function questionItems(text) {
-  return Array.from(text.matchAll(/^#([^\s]+)[ \t]+((?:\[[^\]\r\n]+\])+)[ \t]+([^\r\n]{1,50})$/gm), (match) => ({
-    id: match[1],
-    type: match[2],
-  }));
-}
-
-/** Canonical line length used to decide whether the complete pending list fits beside the fixed notices. */
-function itemLine(item) {
-  const summary = String(item.summary || `Item #${item.id}`)
-    .replace(/[\s|]+/g, " ")
-    .slice(0, 50);
-  return `#${item.id} ${item.type} ${summary}`;
-}
-
-/** Exact pending counts by type from the question's fixed Pending line. */
-function pendingCountsMatch(text, items) {
-  const counts = new Map();
-  for (const item of items) counts.set(item.type, (counts.get(item.type) || 0) + 1);
-  const line = text.split(/\r?\n/).find((entry) => entry.startsWith("Pending: "));
-  if (!line) return false;
-  const shown = new Map();
-  for (const entry of line.slice(9).split(/\s*·\s*/)) {
-    const match = entry.match(/^((?:\[[^\]]+\])+) (\d+)$/);
-    if (!match || shown.has(match[1])) return false;
-    shown.set(match[1], Number(match[2]));
-  }
-  return shown.size === counts.size && Array.from(counts).every(([type, count]) => shown.get(type) === count);
-}
-
 /** Bounded regular-file read; missing, unreadable and oversized tables cannot authorize fallback. */
 function readTableFile(tablePath) {
   try {
@@ -204,41 +174,13 @@ function selectionProblem(toolInput, items, tablePath) {
     problems.push("put the single-select bulk-action question first (Q1)");
   if (text.length > QUESTION_TEXT_MAX_CHARS) problems.push("question text exceeds 1500 characters");
   const rich = (value) => /\||```|<\/?[a-z][^>]*>/i.test(value);
-  if (rich(text)) problems.push("question text must be plain item lines, without a table or HTML");
-  const shown = questionItems(text);
-  const has = (item) => shown.some((entry) => entry.id === item.id && entry.type === item.type);
-  const missing = items.pending.filter((item) => !has(item));
-  if (missing.length) {
-    // Reserve the actual fixed notices/path before deciding whether a full list exceeds the whole-question budget.
-    const fixed = text.split(/\r?\n/).filter((line) => !line.startsWith("#") && !line.startsWith("Pending: "));
-    const fullLength = [...items.pending.map(itemLine), ...fixed].join("\n").length;
-    const top = shown.filter((entry) => items.pending.some((item) => item.id === entry.id));
-    const prefix =
-      top.length > 0 &&
-      top.every(
-        (entry, index) =>
-          items.pending[index] && entry.id === items.pending[index].id && entry.type === items.pending[index].type,
-      );
-    // Skill paths may use forward slashes on native Windows; read only the sentinel-owned table either way.
-    const namesTable = [tablePath, tablePath.replace(/\\/g, "/")].some((name) => text.includes(name));
-    const table = namesTable ? readTableFile(tablePath) : null;
-    const allIds = [...items.pending, ...items.closed].map((item) => item.id);
-    if (
-      fullLength <= QUESTION_TEXT_MAX_CHARS ||
-      !prefix ||
-      !pendingCountsMatch(text, items.pending) ||
-      !table ||
-      !delivers(allIds, table)
-    ) {
-      problems.push(
-        `missing pending items ${missing
-          .slice(0, 10)
-          .map((item) => `#${item.id}`)
-          .join(", ")}; ` +
-          "the over-budget form needs the top items in severity order, exact Pending: counts by type, and the complete table file",
-      );
-    }
-  }
+  if (rich(text)) problems.push("question text must be plain lines, without a table or HTML");
+  // Skill paths may use forward slashes on native Windows; read only the sentinel-owned table either way.
+  const namesTable = [tablePath, tablePath.replace(/\\/g, "/")].some((name) => text.includes(name));
+  const table = namesTable ? readTableFile(tablePath) : null;
+  const allIds = [...items.pending, ...items.closed].map((item) => item.id);
+  if (!table || !delivers(allIds, table))
+    problems.push("name the saved table file, which must hold every pending and resolved/addressed id as its own cell");
   const closedCount = text.match(/^→ (\d+) resolved\/addressed items\b/m);
   if (items.closed.length && (!closedCount || Number(closedCount[1]) !== items.closed.length))
     problems.push(`name the ${items.closed.length} resolved/addressed items by count`);
@@ -259,11 +201,10 @@ function selectionProblem(toolInput, items, tablePath) {
     "oss:resolve selection gate — " +
     problems.join("; ") +
     ". Fix the first question text: " +
-    "list every pending item as #<id> [<type>] <summary up to 50 chars>, most severe first, within 1500 characters. " +
-    `Past that budget, list the top items, Pending: counts by type, and name the complete table file \`${tablePath}\`. ` +
+    `keep counts and notices only, never item rows, and name the complete table file \`${tablePath}\` within 1500 characters. ` +
     "Options carry labels and one-line descriptions, with no preview by default. Optional previews must be distinct " +
     "plain comparisons within 2000 characters and 12 rendered lines. Print the full table once as the last text of the reply message that issues the picker, before the call; " +
-    "do not reprint it after the answer or on a denied retry. Reply text before the call, thinking, tool stdout, option fields and later questions do not supply Q1's items."
+    "do not reprint it after the answer or on a denied retry."
   );
 }
 

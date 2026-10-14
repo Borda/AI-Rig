@@ -61,16 +61,6 @@ CHILD_TIMEOUT_MULTIPLIER = 1.2
 CLEANUP_GRACE_SECONDS = 2.0
 #: Seconds between liveness checks of the signalled child tree while the cleanup grace runs.
 CLEANUP_POLL_SECONDS = 0.01
-#: Longest verdict string, in characters, accepted from a child and kept in a returned envelope.
-MAX_VERDICT_CHARS = 500
-#: Most entries allowed in each of the findings, files_touched, remaining and blockers lists.
-MAX_SUMMARY_ITEMS = 8
-#: Longest single entry, in characters, in the findings, files_touched, remaining and blockers lists.
-MAX_SUMMARY_ITEM_CHARS = 500
-#: Most entries allowed in the child envelope's details list.
-MAX_DETAILS_ITEMS = 32
-#: Longest single entry, in characters, in the child envelope's details list.
-MAX_DETAILS_ITEM_CHARS = 2_000
 # This leaves substantial headroom below the smallest audited process argument
 # limit after the Bridge prompt, schema, environment, and executable arguments.
 #: Largest task text, in UTF-8 bytes, a request may carry before it is rejected as over the transport budget.
@@ -274,17 +264,17 @@ def _is_windows_batch_shim(executable: str) -> bool:
 
 
 def validate_model_core(value: Any) -> dict[str, Any]:
-    """Validate and return the strict peer result before public compaction.
+    """Validate and return the strict peer result before removing transcript-only detail.
 
-    Peer results include bounded supporting ``details`` for transcript storage. The supervisor removes that field before
-    it validates and returns the public envelope, keeping the model boundary compact without discarding evidence.
+    Peer results include supporting ``details`` within the child capture budget for transcript storage. The supervisor
+    removes that field before it validates and returns the public envelope without discarding evidence.
     """
     if not isinstance(value, dict) or set(value) != set(PEER_FIELDS):
         raise ValueError("model result must contain exactly the seven peer fields")
     if value["status"] not in CORE_STATUSES:
         raise ValueError("model result has an unsupported status")
     _validate_result_summary(value)
-    _validate_string_list(value["details"], "details", MAX_DETAILS_ITEMS, MAX_DETAILS_ITEM_CHARS)
+    _validate_string_list(value["details"], "details")
     return value
 
 
@@ -294,20 +284,20 @@ def _public_core(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def _validate_result_summary(value: dict[str, Any]) -> None:
-    """Enforce compact public-result bounds shared by peer and envelope validation."""
+    """Enforce required public-result types without discarding valid captured facts."""
     verdict = value["verdict"]
-    if not isinstance(verdict, str) or not verdict.strip() or len(verdict) > MAX_VERDICT_CHARS:
-        raise ValueError("model result verdict must be a bounded non-empty string")
+    if not isinstance(verdict, str) or not verdict.strip():
+        raise ValueError("model result verdict must be a non-empty string")
     for field in CORE_FIELDS[2:]:
-        _validate_string_list(value[field], field, MAX_SUMMARY_ITEMS, MAX_SUMMARY_ITEM_CHARS)
+        _validate_string_list(value[field], field)
 
 
-def _validate_string_list(value: Any, field: str, maximum_items: int, maximum_item_chars: int) -> None:
-    """Reject unbounded or non-string model-authored list fields."""
-    if not isinstance(value, list) or len(value) > maximum_items:
-        raise ValueError(f"model result {field} must be an array within its item limit")
-    if not all(isinstance(item, str) and len(item) <= maximum_item_chars for item in value):
-        raise ValueError(f"model result {field} must contain bounded strings")
+def _validate_string_list(value: Any, field: str) -> None:
+    """Reject malformed lists while retaining all facts within the capture budget."""
+    if not isinstance(value, list):
+        raise ValueError(f"model result {field} must be an array")
+    if not all(isinstance(item, str) for item in value):
+        raise ValueError(f"model result {field} must contain strings")
 
 
 def validate_envelope(value: Any) -> dict[str, Any]:
@@ -627,10 +617,7 @@ def run_request(
     # Only the write-capable verb may report a resumable session; the others drop it from the envelope.
     reportable_session = observed if _is_write_verb(effective_request.verb) else replace(observed, session_id=None)
     envelope = _make_envelope(reportable_session, core, event_info.cost, _prior_incident)
-    try:
-        _append_health(paths, envelope)
-    except ArtifactBoundaryError as error:
-        return _terminal_envelope(observed, "blocked", str(error), record_health=False)
+    _record_optional_health(paths, envelope)
     return envelope
 
 
@@ -1260,7 +1247,7 @@ def _error_from(value: Any) -> str | None:
             if item
         ]
         rendered = ": ".join(parts)
-        return rendered[:MAX_VERDICT_CHARS] if rendered else "provider request failed"
+        return rendered if rendered else "provider request failed"
     error = value.get("error", value)
     if not isinstance(error, dict):
         return None
@@ -1269,7 +1256,7 @@ def _error_from(value: Any) -> str | None:
     message = error.get("message")
     parts = [str(item) for item in (code, parameter, message) if item]
     rendered = ": ".join(parts)
-    return rendered[:MAX_VERDICT_CHARS] if rendered else None
+    return rendered if rendered else None
 
 
 def _first_string(value: dict[str, Any], keys: Iterable[str]) -> str | None:
@@ -1401,7 +1388,6 @@ def _terminal_envelope(
     *,
     workspace_delta: list[str] | None = None,
     prior_incident: str | None = None,
-    record_health: bool = True,
     fault: str | None = None,
 ) -> dict[str, Any]:
     """Create, record, and return a harness-owned terminal result."""
@@ -1421,13 +1407,7 @@ def _terminal_envelope(
         paths, context.request, fault or status, reason, transcript_path, workspace_delta, prior_incident
     )
     envelope = _make_envelope(context, core, None, incident)
-    if record_health:
-        try:
-            _append_health(paths, envelope)
-        except ArtifactBoundaryError:
-            # A blocked result must remain readable even when the health member
-            # itself is hostile; no external telemetry write is an acceptable tradeoff.
-            pass
+    _record_optional_health(paths, envelope)
     return envelope
 
 
@@ -1455,6 +1435,16 @@ def _write_incident(
     }
     _write_json(path, payload, paths=paths)
     return paths.relative(path)
+
+
+def _record_optional_health(paths: BridgePaths, envelope: dict[str, Any]) -> None:
+    """Preserve primary delivery and report safe optional-telemetry diagnostics to the caller."""
+    try:
+        _append_health(paths, envelope)
+    except (ArtifactBoundaryError, OSError):
+        # Telemetry failure cannot erase completed work or obscure a primary failure.
+        # Keep the message fixed because OS errors can include sensitive path content.
+        envelope["findings"].append("Nonblocking health telemetry warning: health record could not be written safely.")
 
 
 def _append_health(paths: BridgePaths, envelope: dict[str, Any]) -> None:
@@ -1488,12 +1478,13 @@ def _open_regular_append(path: Path) -> Any:
         metadata = None
     except OSError as error:
         raise ArtifactBoundaryError("bridge health artifact could not be inspected") from error
-    if metadata is not None and _is_link_or_reparse_point(metadata):
+    if metadata is not None and (_is_link_or_reparse_point(metadata) or not stat.S_ISREG(metadata.st_mode)):
         raise ArtifactBoundaryError("bridge health artifact must be a regular file")
     if os.name == "nt":
         descriptor = _open_windows_nofollow_descriptor(path)
     else:
-        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        # A FIFO swapped in after lstat must not wait for a reader before descriptor validation.
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
         try:
             descriptor = os.open(path, flags, 0o600)
         except OSError as error:

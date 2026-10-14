@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -21,6 +22,19 @@ _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
 from .errors import _builtin_print, _die_json  # noqa: E402
+
+
+def _pytest_command(files: list[str]) -> str:
+    """Render pytest targets for POSIX shells or native Windows PowerShell.
+
+    ``test_files`` remains the shell-independent argv source. PowerShell literal strings double embedded apostrophes;
+    POSIX quoting has a different escape syntax.
+    """
+    if not files:
+        return ""
+    if sys.platform == "win32":
+        return "pytest " + " ".join("'" + path.replace("'", "''") + "'" for path in files)
+    return shlex.join(["pytest", *files])
 
 
 def _print(*args: object, **kwargs: object) -> None:

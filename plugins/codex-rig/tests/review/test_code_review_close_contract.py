@@ -61,6 +61,7 @@ def _write_closed_final_handoff(out_dir: Path, result_path: Path, metadata: dict
     assert isinstance(closures, list)
     handoff = {
         "schema_version": 1,
+        "presentation_version": 8,
         "skill": "code-review",
         "branch": "closed",
         "outcome": {"title": "Review Decision", "summary": "Close is advised; source findings were not assessed."},

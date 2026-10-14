@@ -235,15 +235,17 @@ Follow `../../shared/helper-cli-contract.md` and authoritative help. Write with 
 12. Missing `development-notes.md` sections => fail.
 13. Result artifact validator failure => fail.
 14. Result artifact missing => fail.
-15. New or materially changed function/method without purpose docstring in configured, established, or fallback project style => fail unless it is generated or third-party code explicitly outside edited ownership.
-16. Non-trivial new or changed code block without explanatory inline comment => fail unless code was refactored until rationale is obvious from names and structure.
-17. Explanatory inline comment placed directly above a new or changed `def`/`class` line, with no intervening blank line or code, => fail; move that explanation into docstring. A comment inside the function/class body is not this rule's target and stays governed by rule 16.
-18. Long, dense, or deeply nested new/changed code block that could be split into clear helpers/classes or simplified with guard clauses => fail unless local project pattern requires structure.
-19. Low-value tiny function/class that only remaps arguments, wraps one call without semantic purpose, or is rarely used => fail unless it materially improves readability, testability, or API stability.
+15. Add a purpose docstring to new or materially changed functions/methods in the configured, established, or fallback project style; generated or third-party code stays outside edited ownership. Correct owned documentation automatically rather than failing for its presentation alone.
+16. Explain non-trivial new or changed blocks with useful inline comments, or simplify the code until its rationale is clear. Missing commentary alone is an advisory; incorrect behavior or a misleading factual contract still needs correction and verification.
+17. Move an explanatory comment directly above a new or changed `def`/`class` into its docstring, preserving meaning. Comments inside the body remain governed by rule 16. Placement alone never withholds verified work.
+18. Simplify long, dense, or deeply nested owned blocks when it improves clarity under the project pattern; prefer guard clauses and avoid speculative abstractions. Subjective density alone is an advisory, not an acceptance failure.
+19. Remove low-value argument-remapping wrappers when doing so reduces maintenance burden without changing authorized behavior. Keep units that materially improve readability, testability, or API stability; wrapper size or usage count alone never blocks delivery.
 20. Missing `confidence-calibration.md` sections => fail.
 21. Shared confidence policy violation from `../../shared/quality-gates.md` => fail.
 
 **Spike exemption**: rules 15-19 (docstring/structure) do not apply to `spike` mode output that stays a disposable, non-retained probe never merged into the codebase. When a spike is later promoted to retained implementation, rules 15-19 resume in full for the promoted code — the exemption does not carry over.
+
+Apply rules 15-19 through authorized automatic owned corrections and relevant configured-check reruns. Preserve useful documentation, project checks, factual evidence and actual authority boundaries. A remaining presentation preference is advisory; block only when a concrete required structure, behavior, fact or authorization remains unmet under [Acceptance and recovery](../../shared/native-skill-contract.md#acceptance-and-recovery).
 
 ## Quality Gates
 

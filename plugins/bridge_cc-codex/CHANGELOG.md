@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.1
+
+- Preserve every valid captured result fact without presentation item-count or string-length rejection; keep actual child-record, output and transcript byte limits.
+- Keep original child results and primary failures when optional health telemetry cannot be written safely, with a sanitized nonblocking warning in public findings.
+- Reject nonregular health members before open and use nonblocking POSIX opens so a FIFO replacement cannot stall completed delivery.
+
 ## 0.10.0
 
 - Add explicit `$bridge:setup --approve-claude-consent` and `bridge_consent.py grant --approve` for recording standing Claude transfer consent without a terminal question, including unattended installation scripts.

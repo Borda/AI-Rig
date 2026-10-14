@@ -32,7 +32,7 @@ from .index_io import (  # noqa: E402
     _SymbolTarget,
     build_module_map,
 )
-from .output import _print  # noqa: E402
+from .output import _print, _pytest_command  # noqa: E402
 
 #: Method suffix whose static callers the scanner records on the owning class: ``Foo()`` is an edge to ``mod::Foo``.
 _INIT_SUFFIX = ".__init__"
@@ -634,7 +634,7 @@ def cmd_test_impact(index: dict, qname: str, include_mocks: bool = True) -> None
 
     all_files = sorted(test_files_via_call | test_files_via_mock)
     all_mods = sorted(test_mods_via_call | test_mods_via_mock)
-    pytest_cmd = ("pytest " + " ".join(all_files)) if all_files else ""
+    pytest_cmd = _pytest_command(all_files)
     method = "static-ast" if "::" in qname else "import-graph"
     short_name = qname.split("::")[-1] if "::" in qname else qname.split(".")[-1]
     payload: dict = {

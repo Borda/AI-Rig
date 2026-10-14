@@ -60,7 +60,7 @@ Use `--require-live-routes` only for strict-live gate. Default offline scoring r
 
 ### 08: Emit measured recommendations for what should be fixed or improved next
 
-- Start with plain-English explanation of whether calibration passed and what any failure means. Then prioritize failed checks/leaks, naming exact check, file or pattern, evidence, next-action owner, and gate that must pass to resume acceptance.
+- Start with plain-English explanation of whether calibration passed and what any failure means. Then prioritize failed structural/behavioral checks and leaks, naming the concrete invalid result, evidence, next-action owner, and gate that must pass to resume acceptance. Benchmark wording-pattern misses are advisory diagnostics in `checks.txt`; inspect their meaning without treating a phrase mismatch alone as a failed obligation or stopping delivery.
 - Behavioral recommendations name metric gap/affected cases when available.
 - Separate fixture-only caveats from live-quality claims.
 

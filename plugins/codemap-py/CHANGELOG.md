@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.41.5
+
+- Quote affected test paths in `test-impact` and `diff-impact` commands for POSIX shells or native Windows PowerShell, preserving spaces and shell metacharacters.
+- Allow fully preflighted renames regardless of caller count and preserve uncommitted edits in tracked module moves. Keep unresolved-caller, untracked-source, conflict, and occupied-destination stops.
+
 ## 0.41.4
 
 - Stop symbol and module rename before source edits when the known-caller budget is exceeded or a caller cannot be resolved; neither host applies a partial known-caller migration. Preserve full planning reports and require caller verification before reporting success.

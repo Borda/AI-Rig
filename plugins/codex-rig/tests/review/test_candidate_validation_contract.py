@@ -253,6 +253,7 @@ def test_batch_aggregation_preserves_nullable_scope(tmp_path: Path, known_rating
         directory = tmp_path / f"part-{index}"
         directory.mkdir()
         response = (
+            "## Reviewer Findings\n```json\n[]\n```\n"
             "## Reviewer Confidence\n```json\n" + json.dumps({"score": 0.95}) + "\n```\n"
             "## Reviewer Assessment\nSource rating version: 1\nRating: "
             + (str(rating) if rating is not None else "null")

@@ -22,6 +22,12 @@ Long workflows keep contract-level `## Workflow` with `### NN:` ordered subheade
 
 Prefer structured terminal updates: one short introductory sentence, then concise bullets for parallel facts, numbered steps for ordered actions, and compact tables for comparisons. Show concrete counts and evidence links; separate completion status, verification, open work and next owner/action. Keep detailed explanations in the linked full report. Preserve exact-output contracts and native question ownership.
 
+## Acceptance and recovery
+
+Keep hard rails minimal: block only on invalid required structure, unsupported or contradictory facts, or an actual authority boundary that affects the requested delivery. Judge the protected outcome, not a tool name: an undefined name, malformed JSON or changed machine identifier is substantive; semantic-preserving whitespace, Markdown layout, prose length and wording preferences are not. A rule's existence or a test asserting its rejection does not justify that rule.
+
+Interpret unambiguous equivalent reviewer/report presentations without changing retained source bytes, factual values or provenance. Regenerate derived presentation and bookkeeping from validated evidence, or apply an authorized deterministic correction and rerun the affected check. Keep original failed attempts; do not relabel a substantive failure as advisory, invent missing evidence, change a reviewer judgment, or repeatedly call models to repair cosmetics. Complementary checks produce useful diagnostics and regressions, not additional user decisions or reasons to withhold verified work. An unresolvable structural, factual or permission problem stops only dependent work and names the missing evidence or decision. Audit reached stops against both a concrete invalid case and a valid equivalent-input case; repair the producer and its next consumer together.
+
 ## Proportional Execution
 
 A specific, understood, bounded, reversible, low-risk task with clear acceptance uses the skill's lightweight local path: inspect, make the authorized change, verify, and report concise evidence. A coherent fix plus its regression remains one task; file count, ordinary logs, factual queries, and optional tooling do not require orchestration. Investigate an unknown cause before editing. Pause further implementation and promote when evidence reveals unclear scope or acceptance, coupled domains, material risk, or consequential design choices.

@@ -1,31 +1,28 @@
 # Changelog
 
+## 0.35.7
+
+- Keep explicit completed-review delivery independent of newer-run discovery; retain strict remediation intake.
+- Accept equivalent release Markdown, remove cosmetic implementation stops and read-only audit selection prompts, and move terminal table paths into item-labelled evidence lists.
+- Accept semantically equivalent reviewer Markdown through admission, aggregation and bounded repair while preserving original response bytes, required structure and factual/provenance checks. Historical source-backed dispositions no longer depend on explanation length or a prescribed prose prefix.
+- Make calibration wording-pattern misses advisory; retain structural and behavioral failures. Audit now challenges reached stops with concrete prevented failures and equivalent valid inputs, favoring deterministic recovery with consumer regressions over extra process gates.
+
 ## 0.35.6
 
 - Repair configured-hook root causes within authorized scope, compare PR/target hook results and resume verified original commits, including proven owned staged content; preserve hook enforcement and read-only boundaries.
-
 - Match GitHub host and repository identities case insensitively across PR collection, review, remediation and report lookup; reject malformed identities without rewriting source receipts or weakening exact checkout evidence.
-
 - Reconcile Codex remote-action prohibitions with shared approval prose while preserving Claude-specific approval records.
-
 - Cover Kaggle in required workflow calibration, with grounded-schema, mode-isolation, submission, runtime-evidence and download-boundary cases.
-
 - Correct xdist source-receipt documentation and remove the implicit three-review cap from explicit convergence loops; retain explicit caller budgets.
 
 ## 0.35.5
 
 - Audit from a flow/dependency map through focused probes and evidence-triggered context rechecks; reconcile coverage before closing and limit composition probes to applicable flows.
-
 - Put confidence-gap deductions before their descriptions, using `(-0.NN) Description` consistently in new reports.
-
 - Cover fork PR checkout with native once/reusable GitHub approval at the verified reader or collector command boundary; disclose cross-target scope and preserve checkout recovery protections.
-
 - Prefer structured decision controls and place any required plain-text question with complete options last in terminal output; show pending remediation handoff context before asking.
-
 - Honor explicit local remediation commits despite failed checks or known regressions, retain failed verification honestly, and require zero task-owned uncommitted residue before completion.
-
 - Require announced remediation isolation and verified return delivery to the invoking checkout by default; preserve unrelated content and distinguish historical source receipts from delivery and resume evidence.
-
 - Locate remediation work in final handoffs with the recorded branch and clickable absolute checkout path, preferring recovered receipts. Require commit summaries to distinguish checkout-specific Git state, local commits, publication and report promotion.
 
 ## 0.35.4

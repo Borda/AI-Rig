@@ -904,6 +904,7 @@ def _write_schema_v2_assess(tmp_path: Path) -> Path:
     gap = "External production behavior was not exercised."
     handoff = {
         "schema_version": 1,
+        "presentation_version": 8,
         "skill": "assess",
         "branch": "standard",
         "outcome": {"title": "Analysis", "summary": "The requested contract is defined."},

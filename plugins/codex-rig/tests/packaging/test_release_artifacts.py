@@ -18,7 +18,12 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 
 
 def bind_handoff(
-    directory: Path, result: dict[str, Any], *, title: str = "warning-only", only_table: str | None = None
+    directory: Path,
+    result: dict[str, Any],
+    *,
+    title: str = "warning-only",
+    only_table: str | None = None,
+    presentation_version: int = 8,
 ) -> None:
     """Render real release handoff evidence so tests exercise schema-v2 completion end to end."""
     spec = importlib.util.spec_from_file_location("release_finalizer", PLUGIN_ROOT / "shared/final_handoff.py")
@@ -33,7 +38,7 @@ def bind_handoff(
     gates = json.loads((directory / "gates.json").read_text(encoding="utf-8"))
     handoff = {
         "schema_version": 1,
-        "presentation_version": 2,
+        "presentation_version": presentation_version,
         "skill": "release",
         "branch": "standard",
         "outcome": {"title": title, "summary": "Release communication has been assessed."},
@@ -294,6 +299,401 @@ def validate_run(validator: ModuleType, run: tuple[Path, dict[str, object]]) -> 
     candidate = directory / "result.candidate.json"
     candidate.write_text(json.dumps(result), encoding="utf-8")
     validator.validate("release", directory, candidate)
+
+
+@pytest.mark.integration
+def test_release_historical_presentation_cannot_certify_a_fresh_candidate(
+    validator: ModuleType, release_run: tuple
+) -> None:
+    """Keep historical reports readable without admitting old rendering for a new release result."""
+    directory, result = release_run
+    bind_handoff(directory, result, presentation_version=2)
+    canonical = directory / "result.json"
+    canonical.write_text(json.dumps(result), encoding="utf-8")
+    validator.validate("release", directory, canonical)
+    with pytest.raises(SystemExit, match="current-handoff-presentation-v8-required"):
+        validate_run(validator, release_run)
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "human-underscores",
+        "human-plain",
+        "human-link",
+        "human-reference",
+        "human-collapsed",
+        "human-shortcut",
+        "human-partial-emphasis",
+        "human-linked-partial-emphasis",
+        "human-handle",
+        "human-linked-handle",
+        "draft-heading",
+        "draft-setext",
+        "summary-heading",
+        "summary-setext",
+        "migration-setext",
+    ],
+)
+@pytest.mark.integration
+def test_release_accepts_equivalent_markdown_with_rebound_receipts(
+    validator: ModuleType, release_run: tuple, variant: str
+) -> None:
+    """Keep verified identities and required sections independent of emphasis and ATX spelling."""
+    directory, result = release_run
+    receipt = result["metadata"]["release_evidence"]
+    draft = directory / "deliverables/DRAFT.md"
+    text = draft.read_text(encoding="utf-8")
+    if variant.startswith("human-"):
+        credit = receipt["contributors"][0]
+        replacement = {
+            "human-underscores": "__Release Test__",
+            "human-plain": "Release Test",
+            "human-link": "[Release Test](https://example.org/person)",
+            "human-reference": "[Release Test][person]",
+            "human-collapsed": "[Release Test][]",
+            "human-shortcut": "[Release Test]",
+            "human-partial-emphasis": "Release **Test**",
+            "human-linked-partial-emphasis": "[Release **Test**](https://example.org/person)",
+            "human-handle": "**Release Test** (@release-test)",
+            "human-linked-handle": "[Release **Test**](https://example.org/person) ([@release-test](https://example.org/profile))",
+        }[variant]
+        text = text.replace(credit["credit_excerpt"], replacement)
+        credit["credit_excerpt"] = replacement
+        if variant in {"human-reference", "human-collapsed", "human-shortcut"}:
+            reference = "person" if variant == "human-reference" else "Release Test"
+            text += f"\n[{reference}]: https://example.org/person\n"
+    elif variant == "draft-heading":
+        text = text.replace("## Summary\n", "  ##\tSummary ##\n")
+    elif variant == "draft-setext":
+        text = text.replace("## Summary\n", "Summary\n-------\n")
+    elif variant == "migration-setext":
+        select_artifact(
+            release_run,
+            "MIGRATION.md",
+            "No migration required\n---------------------\nExisting input keeps its behavior.\n",
+        )
+    else:
+        summary = directory / "deliverables/SUMMARY.md"
+        summary_text = "## Overview ##\nParsing accepts empty input.\n## Benefits ###\nNo recovery needed.\n"
+        if variant == "summary-setext":
+            summary_text = (
+                "Overview\n--------\nParsing accepts empty input.\n\nBenefits\n--------\nNo recovery needed.\n"
+            )
+        summary.write_text(summary_text, encoding="utf-8")
+        result["metadata"]["requested_artifacts"].append("SUMMARY.md")
+        receipt["artifacts"].append(
+            {
+                "name": "SUMMARY.md",
+                "destination": str(summary),
+                "sha256": hashlib.sha256(summary.read_bytes()).hexdigest(),
+            }
+        )
+    draft.write_text(text, encoding="utf-8")
+    digest = hashlib.sha256(draft.read_bytes()).hexdigest()
+    receipt["artifacts"][0]["sha256"] = digest
+    receipt["claims"][0]["sha256"] = digest
+    bind_handoff(directory, result)
+    validate_run(validator, release_run)
+
+
+@pytest.mark.parametrize(
+    ("definition", "accepted"),
+    [
+        pytest.param("[person]: https://example.org/person", True, id="bare-destination"),
+        pytest.param('[person]: <https://example.org/person> "Profile"', True, id="angle-and-title"),
+        pytest.param("[person]: https://example.org/person 'Profile'", True, id="single-quoted-title"),
+        pytest.param("[person]: https://example.org/person (Profile)", True, id="parenthesized-title"),
+        pytest.param("[person]: https://example.org/a(b)c", True, id="balanced-destination"),
+        pytest.param(r"[person]: https://example.org/a\(b\)", True, id="escaped-destination"),
+        pytest.param("[person]:\n  https://example.org/person", True, id="next-line-destination"),
+        pytest.param('[person]: https://example.org/person\n  "Profile"', True, id="next-line-title"),
+        pytest.param(
+            '[other]: https://example.org/other\n  "Other profile"\n[person]: https://example.org/person',
+            True,
+            id="definition-after-continuation-title",
+        ),
+        pytest.param('[person]: https://example.org/person "Public\nprofile"', True, id="multiline-title"),
+        pytest.param("[person]: <>", True, id="empty-angle-destination"),
+        pytest.param("[person]: https://example.org/person unexpected words", False, id="unquoted-trailing-words"),
+        pytest.param('[person]: https://example.org/person "Profile', False, id="unclosed-title"),
+        pytest.param('[person]: https://example.org/person "Profile" extra', False, id="trailing-title-junk"),
+        pytest.param("[person]: <https://example.org/person", False, id="unclosed-angle-destination"),
+        pytest.param("[person]: <https://example.org/<person>>", False, id="nested-angle-destination"),
+        pytest.param("[person]: https://example.org/a(b", False, id="unclosed-destination-parenthesis"),
+        pytest.param('[person]: https://example.org/person "Public\n\nprofile"', False, id="blank-title-line"),
+        pytest.param(
+            "A preceding paragraph.\n[person]: https://example.org/person", False, id="paragraph-continuation"
+        ),
+    ],
+)
+@pytest.mark.integration
+def test_release_reference_credit_requires_complete_definition(
+    validator: ModuleType, release_run: tuple, definition: str, accepted: bool
+) -> None:
+    """Resolve actual reference definitions, never a prefix of malformed or ordinary paragraph text."""
+    directory, result = release_run
+    receipt = result["metadata"]["release_evidence"]
+    draft = directory / "deliverables/DRAFT.md"
+    label = "[Release Test][person]"
+    text = draft.read_text(encoding="utf-8").replace("**Release Test**", label)
+    draft.write_text(text + "\n" + definition + "\n", encoding="utf-8")
+    receipt["contributors"][0]["credit_excerpt"] = label
+    digest = hashlib.sha256(draft.read_bytes()).hexdigest()
+    receipt["artifacts"][0]["sha256"] = digest
+    receipt["claims"][0]["sha256"] = digest
+    bind_handoff(directory, result)
+    if accepted:
+        validate_run(validator, release_run)
+    else:
+        with pytest.raises(SystemExit, match="release-evidence-contributor-credit"):
+            validate_run(validator, release_run)
+
+
+@pytest.mark.parametrize(
+    ("label", "accepted"),
+    [
+        pytest.param("[**Release *Test***](https://example.org/person)", True, id="strong-around-emphasis"),
+        pytest.param("[*Release **Test***](https://example.org/person)", True, id="emphasis-around-strong"),
+        pytest.param("[__Release _Test___](https://example.org/person)", True, id="nested-underscores"),
+        pytest.param("[***Release Test***](https://example.org/person)", True, id="shared-triple-runs"),
+        pytest.param("**Release *Test***", True, id="nested-unlinked"),
+        pytest.param("__Release *Test*__", True, id="mixed-nested-markers"),
+        pytest.param("**Release\u00a0Test**", True, id="unicode-visible-name-space"),
+        pytest.param("**Release\u2028Test**", True, id="unicode-visible-name-separator"),
+        pytest.param("**Release [*Test*](https://example.org/person)**", True, id="link-within-emphasis"),
+        pytest.param('[Release Test](https://example.org/person "Profile")', True, id="inline-title"),
+        pytest.param("[Release Test](https://example.org/a(b)c)", True, id="inline-balanced-destination"),
+        pytest.param("[**Release *Test*** Extra](https://example.org/person)", False, id="longer-nested-label"),
+        pytest.param("[**Release *Tester***](https://example.org/person)", False, id="wrong-nested-label"),
+        pytest.param("[**Release *Test**](https://example.org/person)", False, id="unbalanced-nested-label"),
+        pytest.param(r"[**Release \*Test***](https://example.org/person)", False, id="escaped-literal-marker"),
+        pytest.param("[Release Test](https://example.org/person unexpected words)", False, id="inline-trailing-words"),
+        pytest.param('[Release Test](https://example.org/person "Profile" extra)', False, id="inline-title-junk"),
+    ],
+)
+@pytest.mark.integration
+def test_release_credit_normalizes_complete_balanced_label(
+    validator: ModuleType, release_run: tuple, label: str, accepted: bool
+) -> None:
+    """Read nested complete names without discarding literal markers, longer names or invalid links."""
+    directory, result = release_run
+    receipt = result["metadata"]["release_evidence"]
+    draft = directory / "deliverables/DRAFT.md"
+    draft.write_text(draft.read_text(encoding="utf-8").replace("**Release Test**", label), encoding="utf-8")
+    receipt["contributors"][0]["credit_excerpt"] = label
+    digest = hashlib.sha256(draft.read_bytes()).hexdigest()
+    receipt["artifacts"][0]["sha256"] = digest
+    receipt["claims"][0]["sha256"] = digest
+    bind_handoff(directory, result)
+    if accepted:
+        validate_run(validator, release_run)
+    else:
+        with pytest.raises(SystemExit, match="release-evidence-contributor-credit"):
+            validate_run(validator, release_run)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("kind", ["inline", "reference"])
+@pytest.mark.parametrize("boundary", ["leading", "before-title", "after-title", "after-destination", "title-content"])
+@pytest.mark.parametrize(
+    ("separator", "syntax_space", "destination_character"),
+    [
+        pytest.param(" ", True, False, id="ascii-space"),
+        pytest.param("\t", True, False, id="ascii-tab"),
+        pytest.param("\x00", False, True, id="nul-replacement-destination"),
+        pytest.param("\x0b", False, False, id="vertical-tab"),
+        pytest.param("\x0c", False, False, id="form-feed"),
+        pytest.param("\x1c", False, False, id="file-separator"),
+        pytest.param("\x1f", False, False, id="unit-separator"),
+        pytest.param("\x7f", False, False, id="delete-control"),
+        pytest.param("\u00a0", False, True, id="nonbreaking-space"),
+        pytest.param("\u0085", False, True, id="next-line"),
+        pytest.param("\u2003", False, True, id="em-space"),
+        pytest.param("\u2028", False, True, id="line-separator"),
+        pytest.param("\u2029", False, True, id="paragraph-separator"),
+        pytest.param("\u3000", False, True, id="ideographic-space"),
+    ],
+)
+def test_release_link_whitespace_respects_syntax_boundaries(
+    validator: ModuleType,
+    release_run: tuple,
+    kind: str,
+    boundary: str,
+    separator: str,
+    syntax_space: bool,
+    destination_character: bool,
+) -> None:
+    """Distinguish syntax separators from valid Unicode destination or quoted-title content."""
+    directory, result = release_run
+    receipt = result["metadata"]["release_evidence"]
+    uri = "https://example.org/person"
+    content = {
+        "leading": separator + uri,
+        "before-title": uri + separator + '"Public profile"',
+        "after-title": uri + ' "Public profile"' + separator,
+        "after-destination": f"<{uri}>" + separator,
+        "title-content": uri + ' "Public' + separator + 'profile"',
+    }[boundary]
+    label = f"[Release Test]({content})" if kind == "inline" else "[Release Test][person]"
+    draft = directory / "deliverables/DRAFT.md"
+    text = draft.read_text(encoding="utf-8").replace("**Release Test**", label)
+    if kind == "reference":
+        text += f"\n[person]: {content}\n"
+    draft.write_text(text, encoding="utf-8")
+    receipt["contributors"][0]["credit_excerpt"] = label
+    digest = hashlib.sha256(draft.read_bytes()).hexdigest()
+    receipt["artifacts"][0]["sha256"] = digest
+    receipt["claims"][0]["sha256"] = digest
+    bind_handoff(directory, result)
+    accepted = syntax_space or boundary == "title-content" or (boundary == "leading" and destination_character)
+    if accepted:
+        validate_run(validator, release_run)
+    else:
+        with pytest.raises(SystemExit, match="release-evidence-contributor-credit"):
+            validate_run(validator, release_run)
+
+
+@pytest.mark.parametrize(
+    "separator",
+    [
+        pytest.param(" ", id="ascii-space"),
+        pytest.param("\t", id="ascii-tab"),
+        pytest.param("\x0b", id="vertical-tab"),
+        pytest.param("\x0c", id="form-feed"),
+        pytest.param("\x1c", id="file-separator"),
+        pytest.param("\x1f", id="unit-separator"),
+        pytest.param("\u00a0", id="nonbreaking-space"),
+        pytest.param("\u0085", id="next-line"),
+        pytest.param("\u2028", id="line-separator"),
+        pytest.param("\u2029", id="paragraph-separator"),
+    ],
+)
+@pytest.mark.parametrize("context", ["paragraph", "fence-ending"])
+@pytest.mark.integration
+def test_release_reference_boundary_uses_markdown_blank_lines(
+    validator: ModuleType, release_run: tuple, separator: str, context: str
+) -> None:
+    """Unicode whitespace or control text cannot invent a reference-definition paragraph boundary."""
+    directory, result = release_run
+    receipt = result["metadata"]["release_evidence"]
+    label = "[Release Test][person]"
+    draft = directory / "deliverables/DRAFT.md"
+    text = draft.read_text(encoding="utf-8").replace("**Release Test**", label)
+    ending = separator if context == "paragraph" else f"```text\nExample.\n```{separator}"
+    draft.write_text(text + f"\n{ending}\n[person]: https://example.org/person\n", encoding="utf-8")
+    receipt["contributors"][0]["credit_excerpt"] = label
+    digest = hashlib.sha256(draft.read_bytes()).hexdigest()
+    receipt["artifacts"][0]["sha256"] = digest
+    receipt["claims"][0]["sha256"] = digest
+    bind_handoff(directory, result)
+    if separator in " \t":
+        validate_run(validator, release_run)
+    else:
+        with pytest.raises(SystemExit, match="release-evidence-contributor-credit"):
+            validate_run(validator, release_run)
+
+
+@pytest.mark.parametrize("destination", ["bare", "angle"])
+@pytest.mark.parametrize(
+    "character",
+    [
+        pytest.param("\u00a0", id="nonbreaking-space"),
+        pytest.param("\u0085", id="next-line"),
+        pytest.param("\u2003", id="em-space"),
+        pytest.param("\u2028", id="line-separator"),
+        pytest.param("\u2029", id="paragraph-separator"),
+        pytest.param("\u3000", id="ideographic-space"),
+        pytest.param("é", id="accented-latin"),
+        pytest.param("路径", id="cjk"),
+        pytest.param("😀", id="emoji"),
+    ],
+)
+@pytest.mark.integration
+def test_release_keeps_valid_unicode_destination_characters(
+    validator: ModuleType, release_run: tuple, destination: str, character: str
+) -> None:
+    """Unicode URL characters remain destination data rather than syntax whitespace or line endings."""
+    directory, result = release_run
+    receipt = result["metadata"]["release_evidence"]
+    uri = f"https://example.org/a{character}b"
+    if destination == "angle":
+        uri = f"<{uri}>"
+    label = f"[Release Test]({uri})"
+    draft = directory / "deliverables/DRAFT.md"
+    draft.write_text(draft.read_text(encoding="utf-8").replace("**Release Test**", label), encoding="utf-8")
+    receipt["contributors"][0]["credit_excerpt"] = label
+    digest = hashlib.sha256(draft.read_bytes()).hexdigest()
+    receipt["artifacts"][0]["sha256"] = digest
+    receipt["claims"][0]["sha256"] = digest
+    bind_handoff(directory, result)
+    validate_run(validator, release_run)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("outer", ["inline", "reference"])
+@pytest.mark.parametrize("inner", ["inline", "reference", "collapsed", "shortcut"])
+def test_release_rejects_nested_credit_links(validator: ModuleType, release_run: tuple, outer: str, inner: str) -> None:
+    """Keep a deactivated outer link's literal syntax in the complete visible identity."""
+    directory, result = release_run
+    receipt = result["metadata"]["release_evidence"]
+    nested = {
+        "inline": "[Test](https://inner.example)",
+        "reference": "[Test][inner]",
+        "collapsed": "[Test][]",
+        "shortcut": "[Test]",
+    }[inner]
+    label = f"[Release {nested}](https://outer.example)" if outer == "inline" else f"[Release {nested}][outer]"
+    draft = directory / "deliverables/DRAFT.md"
+    text = draft.read_text(encoding="utf-8").replace("**Release Test**", label)
+    if inner != "inline":
+        key = "inner" if inner == "reference" else "Test"
+        text += f"\n[{key}]: https://inner.example\n"
+    if outer == "reference":
+        text += "\n[outer]: https://outer.example\n"
+    draft.write_text(text, encoding="utf-8")
+    receipt["contributors"][0]["credit_excerpt"] = label
+    digest = hashlib.sha256(draft.read_bytes()).hexdigest()
+    receipt["artifacts"][0]["sha256"] = digest
+    receipt["claims"][0]["sha256"] = digest
+    bind_handoff(directory, result)
+    with pytest.raises(SystemExit, match="release-evidence-contributor-credit"):
+        validate_run(validator, release_run)
+
+
+@pytest.mark.parametrize(
+    ("name", "label"),
+    [
+        pytest.param("Release [Test]", "Release [Test]", id="plain-literal-brackets"),
+        pytest.param("Release [Test]", "[Release [Test]](https://example.org/person)", id="linked-literal-brackets"),
+        pytest.param("Release [Test]", r"[Release \[Test\]](https://example.org/person)", id="linked-escaped-brackets"),
+        pytest.param(
+            "[Release Test](https://outer.example)",
+            "[Release [Test](https://inner.example)](https://outer.example)",
+            id="deactivated-outer-syntax-is-name-text",
+        ),
+    ],
+)
+@pytest.mark.integration
+def test_release_preserves_literal_credit_brackets(
+    validator: ModuleType, release_run: tuple, name: str, label: str
+) -> None:
+    """Keep literal brackets in a retained PR author's exact visible name, linked or unlinked."""
+    directory, result = release_run
+    receipt = result["metadata"]["release_evidence"]
+    receipt["pr_authors"] = [
+        {"sha": result["metadata"]["release_head"], "identity_hash": "f" * 64, "display_name": name}
+    ]
+    receipt["contributors"].append(
+        {"identity_hash": "f" * 64, "display_name": name, "disposition": "credited", "credit_excerpt": label}
+    )
+    draft = directory / "deliverables/DRAFT.md"
+    draft.write_text(draft.read_text(encoding="utf-8") + f"\n- {label} — reviewed contribution.\n", encoding="utf-8")
+    digest = hashlib.sha256(draft.read_bytes()).hexdigest()
+    receipt["artifacts"][0]["sha256"] = digest
+    receipt["claims"][0]["sha256"] = digest
+    bind_handoff(directory, result)
+    validate_run(validator, release_run)
 
 
 @pytest.mark.integration
@@ -670,7 +1070,24 @@ def test_passing_release_requires_credit_for_known_pr_author(validator: ModuleTy
 
 @pytest.mark.parametrize("bot_name", ["automation[bot]", "renovate"])
 @pytest.mark.parametrize(
-    "fault", ["missing-inventory", "missing-line", "duplicate-line", "individual-credit", "stale-proof", "valid"]
+    "fault",
+    [
+        "missing-inventory",
+        "missing-line",
+        "duplicate-line",
+        "individual-credit",
+        "individual-underscores",
+        "individual-link",
+        "individual-reference",
+        "individual-shortcut",
+        "individual-partial-emphasis",
+        "individual-nested-emphasis",
+        "individual-unicode-destination",
+        "stale-proof",
+        "valid",
+        "underscore-line",
+        "plain-line",
+    ],
 )
 @pytest.mark.integration
 def test_bot_pr_authors_require_one_aggregate_credit(
@@ -697,6 +1114,10 @@ def test_bot_pr_authors_require_one_aggregate_credit(
         }
     ]
     aggregate = f"*Automated contributions: @{bot_name}*"
+    if fault == "underscore-line":
+        aggregate = f"_Automated contributions: @{bot_name}_"
+    elif fault == "plain-line":
+        aggregate = f"Automated contributions: @{bot_name}"
     draft = directory / "deliverables/DRAFT.md"
     text = draft.read_text(encoding="utf-8")
     if fault == "missing-inventory":
@@ -707,6 +1128,21 @@ def test_bot_pr_authors_require_one_aggregate_credit(
         text += aggregate + "\n"
     if fault == "individual-credit":
         text += f"- **{bot_name}** — automation.\n"
+    if fault == "individual-underscores":
+        text += f"- __{bot_name}__ — automation.\n"
+    if fault == "individual-link":
+        text += f"- [{bot_name}](https://example.org/bot) — automation.\n"
+    if fault == "individual-reference":
+        text += f"- [{bot_name}][account] — automation.\n\n[account]: https://example.org/bot\n"
+    if fault == "individual-shortcut":
+        reference_label = bot_name.replace("[", r"\[").replace("]", r"\]")
+        text += f"- [{reference_label}] — automation.\n\n[{reference_label}]: https://example.org/bot\n"
+    if fault == "individual-partial-emphasis":
+        text += f"- **{bot_name[:3]}**{bot_name[3:]} — automation.\n"
+    if fault == "individual-nested-emphasis":
+        text += f"- [**{bot_name[:3]}*{bot_name[3:]}***](https://example.org/bot) — automation.\n"
+    if fault == "individual-unicode-destination":
+        text += f"- [{bot_name}](https://example.org/a\u2028b) — automation.\n"
     if fault == "stale-proof":
         proof.write_text("changed evidence", encoding="utf-8")
     draft.write_text(text, encoding="utf-8")
@@ -715,7 +1151,7 @@ def test_bot_pr_authors_require_one_aggregate_credit(
     receipt["claims"][0]["sha256"] = digest
     bind_handoff(directory, result)
 
-    if fault == "valid":
+    if fault in {"valid", "underscore-line", "plain-line"}:
         validate_run(validator, release_run)
     else:
         with pytest.raises(SystemExit, match="release-evidence-bot-"):
@@ -968,7 +1404,24 @@ def test_actual_artifact_destination_is_rechecked(validator: ModuleType, release
         validate_run(validator, release_run)
 
 
-@pytest.mark.parametrize("mutation", ["wrong-person", "missing-anchor", "unproved-exclusion"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "wrong-person",
+        "partial-name",
+        "plain-substring",
+        "wrong-linked-name",
+        "longer-emphasized-link",
+        "longer-emphasized-reference",
+        "missing-reference",
+        "cross-document-reference",
+        "definition-only-credit",
+        "definition-only-unicode-destination",
+        "fenced-credit-only",
+        "missing-anchor",
+        "unproved-exclusion",
+    ],
+)
 @pytest.mark.integration
 def test_human_credit_requires_identity_and_visible_evidence(
     validator: ModuleType, release_run: tuple, mutation: str
@@ -979,8 +1432,67 @@ def test_human_credit_requires_identity_and_visible_evidence(
     if mutation == "wrong-person":
         credit.update(display_name="Codex", credit_excerpt="**Codex**")
         reason = "contributor-display-name"
+    elif mutation in {
+        "partial-name",
+        "plain-substring",
+        "wrong-linked-name",
+        "longer-emphasized-link",
+        "longer-emphasized-reference",
+    }:
+        draft = directory / "deliverables/DRAFT.md"
+        replacement = (
+            "[Release Tester](https://example.org/person)" if mutation == "wrong-linked-name" else "__Release Tester__"
+        )
+        if mutation == "longer-emphasized-link":
+            replacement = "[**Release Test** Extra](https://example.org/person)"
+        elif mutation == "longer-emphasized-reference":
+            replacement = "[**Release Test** Extra][person]"
+        draft.write_text(draft.read_text(encoding="utf-8").replace("**Release Test**", replacement), encoding="utf-8")
+        if mutation == "longer-emphasized-reference":
+            draft.write_text(
+                draft.read_text(encoding="utf-8") + "\n[person]: https://example.org/person\n", encoding="utf-8"
+            )
+        credit["credit_excerpt"] = "Release Test" if mutation == "plain-substring" else replacement
+        digest = hashlib.sha256(draft.read_bytes()).hexdigest()
+        result["metadata"]["release_evidence"]["artifacts"][0]["sha256"] = digest
+        result["metadata"]["release_evidence"]["claims"][0]["sha256"] = digest
+        reason = "contributor-credit"
     elif mutation == "missing-anchor":
         credit["credit_excerpt"] = "**Release Test** — credit not actually present"
+        reason = "contributor-credit"
+    elif mutation in {
+        "missing-reference",
+        "cross-document-reference",
+        "definition-only-credit",
+        "definition-only-unicode-destination",
+        "fenced-credit-only",
+    }:
+        draft = directory / "deliverables/DRAFT.md"
+        text = draft.read_text(encoding="utf-8")
+        replacement = "[Release Test][person]"
+        if mutation in {"definition-only-credit", "definition-only-unicode-destination"}:
+            replacement = "A different contributor"
+            prefix = "\u00a0" if mutation == "definition-only-unicode-destination" else ""
+            text += f"\n[Release Test]: {prefix}https://example.org/person\n"
+            credit["credit_excerpt"] = "[Release Test]"
+        elif mutation == "fenced-credit-only":
+            replacement = "A different contributor"
+            text += "\n```markdown\n- **Release Test** — example only.\n```\n"
+            credit["credit_excerpt"] = "**Release Test**"
+        else:
+            credit["credit_excerpt"] = replacement
+        draft.write_text(
+            text.replace("- **Release Test** — parsing fix.", f"- {replacement} — parsing fix."), encoding="utf-8"
+        )
+        if mutation == "cross-document-reference":
+            select_artifact(
+                release_run,
+                "SUMMARY.md",
+                "## Overview\nParsing improved.\n## Benefits\nInput supported.\n\n[person]: https://example.org/person\n",
+            )
+        digest = hashlib.sha256(draft.read_bytes()).hexdigest()
+        result["metadata"]["release_evidence"]["artifacts"][0]["sha256"] = digest
+        result["metadata"]["release_evidence"]["claims"][0]["sha256"] = digest
         reason = "contributor-credit"
     else:
         credit.update(disposition="excluded", exclusion_basis="privacy-request", exclusion="Remove this credit")
@@ -1029,6 +1541,64 @@ def test_changelog_target_additions_preserve_existing_detail(validator: ModuleTy
         final_sha256=hashlib.sha256(destination.read_bytes()).hexdigest(),
     )
     validate_run(validator, release_run)
+
+
+@pytest.mark.parametrize("selector_style", ["atx", "setext"])
+@pytest.mark.integration
+def test_setext_changelog_retains_exact_unicode_crlf_history_and_excerpt(
+    validator: ModuleType, release_run: tuple, selector_style: str
+) -> None:
+    """Semantic version lookup must preserve original historical and selected excerpt bytes."""
+    _, result = release_run
+    record = result["metadata"]["release_evidence"]["changelog"]
+    if selector_style == "setext":
+        record["target_heading"] = "v1.2.1\n------"
+    backup, destination = Path(record["backup"]), Path(record["destination"])
+    historical = "Changelog\r\n=========\r\n\r\nv1.0\r\n----\r\n- Café behavior.\r\n".encode()
+    target = b"v1.2.1\r\n------\r\n- Parsing fix.\r\n"
+    backup.write_bytes(historical + b"\r\nv1.2.1\r\n------\r\n- Existing target detail.\r\n")
+    destination.write_bytes(historical + b"\r\n" + target + b"- Existing target detail.\r\n")
+    record.update(
+        backup_sha256=hashlib.sha256(backup.read_bytes()).hexdigest(),
+        final_sha256=hashlib.sha256(destination.read_bytes()).hexdigest(),
+    )
+    excerpt = select_artifact(release_run, "CHANGELOG.md", "placeholder")
+    expected = target + b"- Existing target detail.\n"
+    excerpt.write_bytes(expected)
+    result["metadata"]["release_evidence"]["artifacts"][-1]["sha256"] = hashlib.sha256(excerpt.read_bytes()).hexdigest()
+    validate_run(validator, release_run)
+    assert destination.read_bytes().startswith(historical)
+    assert excerpt.read_bytes() == expected
+    destination.write_bytes(destination.read_bytes().replace("Café".encode(), b"Short"))
+    record["final_sha256"] = hashlib.sha256(destination.read_bytes()).hexdigest()
+    with pytest.raises(SystemExit, match="release-evidence-changelog-history"):
+        validate_run(validator, release_run)
+
+
+@pytest.mark.parametrize("name", ["DRAFT.md", "SUMMARY.md", "MIGRATION.md"])
+@pytest.mark.integration
+def test_release_required_sections_cannot_be_supplied_by_fenced_examples(
+    validator: ModuleType, release_run: tuple, name: str
+) -> None:
+    """An example's headings cannot supply the actual selected document's required sections."""
+    directory, result = release_run
+    if name == "DRAFT.md":
+        artifact = directory / "deliverables/DRAFT.md"
+        artifact.write_text("```markdown\n" + artifact.read_text(encoding="utf-8") + "\n```\n", encoding="utf-8")
+        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        result["metadata"]["release_evidence"]["artifacts"][0]["sha256"] = digest
+        result["metadata"]["release_evidence"]["claims"][0]["sha256"] = digest
+        reason = "release-draft-section"
+    else:
+        body = (
+            "Overview\n--------\nParsing fix.\n\nBenefits\n--------\nEmpty input supported.\n"
+            if name == "SUMMARY.md"
+            else "No migration required\n---------------------\nInputs unchanged.\n"
+        )
+        select_artifact(release_run, name, "```markdown\n" + body + "```\n")
+        reason = "release-evidence-summary-role" if name == "SUMMARY.md" else "release-evidence-migration-role"
+    with pytest.raises(SystemExit, match=reason):
+        validate_run(validator, release_run)
 
 
 @pytest.mark.integration

@@ -297,17 +297,16 @@ def test_selection_table_keeps_one_row_per_item_id() -> None:
     assert "cluster into composite rows" not in readme
 
 
-def test_large_selection_table_is_saved_and_question_text_lists_items() -> None:
-    """Large selections keep every table row while Q1 budgets the plain item list and notices."""
+def test_large_selection_table_is_saved_and_question_text_stays_free_of_item_rows() -> None:
+    """Large selections keep every table row while Q1 budgets only counts, notices and the path."""
     skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
     cap = skill[skill.index("**Question budget — MANDATORY**") : skill.index("**Cap mechanics")]
     large = skill[
         skill.index("**≥19 pending items — context-budget mode**") : skill.index("<!-- branch: main-path — commit-mode")
     ]
     assert "**1,500 characters**" in cap
-    assert "Reserve those fixed lines first" in cap
-    assert "pending lines that fit" in cap
-    assert "exact counts for every pending type" in cap
+    assert "Do not use a table, pipe layout, HTML or a fence in the question" in cap
+    assert "pending lines that fit" not in cap
     assert "with every row in `$IMPL_DIR/action-items-table.md` per **Question budget**" in large
     assert "as the last text of the reply message that issues" in large
     assert "options carry no preview" in large

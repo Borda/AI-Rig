@@ -22,8 +22,8 @@ Run ``python find-review-report.py --target <pr-url-or-number>`` to select an as
 same script with ``--result <path>`` to accept assessed working-tree, path, commit, or PR reports while rejecting
 supplied unavailable, closed, or unpromoted candidate results. The target search covers canonical
 ``pr-<number>/run-<NNN>`` directories, timestamped flat reports, and, for the default current root, the legacy
-``.reports/codex/review`` root. ``--complete-run <run>`` validates a promoted review, checks that PR lookup returns that
-exact result, then emits the bound final Markdown bytes. It never promotes candidates.
+``.reports/codex/review`` root. ``--complete-run <run>`` validates the explicitly named promoted review and emits its
+bound final Markdown bytes, even when a newer run exists. It never promotes candidates or changes intake eligibility.
 
 ## Used by
 
@@ -176,6 +176,22 @@ def require_assessed_review_result(
             raise LookupError("review-validation-failed:missing-producer-thread")
         parent_thread_id = producer
     complete_review_run(result_path.parent, codex_home=codex_home, parent_thread_id=parent_thread_id)
+    if payload["metadata"].get("scope") == "pr":
+        run_dir = result_path.resolve().parent
+        identity = _read_pr_identity(run_dir / "pr.json")
+        if identity is None:
+            raise LookupError("review-completion-missing-pr-identity")
+        reports_root = run_dir.parent.parent if PR_DIRECTORY_PATTERN.fullmatch(run_dir.parent.name) else run_dir.parent
+        reports_dirs = [reports_root]
+        current_root = CURRENT_REPORTS_DIR.resolve()
+        legacy_root = LEGACY_REPORTS_DIR.resolve()
+        if reports_root == current_root:
+            reports_dirs.append(legacy_root)
+        elif reports_root == legacy_root:
+            reports_dirs.append(current_root)
+        selected = find_latest_review_report(identity[1] or identity[0], reports_dirs)
+        if selected.resolve() != result_path.resolve():
+            raise LookupError(f"review-completion-not-current:{selected}")
     return result_path
 
 
@@ -430,7 +446,7 @@ def validate_review_result(
 
 
 def complete_review_run(run_dir: Path, *, codex_home: Path | None = None, parent_thread_id: str | None = None) -> bytes:
-    """Emit only a validated promoted review whose PR handoff survives consumer discovery.
+    """Emit the explicitly named validated review without claiming it is the newest intake candidate.
 
     This read-only boundary never repairs or promotes artifacts. Intake shares its validators, but only new producer
     completion requires bound schema-v3 final bytes for every disposition. Historical reports remain readable as
@@ -451,21 +467,6 @@ def complete_review_run(run_dir: Path, *, codex_home: Path | None = None, parent
         raise LookupError(
             "review-source-contract-upgrade-required:rerun-code-review-or-use --archive-result for read-only access"
         )
-    if metadata.get("scope") == "pr" and review_result_kind(result_path) == "assessed":
-        identity = _read_pr_identity(run_dir / "pr.json")
-        if identity is None:
-            raise LookupError("review-completion-missing-pr-identity")
-        reports_root = run_dir.parent.parent if PR_DIRECTORY_PATTERN.fullmatch(run_dir.parent.name) else run_dir.parent
-        reports_dirs = [reports_root]
-        current_root = CURRENT_REPORTS_DIR.resolve()
-        legacy_root = LEGACY_REPORTS_DIR.resolve()
-        if reports_root == current_root:
-            reports_dirs.append(legacy_root)
-        elif reports_root == legacy_root:
-            reports_dirs.append(current_root)
-        selected = find_latest_review_report(identity[1] or identity[0], reports_dirs)
-        if selected.resolve() != result_path:
-            raise LookupError(f"review-completion-not-current:{selected}")
     if result_path.read_bytes() != result_bytes:
         raise LookupError("review-completion-result-changed")
     final_bytes = (run_dir / "final.md").read_bytes()

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.48.2
+
+- Stop the resolve picker from restating items the printed table and item options already show: the bulk question carries counts, notices and the saved table path, and the group-preview question carries the group count and path.
+- Make `enforce-resolve-table.js` require the saved table file (every pending and closed id as its own cell) instead of item lines in the question text.
+- Fix review validation publication: the reviewer instructions now require string-array assessment evidence and limits, open concerns only for UNVERIFIED or pending candidates, and no complete readiness beside an open candidate; the report intake gate accepts a single string for evidence and limits.
+
 ## 0.48.1
 
 - Show reviewer names and finding authors as roles only, using square-bracketed scores (`Software engineer [3]`); keep execution provenance in evidence and limits, omit skipped roles, and render a null score as `[no source judgment]`.

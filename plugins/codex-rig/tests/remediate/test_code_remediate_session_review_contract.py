@@ -280,13 +280,15 @@ def test_terminal_selection_omits_item_details_but_preserves_saved_evidence() ->
     """Keep selection compact without dropping table rows, relevance counts or durable evidence."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     context = skill.split("### Terminal Scope Context Contract", 1)[1].split("### Upfront Decision Packet", 1)[0]
-    assert "Stop the terminal display after the table, then append `## PR Relevance Summary`" in context
+    assert "list each path as `- <item>: <file-path>`" in context
+    assert "Then append `## PR Relevance Summary`" in context
     assert "Do not print the `###` item groups" in context
     assert "`Context`, `Done when`, `Evidence` or `Related mentions`" in context
     assert "Keep these details in the saved scope document and full report" in context
     assert "omit this section when the inventory has no PR relevance data" in context
     assert "print only the terminal scope context defined above" in context
-    assert "immediately after the table and optional PR Relevance Summary" in context
+    assert "Place the item-labelled path list directly below the table" in context
+    assert "optional PR Relevance Summary and Full report path" in context
     assert "use the complete `resolution-scope.md` content" not in context
     for field in (
         "connected open items total",

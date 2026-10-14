@@ -853,3 +853,20 @@ def test_codex_debrief_uses_portable_helper_launcher(helper: str) -> None:
     assert f'"PLUGIN_ROOT/bin/python" "PLUGIN_ROOT/bin/{helper}"' in text
     assert f"python PLUGIN_ROOT/bin/{helper}" not in text
     assert "bin/python.cmd" in text
+
+
+@pytest.mark.parametrize(
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
+)
+def test_rename_refs_retains_preflight_without_arbitrary_migration_stops(runtime_dir: Path) -> None:
+    """Reject instruction regressions which stop a fully mapped or locally edited migration."""
+    text = _flat(_skill_text(runtime_dir, "rename-refs")).lower()
+    assert "resolve every known caller before any source edit" in text
+    assert ">50 callers" not in text
+    assert "caller count > 50" not in text
+    assert "commit or stash" not in text
+    assert "require add/commit/stash" not in text
+    assert "preserve" in text
+    assert "uncommitted" in text
+    assert "untracked" in text
+    assert "non-git" in text

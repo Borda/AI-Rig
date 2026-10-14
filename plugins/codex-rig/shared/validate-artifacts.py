@@ -64,7 +64,7 @@ from adversarial_loop import SCHEMA_VERSION as LOOP_LEDGER_SCHEMA_VERSION  # noq
 from adversarial_loop import load_ledger  # noqa: E402
 from collect_pr import _github_remote_identity, _head_repository, dirty_path_record_is_consistent  # noqa: E402
 from final_handoff import challenge_report_path  # noqa: E402
-from release_evidence import validate_release_evidence  # noqa: E402
+from release_evidence import release_sections, validate_release_evidence  # noqa: E402
 
 #: Fields every result.json must contain regardless of skill.
 COMMON_RESULT_FIELDS = {
@@ -484,14 +484,17 @@ def _validate_code_remediate_final_handoff(
         raise SystemExit("code-remediate-final-handoff-table-invalid")
     expected_items = resolution_table["items"]
     presentation = metadata.get("resolution_scope", {}).get("presentation_version")
-    if candidate and presentation == 4 and handoff.get("presentation_version") != 6:
+    if candidate and presentation == 5 and handoff.get("presentation_version") != 8:
+        raise SystemExit("remediation-current-handoff-presentation-v8-required")
+    if candidate and presentation in {4, 5} and handoff.get("presentation_version") not in {6, 8}:
         raise SystemExit("remediation-current-handoff-presentation-v6-required")
-    if (
-        presentation in {2, 3, 4}
-        and tables[0].get("layout") != {2: "grouped", 3: "concise", 4: "concise"}[presentation]
+    if presentation in {2, 3, 4, 5} and tables[0].get("layout") != (
+        "concise"
+        if handoff.get("presentation_version") == 8
+        else {2: "grouped", 3: "concise", 4: "concise", 5: "concise"}[presentation]
     ):
         raise SystemExit("code-remediate-final-handoff-grouped-layout-required")
-    if presentation in {3, 4} and tables[0].get("overview_only") is not True:
+    if presentation in {3, 4, 5} and tables[0].get("overview_only") is not True:
         raise SystemExit("code-remediate-final-handoff-overview-only-required")
     expected_rows = []
     expected_details = []
@@ -528,10 +531,10 @@ def _validate_code_remediate_final_handoff(
         )
         if item.get("selectable"):
             selectable_index += 1
-        if handoff.get("presentation_version") in {5, 6}:
+        if handoff.get("presentation_version") in {5, 6, 8}:
             selected = metadata.get("resolution_scope", {}).get("selected_indexes", [])
             expected_rows[-1]["selected"] = bool(item.get("selectable")) and selectable_index in selected
-            if handoff.get("presentation_version") == 6:
+            if handoff.get("presentation_version") in {6, 8}:
                 expected_rows[-1]["selected"] = (
                     "Closed" if not item.get("selectable") else "Yes" if selectable_index in selected else "No"
                 )
@@ -623,9 +626,9 @@ def _validate_code_review_final_handoff(
     if handoff.get("branch") != expected_branch:
         raise SystemExit("code-review-final-handoff-branch-mismatch")
     if result.get("schema_version") == 3 and expected_branch == "assessed":
-        if fresh_candidate and handoff.get("presentation_version") != 7:
-            raise SystemExit("review-current-handoff-presentation-v7-required")
-        if handoff.get("presentation_version") not in {3, 7}:
+        if fresh_candidate and handoff.get("presentation_version") != 8:
+            raise SystemExit("review-current-handoff-presentation-v8-required")
+        if handoff.get("presentation_version") not in {3, 7, 8}:
             raise SystemExit("review-current-handoff-presentation-invalid")
     if expected_branch == "assessed":
         decision = metadata.get("review_decision")
@@ -967,6 +970,8 @@ def _validate_final_handoff(
         _validate_code_review_final_handoff(
             result, handoff, candidate=current_contract, out_dir=out_dir, fresh_candidate=candidate
         )
+    if candidate and handoff.get("presentation_version") != 8:
+        raise SystemExit("current-handoff-presentation-v8-required")
 
 
 def _require_file_sections(path: Path, sections: list[str]) -> None:
@@ -1293,7 +1298,7 @@ def _validate_code_remediate_report_intake(
         if not isinstance(value, int) or value < 0:
             raise SystemExit(f"code-remediate-invalid-review-report-intake:{key}")
 
-    grouped_scope = metadata.get("resolution_scope", {}).get("presentation_version") in {2, 3, 4}
+    grouped_scope = metadata.get("resolution_scope", {}).get("presentation_version") in {2, 3, 4, 5}
     if grouped_scope:
         # Item classifications, unlike rendered titles, bind report gate obligations to the inventory.
         report_items = [
@@ -1728,7 +1733,7 @@ def _validate_code_remediate_scope_selection(metadata: dict[str, Any], out_dir: 
     if not isinstance(selected_groups, list) or not all(isinstance(item, str) for item in selected_groups):
         raise SystemExit("code-remediate-invalid-selected-severity-groups")
 
-    if resolution_scope.get("presentation_version") in {2, 3, 4}:
+    if resolution_scope.get("presentation_version") in {2, 3, 4, 5}:
         _validate_grouped_selection(metadata, out_dir)
         return
 
@@ -2839,7 +2844,7 @@ def _validate_code_remediate_final_resolution_table(metadata: dict[str, Any], ou
             if kind == "online" and not CODE_REMEDIATE_ONLINE_SOURCE_ID.fullmatch(source_id):
                 raise SystemExit("code-remediate-final-table-online-source-id-invalid")
             if kind == "user":
-                if presentation_version != 4:
+                if presentation_version not in {4, 5}:
                     raise SystemExit("code-remediate-user-source-requires-v4")
                 _validate_code_remediate_user_source(source, out_dir)
             source_key = (kind, source["source_id"].strip())
@@ -2857,7 +2862,7 @@ def _validate_code_remediate_final_resolution_table(metadata: dict[str, Any], ou
             raise SystemExit("code-remediate-final-table-item-triage-status-invalid")
         if resolution_status not in CODE_REMEDIATE_RESOLUTION_STATUSES:
             raise SystemExit("code-remediate-final-table-item-resolution-status-invalid")
-        if presentation_version in {3, 4}:
+        if presentation_version in {3, 4, 5}:
             if "stale" in {triage_status, resolution_status}:
                 raise SystemExit("code-remediate-v3-stale-status-forbidden")
             disposition, separator, reason = item["resolved_how"].partition(": ")
@@ -2984,7 +2989,7 @@ def _validate_code_remediate_unresolved_summary(metadata: dict[str, Any], out_di
     if counts["selected_items_resolved"] + counts["selected_items_unresolved"] != counts["selected_items_total"]:
         raise SystemExit("code-remediate-unresolved-summary-total-mismatch")
     scope = metadata.get("resolution_scope", {})
-    if scope.get("presentation_version") in {2, 3, 4}:
+    if scope.get("presentation_version") in {2, 3, 4, 5}:
         selectable = [item for item in metadata["final_resolution_table"]["items"] if item["selectable"]]
         selected = [item for index, item in enumerate(selectable, 1) if index in scope["selected_indexes"]]
         open_count = sum(item["resolution_status"] in {"unresolved", "needs-clarification"} for item in selected)
@@ -3505,9 +3510,9 @@ def _validate_chunked_coordinator(
     ):
         raise SystemExit("adversarial-loop-chunk-coordinator-clean-result-invalid")
     handoff = _load_json(out_dir / "final-handoff.json")
-    if candidate and handoff.get("presentation_version") != 3:
+    if candidate and handoff.get("presentation_version") not in {3, 8}:
         raise SystemExit("adversarial-loop-child-scores-presentation-required")
-    if handoff.get("presentation_version") == 3 and handoff.get("child_runs") != checked["runs"]:
+    if handoff.get("presentation_version") in {3, 8} and handoff.get("child_runs") != checked["runs"]:
         raise SystemExit("adversarial-loop-child-scores-mismatch")
     rows = [row["cells"] for table in handoff["tables"] for row in table["rows"]]
     if any(row.get("admission") == "advisory" for table in handoff["tables"] for row in table["rows"]):
@@ -3718,15 +3723,14 @@ def _validate_release_draft(text: str) -> None:
     """Require substantive draft section bodies rather than changelog-only output or heading mentions."""
     if re.match(r"\s*#\s+changelog\b", text, re.IGNORECASE):
         raise SystemExit("release-draft-is-changelog")
-    # Optional leading emojis preserve project voice without weakening the section-role check.
-    for section in ("Summary", "Highlights", "Migration guide", "Notable changes", "Contributors"):
-        match = re.search(
-            rf"^##[^\w\r\n]*{re.escape(section)}[ \t]*\r?\n(?P<body>.*?)(?=^##[ \t]+|\Z)",
-            text,
-            re.IGNORECASE | re.MULTILINE | re.DOTALL,
-        )
-        if match is None or not match.group("body").strip():
-            raise SystemExit(f"release-draft-section:{section}")
+    # One semantic section reader accepts equivalent Markdown while retaining original body offsets.
+    sections = release_sections(text)
+    for required in ("Summary", "Highlights", "Migration guide", "Notable changes", "Contributors"):
+        matches = [
+            section for section in sections if re.fullmatch(rf"[^\w]*{re.escape(required)}", section[0], re.IGNORECASE)
+        ]
+        if len(matches) != 1 or not text[matches[0][2] : matches[0][3]].strip():
+            raise SystemExit(f"release-draft-section:{required}")
     if not re.search(r"full changelog", text, re.IGNORECASE):
         raise SystemExit("release-draft-comparison-missing")
     # Template placeholders and writing notes must never survive into a delivered draft.
@@ -4326,7 +4330,7 @@ def _current_contract(skill: str, result: dict[str, Any], result_path: Path) -> 
         or (skill == "code-review" and result.get("schema_version") == 3)
         or (
             skill == "code-remediate"
-            and result.get("metadata", {}).get("resolution_scope", {}).get("presentation_version") in {3, 4}
+            and result.get("metadata", {}).get("resolution_scope", {}).get("presentation_version") in {3, 4, 5}
         )
     )
 

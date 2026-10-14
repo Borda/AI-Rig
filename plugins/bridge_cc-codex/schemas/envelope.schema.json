@@ -4,42 +4,32 @@
   "properties": {
     "blockers": {
       "items": {
-        "maxLength": 500,
         "type": "string"
       },
-      "maxItems": 8,
       "type": "array"
     },
     "details": {
       "items": {
-        "maxLength": 2000,
         "type": "string"
       },
-      "maxItems": 32,
       "type": "array"
     },
     "files_touched": {
       "items": {
-        "maxLength": 500,
         "type": "string"
       },
-      "maxItems": 8,
       "type": "array"
     },
     "findings": {
       "items": {
-        "maxLength": 500,
         "type": "string"
       },
-      "maxItems": 8,
       "type": "array"
     },
     "remaining": {
       "items": {
-        "maxLength": 500,
         "type": "string"
       },
-      "maxItems": 8,
       "type": "array"
     },
     "status": {
@@ -51,7 +41,6 @@
       "type": "string"
     },
     "verdict": {
-      "maxLength": 500,
       "minLength": 1,
       "type": "string"
     }

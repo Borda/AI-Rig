@@ -336,7 +336,7 @@ def test_artifact_store_rejects_a_preexisting_temp_symlink_before_any_write(tmp_
 
 
 @pytest.mark.skipif(not DIRECTORY_SYMLINKS_SUPPORTED, reason="requires file symlink creation capability")
-def test_health_symlink_returns_a_contained_failure_without_writing_its_target(
+def test_health_symlink_preserves_result_without_writing_its_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Prevent a predictable health artifact from following a workspace-prepared link."""
@@ -349,13 +349,13 @@ def test_health_symlink_returns_a_contained_failure_without_writing_its_target(
 
     result = bridge_call.run_request(_request(tmp_path))
 
-    assert result["status"] == "blocked"
-    assert "health artifact" in result["verdict"]
+    assert result["status"] == "complete"
+    assert "health telemetry warning" in result["findings"][-1]
     assert outside.read_text(encoding="utf-8") == "unchanged\n"
 
 
 @pytest.mark.skipif(not HARDLINKS_SUPPORTED, reason="requires same-filesystem hard-link creation capability")
-def test_health_hard_link_returns_a_contained_failure_without_writing_its_target(
+def test_health_hard_link_preserves_result_without_writing_its_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Prevent a predictable health artifact from appending through a workspace-prepared hard link."""
@@ -368,8 +368,8 @@ def test_health_hard_link_returns_a_contained_failure_without_writing_its_target
 
     result = bridge_call.run_request(_request(tmp_path))
 
-    assert result["status"] == "blocked"
-    assert "health artifact" in result["verdict"]
+    assert result["status"] == "complete"
+    assert "health telemetry warning" in result["findings"][-1]
     assert outside.read_text(encoding="utf-8") == "unchanged\n"
 
 
@@ -573,10 +573,8 @@ def test_partial_result_keeps_remaining_work_public_and_details_transcript_only(
     assert detail in transcript
 
 
-def test_oversized_remaining_summary_becomes_a_blocked_public_envelope(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Prevent more than eight decision-critical remaining items from escaping the compact envelope."""
+def test_remaining_summary_preserves_all_valid_items(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Preserve all decision-critical remaining items within the capture budget."""
     monkeypatch.setattr(
         bridge_call,
         "_run_child",
@@ -585,8 +583,8 @@ def test_oversized_remaining_summary_becomes_a_blocked_public_envelope(
 
     envelope = bridge_call.run_request(_request(tmp_path))
 
-    assert envelope["status"] == "blocked"
-    assert "invalid model result" in envelope["verdict"]
+    assert envelope["status"] == "partial"
+    assert envelope["remaining"] == ["follow-up"] * 9
 
 
 @pytest.mark.parametrize(
@@ -1336,7 +1334,7 @@ def test_claude_provider_error_preserves_bounded_api_context_and_zero_usage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Prevent Claude rate-limit failures from degrading to a generic child-exit verdict."""
-    provider_message = "Spend limit reached; " + "x" * (bridge_call.MAX_VERDICT_CHARS * 2)
+    provider_message = "Spend limit reached; " + "x" * 1000
     provider_result = {
         "is_error": True,
         "terminal_reason": "api_error",
@@ -1357,7 +1355,7 @@ def test_claude_provider_error_preserves_bounded_api_context_and_zero_usage(
     transcript = (tmp_path / result["transcript_path"]).read_text(encoding="utf-8")
     assert result["status"] == "blocked"
     assert result["verdict"].startswith("api_error: HTTP 429: Spend limit reached; ")
-    assert len(result["verdict"]) == bridge_call.MAX_VERDICT_CHARS
+    assert result["verdict"] == "api_error: HTTP 429: " + provider_message
     assert result["tokens"] == {"input_tokens": 0.0, "output_tokens": 0.0}
     assert "details" not in result
     assert incident["fault"] == "blocked"
@@ -2550,16 +2548,17 @@ def test_mcp_implement_runs_real_supervisor_with_claude_write_permissions(
 @pytest.mark.parametrize(
     "invalid_core",
     [
-        pytest.param(_core(details=["detail"] * 33), id="too-many-details"),
-        pytest.param(_core(details=["x" * 2001]), id="detail-too-long"),
-        pytest.param(_core(verdict="x" * 501), id="verdict-too-long"),
-        pytest.param(_core(findings=["finding"] * 9), id="too-many-findings"),
-        pytest.param(_core(findings=["x" * 501]), id="finding-too-long"),
+        pytest.param(_core(details=[1]), id="non-string-detail"),
+        pytest.param(_core(details="detail"), id="non-array-details"),
+        pytest.param(_core(verdict=""), id="empty-verdict"),
+        pytest.param(_core(verdict=1), id="non-string-verdict"),
+        pytest.param(_core(findings=[1]), id="non-string-finding"),
+        pytest.param(_core(remaining=None), id="non-array-remaining"),
     ],
 )
-def test_peer_summary_limits_reject_oversized_model_output(invalid_core: dict[str, object]) -> None:
-    """Prevent a peer from smuggling unbounded verbose or summary content across the bridge boundary."""
-    with pytest.raises(ValueError, match=r"model result (details|findings|verdict) must"):
+def test_peer_result_types_reject_malformed_model_output(invalid_core: dict[str, object]) -> None:
+    """Retain required field and type checks after removing presentation bounds."""
+    with pytest.raises(ValueError, match=r"model result (details|findings|verdict|remaining) must"):
         bridge_call.validate_model_core(invalid_core)
 
 

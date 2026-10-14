@@ -95,7 +95,6 @@ IDENTITY_FIELDS = ("input_item_id", "item_name", "item_type", "severity", "selec
 #: Maps each parallel-approval response to the approval status stored in the workplan.
 APPROVAL_STATUS = {"approve": "approved", "parent-only": "parent-only", "not-required": "not-required"}
 #: Maps a handoff presentation version to the table layout used when rendering the final handoff.
-LAYOUTS = {2: "grouped", 3: "concise", 4: "concise"}
 #: Verification gate identifiers, in the order they are reported in the handoff.
 GATE_IDS = ("lint", "format", "types", "tests", "review")
 #: Workplan section headings this helper regenerates; any other section is preserved as written.
@@ -870,14 +869,13 @@ def _resolution_table(metadata: dict[str, Any], draft: dict[str, Any]) -> tuple[
         )
         if item.get("selectable"):
             selectable_index += 1
-        if scope.get("presentation_version") == 4:
-            rows[-1]["selected"] = (
-                "Closed"
-                if not item.get("selectable")
-                else "Yes"
-                if selectable_index in scope["selected_indexes"]
-                else "No"
-            )
+        rows[-1]["selected"] = (
+            "Closed"
+            if not item.get("selectable")
+            else "Yes"
+            if selectable_index in scope.get("selected_indexes", [])
+            else "No"
+        )
         details.extend(
             (
                 {"id": f"O{position}", "text": item.get("resolved_how")},
@@ -892,13 +890,10 @@ def _resolution_table(metadata: dict[str, Any], draft: dict[str, Any]) -> tuple[
         "columns": list(final_handoff.STANDARD_COLUMNS["code-remediate"]),
         "rows": rows,
         "details": details,
+        "layout": "concise",
+        "overview_only": True,
     }
     table.setdefault("heading", "Remediation results")
-    presentation = metadata.get("resolution_scope", {}).get("presentation_version")
-    if presentation in LAYOUTS:
-        table["layout"] = LAYOUTS[presentation]
-    if presentation in {3, 4}:
-        table["overview_only"] = True
     return table, records
 
 
@@ -914,10 +909,10 @@ def derive_handoff(
         {"check": check.get("id"), "status": check.get("status"), "evidence": check.get("stdout")} for check in checks
     ]
     handoff["confidence"] = _confidence_block(metadata, score)
+    handoff["presentation_version"] = 8
     if handoff.get("skill") != "code-remediate":
         handoff["artifacts"] = _result_artifact(handoff.get("artifacts") or [], artifact_path)
         if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed":
-            handoff["presentation_version"] = 7
             for table in handoff.get("tables", []):
                 if table.get("heading") == "Review Findings and Merge Blocks":
                     table.update(layout="concise", overview_only=True)
@@ -926,9 +921,6 @@ def derive_handoff(
     handoff["artifacts"] = _artifacts(run, handoff.get("artifacts") or [], artifact_path)
     if handoff.get("branch") == "caller-contract":
         return handoff
-    presentation = metadata.get("resolution_scope", {}).get("presentation_version")
-    if presentation in {3, 4}:
-        handoff["presentation_version"] = 6 if presentation == 4 else presentation
     draft_tables = handoff.get("tables") or [{}]
     table, records = _resolution_table(metadata, draft_tables[0] if isinstance(draft_tables[0], dict) else {})
     handoff["tables"] = [table]
@@ -1003,7 +995,7 @@ def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[st
         raise DeriveError("review-action-notes-identity-mismatch")
     if any(len(cells) not in {4, 5} or authored_status.get(cells[0]) != cells[-1] for cells in parsed[2:]):
         raise DeriveError("review-action-notes-status-mismatch")
-    if handoff.get("presentation_version") == 7:
+    if handoff.get("presentation_version") in {7, 8}:
         detail_sections = list(re.finditer(r"(?ms)^## Finding Details[^\S\r\n]*\r?\n.*?(?=^## |\Z)", notes))
         if len(detail_sections) > 1:
             raise DeriveError("review-report-details-ambiguous")
@@ -1017,9 +1009,9 @@ def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[st
         rows,
         by_id,
         metadata.get("reviewer_assessments") is not None,
-        role_only=handoff.get("presentation_version") == 7,
+        role_only=handoff.get("presentation_version") in {7, 8},
     )
-    if handoff.get("presentation_version") == 7:
+    if handoff.get("presentation_version") in {7, 8}:
         # Keep authored prose byte-exact while owning one deterministic, complete detail section.
         notes = notes_path.read_bytes().decode("utf-8")
         details = final_handoff.render_review_report_details(handoff) + "\n"

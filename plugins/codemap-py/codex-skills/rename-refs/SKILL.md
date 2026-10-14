@@ -60,13 +60,13 @@ Read completeness identically. Honor `--remove-if-no-callers` only when passed a
 
 Print old→new, type/definition (symbol), static caller count/files, Step 4 doc-ref search, and `getattr`/cross-repo limits. If incomplete: "index non-exhaustive — some callers may not appear above."
 
-With >50 callers, write full list to `.reports/codex/codemap-py/rename-refs-blast-<branch>-<YYYY-MM-DD>.md`, print it, and stop before any source edit. Do not rename the definition or module, even with `--deprecate`; a larger migration requires a separately bounded plan covering every known caller. `<branch>` is `git branch --show-current | tr '/' '-'` (`main` if empty/detached). Never overwrite: append `-2`, `-3`, … until free; this file is the complete planning record, not permission for a partial migration.
+Caller count alone never blocks a complete migration. Enumerate and preflight every known caller; for a long list, save the complete inventory to `.reports/codex/codemap-py/rename-refs-blast-<branch>-<YYYY-MM-DD>.md` and print its path. `<branch>` is `git branch --show-current | tr '/' '-'` (`main` if empty/detached). Never overwrite: append `-2`, `-3`, … until free. The inventory supports confirmation and complete execution; it never permits a partial migration.
 
 For `--remove-if-no-callers`, before edits: callers found → report count and stop (remove callers first or drop the flag); incomplete/missing completeness → report `$codemap-py:scan-codebase` required and stop; zero with a `hint` → report that zero static callers is not proof for a method or constructor, print the hint's search, and stop (delete manually only if it finds no reference); a protocol-method (dunder) hint names no search — Python calls it implicitly, so report it is never deleted on zero callers and stop; complete zero without a `hint` → ask delete/abort. Before deletion, verify `start_line` names the expected symbol; mismatch aborts. Delete definition plus preceding decorators, skip Step 4, and continue at Step 6.
 
 For `--dry-run`, write would-change sites to `.reports/codex/codemap-py/rename-refs-dry-<branch>-<YYYY-MM-DD>.md` using the same branch and never-overwrite rule; print path, ask for re-invocation without `--dry-run` or stop. Otherwise ask apply/abort and stop on abort.
 
-Before apply confirmation, resolve every known caller before any source edit: for symbols, query every caller and verify its unique source range and expected imports/calls; for modules, inspect every dependent file and matching import. A missing, ambiguous or stale site stops the operation with source unchanged. Retain these locations for apply; recheck them before mutation. The caller budget and preflight apply to both subcommands.
+Before apply confirmation, resolve every known caller before any source edit: for symbols, query every caller and verify its unique source range and expected imports/calls; for modules, inspect every dependent file and matching import. For a missing, ambiguous or stale site, stop before any source edit with source unchanged. Retain these locations for apply; recheck them before mutation. The complete preflight applies to both subcommands regardless of caller count.
 
 ### 4. Apply symbol edits
 
@@ -78,7 +78,7 @@ Before apply confirmation, resolve every known caller before any source edit: fo
 
 ### 5. Apply module edits
 
-1. Refuse non-git, untracked, or uncommitted source; require add/commit/stash. `git mv <old_file_path> <new_file_path>`, preferring indexed path over dotted conversion (which can be wrong under `src/` layouts). Package directories (`__init__.py`) are out of scope: print direct `git mv`, do not attempt.
+1. For non-git or untracked source, stop before edits and report that tracked-file module moves require Git tracking; never add, commit, or stash automatically. For tracked source, preserve uncommitted user edits and use `git mv -- <old_file_path> <new_file_path>` after confirming that the source exists, the destination is unoccupied on disk and in the index, and neither path is conflicted. Do not force a move. Prefer indexed path over dotted conversion (which can be wrong under `src/` layouts). Package directories (`__init__.py`) are out of scope: print direct `git mv`, do not attempt.
 2. Rename direct `import mypackage.old_name` (including `as X`) and `from mypackage.old_name import ...`.
 3. Rename same-package `__init__.py` `from .old_name import ...` after directory check.
 4. Search full dotted path in `pyproject.toml`/`setup.cfg`, editing package/install requirements only; never bare basename.

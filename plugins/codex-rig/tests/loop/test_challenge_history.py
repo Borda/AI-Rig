@@ -13,7 +13,7 @@ from test_loop_review_evidence import _read_ledger, _write_ledger
 def _history(tmp_path: Path) -> dict:
     """Build two completed advisory checkpoints with retained local reports."""
     payload = _handoff_payload()
-    payload.update(skill="challenge-resolve", presentation_version=3)
+    payload.update(skill="challenge-resolve", presentation_version=8)
     payload["tables"] = [
         {
             "heading": "Results",
@@ -82,13 +82,15 @@ def test_advisory_history_and_resources_are_visible(tmp_path: Path) -> None:
     assert "Advisory 1" in table_lines[2]
     assert "Checkpoint 2" in table_lines[3]
     assert "advisory" in table_lines[2].lower()
-    assert "[R1]" in table_lines[2]
-    assert "[R2]" in table_lines[3]
+    assert all("[R" not in line for line in table_lines)
     assert all("](" not in line and ".md" not in line for line in table_lines)
     assert "No validated rounds" in rendered
     assert "Reviewer provenance unavailable" in rendered
     assert "first%20review.md" in rendered
     assert tmp_path.as_posix() in rendered
+    assert "- Advisory 1:" in rendered
+    assert "- Checkpoint 2:" in rendered
+    assert rendered.index("- Advisory 1:") > rendered.index(table_lines[-1])
     assert rendered.index("**Resources**") > rendered.index(table_lines[-1])
 
 
@@ -207,17 +209,20 @@ def test_no_review_history_keeps_unavailable_placeholder(tmp_path: Path) -> None
         }
     ]
     rendered = _render(tmp_path, payload)
-    assert "| not-run | N/A |" in rendered
+    assert "independence-unavailable" in rendered
+    assert "- not-run:" in rendered
     assert "No validated rounds" in rendered
 
 
 def test_resource_targets_are_deduplicated(tmp_path: Path) -> None:
-    """Two checkpoints citing one retained report share a resource without hiding rows."""
+    """List one shared report path for each history row without duplicating either row's item entry."""
     payload = _history(tmp_path)
     payload["tables"][0]["rows"][1]["cells"][-1] = "first review.md"
     rendered = _render(tmp_path, payload)
     assert "[R2]" not in rendered
-    assert rendered.count("- [R1]") == 1
+    shared_path = f"{tmp_path.as_posix()}/first%20review.md"
+    assert rendered.count(f"- Advisory 1: {shared_path}") == 1
+    assert rendered.count(f"- Checkpoint 2: {shared_path}") == 1
     assert "Checkpoint 2" in rendered
 
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.67.2
+
+- Add a no-restating rule to the question-text guidance: a question never repeats rows, items or findings that the last printed text already shows or that its own options carry.
+- Clarify the version-one review publication in the cross-validation protocol: string-array evidence and limits, open concerns only for UNVERIFIED or pending candidates, no complete readiness beside an open candidate.
+
 ## 0.67.1
 
 - Show reviewer roles without execution provenance and render ratings in square brackets, keeping provenance in evidence and limits. Update the shared protocol and Foundry README to match.

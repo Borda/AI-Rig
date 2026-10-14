@@ -142,11 +142,17 @@ def test_handoff_does_not_fall_back_from_invalid_recovered_checkout(
         )
 
 
-def test_current_handoff_marks_selection_independently_of_outcome(valid_run: tuple[Path, dict[str, object]]) -> None:
+@pytest.mark.parametrize(
+    ("selection_version", "handoff_version"),
+    [pytest.param(4, 8, id="historical-selection-new-handoff"), pytest.param(5, 8, id="current")],
+)
+def test_current_handoff_marks_selection_independently_of_outcome(
+    valid_run: tuple[Path, dict[str, object]], selection_version: int, handoff_version: int
+) -> None:
     """Keep all findings visible and count selection indexes only over selectable items."""
     run, result = valid_run
     metadata = copy.deepcopy(result["metadata"])
-    metadata["resolution_scope"].update(presentation_version=4, selected_indexes=[2])
+    metadata["resolution_scope"].update(presentation_version=selection_version, selected_indexes=[2])
     original = metadata["final_resolution_table"]["items"][0]
     items = []
     for identity, selectable in [("CLOSED", False), ("OMITTED", True), ("CHOSEN", True)]:
@@ -164,7 +170,7 @@ def test_current_handoff_marks_selection_independently_of_outcome(valid_run: tup
 
     handoff = HELPER.derive_handoff(run, metadata, _draft_handoff(run), result["confidence"], result["artifact_path"])
 
-    assert handoff["presentation_version"] == 6
+    assert handoff["presentation_version"] == handoff_version
     assert [(row["id"], row["selected"]) for row in handoff["tables"][0]["rows"]] == [
         ("CLOSED", "Closed"),
         ("OMITTED", "No"),
@@ -288,10 +294,12 @@ def test_derived_metadata_restores_every_hand_copied_field(valid_run: tuple[Path
         assert derived[key] == expected[key]
 
 
+@pytest.mark.parametrize("selection_version", [pytest.param(2, id="historical"), pytest.param(5, id="current")])
 def test_finalize_turns_judgement_drafts_into_a_passing_promoted_result(
     valid_run: tuple[Path, dict[str, object]],
     tmp_path_factory: pytest.TempPathFactory,
     capsys: pytest.CaptureFixture[str],
+    selection_version: int,
 ) -> None:
     """Derive, render, write, validate, and promote in one call when only judgement fields were authored.
 
@@ -299,6 +307,24 @@ def test_finalize_turns_judgement_drafts_into_a_passing_promoted_result(
     its handoff binding and derived copies; one finalize call must still produce a validator-accepted result.
     """
     run, result = valid_run
+    if selection_version == 5:
+        for item in result["metadata"]["final_resolution_table"]["items"]:
+            item["resolved_how"] = (
+                "Implemented: Added the guard."
+                if item["resolution_status"] == "implemented"
+                else "Verified without code changes: Existing regression passes."
+            )
+        HELPER.render_ledger(run, result["metadata"])
+        inventory_path = run / "selection.json"
+        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+        inventory["presentation_version"] = selection_version
+        for item in inventory["items"]:
+            if item["selectable"]:
+                item["resolution_proposal"] = "Correct [parser](<src/package/parser.py>) and verify the regression."
+        inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+        (run / "resolution-scope.md").write_text(
+            HELPER.final_handoff.render_selection(inventory), encoding="utf-8", newline="\n"
+        )
     drafts = tmp_path_factory.mktemp("drafts")
     (drafts / "metadata.json").write_text(json.dumps(_stale_metadata(result)), encoding="utf-8")
     (drafts / "handoff.json").write_text(json.dumps(_draft_handoff(run)), encoding="utf-8")
@@ -322,9 +348,19 @@ def test_finalize_turns_judgement_drafts_into_a_passing_promoted_result(
     exit_code = HELPER.main(argv)
     summary = json.loads(capsys.readouterr().out)
 
-    assert (exit_code, summary["status"], summary["errors"], summary["promoted"]) == (0, "pass", [], True)
+    assert (exit_code, summary["status"], summary["errors"], summary["promoted"]) == (0, "pass", [], True), summary[
+        "errors"
+    ]
     assert [step["step"] for step in summary["steps"]] == ["derive", "render", "write-result", "validate"]
     VALIDATOR.validate("code-remediate", run, run / "result.json")
+    if selection_version == 5:
+        handoff = json.loads((run / "final-handoff.json").read_text(encoding="utf-8"))
+        assert handoff["presentation_version"] == 8
+        assert ": src/package/parser.py" in (run / "resolution-scope.md").read_text(encoding="utf-8")
+        handoff["presentation_version"] = 6
+        promoted = json.loads((run / "result.json").read_text(encoding="utf-8"))
+        with pytest.raises(SystemExit, match="remediation-current-handoff-presentation-v8-required"):
+            VALIDATOR._validate_code_remediate_final_handoff(promoted, handoff, candidate=True)
 
 
 def test_all_errors_reports_independent_failures_with_hints(valid_run: tuple[Path, dict[str, object]]) -> None:
@@ -492,9 +528,10 @@ def test_review_finalize_derives_shared_fields_and_runs_both_validators(
         "validate",
     ]
     assert finished.returncode == 0, finished.stderr.decode()
-    assert json.loads((run / "final-handoff.json").read_text())["presentation_version"] == 7
+    assert json.loads((run / "final-handoff.json").read_text())["presentation_version"] == 8
     assert (run / "review-notes.md").read_bytes() == full_report
-    assert b"| Report | [Markdown report](<" in finished.stdout
+    assert b"- Report: " in finished.stdout
+    assert b"| Report |" not in finished.stdout
 
 
 def test_review_finalize_stops_on_review_validator_failure(

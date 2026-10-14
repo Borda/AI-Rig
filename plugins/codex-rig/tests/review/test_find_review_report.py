@@ -817,8 +817,9 @@ def test_explicit_legacy_pr_result_is_superseded_by_canonical_run(
     monkeypatch.setattr(finder, "CURRENT_REPORTS_DIR", canonical_root)
     monkeypatch.setattr(finder, "LEGACY_REPORTS_DIR", legacy_run.parent.parent)
 
+    assert finder.complete_review_run(legacy_run, parent_thread_id="thread") == (legacy_run / "final.md").read_bytes()
     with pytest.raises(LookupError, match=expected_error) as error:
-        finder.complete_review_run(legacy_run, parent_thread_id="thread")
+        finder.require_assessed_review_result(legacy_run / "result.json", parent_thread_id="thread")
 
     if result_name == "result.candidate.json":
         assert str(newer) in str(error.value)

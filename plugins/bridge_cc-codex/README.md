@@ -16,7 +16,7 @@ A user-reported dismissed question leaves its decision pending. The root checks 
 
 The bridge is useful with either host integration installed and has no dependency on another plugin from this repository. Existing-plugin replacement and consumer migration are deliberately outside this standalone package.
 
-> Release: `0.10.0`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
+> Release: `0.10.1`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
 
 ______________________________________________________________________
 
@@ -70,6 +70,7 @@ Every call also carries a soft wall-clock budget and a recursion `depth`:
 Results are compact envelopes rather than transcripts:
 
 - The public envelope carries decision-critical `status`, `verdict`, `findings`, `files_touched`, `remaining`, and `blockers`, plus observed harness metadata such as model, effort, cost, duration, depth, `run_id`, and a session identifier when applicable.
+- Required result fields and string/list types are checked without presentation item-count or string-length limits; actual child-record, output-capture, and transcript byte limits still apply.
 - Incomplete work and blockers must stay in those public fields; transcript-only `details` hold additional evidence and never hide required work.
 - The envelope carries workspace-relative `transcript_path` and, for faults, an `incident` path; open the referenced JSON file and inspect its `fault` member only when the compact result needs investigation.
 - Detached calls return their job identifier separately.
@@ -323,8 +324,8 @@ Artifact handling:
 
 - Artifact directories and members are rechecked against the bound project and store before reads, creation, and writes, including cancellation markers and atomic temporary files. Escaping parents and linked file leaves are rejected; directory aliases contained within the store remain usable. These checks do not promise immunity to concurrent path replacement during an OS operation.
 - Incident records do not persist child command arguments or environment data. They preserve the classified fault, reason, model, effort, verb, budget, transcript path, and—when a write-capable process is killed—the observed worktree delta. That delta is advisory: unchanged dirty status or unavailable Git can produce an empty delta despite edits, so inspect the actual worktree independently.
-- The health log records direction, verb, model, effort, cost/tokens when reported by the host, duration, status, depth, and `run_id`.
-- The predictable `health.jsonl` member is opened without following links or reparse points, then its opened descriptor must be a regular single-link file. A prepared symlink, reparse point, or hard link returns a contained blocked result and does not write its target. This does not provide universal containment if an attacker creates a new hard link after the descriptor check.
+- The optional health log records direction, verb, model, effort, cost/tokens when reported by the host, duration, status, depth, and `run_id`. A write failure appends a sanitized nonblocking telemetry warning to public `findings`, preserving the original status, verdict, decision fields and incident without rerunning the child.
+- The predictable `health.jsonl` member rejects nonregular files before open, opens without following links or reparse points, and requires its opened descriptor to be a regular single-link file. POSIX opens are nonblocking so a FIFO replacement cannot wait for a reader. A prepared symlink, reparse point, hard link, or nonregular member is refused without writing its target; optional telemetry refusal preserves the primary result. This does not provide universal containment if an attacker creates a new hard link after the descriptor check.
 - Setup summarizes blocked/timeout/refused counts, their latest timestamps, and reported cost by direction, verb, and model; static CLI findings are reported separately.
 
 > Artifacts are evidence, not authority. Read the envelope, source changes, tests, permissions, and remaining limits before accepting consequential work. Delete `.temp/bridge/` only under your project's normal retention policy and only after preserving any incident or review evidence you still need.

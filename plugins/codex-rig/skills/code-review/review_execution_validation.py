@@ -1788,14 +1788,74 @@ def _validate_instruction_bounded_review(
     }
 
 
+def _reviewer_sections(content: str) -> list[tuple[str, int, int, int]]:
+    """Locate level-two sections outside fenced examples, retaining original heading and body offsets."""
+    sections = []
+    fence = None
+    offset = 0
+    for line in content.splitlines(keepends=True):
+        text = line.rstrip("\r\n")
+        marker = re.fullmatch(r" {0,3}(`{3,}|~{3,})(.*)", text)
+        if fence is not None:
+            if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence) and not marker[2].strip():
+                fence = None
+        elif marker:
+            fence = marker[1]
+        else:
+            heading = re.fullmatch(r" {0,3}##[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*", text)
+            if heading:
+                sections.append((heading[1], offset, offset + len(line)))
+        offset += len(line)
+    return [
+        (title, start, body, sections[index + 1][1] if index + 1 < len(sections) else len(content))
+        for index, (title, start, body) in enumerate(sections)
+    ]
+
+
+def _batch_response_parts(content: str, role: str) -> dict[str, tuple[int, int]]:
+    """Locate the complete batch inventory without making Markdown spelling part of its evidence contract."""
+    sections = _reviewer_sections(content)
+    titles = [section[0] for section in sections]
+    expected = ["Reviewer Findings", "Reviewer Confidence", "Reviewer Assessment"]
+    if "Finding Dispositions" in titles:
+        expected.insert(1, "Finding Dispositions")
+    if titles != expected:
+        raise SystemExit(f"review-batch-individual-findings-format:{role}")
+    parts = {}
+    for title, _heading, start, end in sections:
+        if title in {"Reviewer Findings", "Reviewer Confidence"}:
+            block = re.fullmatch(
+                r"\s*(?P<open>`{3,}|~{3,})[ \t]*json[ \t]*\r?\n(?P<body>.*?)\r?\n"
+                r" {0,3}(?P<close>`{3,}|~{3,})[ \t]*\s*",
+                content[start:end],
+                re.DOTALL | re.IGNORECASE,
+            )
+            if block is None or block["open"][0] != block["close"][0] or len(block["close"]) < len(block["open"]):
+                raise SystemExit(f"review-batch-individual-findings-format:{role}")
+            parts[title] = (start + block.start("body"), start + block.end("body"))
+        else:
+            parts[title] = (start, end)
+    return parts
+
+
 def _text_reviewer_assessment(body: str, *, batch_response: bool) -> tuple[int | None, str] | None:
-    """Parse a standalone ordinary pair or the strict batch body, retaining opaque one-line rationale."""
+    """Read unique judgment fields, retaining rationale text independently of its line wrapping."""
+    line_break = r"[ \t]*(?:\r?\n[ \t]*)+"
     current = re.fullmatch(
-        r"\s*Source rating version: 1\nRating: ([1-5]|null)\nVerification readiness: (complete|blocked|incomplete)\nRationale: (\S[^\r\n]*)[ \t]*(?:\r?\n)*",
+        r"\s*Source rating version:[ \t]+1"
+        + line_break
+        + r"Rating:[ \t]+([1-5]|null)"
+        + line_break
+        + r"Verification readiness:[ \t]+(complete|blocked|incomplete)"
+        + line_break
+        + r"Rationale:[ \t]*(\S[\s\S]*?)\s*",
         body,
     )
     if current:
-        if current[1] == "null" and current[2] != "blocked":
+        if (current[1] == "null" and current[2] != "blocked") or re.search(
+            r"(?m)^[ \t]*(?:Source rating version|Rating|Verification readiness|Rationale):",
+            "\n".join(current[3].splitlines()[1:]),
+        ):
             return None
         return (None if current[1] == "null" else int(current[1]), current[3])
     if "Source rating version:" in body:
@@ -1817,20 +1877,14 @@ def _text_reviewer_assessment(body: str, *, batch_response: bool) -> tuple[int |
                 if fence is not None:
                     return None
                 declarations.append(index)
-        if len(declarations) != 2:
+        if not 1 <= len(declarations) <= 2:
             return None
-        first, last = declarations
-        # Blank paragraph boundaries distinguish surrounding content from a continued rationale.
-        if (
-            (first and lines[first - 1].strip())
-            or (last + 1 < len(lines) and lines[last + 1].strip())
-            or any(line.strip() for line in lines[first + 1 : last])
-        ):
-            return None
-        body = "\n".join(lines[first : last + 1])
-    separator = r"(?:[ \t]*\r?\n\s*|\.?[ \t]+)" if batch_response else r"[ \t]*\r?\n\s*"
-    assessment = re.fullmatch(r"\s*Rating: ([1-5])" + separator + r"Rationale: (\S[^\r\n]*)[ \t]*(?:\r?\n)*", body)
-    return (int(assessment[1]), assessment[2]) if assessment is not None else None
+        body = "\n".join(lines[declarations[0] :])
+    separator = r"(?:[ \t]*\r?\n\s*|[.;,—-]?[ \t]+)"
+    assessment = re.fullmatch(r"\s*Rating:[ \t]+([1-5])" + separator + r"Rationale:[ \t]*(\S[\s\S]*?)\s*", body)
+    if assessment is None or re.search(r"(?m)^[ \t]*(?:Rating|Rationale):", "\n".join(assessment[2].splitlines()[1:])):
+        return None
+    return int(assessment[1]), assessment[2]
 
 
 def _retained_reviewer_rating(
@@ -1900,19 +1954,18 @@ def _retained_reviewer_rating(
         rationale = assessment.get("rationale") if isinstance(assessment, dict) else None
     else:
         heading = "Main Reviewer Assessment" if main else "Reviewer Assessment"
-        assessment_heading = rf"## {re.escape(heading)}"
         if incomplete_dispatch and not main:
-            assessment_heading = rf"(?:{assessment_heading}|\*\*{re.escape(heading)}\*\*)"
-        if len(re.findall(rf"(?m)^{assessment_heading}[ \t]*$", content)) != 1:
+            # Historical failed dispatches may attest incomplete inspection with a bold paragraph.
+            content = re.sub(r"(?m)^\*\*([^*\n]+)\*\*[ \t]*$", r"## \1", content)
+        sections = [entry for entry in _reviewer_sections(content) if entry[0] == heading]
+        if len(sections) != 1:
             raise SystemExit(f"review-assessment-content-invalid:{role}")
-        boundary = r"^## |\Z"
-        if incomplete_dispatch and not main:
-            boundary += r"|^\*\*[^*\n]+\*\*[ \t]*$"
-        section = re.search(rf"(?ms)^{assessment_heading}\s*\n(?P<body>.*?)(?={boundary})", content)
-        body = section.group("body") if section else ""
-        returned_version = 1 if re.match(r"\s*Source rating version: 1\n", body) else None
+        body = content[sections[0][2] : sections[0][3]]
+        returned_version = 1 if re.match(r"\s*Source rating version:[ \t]+1[ \t]*\r?\n", body) else None
         if returned_version == 1:
-            declared = re.search(r"(?m)^Verification readiness: (complete|blocked|incomplete)$", body)
+            declared = re.search(
+                r"(?m)^[ \t]*Verification readiness:[ \t]+(complete|blocked|incomplete)[ \t]*\r?$", body
+            )
             readiness = declared[1] if declared else None
         assessment = _text_reviewer_assessment(body, batch_response=batch_response and not main)
         rating, rationale = assessment if assessment is not None else (None, None)
@@ -2093,9 +2146,10 @@ def _receipt_binds_child(
 
 def _closure_shape_repair(content: str, snapshot: dict[str, Any], role: str) -> str:
     """Repair only list-valued closure evidence while retaining every other response byte and finding value."""
-    match = re.search(r"\A\s*## Reviewer Findings\s*\n```json\n(.*?)\n```", content, re.DOTALL)
-    if match is None:
-        raise SystemExit(f"review-repair-ineligible-format:{role}")
+    try:
+        start, end = _batch_response_parts(content, role)["Reviewer Findings"]
+    except SystemExit as error:
+        raise SystemExit(f"review-repair-ineligible-format:{role}") from error
 
     def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         """Reject duplicate keys rather than changing which claim survives."""
@@ -2107,7 +2161,7 @@ def _closure_shape_repair(content: str, snapshot: dict[str, Any], role: str) -> 
         return result
 
     try:
-        records = json.loads(match[1], object_pairs_hook=unique)
+        records = json.loads(content[start:end], object_pairs_hook=unique)
     except (ValueError, RecursionError) as error:
         raise SystemExit(f"review-repair-ineligible-json:{role}") from error
     changed = False
@@ -2124,25 +2178,34 @@ def _closure_shape_repair(content: str, snapshot: dict[str, Any], role: str) -> 
             changed = True
     if not changed:
         raise SystemExit(f"review-repair-no-shape-error:{role}")
-    expected = content[: match.start(1)] + json.dumps(records, ensure_ascii=False) + content[match.end(1) :]
+    expected = content[:start] + json.dumps(records, ensure_ascii=False) + content[end:]
     _batch_reviewer_findings(Path("unused"), snapshot, role, content_override=expected)
     return expected
 
 
 def _assessment_format_repair(content: str, snapshot: dict[str, Any], role: str) -> str:
     """Restore the final rationale label while retaining the explicit rating and any current readiness."""
-    if len(re.findall(r"(?m)^## Reviewer Assessment[ \t]*$", content)) != 1:
-        raise SystemExit(f"review-repair-ineligible-assessment:{role}")
-    assessment = re.search(
-        r"(?m)^## Reviewer Assessment[ \t]*\n\s*"
-        r"(?:Rating: [1-5]|Source rating version: 1\nRating: (?:[1-5]|null)\n"
-        r"Verification readiness: (?:complete|blocked|incomplete))"
+    try:
+        start, end = _batch_response_parts(content, role)["Reviewer Assessment"]
+    except SystemExit as error:
+        raise SystemExit(f"review-repair-ineligible-assessment:{role}") from error
+    line_break = r"[ \t]*(?:\r?\n[ \t]*)+"
+    assessment = re.fullmatch(
+        r"\s*(?:Rating:[ \t]+[1-5]|Source rating version:[ \t]+1"
+        + line_break
+        + r"Rating:[ \t]+(?:[1-5]|null)"
+        + line_break
+        + r"Verification readiness:[ \t]+(?:complete|blocked|incomplete))"
         r"(?P<separator> — )\S[^\r\n]*(?:\r?\n)*\Z",
-        content,
+        content[start:end],
     )
     if assessment is None:
         raise SystemExit(f"review-repair-ineligible-assessment:{role}")
-    expected = content[: assessment.start("separator")] + "\nRationale: " + content[assessment.end("separator") :]
+    expected = (
+        content[: start + assessment.start("separator")]
+        + "\nRationale: "
+        + content[start + assessment.end("separator") :]
+    )
     _batch_reviewer_findings(Path("unused"), snapshot, role, content_override=expected)
     return expected
 
@@ -2151,16 +2214,17 @@ def _finding_id_namespace_repair(
     content: str, snapshot: dict[str, Any], role: str, context: str, origins: list[dict[str, Any]]
 ) -> str:
     """Restore one source-proven local ID without changing another response byte or obligation."""
-    match = re.search(r"\A\s*## Reviewer Findings\s*\n```json\n(.*?)\n```", content, re.DOTALL)
-    if match is None:
-        raise SystemExit(f"review-repair-ineligible-finding-id:{role}")
+    try:
+        start, end = _batch_response_parts(content, role)["Reviewer Findings"]
+    except SystemExit as error:
+        raise SystemExit(f"review-repair-ineligible-finding-id:{role}") from error
     candidates = []
     for origin in origins:
         identity = origin["finding_id"]
         local_id = origin["original"]["id"]
         witness = f"Source finding ID: {identity}\n{origin['original_text']}\n"
         token = re.compile(r'("id"\s*:\s*)' + re.escape(json.dumps(identity)))
-        occurrences = list(token.finditer(match[1]))
+        occurrences = list(token.finditer(content[start:end]))
         if occurrences:
             if (
                 len(occurrences) != 1
@@ -2173,9 +2237,8 @@ def _finding_id_namespace_repair(
     if len(candidates) != 1:
         raise SystemExit(f"review-repair-ineligible-finding-id:{role}")
     origin, token = candidates[0]
-    start = match.start(1) + token.end(1)
-    end = match.start(1) + token.end()
-    expected = content[:start] + json.dumps(origin["original"]["id"]) + content[end:]
+    value_start, value_end = start + token.end(1), start + token.end()
+    expected = content[:value_start] + json.dumps(origin["original"]["id"]) + content[value_end:]
     records = _batch_reviewer_findings(Path("unused"), snapshot, role, content_override=expected)
     corrected = next(record for record in records if record["id"] == origin["original"]["id"])
     if corrected != origin["original"]:
@@ -2680,18 +2743,14 @@ def _batch_reviewer_findings(
     """
     content = path.read_text(encoding="utf-8") if content_override is None else content_override
     if expected_provenance_header is not None:
-        content = content.removeprefix(expected_provenance_header + "\n")
-    match = re.fullmatch(
-        r"\s*## Reviewer Findings\s*\n```json\n(?P<records>.*?)\n```\s*"
-        r"(?:## Finding Dispositions\s*\n(?P<dispositions>.*?))?"
-        r"## Reviewer Confidence\s*\n```json\n(?P<confidence>.*?)\n```\s*"
-        r"## Reviewer Assessment\s*\n(?P<assessment>.*?)\s*",
-        content,
-        re.DOTALL,
-    )
-    if match is None or _text_reviewer_assessment(match["assessment"], batch_response=True) is None:
+        content = content.lstrip().removeprefix(expected_provenance_header + "\n")
+    parts = _batch_response_parts(content, role)
+    if content[: _reviewer_sections(content)[0][1]].strip():
         raise SystemExit(f"review-batch-individual-findings-format:{role}")
-    dispositions = match["dispositions"]
+    assessment = content[slice(*parts["Reviewer Assessment"])]
+    if _text_reviewer_assessment(assessment, batch_response=True) is None:
+        raise SystemExit(f"review-batch-individual-findings-format:{role}")
+    dispositions = content[slice(*parts["Finding Dispositions"])] if "Finding Dispositions" in parts else None
     if dispositions is not None and any(
         re.fullmatch(
             r"Source disposition [^\s:]+: (closed|rejected); Evidence: .+:[1-9][0-9]*-[1-9][0-9]* - \S.*", line
@@ -2711,8 +2770,8 @@ def _batch_reviewer_findings(
         return result
 
     try:
-        records = json.loads(match["records"], object_pairs_hook=unique_object)
-        confidence = json.loads(match["confidence"], object_pairs_hook=unique_object)
+        records = json.loads(content[slice(*parts["Reviewer Findings"])], object_pairs_hook=unique_object)
+        confidence = json.loads(content[slice(*parts["Reviewer Confidence"])], object_pairs_hook=unique_object)
     except (ValueError, RecursionError) as error:
         raise SystemExit(f"review-batch-individual-findings-json:{role}") from error
     if (

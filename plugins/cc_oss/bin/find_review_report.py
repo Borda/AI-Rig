@@ -168,7 +168,10 @@ def _assessments_valid(data: dict) -> bool:
         if assessment.get("presence") == "completed":
             if not all(assessment.get(key) for key in ("coverage", "rationale", "evidence")):
                 return False
-            if not isinstance(assessment.get("evidence"), list) or not isinstance(assessment.get("limits"), list):
+            # A single string is equivalent to a one-item list; only the type differs, not the meaning.
+            if not isinstance(assessment.get("evidence"), (list, str)) or not isinstance(
+                assessment.get("limits"), (list, str)
+            ):
                 return False
             if assessment["source_outcome"] is None:
                 if assessment["readiness"] != "blocked":

@@ -81,6 +81,7 @@ def _write_loop(
     handoff_path = tmp_path / "final-handoff.json"
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
     handoff["skill"] = "challenge-resolve"
+    handoff["presentation_version"] = 8
     handoff["outcome"] = {"title": "Parser review", "summary": "Parser review is clean; no code fixes were needed."}
     handoff["tables"] = [
         {
@@ -232,7 +233,7 @@ def test_single_scope_cannot_claim_child_scores(tmp_path: Path, monkeypatch: pyt
     candidate = _write_loop(tmp_path, monkeypatch)
     handoff_path = tmp_path / "final-handoff.json"
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
-    handoff["presentation_version"] = 3
+    handoff["presentation_version"] = 8
     handoff["tables"][0]["rows"][0]["cells"] = ["not-run", *(["N/A"] * 7), "chunk-only", "chunks/results.json"]
     handoff["child_runs"] = [{"result_path": "chunks/runs/001/result.json", "scores": [6, 0], "decision": "clean"}]
     handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
@@ -462,7 +463,7 @@ def test_chunked_coordinator_reports_children_without_a_combined_score(
     gates_path.write_text(json.dumps(gates), encoding="utf-8")
     handoff_path = tmp_path / "final-handoff.json"
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
-    handoff["presentation_version"] = 3
+    handoff["presentation_version"] = 8
     handoff["outcome"] = {"title": "Chunk review", "summary": "Child reviews passed; overall review is incomplete."}
     handoff["tables"][0]["rows"][0]["cells"] = ["not-run", *(["N/A"] * 7), "chunk-only", "chunks/results.json"]
     if table_version == 2:
@@ -541,7 +542,7 @@ def test_chunked_coordinator_reports_children_without_a_combined_score(
     )
     result["metadata"]["final_handoff"].update({key: validation[key] for key in ("handoff_sha256", "rendered_sha256")})
     candidate.write_text(json.dumps(result), encoding="utf-8")
-    with pytest.raises(SystemExit, match="adversarial-loop-child-scores-presentation-required"):
+    with pytest.raises(SystemExit, match="current-handoff-presentation-v8-required"):
         validator.validate("challenge-resolve", tmp_path, candidate)
     (tmp_path / "result.json").write_text(json.dumps(result), encoding="utf-8")
     with pytest.raises(SystemExit, match="adversarial-loop-child-scores-presentation-required"):
@@ -560,7 +561,7 @@ def test_complete_clean_chunk_coverage_permits_success_without_combined_score(
         "runs": [{"result_path": "chunks/runs/001/result.json", "scores": [0], "decision": "clean"}],
     }
     handoff = {
-        "presentation_version": 3,
+        "presentation_version": 8,
         "child_runs": summary["runs"],
         "tables": [{"rows": [{"cells": ["not-run", *(["N/A"] * 7), "chunk-only", "chunks/results.json"]}]}],
         "remaining": [],
@@ -790,7 +791,7 @@ def test_chunked_coordinator_validates_real_children_and_interaction(
     coordinator = _write_loop(tmp_path, monkeypatch)
     handoff_path = tmp_path / "final-handoff.json"
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
-    handoff["presentation_version"] = 3
+    handoff["presentation_version"] = 8
     handoff["outcome"] = {"title": "Chunk review", "summary": "All declared child and interaction reviews are clean."}
     handoff["tables"][0]["rows"][0]["cells"] = ["not-run", *(["N/A"] * 7), "chunk-only", "chunks/results.json"]
     handoff["child_runs"] = summary["runs"]
@@ -913,7 +914,7 @@ def test_chunked_coordinator_validates_real_children_and_interaction(
     gates_path.write_text(json.dumps(gates), encoding="utf-8")
     handoff_path = tmp_path / "final-handoff.json"
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
-    handoff["presentation_version"] = 3
+    handoff["presentation_version"] = 8
     handoff["outcome"] = {"title": "Chunk review", "summary": "Child review stopped; full review remains open."}
     handoff["tables"][0]["rows"][0]["cells"] = ["not-run", *(["N/A"] * 7), "chunk-only", "chunks/results.json"]
     handoff["child_runs"] = stopped_summary["runs"]
@@ -1584,7 +1585,6 @@ def test_public_validator_accepts_unavailable_loop_with_not_run_row(
     else:
         _load_shared_validator().validate("challenge-resolve", tmp_path, result_path)
     rendered = (tmp_path / "final.md").read_text(encoding="utf-8")
-    assert (
-        "| not-run | N/A | N/A | N/A | N/A | N/A | N/A | N/A | independence-unavailable | loop-report.md |" in rendered
-    )
+    assert "independence-unavailable" in rendered
+    assert "- not-run: loop-report.md" in rendered
     assert "| 1 |" not in rendered

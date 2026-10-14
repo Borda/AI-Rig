@@ -196,7 +196,7 @@ def _assessed_pr(tmp_path: Path) -> Path:
     ]
     handoff = {
         "schema_version": 1,
-        "presentation_version": 7,
+        "presentation_version": 8,
         "skill": "code-review",
         "branch": "assessed",
         "outcome": {"title": "Review Decision", "summary": "Recommendation: accept-as-is."},
@@ -332,6 +332,7 @@ def test_current_terminal_writer_promotes_and_completes(tmp_path: Path, disposit
         ]
         handoff_path = tmp_path / "final-handoff.json"
         handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+        handoff["presentation_version"] = 8
         handoff["confidence"]["gaps"] = metadata["confidence_gap_closures"]
         handoff["confidence"]["limits"] = metadata["confidence_recovery"]["remaining_limits"]
         handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
@@ -520,7 +521,7 @@ def test_current_assessed_completion_rejects_presentation_two(assessed_pr: Path,
     error = (
         "review-current-handoff-presentation-invalid"
         if filename == "result.json"
-        else "review-current-handoff-presentation-v7-required"
+        else "review-current-handoff-presentation-v8-required"
     )
     with pytest.raises(LookupError, match=error):
         _run_expected_failure()
@@ -740,20 +741,32 @@ def test_v1_review_validation_preserves_legacy_checkout_command_contract(assesse
         validator._validate_result(assessed_pr, result_path, assessed_pr, "thread", assessed_pr)
 
 
-def test_completion_rejects_a_valid_but_superseded_result(assessed_pr: Path) -> None:
-    """Validation success is insufficient when the consumer would use a newer run."""
+@pytest.mark.parametrize("newer_state", ["incomplete", "candidate"])
+def test_completion_delivers_valid_bytes_without_relaxing_latest_intake(assessed_pr: Path, newer_state: str) -> None:
+    """Deliver the named completed report while keeping newer pending work out of remediation."""
     newer = assessed_pr.parent / "run-002"
     newer.mkdir()
     (newer / "pr.json").write_bytes((assessed_pr / "pr.json").read_bytes())
-    (newer / "review-notes.md").write_text("Incomplete newer review.", encoding="utf-8")
+    if newer_state == "incomplete":
+        (newer / "review-notes.md").write_text("Incomplete newer review.", encoding="utf-8")
+        diagnostic = "matching-review-incomplete:"
+    else:
+        (newer / "result.candidate.json").write_text(
+            json.dumps({"metadata": {"scope": "pr", "review_decision": {"recommendation": "needs-more-work"}}}),
+            encoding="utf-8",
+        )
+        diagnostic = "matching-review-candidate-unpromoted:"
     completed = subprocess.run(
         [sys.executable, str(FINDER), "--complete-run", str(assessed_pr), "--parent-thread-id", "thread"],
         capture_output=True,
-        text=True,
     )
-    assert completed.returncode == 1
-    assert completed.stdout == ""
-    assert "matching-review-incomplete:" in completed.stderr
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == (assessed_pr / "final.md").read_bytes()
+    finder = _module(FINDER)
+    with pytest.raises(LookupError, match=diagnostic):
+        finder.find_latest_review_report("123", [assessed_pr.parent.parent])
+    with pytest.raises(LookupError, match=diagnostic):
+        finder.require_assessed_review_result(assessed_pr / "result.json", parent_thread_id="thread")
 
 
 def test_explicit_pr_result_rejects_newer_unpromoted_run(assessed_pr: Path) -> None:
