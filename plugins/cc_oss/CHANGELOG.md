@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.49.0
+
+- When `/oss:resolve` sends a review item to Codex to fix, hand it the CodeQL alert the item links: `fetch_alert_context.py` reads it in the calling session (the child has no network) and appends it to the brief as delimited untrusted data, only for alerts in the PR's own repository and the item's own file. The helper now also writes the item line, with the reviewer's comment fenced as untrusted, and always ends with one line, outside and after every block, naming the caller-fetched block tokens (`none` when nothing was fetched), so a comment cannot pass a forged section off as fetched data. An item whose path holds a line break, a control character or `<`/`>`, or whose line is not a line number, is refused and takes the ordinary path; a path with spaces is written as a quoted JSON string. A failed fetch, an unresolved repository, an alert elsewhere, a foreign-repository link, a link past the cap or a code-scanning link on another host, in another form or with its number in other digits each append a notice so the child returns `UNCERTAIN` instead of guessing. Links with `http://`, `www.` or a different host case are fetched too. Inside a fence, marker-shaped spellings get a word joiner inserted, never consumed, so identifiers and paths that merely mention them stay verbatim. The spellings, and alert links, are found on a folded view (format characters and invisible marks dropped, dashes unified, NFKC), so in-word zero-width, fullwidth and dash look-alike spellings cannot slip through; the comment itself reaches the child unchanged apart from the inserted joiners.
+- Require `full_comment_text` to keep the comment body verbatim, links included.
+- Drop the `Suggestion` column from the resolve report's Challenge Log; `Resolution` is the outcome, and `suggestion_why` stays in `challenge-log.txt`.
+
 ## 0.48.3
 
 - Sync the quality-gates rule: after each validated adversarial-loop round, print the progress table exactly, with all rows kept and each cell as `old + new`.

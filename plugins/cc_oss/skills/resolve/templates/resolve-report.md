@@ -36,14 +36,16 @@
 
 <!-- One row per surviving/rejected item. Verdicts render as bracketed flags [VALID]/[REJECT] with a mandatory few-word reason — never a bare verdict word. Every cell self-contained — no cross-row lookups needed. Omit section when --no-challenge. -->
 
-| # | Finding | Evidence | Suggestion | Resolution |
-| -- | -- | -- | -- | -- |
-| 1 | Off-by-one in pagination cursor at api.py:88 | [VALID] — cursor increments before bounds check, confirmed in code | [VALID] — fix matches existing guard pattern used elsewhere in file | as-suggested: moved bounds check before cursor increment (`abc1234`) |
-| 9 | Use `cv2.INTER_AREA` for all resizes | [VALID] — current code uses fixed interpolation regardless of scale direction | [REJECT] — unconditional INTER_AREA degrades quality on upscale | self-resolved: use INTER_AREA only when both target dims < source, else INTER_LINEAR |
+| # | Finding | Evidence | Resolution |
+| -- | -- | -- | -- |
+| 1 | Off-by-one in pagination cursor at api.py:88 | [VALID] — cursor increments before bounds check, confirmed in code | as-suggested: moved bounds check before cursor increment (`abc1234`) |
+| 9 | Use `cv2.INTER_AREA` for all resizes | [VALID] — current code uses fixed interpolation regardless of scale direction | self-resolved: use INTER_AREA only when both target dims < source, else INTER_LINEAR |
 
-<!-- ✗ wrong — bare verdict, no reason: | 3 | ... | VALID | VALID | ... | -->
+<!-- No Suggestion column: Resolution is the outcome and already names what was done with the suggestion; suggestion_why stays in challenge-log.txt -->
 
-<!-- ✓ right — every verdict cell carries flag + reason, always the Phase 1 challenge agent's actual rationale — never a filler string standing in for a missing one -->
+<!-- ✗ wrong — bare verdict, no reason: | 3 | ... | VALID | ... | -->
+
+<!-- ✓ right — the Evidence cell carries flag + reason, always the Phase 1 challenge agent's actual rationale — never a filler string standing in for a missing one -->
 
 ### Open Concerns
 

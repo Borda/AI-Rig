@@ -112,11 +112,11 @@ claude plugin install foundry@borda-ai-rig   # specialized agents; optional
 
 **Optional integrations** (unlock extra capabilities inside `oss` skills):
 
-| Plugin                | What it unlocks                                                                                                                                                                                      |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `foundry`             | Specialized review and implementation agents instead of `general-purpose` fallbacks                                                                                                                  |
-| `bridge@borda-ai-rig` | Optional Codex co-review in `/oss:review` and Codex action-item dispatch in `/oss:resolve`                                                                                                           |
-| `codemap-py`          | Reverse-dependency count (`rdep_count`) in `/oss:review` risk assessment; stale-symbol detection in `/oss:analyse` issue triage, Open-PR Overlap + Structural Constraints in `/oss:analyse vitality` |
+| Plugin                | What it unlocks                                                                                                                                                                                                                                        |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `foundry`             | Specialized review and implementation agents instead of `general-purpose` fallbacks                                                                                                                                                                    |
+| `bridge@borda-ai-rig` | Optional Codex co-review in `/oss:review` and Codex action-item dispatch in `/oss:resolve`; a CodeQL alert a dispatched item links, from the PR's own repository and the item's file, is fetched by the calling session and sent to the Codex provider |
+| `codemap-py`          | Reverse-dependency count (`rdep_count`) in `/oss:review` risk assessment; stale-symbol detection in `/oss:analyse` issue triage, Open-PR Overlap + Structural Constraints in `/oss:analyse vitality`                                                   |
 
 All `oss` skills degrade gracefully when optional plugins absent — reduced capability, not broken commands.
 
@@ -888,6 +888,7 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 | `commit_all_items.py`       | Create a bulk commit summarizing resolved review items.                                                         |
 | `commit_lint_fixes.py`      | Stage tracked lint changes and create the lint-fix commit.                                                      |
 | `derive_fork_remote.py`     | Ensure the contributor's fork remote exists, then report the pending push scope.                                |
+| `fetch_alert_context.py`    | Write a review item and its linked CodeQL alert, fenced as untrusted data, into a no-network Codex brief.       |
 | `find_review_report.py`     | Enforce the `/oss:review` reject gate before `/oss:resolve` starts fixing a PR.                                 |
 | `git_state_snapshot.py`     | Print branch, HEAD, upstream, base merge-base, status lists, remotes and worktrees as one JSON.                 |
 | `heal_git_artifacts.py`     | Reclaim stale resolve locks and orphaned git worktrees.                                                         |

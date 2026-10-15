@@ -146,7 +146,7 @@ Per location:discussion comment: skip resolved-thread list entirely — PR discu
 
 ACTION_ITEM fields: id (sequential int starting at 1), type, change, severity, author,
 summary (≤60 chars, truncated at word boundary with …), file, line, url (html_url from
-API, blank for report items), full_comment_text, location, origin, status.
+API, blank for report items), full_comment_text (the comment body verbatim, links included — never trimmed, summarised or rewritten, because Codex dispatch reads linked CodeQL alerts from it), location, origin, status.
   - change ∈ {code,test,docs,config,ci,style,refactor,perf,architecture}; default=code when ambiguous. `perf` = latency/memory/throughput/allocation-focused comment; `architecture` = API design, module boundary, coupling, interface-shape comment. Keep in sync with `_shared/review-section-taxonomy.md`'s resolve `change` column and `action-item-dispatch.md`'s `change` → `IMPL_AGENT` table.
   - severity ∈ 1..5 (5=highest); [req] floor=3
   - location ∈ {inline, discussion, report}; inline = code-review comment (GitHub "Resolve conversation" button available); discussion = PR main-thread comment (no resolve button — cannot be marked resolved in GitHub UI); report = /review finding (no GitHub source)
