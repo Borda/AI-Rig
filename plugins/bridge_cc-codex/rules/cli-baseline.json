@@ -23,7 +23,8 @@
       "--output-schema",
       "--skip-git-repo-check",
       "--ignore-user-config",
-      "--ephemeral"
+      "--ephemeral",
+      "--enable"
     ]
   }
 }

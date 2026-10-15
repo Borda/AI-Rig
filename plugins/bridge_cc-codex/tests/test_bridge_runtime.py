@@ -311,6 +311,607 @@ def test_fresh_review_and_resume_argv_preserve_routing_contract(tmp_path: Path) 
         )
 
 
+class TestGithubReadNetwork:
+    """The opt-in ``github-read`` posture swaps the egress pin for a method- and domain-scoped permission profile."""
+
+    @pytest.fixture(autouse=True)
+    def _verified_platform(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Run as on the one host where enforcement was probed; the refusal elsewhere has its own tests."""
+        monkeypatch.setattr(bridge_call.sys, "platform", "darwin")
+
+    @pytest.fixture
+    def schema_path(self, tmp_path: Path) -> Path:
+        """Minimal schema file the argv builder only needs to reference."""
+        path = tmp_path / "core-schema.json"
+        path.write_text("{}", encoding="utf-8")
+        return path
+
+    @staticmethod
+    def _profile(command: list[str]) -> str:
+        """Return the profile name the argv selects with ``default_permissions``."""
+        selected = next(part for part in command if part.startswith("default_permissions="))
+        return json.loads(selected.split("=", 1)[1])
+
+    @pytest.mark.parametrize(
+        ("verb", "base"),
+        [
+            pytest.param("advise", ":read-only", id="advise"),
+            pytest.param("review", ":read-only", id="review"),
+            pytest.param("implement", ":workspace", id="implement"),
+        ],
+    )
+    def test_profile_replaces_pin_and_states_every_key(
+        self, tmp_path: Path, schema_path: Path, verb: str, base: str
+    ) -> None:
+        """Opting in drops the pin and `-s`, and states base, protected paths, method limit, domain and proxy feature.
+
+        `codex exec` enforces a domain allowlist only through a profile with the `network_proxy` feature on; a profile
+        without `network.mode="limited"` lets an authenticated POST through; and a profile extending `:workspace` loses
+        the built-in write protection of `.git`, `.codex` and `.agents`. Each is a failure a live probe showed.
+        """
+        command = bridge_call.build_codex_argv(_request(tmp_path, verb=verb, network="github-read"), schema_path)
+        profile = f"permissions.{self._profile(command)}"
+
+        assert "sandbox_workspace_write.network_access=false" not in command
+        assert "-s" not in command
+        assert f'{profile}.extends="{base}"' in command
+        assert (
+            f'{profile}.filesystem={{":workspace_roots"={{".git"="read",".codex"="read",".agents"="read"}}}}' in command
+        )
+        assert f'{profile}.network.mode="limited"' in command
+        assert f'{profile}.network.domains={{"api.github.com"="allow"}}' in command
+        assert command[command.index("--enable") + 1] == "network_proxy"
+        assert "--ignore-user-config" in command
+
+    def test_profile_name_is_random_per_build_and_used_consistently(self, tmp_path: Path, schema_path: Path) -> None:
+        """A random name leaves no configuration layer a profile to predefine, even for a caller-chosen run id.
+
+        A trusted project config that declares a profile of the same name adds its domains to ours, so the name must not
+        be derivable from anything a caller or a repository can know in advance.
+        """
+        first = bridge_call.build_codex_argv(_request(tmp_path, run_id="run-a", network="github-read"), schema_path)
+        again = bridge_call.build_codex_argv(_request(tmp_path, run_id="run-a", network="github-read"), schema_path)
+        used = {part.split("=", 1)[0].split(".")[1] for part in first if part.startswith("permissions.")}
+
+        assert self._profile(first) != self._profile(again)
+        assert used == {self._profile(first)}
+
+    def test_default_keeps_the_egress_pin(self, tmp_path: Path, schema_path: Path) -> None:
+        """Without the opt-in the argv is unchanged: pinned off, legacy sandbox flag, no profile."""
+        command = bridge_call.build_codex_argv(_request(tmp_path), schema_path)
+
+        assert "sandbox_workspace_write.network_access=false" in command
+        assert "--enable" not in command
+        assert not any(part.startswith("permissions.") for part in command)
+
+    def test_resumed_implement_uses_the_profile_not_sandbox_mode(self, tmp_path: Path, schema_path: Path) -> None:
+        """A resumed write session keeps the same posture as a fresh one and does not fall back to the pin."""
+        command = bridge_call.build_codex_argv(
+            _request(tmp_path, verb="implement", session_id="s-1", origin_workspace=tmp_path, network="github-read"),
+            schema_path,
+        )
+
+        assert 'sandbox_mode="workspace-write"' not in command
+        assert "sandbox_workspace_write.network_access=false" not in command
+        assert command[command.index("--enable") + 1] == "network_proxy"
+        assert self._profile(command).startswith("bridge-github-")
+
+    def test_unknown_mode_is_refused(self, tmp_path: Path, schema_path: Path) -> None:
+        """An unrecognised posture never falls back to a wider one."""
+        with pytest.raises(ValueError, match="network must be one of"):
+            bridge_call.build_codex_argv(_request(tmp_path, network="open"), schema_path)
+
+    def test_claude_peer_has_no_equivalent(self, tmp_path: Path, schema_path: Path) -> None:
+        """The opt-in is Codex-side only; a reverse-direction request carrying it is refused."""
+        request = _request(tmp_path, direction="codex_to_claude", network="github-read")
+
+        with pytest.raises(ValueError, match="no equivalent for the Claude peer"):
+            bridge_call.build_claude_argv(request, schema_path)
+
+    def test_cli_flag_reaches_the_request(self) -> None:
+        """`--network github-read` on the command line becomes the request's posture, and omitting it keeps `none`."""
+        parser = bridge_call._parser()
+        chosen = parser.parse_args(["advise", "--task", "t", "--network", "github-read"])
+        default = parser.parse_args(["advise", "--task", "t"])
+
+        assert bridge_call._request_from_args(chosen).network == "github-read"
+        assert bridge_call._request_from_args(default).network == "none"
+
+    def test_bad_cli_value_is_a_json_error_not_an_argparse_exit(self) -> None:
+        """A bad value parses, then fails in request validation, so it can reach the caller as a JSON envelope."""
+        args = bridge_call._parser().parse_args(["advise", "--task", "t", "--network", "open"])
+
+        with pytest.raises(ValueError, match="--network must be one of"):
+            bridge_call._request_from_args(args)
+
+    @pytest.mark.parametrize(
+        ("network", "expected"),
+        [pytest.param("github-read", True, id="opted-in"), pytest.param("none", False, id="default")],
+    )
+    def test_background_supervisor_argv_carries_the_posture(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, network: str, expected: bool
+    ) -> None:
+        """The detached supervisor rebuilds its request from argv, so the flag must be on the command it is started
+        with."""
+        commands: list[list[object]] = []
+
+        def _fake_popen(command: list[object], **kwargs: object) -> SimpleNamespace:
+            """Record the supervisor argv and return a process with a stable PID."""
+            commands.append(command)
+            return SimpleNamespace(pid=123)
+
+        monkeypatch.setattr(bridge_call.subprocess, "Popen", _fake_popen)
+        bridge_call.start_background(_request(tmp_path, verb="implement", background=True, network=network))
+
+        argv = [str(part) for part in commands[0]]
+        assert ("--network" in argv and argv[argv.index("--network") + 1] == "github-read") is expected
+
+    def test_background_refuses_an_unknown_posture_before_a_job_exists(self, tmp_path: Path) -> None:
+        """A bad value is rejected before any job record is written or supervisor spawned."""
+        with pytest.raises(ValueError, match="network must be one of"):
+            bridge_call.start_background(_request(tmp_path, verb="implement", background=True, network="open"))
+
+        assert not list((tmp_path / ".temp").rglob("*.json"))
+
+    def test_incident_records_the_posture(self, tmp_path: Path) -> None:
+        """An incident file shows whether egress was open, so a failed opted-in run is distinguishable afterwards."""
+        paths = bridge_call.BridgePaths(tmp_path.resolve())
+        paths.prepare()
+
+        relative = bridge_call._write_incident(
+            paths, _request(tmp_path, network="github-read"), "timeout", "budget", "t.txt", None
+        )
+
+        assert json.loads((tmp_path / relative).read_text(encoding="utf-8"))["network"] == "github-read"
+
+    @pytest.mark.parametrize(
+        ("network", "expected"),
+        [pytest.param("github-read", "github-read", id="opted-in"), pytest.param("none", "none", id="default")],
+    )
+    def test_health_record_carries_the_posture(self, tmp_path: Path, network: str, expected: str) -> None:
+        """A successful run leaves a health line that says whether egress was open, so an audit can tell afterwards."""
+        paths = bridge_call.BridgePaths(tmp_path.resolve())
+        paths.prepare()
+        envelope = {
+            "run_id": "r",
+            "verb": "advise",
+            "direction": "claude_to_codex",
+            "model": "m",
+            "effort": "low",
+            "cost": None,
+            "tokens": {},
+            "duration_seconds": 0.1,
+            "status": "complete",
+            "depth": 0,
+        }
+
+        bridge_call._append_health(paths, envelope, network)
+
+        line = (paths.root / "health.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+        assert json.loads(line)["network"] == expected
+
+    def test_detached_job_record_carries_the_posture(self, tmp_path: Path) -> None:
+        """The job record keeps the posture for status readers; the supervisor itself restarts from argv."""
+        record = bridge_call._request_json(_request(tmp_path, network="github-read"))
+
+        assert record["network"] == "github-read"
+
+    def test_prompt_tells_the_peer_about_the_limit(self, tmp_path: Path) -> None:
+        """An opted-in call's prompt says GitHub access is read-only; a default call's prompt does not mention
+        GitHub."""
+        opted = bridge_call._prompt_with_budget(_request(tmp_path, network="github-read"))
+        default = bridge_call._prompt_with_budget(_request(tmp_path))
+
+        assert "read requests to api.github.com" in opted
+        assert "api.github.com" not in default
+
+
+class _ChildReachedError(Exception):
+    """Raised by a stubbed child launcher to prove a request got that far."""
+
+
+def _stop_at_child(*args: object) -> None:
+    """Stand in for ``_run_child``: stop the request at the point where a real child would start."""
+    raise _ChildReachedError
+
+
+#: Preflight replies that all hold, in probe order: control, .git write, GET, POST, example.com.
+_HOLDING_PROBES: list[tuple[int, str]] = [
+    (0, ""),
+    (1, ""),
+    (0, "200 000"),
+    (0, "403 000 blocked-by-method-policy"),
+    (0, "000 403"),
+]
+
+
+class TestGithubReadGuards:
+    """Platform refusal and the per-call preflight that proves the profile still enforces its limits."""
+
+    @pytest.fixture(autouse=True)
+    def _verified_platform(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Run as on the one host where enforcement was probed, so the suite passes on every CI runner.
+
+        Tests about the refusal elsewhere set their own platform after this fixture.
+        """
+        monkeypatch.setattr(bridge_call.sys, "platform", "darwin")
+
+    @pytest.fixture
+    def schema_path(self, tmp_path: Path) -> Path:
+        """Minimal schema file the argv builder only needs to reference."""
+        path = tmp_path / "core-schema.json"
+        path.write_text("{}", encoding="utf-8")
+        return path
+
+    @pytest.mark.parametrize("platform", [pytest.param("linux", id="linux"), pytest.param("win32", id="windows")])
+    def test_unverified_platform_is_refused(
+        self, tmp_path: Path, schema_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str
+    ) -> None:
+        """Enforcement was probed on macOS only, so another host refuses the opt-in instead of trusting it
+        unverified."""
+        monkeypatch.setattr(bridge_call.sys, "platform", platform)
+
+        with pytest.raises(ValueError, match="verified on darwin only"):
+            bridge_call.build_codex_argv(_request(tmp_path, network="github-read"), schema_path)
+
+    def test_default_posture_is_unaffected_by_platform(
+        self, tmp_path: Path, schema_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The platform gate applies only to the opt-in; the default pinned posture builds everywhere."""
+        monkeypatch.setattr(bridge_call.sys, "platform", "linux")
+
+        assert "sandbox_workspace_write.network_access=false" in bridge_call.build_codex_argv(
+            _request(tmp_path), schema_path
+        )
+
+    @pytest.mark.parametrize(
+        ("verb", "replies", "expected"),
+        [
+            pytest.param("advise", _HOLDING_PROBES, None, id="all-hold"),
+            pytest.param(
+                "advise",
+                [*_HOLDING_PROBES[:4], (0, "403 000 blocked-by-allowlist")],
+                None,
+                id="example-refused-by-allowlist-header",
+            ),
+            pytest.param("advise", [(2, ""), *_HOLDING_PROBES[1:]], "sandbox start", id="sandbox-never-started"),
+            pytest.param("implement", _HOLDING_PROBES, "workspace write", id="workspace-write-did-not-land"),
+            pytest.param(
+                "advise", [_HOLDING_PROBES[0], (0, ""), *_HOLDING_PROBES[2:]], ".git write refusal", id="git-writable"
+            ),
+            pytest.param(
+                "advise",
+                [*_HOLDING_PROBES[:2], (0, "403 000"), *_HOLDING_PROBES[3:]],
+                "GET api.github.com",
+                id="github-limited",
+            ),
+            pytest.param(
+                "advise",
+                [*_HOLDING_PROBES[:3], (0, "403 000"), _HOLDING_PROBES[4]],
+                "POST refusal by the proxy",
+                id="github-own-403-not-the-proxy",
+            ),
+            pytest.param(
+                "advise",
+                [*_HOLDING_PROBES[:3], (0, "400 200"), _HOLDING_PROBES[4]],
+                "POST refusal by the proxy",
+                id="method-limit-dropped",
+            ),
+            pytest.param(
+                "advise", [*_HOLDING_PROBES[:4], (0, "301 200")], "example.com refusal", id="example-reachable"
+            ),
+            pytest.param(
+                "advise",
+                [_HOLDING_PROBES[0], (-1, ""), *_HOLDING_PROBES[2:]],
+                "the .git write refusal probe",
+                id="git-probe-never-ran",
+            ),
+        ],
+    )
+    def test_preflight_reports_the_first_broken_guarantee(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        verb: str,
+        replies: list[tuple[int, str]],
+        expected: str | None,
+    ) -> None:
+        """Each guarantee the opt-in documents is probed; any that does not hold blocks the call with its name.
+
+        A Codex release that renames a profile key drops that restriction silently; these are the observable effects.
+        A status alone is not trusted: GitHub's own 403 on a POST, or a redirect from example.com, does not pass.
+        The control probe first proves the sandbox ran, so a sandbox that never started cannot pass the later probes.
+        """
+        answers = iter(replies)
+        monkeypatch.setattr(bridge_call, "_sandbox_probe", lambda *args, **kwargs: next(answers))
+        request = _request(tmp_path, verb=verb, network="github-read", timeout_seconds=60.0)
+
+        result = bridge_call._github_read_preflight(request)
+
+        assert (result.split(" did not")[0] if result else None) == expected
+
+    def test_preflight_never_touches_the_callers_workspace_or_codex_home(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Probes run in a throwaway workspace with an empty Codex home, never the caller's or the user's.
+
+        The Codex child runs with ``--ignore-user-config``; an empty home keeps the user's config layer out of the probe
+        the same way, and keeps the proxy's certificate and logs out of the real home.
+        """
+        seen: list[tuple[Path, Path, bool]] = []
+
+        def probe(
+            overrides: list[str], workspace: Path, command: list[str], *, codex_home: Path, timeout: float
+        ) -> tuple[int, str]:
+            seen.append((workspace, codex_home, not any(codex_home.iterdir())))
+            return (1, "")
+
+        monkeypatch.setattr(bridge_call, "_sandbox_probe", probe)
+        bridge_call._github_read_preflight(_request(tmp_path, network="github-read", timeout_seconds=60.0))
+
+        assert seen
+        assert all(tmp_path not in [path, *path.parents] for workspace, home, _ in seen for path in (workspace, home))
+        assert all(workspace != home and home_empty for workspace, home, home_empty in seen)
+
+    def test_preflight_stays_inside_the_request_budget(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Each probe's timeout is capped by what remains of the request's budget, and a spent budget refuses.
+
+        Clock reads: deadline at 0, first probe at 0 (5 s left), second at 0.5 (4.5 s left), third at 9 (spent).
+        """
+        timeouts: list[float] = []
+        clock = iter([0.0, 0.0, 0.5, 9.0])
+
+        def probe(
+            overrides: list[str], workspace: Path, command: list[str], *, codex_home: Path, timeout: float
+        ) -> tuple[int, str]:
+            timeouts.append(timeout)
+            return _HOLDING_PROBES[len(timeouts) - 1]
+
+        monkeypatch.setattr(bridge_call.time, "monotonic", lambda: next(clock))
+        monkeypatch.setattr(bridge_call, "_sandbox_probe", probe)
+
+        result = bridge_call._github_read_preflight(_request(tmp_path, network="github-read", timeout_seconds=5.0))
+
+        assert timeouts == [5.0, 4.5]
+        assert result == "the request's time budget ran out before the GET api.github.com probe"
+
+    def test_failed_preflight_refuses_before_any_child(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A failed preflight returns a structured refusal and never starts the Codex child."""
+        monkeypatch.setattr(bridge_call.sys, "platform", "darwin")
+        monkeypatch.setattr(bridge_call, "_github_read_preflight", lambda request: "a write to .git was allowed")
+        monkeypatch.setattr(bridge_call, "_run_child", lambda *args: pytest.fail("refused request spawned a child"))
+
+        result = bridge_call.run_request(_request(tmp_path, network="github-read"))
+
+        incident = json.loads((tmp_path / result["incident"]).read_text(encoding="utf-8"))
+        assert result["status"] == "refused"
+        assert "github-read preflight failed: a write to .git was allowed" in result["verdict"]
+        assert (incident["fault"], incident["network"]) == ("network-preflight", "github-read")
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            pytest.param({"timed_out": True}, id="timeout-retry"),
+            pytest.param({"error": "unsupported effort"}, id="unsupported-effort-retry"),
+        ],
+    )
+    def test_retry_keeps_the_budget_the_preflight_left(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: dict[str, Any]
+    ) -> None:
+        """A retry is told and held to the same remaining budget as the first child, never the full one.
+
+        Both retry paths skip the preflight, so without carrying the reduced budget they would regain its time.
+        """
+        clock = [100.0]
+        seen: list[tuple[float, bool]] = []
+
+        def preflight(request: bridge_call.Request) -> None:
+            clock[0] += 4.0
+
+        def child(command: list[str], workspace: Path, timeout: float, job_path: Path | None = None):
+            seen.append((timeout, any("soft budget of 6 seconds" in part for part in command)))
+            return _outcome(**failure)
+
+        monkeypatch.setattr(bridge_call.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(bridge_call, "_github_read_preflight", preflight)
+        monkeypatch.setattr(bridge_call, "_run_child", child)
+
+        bridge_call.run_request(_request(tmp_path, network="github-read", effort="high", timeout_seconds=10.0))
+
+        cutoff = pytest.approx(6.0 * bridge_call.CHILD_TIMEOUT_MULTIPLIER)
+        incidents = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in bridge_call.BridgePaths(tmp_path.resolve()).incidents.glob("*.json")
+        ]
+        assert seen == [(cutoff, True), (cutoff, True)]
+        assert len(incidents) == 2
+        assert {incident["duration_budget_seconds"] for incident in incidents} == {6.0}
+
+    @pytest.mark.parametrize(
+        ("preflight_result", "status"),
+        [
+            pytest.param(None, "complete", id="opted-in-success"),
+            pytest.param("a probe failed", "refused", id="refused-preflight"),
+        ],
+    )
+    def test_run_records_the_posture_in_health(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, preflight_result: str | None, status: str
+    ) -> None:
+        """A whole opted-in run, finished or refused, leaves a health line saying egress was open to GitHub.
+
+        The clock is frozen so the preflight spends nothing and the success case really reaches the child.
+        """
+        monkeypatch.setattr(bridge_call.time, "monotonic", lambda: 100.0)
+        monkeypatch.setattr(bridge_call, "_github_read_preflight", lambda request: preflight_result)
+        monkeypatch.setattr(bridge_call, "_run_child", lambda *args: _outcome(core=_core()))
+
+        bridge_call.run_request(_request(tmp_path, network="github-read", timeout_seconds=10.0))
+
+        health = (tmp_path / ".temp" / "bridge" / "health.jsonl").read_text(encoding="utf-8").splitlines()
+        record = json.loads(health[-1])
+        assert (record["status"], record["network"]) == (status, "github-read")
+
+    def test_remaining_budget_that_overflows_the_transport_cap_refuses(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A remaining budget whose rendering lengthens the prompt past the cap refuses, never raises mid-call."""
+        clock = [100.0]
+
+        def preflight(request: bridge_call.Request) -> None:
+            clock[0] += 2.3
+
+        def too_large(request: bridge_call.Request) -> None:
+            if request.timeout_seconds != 1e6:
+                raise ValueError("task exceeds Bridge's encoded transport budget")
+
+        monkeypatch.setattr(bridge_call.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(bridge_call, "_github_read_preflight", preflight)
+        monkeypatch.setattr(bridge_call, "validate_request_transport_budget", too_large)
+        monkeypatch.setattr(bridge_call, "_run_child", _stop_at_child)
+
+        result = bridge_call.run_request(
+            _request(tmp_path, network="github-read", effort="trivial", timeout_seconds=1e6)
+        )
+
+        incident = json.loads((tmp_path / result["incident"]).read_text(encoding="utf-8"))
+        assert result["status"] == "refused"
+        assert "the remaining budget makes the request too large" in result["verdict"]
+        assert (incident["fault"], incident["network"]) == ("network-preflight", "github-read")
+        assert (incident["duration_budget_seconds"], incident["effort"]) == (999997.0, "minimal")
+
+    def test_probe_runs_codex_sandbox_with_an_empty_home(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The probe runner passes the overrides, the throwaway workspace and the empty Codex home to the sandbox.
+
+        Every other preflight test stubs the runner, so this pins the wiring that keeps the user's config layer out.
+        """
+        calls: list[dict[str, Any]] = []
+
+        def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            calls.append({"argv": argv, **kwargs})
+            return subprocess.CompletedProcess(argv, 0, " 200 000 \n", "")
+
+        monkeypatch.setattr(bridge_call.subprocess, "run", run)
+        home, workspace = tmp_path / "home", tmp_path / "ws"
+
+        result = bridge_call._sandbox_probe(["-c", "x=1"], workspace, ["curl", "u"], codex_home=home, timeout=7.0)
+
+        assert result == (0, "200 000")
+        assert calls[0]["argv"][1:] == ["sandbox", "-c", "x=1", "--", "curl", "u"]
+        assert (calls[0]["cwd"], calls[0]["env"]["CODEX_HOME"], calls[0]["timeout"]) == (workspace, str(home), 7.0)
+
+    def test_git_probe_fails_when_the_write_landed_despite_an_error_exit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-zero exit is not enough: if the sentinel file exists, the .git write happened and the call is
+        refused."""
+        answers = iter(_HOLDING_PROBES)
+
+        def probe(
+            overrides: list[str], workspace: Path, command: list[str], *, codex_home: Path, timeout: float
+        ) -> tuple[int, str]:
+            if "preflight" in command[-1]:
+                (workspace / ".git" / "preflight").write_text("x", encoding="utf-8")
+            return next(answers)
+
+        monkeypatch.setattr(bridge_call, "_sandbox_probe", probe)
+
+        result = bridge_call._github_read_preflight(_request(tmp_path, network="github-read", timeout_seconds=60.0))
+
+        assert result is not None
+        assert result.startswith(".git write refusal did not hold")
+
+    def test_default_posture_skips_the_preflight(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A valid call without the opt-in reaches the child without running the preflight."""
+        monkeypatch.setattr(bridge_call, "_github_read_preflight", lambda request: pytest.fail("preflight ran"))
+        monkeypatch.setattr(bridge_call, "_run_child", _stop_at_child)
+
+        with pytest.raises(_ChildReachedError):
+            bridge_call.run_request(_request(tmp_path))
+
+    def test_preflight_time_comes_out_of_the_child_budget(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The child is told, and held to, the budget the preflight left, so the whole call stays bounded.
+
+        The prompt's soft budget and the hard cutoff both come from what remains, never from the full budget.
+        """
+        clock = [100.0]
+        cutoffs: list[float] = []
+        commands: list[list[str]] = []
+
+        def preflight(request: bridge_call.Request) -> None:
+            clock[0] += 0.4
+
+        def child(command: list[str], workspace: Path, timeout: float, job_path: Path | None = None) -> None:
+            cutoffs.append(timeout)
+            commands.append(command)
+            raise _ChildReachedError
+
+        monkeypatch.setattr(bridge_call.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(bridge_call, "_github_read_preflight", preflight)
+        monkeypatch.setattr(bridge_call, "_run_child", child)
+
+        with pytest.raises(_ChildReachedError):
+            bridge_call.run_request(_request(tmp_path, network="github-read", timeout_seconds=10.0))
+
+        assert cutoffs == [pytest.approx(9.0 * bridge_call.CHILD_TIMEOUT_MULTIPLIER)]
+        assert any("soft budget of 9 seconds" in part for part in commands[0])
+
+    def test_refusal_reports_the_applied_effort(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A refused call's envelope carries the effort the call would have used, like every other early exit."""
+        monkeypatch.setattr(bridge_call, "_github_read_preflight", lambda request: "a probe failed")
+        captured: list[bridge_call.Request] = []
+        real = bridge_call._unstarted_context
+
+        def unstarted(request: bridge_call.Request, paths: object) -> object:
+            captured.append(request)
+            return real(request, paths)
+
+        monkeypatch.setattr(bridge_call, "_unstarted_context", unstarted)
+
+        # the "trivial" alias makes the requested and applied efforts differ, so the assertion can tell them apart
+        bridge_call.run_request(_request(tmp_path, network="github-read", effort="trivial"))
+
+        assert [seen.effort for seen in captured] == ["minimal"]
+
+    def test_preflight_that_spends_the_whole_budget_refuses(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A preflight that leaves no time for the child refuses the call instead of starting a child it must kill."""
+        clock = [100.0]
+
+        def preflight(request: bridge_call.Request) -> None:
+            clock[0] += 9.5
+
+        monkeypatch.setattr(bridge_call.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(bridge_call, "_github_read_preflight", preflight)
+        monkeypatch.setattr(bridge_call, "_run_child", _stop_at_child)
+
+        result = bridge_call.run_request(_request(tmp_path, network="github-read", timeout_seconds=10.0))
+
+        assert result["status"] == "refused"
+        assert "github-read preflight failed: it left less than one second" in result["verdict"]
+
+    def test_invalid_opted_in_request_never_reaches_github(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Effort validation runs before the preflight, so a request that cannot run sends no GitHub request."""
+        monkeypatch.setattr(bridge_call, "_github_read_preflight", lambda request: pytest.fail("preflight ran"))
+
+        result = bridge_call.run_request(_request(tmp_path, effort="bogus", network="github-read"))
+
+        assert result["status"] == "blocked"
+
+    def test_cancelled_job_skips_the_preflight(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A detached job cancelled before it starts is reported cancelled without probing GitHub first."""
+        monkeypatch.setattr(bridge_call, "_github_read_preflight", lambda request: pytest.fail("preflight ran"))
+        monkeypatch.setattr(bridge_call, "_job_cancel_requested", lambda *args, **kwargs: True)
+
+        result = bridge_call.run_request(_request(tmp_path, network="github-read"), _job_path=tmp_path / "job.json")
+
+        assert (result["status"], result["verdict"]) == ("blocked", "cancelled by job owner")
+
+
 def test_invalid_effort_is_rejected_before_a_child_can_spawn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Prevent an unknown caller effort from silently consuming default-tier tokens."""
     monkeypatch.setattr(bridge_call, "_run_child", lambda *args: pytest.fail("invalid effort spawned a child"))
@@ -1249,6 +1850,41 @@ def test_timeout_retries_read_only_once_at_a_lower_tier_but_never_implement(
     assert floor["effort_substituted"] is None
     assert implement["status"] == "timeout"
     assert implement["effort_substituted"] is None
+
+
+@pytest.mark.parametrize(
+    ("failure", "status"),
+    [
+        pytest.param({"timed_out": True}, "timeout", id="timeout-retry"),
+        pytest.param({"error": "unsupported effort"}, "blocked", id="unsupported-effort-retry"),
+    ],
+)
+def test_retry_that_would_not_fit_the_transport_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: dict[str, Any], status: str
+) -> None:
+    """A lower-effort retry whose prompt no longer fits is skipped, so the first result returns instead of an error.
+
+    A longer tier name (``high`` to ``medium``) can push a task near the limit past it; before this guard the retry re-
+    entered the request runner and raised, leaving an orphan incident and no envelope.
+    """
+    launches: list[list[str]] = []
+
+    def lowered_does_not_fit(request: bridge_call.Request) -> None:
+        if request.effort == "low":
+            raise ValueError("task exceeds Bridge's encoded transport budget")
+
+    def child(command: list[str], workspace: Path, timeout: float) -> bridge_call.ChildOutcome:
+        launches.append(command)
+        return _outcome(**failure)
+
+    monkeypatch.setattr(bridge_call, "validate_request_transport_budget", lowered_does_not_fit)
+    monkeypatch.setattr(bridge_call, "_run_child", child)
+
+    result = bridge_call.run_request(_request(tmp_path, effort="medium", supported_efforts=("low", "medium")))
+
+    assert len(launches) == 1
+    assert result["status"] == status
+    assert result["effort_substituted"] is None
 
 
 def test_parse_output_preserves_session_usage_and_cost() -> None:
@@ -2718,6 +3354,7 @@ def test_cli_reads_a_task_containing_shell_metacharacters_from_a_file(
         background=False,
         session_id=None,
         depth=0,
+        network="none",
         run_id=None,
         workspace=str(tmp_path),
     )

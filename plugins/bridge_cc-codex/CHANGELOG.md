@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.0
+
+- Add `--network github-read` to `advise`, `review` and `implement`: a per-call caller opt-in that replaces the Codex egress pin with a per-run permission profile that allows GET, HEAD and OPTIONS to `api.github.com` only and keeps `.git`, `.codex` and `.agents` at the workspace root read-only. The default stays `none`, the Claude peer refuses it, detached jobs keep the same posture and resumed sessions re-pass it, and incidents and health records record it. Relies on Codex's experimental `network_proxy` feature; the diagnose baseline now requires `--enable`. Every opted-in call first runs a `codex sandbox` preflight, with an empty Codex home and its time taken from the request's budget, that must show the sandbox running, the `.git` write denied, GET allowed, POST refused by the proxy's method policy and other domains refused, and the opt-in is refused outside macOS until enforcement there is verified.
+- Skip the one lower-effort retry after a timeout or an unsupported effort when the lower tier's longer name would push the prompt past the transport limit, so the first attempt's result is returned instead of an error with no envelope.
+
 ## 0.10.1
 
 - Preserve every valid captured result fact without presentation item-count or string-length rejection; keep actual child-record, output and transcript byte limits.

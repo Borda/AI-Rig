@@ -28,10 +28,11 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from pathlib import Path
@@ -53,6 +54,12 @@ CORE_STATUSES = {"complete", "partial", "blocked"}
 FINAL_STATUSES = CORE_STATUSES | {"timeout", "refused"}
 #: Reasoning-effort levels ordered lowest to highest; a requested level is clamped against this order.
 EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max")
+#: Egress postures a Codex child may be started with; ``none`` is the default and the only one without a caller opt-in.
+NETWORK_MODES = ("none", "github-read")
+#: Hosts on which the ``github-read`` profile's enforcement was probed; elsewhere the opt-in is refused until verified.
+_GITHUB_READ_PLATFORMS = ("darwin",)
+#: Seconds one preflight probe under ``codex sandbox`` may take.
+_PREFLIGHT_TIMEOUT = 30
 #: Environment variable carrying the bridge nesting depth to child processes, used by the recursion guard.
 DEPTH_ENVIRONMENT_VARIABLE = "CC_CODEX_BRIDGE_DEPTH"
 #: Factor applied to the caller's timeout to get the hard cutoff at which the child process group is killed.
@@ -212,6 +219,7 @@ class Request:
     session_id: str | None = None
     origin_workspace: Path | None = None
     supported_efforts: tuple[str, ...] = ()
+    network: str = "none"
 
 
 @dataclass(frozen=True)
@@ -365,10 +373,188 @@ def validate_envelope(value: Any) -> dict[str, Any]:
     return value
 
 
+def _github_read_overrides(request: Request) -> list[str]:
+    """Return the Codex overrides that allow only read requests to ``api.github.com``, on the verb's filesystem posture.
+
+    The profile replaces the legacy sandbox mode rather than adding to it. ``codex exec`` enforces a domain allowlist
+    only through a permission profile with the ``network_proxy`` feature on, and ``--ignore-user-config`` means the
+    user's own profile is never loaded, so the bridge states every key itself:
+
+    - ``network.mode="limited"`` restricts requests to GET, HEAD and OPTIONS; without it the domain allowlist alone lets
+      an authenticated POST reach GitHub.
+    - A profile that extends ``:workspace`` loses the protection the built-in profile gives ``.git``, ``.codex`` and
+      ``.agents`` (writing a git hook or a Codex config would run code outside the sandbox), so each is set read-only.
+    - The profile name is random per build, so no lower configuration layer (which a caller-chosen run id could be
+      matched against) can predefine the same profile and merge extra domains into it.
+
+    Args:
+        request: Request whose verb picks the base profile (``implement`` extends the workspace profile, the read
+            verbs the read-only one).
+
+    Returns:
+        Codex CLI arguments, to be placed where the sandbox selection would otherwise go.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> request = Request("advise", "t", None, "low", 1.0, 0, "run-1", Path("."), "claude_to_codex")
+        >>> "--enable" in _github_read_overrides(request)
+        True
+    """
+    base = ":workspace" if _is_write_verb(request.verb) else ":read-only"
+    name = "bridge-github-" + uuid.uuid4().hex[:12]
+    profile = f"permissions.{name}"
+    protected = '{":workspace_roots"={".git"="read",".codex"="read",".agents"="read"}}'
+    return [
+        "-c",
+        f"default_permissions={json.dumps(name)}",
+        "-c",
+        f"{profile}.extends={json.dumps(base)}",
+        "-c",
+        f"{profile}.filesystem={protected}",
+        "-c",
+        f"{profile}.network.enabled=true",
+        "-c",
+        f'{profile}.network.mode="limited"',
+        "-c",
+        f'{profile}.network.domains={{"api.github.com"="allow"}}',
+        "--enable",
+        "network_proxy",
+    ]
+
+
+def _sandbox_probe(
+    overrides: list[str], workspace: Path, command: list[str], *, codex_home: Path, timeout: float
+) -> tuple[int, str]:
+    """Run one command under ``codex sandbox`` with the given overrides and return its exit code and stdout.
+
+    ``CODEX_HOME`` points at an empty directory: the Codex child runs with ``--ignore-user-config``, so the user's
+    config layer must not shape the probe either, and the proxy's certificate and log writes stay out of the real home.
+    Managed requirements are not loaded (``codex sandbox`` applies them only with an explicit ``--permission-profile``,
+    while the profile here is selected through ``default_permissions`` as in the child's run). On a host with managed
+    requirements, whether they change the run's profile is unverified.
+    """
+    env = build_child_environment()
+    env["CODEX_HOME"] = str(codex_home)
+    try:
+        result = subprocess.run(  # noqa: S603 - argv list, no shell
+            _resolved_command(["codex", "sandbox", *overrides, "--", *command]),
+            cwd=workspace,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return -1, ""
+    return result.returncode, result.stdout.strip()
+
+
+def _curl_fields(output: str) -> tuple[str, str, str]:
+    """Split the preflight's curl output into HTTP status, proxy CONNECT status and the proxy's refusal reason.
+
+    Examples:
+        >>> _curl_fields("403 000 blocked-by-method-policy")
+        ('403', '000', 'blocked-by-method-policy')
+        >>> _curl_fields("")
+        ('', '', '')
+    """
+    status, connect, reason = [*output.split(maxsplit=2), "", "", ""][:3]
+    return status, connect, reason.strip()
+
+
+#: One preflight probe: what it proves, the command run in the sandbox, and the check on ``(exit code, curl fields)``.
+_Probe = tuple[str, list[str], Callable[[int, tuple[str, str, str]], bool]]
+
+
+def _preflight_probes(verb: str, workspace: Path) -> list[_Probe]:
+    """List the preflight probes in order; the first is a control that proves the sandbox ran at all."""
+    curl = ["curl", "-s", "-m", "10", "-o", "/dev/null", "-w", "%{http_code} %{http_connect} %header{x-proxy-error}"]
+    if _is_write_verb(verb):
+        control: _Probe = (
+            "workspace write",
+            ["/bin/sh", "-c", "echo x > control"],
+            lambda code, _: code == 0 and (workspace / "control").exists(),
+        )
+    else:
+        control = ("sandbox start", ["/bin/sh", "-c", "true"], lambda code, _: code == 0)
+    return [
+        control,
+        (
+            ".git write refusal",
+            ["/bin/sh", "-c", "echo x > .git/preflight"],
+            lambda code, _: code != 0 and not (workspace / ".git" / "preflight").exists(),
+        ),
+        # /rate_limit does not spend GitHub's unauthenticated quota, so the probe cannot rate-limit itself
+        ("GET api.github.com", [*curl, "https://api.github.com/rate_limit"], lambda _, fields: fields[0] == "200"),
+        (
+            "POST refusal by the proxy",
+            [*curl, "-X", "POST", "https://api.github.com/markdown"],
+            lambda _, fields: fields[0] == "403" and fields[2] == "blocked-by-method-policy",
+        ),
+        (
+            "example.com refusal",
+            [*curl, "https://example.com"],
+            lambda _, fields: fields[0] == "000" or fields[1] == "403" or fields[2] == "blocked-by-allowlist",
+        ),
+    ]
+
+
+def _github_read_preflight(request: Request) -> str | None:
+    """Prove on this Codex build that the ``github-read`` profile still enforces what the bridge relies on.
+
+    Codex silently ignores an unknown profile key, so a release that renames ``network.mode`` or reshapes
+    ``filesystem`` would drop that restriction without an error. Before an opted-in call, the same overrides run five
+    probes under ``codex sandbox`` in a throwaway workspace with an empty Codex home, never the caller's:
+
+    - a control: a trivial command must run (for a write verb, a workspace write must succeed), so the probes below
+      cannot pass merely because the sandbox never started;
+    - a write to ``.git`` must fail;
+    - a GET to ``https://api.github.com/rate_limit`` must return 200 (that endpoint does not spend the quota);
+    - a POST to ``https://api.github.com/markdown`` must get the proxy's 403 with ``x-proxy-error:
+      blocked-by-method-policy``, not a status GitHub itself chose;
+    - ``https://example.com`` must be refused by the proxy or unreachable.
+
+    The whole preflight stays within the request's own time budget.
+
+    Args:
+        request: The opted-in request; its verb picks the base profile the probes use.
+
+    Returns:
+        ``None`` when every probe holds, otherwise a short description of the first one that did not.
+    """
+    deadline = time.monotonic() + request.timeout_seconds
+    overrides = _github_read_overrides(request)
+    with tempfile.TemporaryDirectory(prefix="bridge-preflight-") as scratch:
+        workspace, codex_home = Path(scratch, "workspace"), Path(scratch, "codex-home")
+        (workspace / ".git").mkdir(parents=True)
+        codex_home.mkdir()
+        for label, command, holds in _preflight_probes(request.verb, workspace):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return f"the request's time budget ran out before the {label} probe"
+            code, output = _sandbox_probe(
+                overrides, workspace, command, codex_home=codex_home, timeout=min(remaining, _PREFLIGHT_TIMEOUT)
+            )
+            if code < 0:  # timed out or could not spawn: a refusal check must not read that as "refused"
+                return f"the {label} probe did not complete (timeout, spawn failure or signal)"
+            if not holds(code, _curl_fields(output)):
+                return f"{label} did not hold (exit {code}, output {output or 'none'!r})"
+    return None
+
+
 def build_codex_argv(request: Request, schema_path: Path) -> list[str]:
     """Build a verified local Codex CLI command for a bridge request."""
+    if request.network not in NETWORK_MODES:
+        raise ValueError(f"network must be one of: {', '.join(NETWORK_MODES)}")
+    if request.network == "github-read" and sys.platform not in _GITHUB_READ_PLATFORMS:
+        raise ValueError(
+            f"--network github-read is verified on {', '.join(_GITHUB_READ_PLATFORMS)} only; "
+            "fetch the GitHub data in the caller and pass it in the task file instead"
+        )
     quoted_effort = json.dumps(request.effort)
     prompt = _prompt_with_budget(request)
+    github_read = request.network == "github-read"
     common = [
         "-c",
         f"model_reasoning_effort={quoted_effort}",
@@ -380,8 +566,9 @@ def build_codex_argv(request: Request, schema_path: Path) -> list[str]:
         # whatever Codex defaults to in the installed version. Pinning it keeps
         # the child unable to send workspace contents anywhere, which is the
         # cheapest capability to remove: it still reads code and writes files.
-        "-c",
-        "sandbox_workspace_write.network_access=false",
+        # A caller opt-in to `github-read` swaps this pin and `-s` for a
+        # domain- and method-scoped permission profile (see _github_read_overrides).
+        *([] if github_read else ["-c", "sandbox_workspace_write.network_access=false"]),
         "--skip-git-repo-check",
         "--ignore-user-config",
         "--json",
@@ -402,11 +589,19 @@ def build_codex_argv(request: Request, schema_path: Path) -> list[str]:
             request.session_id,
             prompt,
             *common,
-            "-c",
-            f"sandbox_mode={json.dumps('workspace-write')}",
+            *(
+                _github_read_overrides(request)
+                if github_read
+                else ["-c", f"sandbox_mode={json.dumps('workspace-write')}"]
+            ),
         ]
     sandbox = "workspace-write" if _is_write_verb(request.verb) else "read-only"
-    command = ["codex", "exec", *common, "-s", sandbox]
+    command = [
+        "codex",
+        "exec",
+        *common,
+        *(_github_read_overrides(request) if github_read else ["-s", sandbox]),
+    ]
     if not _is_write_verb(request.verb):
         command.append("--ephemeral")
     return [*command, prompt]
@@ -414,6 +609,8 @@ def build_codex_argv(request: Request, schema_path: Path) -> list[str]:
 
 def build_claude_argv(request: Request, schema_path: Path) -> list[str]:
     """Build the Claude print-mode command with its compatible peer schema."""
+    if request.network != "none":
+        raise ValueError("network opt-in is a Codex-side control with no equivalent for the Claude peer")
     effort, _ = normalize_effort(request.effort, "claude", request.supported_efforts)
     permission = "acceptEdits" if _is_write_verb(request.verb) else "plan"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -473,6 +670,24 @@ def _unstarted_context(request: Request, paths: BridgePaths) -> EnvelopeContext:
     return EnvelopeContext(request, paths, None, {}, None, 0.0)
 
 
+def _lower_effort_retry(request: Request, budget: float) -> Request | None:
+    """Build the one lower-effort retry of a request, or ``None`` when there is no lower tier or it would not fit.
+
+    A lower tier's name can be longer than the one it replaces (``high`` to ``medium``), so a task near the transport
+    limit can fit at the first effort and not at the retry's; skipping that retry keeps the first attempt's result
+    instead of raising halfway through the call.
+    """
+    retry_effort = _lower_effort(request.effort, request.supported_efforts)
+    if retry_effort is None:
+        return None
+    retry = Request(**{**request.__dict__, "timeout_seconds": budget, "effort": retry_effort})
+    try:
+        validate_request_transport_budget(retry)
+    except ValueError:
+        return None
+    return retry
+
+
 def run_request(
     request: Request,
     *,
@@ -509,21 +724,49 @@ def run_request(
         if host == "codex"
         else build_claude_argv(effective_request, schema_path)
     )
+    preflight_seconds = 0.0
+    if request.network == "github-read" and host == "codex" and _attempt == 0:
+        # after validation and a cancel check, so a request that cannot run never reaches GitHub
+        if _job_path is not None and _job_cancel_requested(_job_path, paths=paths):
+            return _terminal_envelope(_unstarted_context(effective_request, paths), "blocked", "cancelled by job owner")
+        preflight_started = time.monotonic()
+        failure = _github_read_preflight(request)
+        preflight_seconds = time.monotonic() - preflight_started
+        # whole seconds: a fractional budget renders longer in the prompt and could push it past the transport cap
+        remaining = math.floor(request.timeout_seconds - preflight_seconds)
+        if failure is None and remaining < 1:
+            failure = "it left less than one second of the request's time budget"
+        if failure is not None:
+            return _terminal_envelope(
+                _unstarted_context(effective_request, paths),
+                "refused",
+                f"github-read preflight failed: {failure}",
+                fault="network-preflight",
+            )
+        # from here on the request describes the child: its prompt, cutoff, retries and incidents use what remains
+        effective_request = Request(**{**effective_request.__dict__, "timeout_seconds": float(remaining)})
+        try:
+            # the budget renders with ``{:g}``, whose length is not monotone (1e+06 vs 999998), so the shorter budget
+            # can still lengthen the prompt past the transport cap; a retry revalidates and would raise there
+            validate_request_transport_budget(effective_request)
+        except ValueError as error:
+            return _terminal_envelope(
+                _unstarted_context(effective_request, paths),
+                "refused",
+                f"github-read preflight failed: the remaining budget makes the request too large ({error})",
+                fault="network-preflight",
+            )
+        command = build_codex_argv(effective_request, schema_path)
+    child_budget = effective_request.timeout_seconds
     before_delta = _workspace_state(effective_request.workspace) if _is_write_verb(effective_request.verb) else []
+    child_cutoff = child_budget * CHILD_TIMEOUT_MULTIPLIER
     started = time.monotonic()
     if _job_path is None:
-        outcome = _run_child(
-            command, effective_request.workspace, effective_request.timeout_seconds * CHILD_TIMEOUT_MULTIPLIER
-        )
+        outcome = _run_child(command, effective_request.workspace, child_cutoff)
     else:
         if _job_cancel_requested(_job_path, paths=paths):
             return _terminal_envelope(_unstarted_context(effective_request, paths), "blocked", "cancelled by job owner")
-        outcome = _run_child(
-            command,
-            effective_request.workspace,
-            effective_request.timeout_seconds * CHILD_TIMEOUT_MULTIPLIER,
-            _job_path,
-        )
+        outcome = _run_child(command, effective_request.workspace, child_cutoff, _job_path)
     duration = time.monotonic() - started
     transcript = _write_transcript(paths, outcome.stdout, outcome.stderr)
     event_info = _parse_output(outcome.stdout, host)
@@ -550,13 +793,12 @@ def run_request(
             prior_incident=_prior_incident,
         )
     if outcome.timed_out:
-        retry_effort = _lower_effort(effective_request.effort, effective_request.supported_efforts)
-        if _attempt == 0 and effective_request.verb in {"advise", "review"} and retry_effort is not None:
-            recovery = {"requested": effective_request.effort, "applied": retry_effort, "reason": "timeout retry"}
+        retry = _lower_effort_retry(effective_request, child_budget)
+        if _attempt == 0 and effective_request.verb in {"advise", "review"} and retry is not None:
+            recovery = {"requested": effective_request.effort, "applied": retry.effort, "reason": "timeout retry"}
             incident = _write_incident(
                 paths, effective_request, "timeout", "hard cutoff reached; retrying once", transcript, None
             )
-            retry = Request(**{**effective_request.__dict__, "effort": retry_effort})
             return run_request(
                 retry, host=host, _attempt=1, _recovery=recovery, _prior_incident=incident, _job_path=_job_path
             )
@@ -585,23 +827,17 @@ def run_request(
         )
     if outcome.returncode != 0:
         reason = event_info.error or f"child exited with code {outcome.returncode}"
-        retry_effort = _lower_effort(effective_request.effort, effective_request.supported_efforts)
+        retry = _lower_effort_retry(effective_request, child_budget)
         # The stale-capability retry stays read-only: a failed write-capable
         # child may already have landed edits, so rerunning it can duplicate
         # or conflict with work that reached the worktree.
-        if (
-            _attempt == 0
-            and not _is_write_verb(effective_request.verb)
-            and _is_effort_failure(reason)
-            and retry_effort is not None
-        ):
+        if _attempt == 0 and not _is_write_verb(effective_request.verb) and _is_effort_failure(reason) and retry:
             recovery = {
                 "requested": effective_request.effort,
-                "applied": retry_effort,
+                "applied": retry.effort,
                 "reason": "structured unsupported effort",
             }
             incident = _write_incident(paths, effective_request, "unsupported-effort", reason, transcript, None)
-            retry = Request(**{**effective_request.__dict__, "effort": retry_effort})
             return run_request(
                 retry, host=host, _attempt=1, _recovery=recovery, _prior_incident=incident, _job_path=_job_path
             )
@@ -617,7 +853,7 @@ def run_request(
     # Only the write-capable verb may report a resumable session; the others drop it from the envelope.
     reportable_session = observed if _is_write_verb(effective_request.verb) else replace(observed, session_id=None)
     envelope = _make_envelope(reportable_session, core, event_info.cost, _prior_incident)
-    _record_optional_health(paths, envelope)
+    _record_optional_health(paths, envelope, observed.request.network)
     return envelope
 
 
@@ -1291,6 +1527,13 @@ def _prompt_with_budget(request: Request) -> str:
             "Leave every change unstaged and uncommitted: do not run git add, git commit, git push, or any other Git "
             "write. The caller reviews the diff and commits.\n\n"
         )
+    if request.network == "github-read":
+        # The sandbox already limits requests to GET/HEAD/OPTIONS on api.github.com; this tells the peer, so it does not
+        # waste its budget on a write that would be refused, and asks it not to put workspace content in a query string.
+        preamble += (
+            "GitHub access is limited to read requests to api.github.com. Never create, edit, comment on, close, merge, "
+            "label or delete anything on GitHub, and send no workspace content in a request.\n\n"
+        )
     return preamble + request.task
 
 
@@ -1407,7 +1650,7 @@ def _terminal_envelope(
         paths, context.request, fault or status, reason, transcript_path, workspace_delta, prior_incident
     )
     envelope = _make_envelope(context, core, None, incident)
-    _record_optional_health(paths, envelope)
+    _record_optional_health(paths, envelope, context.request.network)
     return envelope
 
 
@@ -1428,6 +1671,7 @@ def _write_incident(
         "model": request.model or "host-default",
         "effort": request.effort,
         "verb": request.verb,
+        "network": request.network,
         "duration_budget_seconds": request.timeout_seconds,
         "transcript_path": transcript_path,
         "workspace_delta": workspace_delta or [],
@@ -1437,18 +1681,18 @@ def _write_incident(
     return paths.relative(path)
 
 
-def _record_optional_health(paths: BridgePaths, envelope: dict[str, Any]) -> None:
+def _record_optional_health(paths: BridgePaths, envelope: dict[str, Any], network: str = "none") -> None:
     """Preserve primary delivery and report safe optional-telemetry diagnostics to the caller."""
     try:
-        _append_health(paths, envelope)
+        _append_health(paths, envelope, network)
     except (ArtifactBoundaryError, OSError):
         # Telemetry failure cannot erase completed work or obscure a primary failure.
         # Keep the message fixed because OS errors can include sensitive path content.
         envelope["findings"].append("Nonblocking health telemetry warning: health record could not be written safely.")
 
 
-def _append_health(paths: BridgePaths, envelope: dict[str, Any]) -> None:
-    """Append one cross-hop accounting record for every completed bridge call."""
+def _append_health(paths: BridgePaths, envelope: dict[str, Any], network: str = "none") -> None:
+    """Append one cross-hop accounting record for every completed bridge call, including its egress posture."""
     payload = {
         key: envelope[key]
         for key in (
@@ -1464,6 +1708,7 @@ def _append_health(paths: BridgePaths, envelope: dict[str, Any]) -> None:
             "depth",
         )
     }
+    payload["network"] = network
     payload["ts"] = time.time()
     path = paths._member(paths.root / "health.jsonl", check_leaf=False)
     with _open_regular_append(path) as stream:
@@ -1571,6 +1816,8 @@ def start_background(request: Request) -> dict[str, Any]:
         command.extend(["--model", request.model])
     if request.session_id:
         command.extend(["--session-id", request.session_id])
+    if request.network != "none":
+        command.extend(["--network", request.network])
     kwargs: dict[str, Any] = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -1906,6 +2153,8 @@ def _request_from_args(args: argparse.Namespace) -> Request:
         raise ValueError("--background is available only for implement")
     if args.depth < 0:
         raise ValueError("--depth must be a non-negative integer")
+    if args.network not in NETWORK_MODES:
+        raise ValueError(f"--network must be one of: {', '.join(NETWORK_MODES)}")
     timeout = args.timeout_seconds if args.timeout_seconds is not None else DEFAULT_TIMEOUTS[args.verb]
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("--timeout-seconds must be a finite positive number")
@@ -1924,6 +2173,7 @@ def _request_from_args(args: argparse.Namespace) -> Request:
         args.background,
         args.session_id,
         workspace if args.session_id else None,
+        network=args.network,
     )
     validate_request_transport_budget(request)
     return request
@@ -1947,6 +2197,12 @@ def _parser() -> argparse.ArgumentParser:
         child.add_argument("--background", action="store_true")
         child.add_argument("--session-id")
         child.add_argument("--depth", type=int, default=0)
+        # No argparse `choices`: a bad value is rejected in _request_from_args so it reaches the caller as JSON.
+        child.add_argument(
+            "--network",
+            default="none",
+            help="Codex egress: none (default) or github-read (GET/HEAD/OPTIONS to api.github.com only)",
+        )
         child.add_argument("--run-id")
         child.add_argument("--workspace", default=".")
         child.add_argument("--job-id", help=argparse.SUPPRESS)

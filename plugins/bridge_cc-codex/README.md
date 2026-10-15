@@ -16,7 +16,7 @@ A user-reported dismissed question leaves its decision pending. The root checks 
 
 The bridge is useful with either host integration installed and has no dependency on another plugin from this repository. Existing-plugin replacement and consumer migration are deliberately outside this standalone package.
 
-> Release: `0.10.1`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
+> Release: `0.11.0`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
 
 ______________________________________________________________________
 
@@ -189,11 +189,12 @@ Invoke the namespaced skills directly. Pass a concrete task or question and sele
 
 The verb skills accept the bridge's task text and these caller-selected fields:
 
-| Applies to            | Fields and behavior                                                                                                                                                                                                            |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| All verbs             | `--timeout-seconds`, `--depth`, `--run-id`, and `--workspace`. Omitted budget uses the per-verb default (`advise` 120 seconds, `review` 300 seconds, `implement` 600 seconds); omitted depth starts an outermost call at zero. |
-| `implement`           | `--background` and `--session-id`. A write-capable implementation is never automatically retried after timeout because its process may already have changed the worktree.                                                      |
-| `advise` and `review` | May receive one bounded retry at the next lower supported effort tier, so the retry can finish within the same budget.                                                                                                         |
+| Applies to                      | Fields and behavior                                                                                                                                                                                                            |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| All verbs                       | `--timeout-seconds`, `--depth`, `--run-id`, and `--workspace`. Omitted budget uses the per-verb default (`advise` 120 seconds, `review` 300 seconds, `implement` 600 seconds); omitted depth starts an outermost call at zero. |
+| `implement`                     | `--background` and `--session-id`. A write-capable implementation is never automatically retried after timeout because its process may already have changed the worktree.                                                      |
+| `advise`, `review`, `implement` | `--network none\|github-read` (default `none`; caller opt-in, Codex peer only).                                                                                                                                                |
+| `advise` and `review`           | May receive one bounded retry at the next lower supported effort tier, so the retry can finish within the same budget.                                                                                                         |
 
 Long-running implementation work may be detached. Use the job identifier printed by the bridge to inspect or stop it — one check when you have a reason to look, never a polling loop; any state other than `queued` or `running` is final:
 
@@ -347,7 +348,8 @@ Safety boundaries:
 - Timeout and cancellation give POSIX peer groups a two-second cooperative grace, then force termination even when the group leader already exited. Windows invokes `taskkill /T /F` before a leader can exit and orphan its tree; native Windows reparse and tree behavior still require native-host verification.
 - Provider login output is never captured, and rollback never touches credentials.
 - The peer child receives an allowlisted environment, not the caller's: base process keys, provider authentication keys, and on Windows the interpreter start-up keys. Unrelated API keys, cloud credentials, and the session's inter-agent messaging variables are dropped. A host whose proxy or enterprise provider path needs more names them in `BRIDGE_CHILD_ENV_EXTRA` (comma-separated).
-- ! BREAKING — every Codex invocation pins `sandbox_workspace_write.network_access=false`, so an `implement` task that installed a dependency, refreshed a lockfile, or ran a network-touching hook now fails inside the sandbox. The control is Codex-side only; the Claude child is constrained by permission mode instead.
+- ! BREAKING — unless the caller opts in with `--network github-read`, every Codex invocation pins `sandbox_workspace_write.network_access=false`, so an `implement` task that installed a dependency, refreshed a lockfile, or ran a network-touching hook now fails inside the sandbox. The control is Codex-side only; the Claude child is constrained by permission mode instead.
+- Opt-in egress: `--network github-read` swaps that pin for a profile that allows GET, HEAD and OPTIONS to `api.github.com` only, keeps `.git`, `.codex` and `.agents` at the workspace root read-only, and relies on Codex's experimental `network_proxy` feature (an unknown profile key is silently ignored by Codex, so re-check after upgrades). The caller chooses it per call; the default stays `none`, and the Claude peer refuses it. A GET can still carry workspace content in its URL, so prefer fetching GitHub data yourself and passing it in the task file. Each opted-in call first proves the limits with a sandbox preflight (a few requests to `api.github.com` and `example.com`) and is refused if any fails; the opt-in is refused outside macOS until enforcement there is verified. See `docs/security.md`.
 
 Termination reaps the child leader after native tree cleanup, including Windows `taskkill` and direct-kill fallbacks. The final wait is bounded to two seconds; unavailable exit status is diagnosed rather than fabricated. Existing timeout, cancellation, and output-limit classifications stay intact.
 
