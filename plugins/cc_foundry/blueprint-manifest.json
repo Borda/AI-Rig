@@ -806,7 +806,7 @@
     },
     "23eefbf744adbe1d035200bf130dbb080b24625ecf0f4325d5bb5f213a2fbdd3": {
       "kind": "block",
-      "src": "rules/_full/git-commit.md:211"
+      "src": "rules/_full/git-commit.md:208"
     },
     "23f491b88ce2b7922e34eebc665dcfec4b4151e1a00dd0f07463b820f9702943": {
       "kind": "command",
@@ -5257,6 +5257,6 @@
       "src": "rules/claude-config.md:41"
     }
   },
-  "plugin": "cc_foundry@0.67.3",
+  "plugin": "cc_foundry@0.67.4",
   "schema": 1
 }

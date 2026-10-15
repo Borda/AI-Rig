@@ -44,7 +44,7 @@ through the shared result writer, and runs the shared validator in all-errors mo
 candidate to ``result.json``.
 
 ``obligations --run <run>`` derives inspectable report source occurrences from retained ``findings-input.txt``.
-Attach those sources to the appropriate inventory items; the generated list grants no admission or selection.
+Retain these as review context; they grant no admission, selection, or automatic action-item authority.
 ``preflight --run <run> --stage selection [--report]`` validates pending inventory and exact report coverage before
 prompting. ``preflight --run <run> --stage plan --metadata <draft.json>`` validates frozen ownership, selection,
 dependencies and dispatch evidence before edits; completed parallel runtime evidence remains a final gate.
@@ -469,7 +469,12 @@ def derive_metadata(run: Path, metadata: dict[str, Any]) -> dict[str, Any]:
     derive_merge(run, metadata)
     intake = metadata.get("review_report_intake", {})
     if intake.get("requested_report") and intake.get("admission_status", "completed") != "unavailable":
-        intake["obligation_records_version"] = 1
+        intake["obligation_records_version"] = 2
+        validator = _load_module("codex_rig_validate_artifacts", "validate-artifacts.py")
+        intake["context_sources"] = validator.report_obligation_sources(
+            _load(run / "findings-input.txt"), intake.get("admission_evidence", {}).get("producer_result_path")
+        )
+        intake["review_limitations"] = _load(run / "selection.json").get("review_limitations", [])
     return metadata
 
 
@@ -751,7 +756,8 @@ def append_review_resolutions(
     commits, default = _item_commits(item_shas or [], sha)
     ledger = review_run / REVIEW_RESOLUTION_LEDGER
     existing = set(ledger.read_text(encoding="utf-8").splitlines()) if ledger.is_file() else set()
-    items = _load(result_path).get("metadata", {}).get("final_resolution_table", {}).get("items") or []
+    metadata = _load(result_path).get("metadata", {})
+    items = metadata.get("final_resolution_table", {}).get("items") or []
     lines, unmatched, seen = [], [], set()
     for item in items:
         for finding_id in _report_finding_ids(item):
@@ -773,6 +779,26 @@ def append_review_resolutions(
             line = _json_line(record)
             if line.rstrip("\n") not in existing:
                 lines.append(line)
+    # Reclassified process records must stay rejected when the producer is read again, without becoming work items.
+    intake = metadata.get("review_report_intake", {})
+    for limitation in intake.get("review_limitations", []) if intake.get("obligation_records_version") == 2 else []:
+        finding_id = limitation["finding_id"]
+        if finding_id not in known or finding_id in seen:
+            raise DeriveError(f"resolution-review-limitation-invalid:{finding_id}")
+        seen.add(finding_id)
+        line = _json_line(
+            {
+                "schema_version": RESOLUTION_SCHEMA_VERSION,
+                "finding_id": finding_id,
+                "item_id": finding_id,
+                "verdict": "rejected",
+                "sha": None,
+                "why": _one_line(limitation["rationale"]),
+                "remediation_run": run.name,
+            }
+        )
+        if line.rstrip("\n") not in existing:
+            lines.append(line)
     if lines:
         _append_text(ledger, "".join(lines))
     return {
@@ -1263,11 +1289,17 @@ def _preflight_action(arguments: argparse.Namespace) -> dict[str, Any]:
     final_handoff._validate_selection(inventory)
     if arguments.stage == "selection":
         if arguments.report:
+            context_sources = validator.report_obligation_sources(
+                _load(run / "findings-input.txt"), arguments.producer_result_path
+            )
             validator._validate_code_remediate_report_coverage(
                 {
                     "final_resolution_table": {"items": inventory["items"]},
                     "review_report_intake": {
-                        "admission_evidence": {"producer_result_path": arguments.producer_result_path}
+                        "admission_evidence": {"producer_result_path": arguments.producer_result_path},
+                        "obligation_records_version": 2,
+                        "context_sources": context_sources,
+                        "review_limitations": inventory.get("review_limitations", []),
                     },
                 },
                 run,

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.67.4
+
+- Select fixed context-composition fixture sessions explicitly so rendering tests remain valid after the checkout ages beyond the default 24-hour usage window.
+- Recognize literal dictionary-key version assignments in continuity checks, preserving existing schema baselines while rejecting skipped versions.
+- Keep review coverage and confidence gaps as factual limitations; require a specific user decision for additional review and omit declined requests from findings and final actions.
+- Make the `git-approve`, `git-push` and `gh-write` questions readable: the first line states the ask (commit, push or write target), one blank line follows, then short fact lines; what each answer does moves into the one-line option descriptions instead of repeating in the question body. The `Approve always` description names what the grant never covers (push, force, history rewrite, discarding work, deleting unique history, auth changes). The `git-push` and `gh-write` `Approve` descriptions keep the token terms (15-minute validity; `gh-write` also re-hashes the files the command reads). Branch, command span and grant-file requirements for the approval hook are unchanged.
+- Cross-validation protocol: state that aggregate `readiness: complete` requires every assessment `readiness: complete` and an empty `open_concerns`; one blocked or incomplete assessment makes the aggregate blocked or incomplete, and a missing required role or a `null` candidate makes it `incomplete`, overriding `blocked`, also under a null aggregate outcome. Resolver intake already enforced this; the protocol now says it.
+
 ## 0.67.3
 
 - State the adversarial-loop progress table in the always-loaded quality-gates rule: after each validated round, print exactly the `Iteration | Critical | High | Medium | Low | Nits | Weighted score` table with all rows kept and each cell as `old + new`. The format lived only in the lazily read full rule, and a live loop report replaced it with a reduced table.

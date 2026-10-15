@@ -319,6 +319,8 @@ def test_actual_claude_entrypoint_imports_and_writes(tmp_path: Path) -> None:
             sys.executable,
             str(Path(analyzer.__file__)),
             "--composition",
+            "--session-id",
+            "composition_duplicate_usage",
             "--runtime",
             "claude",
             "--compactions-log",
@@ -340,7 +342,12 @@ def test_missing_compactions_log_preserves_session_report(tmp_path: Path) -> Non
     """A missing log adds only a note to the existing Claude session measurements."""
     path = FIXTURES / "composition_compactions_example.jsonl"
     output = tmp_path / "context.md"
-    assert analyzer.main(["--composition", "--projects-root", str(path), "--output", str(output)]) == 0
+    assert (
+        analyzer.main(
+            ["--composition", "--session-id", path.stem, "--projects-root", str(path), "--output", str(output)]
+        )
+        == 0
+    )
     report = output.read_text(encoding="utf-8")
     assert report.count("no logged compaction events") == 1
     assert "Logged compaction events" not in report
@@ -367,6 +374,8 @@ def test_logged_compactions_render_and_compare_fixture_windows(tmp_path: Path) -
         analyzer.main(
             [
                 "--composition",
+                "--session-id",
+                "composition_compactions_example",
                 "--projects-root",
                 str(FIXTURES / "composition_compactions_example.jsonl"),
                 "--compactions-log",
@@ -470,6 +479,8 @@ def test_malformed_compaction_events_warn_and_keep_valid_rows(tmp_path: Path, ca
         analyzer.main(
             [
                 "--composition",
+                "--session-id",
+                "composition_compactions_example",
                 "--projects-root",
                 str(FIXTURES / "composition_compactions_example.jsonl"),
                 "--compactions-log",

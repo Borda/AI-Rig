@@ -4,6 +4,14 @@ Detailed codex-native workflows emit the same gate fields. Documented lightweigh
 
 Apply [Acceptance and recovery](native-skill-contract.md#acceptance-and-recovery): reviewer/report formatting and wording hints do not become failed acceptance checks. Preserve semantic structure and factual evidence; automatically handle equivalent presentation at the owning reader and retain raw evidence. Calibration benchmark wording misses are advisory entries in `checks.txt`; structural contract and behavioral failures retain their normal failed-check accounting. Configured project checks still run, with authorized automatic formatting/correction and relevant reruns; a tool's diagnostic alone does not establish its impact on delivery.
 
+## Review limitations and additional review
+
+Deliver the full review supported by the evidence actually obtained. Missing independent coverage, unavailable reviewer tools, unproven context isolation, incomplete provenance, unexecuted checks and confidence limitations describe the review's limits; they are not source defects, severity findings, operational-blocker rows or automatic remediation tasks. Preserve actual failed checks and qualify readiness and conclusions honestly; never fabricate passing evidence or unconditional approval. A concrete source defect supported by evidence remains a finding even when coverage is limited.
+
+If an additional review beyond the already authorized scope would resolve a material uncertainty, ask once for a decision before dispatch. State the exact question or gap, bounded scope, expected evidence/output and stopping condition, and offer to finish with the stated limitation. Existing explicit authorization for that same pass remains valid. A declined or dismissed optional review is skipped: do not re-ask, dispatch an alternative reviewer, or carry the request into final findings, blockers, recommendations, next steps or remediation selection. Retain only the factual limitation describing what was not verified. An unanswered optional question never authorizes dispatch; finish the available review with its limitation. An explicitly pending required decision keeps only its dependent work paused.
+
+One accepted additional pass does not authorize another pass or a review/fix loop. An explicitly requested convergence workflow retains its bounded mechanics; its coverage gaps still remain limitations rather than synthetic source findings. Reviewers assess the assigned source and report real defects, not requests to review their own review. A report-intake consumer preserves this distinction, including for historical reports that incorrectly promoted a process limitation into a finding.
+
 ## Required checks
 
 1. `lint`: `ruff check` (or project lint command)

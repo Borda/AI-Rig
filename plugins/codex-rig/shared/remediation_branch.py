@@ -82,8 +82,8 @@ def _destination(branch: str, head_ref: str, head_repository: str) -> None:
     expected = _github_remote_identity(f"https://github.com/{head_repository}.git")
     if expected is None or not head_ref:
         raise ValueError("invalid-pr-destination")
-    if branch != head_ref:
-        raise ValueError("pr-branch-name-mismatch:default-push-destination-unverified")
+    # gh may prefix a fork's local branch to avoid collisions. Tracking identifies
+    # the remote ref; the collector receipt separately binds the actual local name.
     _git("check-ref-format", f"refs/heads/{head_ref}")
     merge = _git("config", "--get", f"branch.{branch}.merge", optional=True)
     remote = _git("config", "--get", f"branch.{branch}.remote", optional=True)
@@ -244,6 +244,7 @@ def prepare(pr_dir: Path, receipt: Path) -> dict[str, Any]:
             or "/".join(base_repository).casefold() != head_repository.casefold()
             or not isinstance(remote, str)
             or not remote
+            or checkout.get("local_branch") != head_ref
             or checkout.get("command") not in commands
             or not isinstance(checkout.get("gh_checkout_failure"), dict)
             or not checkout["gh_checkout_failure"].get("code")

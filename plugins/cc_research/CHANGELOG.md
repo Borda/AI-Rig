@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.28.3
+
+- Keep review coverage and confidence gaps as factual limitations; require a specific user decision for additional review and omit declined requests from findings and final actions.
+
 ## 0.28.2
 
 - Sync the quality-gates rule: after each validated adversarial-loop round, print the progress table exactly, with all rows kept and each cell as `old + new`.

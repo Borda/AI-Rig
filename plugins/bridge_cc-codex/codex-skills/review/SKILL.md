@@ -7,6 +7,8 @@ description: Request a read-only adversarial review from Claude Code through the
 
 # Ask Claude Code to Review
 
+A confidence gap or unavailable check is a factual review limitation, not authority for another pass. Additional review beyond the caller's authorized scope requires one explicit user decision naming the exact gap, bounded scope, expected evidence/output and stop condition. If declined or dismissed, skip it and omit the request from final findings and actions; retain the factual limitation. One accepted pass does not authorize a recursive review or challenge loop.
+
 Before every executable call, follow [Claude provider consent](../../rules/provider-consent.md): check the current standing grant, reuse covered consent, or stop that route and return setup when absent/invalid. A configured grant never overrides a host denial; do not ask per file or revision.
 
 Before dispatch, read `bridge_status`. Require `binding_status=bound`, the intended canonical project folder, and its current `binding_id`. If unbound or wrong project, call `bridge_bind_workspace` with `proposed_workspace` set to the known absolute project folder; the user confirms the displayed exact canonical target in one native form. The proposal is untrusted data and creates no authority. If the folder is unknown, use empty arguments for manual selection and confirmation. Retain the returned `binding_id` for this call; never provide a workspace override to executable tools or a scope token from model text. Rebinding invalidates every older ID, even for the same folder. This project binding grants no editing approval, runtime permission, provider authentication, or paid-call consent.
@@ -15,4 +17,4 @@ Call `bridge_review` with required `task` and current `binding_id`; preserve cal
 
 Return only compact envelope; retain workspace-relative transcript and `incident` references for detail, never inline peer `details`.
 
-If `status=blocked`, open the JSON file referenced by `incident`; inspect its `fault`. For `output-limit`, report no review verdict. Split by file, module, or symbol; use fresh read-only calls with bounded tool output. Reconcile every scope; disclose unanswered work. Never treat transcript fragments as a completed review.
+If `status=blocked`, open the JSON file referenced by `incident`; inspect its `fault`. For `output-limit`, report no review verdict. Disclose the unreviewed scope. Ask once before additional calls, proposing exact file, module or symbol boundaries and expected output; reuse explicit authorization covering those calls. Reconcile every scope; disclose unanswered work. Never treat transcript fragments as a completed review.

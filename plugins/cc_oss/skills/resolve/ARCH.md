@@ -19,6 +19,8 @@ JOIN   lanes collected; nothing past it starts until all land
 ```
 SETUP  (steps 1, 2)
   flags · gh auth · codemap detect · workflow tasks
+  review report intake  reject gate · report source · incomplete report → --assess
+◆ GAP TRIAGE  (step 1, incomplete report only)  proceed with valid parts (zero critical) · rerun selected gaps · full rerun · abort
   |
   +--------------------- FAN 2 ----------------------+
   |                                                  |
@@ -103,6 +105,7 @@ Both fans overlap work with no data dependency between the lanes. The first work
 | Gate | Always? | Blocks |
 | -- | -- | -- |
 | unknown flag · missing report source · codemap index | conditional | SETUP |
+| GAP TRIAGE (incomplete review report graded by `find_review_report.py --assess`; gap table, then Proceed with valid parts only at zero critical gaps · rerun selected gaps (follow-up multi-select of roles/candidates, prints `/oss:review <N> --fill-gaps …`) · full rerun · abort; reruns print the command and stop, never `Skill(oss:review)`; never self-heals the review run dir) | conditional | SETUP |
 | more than 20 conflicted files | conditional | trial merge, and aborts it |
 | **SELECTION** (items, commit mode, grouping + labels, dispatch width, push intent + post-PR action; `enforce-resolve-table.js` requires Q1’s question text to name `action-items-table.md`, which holds every pending and closed id, within the 1,500-character whole-question budget, with no item rows; closed items are named by count; options carry no preview, identical optional previews are denied and optional plain comparisons stay within 2000 characters / 12 rendered lines; the saved table is printed once as the last text of the reply message that issues the picker) | **always** | everything past it, including the second fan |
 | group preview (`DISPATCH_MODE=preview`, elected at SELECTION) | conditional | challenge → specialists |
@@ -148,4 +151,4 @@ Index of the `(step N)` tags in the schema above, one row per block. Text order 
 | VERIFY | 9 |
 | SHIP | 10, 11, 12 |
 
-Version-one review intake validates review-validation.json before findings merge. Only confirmed findings become action items. Challenge evidence distinguishes VALID, affirmative REJECT, UNVERIFIED and ALREADY_FIXED; the ordinary challenge-log and resolution ledger preserve these meanings. Unverified obligations retain owner/next_check/closure and are never implemented or discarded as refuted.
+Version-one review intake validates review-validation.json before findings merge. An incomplete publication is graded, never repaired: critical gaps (lost or unbacked obligation, stale evidence, ambiguous verdict, blocked QA under a claimed-complete review) forbid consuming it; with only degraded gaps the user may proceed, and the final report lists every gap under Review Intake. Only confirmed findings become action items. Challenge evidence distinguishes VALID, affirmative REJECT, UNVERIFIED and ALREADY_FIXED; the ordinary challenge-log and resolution ledger preserve these meanings. Unverified obligations retain owner/next_check/closure and are never implemented or discarded as refuted.

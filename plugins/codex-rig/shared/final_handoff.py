@@ -924,7 +924,7 @@ def _validate_selection(payload: object) -> tuple[dict[str, Any], list[dict[str,
     """
     inventory = _require_object(payload, "selection")
     presentation = inventory.get("presentation_version", 2)
-    if type(presentation) is not int or presentation not in {2, 3, 4}:
+    if type(presentation) is not int or presentation not in {2, 3, 4, 5}:
         raise HandoffError("selection-presentation-version-invalid")
     if (
         type(inventory.get("schema_version")) is not int
@@ -953,7 +953,7 @@ def _validate_selection(payload: object) -> tuple[dict[str, Any], list[dict[str,
         if not isinstance(item.get("selectable"), bool):
             raise HandoffError("selection-item-selectable-invalid")
         if item["selectable"]:
-            if presentation in {3, 4}:
+            if presentation in {3, 4, 5}:
                 _require_string(item.get("resolution_proposal"), "selection-item-resolution_proposal")
             selectable.append(item)
         records = item.get("sources")
@@ -975,7 +975,7 @@ def _validate_selection(payload: object) -> tuple[dict[str, Any], list[dict[str,
                 raise HandoffError("selection-source-duplicate")
             if kind == "online" and re.fullmatch(r"(?!https?://)\S+", source_id, re.IGNORECASE) is None:
                 raise HandoffError("selection-online-source-invalid")
-            if kind == "user" and presentation != 4:
+            if kind == "user" and presentation not in {4, 5}:
                 raise HandoffError("selection-user-source-requires-v4")
             if kind == "user" and re.fullmatch(r"user-[A-Za-z0-9_-]+#finding-[1-9]\d*", source_id) is None:
                 raise HandoffError("selection-user-source-invalid")

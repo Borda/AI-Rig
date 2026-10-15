@@ -342,6 +342,7 @@ The bridge sends the task text and the selected project context to the provider 
 Safety boundaries:
 
 - Use `advise` and `review` for read-only work.
+- A review's confidence gaps or unavailable checks are factual limits, not authority for another review; an out-of-scope pass requires one explicit user decision naming its gap, expected evidence/output, and stop condition.
 - `implement` can modify the current worktree under the host's normal permission policy.
 - Setup configuration and repair are state-changing operations bound to an exact approval digest.
 - Authentication failures, permission denials, unsupported models, and unknown faults are surfaced as structured results or incidents.

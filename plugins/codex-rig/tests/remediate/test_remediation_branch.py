@@ -207,12 +207,13 @@ def test_prepare_retains_collected_github_branch(tmp_path: Path, repository_temp
 
 @pytest.mark.parametrize("starting_state", ["detached", "unrelated", "topic"])
 @pytest.mark.parametrize(
-    ("cross_repository", "gh_checkout_fails", "missing_branch"),
+    ("cross_repository", "gh_checkout_fails", "missing_branch", "gh_local_branch"),
     [
-        pytest.param(False, False, False, id="same-repo-gh"),
-        pytest.param(True, False, False, id="fork-gh"),
-        pytest.param(False, True, False, id="same-repo-git-existing"),
-        pytest.param(False, True, True, id="same-repo-git-new"),
+        pytest.param(False, False, False, "topic", id="same-repo-gh"),
+        pytest.param(True, False, False, "topic", id="fork-gh"),
+        pytest.param(True, False, False, "contributor/topic", id="fork-gh-local-alias"),
+        pytest.param(False, True, False, "topic", id="same-repo-git-existing"),
+        pytest.param(False, True, True, "topic", id="same-repo-git-new"),
     ],
 )
 def test_prepared_branch_retains_next_commit_and_original_pr_push_destination(
@@ -223,8 +224,9 @@ def test_prepared_branch_retains_next_commit_and_original_pr_push_destination(
     cross_repository: bool,
     gh_checkout_fails: bool,
     missing_branch: bool,
+    gh_local_branch: str,
 ) -> None:
-    """Carry collection through commit and default push selection without changing unrelated branches."""
+    """Carry collection through commit and verify the original remote ref, including fork aliases."""
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
     monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
@@ -250,6 +252,7 @@ def test_prepared_branch_retains_next_commit_and_original_pr_push_destination(
         cross_repository=cross_repository,
         checkout_mode="remediate",
         gh_checkout_fails=gh_checkout_fails,
+        gh_local_branch=gh_local_branch,
     )
     assert code == 0
     (worktree / "notes.txt").write_text("user notes\n", encoding="utf-8")
@@ -267,7 +270,7 @@ def test_prepared_branch_retains_next_commit_and_original_pr_push_destination(
     recorded = json.loads(receipt.read_text(encoding="utf-8"))
     branch = _git(worktree, "branch", "--show-current")
     assert branch == recorded["branch"]
-    assert branch == "topic"
+    assert branch == gh_local_branch
     assert recorded["head_ref"] == "topic"
     assert recorded["head_repository"] == ("contributor/project" if cross_repository else "example/project")
     assert _git(worktree, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/") == original_refs
@@ -303,6 +306,7 @@ def test_prepared_branch_retains_next_commit_and_original_pr_push_destination(
             "push.autoSetupRemote=false",
             "push",
             "--dry-run",
+            *([destination, "HEAD:refs/heads/topic"] if branch != recorded["head_ref"] else []),
         ],
         cwd=worktree,
         capture_output=True,
@@ -310,7 +314,7 @@ def test_prepared_branch_retains_next_commit_and_original_pr_push_destination(
         check=False,
     )
     assert pushed.returncode == 0, pushed.stderr
-    assert "topic -> topic" in pushed.stderr
+    assert ("HEAD -> topic" if branch != recorded["head_ref"] else "topic -> topic") in pushed.stderr
     assert "[new branch]" not in pushed.stderr
     assert _git(source, "show-ref") == source_refs
     stale = subprocess.run(
@@ -334,11 +338,12 @@ def test_prepared_branch_retains_next_commit_and_original_pr_push_destination(
     assert "branch-mismatch" in rejected.stderr
 
 
+@pytest.mark.parametrize("gh_local_branch", ["topic", "contributor/topic"])
 @pytest.mark.parametrize(
     "mismatch", ["none", "branch", "worktree", "head", "ancestry", "legacy", "upstream", "remote", "push-remote"]
 )
 def test_receipt_checks_actual_state_without_repair(
-    tmp_path: Path, repository_template: RepositoryTemplate, mismatch: str
+    tmp_path: Path, repository_template: RepositoryTemplate, mismatch: str, gh_local_branch: str
 ) -> None:
     """Reject destination or revision drift without repairing or discarding local work."""
     source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
@@ -352,6 +357,7 @@ def test_receipt_checks_actual_state_without_repair(
             head,
             checkout_mode="remediate",
             gh_checkout_fails=False,
+            gh_local_branch=gh_local_branch,
         )[0]
         == 0
     )
@@ -381,11 +387,11 @@ def test_receipt_checks_actual_state_without_repair(
     elif mismatch == "legacy":
         record["schema_version"] = 1
     elif mismatch == "upstream":
-        _git(worktree, "config", "branch.topic.merge", "refs/heads/main")
+        _git(worktree, "config", f"branch.{gh_local_branch}.merge", "refs/heads/main")
     elif mismatch == "remote":
-        _git(worktree, "config", "branch.topic.remote", "origin")
+        _git(worktree, "config", f"branch.{gh_local_branch}.remote", "origin")
     elif mismatch == "push-remote":
-        _git(worktree, "config", "branch.topic.pushRemote", "origin")
+        _git(worktree, "config", f"branch.{gh_local_branch}.pushRemote", "origin")
     receipt.write_text(json.dumps(record), encoding="utf-8")
     before = receipt.read_bytes()
     branch = _git(worktree, "branch", "--show-current")
@@ -474,19 +480,6 @@ def test_prepare_rejects_unusable_destination_without_git_mutation(
         _git(worktree, "config", "remote.origin.push", "HEAD:refs/heads/main")
     else:
         _git(worktree, "branch", "-m", "contributor/topic")
-        checkout_path = pr_dir / "local-checkout.json"
-        checkout = json.loads(checkout_path.read_text(encoding="utf-8"))
-        checkout["local_branch"] = "contributor/topic"
-        checkout_path.write_text(json.dumps(checkout), encoding="utf-8")
-        pushed = subprocess.run(
-            ["git", "-c", "protocol.allow=never", "-c", "push.default=simple", "push", "--dry-run"],
-            cwd=worktree,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert pushed.returncode == 128
-        assert "does not match" in pushed.stderr
     before_refs = _git(worktree, "show-ref")
     before_branch = _git(worktree, "branch", "--show-current")
     before_config = _git(worktree, "config", "--local", "--list")
@@ -500,14 +493,14 @@ def test_prepare_rejects_unusable_destination_without_git_mutation(
     )
     assert result.returncode == 2, result.stderr
     if invalid == "renamed":
-        assert "pr-branch-name-mismatch" in result.stderr
+        assert "branch-mismatch-after-pr-checkout" in result.stderr
     assert not receipt.exists()
     assert _git(worktree, "show-ref") == before_refs
     assert _git(worktree, "branch", "--show-current") == before_branch
     assert _git(worktree, "config", "--local", "--list") == before_config
 
 
-@pytest.mark.parametrize("invalid", ["fork", "missing-failure", "missing-gh-command", "wrong-command"])
+@pytest.mark.parametrize("invalid", ["fork", "missing-failure", "missing-gh-command", "wrong-command", "local-alias"])
 def test_prepare_rejects_unverified_direct_branch_fallback(
     tmp_path: Path, repository_template: RepositoryTemplate, invalid: str
 ) -> None:
@@ -537,7 +530,10 @@ def test_prepare_rejects_unverified_direct_branch_fallback(
         "code": "local-pr-checkout-failed",
         "diagnostics": {},
     }
-    if invalid == "fork":
+    if invalid == "local-alias":
+        _git(worktree, "branch", "-m", "contributor/topic")
+        checkout["local_branch"] = "contributor/topic"
+    elif invalid == "fork":
         pr_path = pr_dir / "pr.json"
         payload = json.loads(pr_path.read_text(encoding="utf-8"))
         # Even a false same-repository flag cannot override the observed head identity.

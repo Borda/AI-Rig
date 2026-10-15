@@ -281,6 +281,29 @@ def _promote_with_report_ids(run: Path, result: dict[str, object]) -> None:
 class TestReviewResolutionFeedback:
     """Protect the remediation-to-review feedback ledger."""
 
+    def test_process_limitation_feedback_prevents_reopening_as_a_finding(
+        self, selected_run: tuple[Path, dict], tmp_path_factory: pytest.TempPathFactory
+    ) -> None:
+        """Persist reclassification without putting a declined extra-review request in the final item table."""
+        run, result = selected_run
+        result["metadata"]["final_resolution_table"]["items"].pop()
+        result["metadata"]["review_report_intake"]["obligation_records_version"] = 2
+        result["metadata"]["review_report_intake"]["review_limitations"] = [
+            {"finding_id": "R2", "rationale": "Reviewer coverage unavailable; extra review declined."}
+        ]
+        _promote_with_report_ids(run, result)
+        review_run = _review_run(tmp_path_factory.mktemp("reviews"), run)
+        summary = HELPER.append_review_resolutions(run, review_run)
+        records = [json.loads(line) for line in (review_run / "resolution.jsonl").read_text().splitlines()]
+        assert summary["appended"] == 2
+        assert records[-1]["finding_id"] == "R2"
+        assert records[-1]["verdict"] == "rejected"
+        assert records[-1]["sha"] is None
+        assert records[-1]["why"] == "Reviewer coverage unavailable; extra review declined."
+        original = (review_run / "resolution.jsonl").read_bytes()
+        assert HELPER.append_review_resolutions(run, review_run)["appended"] == 0
+        assert (review_run / "resolution.jsonl").read_bytes() == original
+
     def test_appends_one_verdict_per_admitted_finding(
         self, selected_run: tuple[Path, dict], tmp_path_factory: pytest.TempPathFactory
     ) -> None:

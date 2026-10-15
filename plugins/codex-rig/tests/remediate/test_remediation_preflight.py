@@ -13,6 +13,73 @@ from test_remediation_finalize import valid_run as _shared_valid_run
 _valid_run = pytest.fixture(name="valid_run")(_shared_valid_run.__wrapped__)
 
 
+@pytest.mark.parametrize("presentation", [2, 3, 4, 5])
+def test_selection_preflight_accepts_supported_presentations(
+    tmp_path: Path, presentation: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Admit the same valid inventory through the public preflight and renderer without migration."""
+    inventory = _selection()
+    inventory["presentation_version"] = presentation
+    for item in inventory["items"]:
+        item["resolution_proposal"] = "Verify the input contract and retain a regression."
+    if presentation in {4, 5}:
+        inventory["items"][1]["sources"][0].update(kind="user", source_id="user-request#finding-1")
+    selection = tmp_path / "selection.json"
+    original = json.dumps(inventory).encode("utf-8")
+    selection.write_bytes(original)
+    assert HELPER.main(["preflight", "--run", str(tmp_path), "--stage", "selection"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "pass"
+    rendered = HELPER.final_handoff.render_selection(inventory)
+    assert "Awaiting selection" in rendered
+    assert "Preserve input compatibility" in rendered
+    assert selection.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    ("damage", "error"),
+    [
+        pytest.param("proposal", "selection-item-resolution_proposal", id="missing-proposal"),
+        pytest.param("user-id", "selection-user-source-invalid", id="malformed-user-source"),
+        pytest.param("duplicate", "selection-source-duplicate", id="duplicate-source"),
+        pytest.param("count", "selection-count-mismatch", id="incorrect-count"),
+        pytest.param("schema", "selection-schema-invalid", id="unknown-schema"),
+        pytest.param("version", "selection-presentation-version-invalid", id="unknown-presentation"),
+        pytest.param("index", "selection-index-invalid", id="invalid-selection"),
+    ],
+)
+def test_current_selection_preflight_keeps_evidence_guards(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], damage: str, error: str
+) -> None:
+    """Accepting the current presentation must still reject concrete invalid input before prompting."""
+    inventory = _selection()
+    inventory["presentation_version"] = 5
+    for item in inventory["items"]:
+        item["resolution_proposal"] = "Verify the input contract and retain a regression."
+    source = inventory["items"][1]["sources"][0]
+    source.update(kind="user", source_id="user-request#finding-1")
+    if damage == "proposal":
+        del inventory["items"][0]["resolution_proposal"]
+    elif damage == "user-id":
+        source["source_id"] = "not-a-user-finding"
+    elif damage == "duplicate":
+        inventory["items"][1]["sources"].append(dict(source))
+    elif damage == "count":
+        inventory["source_records_total"] = 99
+    elif damage == "schema":
+        inventory["schema_version"] = 2
+    elif damage == "version":
+        inventory["presentation_version"] = 6
+    else:
+        inventory["selected_indexes"] = [3]
+    selection = tmp_path / "selection.json"
+    original = json.dumps(inventory).encode("utf-8")
+    selection.write_bytes(original)
+    assert HELPER.main(["preflight", "--run", str(tmp_path), "--stage", "selection"]) == 1
+    assert error in json.loads(capsys.readouterr().out)["code"]
+    assert selection.read_bytes() == original
+    assert not (tmp_path / "resolution-scope.md").exists()
+
+
 @pytest.fixture
 def legacy_text_encoding(monkeypatch: pytest.MonkeyPatch) -> None:
     """Exercise UTF-8 artifacts with the legacy Windows text default on every host."""
@@ -124,18 +191,99 @@ def test_report_occurrences_preserved_before_scope(tmp_path: Path, capsys: pytes
     selection = tmp_path / "selection.json"
     selection.write_text(json.dumps(inventory), encoding="utf-8", newline="\n")
     argv = ["preflight", "--run", str(tmp_path), "--stage", "selection", "--report"]
-    assert HELPER.main(argv) == 1
-    assert "report-obligation-omitted" in capsys.readouterr().out
+    assert HELPER.main(argv) == 0
+    historical = {"final_resolution_table": {"items": inventory["items"]}}
+    with pytest.raises(SystemExit, match="report-obligation-omitted"):
+        VALIDATOR._validate_code_remediate_report_coverage(historical, tmp_path, occurrence_contract=True)
     assert not (tmp_path / "resolution-scope.md").exists()
     inventory["items"][0]["sources"].append(sources[2])
     selection.write_text(json.dumps(inventory), encoding="utf-8", newline="\n")
     assert HELPER.main(argv) == 0
+    VALIDATOR._validate_code_remediate_report_coverage(historical, tmp_path, occurrence_contract=True)
     assert inventory["selected_indexes"] is None
     assert HELPER._report_finding_ids(inventory["items"][0]) == ["F7"]
     report["follow_up"][1] = "Changed producer obligation."
     (tmp_path / "findings-input.txt").write_text(json.dumps(report), encoding="utf-8", newline="\n")
+    with pytest.raises(SystemExit, match="report-obligation"):
+        VALIDATOR._validate_code_remediate_report_coverage(historical, tmp_path, occurrence_contract=True)
+
+
+def test_review_context_does_not_require_action_items(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Keep repeated reviewer limitations out of selection while retaining their original evidence."""
+    report = {
+        "schema_version": 3,
+        "artifact_path": "review/result.json",
+        "checks_failed": ["independent-coverage"],
+        "follow_up": ["Consider a further review."],
+        "metadata": {
+            "review_status": "assessed",
+            "confidence_gaps": ["Independent coverage unavailable."],
+            "confidence_recovery": {"remaining_limits": ["Independent coverage unavailable."]},
+        },
+    }
+    original = json.dumps(report).encode()
+    (tmp_path / "findings-input.txt").write_bytes(original)
+    inventory = _selection()
+    (tmp_path / "selection.json").write_text(json.dumps(inventory), encoding="utf-8")
+    assert HELPER.main(["preflight", "--run", str(tmp_path), "--stage", "selection", "--report"]) == 0
+    assert (tmp_path / "findings-input.txt").read_bytes() == original
+    assert json.loads((tmp_path / "selection.json").read_bytes()) == inventory
+    assert "Consider a further review" not in HELPER.final_handoff.render_selection(inventory)
+
+    # Context must not let a real source defect disappear from the same consumer.
+    report["metadata"]["review_findings"] = [{"id": "BUG", "title": "Invalid input accepted"}]
+    (tmp_path / "findings-input.txt").write_text(json.dumps(report), encoding="utf-8")
+    assert HELPER.main(["preflight", "--run", str(tmp_path), "--stage", "selection", "--report"]) == 1
+    assert "report-finding-omitted:BUG" in capsys.readouterr().out
+
+
+def test_context_intake_rejects_lost_or_changed_evidence(tmp_path: Path) -> None:
+    """Separating context from tasks must not silently discard or rewrite the original caveats."""
+    report = {
+        "schema_version": 3,
+        "artifact_path": "review/result.json",
+        "metadata": {
+            "confidence_gaps": ["Optional platform untested."],
+        },
+    }
+    (tmp_path / "findings-input.txt").write_text(json.dumps(report), encoding="utf-8")
+    sources = VALIDATOR.report_obligation_sources(report)
+    metadata = {
+        "final_resolution_table": {"items": []},
+        "review_report_intake": {"obligation_records_version": 2, "context_sources": sources},
+    }
+    VALIDATOR._validate_code_remediate_report_coverage(metadata, tmp_path)
+    sources[0]["body"] = "Everything tested."
+    with pytest.raises(SystemExit, match="report-context-mismatch"):
+        VALIDATOR._validate_code_remediate_report_coverage(metadata, tmp_path)
+
+
+def test_historical_process_finding_can_be_reclassified_as_limitation(tmp_path: Path) -> None:
+    """Retain the historical record while removing its rejected extra-review request from selection."""
+    report = {
+        "schema_version": 3,
+        "artifact_path": "review/result.json",
+        "metadata": {
+            "operational_blockers": [{"id": "PROCESS", "title": "Reviewer unavailable"}],
+        },
+    }
+    (tmp_path / "findings-input.txt").write_text(json.dumps(report), encoding="utf-8")
+    inventory = _selection()
+    inventory["review_limitations"] = [
+        {
+            "finding_id": "PROCESS",
+            "rationale": "Reviewer coverage unavailable; user declined another pass.",
+        }
+    ]
+    (tmp_path / "selection.json").write_text(json.dumps(inventory), encoding="utf-8")
+    argv = ["preflight", "--run", str(tmp_path), "--stage", "selection", "--report"]
+    assert HELPER.main(argv) == 0
+    rendered = HELPER.final_handoff.render_selection(inventory)
+    assert "PROCESS" not in rendered
+    assert "Reviewer unavailable" not in rendered
+    inventory["review_limitations"][0]["finding_id"] = "UNKNOWN"
+    (tmp_path / "selection.json").write_text(json.dumps(inventory), encoding="utf-8")
     assert HELPER.main(argv) == 1
-    assert "report-obligation" in capsys.readouterr().out
 
 
 def test_public_plan_checkpoint_needs_no_completed_outcomes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -102,7 +102,7 @@ def test_requested_review_does_not_replace_primary_remediation() -> None:
     assert "`+review` requests existing review evidence; it does not authorize a fresh code review" in intake
     assert "Missing requested PR review decision" in intake
     assert "continue available findings only after explicit user confirmation" in intake
-    assert "Disclose the requested review obligation as open" in intake
+    assert "Disclose the requested review evidence as unavailable without manufacturing a finding" in intake
     assert "Remediation resumes only after the producer completes" not in intake
     assert "or switch to online-only intake" not in intake
     assert "complete its ordered artifact closure before intake" not in intake
@@ -132,8 +132,8 @@ def test_missing_requested_report_blocks_continuation_until_explicit_decision() 
     assert "available findings require explicit user confirmation before continuation" in fail_fast
 
 
-def test_missing_requested_pr_review_has_explicit_yes_no_and_pending_routes() -> None:
-    """Keep review authorization, declined review and unanswered review distinct."""
+def test_missing_requested_pr_review_has_repair_fresh_partial_and_pending_routes() -> None:
+    """Offer feasible bounded recovery and preserve explicit partial and pending decisions."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     decision = skill.split("### Missing requested PR review decision", maxsplit=1)[1].split(
         "### Preliminary finding intake", maxsplit=1
@@ -151,8 +151,9 @@ def test_missing_requested_pr_review_has_explicit_yes_no_and_pending_routes() ->
     assert "resume this same remediation run" in decision
     assert "only after an eligible completed result is admitted" in decision
     assert "`requested_report=true`" in decision
-    assert "missing/cancelled answer leaves this decision pending" in decision
-    assert "Tool acceptance, silence or an unrelated answer does not authorize continuation" in decision
+    assert "Declined or dismissed additional review" in decision
+    assert "Do not carry the request into final actions or ask again" in decision
+    assert "silence never authorizes new work" in decision
     assert "Bare PR online-only intake does not ask this question" in decision
 
 
@@ -177,7 +178,10 @@ def test_available_findings_cannot_bypass_missing_requested_review_approval() ->
     decision = skill.split("### Missing requested PR review decision", 1)[1].split("### Preliminary finding intake", 1)[
         0
     ]
-    assert "Always ask for approval to run a fresh local code review before continuation" in decision
+    assert "only after compatibility assessment and feasible automatic recovery" in decision
+    assert "A version mismatch or repairable derived artifact alone does not trigger this question" in decision
+    assert "Repair existing review and add missing coverage (Recommended)" in decision
+    assert "Do not offer an infeasible repair" in decision
     assert "even when usable current-online/user findings or preliminary hypotheses exist" in decision
     assert "Continuing without a completed report requires explicit user confirmation" in decision
     assert "Reuse an unambiguous existing answer bound to this unchanged target and decision" in decision

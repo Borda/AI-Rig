@@ -384,6 +384,34 @@ def test_stop_passes_delivery_in_final_message(tmp_path: Path, review_run: tuple
     assert _run(tmp_path, _stop_payload(last_assistant_message=DELIVERED)) == {}
 
 
+@_skip_node_unavailable
+def test_stop_ignores_report_refused_by_publication_gate(tmp_path: Path, review_run: tuple[Path, Path]) -> None:
+    """A review stopped BLOCKED at its publication gate is never pushed to deliver the refused report.
+
+    The gate's BLOCKED route truncates the report-dir sentinel while the written report stays on disk for inspection;
+    the Stop hook must read that as no in-flight review rather than demand the header table.
+    """
+    report_dir, sentinel = review_run
+    (report_dir / "review-report.md").write_text("---\nTitle: x\nPR: #1\nDate: y\n---\n", encoding="utf-8")
+    sentinel.write_text("", encoding="utf-8")
+
+    assert _run(tmp_path, _stop_payload()) == {}
+
+
+@_skip_node_unavailable
+def test_stop_ignores_report_parked_for_consolidator_respawn(tmp_path: Path, review_run: tuple[Path, Path]) -> None:
+    """While the consolidator re-spawn runs, the refused report parked aside is never pushed for delivery.
+
+    The re-spawn is a background spawn, so the turn ends with the sentinel still live; before the re-spawn the gate
+    moves the refused report to ``review-report.refused.md``, and the Stop hook must find nothing to deliver until the
+    corrected report is written.
+    """
+    report_dir, _sentinel = review_run
+    (report_dir / "review-report.refused.md").write_text("---\nTitle: x\nPR: #1\nDate: y\n---\n", encoding="utf-8")
+
+    assert _run(tmp_path, _stop_payload()) == {}
+
+
 DELIVERED = "| Field | Value |\n| --- | --- |\n| Title | x |\n| PR | #1 |\n| Date | y |\n"
 
 

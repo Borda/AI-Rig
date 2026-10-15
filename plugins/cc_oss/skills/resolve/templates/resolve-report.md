@@ -51,6 +51,16 @@
 
 [Retain review-validation.json open_concerns and resolver UNVERIFIED items with stable ID, reason, owner, next_check and observable closure. Separate ALREADY_FIXED history with original/current revision and fix evidence. These are not rejected defects or implemented changes.]
 
+### Review Intake
+
+⚠ Review intake degraded ([report path]) — [critical count] critical · [degraded count] degraded gaps
+
+| Rule | Severity | Subject | Detail |
+| -- | -- | -- | -- |
+| [rule] | [severity] | [role, candidate id, or -] | [detail] |
+
+> Only when Step 11 printed `INTAKE=degraded`; omit the section otherwise. One row per `gaps[]` entry of the gap JSON printed beside it. `report` / `pr + report` mode: state that the confirmed findings were consumed and the open concerns carried non-actionable; `pr` mode: state that report findings were not merged (PR comments only). Either way, state that the review's report, sidecars and findings were left unchanged.
+
 ### Lint + QA
 
 [Lint summary] / [QA summary]

@@ -1280,7 +1280,7 @@ def _validate_code_remediate_report_intake(
     if not isinstance(requested_report, bool):
         raise SystemExit("code-remediate-invalid-review-report-requested")
     if "admission_status" in intake and (
-        type(intake.get("schema_version")) is not int or intake["schema_version"] != 1
+        type(intake.get("schema_version")) is not int or intake["schema_version"] not in {1, 2}
     ):
         raise SystemExit("code-remediate-report-admission-schema-invalid")
     admission_status = intake.get("admission_status", "completed")
@@ -1320,18 +1320,22 @@ def _validate_code_remediate_report_intake(
     if not requested_report:
         return
     occurrence_version = intake.get("obligation_records_version")
-    if occurrence_version is not None and (type(occurrence_version) is not int or occurrence_version != 1):
+    if occurrence_version is not None and (type(occurrence_version) is not int or occurrence_version not in {1, 2}):
         raise SystemExit("code-remediate-report-obligation-version-invalid")
-    if candidate and admission_status != "unavailable" and occurrence_version != 1:
+    if candidate and admission_status != "unavailable" and occurrence_version not in {1, 2}:
         raise SystemExit("code-remediate-report-obligation-version-required")
     if admission_status != "completed":
         _validate_code_remediate_incomplete_report_admission(
             result, out_dir, admission_status, occurrence_contract=occurrence_version == 1
         )
         return
-    if current_contract or candidate or occurrence_version == 1:
+    if current_contract or candidate or occurrence_version in {1, 2}:
         _validate_code_remediate_report_coverage(metadata, out_dir, occurrence_contract=occurrence_version == 1)
         _validate_code_remediate_completed_report_producer(intake, out_dir)
+    if occurrence_version == 2 and any(
+        entry["rationale"] not in metadata.get("confidence_gaps", []) for entry in intake.get("review_limitations", [])
+    ):
+        raise SystemExit("code-remediate-review-limitation-disclosure-missing")
 
     report_items_total = intake["report_items_total"]
     review_gate_items_total = intake["review_gate_items_total"]
@@ -1421,8 +1425,9 @@ def _validate_code_remediate_completed_report_producer(intake: dict[str, Any], o
 def _validate_code_remediate_incomplete_report_admission(
     result: dict[str, Any], out_dir: Path, admission_status: str, *, occurrence_contract: bool = False
 ) -> None:
-    """Bind an open report obligation to selected source, selection, and retained diagnostic."""
-    if result.get("status") != "fail":
+    """Bind incomplete report admission to source, selection, and an honestly disclosed limitation."""
+    context_admission = result.get("metadata", {}).get("review_report_intake", {}).get("schema_version") == 2
+    if not context_admission and result.get("status") != "fail":
         raise SystemExit("code-remediate-report-admission-requires-fail")
     metadata = result["metadata"]
     intake = metadata["review_report_intake"]
@@ -1454,7 +1459,16 @@ def _validate_code_remediate_incomplete_report_admission(
         raise SystemExit("code-remediate-report-admission-evidence-mismatch")
     items = metadata.get("final_resolution_table", {}).get("items", [])
     obligations = [item for item in items if item.get("input_item_id") == evidence.get("open_item_id")]
-    if (
+    if context_admission:
+        limitation = evidence.get("limitation")
+        if (
+            not isinstance(limitation, str)
+            or not limitation.strip()
+            or limitation not in metadata.get("confidence_gaps", [])
+            or "open_item_id" in evidence
+        ):
+            raise SystemExit("code-remediate-report-admission-limitation-missing")
+    elif (
         len(obligations) != 1
         or obligations[0].get("item_type") not in {"review-gate", "confidence-gap"}
         or obligations[0].get("resolution_status") not in {"unresolved", "needs-clarification"}
@@ -1462,7 +1476,7 @@ def _validate_code_remediate_incomplete_report_admission(
         or obligations[0].get("triage_status") not in {"valid", "needs-clarification"}
     ):
         raise SystemExit("code-remediate-report-admission-open-obligation-missing")
-    # Missing requested proof stays open even when the user selected only the source fix.
+    # Missing producer proof stays disclosed without creating a synthetic source finding.
     if admission_status == "unavailable":
         if any(source.get("kind") == "report" for item in items for source in item.get("sources", [])):
             raise SystemExit("code-remediate-report-admission-unavailable-report-sources")
@@ -1471,6 +1485,10 @@ def _validate_code_remediate_incomplete_report_admission(
         raise RuntimeError("routing must not be None")
     _validate_code_remediate_preliminary_report_source(out_dir, evidence, routing)
     _validate_code_remediate_report_coverage(metadata, out_dir, occurrence_contract=occurrence_contract)
+    if intake.get("obligation_records_version") == 2 and any(
+        entry["rationale"] not in metadata.get("confidence_gaps", []) for entry in intake.get("review_limitations", [])
+    ):
+        raise SystemExit("code-remediate-review-limitation-disclosure-missing")
 
 
 def _validate_code_remediate_local_report_admission(out_dir: Path, evidence: dict[str, Any]) -> None:
@@ -1651,7 +1669,35 @@ def _validate_code_remediate_report_coverage(
         raise SystemExit("code-remediate-report-input-not-assessed")
     items = metadata["final_resolution_table"]["items"]
     report_sources = [source for item in items for source in item["sources"] if source["kind"] == "report"]
-    if occurrence_contract:
+    intake = metadata.get("review_report_intake", {})
+    context_contract = intake.get("obligation_records_version") == 2
+    limitations = intake.get("review_limitations", []) if context_contract else []
+    if not isinstance(limitations, list) or any(
+        not isinstance(entry, dict)
+        or set(entry) != {"finding_id", "rationale"}
+        or any(not isinstance(entry[key], str) or not entry[key].strip() for key in entry)
+        for entry in limitations
+    ):
+        raise SystemExit("code-remediate-review-limitations-invalid")
+    limited_ids = [entry["finding_id"] for entry in limitations]
+    original_ids = set()
+    for field in ("review_findings", "operational_blockers"):
+        records = original.get(field, [])
+        if not isinstance(records, list):
+            raise SystemExit(f"code-remediate-report-input-invalid:{field}")
+        for record in records:
+            if not isinstance(record, dict) or not isinstance(record.get("id"), str) or not record["id"].strip():
+                raise SystemExit(f"code-remediate-report-input-invalid:{field}")
+            original_ids.add(record["id"])
+    if len(set(limited_ids)) != len(limited_ids) or any(identity not in original_ids for identity in limited_ids):
+        raise SystemExit("code-remediate-review-limitations-invalid")
+    if context_contract:
+        expected_context = report_obligation_sources(
+            report, intake.get("admission_evidence", {}).get("producer_result_path")
+        )
+        if intake.get("context_sources") != expected_context:
+            raise SystemExit("code-remediate-report-context-mismatch")
+    elif occurrence_contract:
         for expected in report_obligation_sources(
             report, metadata.get("review_report_intake", {}).get("admission_evidence", {}).get("producer_result_path")
         ):
@@ -1677,6 +1723,10 @@ def _validate_code_remediate_report_coverage(
                     or item["input_item_id"] == identity
                 )
             ]
+            if identity in limited_ids:
+                if sources:
+                    raise SystemExit(f"code-remediate-review-limitation-is-finding:{identity}")
+                continue
             if not sources:
                 raise SystemExit(f"code-remediate-report-finding-omitted:{identity}")
             bodies = "\n".join(source["body"] for source in sources)
@@ -1688,6 +1738,8 @@ def _validate_code_remediate_report_coverage(
                     raise SystemExit(f"code-remediate-report-input-invalid:{field}:{detail}")
                 if any(" ".join(text.split()) not in " ".join(bodies.split()) for text in texts):
                     raise SystemExit(f"code-remediate-report-finding-detail-omitted:{identity}:{detail}")
+    if context_contract:
+        return
     decision = original.get("review_decision", {})
     recovery = original.get("confidence_recovery", {})
     if not isinstance(decision, dict) or not isinstance(recovery, dict):

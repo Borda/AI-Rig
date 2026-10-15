@@ -131,7 +131,7 @@ def _literal_integer(value: ast.expr | None) -> int | None:
 
 
 def _python_dict_version_fields(tree: ast.AST) -> dict[str, int]:
-    """Identify literal dictionary versions by lexical scope and named assignment."""
+    """Identify literal dictionary versions, including writes through a string key."""
     fields: dict[str, int] = {}
     counts: dict[tuple[tuple[str, ...], str], int] = {}
 
@@ -145,8 +145,20 @@ def _python_dict_version_fields(tree: ast.AST) -> dict[str, int]:
             scope = (*scope, f"assignment:{node.targets[0].id}")
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             scope = (*scope, f"assignment:{node.target.id}")
+        entries = []
         if isinstance(node, ast.Dict):
-            for key, value in zip(node.keys, node.values):
+            entries = list(zip(node.keys, node.values))
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            # Producers often fill an existing payload one field at a time. Keep
+            # their committed version baseline visible to new dictionary readers.
+            if len(targets) == 1 and isinstance(targets[0], ast.Subscript):
+                target = targets[0]
+                if isinstance(target.value, ast.Name):
+                    scope = (*scope, f"assignment:{target.value.id}")
+                entries = [(target.slice, node.value)]
+        if entries:
+            for key, value in entries:
                 if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
                     continue
                 name = key.value

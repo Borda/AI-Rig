@@ -1,7 +1,7 @@
 ---
 name: review
 description: "Multi-agent code review of GitHub Pull Requests (Python source, documentation (Markdown/RST), and CI/CD config PRs) covering architecture, tests, performance, docs, lint, security, and API design. TRIGGER when: user provides a GitHub PR number (e.g. 42, #42) and asks to review/audit/check it, or provides a saved review-report path with --reply to draft a contributor-facing comment; phrases: 'review PR 123', 'audit this pull request', 'look at PR #42', 'draft a reply for this review report'. SKIP: local file or current git diff review (use /develop:review (requires 'develop' plugin)); non-Python source PRs without Python files (TypeScript-only, Go-only, Rust-only); standalone issue/discussion thread analysis (use /oss:analyse)."
-argument-hint: '[PR number|path/to/report.md] [--reply] [--no-challenge] [--codemap] [--worktree] [--full] [--keep "<items>"]'
+argument-hint: '[PR number|path/to/report.md] [--reply] [--no-challenge] [--codemap] [--worktree] [--full] [--fill-gaps <review-report.md> --roles "<role,…>" --candidates "<id,…>"] [--keep "<items>"]'
 allowed-tools: Read, Write, Edit, Bash, Agent, Skill, TaskList, TaskCreate, TaskUpdate, AskUserQuestion, EnterWorktree, ExitWorktree
 model: sonnet
 effort: high
@@ -26,6 +26,7 @@ NOT for local file review or current git diff — use `/develop:review` (require
   - **Local files**: use `/develop:review` (requires `develop` plugin) for local files or current git diff.
   - `--codemap`: strict mode — stop, report if codemap not installed (on by default when installed; use `--no-codemap` to opt out; requires codemap plugin installed)
   - `--full`: run **every** dimension the scope preselected, instead of only the `FANOUT_MAX` most relevant. Never widens the preselection itself — a dimension the scope ruled out stays out. **Not free**: each extra agent costs ~120,851 tok fixed overhead however little work it does. Default stays capped; pass this when depth matters more than cost.
+  - `--fill-gaps <path/to/review-report.md>` with `--roles "<role>,…"` and/or `--candidates "<id>,…"` (at least one): targeted rerun of one published run under `.reports/review/pr-<N>/run-<NNN>/`. Re-spawns only the dimension agents behind the named roles, re-validates only the named candidates, and carries every other assessment, candidate, open concern and finding row unchanged into a **new** run; the prior run is never edited. Names must match that run's `review-validation.json` exactly (`assessments[].role`, `candidates[].id`, any disposition); a named candidate already CONFIRMED but missing its `findings.jsonl` row, whose record passes every publication rule and has no open concern, is not re-validated — the new run only publishes its row; any other named candidate is re-validated. An unknown name, a moved PR head, or a combination with `--full`/`--reply` → `! BLOCKED`. Detail: `modes/fill-gaps.md`.
 - **--plan handoff not supported** — skill doesn't accept plan-mode output from `/develop:plan` (requires `develop` plugin).
 
 </inputs>
@@ -114,6 +115,9 @@ Parse `$ARGUMENTS` flags first (via `bin/parse-skill-flags.py`, C5) — this set
 | `--codemap` | — strict mode, consumed by `detect_codemap.py` | stop and report if codemap missing | auto-detect |
 | `--worktree` | `WT_ENABLED` | `true` | `false` |
 | `--full` | `FANOUT_CAP` | `0` — no cap, all preselected | `3` (`FANOUT_MAX`) |
+| `--fill-gaps <report.md>` | `FILL_GAPS_MODE` + `oss-review-fill-report` sentinel | `true` — targeted rerun of that run (`modes/fill-gaps.md`) | `false` |
+| `--roles "<role,…>"` | `oss-review-fill-roles` sentinel | role names to re-run | `""` |
+| `--candidates "<id,…>"` | `oss-review-fill-candidates` sentinel | candidate ids to re-validate | `""` |
 | `--keep "<items>"` | `KEEP_ITEMS` | value string | `""` |
 
 `CLEAN_ARGS`: `$ARGUMENTS` with matched flags removed (including `--keep "<items>"` and its quoted value), leading whitespace stripped, leading `#` stripped.
@@ -147,13 +151,23 @@ REVIEW_SKILL_DIR="${CLAUDE_PLUGIN_ROOT:-}/skills/review"
 [ -z "$REVIEW_SKILL_DIR" ] && REVIEW_SKILL_DIR="plugins/cc_oss/skills/review"
 echo "$REVIEW_SKILL_DIR" > "${TMPDIR:-/tmp}/review-skill-dir-${CSID}"  # cross-block (Check 41)
 
-# parses --reply/--no-challenge/--worktree/--full/--keep; codemap flags detected-only, re-derived independently below
+# parses --reply/--no-challenge/--worktree/--full/--keep + --fill-gaps/--roles/--candidates values; codemap flags detected-only, re-derived independently below
 # shared flag/--keep parser (C5; also resolve/analyse SKILL.md)
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags reply,no-challenge,no-codemap,codemap,worktree,full "$ARGUMENTS")"  # timeout: 5000
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags reply,no-challenge,no-codemap,codemap,worktree,full --value-flags fill-gaps,roles,candidates "$ARGUMENTS")"  # timeout: 5000
 FANOUT_CAP=3; [ "$FLAG_FULL" = "true" ] && FANOUT_CAP=0  # 0 = no cap: all scope-preselected dimensions
 REPLY_MODE="$FLAG_REPLY"
 WT_ENABLED="$FLAG_WORKTREE"
 [ "$FLAG_NO_CHALLENGE" = "true" ] && CHALLENGE_ENABLED=false || CHALLENGE_ENABLED=true
+# fill-gaps values rewritten every run — a crashed fill-gaps run must never leak its plan into a plain review
+printf '%s\n' "$VALUE_FILL_GAPS" > "${TMPDIR:-/tmp}/oss-review-fill-report-${CSID}"
+printf '%s\n' "$VALUE_ROLES" > "${TMPDIR:-/tmp}/oss-review-fill-roles-${CSID}"
+printf '%s\n' "$VALUE_CANDIDATES" > "${TMPDIR:-/tmp}/oss-review-fill-candidates-${CSID}"
+: > "${TMPDIR:-/tmp}/oss-review-fill-plan-${CSID}"; : > "${TMPDIR:-/tmp}/oss-review-fill-head-${CSID}"
+FILL_GAPS_MODE=false; [ -n "$VALUE_FILL_GAPS$VALUE_ROLES$VALUE_CANDIDATES" ] && FILL_GAPS_MODE=true
+if [ "$FILL_GAPS_MODE" = "true" ]; then
+    [ -n "$VALUE_FILL_GAPS" ] || { echo "! BLOCKED — --roles/--candidates need --fill-gaps <path/to/review-report.md>"; exit 1; }
+    [ "$FLAG_REPLY$FLAG_FULL" = "falsefalse" ] || { echo "! BLOCKED — --fill-gaps cannot combine with --reply or --full; drop one"; exit 1; }
+fi
 # stale contract, crashed prior run (compaction-contract.md §Lifecycle); the report-dir sentinel of a run
 # that died between Step 2 and Step 5 makes enforce-review-header.js deny every AskUserQuestion (Gate A,
 # the existing-report guard) for its 2h staleness window — this run has not reached Step 2, so it is stale
@@ -163,6 +177,7 @@ rm -f .temp/state/skill-contract.md "${TMPDIR:-/tmp}/oss-review-report-dir-${CSI
 {
     echo "REPLY_MODE=$REPLY_MODE"
     echo "WT_ENABLED=$WT_ENABLED"
+    echo "FILL_GAPS_MODE=$FILL_GAPS_MODE"
 } > "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
 echo "$CHALLENGE_ENABLED" > "${TMPDIR:-/tmp}/oss-review-challenge-enabled-${CSID}"
 echo "$CLEAN_ARGS" > "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}"
@@ -212,6 +227,20 @@ if [ "$DIRECT_PATH_MODE" = "false" ] && [[ "$CLEAN_ARGS" =~ ^[0-9]+$ ]]; then
 fi
 ```
 
+### Fill-gaps gate — `--fill-gaps` only, before the existing-report guard
+
+<!-- loads: modes/fill-gaps.md -->
+
+`FILL_GAPS_MODE=true` → load and follow `modes/fill-gaps.md`: its gate validates the selection against the prior run before any run-dir allocation or spawn, and it lists every later step that narrows. Any other run skips this section.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && . "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
+[ "${FILL_GAPS_MODE:-false}" = "true" ] || exit 0
+IFS= read -r REVIEW_SKILL_DIR < "${TMPDIR:-/tmp}/review-skill-dir-${CSID}" 2>/dev/null || REVIEW_SKILL_DIR=""
+cat "$REVIEW_SKILL_DIR/modes/fill-gaps.md"  # timeout: 5000
+```
+
 ### Existing-report guard — before Step 1, before any worktree
 
 A full review is a multi-agent fan-out; re-running one over an unchanged PR head spends that cost for a report already on disk. Nothing else in this skill checks — a real session re-reviewed a PR minutes after reviewing it, because the prior run had been compacted out of context. Check disk, not memory, and do it here: nothing below Step 0 (codemap gates, worktree entry, CI status, the codemap battery) has run yet, so a reuse costs only the snapshot above.
@@ -222,6 +251,8 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 [ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && . "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
 IFS= read -r SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" 2>/dev/null || SNAP_DIR=""
+# fill-gaps names its prior run explicitly; its gate already wrote the prior-resolution sentinel — never overwrite it
+[ "${FILL_GAPS_MODE:-false}" = "false" ] || { echo "PRIOR_REPORT="; exit 0; }
 _PRIOR=""
 if [ "$DIRECT_PATH_MODE" = "false" ] && [[ "$CLEAN_ARGS" =~ ^[0-9]+$ ]]; then
     python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --pr "$CLEAN_ARGS" \
@@ -351,7 +382,7 @@ IFS= read -r CODEMAP_FORCE_OFF < "${TMPDIR:-/tmp}/review-codemap-forced-off-${CS
 
 **Codemap gates** — when `CODEMAP_FORCE_OFF=false`, run (from `codemap-gates.md`, loaded above): **Gate A** if `CODEMAP_ENABLED=false` (missing index → offer to build); **Gate B** if `CODEMAP_ENABLED=true` and `CODEMAP_CURRENCY=stale`. On a build choice, build with the gated `codemap-py index` binary in the foreground, then set `CODEMAP_ENABLED=true` — never model-invoke the `codemap-py:scan-codebase` skill, which is `disable-model-invocation: true` (user-slash-only). Skip both gates when `CODEMAP_FORCE_OFF=true` (`--no-codemap`).
 
-**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--reply`, `--no-challenge`, `--codemap`, `--no-codemap`, `--worktree`, `--full`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--reply`, `--no-challenge`, `--codemap`, `--no-codemap`, `--worktree`, `--full`, `--fill-gaps`, `--roles`, `--candidates`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 **Worktree isolation** — when `WT_ENABLED=true` **and** this is a PR review (not `--reply` / direct-report `.md` mode): run the review in an isolated git worktree so no dimension agent can mutate main sources. Load and follow the oss worktree protocol (§Enter now, §review deliverable routing, §Exit at the follow-up gate):
 
@@ -519,7 +550,7 @@ Parse PR body (`gh pr view $CLEAN_ARGS`) for issue refs (`Closes #N`, `Fixes #N`
 
 ### Acceptance gate (PR mode only) — validate reject, then block
 
-Skip if `DIRECT_PATH_MODE=true`. Two ordered stages, cheap, before Step 2's expensive fanout. **Reject is terminal** — no code change fixes the premise, pipeline stops. **Block is not** — premise is sound, current diff state has a fixable gap (red CI, a typo, a flaky test) — full fanout still runs, report just surfaces the fixable gap up front instead of burying it in consolidator output. Test to pick the stage: *"could revising the code, not the goal, resolve this?"* Yes → block. No → reject.
+Skip if `DIRECT_PATH_MODE=true`. `FILL_GAPS_MODE=true` → skip Stage 1 only (the prior run judged the premise at this same head; the fill-gaps gate refuses a REJECT run); Stage 2 still runs. Two ordered stages, cheap, before Step 2's expensive fanout. **Reject is terminal** — no code change fixes the premise, pipeline stops. **Block is not** — premise is sound, current diff state has a fixable gap (red CI, a typo, a flaky test) — full fanout still runs, report just surfaces the fixable gap up front instead of burying it in consolidator output. Test to pick the stage: *"could revising the code, not the goal, resolve this?"* Yes → block. No → reject.
 
 > **Why this gate exists**: Step 2's fanout costs ~120,851 tok/agent, up to ~7 spawns under `--full` (4 units + pinned qa + bridge + issue agent) — never spend that on a PR whose premise is already fatal. Gate must stay cheap (a `gh pr view` + at most one `foundry:challenger` call) — never grow it into anything resembling the full fanout it exists to avoid paying for.
 
@@ -667,6 +698,10 @@ IFS= read -r _REPORT_BASE < "${TMPDIR:-/tmp}/oss-review-orig-root-${CSID}" 2>/de
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 # fail closed: a lost/emptied sentinel must never fall through into a bare "pr-" directory nothing can find later
 [[ "$CLEAN_ARGS" =~ ^[0-9]+$ ]] || { echo "! BLOCKED — PR tag sentinel empty or non-numeric ('$CLEAN_ARGS') — refusing to allocate a report dir"; exit 1; }
+# fill-gaps without a written plan must never fall through to a plain run at the current head
+IFS= read -r _FILL_REPORT < "${TMPDIR:-/tmp}/oss-review-fill-report-${CSID}" 2>/dev/null || _FILL_REPORT=""
+IFS= read -r _FILL_HEAD < "${TMPDIR:-/tmp}/oss-review-fill-head-${CSID}" 2>/dev/null || _FILL_HEAD=""
+[ -z "$_FILL_REPORT" ] || [ -n "$_FILL_HEAD" ] || { echo "! BLOCKED — --fill-gaps has no plan (fill-gaps gate not passed); refusing to allocate a report dir"; exit 1; }
 # PR-scoped, run-indexed (find_review_report.py + oss:resolve glob this shape — ls .reports/review/pr-<N>/ finds every run for that PR at a glance)
 PR_REPORT_DIR="$_REPORT_BASE/.reports/review/pr-$CLEAN_ARGS"
 REPORT_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/next_run_dir.py" --pr-dir "$PR_REPORT_DIR") # timeout: 5000
@@ -675,6 +710,8 @@ echo "$REPORT_DIR" > "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}"  # persist 
 # read from the snapshot, not the acceptance-gate sentinel (DOCS_TYPING/TESTS_CI never write that one)
 IFS= read -r SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" 2>/dev/null || SNAP_DIR=""
 _HEAD_SHA=$(jq -r '.headRefOid // empty' "$SNAP_DIR/pr-meta.json" 2>/dev/null)
+# fill-gaps: keep the prior run's exact revision string — carried candidates bind to it (modes/fill-gaps.md)
+[ -n "$_FILL_HEAD" ] && { _HEAD_SHA="$_FILL_HEAD"; cp "${TMPDIR:-/tmp}/oss-review-fill-plan-${CSID}" "$REPORT_DIR/fill-gaps.json"; }
 [ -n "$_HEAD_SHA" ] && echo "$_HEAD_SHA" > "$REPORT_DIR/head-sha.txt" || :
 ```
 
@@ -731,6 +768,7 @@ Two stages, in order — never collapse them:
 
 - More work → give each agent more, never add agents.
 - **Spawn fewest that keep each near `AGENT_CALL_BUDGET`** — not the most the cap allows. Small diff → merge surviving units into fewer spawns, **never zero**.
+- **Fill-gaps exception**: `FILL_GAPS_MODE=true` → the lineup is exactly the plan's units (`modes/fill-gaps.md` §Step 2) — no ranking, no cap, no auto-pinned qa-specialist; a candidates-only plan spawns zero dimension agents.
 - **Diff size never licenses inline review.** ~73-call inline rule covers work-displacement spawns only; review specialists are role-isolated (own system prompt, independent eyes), so it does not apply here. Small diff ≠ low risk: few-line change on hot path often riskiest. Orchestrator never substitutes itself for a ranked unit, pinned qa-specialist, challenger (`CHALLENGE_ENABLED=true`), or Codex (`CODEX_AVAILABLE=1`).
 - **Merge before you split**: two dimensions whose files overlap go to one agent, not two.
 - Every spawn prompt states budget, requires an envelope even on exhaustion — `partial: true` plus what was finished. An agent stalling past ~60 calls without an envelope forces full disk reconstruction.
@@ -790,7 +828,7 @@ Follow the Boundary step printed above before consolidation; Step 3 checks alrea
 
 ## Step 3: Post-agent checks (concurrent with Step 2 — after PR_BASE available)
 
-Step 3a/3b may run concurrently with still-executing Step 2 agents — issue them on a Step 2 wake-up rather than opening a turn of their own. Do NOT issue before `PR_BASE` is bound.
+Step 3a/3b may run concurrently with still-executing Step 2 agents — issue them on a Step 2 wake-up rather than opening a turn of their own. Do NOT issue before `PR_BASE` is bound. `FILL_GAPS_MODE=true` → skip Step 3 entirely; the consolidator carries the prior report's OSS Checks.
 
 ```bash
 TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}') # timeout: 6000
@@ -843,7 +881,7 @@ IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/review-oss-shared-${CSID}" 2>/dev/nu
 cat "$_OSS_SHARED/foundry--cross-validation-protocol.md"  # timeout: 5000
 ```
 
-Follow the protocol above: parent validates all candidates before consolidation. File absent → record incomplete review-process coverage with owner/reinstall recovery; do not publish confirmed findings or unconditional approval from an unapplied protocol.
+Follow the protocol above: parent validates all candidates before consolidation (`FILL_GAPS_MODE=true` → only the plan's candidates plus new claims from re-run agents, `modes/fill-gaps.md` §Step 4). File absent → record incomplete review-process coverage with owner/reinstall recovery; do not publish confirmed findings or unconditional approval from an unapplied protocol.
 
 **Independence requirement**: the additional critical/blocking verification runs as a separate spawned agent of the finding's origin type; parent validation of every candidate remains mandatory.
 
@@ -923,6 +961,7 @@ CI_FAILING_CHECKS=<resolved CI failing-check names or empty>
 CI_COUNTS=<resolved CI counts or empty>
 GATE=<resolved PASS or BLOCK>
 PR_NUMBER=<resolved PR number or empty>
+FILL_GAPS_PLAN=<resolved $REPORT_DIR/fill-gaps.json — fill-gaps runs only; omit this line otherwise>
 Return ONLY the publication summary: verdict=<APPROVE|MINOR_EDITS|NEEDS_WORK|INSUFFICIENT_BUT_PROMISING|null> | findings=N | critical=N | high=N | file=<REPORT_DIR>/review-report.md
 Late terminal conflict instead: terminal-ground=<GROUND> | evidence=<path>; publish nothing, return to parent for Stage 1 ground validation and terminal publication.
 ```
@@ -930,6 +969,39 @@ Late terminal conflict instead: terminal-ground=<GROUND> | evidence=<path>; publ
 `CONSOLIDATOR_INSTRUCTIONS_LITERAL` is the printed `_CONSOLIDATOR_INSTRUCTIONS` path; `VALIDATION_PROTOCOL_LITERAL` is `<resolved _OSS_SHARED>/foundry--cross-validation-protocol.md`. Resolve every listed binding, including `<GATE>` from the gate-reload block and `<IMPACT>` from its printed `IMPACT=` line. When the `oss-review-prior-resolution-${CSID}` sentinel is non-empty, append the same `Prior resolution ledger:` line Step 2 gave dimension agents. Pass only the file reference, bindings, preamble and return contract; never cat or inline `consolidator-prompt.md` into the parent context or Agent prompt.
 
 If the consolidator returns `terminal-ground=<GROUND> | evidence=<path>` instead of a publication, inspect that referenced evidence, validate the ground under Stage 1 (including its conduct/license confirmation safeguards), and use the late terminal-conflict route above before Step 5b. The consolidator must not publish conflicting PASS/BLOCK and source REJECT. Main context otherwise receives only the one-liner verdict. **Consolidator unavailable fallback** — `Agent` tool deferred/not loaded: Print: `⛔ BLOCKED — Agent tool not loaded; consolidator cannot run. Re-invoke /oss:review to retry. If persistent, run /foundry:setup (requires foundry plugin) to verify session config.` Do NOT read agent finding files inline — floods main context (~16–32K tokens per run), produces unreliable synthesis.
+
+`FILL_GAPS_MODE=true` → run the carry check (`modes/fill-gaps.md` §Carry check) on the publication summary first; only a passing carry check reaches the publication gate below. Carry check and publication gate share **one** consolidator re-spawn per run: after it returns, re-enter the carry check first, then this gate — a re-spawned consolidator may alter carried records while correcting the envelope.
+
+**Publication gate** — after a publication summary, before Step 5b. The consolidator self-certifies header, `review-validation.json` and `findings.jsonl` from prose rules; run the deterministic check `/oss:resolve` applies at intake plus the producer checks (`--producer`: the header carries `Review contract: 1`, and every `findings.jsonl` row carries the fields resolve's merge requires, a known severity and its own id; skipped for a `REJECT_` gate), so a report resolve would reject or fail to merge never ships as finished. Stage 1's terminal REJECT publication is parent-written from the fixed field list above and never reaches this gate:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
+[ -n "$_REPORT_DIR" ] || { echo "! BLOCKED — report-dir sentinel missing; cannot validate publication"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --report "$_REPORT_DIR/review-report.md" --producer  # timeout: 15000
+```
+
+- Exit 0 → continue to Step 5b.
+- Exit 1 without `incomplete-review-report` → the consolidator published a `REJECT_` gate itself. Only Stage 1's terminal publisher may (late conflicts return `terminal-ground=` instead, consolidator rule 5), so this is a gate failure: reason `consolidator published a terminal REJECT; return terminal-ground=<GROUND> | evidence=<path> instead and publish nothing`.
+- Exit 1 with `incomplete-review-report` → gate failure; reason = the printed `[gate] reason:` text.
+- Gate failure, re-spawn unused → run the park block below, then re-spawn the consolidator **once** with the same prompt plus: `Publication gate rejected: <reason>. The refused report is parked at <REPORT_DIR>/review-report.refused.md; write the corrected <REPORT_DIR>/review-report.md, review-validation.json and findings.jsonl to satisfy the protocol; never mark readiness complete to pass the gate.` `FILL_GAPS_MODE=true` → append `Carried records stay verbatim from the prior run; only additions are allowed.` On its return re-enter the carry check (fill-gaps runs), then this block.
+- Gate failure once the re-spawn is used, or the re-spawn ⏱ timed out or returned no publication → run the truncation block below, print `! BLOCKED — review publication fails the publication gate (resolve intake or producer rules): <reason>; report kept at <path> for inspection` (`<path>` = `review-report.md`, else `review-report.refused.md`) and stop before Step 5b. Never deliver it as a finished review or suggest `/oss:resolve <N> report` for it.
+
+Park block — the re-spawn runs in the background, so this turn ends with the run still live; the Stop delivery hook must find no refused report to demand, and resolve's newest-report lookup never picks a parked one:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
+[ -n "$_REPORT_DIR" ] || { echo "! BLOCKED — report-dir sentinel missing; cannot park the refused publication"; exit 1; }
+mv -f "$_REPORT_DIR/review-report.md" "$_REPORT_DIR/review-report.refused.md"  # timeout: 3000
+```
+
+Truncation block:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+: > "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}"  # refused publication: the Stop delivery hook must not demand it  # timeout: 3000
+```
 
 After parsing confidence: agent < 0.7 → prepend **⚠ LOW CONFIDENCE** to findings section, state gap explicitly. Never drop uncertain findings.
 
@@ -1092,6 +1164,7 @@ Scenarios:
 6. REJECT_GOAL: PR body states "make recall exceed 1.0" as the goal → gate finds the metric bounded [0,1] by spec, contradicts stated goal regardless of diff quality → skip Step 2–4, orchestrator writes report with Gate=REJECT_GOAL, no agents spawned.
 7. REJECT_CONDUCT: PR diff silently exfiltrates env vars to an external URL, body claims unrelated bugfix → gate spawns foundry:challenger, confirms `conduct.verdict=BY_DESIGN` at confidence ≥0.7 → skip Step 2–4, Gate=REJECT_CONDUCT. Contrast: same diff pattern but challenger returns `ACCIDENTAL` (e.g. leftover debug logging) → treat as normal `[critical]` finding, proceed to full fanout.
 8. REJECT_DUPLICATE: PR body says "Closes #40", `gh issue view 40` shows `state=CLOSED` closed by a different, already-merged PR → `DUPLICATE_HIT=true` → skip Step 2–4, Gate=REJECT_DUPLICATE, no agents spawned, no challenger needed (mechanical evidence, orchestrator judgment only).
+9. Fill-gaps: `/oss:review 8 --fill-gaps .reports/review/pr-8/run-002/review-report.md --roles "QA specialist" --candidates V13` at an unchanged head → existing-report guard and Stage 1 skipped; new `run-003` allocated with run-002's `head-sha.txt` string; one spawn `review-qa` + consolidator (cost line 2 × ~120,851 tok); parent re-validates V13 plus the new QA claims only; every other assessment, candidate, open concern and finding row carried verbatim, proven by the carry check, then the publication gate. Same call after a push, or naming role `Security auditor` absent from run-002 → `! BLOCKED`, nothing allocated or spawned.
 
 </calibration>
 

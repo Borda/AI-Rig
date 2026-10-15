@@ -1,5 +1,7 @@
 # 🔬 research — Claude Code Plugin
 
+Review gaps remain factual limitations. Any additional review beyond authorized scope requires one explicit, bounded user decision; declined requests do not return as findings or final action items.
+
 [Changelog](CHANGELOG.md) records version-by-version changes, including the plugin's earlier directory history.
 
 Review loops fix feasible authorized findings, investigate repeated signatures, and continue whenever the weighted score decreases; structural labels alone do not stop remediation. Completion prompts ask only for a missing decision or authorization, regardless of report length, and already-authorized next steps continue. Concrete gates for fresh scope, paid execution, sensitive or destructive actions, and remote changes remain in force.

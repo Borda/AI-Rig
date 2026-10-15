@@ -19,7 +19,7 @@ This is a post-gate checkpoint, not a sixth quality gate. Order is fixed: five g
 
 ## Nested review delivery
 
-Apply only when `code-remediate` is waiting for the already-approved fresh review of its unchanged PR target in the same remediation run. Run the normal full `code-review` workflow end-to-end. This changes delivery only, not authorization, review coverage or any completion gate; it is not a `caller-contract` schema override.
+Apply when `code-remediate` is waiting for an already-approved fresh review or producer recovery of its unchanged PR target in the same remediation run. Fresh review runs the normal full `code-review` workflow end-to-end; report recovery follows its compatibility assessment, reusing only authentic still-valid evidence and completing the same producer validation, promotion and completion gates. This changes delivery only, not authorization, review coverage or any completion gate; it is not a `caller-contract` schema override.
 
 1. Capture the successful completion stdout after `find-review-report.py --complete-run <review-run-directory>` succeeds. Keep the rendered `final.md` and all validated review artifacts intact.
 2. Return the exact canonical `<review-run-directory>/result.json` path and producer evidence coordinates to the waiting remediation; never extract the path from rendered prose. Do not send a standalone review-only final answer and do not end the parent turn at this boundary.

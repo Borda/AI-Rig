@@ -12,6 +12,10 @@ Applies only to instruction files an LLM host loads (`AGENTS.md`, `CLAUDE.md`, r
 4. Run the project's affected Markdown, instruction-contract, and calibration gates where it has them. Broad instruction-set changes also require an independent agent followability review against the pre-change backup.
 5. Reject the compression and restore the pre-change file when any instruction is lost, weakened, broadened, made ambiguous, harder to navigate, or less reliably followed. An unresolved comparison difference blocks completion.
 
+## Review cycle routing
+
+- Code Remediate's single-pass contract takes precedence over generic plan-challenge and review-to-fix convergence rules: collect findings, resolve selected work, verify, and report without convergence scoring. Start a challenge/resolve loop in remediation only when the user explicitly requests it; bounded closure verification never implies that request. For other independent review → authorized-fix cycles, follow packaged `shared/adversarial-loop.md`; read it before dispatch. Its scope, evidence ledger, strictly decreasing nonnegative integer score after baseline `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, stop and remediation rules are mandatory. Never fork the implementing conversation for review or treat a loop's local fix as closed before later independent verification.
+
 ## Reasoning-progress escalation
 
 Continues the template's reasoning-progress bullets; the trigger bullet that names `escalation_ledger.py` stays in the template.

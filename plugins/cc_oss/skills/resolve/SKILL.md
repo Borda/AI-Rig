@@ -204,6 +204,7 @@ When `$ARGUMENTS` empty:
 
 ```bash
 # oss lineage → .reports/review/pr-<N>/run-<NNN>/ (current) or .reports/review/<timestamp>/ (pre-rename, still readable); codex lineage → .reports/codex/review/
+unsetopt nomatch 2>/dev/null  # zsh: unmatched glob stays literal as in bash, ls drops it; NOMATCH would abort the whole lookup
 REVIEW_FILE=$(ls -t .reports/review/*/review-report.md .reports/review/*/*/review-report.md .reports/codex/review/*/review-notes.md 2>/dev/null | head -1)
 if [ -z "$REVIEW_FILE" ]; then
     echo "No review output found in .reports/review/ or .reports/codex/review/ — run /review <PR#> first, or provide a PR number"
@@ -255,6 +256,7 @@ echo domain > "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}"
 # Step 3d overwrites; `auto` (not `unset`) because a skipped Step 3d means no Phase 2 dispatch either — nothing to widen or serialize
 echo auto > "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}"
 : > "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}"  # empty, not rm (danger filter): report mode skips Step 3b; a stale dir from the previous PR would feed its items into this run
+: > "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}"  # gap triage Proceed writes the accepted report path; empty = full intake, never inherited
 # defence-in-depth: validate VAR=value, no metachars, before sourcing — guards regression/tampered binary
 tmpenv=$(mktemp)  # timeout: 3000
 trap 'rm -f "$tmpenv"' EXIT INT TERM
@@ -291,12 +293,12 @@ case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "report" > "${TMPDIR:-/tmp}/oss-resol
 
 - `MODE="pr+report"` or `MODE="report"` → resolve the report source with the **Report source resolution** block below (executable, not prose), then branch on its printed `REPORT_STATUS`.
   - `MODE="report"` additionally: extract PR# from the report header if present; no PR# in header → add branch safety check before Step 8 — `CURRENT=$(git branch --show-current); DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||'); [ -z "$DEFAULT" ] && DEFAULT=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}'); [ -z "$DEFAULT" ] && { printf "! BLOCKED — cannot determine default branch; refusing to proceed\n"; exit 1; }; [ "$CURRENT" = "$DEFAULT" ] && { echo "⛔ On default branch '$CURRENT' — report mode without PR# must not operate on default branch; check out a feature branch first"; exit 1; }`
-- `MODE="pr"` → continue Step 2
+- `MODE="pr"` → continue Step 2; only when the reject gate printed `incomplete-review-report`, run **Report source resolution** first for its gap triage
 - `MODE="comment-dispatch"` → branch safety check before Step 12: `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; IFS= read -r WT_ENABLED < "${TMPDIR:-/tmp}/oss-resolve-worktree-${CSID}" 2>/dev/null; [ "$WT_ENABLED" = "true" ] || WT_ENABLED=false; CURRENT=$(git branch --show-current); DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||'); [ -z "$DEFAULT" ] && DEFAULT=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}'); [ -z "$DEFAULT" ] && { printf "! BLOCKED — cannot determine default branch; refusing to proceed\n"; exit 1; }; [ "$CURRENT" = "$DEFAULT" ] && { echo "⛔ On default branch '$CURRENT' — comment dispatch must not commit to default branch"; exit 1; }; [ "$WT_ENABLED" = "true" ] && echo "⚠ --worktree has no effect in comment-dispatch mode"` → jump to Step 12
 
 ### Reject-gate check (every mode — run the block even without a `PR_NUMBER`)
 
-`oss:review`'s acceptance gate can reject a PR at the premise level — `Gate: REJECT_<GROUND> @<sha>`, one of `GOAL`/`CONDUCT`/`SCOPE`/`LICENSE`/`DUPLICATE`/`REVERTED`/`SPAM`/`PHILOSOPHY` (see `oss:review` SKILL.md Stage 1 for what each means). Premise problem, not fixable by `/oss:resolve` editing code — never start the fix pipeline on a PR still in that state, regardless of which of the 8 grounds fired. Only complete `PASS` or `BLOCK` reports are actionable fix queues. Missing, malformed, or ambiguous decision headers block the workflow; a newer unfinished run cannot replace an earlier decision. No prior report still permits PR-comments-only mode. Report-only mode also validates the selected report; it cannot clear a rejection by bypassing PR-aware intake.
+`oss:review`'s acceptance gate can reject a PR at the premise level — `Gate: REJECT_<GROUND> @<sha>`, one of `GOAL`/`CONDUCT`/`SCOPE`/`LICENSE`/`DUPLICATE`/`REVERTED`/`SPAM`/`PHILOSOPHY` (see `oss:review` SKILL.md Stage 1 for what each means). Premise problem, not fixable by `/oss:resolve` editing code — never start the fix pipeline on a PR still in that state, regardless of which of the 8 grounds fired. Only complete `PASS` or `BLOCK` reports are actionable fix queues, plus an incomplete report the user accepts at **Gap triage** with zero critical gaps. Missing, malformed, or ambiguous decision headers block the workflow; a newer unfinished run cannot replace an earlier decision. No prior report still permits PR-comments-only mode. Report-only mode also validates the selected report; it cannot clear a rejection by bypassing PR-aware intake.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -306,46 +308,75 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --pr "$
     --path-out "${TMPDIR:-/tmp}/resolve-report-file-${CSID}"  # timeout: 6000
 ```
 
-The gate's `--path-out` sentinel (`${TMPDIR:-/tmp}/resolve-report-file-${CSID}`) is the **PR-scoped** answer to "does a review report for this PR already exist". Steps 3a and 3c reuse it; PR-scoped misses never glob another PR — never re-derive it from the gate's printed line, and never let the printed `Gate: …` verdict be the only thing parsed out of this block. A path-publication failure stops the workflow. With no `PR_NUMBER` the script skips the check and writes an **empty** sentinel — that write is why the block runs in every mode: a bare `/oss:resolve report` after an earlier `/oss:resolve 42 report` in the same session would otherwise inherit PR 42's path.
+The gate's `--path-out` sentinel (`${TMPDIR:-/tmp}/resolve-report-file-${CSID}`) is the **PR-scoped** answer to "does a review report for this PR already exist". Steps 3a and 3c reuse it; PR-scoped misses never glob another PR — never re-derive it from the gate's printed line, and never let the printed `Gate: …` verdict be the only thing parsed out of this block. A path-publication failure stops the workflow. An exit 1 that printed `⛔ BLOCKED — incomplete-review-report` is not yet a stop, in any mode: run **Report source resolution** next, which grades the gaps and asks (**Gap triage**). Every other exit 1 — a standing rejection, an invalid `--pr`, a failed path publication — stops here. With no `PR_NUMBER` the script skips the check and writes an **empty** sentinel — that write is why the block runs in every mode: a bare `/oss:resolve report` after an earlier `/oss:resolve 42 report` in the same session would otherwise inherit PR 42's path.
 
-### Report source resolution (`report` and `pr + report` modes)
+### Report source resolution (`report` and `pr + report` modes; `pr` mode only after an incomplete-report gate)
 
 Run this block — it is the single lookup for both modes, and the **only** sanctioned way to conclude that no report exists. A prose-only lookup here was silently skipped in a real run, and the orchestrator re-ran a full `oss:review` fan-out while a matching report sat on disk and its path had already been printed by the reject gate one block earlier.
 
+It is also the single intake triage. A report failing the publication contract (`⛔ BLOCKED — incomplete-review-report`) is graded by `find_review_report.py --assess` instead of stopping blind; a standing rejection, an invalid `--pr` or a failed path publication stays `blocked`. Resolve never edits or regenerates the review's report, sidecars or findings to clear a gap — no self-heal. Its only write into a review run stays Step 11's `resolution.jsonl` ledger.
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# timeout: 5000
+# timeout: 45000 — gate and --assess may each call gh
+_SENTINEL="${TMPDIR:-/tmp}/resolve-report-file-${CSID}"
+_GATE_OUT="${TMPDIR:-/tmp}/resolve-gate-out-${CSID}"
+_GAPS="${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}"
+_RERUN="${TMPDIR:-/tmp}/resolve-intake-rerun-${CSID}"
+unsetopt nomatch 2>/dev/null  # zsh: unmatched glob stays literal as in bash, ls drops it; NOMATCH would report a present report missing
 IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
-# re-run the PR-scoped lookup here (idempotent): the sentinel is trustworthy only if the reject gate ran THIS run for THIS PR.
-# Its exit 1 = still-rejected PR; never swallow that — a skipped gate block would otherwise resolve a rejected PR silently
-if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "n/a" ]; then
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --pr "$PR_NUMBER" --path-out "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" || { echo "REPORT_STATUS=blocked"; rm -f "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"; exit 1; }  # timeout: 6000
-fi
-IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
-[ -f "$REPORT_FILE" ] || REPORT_FILE=""  # sentinel may outlive its report (TTL sweep, failed --path-out write)
-# with a PR# the gate sentinel is authoritative: empty means "none for THIS PR", and the newest
-# report of a *different* PR would merge the wrong findings. No PR# → the sentinel carries nothing
-# PR-scoped (gate wrote it empty), so glob newest-of-any.
+IFS= read -r INTAKE_ACCEPTED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_ACCEPTED=""
+# PR# → re-run the PR-scoped lookup (idempotent): sentinel trustworthy only if the reject gate ran THIS run for THIS PR,
+# and another PR's newest report would merge the wrong findings. No PR# → gate wrote the sentinel empty; glob newest-of-any
 case "$PR_NUMBER" in
-    ""|n/a) REPORT_FILE=$(ls -t .reports/review/*/review-report.md .reports/review/*/*/review-report.md .reports/codex/review/*/review-notes.md 2>/dev/null | head -1) ;;
+    ""|n/a)
+        REPORT_FILE=$(ls -t .reports/review/*/review-report.md .reports/review/*/*/review-report.md .reports/codex/review/*/review-notes.md 2>/dev/null | head -1)
+        echo "$REPORT_FILE" > "$_SENTINEL"
+        set -- --report "$REPORT_FILE" ;;
+    *) REPORT_FILE=""; set -- --pr "$PR_NUMBER" ;;
 esac
-echo "$REPORT_FILE" > "${TMPDIR:-/tmp}/resolve-report-file-${CSID}"
+: > "$_GATE_OUT"
+GATE_RC=0
+case "$1:$REPORT_FILE" in
+    --report: | --report:.reports/codex/review/*) ;;  # missing or codex-lineage: nothing to gate
+    *) python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" "$@" --path-out "$_SENTINEL" > "$_GATE_OUT"; GATE_RC=$?; cat "$_GATE_OUT" ;;  # timeout: 6000
+esac
+# exit 1 without the incomplete marker = still-rejected PR, bad --pr or lost path; never swallowed, never triaged
+if [ "$GATE_RC" -ne 0 ]; then
+    grep -q 'incomplete-review-report' "$_GATE_OUT" || { echo "REPORT_STATUS=blocked"; rm -f "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"; exit 1; }
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" "$@" --assess --path-out "$_SENTINEL" > "$_GAPS"; ASSESS_RC=$?; cat "$_GAPS"  # timeout: 15000 — may call gh for head_moved
+    # degraded-only gaps can still carry REJECT_: premise problem, never consumable
+    grep -q '"gate": "Gate: REJECT_' "$_GAPS" && { : > "$_SENTINEL"; echo "⛔ incomplete review report still records a rejection — address the ground, then rerun /oss:review"; ASSESS_RC=1; }
+    [ "$ASSESS_RC" -eq 1 ] && { echo "REPORT_STATUS=blocked"; rm -f "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"; exit 1; }
+    IFS= read -r REPORT_FILE < "$_SENTINEL" 2>/dev/null || REPORT_FILE=""
+    # -ef, not string equality: report mode accepts a relative path, a later PR-scoped lookup publishes it absolute
+    if [ "$ASSESS_RC" -ne 0 ] || [ -z "$REPORT_FILE" ] || [ -z "$INTAKE_ACCEPTED" ] || ! [ "$REPORT_FILE" -ef "$INTAKE_ACCEPTED" ]; then
+        : > "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"  # paused on the triage question; Intake proceed re-arms it
+        # targeted-rerun admissibility comes from fill-gaps' own planner, never re-derived in prose
+        python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/fill_gaps_scope.py" triage --assessment="$_GAPS" --pr="$PR_NUMBER" > "$_RERUN" || : > "$_RERUN"; cat "$_RERUN"  # timeout: 15000
+        [ "$ASSESS_RC" -eq 0 ] && echo "REPORT_STATUS=gaps" || echo "REPORT_STATUS=gaps-critical"
+        echo "GAPS_FILE=$_GAPS"
+        echo "RERUN_FILE=$_RERUN"
+        exit 0
+    fi
+    echo "→ Intake degraded, accepted earlier this run: $REPORT_FILE"
+fi
+IFS= read -r REPORT_FILE < "$_SENTINEL" 2>/dev/null || REPORT_FILE=""
+[ -f "$REPORT_FILE" ] || REPORT_FILE=""  # sentinel may outlive its report (TTL sweep, failed --path-out write)
+echo "$REPORT_FILE" > "$_SENTINEL"
 case "$REPORT_FILE" in
     "")                      echo "REPORT_STATUS=missing" ;;
     .reports/codex/review/*) echo "REPORT_STATUS=codex-lineage" ;;
-    *)
-        if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "n/a" ]; then
-        python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --report "$REPORT_FILE" || { echo "REPORT_STATUS=blocked"; rm -f "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"; exit 1; }  # timeout: 6000
-        fi
-        echo "REPORT_STATUS=ok" ;;
+    *)                       echo "REPORT_STATUS=ok" ;;
 esac
 echo "REPORT_FILE=$REPORT_FILE"
 ```
 
 Branch on the printed `REPORT_STATUS` — read it from stdout, never assume it:
 
-- `blocked` → stop the fix pipeline; retain the printed reason (rejected PR, incomplete report, failed path publication, or an invalid `--pr` value). Diagnostic/recovery questions remain available. Repair or rerun the producer before consuming findings; never treat this as `missing` or start remediation from its notes.
-- `ok` → print `→ Reusing review report: <REPORT_FILE>`; `report` mode continues at Step 3a, `pr + report` at Step 3c. **Never start a review when a report is already resolved.**
+- `blocked` → stop the fix pipeline; retain the printed reason (rejected PR, including an incomplete report that still records a rejection; failed path publication; or an invalid `--pr` value). Diagnostic/recovery questions remain available. Repair or rerun the producer before consuming findings; never treat this as `missing` or start remediation from its notes.
+- `gaps` / `gaps-critical` → **Gap triage** below. The first printed JSON line (also saved at `GAPS_FILE`) is the whole assessment, the second (`RERUN_FILE`) the targeted-rerun verdict; `gaps-critical` has already emptied the report sentinel, so no later step can consume that report.
+- `ok` → print `→ Reusing review report: <REPORT_FILE>`; `report` mode continues at Step 3a, `pr + report` at Step 3c, `pr` mode at Step 2 (pr mode never merges report findings). **Never start a review when a report is already resolved.**
 - `codex-lineage` → this parser reads `oss:review`'s section schema only, not codex's flat H1/H2/M1-bullet schema. Treat as `missing` for the gate below, stating the lineage as the reason.
 - `missing` with **no `PR_NUMBER`** (bare `report` on the current branch) → nothing to offer: there is no second source and no PR to review. Stop with `No review report found in .reports/review/ or .reports/codex/review/ — run /oss:review <PR#> first, or provide a PR number`.
 - `missing` with a known `PR_NUMBER` → **do not spawn anything.** The caller asked for report findings; producing them is a decision, not a fallback. Invoke `AskUserQuestion` (actual tool call — prose question is a violation):
@@ -363,6 +394,40 @@ Branch on the printed `REPORT_STATUS` — read it from stdout, never assume it:
 - Selected (a) → print `⚠ no report findings merged — GitHub comments only` and continue in pr mode.
 - Selected (b) → print `→ Run /oss:review <PR#>, then re-invoke /oss:resolve <PR#> report`, and stop. **Never invoke `Skill(skill="oss:review", …)` here** — `oss:review` ends its own run in a Step 7a `AskUserQuestion` asking the user what to do next, so there is no structural "return" to resume this block on: the whole nested multi-agent fan-out would run only to leave the resume instruction sitting in context, unenforceable across the exact kind of compaction this fix exists to survive. Print the command and let the user re-invoke `/oss:resolve` themselves — the same pattern `oss:review`'s own Step 7a already uses.
 - Selected (c) → stop.
+
+#### Gap triage
+
+<!-- branch: report-gaps — fires only when the gate printed incomplete-review-report and --assess graded it -->
+
+Never self-heal: no edit or regeneration of the review's report, `review-validation.json` or `findings.jsonl`, whatever the user picks; Step 11's `resolution.jsonl` append stays the only write into that run.
+
+1. Print the gap table, once, as the last text before the question. First line `Review report <report> — <critical> critical · <degraded> degraded gaps (contract <contract>)`, then `| Rule | Severity | Subject |` with one row per `gaps[]` entry of the printed JSON, critical rows first. A non-empty `recorded_rejection` adds the line `⛔ report records a rejection (<recorded_rejection>) it cannot certify — a full rerun re-decides it`. The question text carries a plain summary of the gap table regardless — printed text before a tool call can vanish, so the decision never depends on it — in at most 6 lines: the first line, the rejection line when present, the `RERUN_FILE` verdict's `reason` when it is not admissible, then critical gaps as `rule subject`, as many as fit with a final `+N more` when they do not, and as its last line `Long wait? /compact now — gap assessment saved at <GAPS_FILE>, resume lossless.` (the question may idle past the prompt-cache lifetime).
+2. Invoke `AskUserQuestion` (actual tool call), one question, `multiSelect: false`. The rerun options need a PR number — `PR_NUMBER`, else the `RERUN_FILE` JSON's `pr` (the report header's PR); none → drop both reruns. **Rerun review for selected gaps** is offered only when the `RERUN_FILE` JSON says `admissible: true` (empty or unreadable = not admissible): `fill_gaps_scope.py triage` applies the planner's own checks — selectable subjects, recorded commit id, moved head, terminal REJECT, and whether the carried records can pass the publication gate — and always requires a QA or security role a gap names. Required subjects may include a carried record no gap names (for example the candidate behind a row the grader could not attribute, or behind a carried row resolve's merge cannot use). Nothing required and no gap-named subject → the optional lists hold every recorded subject that plans alone. A gap-named QA or security role that no request can name or re-run makes the rerun not admissible. Not admissible → its `reason`, which always points to a full review, goes in the question summary (step 1). The gap JSON's `head_moved` is `null` (PR head not checked) and the rerun verdict is admissible → offer the same options but mark none recommended: the planner re-checks the head and may still refuse.
+   - `gaps` → (a) **Proceed with valid parts** · (b) **Rerun review for selected gaps** (Recommended) · (c) **Full rerun** · (d) **Abort**. Not admissible → (a) **Proceed with valid parts** · (b) **Full rerun** (Recommended) · (c) **Abort**. No PR number → (a) **Proceed with valid parts** · (b) **Abort**, no option marked recommended.
+   - `gaps-critical` → **never offer Proceed.** Admissible → (a) **Full rerun** · (b) **Rerun review for selected gaps** (Recommended) · (c) **Abort**. Not admissible → (a) **Full rerun** (Recommended) · (b) **Abort**. No PR number → no question: print `⛔ review report has critical gaps and names no PR — rerun /oss:review on its PR` and stop.
+3. Act on the answer:
+   - **Proceed with valid parts** → run the **Intake proceed** block below; on its `REPORT_STATUS=ok` continue as `ok` above. Confirmed `findings.jsonl` rows become action items through the normal Step 3a/3c merge, which passes `--accept-degraded` for exactly this report; the Phase 1 verdict re-check stays strict, so its parent proof is never reused as a shortcut; `open_concerns` stay non-actionable (`report-intelligence.md` **Review findings source**); the final report's **Review Intake** section lists every gap (Step 11).
+   - **Rerun review for selected gaps** → choose the subjects from the `RERUN_FILE` JSON; never re-derive them from the gap table. `required_roles` and `required_candidates` are always in the selection (the rerun refuses without them). The optional `roles` and `candidates` are the user's choice: one optional subject and nothing required → no follow-up, take it. One optional subject beside required ones → a follow-up `AskUserQuestion`, `multiSelect: false`, options `Include <subject>` and `Required only`. 2–16 → a follow-up `AskUserQuestion`, `multiSelect: true`, one option per optional subject labelled `Role: <name>` or `Candidate: <id>`, split as evenly as possible over ceil(n/4) questions (`Gaps 1/2`, …), so each carries 2–4 options and the call at most 4 questions; its question text names the required subjects as already included. Past 16 → one question, `multiSelect: true`, options `All roles` and `All candidates` when both optional kinds exist; a single kind → `multiSelect: false`, options `All <kind>` and `Required only`. Print `→ Run /oss:review <N> --fill-gaps "<report>" --roles "<role,role>" --candidates "<id,id>"` with the JSON's `report` path inside the double quotes (paths may hold spaces), omitting a flag whose list is empty, then `→ then re-invoke /oss:resolve <same arguments>`, and stop. Nothing selected and nothing required → stop as **Abort**.
+   - **Full rerun** → print `→ Run /oss:review <N>, then re-invoke /oss:resolve <same arguments>` and stop.
+   - **Abort** → stop.
+
+Neither rerun invokes `Skill(skill="oss:review", …)` — same reason as the report-missing gate's (b): review ends in its own `AskUserQuestion`, leaving no return point to resume intake on. The block already cleared the liveness sentinel for every stop.
+
+**Intake proceed** — only on **Proceed with valid parts**. It re-grades the published report rather than trusting the earlier answer, so a stray run can never accept a critical or rejecting report:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
+IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
+[ -f "$REPORT_FILE" ] || { echo "! BLOCKED — no consumable report published; Proceed needs zero critical gaps"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --report "$REPORT_FILE" --assess > "${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}" || { echo "! BLOCKED — report has critical gaps; Proceed is not available"; exit 1; }  # timeout: 15000 — may call gh for head_moved
+grep -q '"gate": "Gate: REJECT_' "${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}" && { echo "! BLOCKED — report records a rejection; Proceed is not available"; exit 1; }
+printf '%s\n' "$REPORT_FILE" > "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}"
+case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "report" > "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}" ;; *) echo "$PR_NUMBER" > "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}" ;; esac
+echo "⚠ Review intake degraded — consuming the valid parts of $REPORT_FILE"
+echo "REPORT_STATUS=ok"
+echo "REPORT_FILE=$REPORT_FILE"
+```
 
 ### Create all workflow tasks upfront
 
@@ -466,7 +531,10 @@ if [ ! -f "$FINDINGS" ]; then
     python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/mint_finding_ids.py" "$FINDINGS" || exit 1  # timeout: 5000
 fi
 printf '%s\n' "$FINDINGS" > "${TMPDIR:-/tmp}/resolve-findings-file-${CSID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --findings "$FINDINGS" --candidates  # timeout: 5000
+IFS= read -r INTAKE_DEGRADED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_DEGRADED=""
+# only the report the user accepted at Gap triage; -ef: relative vs absolute spelling of one file
+[ -n "$INTAKE_DEGRADED" ] && [ "$INTAKE_DEGRADED" -ef "$REPORT_FILE" ] && ACCEPT_DEGRADED="--accept-degraded" || ACCEPT_DEGRADED=""
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --findings "$FINDINGS" --candidates ${ACCEPT_DEGRADED:+"$ACCEPT_DEGRADED"}  # timeout: 5000
 ```
 
 Step 2 — for each printed pair, decide whether the finding and the GitHub item describe the same problem (similar description, not merely the same file). Write the accepted pairs with the Write tool to `$IMPL_DIR/report-links.jsonl`, one `{"finding_id": "<id>", "item_id": <N>}` per line; write an empty file when none match. Then merge:
@@ -475,8 +543,11 @@ Step 2 — for each printed pair, decide whether the finding and the GitHub item
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 IFS= read -r FINDINGS < "${TMPDIR:-/tmp}/resolve-findings-file-${CSID}" 2>/dev/null || FINDINGS=""
+IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
+IFS= read -r INTAKE_DEGRADED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_DEGRADED=""
 [ -f "$IMPL_DIR/report-links.jsonl" ] || { echo "! BLOCKED — write report-links.jsonl (empty when no semantic match) before merging"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --findings "$FINDINGS" --links "$IMPL_DIR/report-links.jsonl"  # timeout: 5000
+[ -n "$INTAKE_DEGRADED" ] && [ "$INTAKE_DEGRADED" -ef "$REPORT_FILE" ] && ACCEPT_DEGRADED="--accept-degraded" || ACCEPT_DEGRADED=""
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --findings "$FINDINGS" --links "$IMPL_DIR/report-links.jsonl" ${ACCEPT_DEGRADED:+"$ACCEPT_DEGRADED"}  # timeout: 5000
 ```
 
 - The printed summary's `deduped_exact + deduped_semantic` is the `<M>` and `appended` is the `<K>` of the merge summary line below.
@@ -1374,11 +1445,13 @@ _PRESERVE="pr=${_PR_NUMBER}, final-report=pending-write, impl-dir=${_IMPL_DIR}, 
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "final-report (after push)" "$_IMPL_DIR" "${_PRESERVE}" "write final report → post-PR action gate"  # timeout: 5000
 echo "PUSH_STATUS=$PUSH_STATUS"
 case "$PUSH_STATUS" in blocked-guard|blocked-permission|blocked-needs-manual-push) echo "PUSH_UNBLOCK=$_IMPL_DIR/push-unblock.txt"; cat "$_IMPL_DIR/push-unblock.txt" 2>/dev/null || echo "⚠ push-unblock.txt missing" ;; esac
+IFS= read -r INTAKE_DEGRADED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_DEGRADED=""
+[ -z "$INTAKE_DEGRADED" ] || { echo "INTAKE=degraded $INTAKE_DEGRADED"; cat "${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}" 2>/dev/null || echo "⚠ intake gap list missing"; }
 IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
 cat "$_OSS_RESOLVE/templates/resolve-report.md"  # timeout: 5000
 ```
 
-Report template (loaded above) — use for section structure. Its `### Push` section shows the printed `PUSH_STATUS` through the template's status table, never a prose recollection of Step 10. More than 50 items selected → the report's summary carries Step 3d's large-selection line.
+Report template (loaded above) — use for section structure. Its `### Push` section shows the printed `PUSH_STATUS` through the template's status table, never a prose recollection of Step 10. Its `### Review Intake` section appears only when the block printed `INTAKE=degraded`, built from the gap JSON printed beside it, never from recollection of the triage. More than 50 items selected → the report's summary carries Step 3d's large-selection line.
 
 **Tell the review what happened.** When this run consumed a review report, append one outcome per review-sourced item (`fixed` / `self-resolved` / `rejected` / `skipped` / `pending`, finding title and location, commit hash, reason) to `resolution.jsonl` beside that report. `fixed` and `self-resolved` need an implementation record (Phase 2 commit, Codex-direct record, or a `[resolve No.<id>]` commit after this run's base head); an accepted but unmerged item stays `pending`. The next `/oss:review` of this PR reads the ledger, confirms earlier fixes at the new head and re-checks rejected findings before deciding whether to report them again. Append-only and idempotent per run; the script builds records from this run's own files, never from recollection:
 
@@ -1457,7 +1530,7 @@ The post-PR sentinel needs no cleanup — Step 1 re-initialises it to `skip` on 
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-rm -f .temp/state/skill-contract.md "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"  # skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
+rm -f .temp/state/skill-contract.md "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}" "${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}" "${TMPDIR:-/tmp}/resolve-intake-rerun-${CSID}" "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" "${TMPDIR:-/tmp}/resolve-gate-out-${CSID}"  # skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
 ```
 
 ## Step 12: Comment dispatch + Codex review loop
@@ -1472,7 +1545,7 @@ Execute its steps (loaded above).
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-rm -f .temp/state/skill-contract.md "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"  # skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
+rm -f .temp/state/skill-contract.md "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}" "${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}" "${TMPDIR:-/tmp}/resolve-intake-rerun-${CSID}" "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" "${TMPDIR:-/tmp}/resolve-gate-out-${CSID}"  # skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
 ```
 
 </workflow>

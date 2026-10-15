@@ -1015,7 +1015,7 @@ def _validate_action_table(notes_path: Path, result: dict[str, Any], metadata: d
         metadata.get("review_findings") or metadata.get("operational_blockers")
     )
     if not canonical_actions and (
-        recommendation == "accept-as-is" or (scope != "pr" and recommendation != "needs-more-work")
+        recommendation in {None, "accept-as-is"} or (scope != "pr" and recommendation != "needs-more-work")
     ):
         return
 

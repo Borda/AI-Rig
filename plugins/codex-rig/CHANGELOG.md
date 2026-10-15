@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.35.8
+
+- Accept the actual local branch alias selected by a successful `gh pr checkout` for fork remediation, while verifying the original remote head ref, fork identity and checkout receipt; preserve exact-name checks for same-repository direct fallback and reject later branch drift.
+- Keep review coverage and confidence gaps as factual limitations; require a specific user decision for additional review and omit declined requests from findings and final actions.
+- Preserve report context separately from actionable remediation findings; retain historical validation and disclose incomplete report admission without synthetic review tasks.
+- Accept selection presentation 5 in remediation preflight with the same proposal and source guards as rendering; retain historical presentations. Assess report compatibility before prompting, automatically recover proven derived artifacts through their owner, and offer bounded missing-coverage repair before a full review rerun.
+- Open the local-commit question with the ask and a blank line, then subject, diff and scope; the scope disclosure stays in the question body because it must precede the choices.
+- Keep Code Remediate single-pass across skill, shared planning policy, and global instructions: collect findings, resolve selected work, verify, and report. Require an explicit user request for challenge/resolve loops, including checkout recovery; remove unsolicited loop prompts and convergence-score stops from ordinary remediation while retaining bounded closure verification and honest unresolved findings.
+
 ## 0.35.7
 
 - Keep explicit completed-review delivery independent of newer-run discovery; retain strict remediation intake.

@@ -48,15 +48,12 @@ Every write on any repository, public or private, including:
 3. **Approve** → the hook writes a single-use token, `claude-gh-write-approval.json` in the git common dir, holding the answered question's call id, that command and a digest of every file the command names, valid 15 minutes. Run exactly that text as the whole Bash command, once, without touching those files. The guard checks the session transcript for your question and the user's `Approve` before it allows the call. Any other text, a file changed, created or removed since the answer, a second run, a spawned agent's call or another project stays blocked. A later `Approve` replaces a pending token; `Deny` removes it; a new session or `/clear` wipes it.
 4. **Outside a git repository** no token can be recorded: give the user the command to run.
 
-**gh-write question text** — Fill these lines in order as multi-line plain text, at most 1,500 characters; exempt from the 6-line target; no table, no fence. Render each bullet as a separate plain line without its bullet marker. Option descriptions repeat their scope in one line; no second command span in the scope lines.
+**gh-write question text** — Fill these lines in order as multi-line plain text, at most 1,500 characters; exempt from the 6-line target; no table, no fence. Render each bullet as a separate plain line without its bullet marker, with one blank line after the first line, which states the ask. Option descriptions carry what each answer does, one line each, with no second command span: `Approve` = run exactly this command once; token valid 15 minutes; read files re-hashed; `Deny` = skip this write.
 
-- Target repo: {owner/repo}
+- Run this write on {owner/repo}?
 - Writes: {action, such as create, comment, edit or close; target}
 - Body summary: {one-line summary}
 - Command: `gh {exact arguments}`
-- Approve = run exactly this command once; token valid 15 minutes; files it reads are re-hashed.
-- Anything else needs a new question.
-- Deny = skip this write.
 
 Never create, copy, edit or restore the token by any means; revoke a pending one with `rm "$(git rev-parse --git-common-dir)/claude-gh-write-approval.json"`. A spawned agent never asks the question and never spends a token.
 

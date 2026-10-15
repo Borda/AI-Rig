@@ -324,6 +324,24 @@ def test_missing_review_keeps_fixed_work_and_unselected_evidence_gap(admission: 
     assert result["metadata"]["review_report_intake"]["requested_report"] is True
 
 
+def test_current_admission_discloses_missing_review_without_synthetic_finding(admission: tuple[dict, Path]) -> None:
+    """A declined extra review leaves its evidence limitation, not an unresolved fix task."""
+    result, directory = admission
+    metadata = result["metadata"]
+    intake = metadata["review_report_intake"]
+    intake["schema_version"] = 2
+    evidence = intake["admission_evidence"]
+    evidence.pop("open_item_id")
+    evidence["limitation"] = "(-0.03) Completed review unavailable; additional review declined."
+    metadata["confidence_gaps"] = [evidence["limitation"]]
+    metadata["final_resolution_table"]["items"].pop()
+    result["status"] = "pass"
+    VALIDATOR._validate_code_remediate_report_intake(result, directory, current_contract=True)
+    metadata["confidence_gaps"] = []
+    with pytest.raises(SystemExit, match="report-admission-limitation-missing"):
+        VALIDATOR._validate_code_remediate_report_intake(result, directory, current_contract=True)
+
+
 @pytest.mark.parametrize("status", ["pass", "timeout"])
 def test_noncompleted_admission_never_certifies_clean_result(admission: tuple[dict, Path], status: str) -> None:
     """A missing requested review is retained only in an explicitly failed remediation."""
@@ -750,8 +768,8 @@ def test_user_source_requires_retained_complete_body(admission: tuple[dict, Path
         VALIDATOR._validate_code_remediate_user_source(source, directory)
 
 
-@pytest.mark.parametrize("version", [0, 2, True])
-def test_admission_schema_is_its_own_first_version(admission: tuple[dict, Path], version: object) -> None:
+@pytest.mark.parametrize("version", [0, 3, True])
+def test_admission_schema_rejects_unknown_versions(admission: tuple[dict, Path], version: object) -> None:
     """Prevent version skipping and boolean aliases in the new admission family."""
     result, directory = admission
     result["metadata"]["review_report_intake"]["schema_version"] = version

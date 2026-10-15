@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.40.4
+
+- Keep review coverage and confidence gaps as factual limitations; require a specific user decision for additional review and omit declined requests from findings and final actions.
+- Sync the cross-validation protocol, and state in the review consolidator prompt that aggregate `readiness: complete` requires every assessment complete and no open concerns, and that a missing required role or a `null` candidate makes the aggregate `incomplete`, overriding `blocked`, also under a null aggregate outcome.
+
 ## 0.40.3
 
 - Sync the quality-gates rule: after each validated adversarial-loop round, print the progress table exactly, with all rows kept and each cell as `old + new`.

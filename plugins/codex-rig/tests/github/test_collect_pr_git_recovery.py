@@ -197,6 +197,7 @@ def _collect(
     mutate_after_checkout: bool = False,
     checkout_mode: str = "review",
     gh_checkout_fails: bool = True,
+    gh_local_branch: str = "topic",
     mutate_after_gh_failure: bool = False,
     move_source_after_head_fetch: bool = False,
 ) -> tuple[int, list[list[str]]]:
@@ -221,11 +222,13 @@ def _collect(
                 if mutate_after_gh_failure:
                     (worktree / "module.py").write_text("value = 'partial-gh-checkout'\n", encoding="utf-8")
                 return subprocess.CompletedProcess(arguments, 1, stdout=b"", stderr=b"connection reset by peer")
-            checkout = subprocess.run(["git", "checkout", "topic"], cwd=worktree, **kwargs)
+            if gh_local_branch != "topic":
+                _git(worktree, "branch", gh_local_branch, head)
+            checkout = subprocess.run(["git", "checkout", gh_local_branch], cwd=worktree, **kwargs)
             if checkout.returncode == 0:
                 tracking_remote = "https://github.com/contributor/project.git" if cross_repository else "origin"
-                _git(worktree, "config", "branch.topic.remote", tracking_remote)
-                _git(worktree, "config", "branch.topic.merge", "refs/heads/topic")
+                _git(worktree, "config", f"branch.{gh_local_branch}.remote", tracking_remote)
+                _git(worktree, "config", f"branch.{gh_local_branch}.merge", "refs/heads/topic")
             return checkout
         if arguments[:3] == ["git", "checkout", "--detach"]:
             result = subprocess.run(arguments, cwd=worktree, **kwargs)

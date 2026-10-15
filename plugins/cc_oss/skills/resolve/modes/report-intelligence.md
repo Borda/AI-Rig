@@ -63,7 +63,7 @@ cat "$_OSS_SHARED/review-section-taxonomy.md"  # timeout: 5000
 
 The review's own structured findings are the handoff. Never re-derive what the review already recorded:
 
-- **Version-one `review-validation.json` beside the report**: the normal find_review_report.py intake gate validates the contract before any merge. Carry open_concerns (IDs, owner, next_check, closure) unchanged into the final report/handoff; never parse them as actionable findings or silently discard them. Unsupported contract means block with upgrade/review recovery.
+- **Version-one `review-validation.json` beside the report**: the normal find_review_report.py intake gate validates the contract before any merge. Carry open_concerns (IDs, owner, next_check, closure) unchanged into the final report/handoff; never parse them as actionable findings or silently discard them. Unsupported contract means block with upgrade/review recovery. An incomplete publication arrives here only after SKILL.md **Gap triage** accepted it with zero critical gaps (`resolve-intake-degraded-${CSID}` names it): only its confirmed rows become items (the merge below passes `--accept-degraded` for exactly that report), and every gap goes to the final report's Review Intake section. Never repair the report or its sidecars.
 - **`findings.jsonl` beside the report** (written by the review consolidator, stable `id` per finding): use it as-is. No taxonomy parse, no retyping.
 - **Older report without it**: parse the report once into the same shape. Use the Write tool to write `$IMPL_DIR/report-findings.jsonl`, then mint ids with the block below. Taxonomy (loaded above):
   - **Grep pattern** row for header matching (contains-match; headers may carry `⚠ LOW CONFIDENCE — ` prefix); skip sections where Grep key is `— skip`.
@@ -92,7 +92,10 @@ if [ ! -f "$FINDINGS" ]; then
     python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/mint_finding_ids.py" "$FINDINGS" || exit 1  # timeout: 5000
 fi
 printf '%s\n' "$FINDINGS" > "${TMPDIR:-/tmp}/resolve-findings-file-${CSID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --findings "$FINDINGS"  # timeout: 5000
+IFS= read -r INTAKE_DEGRADED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_DEGRADED=""
+# only the report the user accepted at SKILL.md Gap triage; -ef: relative vs absolute spelling of one file
+[ -n "$INTAKE_DEGRADED" ] && [ "$INTAKE_DEGRADED" -ef "$REPORT_FILE" ] && ACCEPT_DEGRADED="--accept-degraded" || ACCEPT_DEGRADED=""
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --findings "$FINDINGS" ${ACCEPT_DEGRADED:+"$ACCEPT_DEGRADED"}  # timeout: 5000
 ```
 
 - Zero findings leave an empty `action-items.jsonl`.

@@ -11,6 +11,7 @@ import re
 import subprocess
 from pathlib import Path
 
+import find_review_report as frr
 import merge_action_items as mai
 import mint_finding_ids as mfi
 import pytest
@@ -246,6 +247,123 @@ def test_bad_item_ids_block(
     findings = _write_jsonl(tmp_path / "f.jsonl", mfi.mint([_finding()]))
     assert mai.main(["--items", str(path), "--findings", str(findings)]) == 1
     assert message in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("finding", "link", "message"),
+    [
+        pytest.param(
+            dict(_finding(), id="architecture-quality-1", section=5), None, "field section is int", id="int-section"
+        ),
+        pytest.param(dict(_finding(), id=["architecture-quality-1"]), None, "field id is list", id="list-id"),
+        pytest.param(dict(_finding(), id="architecture-quality-1", file=3), None, "field file is int", id="int-file"),
+        pytest.param(
+            dict(_finding(), id="architecture-quality-1", line=[12]), None, "field line is list", id="list-line"
+        ),
+        pytest.param(7, None, "finding 1 is not a JSON object", id="row-not-object"),
+        pytest.param(
+            dict(_finding(), id="architecture-quality-1"),
+            {"finding_id": ["architecture-quality-1"], "item_id": 1},
+            "link 1 is not a {finding_id: text, item_id: number} object",
+            id="list-link-finding-id",
+        ),
+    ],
+)
+def test_wrongly_typed_rows_block_instead_of_crashing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], finding: object, link: dict | None, message: str
+) -> None:
+    """A finding row or link whose fields are not the expected JSON types refuses with ``! BLOCKED``.
+
+    A numeric section used to reach the section slug's string operations and a list id the merge's id sets, raising
+    ``AttributeError``/``TypeError`` mid-merge (found by the resolve intake fuzz under ``--accept-degraded``).
+    """
+    items = _write_jsonl(tmp_path / "action-items.jsonl", [_gh(1)])
+    findings = _write_jsonl(tmp_path / "f.jsonl", [finding])
+    links = _write_jsonl(tmp_path / "links.jsonl", [link] if link else [])
+    assert mai.main(["--items", str(items), "--findings", str(findings), "--links", str(links)]) == 1
+    error = capsys.readouterr().err
+    assert error.startswith("! BLOCKED — ")
+    assert message in error
+
+
+@pytest.mark.parametrize(
+    ("finding", "message"),
+    [
+        pytest.param(
+            {key: value for key, value in _finding(id="architecture-quality-1").items() if key != "author"},
+            "! BLOCKED — finding 1 missing author — run mint_finding_ids.py and complete the record\n",
+            id="missing-author",
+        ),
+        pytest.param(
+            dict(_finding(), id="architecture-quality-1", section=5),
+            "! BLOCKED — finding 1 field section is int, not text — the review must write it as one JSON object of "
+            "text fields\n",
+            id="int-section",
+        ),
+        pytest.param(
+            dict(_finding(), id="architecture-quality-1", severity="major"),
+            "! BLOCKED — finding 1 has unknown severity 'major' — use one of critical, high, medium, low, cosmetic\n",
+            id="unknown-severity",
+        ),
+    ],
+)
+def test_merge_and_producer_gate_share_one_row_rule(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], finding: dict, message: str
+) -> None:
+    """The merge refuses a row with exactly the words ``oss:review``'s producer gate uses for that row.
+
+    The required-field list, the type check and the severity vocabulary live in ``find_review_report`` so the review can
+    refuse, before delivery, any row this merge would refuse; an unknown severity used to pass the producer gate and
+    block only here.
+    """
+    items = _write_jsonl(tmp_path / "action-items.jsonl", [])
+    findings = _write_jsonl(tmp_path / "f.jsonl", [finding])
+    assert mai.main(["--items", str(items), "--findings", str(findings)]) == 1
+    assert capsys.readouterr().err == message
+    assert frr.finding_row_problem(finding, 1) == message.removeprefix("! BLOCKED — ").rstrip("\n")
+
+
+def test_severity_vocabulary_is_shared_by_mint_gate_and_merge() -> None:
+    """Mint, the producer gate and the merge accept the same severity words, scored most severe first."""
+    expected_scores = {"critical": 5, "high": 4, "medium": 3, "low": 2, "cosmetic": 1}
+    assert (mfi.SEVERITIES, mai.SEVERITY_SCORE) == (frr.FINDING_SEVERITIES, expected_scores)
+
+
+def test_findings_sharing_an_id_block_instead_of_collapsing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Two findings with one id stop the merge before anything is written; neither is folded into the other.
+
+    Regression: the merge keyed findings by id, so the second row's confirmed finding was silently lost while its text
+    replaced the first row's detail on the GitHub item at the first row's line.
+    """
+    items = _write_jsonl(tmp_path / "action-items.jsonl", [_gh(1)])
+    before = items.read_bytes()
+    rows = [_finding(id="dup-1"), _finding(id="dup-1", file="src/other.py", line=9, title="Other")]
+    findings = _write_jsonl(tmp_path / "f.jsonl", rows)
+    assert mai.main(["--items", str(items), "--findings", str(findings)]) == 1
+    assert capsys.readouterr().err.startswith("! BLOCKED — duplicate finding id dup-1 on findings 1 and 2")
+    assert items.read_bytes() == before
+
+
+def test_mint_carry_from_keeps_a_carried_row_id_against_an_outranking_collision(tmp_path: Path) -> None:
+    """A row equal to a prior row except its id keeps that id; a colliding new row takes the next free suffix.
+
+    Without ``--carry-from`` the new row's text outranks the carried one and takes the base id, re-suffixing a row a
+    fill-gaps run must publish verbatim.
+    """
+    prior_path = _write_jsonl(tmp_path / "prior.jsonl", mfi.mint([_finding(full_text="alpha")]))
+    carried = mfi.read_jsonl(prior_path)[0]
+    new_path = _write_jsonl(tmp_path / "findings.jsonl", [carried, _finding(full_text="beta", line=40)])
+    assert mfi.main([str(new_path), "--carry-from", str(prior_path)]) == 0
+    minted = mfi.read_jsonl(new_path)
+    assert (minted[0], minted[1]["id"]) == (carried, carried["id"] + "-2")
+
+
+def test_mint_without_carry_from_is_unchanged(tmp_path: Path) -> None:
+    """Without ``--carry-from`` minting ignores prior ids exactly as before, outranking collisions included."""
+    carried = mfi.mint([_finding(full_text="alpha")])[0]
+    path = _write_jsonl(tmp_path / "findings.jsonl", [carried, _finding(full_text="beta", line=40)])
+    assert mfi.main([str(path)]) == 0
+    assert [row["id"] for row in mfi.read_jsonl(path)] == [carried["id"] + "-2", carried["id"]]
 
 
 def test_unknown_link_blocks(tmp_path: Path) -> None:

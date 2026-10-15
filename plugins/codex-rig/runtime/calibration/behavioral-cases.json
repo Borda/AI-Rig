@@ -465,7 +465,7 @@
         "remediation-local-branch-name-required"
       ],
       "id": "code-remediate-branch-continuity",
-      "prompt": "Assess a PR review/remediation pair. Review fetches and verifies the exact PR head, then uses `git worktree add --detach` at that immutable commit; it does not call `gh pr checkout` or switch the invoking branch. Remediation first runs `gh pr checkout <canonical PR URL>`, including at matching HEAD. After failure, a same-repository PR may directly check out the actual PR branch only after proving repository identity, branch name equal to `headRefName`, exact SHA, merge tracking, and effective destination; a fork must use the shared bounded adversarial recovery loop and then return to attached `gh` checkout. No generated branch, detached remediation checkout, manual tracking repair, unchanged retry, or local edits before verified recovery. Prepare only records a schema-2 read-only receipt. A legacy schema-1 run already on its original PR branch can use recover with retained PR identity and its last recorded authorized HEAD to write separate continuation evidence while preserving the legacy receipt and Git state. A resumed invocation rechecks branch, worktree, head, ancestry, and destination instead of recollecting over local fixes. Assess destination identity and continuation without overwriting local work; require actual user-outcome evidence.",
+      "prompt": "Assess a PR review/remediation pair. Review fetches and verifies the exact PR head, then uses `git worktree add --detach` at that immutable commit; it does not call `gh pr checkout` or switch the invoking branch. Remediation first runs `gh pr checkout <canonical PR URL>`, including at matching HEAD. After failure, a same-repository PR may directly check out the actual PR branch only after proving repository identity, branch name equal to `headRefName`, exact SHA, merge tracking, and effective destination; a fork may use the shared bounded adversarial recovery loop only on explicit user request and must then return to attached `gh` checkout; otherwise report the checkout blocker. No generated branch, detached remediation checkout, manual tracking repair, unchanged retry, or local edits before verified recovery. A successful gh checkout may use a fork-owner-prefixed local alias; bind its actual recorded local name separately from headRefName and verify merge tracking plus fork repository identity. Do not rename it or start recovery merely because local and remote names differ; plain-push behavior is not the remediation gate. Prepare only records a schema-2 read-only receipt. A legacy schema-1 run already on its original PR branch can use recover with retained PR identity and its last recorded authorized HEAD to write separate continuation evidence while preserving the legacy receipt and Git state. A resumed invocation rechecks branch, worktree, head, ancestry, and destination instead of recollecting over local fixes. Assess destination identity and continuation without overwriting local work; require actual user-outcome evidence.",
       "target": "code-remediate"
     },
     {
@@ -1561,7 +1561,7 @@
         "confidence-score-overcompressed"
       ],
       "id": "code-review-confidence-output-gaps-missing",
-      "prompt": "Assess a review final output that reports confidence 0.88 but does not list the confidence gaps, degradation reasons, or residual limits behind that score.",
+      "prompt": "Assess a review final output that reports confidence 0.88 but does not list the confidence gaps, degradation reasons, or residual limits behind that score. The user dismissed an optional additional review. The request must stay out of final findings, blockers and next steps, while the actual coverage limitation remains explicit. Do not prescribe another pass.",
       "target": "code-review"
     },
     {
@@ -1582,7 +1582,7 @@
         "false-pass-with-unresolved-review-gates"
       ],
       "id": "code-remediate-review-report-gate-asymmetry",
-      "prompt": "Assess a code-remediate workflow that uses a review report with checks_failed independence, follow_up needs-independent-review, full-gate noise, and missing mypy, but marks these report-origin items out-of-scope, omits them from the selectable list, and returns pass after fixing only concrete code findings.",
+      "prompt": "Validate a historical obligation_records_version=1 artifact under its original contract, without rewriting it or applying this intake rule to new version-2 runs. Assess a code-remediate workflow that uses a review report with checks_failed independence, follow_up needs-independent-review, full-gate noise, and missing mypy, but marks these report-origin items out-of-scope, omits them from the selectable list, and returns pass after fixing only concrete code findings.",
       "target": "code-remediate"
     },
     {
@@ -1749,7 +1749,7 @@
         "confidence-score-overcompressed"
       ],
       "id": "code-remediate-confidence-output-gaps-missing",
-      "prompt": "Assess a code-remediate final output that reports confidence 0.9 but does not list confidence gaps, degradation reasons, unresolved limits, or why confidence was not higher.",
+      "prompt": "Assess a code-remediate final output that reports confidence 0.9 but does not list confidence gaps, degradation reasons, unresolved limits, or why confidence was not higher. The user declined another review; the consumer correctly omits that request from final findings and next steps, but incorrectly hides the factual coverage limitation too. Require the factual limitation only, not another review request or synthetic remediation finding.",
       "target": "code-remediate"
     },
     {

@@ -1,5 +1,7 @@
 # code-remediate Handoff Supplement
 
+Apply [Review limitations and additional review](quality-gates.md#review-limitations-and-additional-review): publish all supported source findings and explicitly disclose material review limits. Missing reviewer coverage, unavailable checks and provenance gaps do not create finding/blocker rows. A declined or dismissed optional extra review disappears from final actions and recommendations; retain only its factual coverage limitation.
+
 Before every status or final answer, reconcile the requested remediation with its retained selection, closure ledger, gates and canonical result.
 
 - A completed nested review, prepared branch receipt or passing tests proves no finding was fixed.

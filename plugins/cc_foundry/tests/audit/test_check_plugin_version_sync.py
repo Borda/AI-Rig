@@ -472,6 +472,27 @@ class TestHeadContinuity:
 
         assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 0
 
+    @pytest.mark.parametrize(
+        ("current", "expected"),
+        [pytest.param(2, 0, id="next-with-new-reference"), pytest.param(3, 1, id="skipped-key-assignment")],
+    )
+    def test_key_assignment_preserves_version_family(
+        self, tmp_path: Path, monkeypatch, capsys, current: int, expected: int
+    ) -> None:
+        """Key writes establish the same schema baseline as dictionary literals."""
+        baseline = 'def existing(payload):\n    payload["record_version"] = 1\n'
+        path = _committed_file(tmp_path, "plugins/example/bin/writer.py", baseline)
+        path.write_text(
+            f'def existing(payload):\n    payload["record_version"] = {current}\n'
+            'def preflight():\n    return {"record_version": 2}\n',
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+
+        assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == expected
+        if expected:
+            assert "exceeds the next HEAD value (2)" in capsys.readouterr().out
+
     def test_new_python_dict_version_family_starts_at_one(self, tmp_path: Path, monkeypatch, capsys) -> None:
         """A new dictionary key cannot borrow another version family's HEAD baseline."""
         baseline = 'def existing():\n    return {"schema": 2}\n'

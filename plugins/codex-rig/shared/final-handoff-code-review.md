@@ -1,5 +1,7 @@
 # code-review Handoff Supplement
 
+Apply [Review limitations and additional review](quality-gates.md#review-limitations-and-additional-review): publish all supported source findings and explicitly disclose material review limits. Missing reviewer coverage, unavailable checks and provenance gaps do not create finding/blocker rows. A declined or dismissed optional extra review disappears from final actions and recommendations; retain only its factual coverage limitation.
+
 New assessed code-review `result.candidate.json` promotion and current schema-3 `result.json` validation require a nonempty reviewer assessment list and exactly one matching attributed snapshot for its scope, including the bound aggregate summary. Schema-2 results and schema-3 results without retained proof remain readable as unverified archives and cannot certify completion or remediation intake.
 
 This is a breaking requirement for newly built non-PR assessed results: they previously promoted with no snapshot table at all and must now carry a `Review Snapshot`. Rejection is `code-review-final-handoff-candidate-attribution-missing`. Current schema-3 candidate and promoted results are gated; historical schema-2 artifacts remain readable.

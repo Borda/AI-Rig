@@ -561,16 +561,19 @@ def test_conditional_native_roster_does_not_satisfy_explicit_core_independence(t
     _finalize_native_review(tmp_path, run, home, children, "conditional-requirement")
 
 
-def test_review_and_remediation_share_evidence_only_recovery_contract() -> None:
-    """Prevent a needs-work review from turning into a no-op for non-code obligations."""
+def test_review_and_remediation_keep_process_limits_out_of_findings() -> None:
+    """Stop review producers and consumers from regenerating declined review requests as work."""
     review = (PLUGIN_ROOT / "skills/code-review/SKILL.md").read_text(encoding="utf-8")
     remediate = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    shared = (PLUGIN_ROOT / "shared/quality-gates.md").read_text(encoding="utf-8")
     for contract in (review, remediate):
-        assert "No source changes identified; required verification remains" in contract
-    assert "concrete recovery action, responsible owner, and observable closure evidence" in review
-    assert "do not request impossible retroactive proof" in review
-    assert "instead of ending with `nothing to implement`" in remediate
-    assert "Parent substitutes do not establish independence" in remediate
-    assert "If original-run provenance itself is required" in remediate
-    assert "Original-head CI does not prove a new merge commit passed hosted CI" in remediate
-    assert "Count fresh validation as evidence-only closure, never `implemented`" in remediate
+        assert "Review limitations and additional review" in contract
+    assert "Every blocking gap must have one canonical finding" not in review
+    assert "never canonical findings, operational blockers" in review
+    assert "does not authorize another pass or a review/fix loop" in shared
+    assert "declined or dismissed optional review is skipped" in shared
+    assert "selection.json.review_limitations" in remediate
+    assert "Omit it from `items`, severity counts, scope selection and final action tables" in remediate
+    assert "Never use this classification to conceal a real source defect" in remediate
+    assert "Original-head CI does not prove a changed merge commit passed" in remediate
+    assert "fresh verification is evidence-only closure, never `implemented`" in remediate

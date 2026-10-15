@@ -223,8 +223,15 @@ def test_grant_present_skips_the_question(relative: str, marker: str) -> None:
         pytest.param(
             "git-commit.md",
             "the `Approve always` description stating that the grant persists into later sessions in every worktree "
-            "of this project, covers plain commits, and is revoked with",
+            "of this project, covers plain commits only (never push, force, history rewrite, discarding work, deleting "
+            "unique history or auth changes), and is revoked with",
             id="stub-always-option-discloses",
+        ),
+        pytest.param(
+            "_full/git-commit.md",
+            "covers plain commits only (never push, force, history rewrite, discarding work, deleting unique history or "
+            "auth changes), and is revoked with",
+            id="full-always-option-names-exclusions",
         ),
         pytest.param(
             "_full/git-commit.md",

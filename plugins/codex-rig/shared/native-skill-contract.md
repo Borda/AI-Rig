@@ -32,6 +32,8 @@ Interpret unambiguous equivalent reviewer/report presentations without changing 
 
 A specific, understood, bounded, reversible, low-risk task with clear acceptance uses the skill's lightweight local path: inspect, make the authorized change, verify, and report concise evidence. A coherent fix plus its regression remains one task; file count, ordinary logs, factual queries, and optional tooling do not require orchestration. Investigate an unknown cause before editing. Pause further implementation and promote when evidence reveals unclear scope or acceptance, coupled domains, material risk, or consequential design choices.
 
+Code Remediate's single-pass contract takes precedence over the generic plan-challenge and review-to-fix convergence rules below: collect findings, resolve selected work, run bounded verification, and report. Start a challenge/resolve loop only when the user explicitly requests it; normal remediation and its closure checks never imply that request or require convergence scoring.
+
 Medium/large or unexpectedly nontrivial implementation follows this default order:
 
 1. Define and freeze the top-level outcome, scope, constraints, and acceptance plan.
@@ -134,12 +136,12 @@ Otherwise, without a grant, a plain commit asks one question through [User Quest
 
 Every question offering **Approve always**, including the remember question below, must display this scope in the question body before its choices: `Covers only task-scoped, non-destructive local commits (git commit) of verified, owned changes. Applies to later sessions in every worktree of this project until revoked. Excludes push or other remote changes, history rewriting (including commit --amend), discarding work (reset --hard, clean), branch or unique-history deletion, force operations, and authentication or permission changes. Explicit no-commit or wait instructions still apply.` Do not replace this disclosure with the label "local Git" or an unrestricted subcommand allowlist: command effects and the active task determine authorization. Inspection, staging, branch/worktree preparation, task-owned non-destructive merges and cherry-picks already follow the authorized-task rules above; the grant adds standing approval only for plain commits. Explain revocation by deleting `codex-git-approval.json` from the repository's common Git directory.
 
-**Local-commit question text** — For the three-choice plain-commit question, fill these lines in order as multi-line plain text, at most 1,500 characters including the required scope disclosure above; exempt from the 6-line target; no table, no fence. Render each bullet as a separate plain line without its bullet marker. Choice descriptions repeat their scope in one line; keep the native control and the three labels above. This does not change a workflow's commit-mode or remember question.
+**Local-commit question text** — For the three-choice plain-commit question, fill these lines in order as multi-line plain text, at most 1,500 characters including the required scope disclosure above; exempt from the 6-line target; no table, no fence. Render each bullet as a separate plain line without its bullet marker, with one blank line after the first line, which states the ask. Choice descriptions repeat their scope in one line; keep the native control and the three labels above. The scope lines stay in the question body because the disclosure above must precede the choices; Claude Code's counterpart moves them into option descriptions. This does not change a workflow's commit-mode or remember question.
 
-- Branch: {branch}
-- Operation: plain local commit
+- Commit these changes to {branch}?
+- Subject: {subject}
 - Diff: {file count}, {insertions} insertions, {deletions} deletions; files: {file names}
-- Draft subject: {subject}
+- Scope: one plain local commit; never push.
 - Approve = this commit only.
 - Approve always = standing grant for verified, owned plain local commits in every worktree of this project and in later sessions; never push, force, history rewrite, discarding work, deleting unique history or auth/security changes; revoke with rm "$(git rev-parse --git-common-dir)/codex-git-approval.json".
 - Deny = skip, leave the changes.
@@ -405,6 +407,7 @@ A file that only grows — a `.jsonl` record or event log, a review-round or wor
 - Every skill/agent score uses bands: `<= 0.8` unacceptable; `0.8 < confidence < 0.85` very questionable; `0.85 <= confidence < 0.9` cautious-low; `>= 0.9` fair but not automatic.
 - Skill JSON `metadata.confidence_recovery`: initial/final score, band, objective evidence, recovery, limits. Post-recovery `<= 0.8`: `confidence-not-acceptable`; `0.8 < confidence < 0.85`: `confidence-very-questionable`. Agent output has visible prose/table same fields.
 - Close gaps with evidence or explicit unresolved/deferred record. Skill JSON uses `metadata.confidence_gap_closures`; agents show closure list/table. Every reported gap or limitation follows [Confidence Deduction Accounting](quality-gates.md#confidence-deduction-accounting), including visible numerical contributions and nonreducing limits.
+- Apply [Review limitations and additional review](quality-gates.md#review-limitations-and-additional-review): disclose missing coverage without converting it into a source finding or automatic task. Additional review requires a specific user decision; declined or dismissed optional requests stay out of final findings and next steps.
 
 ## Calibration Hooks
 

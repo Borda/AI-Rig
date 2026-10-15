@@ -59,8 +59,8 @@ Every analysis agent **must** end with:
 
 - Omit **Refinements** if 0 passes (don't write "0 passes") — omit individual **Gaps** bullets only at Score 1.0, but keep the **Gaps** header
 - **Score**, **Gaps**, **Refinements** = peer top-level fields — never nest Refinements under Gaps; blank line before **Refinements** required
-- Score < 0.85 → ⚠ on the score line AND on the line immediately after (standalone, not a Gaps bullet): "orchestrator may re-run with the specific gap addressed"
-- Gaps = primary signal — surfaces implicit limitations for re-run decisions
+- Score < 0.85 → ⚠ on the score line AND on the line immediately after (standalone, not a Gaps bullet): "review limitations are explicit; no extra review is authorized by this score alone"
+- Gaps = factual review limits. They do not become source findings, remediation tasks, or authorization for another review. Any review beyond the invoked workflow's authorized scope needs one explicit user decision naming the exact gap, expected evidence/output, and stop condition. If declined or dismissed, skip it without asking again or carrying the request into findings/action items; retain only the factual limitation needed to describe what was not verified.
 - **Each Gap opens with its deduction** `- (-0.NN) <gap>`: its share of the `1.0 - Score` shortfall — an attribution, approximate when gaps overlap. Deductions sum to exactly `1.0 - Score`, so a reader can drop or re-weigh a gap and re-assess the score. A cap, floor, or band that set the score is itself a gap: name it, carry its delta. A limitation that did not lower the score stays as `(-0.00)`. Uncertainty no named gap explains goes in one `residual` bullet — never spread silently across gaps. ASCII `-`, two decimals. Score below 1.0 with no Gaps bullets = rule violation
 
 ## Internal Quality Loop (analysis tasks only)
@@ -77,7 +77,7 @@ Limits per function: cyclomatic ≤12 · required args ≤7 · branches ≤12 ·
 
 ## Pre-Handover Check (trigger: a named gap the analysis itself cannot close)
 
-Trigger is a **specific unproven claim**, not a score crossing a line: a premise no source was read for, a conclusion resting on one ambiguous signal, an alternative never examined. A low score with every gap already documented needs no dispatch — say so, hand over. When the trigger fires: proof per uncertain claim, re-examine assumptions from first principles. `bridge@borda-ai-rig` available → dispatch `bridge:review` with the exact-args template in `_full/quality-gates.md` §Pre-Handover Check (read it at this trigger; never pass placeholders or a workflow step label), incorporate findings; bridge absent/disabled → state the specific gap so the user can decide to re-run.
+Trigger: a **specific unproven claim**. Read and follow `_full/quality-gates.md` §Pre-Handover Check before further review; it owns evidence checks, user decisions, dispatch, stop conditions and disclosure.
 
 ## Write-Delegation Checklist (trigger: any `bridge:implement` call)
 

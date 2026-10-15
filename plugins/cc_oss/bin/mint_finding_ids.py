@@ -15,15 +15,22 @@ Required record fields: ``section``, ``severity`` (one of ``critical``, ``high``
 and ``title``. ``file`` may be empty for findings with no single location. Any existing ``id`` is recomputed, so
 re-running the script is idempotent.
 
+``--carry-from <prior findings.jsonl>`` serves an ``oss:review --fill-gaps`` run, which must publish every carried
+prior row unchanged. A row equal to a prior row in every field except ``id`` keeps that prior row's id; every other
+row is minted as usual but skips any id a kept row holds. Without it, a new row colliding with a carried one could
+outrank it and re-suffix the carried row's id. Without the flag the output is byte-identical to before.
+
 consumers: plugins/cc_oss/skills/review/templates/consolidator-prompt.md (mints ids before rendering);
 plugins/cc_oss/bin/merge_action_items.py (imports the normalizers so resolve matches findings the same way)
 
 Usage:
     python "${CLAUDE_PLUGIN_ROOT}/bin/mint_finding_ids.py" "$REPORT_DIR/findings.jsonl"
+    python "${CLAUDE_PLUGIN_ROOT}/bin/mint_finding_ids.py" "$REPORT_DIR/findings.jsonl" --carry-from "$PRIOR_FINDINGS"
 
 Exit codes:
     0 — ids written
-    1 — file missing, unreadable JSON, or a record missing a required field / carrying an unknown severity
+    1 — a findings file missing or unreadable, or a record that is not an object, misses a required field or carries an
+        unknown severity
 """
 
 from __future__ import annotations
@@ -35,6 +42,8 @@ import os
 import re
 import sys
 import tempfile
+from collections.abc import Iterator
+from itertools import count
 from pathlib import Path, PurePosixPath
 from typing import Final
 
@@ -112,8 +121,10 @@ def base_id(record: dict) -> str:
     return f"{section_slug(str(record['section']))}-{digest}"
 
 
-def validate(record: dict, index: int) -> str | None:
+def validate(record: object, index: int) -> str | None:
     """Return a readable problem description for an invalid record, or ``None`` when it is usable."""
+    if not isinstance(record, dict):
+        return f"record {index}: not a JSON object"
     missing = [name for name in REQUIRED_FIELDS if not str(record.get(name) or "").strip()]
     if missing:
         return f"record {index}: missing {', '.join(missing)}"
@@ -132,25 +143,89 @@ def _collision_rank(record: dict) -> str:
     return hashlib.sha1(text.encode("utf-8")).hexdigest()  # noqa: S324 - ordering key, not security
 
 
-def mint(records: list[dict]) -> list[dict]:
+def _body(record: dict) -> dict:
+    """Return a record without its ``id``, the part a carried row must keep verbatim."""
+    return {key: value for key, value in record.items() if key != "id"}
+
+
+def carried_ids(records: list[dict], prior: list) -> dict[int, str]:
+    """Match each record equal to a prior row in every field except ``id`` to that prior row's id.
+
+    Each prior row and each prior id is matched at most once, so two identical new rows never share one id.
+
+    Args:
+        records: The rows about to be minted, before any normalization.
+        prior: The prior run's ``findings.jsonl`` rows; entries that are not objects or lack a string id are ignored.
+
+    Returns:
+        Record index to the prior id it keeps.
+
+    Examples:
+        >>> prior = [{"id": "x-1", "title": "a"}, {"id": "x-2", "title": "b"}, "junk"]
+        >>> carried_ids([{"title": "b"}, {"title": "c"}, {"id": "stale", "title": "b"}], prior)
+        {0: 'x-2'}
+    """
+    pool = [row for row in prior if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"]]
+    kept: dict[int, str] = {}
+    for index, record in enumerate(records):
+        body = _body(record)
+        match = next((row for row in pool if row["id"] not in kept.values() and _body(row) == body), None)
+        if match is not None:
+            kept[index] = match["id"]
+            pool.remove(match)
+    return kept
+
+
+def mint(records: list[dict], kept: dict[int, str] | None = None) -> list[dict]:
     """Assign stable IDs to every record and return the records in their original order.
 
     Findings that share a base ID get ``-2``, ``-3``, ... ranked by a hash of their full text, so the same findings
-    reported in a different order, or at shifted lines, keep the same IDs.
+    reported in a different order, or at shifted lines, keep the same IDs. A record listed in ``kept`` keeps its id
+    and stays verbatim (it is a carried prior row); the others never take an id a kept record holds.
 
-    >>> a = {"section": "Performance Concerns", "severity": "high", "title": "Slow loop", "file": "a.py"}
-    >>> b = {"section": "Performance Concerns", "severity": "low", "title": "slow loop.", "file": "a.py"}
-    >>> sorted(f["id"][-2:] for f in mint([a, b]))[0] == "-2", mint([a, b])[0]["id"] == mint([b, a])[1]["id"]
-    (True, True)
+    Args:
+        records: Finding records; each gains an ``id`` and a normalized ``severity`` unless kept.
+        kept: Record index to the id it keeps, from ``carried_ids``; ``None`` mints every record.
+
+    Returns:
+        ``records``, updated in place.
+
+    Examples:
+        >>> a = {"section": "Performance Concerns", "severity": "high", "title": "Slow loop", "file": "a.py"}
+        >>> b = {"section": "Performance Concerns", "severity": "low", "title": "slow loop.", "file": "a.py"}
+        >>> sorted(f["id"][-2:] for f in mint([a, b]))[0] == "-2", mint([a, b])[0]["id"] == mint([b, a])[1]["id"]
+        (True, True)
+        >>> taken = mint([dict(a)])[0]["id"]
+        >>> [f["id"] == taken for f in mint([dict(b), dict(a, id=taken)], {1: taken})]
+        [False, True]
     """
+    kept = kept or {}
+    reserved = set(kept.values())
     groups: dict[str, list[dict]] = {}
-    for record in records:
+    for index, record in enumerate(records):
+        if index in kept:
+            record["id"] = kept[index]
+            continue
         groups.setdefault(base_id(record), []).append(record)
         record["severity"] = str(record["severity"]).strip().lower()
     for root, group in groups.items():
-        for rank, record in enumerate(sorted(group, key=_collision_rank), 1):
-            record["id"] = root if rank == 1 else f"{root}-{rank}"
+        free = _suffixed(root, reserved)
+        for record in sorted(group, key=_collision_rank):
+            record["id"] = next(free)
     return records
+
+
+def _suffixed(root: str, reserved: set[str]) -> Iterator[str]:
+    """Yield the root id and then its numbered suffixes in rank order, skipping every id in ``reserved``.
+
+    >>> ids = _suffixed("api-1a2b3c4d", {"api-1a2b3c4d-2"})
+    >>> [next(ids) for _ in range(3)]
+    ['api-1a2b3c4d', 'api-1a2b3c4d-3', 'api-1a2b3c4d-4']
+    """
+    for rank in count(1):
+        ident = root if rank == 1 else f"{root}-{rank}"
+        if ident not in reserved:
+            yield ident
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -176,18 +251,28 @@ def main(argv: list[str] | None = None) -> int:
     """Mint ids in place for the findings file named on the command line."""
     parser = argparse.ArgumentParser(description="Assign stable finding IDs in an oss:review findings.jsonl.")
     parser.add_argument("findings", help="path to findings.jsonl written by the review consolidator")
+    parser.add_argument(
+        "--carry-from",
+        default="",
+        help="prior run's findings.jsonl (fill-gaps runs): a row equal to a prior row except its id keeps that id",
+    )
     args = parser.parse_args(argv)
     path = Path(args.findings)
     try:
         records = read_jsonl(path)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         print(f"! BLOCKED — cannot read {path}: {exc}", file=sys.stderr)
+        return 1
+    try:
+        prior = read_jsonl(Path(args.carry_from)) if args.carry_from else []
+    except (OSError, ValueError, RecursionError) as exc:
+        print(f"! BLOCKED — cannot read --carry-from {args.carry_from}: {exc}", file=sys.stderr)
         return 1
     problems = [problem for i, rec in enumerate(records, 1) if (problem := validate(rec, i))]
     if problems:
         print("! BLOCKED — invalid findings: " + "; ".join(problems), file=sys.stderr)
         return 1
-    write_jsonl_atomic(path, mint(records))
+    write_jsonl_atomic(path, mint(records, carried_ids(records, prior) if args.carry_from else None))
     print(f"minted {len(records)} finding id(s) in {path.as_posix()}")
     return 0
 

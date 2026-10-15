@@ -43,8 +43,8 @@ Every analysis agent **must** end with:
 
 - Omit **Refinements** if 0 passes (don't write "0 passes") — omit individual **Gaps** bullets only at Score 1.0, but keep the **Gaps** header
 - **Score**, **Gaps**, **Refinements** = peer top-level fields — never nest Refinements under Gaps; blank line before **Refinements** required
-- Score < 0.85 → ⚠ on the score line AND on the line immediately after (standalone, not a Gaps bullet): "orchestrator may re-run with the specific gap addressed"
-- Gaps = primary signal — surfaces implicit limitations for re-run decisions
+- Score < 0.85 → ⚠ on the score line AND on the line immediately after (standalone, not a Gaps bullet): "review limitations are explicit; no extra review is authorized by this score alone"
+- Gaps = factual review limits. They do not become source findings, remediation tasks, or authorization for another review. Any review beyond the invoked workflow's authorized scope needs one explicit user decision naming the exact gap, expected evidence/output, and stop condition. If declined or dismissed, skip it without asking again or carrying the request into findings/action items; retain only the factual limitation needed to describe what was not verified.
 - **Each Gap opens with its deduction** `- (-0.NN) <gap>`: its share of the `1.0 - Score` shortfall — an attribution, approximate when gaps overlap. Deductions sum to exactly `1.0 - Score`, so a reader can drop or re-weigh a gap and re-assess the score. A cap, floor, or band that set the score is itself a gap: name it, carry its delta. A limitation that did not lower the score stays as `(-0.00)`. Uncertainty no named gap explains goes in one `residual` bullet — never spread silently across gaps. ASCII `-`, two decimals. Score below 1.0 with no Gaps bullets = rule violation
 
 ## Internal Quality Loop (analysis tasks only)
@@ -60,7 +60,7 @@ Every analysis agent **must** end with:
 
 Trigger is a **specific unproven claim**, not a score crossing a line: premise no source read for, conclusion resting on one ambiguous signal, alternative never examined. Low score with every gap already documented → no dispatch; say so and hand over.
 
-When triggered: demand proof per uncertain claim (read source code, read docs, trace examples), re-examine assumptions, rethink conclusions from first principles. If `bridge@borda-ai-rig` is available, render and call `Skill(skill="bridge:review", args="Read-only adversarial review of <exact area and target paths>. Uncertain claims: <complete claim list>. Current evidence: <source paths or observations>. Challenge each claim, identify missing evidence and alternatives, and return actionable findings with locations; do not apply fixes.")`; never pass the placeholders or a workflow step label. Incorporate findings before handover. After re-examination: confidence still < 0.9 → state specific gap explicitly so user can decide to re-run.
+First use available evidence within the authorized scope. If a further review is needed, ask once with the exact gap, bounded scope, expected evidence/output and stopping condition. Dispatch only after an explicit user decision; a declined or dismissed optional review is skipped without another ask or a request in final findings/action items. Keep the factual limitation. One approved pass does not authorize another pass or challenge loop. When authorized, use the existing `bridge:review` route (requires `bridge` plugin) with exact task and source evidence; unavailable routes remain disclosed, never fabricated.
 
 ## Link Verification
 

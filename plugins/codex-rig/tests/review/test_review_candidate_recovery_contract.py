@@ -60,7 +60,11 @@ def test_review_prior_choice_precedes_run_creation() -> None:
     assert "--result" in entry
     assert "Reuse completed review" in entry
     assert "Run fresh review" in entry
-    assert "No eligible completed report means fresh review without a question" in entry
+    assert (
+        "For a new review request without requested report recovery, no eligible completed report means fresh review"
+        " without a question" in entry
+    )
+    assert "A failed requested-report recovery instead returns to the substantive repair/fresh decision" in entry
     assert "before creating or promoting another run" in entry
     assert "recorded revision" in entry
     assert "current-head" in entry
@@ -100,11 +104,11 @@ def test_review_and_remediation_routes_remain_distinct_during_incomplete_handoff
     assert "uses `git worktree add --detach`" in prompt
     assert "it does not call `gh pr checkout`" in prompt
     assert "continue current-online/user findings" in incomplete_handoff
-    assert "requested report obligation open" in incomplete_handoff
+    assert "keeping the missing report limitation explicit" in incomplete_handoff
     assert "missing requested pr review decision" in incomplete_handoff
     assert "only after the user explicitly chooses to continue without a completed report" in incomplete_handoff
     assert "fresh review" in readme.lower()
-    assert "requested report obligation open" in readme.lower()
+    assert "requested report limitation disclosed" in readme.lower()
     assert "silently switch to online-only remediation" not in readme.lower()
 
 
@@ -339,23 +343,22 @@ def test_execution_failure_cannot_be_reclassified_as_inapplicable() -> None:
         in remediation
     )
     assert (
-        "For requested PR evidence, continue source-verified remediation with the report obligation open only after "
+        "For requested PR evidence, continue source-verified remediation with the report limitation disclosed only after "
         "the user explicitly chooses to continue without a completed report" in remediation
     )
 
 
 def test_remediation_validates_unpromoted_candidate_read_only() -> None:
-    """Diagnose an unpromoted review candidate without repairing or promoting the review run.
-
-    The review run belongs to code-review; remediation that rewrote its manifest or promoted its candidate would certify
-    a review it did not produce. A passing read-only check still sends the user back to code-review.
-    """
+    """Diagnose candidates read-only, then resume the producer for feasible automatic recovery."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8").lower()
 
     assert "matching-review-candidate-unpromoted" in skill
-    assert "remediation never repairs, rewrites, rerenders, or promotes its `specialist-manifest.json`" in skill
+    assert (
+        "remediation never directly repairs, rewrites, rerenders, or promotes its `specialist-manifest.json`" in skill
+    )
     assert "review-specific validator, then the shared validator, read-only" in skill
-    assert "re-run code-review on <review-run-directory> to finish or repair it" in skill
+    assert "resume that owning producer automatically" in skill
+    assert "do not ask the user to re-run code-review for an agent-owned bookkeeping failure" in skill
     assert "a passing read-only validation does not admit the candidate either" in skill
     assert "never consume `result.candidate.json` as a completed review" in skill
     assert "only its eligible finding records may be considered under preliminary finding intake" in skill
@@ -527,11 +530,12 @@ def test_broad_routing_and_fail_fast_admit_complete_fast_native_coverage(section
 
 
 @pytest.mark.installed_plugin
-def test_finalization_failure_keeps_next_action_and_authorized_remediation() -> None:
+def test_finalization_failure_delivers_evidence_without_repeating_declined_review() -> None:
     """A failed artifact route cannot become a bare-code dead end for authorized source work."""
     review = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
     contract = (PLUGIN_ROOT / "shared/final-handoff-contract.md").read_text(encoding="utf-8")
-    assert "End with one recommended next action, its owner and exact resume condition" in review
+    assert "Deliver all supported findings as explicitly preliminary evidence" in review
+    assert "Do not repeat a declined additional review in next actions" in review
     assert "already-authorized source-confirmed remediation may proceed" in review
     assert "including progress reports and unvalidated process failures" in contract
     assert "Perform already-authorized next work instead of asking for permission again" in contract
@@ -546,3 +550,27 @@ def test_review_completion_is_distinct_from_failed_quality_gates() -> None:
     remediation = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     assert "A failed or incomplete review lifecycle checkpoint" in remediation
     assert "An admitted report with `status=fail` from quality gates" in remediation
+
+
+def test_report_recovery_preserves_evidence_and_distinguishes_substantive_gaps() -> None:
+    """Recovery may regenerate proven bookkeeping but cannot manufacture review completion."""
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    recovery = skill.split("### Report compatibility and recovery", 1)[1].split(
+        "### Previous completed review lookup", 1
+    )[0]
+    assert "A failed requested-report recovery instead returns to the substantive repair/fresh decision" in skill
+    assert "An incompatible reader requires capability diagnosis" in skill
+    assert "Do not prescribe a review rerun for the version alone" in CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    for obligation in (
+        "A version number selects a reader and its semantics",
+        "Automatically repair deterministic derived presentation or bookkeeping",
+        "Retain byte-exact pre-repair artifacts",
+        "Never rewrite frozen dispatch, contexts, source receipts or raw reviewer output",
+        "A schema-2 archive or another unsupported representation stays unverified",
+        "Never transplant evidence between runs",
+        "Repair existing review and add missing coverage",
+        "never promise a partial rerun that the producer cannot validate",
+        "run both producer artifact validators, normal promotion and `--complete-run`",
+        "Resume the waiting remediation at its first unmet checkpoint in the same turn",
+    ):
+        assert obligation in recovery

@@ -338,8 +338,9 @@ def test_required_gate_and_review_do_not_invent_consent_holds() -> None:
     assert "Existing grants or an applicable preapproval satisfy that capability" in contract
     assert "A timestamp-specific whole-command prefix is not reusable approval" in contract
     assert "`run_gates.py` and its configured checks are required authorized workflow work" in contract
-    assert "`+review` selects report intake; it does not forbid" in skill
-    assert "Never use `--skip-review` solely because" in skill
+    assert "The selected remediation scope authorizes its required local checks" in skill
+    assert "An additional independent review requires the specific user decision" in skill
+    assert "do not dispatch another reviewer by default" in skill
 
 
 def test_git_reads_and_local_configuration_reuse_authorization() -> None:

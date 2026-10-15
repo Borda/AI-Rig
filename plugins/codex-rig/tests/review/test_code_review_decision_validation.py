@@ -509,3 +509,19 @@ def test_gate_binding_preserves_passing_and_non_approval_decisions(recommendatio
         result.update(status="fail", checks_failed=["tests"])
 
     _load_validator()._validate_review_decision(_metadata(recommendation), result)
+
+
+def test_undecidable_review_does_not_require_synthetic_action(tmp_path: Path) -> None:
+    """A limited source judgment needs a disclosure, not an invented review-request row."""
+    notes = tmp_path / "review-notes.md"
+    notes.write_text("Verification limited: independent coverage unavailable.\n", encoding="utf-8")
+    metadata = {
+        "review_decision": {"recommendation": None},
+        "finding_records_version": 2,
+        "review_findings": [],
+        "operational_blockers": [],
+    }
+    validator = _load_validator()
+    validator._validate_action_table(
+        notes, {"findings": dict.fromkeys(("critical", "high", "medium", "low"), 0)}, metadata, "pr"
+    )

@@ -28,6 +28,12 @@ Ids already in the file never change, so table numbers, task ids and commit tags
 ``--candidates`` prints same-file finding/item pairs that did not match exactly, for the orchestrator's semantic-match
 judgment, and writes nothing.
 
+Version-one findings are merged only from a publication the strict intake gate accepts. ``--accept-degraded`` also
+accepts one whose every gap is degraded (``find_review_report.py --assess`` finds no critical gap): its confirmed rows
+are intact, only a readiness label, a reviewer's coverage or open-concern bookkeeping is wrong. ``oss:resolve`` passes
+the flag only after the user chose to proceed with that exact report at its gap triage. The verdict re-check never
+takes the flag, so parent candidate proof from a degraded publication is never reused as a shortcut.
+
 ``--recheck-verdicts`` runs right before the challenge phase. It drops every ``verify_verdict`` whose evidence no
 longer holds: the review's recorded head (``head-sha.txt`` in ``--review-dir``) differs from ``--current-head``, either
 is unknown, or the ``verify_file`` is gone from disk. Native Windows resolves serialized Git Bash evidence paths
@@ -43,13 +49,17 @@ consumers: plugins/cc_oss/skills/resolve/modes/report-intelligence.md (Step 3a),
 
 Usage:
     python "${CLAUDE_PLUGIN_ROOT}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" \\
-        --findings "$FINDINGS" [--links "$IMPL_DIR/report-links.jsonl"] [--candidates]
+        --findings "$FINDINGS" [--links "$IMPL_DIR/report-links.jsonl"] [--candidates] [--accept-degraded]
     python "${CLAUDE_PLUGIN_ROOT}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" \\
         --recheck-verdicts --review-dir "$(dirname "$REPORT_FILE")" --current-head "$PR_HEAD_OID"
 
 Exit codes:
     0 — merged, candidates printed, or verdicts re-checked
-    1 — unreadable input, a finding missing a required field, a link naming an unknown id, or a duplicate item id
+    1 — unreadable input, a finding missing a required field or carrying an unknown severity, two findings sharing an
+        id, a row or link that is not an object of the expected field types (text fields, a numeric line), a link
+        naming an unknown id, a duplicate item id, version-one findings whose publication is neither valid nor (with
+        ``--accept-degraded``) free of critical gaps, or (with ``--recheck-verdicts``) a validated publication holding
+        findings rows the merge could not use
 """
 
 from __future__ import annotations
@@ -70,15 +80,26 @@ _BIN_DIR = str(Path(__file__).resolve().parent)
 if _BIN_DIR not in sys.path:
     sys.path.insert(0, _BIN_DIR)
 
-from find_review_report import _parse_header_fields, gate_line  # noqa: E402
+#: ``FINDING_FIELDS`` (the fields every finding record must provide to be merged into an action item), the severity
+#: vocabulary ``FINDING_SEVERITIES`` and the row-set check ``findings_problem`` live in ``find_review_report``, so
+#: ``oss:review``'s producer gate refuses exactly the rows this merge would refuse. ``FINDING_FIELDS`` stays importable
+#: from this module, where it used to be defined.
+from find_review_report import (  # noqa: E402
+    FINDING_FIELDS,  # noqa: F401 - re-exported: the merge's required-field list, now owned by find_review_report
+    FINDING_SEVERITIES,
+    _parse_header_fields,
+    assess_report,
+    finding_row_problem,
+    findings_problem,
+    gate_line,
+)
 from mint_finding_ids import normalize_path, read_jsonl, section_slug  # noqa: E402
 
-#: Numeric resolve severity per review severity word.
-SEVERITY_SCORE: Final = {"critical": 5, "high": 4, "medium": 3, "low": 2, "cosmetic": 1}
+#: Numeric resolve severity per review severity word. Keyed by the shared vocabulary (a strict zip fails at import if
+#: its length changes), so every word the producer gate accepts has a score here.
+SEVERITY_SCORE: Final = dict(zip(FINDING_SEVERITIES, (5, 4, 3, 2, 1), strict=True))
 #: Sections whose MEDIUM findings are ``[req]`` (code-related) per review-section-taxonomy.md "Severity → Resolve Type".
 REQ_MEDIUM_SECTIONS: Final = frozenset({"critical", "architecture-quality", "performance-concerns", "api-design"})
-#: Fields every finding record must provide to be merged into an action item.
-FINDING_FIELDS: Final = ("id", "section", "severity", "title", "change", "author")
 #: Item-type markers that denote an unresolved review comment still needing action.
 PENDING_TYPE_MARKERS: Final = ("[req]", "[suggest]", "[question]")
 #: Item ``status`` values that keep an item open; a missing status counts as open.
@@ -292,26 +313,56 @@ def mark_thin(items: list[dict]) -> int:
     return count
 
 
+def _links_problem(links: list) -> str | None:
+    """Name the first semantic link that is not a ``{finding_id: text, item_id: number}`` object, or ``None``.
+
+    >>> _links_problem([{"finding_id": "a", "item_id": 2}, {"finding_id": ["a"], "item_id": 2}])
+    'link 2 is not a {finding_id: text, item_id: number} object'
+    """
+    for n, link in enumerate(links, 1):
+        if not (
+            isinstance(link, dict)
+            and isinstance(link.get("finding_id"), str)
+            and (
+                type(link.get("item_id")) is int or (isinstance(link.get("item_id"), str) and link["item_id"].isdigit())
+            )
+        ):
+            return f"link {n} is not a {{finding_id: text, item_id: number}} object"
+    return None
+
+
+def _finding_problem(finding: object, n: int) -> str | None:
+    """Return why one finding row cannot become an action item, or ``None``.
+
+    The field, type and severity rules are ``find_review_report.finding_row_problem``, shared with ``oss:review``'s
+    producer gate; the contract and validation-status rules below are the merge's own.
+    """
+    row_problem = finding_row_problem(finding, n)
+    if row_problem:
+        return row_problem
+    if "contract_version" in finding and (
+        finding["contract_version"] != 1 or finding.get("validation_status") != "CONFIRMED"
+    ):
+        return f"finding {finding['id']} is not confirmed under a supported review contract — upgrade or revalidate the review"
+    if finding.get("validation_status", "CONFIRMED") != "CONFIRMED":
+        return f"finding {finding['id']} is an open concern, not an actionable finding"
+    return None
+
+
 def _validate(items: list[dict], findings: list[dict]) -> str | None:
-    """Return the first blocking input problem, or ``None``."""
+    """Return the first blocking input problem, or ``None``.
+
+    Two findings sharing an id block too: items are keyed by finding id, so the later row would be folded into the
+    earlier row's item and its confirmed finding silently lost.
+    """
+    if not all(isinstance(item, dict) for item in items):
+        return "action-items.jsonl holds a line that is not a JSON object"
     ids = [item.get("id") for item in items]
     if any(not isinstance(i, int) or i < 1 for i in ids):
         return "action-items.jsonl holds a non-positive or non-integer id"
     if len(ids) != len(set(ids)):
         return "action-items.jsonl holds a duplicate id"
-    for n, finding in enumerate(findings, 1):
-        missing = [name for name in FINDING_FIELDS if not str(finding.get(name) or "").strip()]
-        if missing:
-            return f"finding {n} missing {', '.join(missing)} — run mint_finding_ids.py and complete the record"
-        if "contract_version" in finding and (
-            finding["contract_version"] != 1 or finding.get("validation_status") != "CONFIRMED"
-        ):
-            return f"finding {finding['id']} is not confirmed under a supported review contract — upgrade or revalidate the review"
-        if finding.get("validation_status", "CONFIRMED") != "CONFIRMED":
-            return f"finding {finding['id']} is an open concern, not an actionable finding"
-        if finding["severity"] not in SEVERITY_SCORE:
-            return f"finding {finding['id']} has unknown severity {finding['severity']!r}"
-    return None
+    return findings_problem(findings, _finding_problem)
 
 
 def _dump(record: dict) -> str:
@@ -429,7 +480,15 @@ def recheck_verdicts(items: list[dict], review_head: str, current_head: str) -> 
 
 
 def _run_recheck(items_path: Path, review_dir: str, current_head: str) -> int:
-    """Apply ``recheck_verdicts`` to the item file and print what changed."""
+    """Apply ``recheck_verdicts`` to the item file and print what changed.
+
+    A findings row of the validated publication that the merge could not use (no ``id``, a wrong JSON type, an unknown
+    severity, an id another row repeats) blocks the re-check before anything is written: its parent proof cannot be
+    matched to an item, and guessing would either keep or drop a shortcut on no evidence.
+
+    Returns:
+        0 after the re-check, or 1 when the publication's findings rows are unusable (reason on stderr).
+    """
     items = read_jsonl(items_path) if items_path.exists() else []
     head_file = Path(review_dir) / "head-sha.txt" if review_dir else None
     review_head = head_file.read_text(encoding="utf-8").strip() if head_file and head_file.is_file() else ""
@@ -447,6 +506,10 @@ def _run_recheck(items_path: Path, review_dir: str, current_head: str) -> int:
     )
     digest = hashlib.sha256(validation_file.read_bytes()).hexdigest() if publication_valid else ""
     findings = read_jsonl(Path(review_dir) / "findings.jsonl") if publication_valid else []
+    row_problem = findings_problem(findings)
+    if row_problem:
+        print(f"! BLOCKED — {row_problem}", file=sys.stderr)
+        return 1
     candidate_by_finding = {finding["id"]: finding.get("candidate_id") for finding in findings}
     for item in items:
         if not item.get("parent_validation_file") or not item.get("validation_status"):
@@ -479,6 +542,25 @@ def _run_recheck(items_path: Path, review_dir: str, current_head: str) -> int:
     return 0
 
 
+def _publication_accepted(report: Path, accept_degraded: bool) -> bool:
+    """Decide whether version-one findings may be merged from the publication beside them.
+
+    A publication the strict intake gate accepts always qualifies. With ``accept_degraded`` one that fails that gate
+    still qualifies when gap assessment finds no critical gap, so its confirmed findings rows are intact; the caller
+    owns the decision that the user accepted exactly this degraded report.
+
+    Args:
+        report: The ``review-report.md`` beside the findings file.
+        accept_degraded: Whether the caller's intake accepted a degraded publication.
+
+    Returns:
+        True when the findings may become action items.
+    """
+    if gate_line(report):
+        return True
+    return accept_degraded and not assess_report(report).critical
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     """Parse the command line for the merge, candidates and re-check modes."""
     parser = argparse.ArgumentParser(description="Fold oss:review findings into oss:resolve action-items.jsonl.")
@@ -489,6 +571,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--recheck-verdicts", action="store_true", help="drop verdicts a moved head no longer backs")
     parser.add_argument("--review-dir", default="", help="review report directory holding head-sha.txt")
     parser.add_argument("--current-head", default="", help="PR head now; empty means the checkout's HEAD")
+    parser.add_argument(
+        "--accept-degraded",
+        action="store_true",
+        help="also merge from a publication with only degraded gaps (no critical one); pass only after the user "
+        "accepted that exact report at resolve's gap triage; never applies to --recheck-verdicts",
+    )
     args = parser.parse_args(argv)
     if not args.recheck_verdicts and not args.findings:
         parser.error("--findings is required unless --recheck-verdicts is given")
@@ -506,12 +594,13 @@ def main(argv: list[str] | None = None) -> int:
         findings_path = Path(args.findings)
         findings = read_jsonl(findings_path)
         links = read_jsonl(Path(args.links)) if args.links and Path(args.links).exists() else []
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+    except (OSError, ValueError, RecursionError, subprocess.SubprocessError) as exc:
         print(f"! BLOCKED — cannot read merge inputs: {exc}", file=sys.stderr)
         return 1
     for finding in findings:
-        finding["severity"] = str(finding.get("severity") or "").strip().lower()
-    problem = _validate(items, findings)
+        if isinstance(finding, dict) and isinstance(finding.get("severity"), str):
+            finding["severity"] = finding["severity"].strip().lower()
+    problem = _validate(items, findings) or _links_problem(links)
     if problem:
         print(f"! BLOCKED — {problem}", file=sys.stderr)
         return 1
@@ -519,7 +608,11 @@ def main(argv: list[str] | None = None) -> int:
     if current_findings:
         report = findings_path.with_name("review-report.md")
         fields = _parse_header_fields(report.read_text(encoding="utf-8").splitlines()) if report.is_file() else None
-        if not fields or fields.get("Review contract") != "1" or not gate_line(report):
+        if (
+            not fields
+            or fields.get("Review contract") != "1"
+            or not _publication_accepted(report, args.accept_degraded)
+        ):
             print("! BLOCKED — current findings require their validated review publication", file=sys.stderr)
             return 1
         validation_file = findings_path.with_name("review-validation.json")

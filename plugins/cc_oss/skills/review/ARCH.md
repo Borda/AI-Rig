@@ -20,7 +20,11 @@ JOIN   lanes collected; nothing past it starts until all land
 SETUP  (step 0)
   flags · gh PR snapshot (view/diff/checks) · PR_TYPE classify
   |
-◆ EXISTING REPORT GATE  (step 0 — existing-report guard)  [conditional]
+FILL-GAPS GATE  (step 0 — fill-gaps gate)  [--fill-gaps only]
+  fill_gaps_scope.py plan: run layout · names known · head unchanged · roles map to units · carried projection passes the gate's record rules
+  refuse → ! BLOCKED, stop (nothing allocated or spawned) · pass → print cost line
+  |
+◆ EXISTING REPORT GATE  (step 0 — existing-report guard)  [conditional; skipped under --fill-gaps]
   (a) reuse, stop · (b) re-run · (c) reply-draft → REPLY
   prior resolution.jsonl (from /oss:resolve) → carried into (b) agent prompts
   |
@@ -55,6 +59,8 @@ CROSS-VALIDATE  (step 4)
   |
 CONSOLIDATE  (step 5)  ▣ sw-engineer / doc-scribe / qa-specialist, by PR_TYPE
   findings.jsonl (stable ids minted) → review-report.md
+  CARRY CHECK  [--fill-gaps only]  fill_gaps_scope.py verify; drift → park report → ▣ consolidator re-spawn (shared, once per run) → back here; again → stop
+  ◆ PUBLICATION GATE  find_review_report.py --report --producer (consolidator REJECT = fail); fail → park report → ▣ consolidator re-spawn (shared) → CARRY CHECK [fill-gaps] → here; fail again → stop, report-dir sentinel emptied
   REPORT HEADER  (step 5b)  print (hook-enforced)
   |
 CODEX-ELIGIBLE LIST  (step 6)  tag only, no gate — resolve implements
@@ -94,10 +100,13 @@ The top fan is free — it rides an idle window AGENT LAUNCH already had. ECOSYS
 
 | Gate | Always? | Blocks |
 | -- | -- | -- |
-| existing review report already on disk | conditional | SETUP, before PRE-FLIGHT or any fan-out |
+| fill-gaps selection invalid (unknown role/candidate, head moved, unmappable role, REJECT/legacy/stale run, carried projection cannot pass the publication gate) | conditional (`--fill-gaps` only); prints `! BLOCKED`, no question | SETUP, before run-dir allocation or any spawn |
+| existing review report already on disk | conditional (never under `--fill-gaps`) | SETUP, before PRE-FLIGHT or any fan-out |
 | report path passed, no `--reply` | conditional (`DIRECT_PATH_MODE` only) | PRE-FLIGHT entry — redirects to REPLY or stops |
 | codemap index missing/stale | conditional | PRE-FLIGHT |
 | unknown flag(s) | conditional | PRE-FLIGHT |
+| fill-gaps carry-over altered a carried prior record (`fill_gaps_scope.py verify`) | conditional (`--fill-gaps` only); one consolidator re-spawn per run, shared with the publication gate, then stop | PUBLICATION GATE |
+| publication fails resolve intake or producer rules (`find_review_report.py --report --producer`: contract header, merge-ready rows with known severity and unique ids), or the consolidator published a REJECT itself | always after a consolidator publication; the refused report is parked as `review-report.refused.md` before one shared re-spawn (fill-gaps re-enters CARRY CHECK first), then stop with the report-dir sentinel emptied, so the Stop hook never demands a refused report | REPORT HEADER |
 | **FOLLOW-UP GATE** | **always** (default, non-reply path) | CONFIDENCE BLOCK |
 
 Normal PR-review path (`REPLY_MODE=false`, `DIRECT_PATH_MODE=false`) costs at most 4 `AskUserQuestion` calls; `--reply` and direct-path modes cost 0–1.
@@ -111,6 +120,7 @@ Normal PR-review path (`REPLY_MODE=false`, `DIRECT_PATH_MODE=false`) costs at mo
 | `CICD_ONLY` (no `.py`/`.md`/`.rst` changed) | AGENT LAUNCH narrows to cicd-steward + bridge + challenger (if enabled) |
 | `DOCS_ONLY` (no `.py` changed) | AGENT LAUNCH narrows to doc-scribe + bridge + challenger (if enabled); sw-engineer and the issue agent never spawn |
 | `DOCS_CICD` (no Python at all) | AGENT LAUNCH narrows to cicd-steward + doc-scribe + bridge + challenger (if enabled) |
+| `--fill-gaps` (targeted rerun of one prior run) | FILL-GAPS GATE runs, EXISTING REPORT GATE and ACCEPTANCE GATE Stage 1 skip; new run dir keeps the prior `head-sha.txt` string; AGENT LAUNCH = the plan's units exactly (no ranking, no cap, no pinned qa; zero when candidates-only); ECOSYSTEM + OSS CHECKS skip; CROSS-VALIDATE = named candidates + new claims only (a named CONFIRMED candidate missing its findings row skips it — row published, record carried); CONSOLIDATE merges carried prior records, then CARRY CHECK before PUBLICATION GATE |
 
 ## Degenerate cases
 
@@ -121,6 +131,7 @@ All collapse to a shorter path with no special handling beyond what is described
 - **Existing-report guard, option (a)** — reuses the prior report and stops before PRE-FLIGHT ever runs. Option (c) — redirects straight to REPLY, same skip as the direct-report path.
 - **Stage 1 REJECT** (ACCEPTANCE GATE) — skips AGENT LAUNCH through CONSOLIDATE entirely (no fan-out, no consolidator); the orchestrator writes the report itself and jumps to REPORT HEADER's print + the FOLLOW-UP GATE.
 - **No Python, doc, or CI/CD files changed at all** — file-scope detection exits the skill in PRE-FLIGHT, before any fan-out.
+- **`--fill-gaps` with `--candidates` only** — AGENT LAUNCH spawns nothing; CROSS-VALIDATE re-checks the named candidates, then CONSOLIDATE merges.
 
 ## Where this lives in `SKILL.md`
 
@@ -129,13 +140,14 @@ Index of the `(step N)` tags in the schema above, one row per block.
 | Block | Steps |
 | -- | -- |
 | SETUP | 0 |
+| FILL-GAPS GATE | 0 (fill-gaps gate; `modes/fill-gaps.md`) |
 | EXISTING REPORT GATE | 0 (existing-report guard) |
 | PRE-FLIGHT | 1 |
 | ACCEPTANCE GATE | 1 (acceptance gate) |
 | AGENT LAUNCH | 1 (Agent 0 gather), 2 |
 | ECOSYSTEM + OSS CHECKS | 3a, 3b |
 | CROSS-VALIDATE | 4 |
-| CONSOLIDATE | 5, 5b |
+| CONSOLIDATE | 5, 5b (carry check: `modes/fill-gaps.md`) |
 | CODEX-ELIGIBLE LIST | 6 |
 | WORKTREE EXIT | 7 |
 | FOLLOW-UP GATE | 7a |

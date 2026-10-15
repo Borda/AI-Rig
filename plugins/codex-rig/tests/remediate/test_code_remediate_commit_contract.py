@@ -23,8 +23,7 @@ def test_remediation_classifies_confidence_and_prepares_backend_evidence() -> No
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     assert "Ephemeral Dependency Evidence" in skill
     assert "before closing a missing-backend item as environment-blocked" in skill
-    assert "Statistical calibration disclaimer only" in skill
-    assert "not-applicable" in skill.split("Statistical calibration disclaimer only", 1)[1].split("\n", 1)[0]
+    assert "A statistical-confidence disclaimer requires no invented calibration experiment" in skill
     assert "An explicitly required calibration experiment remains actionable" in skill
     assert "resume ledger, workplan, finalization, validation and promotion" in skill
 
@@ -35,11 +34,28 @@ def test_review_and_remediation_require_explicit_convergence_authorization() -> 
         skill = (PLUGIN_ROOT / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
         assert "Challenge Resolve is opt-in" in skill
         assert "invocation alone does not authorize" in skill
-        assert "ask before entering that workflow or loop" in skill
         assert "Existing explicit approval for the same scope remains valid" in skill
+        if name == "code-review":
+            assert "ask before entering that workflow or loop" in skill
     remediation = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     fork = remediation.split("- **Fork PR:**", 1)[1].split("####", 1)[0]
     assert "separate explicit approval for the adversarial recovery loop" in fork
+
+
+def test_remediation_single_pass_overrides_generic_convergence_rules() -> None:
+    """Prevent closure verification or newly found work from starting an unsolicited loop."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    baseline = (PLUGIN_ROOT / "assets" / "AGENTS.md").read_text(encoding="utf-8")
+    shared = (PLUGIN_ROOT / "shared" / "native-skill-contract.md").read_text(encoding="utf-8")
+    assert "single pass: collect findings, resolve the selected work, verify, and report" in skill
+    assert "Do not propose or ask approval for an unsolicited loop" in skill
+    assert "No convergence score, loop ledger, or score-based stop applies" in skill
+    assert "Newly discovered in-scope defects do not trigger another review wave" in skill
+    assert "at most one closure-verification pass" in skill
+    assert "Code Remediate's single-pass contract takes precedence" in baseline
+    assert "Code Remediate's single-pass contract takes precedence" in shared
+    assert "only when the user explicitly requests it" in baseline
+    assert "only when the user explicitly requests it" in shared
 
 
 def test_remediation_offers_post_gate_commit_modes() -> None:
