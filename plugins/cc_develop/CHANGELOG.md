@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.40.3
+
+- Sync the quality-gates rule: after each validated adversarial-loop round, print the progress table exactly, with all rows kept and each cell as `old + new`.
+
 ## 0.40.2
 
 - Sync the cross-validation protocol: assessment evidence and limits are string arrays, open concerns cover only UNVERIFIED or pending candidates, and an open candidate forbids complete readiness.

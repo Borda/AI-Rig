@@ -3509,6 +3509,6 @@
       "src": "skills/debug/SKILL.md:369"
     }
   },
-  "plugin": "cc_develop@0.40.2",
+  "plugin": "cc_develop@0.40.3",
   "schema": 1
 }

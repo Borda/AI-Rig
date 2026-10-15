@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.48.3
+
+- Sync the quality-gates rule: after each validated adversarial-loop round, print the progress table exactly, with all rows kept and each cell as `old + new`.
+
 ## 0.48.2
 
 - Stop the resolve picker from restating items the printed table and item options already show: the bulk question carries counts, notices and the saved table path, and the group-preview question carries the group count and path.

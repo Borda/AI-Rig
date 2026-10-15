@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.28.2
+
+- Sync the quality-gates rule: after each validated adversarial-loop round, print the progress table exactly, with all rows kept and each cell as `old + new`.
+
 ## 0.28.0
 
 - Write Research skill contracts atomically with validated optional gate metadata and a session/digest owner stamp, allowing the continuation path to verify which session produced the contract.

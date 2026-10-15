@@ -20,6 +20,8 @@ Read `_full/adversarial-loop.md` before every independent review → authorized-
 
 Never fork the implementing conversation for review or close a local fix before later independent verification. Resolve every feasible authorized finding; a structural flag alone is not a stop, and a repeated signature requires shared-root-cause investigation before another fix. Any score decrease converges (`0 < r_n < 1`); equal scores plateau and increases do not converge. Unavailable independent coverage, stale final evidence, an unmet approval boundary, plateau/non-convergence with open findings, or exhaustion of a stricter caller budget stops the dependent route. Open `security` or `critical` findings forbid completion and commit; unresolved `high` findings require escalation rather than deferral. At a stop, report only completed-round scores (for example `W_0 → W_1 → W_2`), or `not-run` when no review completed, plus per-tier residue, evidence, owner and next action; invoke `AskUserQuestion` only for the concrete missing decision or authorization. A clean loop still requires the owning workflow's remaining gates.
 
+After each validated round, print the progress table exactly: `| Iteration | Critical | High | Medium | Low | Nits | Weighted score |`, all rows kept, each cell `old + new`; never reshape or reduce it.
+
 ## Confidence Block (required on all analysis tasks)
 
 <!-- policy-sibling: plugins/cc_oss/rules/quality-gates.md, plugins/cc_foundry/rules/quality-gates.md, plugins/cc_research/rules/quality-gates.md -->

@@ -37,7 +37,10 @@ EAGER_GLOBS = frozenset({"**", "**/*"})
 # Raised from 59990 by 995 bytes: the gh-write question now lists approval scope and expiry,
 # with the body summary and exact command visible before approval. It must remain eager
 # because no hook injects this rule before the first write; a lazy home misses that decision.
-EAGER_BUDGET_BYTES = 60985
+# Raised from 60985 by 161 bytes: the adversarial-loop progress table format (exact columns,
+# `old + new` cells) now sits in the quality-gates stub. Defined only in the lazily read full
+# rule, it was replaced by a reduced ad-hoc table in a live loop report.
+EAGER_BUDGET_BYTES = 61146
 #: Rules ``hooks/rule-inject.js`` injects on their activity; eager loading would duplicate them.
 HOOK_INJECTED_RULES = ("agent-spawn.md", "git-commit.md")
 

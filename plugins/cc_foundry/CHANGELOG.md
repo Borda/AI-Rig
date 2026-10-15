@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.67.3
+
+- State the adversarial-loop progress table in the always-loaded quality-gates rule: after each validated round, print exactly the `Iteration | Critical | High | Medium | Low | Nits | Weighted score` table with all rows kept and each cell as `old + new`. The format lived only in the lazily read full rule, and a live loop report replaced it with a reduced table.
+
 ## 0.67.2
 
 - Add a no-restating rule to the question-text guidance: a question never repeats rows, items or findings that the last printed text already shows or that its own options carry.
