@@ -1314,7 +1314,7 @@ def _restore_tree(root: Path, state: dict[str, tuple[bytes, int] | None]) -> Non
     assert _tree_state(root).keys() == state.keys(), "subtest-tree-restore-incomplete"
 
 
-def _partial_dispatch_base(tmp_path: Path) -> tuple[Path, Path, dict[str, Path]]:
+def _partial_dispatch_base(tmp_path: Path, *, compact_reader: bool = False) -> tuple[Path, Path, dict[str, Path]]:
     """Prepare one bounded batch and record complete native context reads before any launch failure is injected."""
     root = _review_inputs(tmp_path)
     source_root = json.loads((root / "local-source/review-worktree.json").read_bytes())["review_worktree"]
@@ -1340,7 +1340,7 @@ def _partial_dispatch_base(tmp_path: Path) -> tuple[Path, Path, dict[str, Path]]
     )
     assert prepared.returncode == 0, prepared.stderr
     run = root / "batches/source-001"
-    _, home, children = _assembly_evidence(tmp_path, prepared_run=run)
+    _, home, children = _assembly_evidence(tmp_path, prepared_run=run, compact_reader=compact_reader)
     return run, home, children
 
 
@@ -1412,12 +1412,22 @@ def _inject_partial_dispatch_failure(
         if row.get("payload", {}).get("type") == "agent_message"
     )
     sent = original_message
+    # Compact fixtures already retain expanded command receipts; rebuild them for the injected failure below.
+    rows = [row for row in rows if row.get("payload", {}).get("item", {}).get("type") != "CommandExecution"]
     commands = []
     duplicate = failure.startswith("duplicate-interpreter")
     failed_page = 1 if failure.endswith("-first") else len(calls) if failure.endswith("-last") else len(calls) - 1
     for page, call in enumerate(calls, 1):
+        literal_call = render(
+            run / "inspection-plan.json",
+            role,
+            1,
+            sys.executable,
+            page,
+            installed_reader if copied_reader else SKILL / "review_context.py",
+        )
+        arguments = json.loads(literal_call.split("tools.exec_command(", 1)[1].split("); text", 1)[0])
         if (duplicate and page != failed_page) or (not duplicate and page <= len(calls) - 2):
-            arguments = json.loads(call["input"].split("tools.exec_command(", 1)[1].split("); text", 1)[0])
             command = arguments["cmd"] if os.name == "nt" else shlex.split(arguments["cmd"])
             successful = subprocess.run(command, capture_output=True, check=False)
             assert successful.returncode == 0
@@ -1439,10 +1449,10 @@ def _inject_partial_dispatch_failure(
             )
             continue
         if duplicate:
-            original_args = json.loads(call["input"].split("tools.exec_command(", 1)[1].split("); text", 1)[0])
+            original_args = arguments
             executable = subprocess.list2cmdline([sys.executable]) if os.name == "nt" else shlex.quote(sys.executable)
             duplicate_args = {**original_args, "cmd": executable + " " + original_args["cmd"]}
-            malformed = call["input"].replace(
+            malformed = literal_call.replace(
                 json.dumps(original_args, ensure_ascii=False), json.dumps(duplicate_args, ensure_ascii=False)
             )
         else:

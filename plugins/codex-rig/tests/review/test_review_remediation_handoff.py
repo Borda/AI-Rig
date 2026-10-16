@@ -15,6 +15,103 @@ from test_review_completion_gate import FINDER, PLUGIN_ROOT, _assessed_pr, _fina
 
 
 @pytest.mark.integration
+def test_coverage_waiver_completes_separate_fallback_without_synthetic_actions(tmp_path: Path) -> None:
+    """Keep original independence binding while completing a limited, action-free revised scope."""
+    original = _assessed_pr.__wrapped__(tmp_path / "original")
+    rejected = _finalize_parent_fallback(original, independent_required=True)
+    assert rejected.returncode != 0
+    assert "independent-review-required-for-completion" in rejected.stdout + rejected.stderr
+    frozen = {path: path.read_bytes() for path in original.rglob("*") if path.is_file()}
+
+    fallback = _assessed_pr.__wrapped__(tmp_path / "revised")
+    assert (fallback / "diff.patch").read_bytes() == (original / "diff.patch").read_bytes()
+    assert _finalize_parent_fallback(fallback).returncode == 0
+    metadata_path = fallback / "fallback-drafts/metadata.json"
+    handoff_path = fallback / "fallback-drafts/handoff.json"
+    metadata = json.loads(metadata_path.read_bytes())
+    handoff = json.loads(handoff_path.read_bytes())
+    metadata["operational_blockers"] = []
+    metadata["review_decision"]["summary"] = "No source changes identified; verification limited"
+    metadata["review_decision"]["rationale"] = (
+        "The user waived independent coverage; configured checks retain their failures."
+    )
+    handoff["tables"] = handoff["tables"][:1]
+    handoff["tables"][0]["summary"] = metadata["review_decision"]["summary"]
+    handoff["source_records"] = [record for record in handoff["source_records"] if record["id"] != "gate:types"]
+    handoff["source_coverage"].update(source_records_total=5, represented_source_records_total=5)
+    notes = fallback / "review-notes.md"
+    notes.write_text(
+        notes.read_text(encoding="utf-8").split("## Review Findings and Merge Blocks")[0]
+        + "\n## Revised scope\n\nUser decision: skip independent reviewers for this unchanged revision. "
+        + "Retain parent inspection, source identity, configured checks and every artifact/completion gate. "
+        + f"Original plan retained: {original / 'parent-inspection-plan.json'}. "
+        + "Independent coverage was not performed; the type check remains failed.\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    finalized = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/remediation_finalize.py"),
+            "finalize",
+            "--skill",
+            "code-review",
+            "--run",
+            str(fallback),
+            "--metadata",
+            str(metadata_path),
+            "--handoff",
+            str(handoff_path),
+            "--status",
+            "fail",
+            "--confidence",
+            "0.95",
+            "--artifact-path",
+            str(fallback / "result.json"),
+            "--parent-thread-id",
+            "thread",
+            "--promote",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert finalized.returncode == 0, finalized.stdout + finalized.stderr
+    result = json.loads((fallback / "result.json").read_bytes())
+    assert result["metadata"]["review_decision"]["recommendation"] is None
+    assert result["metadata"]["independence_required"] is False
+    assert result["metadata"]["independence_satisfied"] is False
+    assert result["metadata"]["operational_blockers"] == []
+    assert result["checks_failed"] == ["types"]
+    completed = subprocess.run(
+        [sys.executable, str(FINDER), "--complete-run", str(fallback), "--parent-thread-id", "thread"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "Review Findings and Merge Blocks" not in completed.stdout
+    discovered = subprocess.run(
+        [
+            sys.executable,
+            str(FINDER),
+            "--target",
+            "https://github.com/acme/widgets/pull/123",
+            "--reports-dir",
+            str(fallback.parent.parent),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert discovered.returncode == 0, discovered.stderr
+    assert discovered.stdout.strip() == str(fallback / "result.json")
+    assert all(path.read_bytes() == content for path, content in frozen.items())
+
+
+@pytest.mark.integration
 def test_parent_fallback_promotes_and_preserves_failed_gate_obligations_at_intake(tmp_path: Path) -> None:
     """Carry a failed parent review through finalization, discovery, and lossless consumer admission."""
     run = _assessed_pr.__wrapped__(tmp_path)

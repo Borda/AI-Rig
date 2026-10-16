@@ -748,7 +748,8 @@ def _validate_context_read(
             _include_workdir=manifest.get("schema_version") == 6
             or manifest.get("context_reader_sha256") in LEGACY_WORKDIR_READER_SHA256S,
         )
-        expected_command = json.loads(expected_call.split("tools.exec_command(", 1)[1].split("); text", 1)[0])["cmd"]
+        arguments = review_prepare._read_arguments(expected_call)
+        expected_command = arguments["cmd"]
         expected_call = _native_read_frame(manifest, plan_path, role, attempt, page, expected_call)
         expected_output = render_read_output(
             context,
@@ -799,7 +800,6 @@ def _validate_context_read(
         if incomplete_dispatch and not (canonical_call and canonical_output):
             diagnostic = receipt[1].get("text") if valid_receipt and isinstance(receipt[1], dict) else None
             # Only one extra copy of the exact interpreter token explains this binary-as-source failure.
-            arguments = json.loads(expected_call.split("tools.exec_command(", 1)[1].split("); text", 1)[0])
             executable = manifest["context_reader_python"]
             quoted_executable = subprocess.list2cmdline([executable]) if os.name == "nt" else shlex.quote(executable)
             duplicate_arguments = {**arguments, "cmd": quoted_executable + " " + arguments["cmd"]}

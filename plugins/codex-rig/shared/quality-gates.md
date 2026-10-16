@@ -12,6 +12,10 @@ If an additional review beyond the already authorized scope would resolve a mate
 
 One accepted additional pass does not authorize another pass or a review/fix loop. An explicitly requested convergence workflow retains its bounded mechanics; its coverage gaps still remain limitations rather than synthetic source findings. Reviewers assess the assigned source and report real defects, not requests to review their own review. A report-intake consumer preserves this distinction, including for historical reports that incorrectly promoted a process limitation into a finding.
 
+An explicit user decision may waive additional reviewers, review rounds or broader review coverage, including independence the user previously requested. Treat this as a change to the review scope, not a gate override. Record the user's decision, exact target/revision, waived coverage, retained requirements and resulting limitation in the review notes. Preserve frozen plans and rejected evidence; use the owning workflow's separate fallback plan for the revised scope. A declined optional repair alone does not revoke an earlier explicit independence requirement. Reuse an already explicit waiver for the same target and gap; never ask again or dispatch waived work.
+
+Source identity/freshness, evidence integrity and provenance for claimed work, truthful check results, artifact validation, promotion and completion checks are never waivable. Keep required project checks and their actual failures; a coverage waiver never authorizes merge approval, fabricates independent evidence, turns an unexecuted check into a pass or admits an invalid artifact. A review can complete within its revised scope only after the normal validators and completion gates succeed; otherwise deliver the supported findings as a clearly incomplete report. State review completion separately from merge readiness.
+
 ## Required checks
 
 1. `lint`: `ruff check` (or project lint command)
