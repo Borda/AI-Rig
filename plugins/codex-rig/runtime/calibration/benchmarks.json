@@ -622,7 +622,7 @@
       "Review Findings and Merge Blocks",
       "Required change",
       "Finding / area",
-      "non-`accept-as-is` PR decision",
+      "source recommendation requires changes",
       "T0 PR collection failure",
       "PR Review Availability: unavailable",
       "Merge decision: not made",

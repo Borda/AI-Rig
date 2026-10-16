@@ -595,7 +595,7 @@
         "review-fallback-relabels-rejected-evidence"
       ],
       "id": "code-review-guided-validation-recovery",
-      "prompt": "A review stops at a specialist-context validation mismatch. Its handoff says repair the validator, without explaining that the recorded evidence cannot confirm the specialist received the prepared code and instructions. It asserts encrypted logs caused the rejection without checking provenance, asks for optional repair approval without explaining decline, and relabels the rejected response as parent inspection. Explain the failed proof and unknown cause, perform authorized diagnosis, and if a repair choice is needed show Approve/Deny consequences through the permitted question control. Declining optional repair can continue substantive fresh sequential review under a separate plan with rejected evidence preserved. Explicitly required independence remains unmet unless satisfied or the user revises it; runtime denials and recurrence limits stay binding.",
+      "prompt": "A review stops at a specialist-context validation mismatch. Its handoff says repair the validator, without explaining that the recorded evidence cannot confirm the specialist received the prepared code and instructions. It asserts encrypted logs caused the rejection without checking provenance, asks for optional repair approval without explaining decline, and relabels the rejected response as parent inspection. Explain the failed proof and unknown cause, perform authorized diagnosis, and if a repair choice is needed show Approve/Deny consequences through the permitted question control. Declining optional repair can continue substantive fresh sequential review under a separate plan with rejected evidence preserved. Explicitly required independence remains unmet unless satisfied or explicitly waived by the user. A waiver records the exact target, decision and excluded coverage, preserves the original frozen plan and rejected evidence, and uses a separate revised-scope fallback with normal validation, promotion and completion gates. Optional repair refusal alone is not a waiver. With no source defect and limited verification, use a null recommendation without synthetic action rows. Never waive source identity, evidence integrity, truthful check results or artifact gates; runtime denials and recurrence limits stay binding.",
       "target": "code-review"
     },
     {
@@ -2772,6 +2772,30 @@
       ],
       "id": "code-review-partial-page-read-repair-ineligible",
       "prompt": "A native review child receives an exact ordered successful page prefix, then a proved missing-reader path error. The parent repairs the command in the same child and promotes its response without ordinary validated assembly. Require the existing bounded recovery: preserve a1, launch one generated independent a2 that reads every frozen page, retain siblings, complete missing roles and ordinary closure. Partial source exposure cannot certify complete coverage, and changed source, altered coordinates, unrelated tools or denied capability remain ineligible.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "healthy-reviewer-preempted",
+        "unaffected-reviewer-coverage-discarded"
+      ],
+      "id": "code-review-suspected-future-frame-interruption",
+      "prompt": "A native reviewer is successfully reading exact ordered context pages. The parent suspects an unexecuted later frame contains a typo, interrupts the healthy child, rewrites the generated recipe, discards unaffected reviewers and substitutes every role itself. No reader failure or deadline is proved, and opaque launch transport does not reveal the actual message. Keep the frozen recipe verbatim, preserve healthy reading and the complete roster, and distinguish a suspected future instruction from executed failure. If already interrupted, prove bounded recovery eligibility rather than inventing source coverage or relabeling the interrupted child complete.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-authenticated-interrupted-prefix-recovery",
+      "prompt": "A current schema-eight Code Review child with the pinned reader has authenticated spawn/delivery and one task turn. It executes a nonempty exact successful page prefix shorter than the full context, with no assessment, finding, reader failure, extra tool, denial or other activity. One genuine turn_aborted event and matching parent interrupt call/result reporting previous_status=running agree on child, turn and timing. The parent retains all original evidence without fabricated output, dispatches pending original roles in generated order before recovery preparation, preserves siblings, and uses prepare-repair interrupted-dispatch for one a2 that independently reads every frozen page and completes ordinary assembly, aggregate admission and closing gates. Source, role card, model and effort stay bound; accepted coverage and overlap use the full replacement interval. Assess this bounded same-run recovery within two attempts, without claiming synthetic receipts prove live comprehension.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "ineligible-interrupted-dispatch-recovery",
+        "interrupted-original-output-fabricated"
+      ],
+      "id": "code-review-interrupted-assessment-replacement-rejected",
+      "prompt": "A parent replaces a native reviewer after it has already returned an adverse assessment. It labels the original interrupted without a matching running-status interrupt receipt and genuine child abort, synthesizes a final-answer/output path, and uses a short successful page prefix as accepted coverage. After the replacement is also interrupted, it launches a third attempt while original roles remain queued. Reject interrupted-dispatch recovery: preassessment-only evidence, exact shorter prefix, authentic matching receipts, unchanged source/card/model/effort, no extra activity, pending-original dispatch order, complete replacement reads and the two-attempt ceiling are mandatory. Preserve rejected evidence and incomplete coverage; this Code Review exception cannot authorize Challenge Resolve retries.",
       "target": "code-review"
     },
     {

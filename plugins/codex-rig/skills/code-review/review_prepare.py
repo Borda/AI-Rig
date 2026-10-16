@@ -587,8 +587,9 @@ def _observed_pass(
     attempt_number: int = 1,
     retain_rejected: bool = False,
     batch_response: bool = False,
+    interrupted: bool = False,
 ) -> dict[str, Any]:
-    """Extract one completed child without inventing IDs, model choices, outputs, or joins."""
+    """Extract a completed child or an explicitly selected abort without inventing terminal evidence."""
     role = context["role_id"]
     task_name = f"review_{role.replace('-', '_')}_{context['context_sha256'][:12]}_a{attempt_number}"
     paths = children.get(task_name, [])
@@ -596,8 +597,8 @@ def _observed_pass(
         raise ValueError(f"review-child-session-not-unique:{role}")
     rows = validator._read_jsonl(paths[0])
     session = next(row["payload"] for row in rows if row["type"] == "session_meta")
-    terminals = validator._event_payloads(rows, "task_complete")
-    if len(terminals) != 1 or not isinstance(terminals[0].get("last_agent_message"), str):
+    terminals = validator._event_payloads(rows, "turn_aborted" if interrupted else "task_complete")
+    if len(terminals) != 1 or (not interrupted and not isinstance(terminals[0].get("last_agent_message"), str)):
         raise ValueError(f"review-child-not-completed:{role}")
     terminal = terminals[0]
     turns = [
@@ -637,15 +638,16 @@ def _observed_pass(
     if len(successful_calls) != 1:
         raise ValueError(f"review-spawn-call-not-unique:{role}")
     calls = successful_calls
-    message = terminal["last_agent_message"].strip()
+    message = "" if interrupted else terminal["last_agent_message"].strip()
     if any(pattern.search(message) for pattern in validator._SECRET_PATTERNS):
         raise ValueError(f"review-output-sensitive-material:{role}")
     suffix = f".a{attempt_number}" if retain_rejected or attempt_number > 1 else ""
     output_path = f"specialists/{role}{suffix}.md"
-    _freeze({out / output_path: (message + "\n").encode("utf-8")})
     raw_output_path = f"specialists/{role}{suffix}.raw.md"
-    _freeze({out / raw_output_path: terminal["last_agent_message"].encode("utf-8")})
-    if not retain_rejected:
+    if not interrupted:
+        _freeze({out / output_path: (message + "\n").encode("utf-8")})
+        _freeze({out / raw_output_path: terminal["last_agent_message"].encode("utf-8")})
+    if not retain_rejected and not interrupted:
         plan = validator._load_json(out / "inspection-plan.json")
         validator._retained_reviewer_rating(
             out / output_path,
@@ -658,7 +660,7 @@ def _observed_pass(
     agent_path = session.get("agent_path") or session["source"]["subagent"]["thread_spawn"]["agent_path"]
     attempt = {
         "attempt": attempt_number,
-        "status": "completed",
+        "status": "interrupted" if interrupted else "completed",
         "agent_thread_id": session["id"],
         "agent_path": agent_path,
         "spawn_call_id": calls[0]["call_id"],
@@ -667,11 +669,14 @@ def _observed_pass(
         "turn_id": terminal["turn_id"],
         "model": turns[0]["model"],
         "effort": turns[0]["effort"],
-        "output_path": output_path,
-        "output_sha256": validator._sha256(out / output_path),
-        "raw_output_path": raw_output_path,
-        "raw_output_sha256": validator._sha256(out / raw_output_path),
     }
+    if not interrupted:
+        attempt.update(
+            output_path=output_path,
+            output_sha256=validator._sha256(out / output_path),
+            raw_output_path=raw_output_path,
+            raw_output_sha256=validator._sha256(out / raw_output_path),
+        )
     events = [
         event
         for event in validator._event_payloads(parent_rows, "sub_agent_activity")
@@ -688,7 +693,7 @@ def _observed_pass(
         "trigger": "; ".join(trigger),
         "confidence": assessment["confidence"],
         "blocking_findings": assessment["blocking_findings"],
-        "output_path": output_path,
+        "output_path": None if interrupted else output_path,
         "role_card_sha256": validator._sha256(out / "role-cards" / role / "ROLE.md"),
         "attempts": [attempt],
         "selected_attempt": attempt_number,
@@ -711,7 +716,15 @@ def observed_pass(
         return _observed_pass(out, context, parent_rows, children, assessment, trigger, batch_response=batch_response)
     repair = validator._load_json(repair_path)
     original = _observed_pass(
-        out, context, parent_rows, children, assessment, trigger, retain_rejected=True, batch_response=batch_response
+        out,
+        context,
+        parent_rows,
+        children,
+        assessment,
+        trigger,
+        retain_rejected=True,
+        batch_response=batch_response,
+        interrupted=repair["kind"] == "interrupted-dispatch",
     )
     selected = _observed_pass(
         out, context, parent_rows, children, assessment, trigger, attempt_number=2, batch_response=batch_response
@@ -781,14 +794,53 @@ def prepare_repair(out: Path, codex_home: Path, role: str, kind: str) -> dict[st
         raise ValueError("manifest-review-input-hash-mismatch")
     reader_identity = _retained_reader_identity(out, dispatch)
     rows = validator._read_jsonl(validator._find_rollout(codex_home, plan["parent_thread_id"]))
+    children = _child_sessions(codex_home, plan["parent_thread_id"])
+    if kind == "interrupted-dispatch":
+        # Recovery cannot replace the pending launch queue: every original must already have a bound spawn.
+        previous_index = -1
+        for call in dispatch["calls"]:
+            arguments = call["arguments"]
+            paths = children.get(arguments["task_name"], [])
+            if len(paths) != 1:
+                raise ValueError("review-interrupted-original-roster-pending")
+            session = validator._read_jsonl(paths[0])[0]["payload"]
+            matched = []
+            for index, row in enumerate(rows):
+                payload = row.get("payload", {})
+                if (
+                    row.get("type") != "response_item"
+                    or payload.get("type") != "function_call"
+                    or payload.get("name") != "spawn_agent"
+                ):
+                    continue
+                attempt = {
+                    "agent_thread_id": session["id"],
+                    "agent_path": session["agent_path"],
+                    "spawn_call_id": payload.get("call_id"),
+                }
+                if validator._receipt_binds_child(
+                    rows,
+                    codex_home,
+                    plan["parent_thread_id"],
+                    attempt,
+                    arguments["message"],
+                    schema_version=6,
+                    model=arguments["model"],
+                    effort=arguments["reasoning_effort"],
+                ):
+                    matched.append(index)
+            if len(matched) != 1 or matched[0] <= previous_index:
+                raise ValueError("review-interrupted-original-roster-pending")
+            previous_index = matched[0]
     original = _observed_pass(
         out,
         contexts[0],
         rows,
-        _child_sessions(codex_home, plan["parent_thread_id"]),
+        children,
         {"axis": role, "confidence": 0.95, "blocking_findings": 0},
         ["Diagnosed internal failure."],
         retain_rejected=True,
+        interrupted=kind == "interrupted-dispatch",
     )
     manifest = {
         **manifest_header(plan),
@@ -1013,7 +1065,13 @@ def main() -> int:
     repair_parser.add_argument(
         "--kind",
         required=True,
-        choices=("closure-evidence-shape", "assessment-format", "finding-id-namespace", "incomplete-dispatch"),
+        choices=(
+            "closure-evidence-shape",
+            "assessment-format",
+            "finding-id-namespace",
+            "incomplete-dispatch",
+            "interrupted-dispatch",
+        ),
     )
     assemble_parser = commands.add_parser("assemble", help="Bind received child results to actual runtime records.")
     assemble_parser.add_argument("--out", required=True, type=Path)

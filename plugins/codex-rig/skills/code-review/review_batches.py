@@ -1101,8 +1101,10 @@ def _role_passes(
             prefix = directory.relative_to(out).as_posix() + "/"
             item["output_path"] = prefix + item["output_path"]
             for attempt in item["attempts"]:
-                for key in ("context_path", "output_path", "raw_output_path"):
-                    attempt[key] = prefix + attempt[key]
+                attempt["context_path"] = prefix + attempt["context_path"]
+                for key in ("output_path", "raw_output_path"):
+                    if key in attempt:
+                        attempt[key] = prefix + attempt[key]
             content = validator._resolve_path(out, item["output_path"]).read_text(encoding="utf-8")
             assessment = validator._retained_reviewer_rating(
                 out / item["output_path"],

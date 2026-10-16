@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.35.10
+
+- Honor explicit review coverage waivers as recorded scope changes through a separate frozen fallback plan; preserve source identity, evidence integrity, failed checks and every validation/completion gate. Optional repair refusal alone never revokes required independence.
+- Finish limited no-finding reviews with a null source recommendation and no synthetic action table; remove contradictory fallback instructions that required source-change verdicts or blocker rows for missing coverage/checkers.
+- Repair compact reader launch failures using the retained canonical arguments before selector rendering; preserve original dispatch evidence and require complete replacement coverage.
+- Preserve healthy reviewer page reads despite suspected future-frame errors; recover one authenticated preassessment parent interruption through complete replacement reads while retaining sibling coverage, pending role order and the two-attempt limit.
+
 ## 0.35.9
 
 - The global baseline now requires that baseline claims name their tree and run with explicit paths, new checks are classified as behaviour (pytest) or bookkeeping (pre-commit hook), mutation checks run on a copy outside the repository, and an option that widens a grant is read before it is marked recommended; parent agents send changed scope to a fresh narrowly briefed child and check it against disk state, not the handover text.

@@ -534,6 +534,21 @@ def _binary_source_diagnostic(diagnostic: object, executable: str) -> bool:
     return re.fullmatch(rf"(?:{null_bytes}|{non_utf8}|{invalid_syntax})\r?\n?", diagnostic) is not None
 
 
+def _command_streams(command: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Read native command output without accepting conflicting host representations."""
+    if "aggregated_output" not in command:
+        return command.get("stdout"), command.get("stderr")
+    aggregate = command["aggregated_output"]
+    if not isinstance(aggregate, str) or command.get("status") != "completed":
+        raise SystemExit("review-inspection-command-output-invalid")
+    if "stdout" not in command and "stderr" not in command:
+        return aggregate, ""
+    stdout, stderr = command.get("stdout"), command.get("stderr")
+    if not isinstance(stdout, str) or not isinstance(stderr, str) or stdout + stderr != aggregate:
+        raise SystemExit("review-inspection-command-output-conflict")
+    return stdout, stderr
+
+
 def _validate_context_read(
     child_rows: list[dict[str, Any]],
     plan_path: Path,
@@ -543,6 +558,7 @@ def _validate_context_read(
     context: str,
     *,
     incomplete_dispatch: bool = False,
+    interrupted_prefix: bool = False,
 ) -> None:
     """Require complete reads, one proved preprocessing correction, or a bounded launch error for reassessment."""
     # Resolve the existing producer/validator circular boundary only after both modules initialize.
@@ -566,6 +582,13 @@ def _validate_context_read(
         and row["payload"]["item"].get("type") == "CommandExecution"
     ]
     page_count = len(context_pages(context))
+    if interrupted_prefix:
+        if incomplete_dispatch or len(tool_rows) % 2 or not 0 < len(tool_rows) // 2 < page_count:
+            raise SystemExit(f"review-interrupted-prefix-invalid:{role}")
+        if len(commands) != len(tool_rows) // 2:
+            raise SystemExit(f"review-inspection-context-command-mismatch:{role}")
+        # This bounded prefix admits only successful canonical reads, never the incidental failure allowances below.
+        page_count = len(tool_rows) // 2
     optional_pragma = (
         manifest.get("schema_version") == 8
         and manifest.get("context_reader_sha256") == _sha256(SKILL_DIRECTORY / "review_context.py")
@@ -587,6 +610,7 @@ def _validate_context_read(
     # correction only with that preprocessing receipt and every canonical command still accounted for.
     if (
         not incomplete_dispatch
+        and not interrupted_prefix
         and manifest.get("schema_version") == 8
         and manifest.get("context_reader_sha256") == _sha256(SKILL_DIRECTORY / "review_context.py")
         and len(tool_rows) == 2 * (page_count + 1)
@@ -638,6 +662,7 @@ def _validate_context_read(
     # to retry that same canonical page; one incidental launch never substitutes for source coverage.
     if (
         not incomplete_dispatch
+        and not interrupted_prefix
         and manifest.get("schema_version") == 8
         and manifest.get("context_reader_sha256") == _sha256(SKILL_DIRECTORY / "review_context.py")
         and len(tool_rows) == 2 * (page_count + 1)
@@ -718,8 +743,7 @@ def _validate_context_read(
             or not proved_diagnostic
             or not _reader_command_matches(command.get("command"), arguments["cmd"])
             or command.get("exit_code") != (2 if missing_reader else 1)
-            or (command.get("stdout"), command.get("stderr"))
-            not in {(receipt[1]["text"], ""), ("", receipt[1]["text"])}
+            or _command_streams(command) not in {(receipt[1]["text"], ""), ("", receipt[1]["text"])}
         ):
             raise SystemExit(f"review-inspection-context-read-retry-invalid:{role}")
         tool_rows = tool_rows[: 2 * index] + tool_rows[2 * index + 2 :]
@@ -748,7 +772,8 @@ def _validate_context_read(
             _include_workdir=manifest.get("schema_version") == 6
             or manifest.get("context_reader_sha256") in LEGACY_WORKDIR_READER_SHA256S,
         )
-        expected_command = json.loads(expected_call.split("tools.exec_command(", 1)[1].split("); text", 1)[0])["cmd"]
+        arguments = review_prepare._read_arguments(expected_call)
+        expected_command = arguments["cmd"]
         expected_call = _native_read_frame(manifest, plan_path, role, attempt, page, expected_call)
         expected_output = render_read_output(
             context,
@@ -763,6 +788,7 @@ def _validate_context_read(
         if (
             not canonical_call
             and not incomplete_dispatch
+            and not interrupted_prefix
             and literal_plan_page is None
             and manifest.get("schema_version") == 8
             and manifest.get("dispatch_protocol") == "paged-context-v7"
@@ -799,7 +825,6 @@ def _validate_context_read(
         if incomplete_dispatch and not (canonical_call and canonical_output):
             diagnostic = receipt[1].get("text") if valid_receipt and isinstance(receipt[1], dict) else None
             # Only one extra copy of the exact interpreter token explains this binary-as-source failure.
-            arguments = json.loads(expected_call.split("tools.exec_command(", 1)[1].split("); text", 1)[0])
             executable = manifest["context_reader_python"]
             quoted_executable = subprocess.list2cmdline([executable]) if os.name == "nt" else shlex.quote(executable)
             duplicate_arguments = {**arguments, "cmd": quoted_executable + " " + arguments["cmd"]}
@@ -870,21 +895,23 @@ def _validate_context_read(
         for page, (command, expected_command, expected_output, exit_code) in enumerate(
             zip(commands, expected_commands, expected_outputs, expected_exits), start=1
         ):
+            stdout, stderr = _command_streams(command)
             if (
                 not _reader_command_matches(command.get("command"), expected_command)
                 or command.get("exit_code") != exit_code
-                or (exit_code == 0 and command.get("stdout") != expected_output)
-                or (
-                    exit_code in {1, 2}
-                    and (command.get("stdout"), command.get("stderr"))
-                    not in {(expected_output, ""), ("", expected_output)}
-                )
+                or (exit_code == 0 and (stdout != expected_output or stderr not in {None, ""}))
+                or (exit_code in {1, 2} and (stdout, stderr) not in {(expected_output, ""), ("", expected_output)})
             ):
                 raise SystemExit(f"review-inspection-context-command-mismatch:{role}:{page}")
     remaining = [
         row
         for row in child_rows
         if not (row.get("type") == "response_item" and row.get("payload") in retained_tool_rows)
+        and not (
+            interrupted_prefix
+            and row.get("type") == "event_msg"
+            and row.get("payload", {}).get("type") == "turn_aborted"
+        )
         and not (
             row.get("type") == "event_msg"
             and isinstance(row.get("payload"), dict)
@@ -1168,6 +1195,7 @@ def _validate_native_schedule(
 
     allocations: list[dict[str, Any]] = []
     successful_call_ids: set[str] = set()
+    interruption_call_ids: set[str] = set()
     expected_task_names: dict[str, tuple[str, int]] = {}
     expected_task_arguments: dict[str, dict[str, Any]] = {}
     for role in ordered_roles:
@@ -1203,7 +1231,7 @@ def _validate_native_schedule(
             if recovered.get("recovery") is not None and number == 2:
                 expected = _recovery_arguments(out_dir, manifest, recovered, parent_rows, codex_home)
                 expected["agent_type"] = "default"
-            elif recovered.get("recovery") == {"kind": "incomplete-dispatch"}:
+            elif recovered.get("recovery") in ({"kind": "incomplete-dispatch"}, {"kind": "interrupted-dispatch"}):
                 expected["message"] = _original_dispatch_message(manifest, plan_path, role, attempt, parent_rows)
             # Refusals allocate the same task as successful spawns, including any proved recovery instruction.
             # Retain canonical controls before the host's optional agent selector normalization.
@@ -1236,42 +1264,55 @@ def _validate_native_schedule(
             if launched_at >= received_at:
                 raise SystemExit(f"review-inspection-launch-receipt-invalid:{role}:{number}")
             child_rows = _read_jsonl(_find_rollout(codex_home, attempt["agent_thread_id"]))
-            terminals = [
-                event
-                for event in _event_payloads(child_rows, "task_complete")
-                if event.get("turn_id") == attempt.get("turn_id")
-            ]
-            if len(terminals) != 1:
-                raise SystemExit(f"review-inspection-attempt-timing-missing:{role}:{number}")
-            terminal = terminals[0]
-            terminal_start = terminal.get("started_at")
-            terminal_end = terminal.get("completed_at")
-            if (
-                isinstance(terminal_start, bool)
-                or isinstance(terminal_end, bool)
-                or not isinstance(terminal_start, int | float)
-                or not isinstance(terminal_end, int | float)
-                or not math.isfinite(terminal_start)
-                or not math.isfinite(terminal_end)
-                or terminal_start >= terminal_end
-            ):
-                raise SystemExit(f"review-inspection-attempt-timing-invalid:{role}:{number}")
-            terminal_at = datetime.fromtimestamp(terminal_end, timezone.utc)
-            if attempt.get("status") == "completed":
-                message = _resolve_path(out_dir, attempt["output_path"]).read_text(encoding="utf-8").strip()
+            if recovered.get("recovery") == {"kind": "interrupted-dispatch"} and number == 1:
+                joined_at, interrupt_id = _interrupted_dispatch_receipt(
+                    out_dir, manifest, role, attempt, parent_rows, child_rows
+                )
+                interruption_call_ids.add(interrupt_id)
+                terminal_at = joined_at
+                terminal_start = _event_payloads(child_rows, "turn_aborted")[0]["started_at"]
+                if (
+                    terminal_start + (1 if type(terminal_start) is int else 0) < launched_at.timestamp()
+                    or received_at > joined_at
+                ):
+                    raise SystemExit(f"review-inspection-parent-join-missing:{role}")
             else:
-                message = terminal.get("last_agent_message")
-            if not isinstance(message, str):
-                raise SystemExit(f"review-inspection-parent-join-missing:{role}")
-            joined_at = _joined_terminal_timestamp(parent_rows, attempt["agent_path"], message.strip())
-            # Integer host starts identify a whole-second bucket; precise child creation remains receipt-bound.
-            start_predates_launch = (
-                terminal_start + 1 <= launched_at.timestamp()
-                if type(terminal_start) is int
-                else terminal_start < launched_at.timestamp()
-            )
-            if start_predates_launch or joined_at is None or received_at > joined_at:
-                raise SystemExit(f"review-inspection-parent-join-missing:{role}")
+                terminals = [
+                    event
+                    for event in _event_payloads(child_rows, "task_complete")
+                    if event.get("turn_id") == attempt.get("turn_id")
+                ]
+                if len(terminals) != 1:
+                    raise SystemExit(f"review-inspection-attempt-timing-missing:{role}:{number}")
+                terminal = terminals[0]
+                terminal_start = terminal.get("started_at")
+                terminal_end = terminal.get("completed_at")
+                if (
+                    isinstance(terminal_start, bool)
+                    or isinstance(terminal_end, bool)
+                    or not isinstance(terminal_start, int | float)
+                    or not isinstance(terminal_end, int | float)
+                    or not math.isfinite(terminal_start)
+                    or not math.isfinite(terminal_end)
+                    or terminal_start >= terminal_end
+                ):
+                    raise SystemExit(f"review-inspection-attempt-timing-invalid:{role}:{number}")
+                terminal_at = datetime.fromtimestamp(terminal_end, timezone.utc)
+                if attempt.get("status") == "completed":
+                    message = _resolve_path(out_dir, attempt["output_path"]).read_text(encoding="utf-8").strip()
+                else:
+                    message = terminal.get("last_agent_message")
+                if not isinstance(message, str):
+                    raise SystemExit(f"review-inspection-parent-join-missing:{role}")
+                joined_at = _joined_terminal_timestamp(parent_rows, attempt["agent_path"], message.strip())
+                # Integer host starts identify a whole-second bucket; precise child creation remains receipt-bound.
+                start_predates_launch = (
+                    terminal_start + 1 <= launched_at.timestamp()
+                    if type(terminal_start) is int
+                    else terminal_start < launched_at.timestamp()
+                )
+                if start_predates_launch or joined_at is None or received_at > joined_at:
+                    raise SystemExit(f"review-inspection-parent-join-missing:{role}")
             successful_call_ids.add(call_id)
             expected_task_names[expected["task_name"]] = (role, number)
             allocations.append(
@@ -1319,6 +1360,11 @@ def _validate_native_schedule(
             continue
         name = arguments.get("task_name") if isinstance(arguments, dict) else None
         if name not in expected_task_names:
+            if isinstance(name, str) and any(
+                re.fullmatch(re.escape(task.rsplit("_a", 1)[0]) + r"_a[1-9][0-9]*", name)
+                for task in expected_task_names
+            ):
+                raise SystemExit("review-inspection-unrecorded-attempt")
             continue
         call_id = payload.get("call_id")
         matching = [
@@ -1534,6 +1580,7 @@ def _validate_native_schedule(
             or not isinstance(payload, dict)
             or payload.get("type") not in {"function_call", "custom_tool_call"}
             or index in launch_indices | refusal_indices
+            or (payload.get("name") == "interrupt_agent" and payload.get("call_id") in interruption_call_ids)
         ):
             continue
         called_at = _parent_timestamp(row)
@@ -1628,6 +1675,9 @@ def _validate_instruction_bounded_review(
             if not context.startswith(role_card):
                 raise SystemExit(f"review-inspection-role-card-context-missing:{role}")
             child_rows = _read_jsonl(_find_rollout(codex_home, attempt["agent_thread_id"]))
+            if item.get("recovery") == {"kind": "interrupted-dispatch"} and attempt["attempt"] == 1:
+                _interrupted_dispatch_receipt(out_dir, manifest, role, attempt, parent_rows, child_rows)
+                continue
             if manifest.get("schema_version") in {7, 8}:
                 turn_id = attempt.get("turn_id")
                 terminals = [
@@ -1745,7 +1795,7 @@ def _validate_instruction_bounded_review(
                 for row in original_rows
                 if row.get("type") == "response_item"
             )
-            if inspected_source:
+            if inspected_source and item["recovery"]["kind"] != "interrupted-dispatch":
                 # Already validated original reads prove actual source concurrency; only a2 supplies accepted coverage.
                 original_terminal = next(
                     event
@@ -2286,6 +2336,137 @@ def _original_dispatch_message(
     return actual
 
 
+def _interrupted_dispatch_receipt(
+    out_dir: Path,
+    manifest: dict[str, Any],
+    role: str,
+    attempt: dict[str, Any],
+    parent_rows: list[dict[str, Any]],
+    child_rows: list[dict[str, Any]],
+) -> tuple[datetime, str]:
+    """Prove a parent-ended successful read prefix and return its slot-release receipt."""
+    plan_path = _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"])
+    if (
+        manifest.get("schema_version") != 8
+        or not _paged_native_manifest(manifest)
+        or manifest.get("context_reader_sha256") != _sha256(SKILL_DIRECTORY / "review_context.py")
+        or _load_json(plan_path)["consumer_policy"]["consumer_id"] != "code-review"
+        or attempt.get("attempt") != 1
+        or attempt.get("status") != "interrupted"
+        or any(
+            key in attempt
+            for key in ("output_path", "raw_output_path", "output_sha256", "raw_output_sha256", "error_type")
+        )
+    ):
+        raise SystemExit(f"review-interrupted-attempt-invalid:{role}")
+    starts = _event_payloads(child_rows, "task_started")
+    aborts = [
+        row
+        for row in child_rows
+        if row.get("type") == "event_msg" and row.get("payload", {}).get("type") == "turn_aborted"
+    ]
+    contexts = [row["payload"] for row in child_rows if row.get("type") == "turn_context"]
+    card = _load_role_card(PLUGIN_ROOT / "roles", role)
+    if (
+        len(starts) != 1
+        or len(aborts) != 1
+        or len(contexts) != 1
+        or any(event.get("turn_id") != attempt.get("turn_id") for event in [*starts, aborts[0]["payload"], *contexts])
+        or aborts[0]["payload"].get("reason") != "interrupted"
+        or contexts[0].get("model") != attempt.get("model")
+        or attempt.get("model") != card["model"]
+        or contexts[0].get("effort") != attempt.get("effort")
+        or attempt.get("effort") != card["model_reasoning_effort"]
+        or _event_payloads(child_rows, "task_complete")
+        or any(
+            (row.get("type") == "event_msg" and row.get("payload", {}).get("type") == "agent_message")
+            or row.get("payload", {}).get("item", {}).get("type") == "AgentMessage"
+            or (
+                row.get("type") == "response_item"
+                and row.get("payload", {}).get("type") == "message"
+                and row["payload"].get("role") == "assistant"
+            )
+            or (
+                row.get("type") == "response_item"
+                and row.get("payload", {}).get("type") == "agent_message"
+                and any(
+                    item.get("type") == "output_text"
+                    for item in row["payload"].get("content", [])
+                    if isinstance(item, dict)
+                )
+            )
+            for row in child_rows
+        )
+    ):
+        raise SystemExit(f"review-interrupted-turn-invalid:{role}")
+    abort = aborts[0]
+    started = abort["payload"].get("started_at")
+    ended = abort["payload"].get("completed_at")
+    if (
+        type(started) not in {int, float}
+        or type(ended) not in {int, float}
+        or not math.isfinite(started)
+        or not math.isfinite(ended)
+        or started > ended
+        or starts[0].get("started_at") != started
+        or not ended <= _parent_timestamp(abort).timestamp() < ended + (1 if type(ended) is int else 0.001)
+    ):
+        raise SystemExit(f"review-interrupted-timing-invalid:{role}")
+    interrupts = []
+    for row in parent_rows:
+        payload = row.get("payload", {})
+        if (
+            row.get("type") != "response_item"
+            or payload.get("type") != "function_call"
+            or payload.get("name") != "interrupt_agent"
+        ):
+            continue
+        try:
+            arguments = json.loads(payload.get("arguments", ""))
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if arguments in ({"target": attempt["agent_path"]}, {"target": Path(attempt["agent_path"]).name}):
+            interrupts.append(row)
+    if len(interrupts) != 1:
+        raise SystemExit(f"review-interrupted-parent-receipt-invalid:{role}")
+    interrupt = interrupts[0]
+    call_id = interrupt["payload"].get("call_id")
+    outputs = [
+        row
+        for row in parent_rows
+        if row.get("type") == "response_item"
+        and row.get("payload", {}).get("type") == "function_call_output"
+        and row["payload"].get("call_id") == call_id
+    ]
+    if len(outputs) != 1 or not isinstance(call_id, str) or not call_id:
+        raise SystemExit(f"review-interrupted-parent-receipt-invalid:{role}")
+    try:
+        receipt = json.loads(outputs[0]["payload"].get("output", ""))
+    except (TypeError, json.JSONDecodeError) as error:
+        raise SystemExit(f"review-interrupted-parent-receipt-invalid:{role}") from error
+    called_at, returned_at = _parent_timestamp(interrupt), _parent_timestamp(outputs[0])
+    if (
+        receipt != {"previous_status": "running"}
+        or not started <= called_at.timestamp() <= _parent_timestamp(abort).timestamp() <= returned_at.timestamp()
+    ):
+        raise SystemExit(f"review-interrupted-parent-receipt-invalid:{role}")
+    context = _resolve_path(out_dir, attempt["context_path"]).read_text(encoding="utf-8")
+    _validate_context_read(child_rows, plan_path, role, attempt, manifest, context, interrupted_prefix=True)
+    # An abort is admissible only after all observed read calls returned, with no later execution or resumed turn.
+    for row in child_rows:
+        payload = row.get("payload", {})
+        if payload.get("type") in {
+            "custom_tool_call",
+            "custom_tool_call_output",
+            "function_call",
+            "function_call_output",
+            "item_completed",
+        }:
+            if not started <= _parent_timestamp(row).timestamp() <= called_at.timestamp():
+                raise SystemExit(f"review-interrupted-read-timing-invalid:{role}")
+    return returned_at, call_id
+
+
 def _recovery_arguments(
     out_dir: Path,
     manifest: dict[str, Any],
@@ -2299,7 +2480,13 @@ def _recovery_arguments(
 
     role = item["role"]
     kind = item["recovery"]["kind"]
-    if kind not in {"closure-evidence-shape", "assessment-format", "finding-id-namespace", "incomplete-dispatch"}:
+    if kind not in {
+        "closure-evidence-shape",
+        "assessment-format",
+        "finding-id-namespace",
+        "incomplete-dispatch",
+        "interrupted-dispatch",
+    }:
         raise SystemExit(f"review-repair-kind-invalid:{role}")
     if kind in {"assessment-format", "finding-id-namespace"} and (
         manifest.get("schema_version") != 8 or out_dir.parent.name != "batches"
@@ -2308,7 +2495,7 @@ def _recovery_arguments(
     original = item["attempts"][0]
     card = _load_role_card(PLUGIN_ROOT / "roles", role)
     # The original response must independently bind to its real child, parent and exact output bytes.
-    initial = {**item, "attempts": [original], "selected_attempt": 1, "output_path": original["output_path"]}
+    initial = {**item, "attempts": [original], "selected_attempt": 1, "output_path": original.get("output_path")}
     initial.pop("recovery", None)
     _validate_spawn_attempts(
         out_dir,
@@ -2321,8 +2508,19 @@ def _recovery_arguments(
         set(),
         set(),
         original_dispatch_failure=kind == "incomplete-dispatch",
+        original_interruption=kind == "interrupted-dispatch",
     )
     rows = _read_jsonl(_find_rollout(codex_home, original["agent_thread_id"]))
+    if kind == "interrupted-dispatch":
+        return {
+            "task_name": f"review_{role.replace('-', '_')}_{original['context_sha256'][:12]}_a2",
+            "fork_turns": "none",
+            "model": card["model"],
+            "reasoning_effort": card["model_reasoning_effort"],
+            "message": _native_dispatch_message(
+                manifest, _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"]), role, 2
+            ),
+        }
     raw = _resolve_path(out_dir, original["raw_output_path"]).read_bytes().decode("utf-8")
     if _joined_terminal_timestamp(parent_rows, original["agent_path"], raw.strip()) is None:
         raise SystemExit(f"review-repair-original-not-joined:{role}")
@@ -2518,6 +2716,7 @@ def _validate_spawn_attempts(
     used_output_paths: set[Path],
     *,
     original_dispatch_failure: bool = False,
+    original_interruption: bool = False,
 ) -> None:
     """Bind a spawned specialist output to parent and child rollout evidence."""
     role = str(item["role"])
@@ -2528,6 +2727,8 @@ def _validate_spawn_attempts(
         raise SystemExit(f"manifest-attempt-not-object:{role}")
     if [attempt.get("attempt") for attempt in attempts] != list(range(1, len(attempts) + 1)):
         raise SystemExit(f"manifest-attempt-sequence:{role}")
+    if original_interruption and (len(attempts) != 1 or attempts[0].get("status") != "interrupted"):
+        raise SystemExit(f"review-interrupted-attempt-invalid:{role}")
     recovery = item.get("recovery")
     if recovery is not None and (
         manifest.get("schema_version") != 8
@@ -2538,9 +2739,13 @@ def _validate_spawn_attempts(
             {"kind": "assessment-format"},
             {"kind": "finding-id-namespace"},
             {"kind": "incomplete-dispatch"},
+            {"kind": "interrupted-dispatch"},
         )
         or item.get("selected_attempt") != 2
-        or any(attempt.get("status") != "completed" for attempt in attempts)
+        or [attempt.get("status") for attempt in attempts]
+        != (
+            ["interrupted", "completed"] if recovery == {"kind": "interrupted-dispatch"} else ["completed", "completed"]
+        )
     ):
         raise SystemExit(f"manifest-invalid-internal-recovery:{role}")
     if (
@@ -2603,7 +2808,14 @@ def _validate_spawn_attempts(
             )
             if recovery is not None and attempt["attempt"] == 2:
                 sent_context = _recovery_arguments(out_dir, manifest, item, parent_rows, codex_home)["message"]
-            elif original_dispatch_failure or (recovery == {"kind": "incomplete-dispatch"} and attempt["attempt"] == 1):
+            elif (
+                original_dispatch_failure
+                or original_interruption
+                or (
+                    recovery in ({"kind": "incomplete-dispatch"}, {"kind": "interrupted-dispatch"})
+                    and attempt["attempt"] == 1
+                )
+            ):
                 sent_context = _original_dispatch_message(
                     manifest,
                     _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"]),
@@ -2662,6 +2874,11 @@ def _validate_spawn_attempts(
             raise SystemExit(f"provenance-child-role-mismatch:{role}:{session_role}")
 
         if attempt.get("status") != "completed":
+            if attempt.get("status") == "interrupted" and (
+                original_interruption or recovery == {"kind": "interrupted-dispatch"}
+            ):
+                _interrupted_dispatch_receipt(out_dir, manifest, role, attempt, parent_rows, child_rows)
+                continue
             if attempt.get("error_type") not in TRANSIENT_RETRY_ERRORS or attempt["attempt"] == selected:
                 raise SystemExit(f"manifest-invalid-failed-attempt:{role}:{attempt['attempt']}")
             continue
@@ -2719,6 +2936,8 @@ def _validate_spawn_attempts(
         if manifest.get("schema_version") not in {7, 8} and message.splitlines()[0] != expected_header:
             raise SystemExit(f"provenance-output-header-mismatch:{role}")
 
+    if original_interruption and len(attempts) == 1 and selected == 1:
+        return
     if attempts[selected - 1].get("status") != "completed":
         raise SystemExit(f"manifest-selected-attempt-not-completed:{role}")
     canonical_output = _resolve_path(out_dir, item.get("output_path"))

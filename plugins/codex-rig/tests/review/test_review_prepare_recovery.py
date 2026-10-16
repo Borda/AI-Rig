@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import re
 import runpy
 import subprocess
 import sys
@@ -16,10 +17,50 @@ from test_review_prepare import (
     SKILL,
     _assembly_evidence,
     _finding_id_recovery_evidence,
+    _inject_partial_dispatch_failure,
+    _partial_dispatch_base,
     _restore_tree,
     _tree_state,
     _write_jsonl,
 )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("failure", ["missing-reader", "duplicate-interpreter-first", "duplicate-interpreter-last"])
+@pytest.mark.parametrize("parent_typo", [False, True])
+def test_compact_dispatch_repair_uses_canonical_arguments(tmp_path: Path, failure: str, parent_typo: bool) -> None:
+    """Prepare a replacement after real launch failures without parsing compact selectors as JSON."""
+    run, home, children = _partial_dispatch_base(tmp_path, compact_reader=True)
+    _inject_partial_dispatch_failure(tmp_path, run, home, children, parent_typo=parent_typo, failure=failure)
+    retained = {
+        path: path.read_bytes() for path in [run / "inspection-plan.json", run / "dispatch.json", *children.values()]
+    }
+    repaired = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER),
+            "prepare-repair",
+            "--out",
+            str(run),
+            "--codex-home",
+            str(home),
+            "--role",
+            "challenger",
+            "--kind",
+            "incomplete-dispatch",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert repaired.returncode == 0, repaired.stderr
+    result = json.loads(repaired.stdout)
+    blocks = re.findall(r"```javascript\n(.*?)\n```", result["arguments"]["message"], re.DOTALL)
+    assert "--attempt 2" in blocks[0]
+    assert 'store("review-context-' in blocks[0]
+    assert len(blocks) >= 3
+    assert all('load("review-context-' in block for block in blocks[1:])
+    assert all(path.read_bytes() == content for path, content in retained.items())
 
 
 @pytest.mark.parametrize("family", ["historical", "current"])
