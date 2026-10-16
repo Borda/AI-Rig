@@ -66,6 +66,18 @@ echo "$AUDIT_OUT" | grep -q '^pip-audit-status: not-installed' && PIP_AUDIT_MISS
   Fill Dependency CVEs row with real `N deps, M vulns` result, same as any successful scan.
 - **Skip**: Dependency CVEs row stays `⚠ pip-audit not installed — CVE scan skipped` — informational soft gap, same convention as Phase 1a's "target version unknown" case (`modes/audit.md`): never added to Findings summary table as own finding, doesn't block `READY` alone.
 
+### Check 6 scope: new versus pre-existing CVEs
+
+**Only packages the release ships count.** `--runtime-from pyproject.toml` limits the scan to `[project].dependencies`, optional-dependency groups not named `dev`/`test`/`tests`/`testing`/`doc`/`docs`/`lint`/`typing`/`bench`/`benchmark`, and their transitive runtime requirements from installed metadata. `[dependency-groups]`, test, docs and other dev tooling never count: vulnerable ones print as `| not shipped: P [pkgs]`, are shown as an informational Detail note, and add no finding. A project with no runtime dependencies therefore has an empty shipped set and a clean CVE row. `| scope: unknown` (no readable `[project]` table, dynamic dependencies, or a runtime dependency not installed) means every installed package was scanned; mark the row `⚠` and say the shipped set could not be established.
+
+`bin/run_audit_checks.py` splits the scan by `$RANGE`: a vulnerable package whose requirement or lock entry was added or version-changed in the range's `pyproject.toml`, `uv.lock`, `poetry.lock`, `requirements*.txt` or `setup.cfg` diff is **new**; every other vulnerable package is **pre-existing**. The scan line reads `N deps, M vulns | new: K [pkgs] | pre-existing: P [pkgs]`.
+
+- `new: K` with K > 0 → **red flag**: Dependency CVEs row `✗ K new vulns`, Findings summary `severity: critical` (release verdict `BLOCKED`), detail names the packages and the range commits that introduced them. The release shipped the vulnerability; fix or pin before release.
+- `new: 0`, `pre-existing: P` with P > 0 (shipped packages only) → **warning**: row `⚠ P pre-existing vulns`, detail names the packages, add a Findings row `severity: medium` only. Never blocks alone; the user may ship and track the upgrade separately.
+- Both zero → `✓ Clean`. Both non-zero → report the red flag first, then the warning on its own line.
+- Line has no `| new:` split (pip-audit JSON parse failed, or script run outside a git range) → treat every vuln as unclassified `⚠`, never as new, and say the scope could not be determined.
+- Limit: a vulnerable transitive dependency pulled in by a new direct dependency counts as new only when the lock file diff shows it; without a lock file in the repo it reads pre-existing.
+
 ### Output
 
 Print readiness report:
@@ -105,7 +117,7 @@ Date: [date] | Range: [last-tag]..HEAD ([N] commits)
 | Changelog scope  | ✓ Clean / ✗ N flagged | [scope evidence] |
 | Changelog evidence | ✓ All sourced / ⚠ N unsourced | [unsourced bullets] |
 | Version consistent  | ✓ / ⚠ Mismatch | [files and values] |
-| Dependency CVEs     | ✓ Clean / ⚠ N vulns | [package names] |
+| Dependency CVEs     | ✓ Clean / ⚠ N pre-existing vulns / ✗ N new vulns | [package names, new first] |
 | Scheduled removals  | ✓ All removed / ✗ N still present | [symbol names with `remove_in` version] |
 | Doc proportionality | ✓ / ⚠ N features undertreated | [undertreated features] |
 | Upstream review verdict | ✓ None blocking / ✗ Blocking | [review result] |

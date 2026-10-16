@@ -14,6 +14,10 @@ Defaults:
     range = $LAST_TAG..HEAD where LAST_TAG falls back to last stable tag
             or the initial commit when no tags exist.
 
+Dependency CVE scope:
+    The CVE line splits vulnerable packages into ``new`` (added or changed in a manifest/lock diff over the
+    range) and ``pre-existing``; templates/audit-checks.md maps new to a critical finding, pre-existing to a warning.
+
 Missing pip-audit:
     Stays non-interactive — emits ``PIP_AUDIT_MISSING_SIGNAL`` as its own
     output line instead of prompting. Caller (templates/audit-checks.md
@@ -346,8 +350,61 @@ def _check_version_consistency(tag: str) -> None:
         print(f"## target version: {tag}")
 
 
-def _check_code_signals() -> None:
-    """Print release-blocking code signals and the dependency CVE scan."""
+_DEP_MANIFESTS = ("pyproject.toml", "uv.lock", "poetry.lock", "requirements*.txt", "requirements/*.txt", "setup.cfg")
+_LOCK_NAME = re.compile(r'^\s*name = "([^"]+)"')
+_LOCK_CHANGE = re.compile(r"^\s*(?:name|version) = ")
+_QUOTED_REQ = re.compile(r'^\s*"([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*(?:[=<>!~@;]|")')
+_PLAIN_REQ = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*(?:[=<>!~@;]|$)")
+
+
+def _introduced_dependencies(diff_text: str) -> set[str]:
+    """Return PEP 503 names of dependencies added or changed in a manifest/lock unified diff.
+
+    Lock files (``uv.lock``, ``poetry.lock``) attribute a changed ``name``/``version`` line to the package block it
+    sits in, so a version bump and a newly locked transitive dependency both count. Manifests count only added
+    requirement lines. The diff must carry at least two lines of context so a bumped ``version`` line still sees its
+    ``name`` line.
+
+    Args:
+        diff_text: Output of ``git diff -U2`` limited to dependency manifests.
+
+    Returns:
+        Normalized dependency names; empty when nothing dependency-related changed.
+
+    Examples:
+        >>> sorted(_introduced_dependencies('+++ b/pyproject.toml\\n+    "Foo_Bar>=1",\\n+    "baz[x]==2",'))
+        ['baz', 'foo-bar']
+        >>> _introduced_dependencies('+++ b/uv.lock\\n name = "pkg"\\n-version = "1"\\n+version = "2"')
+        {'pkg'}
+        >>> _introduced_dependencies('+++ b/uv.lock\\n name = "pkg"\\n version = "1"')
+        set()
+    """
+    names: set[str] = set()
+    path = ""
+    block = ""
+    for line in diff_text.splitlines():
+        if line.startswith("+++ "):
+            path = line[4:].removeprefix("b/")
+            block = ""
+            continue
+        if line.startswith(("--- ", "@@")):
+            block = "" if line.startswith("@@") else block
+            continue
+        body, changed = line[1:], line[:1] in "+-"
+        if path.endswith(".lock"):
+            if (m := _LOCK_NAME.match(body)) and not line.startswith("-"):
+                block = m.group(1)
+            if changed and block and _LOCK_CHANGE.match(body):
+                names.add(block)
+        elif line.startswith("+"):
+            regex = _PLAIN_REQ if Path(path).name.startswith("requirements") else _QUOTED_REQ
+            if m := regex.match(body):
+                names.add(m.group(1))
+    return {re.sub(r"[-_.]+", "-", n).lower() for n in names}
+
+
+def _check_code_signals(git: str, range_arg: str) -> None:
+    """Print release-blocking code signals and the dependency CVE scan, split by release-range scope."""
     print("--- check: code-signals ---")
     print("## release-blocking TODOs / FIXME / HACK / XXX (outside tests):")
     for match_line in _grep_code_signals():
@@ -363,9 +420,11 @@ def _check_code_signals() -> None:
             check=False,
             timeout=120,
         )
+        diff_text = _run([git, "diff", "-U2", range_arg, "--", *_DEP_MANIFESTS], timeout=20)
+        introduced = ",".join(sorted(_introduced_dependencies(diff_text)))
         if audit_proc.returncode == 0 and parse_script.is_file():
             parse_proc = subprocess.run(  # noqa: S603
-                [sys.executable, str(parse_script)],
+                [sys.executable, str(parse_script), "--introduced", introduced, "--runtime-from", "pyproject.toml"],
                 input=audit_proc.stdout,
                 capture_output=True,
                 text=True,
@@ -444,7 +503,7 @@ def main(argv: list[str] | None = None) -> int:
     _check_open_issues_prs(gh, git)
     _check_docs_alignment(git, range_arg)
     _check_version_consistency(tag)
-    _check_code_signals()
+    _check_code_signals(git, range_arg)
 
     print("--- check: end ---")
     return 0

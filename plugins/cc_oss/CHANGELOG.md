@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.50.2
+
+- `/oss:release audit` splits dependency CVEs by release scope. `run_audit_checks.py` diffs the range's dependency manifests and lock files and passes the touched package names to `parse_audit_json.py --introduced`, which reports `new` and `pre-existing` vulnerable packages. A CVE new in the range is a critical finding (red flag, verdict `BLOCKED`); a pre-existing one stays a `medium` warning and never blocks alone.
+- `/oss:release audit` counts dependency CVEs only for packages the built distribution ships: `[project].dependencies`, non-dev optional groups and their transitive runtime requirements. Test, docs and other dev-only packages are listed as `not shipped` and never become findings; an unreadable or dynamic dependency set falls back to scanning everything and says so.
+
 ## 0.50.1
 
 - Sync `write-guard.js`: a protected file git already tracks no longer asks before a write, since the write is diffable and revertible; untracked, new and gitignored protected files still ask, and `.claude/settings*.json` and `.pre-commit-config.yaml` always ask.

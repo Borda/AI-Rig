@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import io
 import json
+from importlib import metadata
+from pathlib import Path
 from unittest.mock import patch
 
+import parse_audit_json
 import pytest
-from parse_audit_json import main, summarize
+from parse_audit_json import main, runtime_closure, summarize, summarize_scoped, summarize_shipped
 
 # ---------------------------------------------------------------------------
 # summarize() — pure function
@@ -128,3 +131,138 @@ def test_doctests_pass() -> None:
 
     results = doctest.testmod(_mod, verbose=False)
     assert results.failed == 0, f"{results.failed} doctest(s) failed"
+
+
+# ---------------------------------------------------------------------------
+# summarize_scoped() / --introduced — new versus pre-existing split
+# ---------------------------------------------------------------------------
+
+
+class TestScopedSummary:
+    """Scope split: vulnerable packages touched in the release range are new, the rest pre-existing."""
+
+    @pytest.mark.parametrize(
+        ("introduced", "expected"),
+        [
+            pytest.param(set(), "3 deps, 3 vulns | new: 0 [] | pre-existing: 3 [Old_Pkg, fresh]", id="none-introduced"),
+            pytest.param({"fresh"}, "3 deps, 3 vulns | new: 1 [fresh] | pre-existing: 2 [Old_Pkg]", id="one-new"),
+            pytest.param(
+                {"old-pkg", "fresh"}, "3 deps, 3 vulns | new: 3 [Old_Pkg, fresh] | pre-existing: 0 []", id="all-new"
+            ),
+        ],
+    )
+    def test_split_by_introduced_names(self, introduced: set[str], expected: str) -> None:
+        """Names are PEP 503 normalized, so ``Old_Pkg`` matches ``old-pkg``; clean packages never appear.
+
+        Guards the release audit's red-flag-versus-warning decision: a vulnerable package mislabelled as pre-existing
+        would downgrade a regression introduced by the release to a warning.
+        """
+        payload = {
+            "dependencies": [
+                {"name": "Old_Pkg", "vulns": [{}, {}]},
+                {"name": "fresh", "vulns": [{}]},
+                {"name": "clean", "vulns": []},
+            ]
+        }
+        assert summarize_scoped(payload, introduced) == expected
+
+    def test_cli_introduced_flag(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """``--introduced a,b`` switches the CLI to the scoped line; an empty value marks everything pre-existing."""
+        payload = {"dependencies": [{"name": "a", "vulns": [{}]}]}
+        with patch("sys.stdin", io.StringIO(json.dumps(payload))):
+            rc = main(["--introduced", ""])
+        assert rc == 0
+        assert capsys.readouterr().out.strip() == "1 deps, 1 vulns | new: 0 [] | pre-existing: 1 [a]"
+
+
+# ---------------------------------------------------------------------------
+# runtime_closure() / summarize_shipped() — only what the built package ships
+# ---------------------------------------------------------------------------
+
+_REQUIRES = {
+    "app-dep": ["sub-dep>=1", "pytest ; extra == 'test'"],
+    "sub-dep": [],
+    "plot-dep": [],
+}
+
+
+class _FakeDist:
+    """Installed-distribution stand-in exposing only ``requires``."""
+
+    def __init__(self, requires: list[str]) -> None:
+        self.requires = requires
+
+
+def _fake_distribution(name: str) -> _FakeDist:
+    """Return the fake distribution or raise the real not-installed error."""
+    if name not in _REQUIRES:
+        raise metadata.PackageNotFoundError(name)
+    return _FakeDist(_REQUIRES[name])
+
+
+class TestRuntimeClosure:
+    """Shipped set: core and non-dev extras plus transitive runtime requirements, never dev groups."""
+
+    @pytest.fixture(autouse=True)
+    def _installed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Route metadata lookups to the fake installed set."""
+        monkeypatch.setattr(parse_audit_json.metadata, "distribution", _fake_distribution)
+
+    @pytest.mark.parametrize(
+        ("pyproject", "expected"),
+        [
+            pytest.param(
+                '[project]\nname = "x"\ndependencies = ["App_Dep>=2"]\n',
+                {"app-dep", "sub-dep"},
+                id="transitive-followed-extra-requirement-skipped",
+            ),
+            pytest.param(
+                '[project]\nname = "x"\n[dependency-groups]\ntest = ["pytest"]\n', set(), id="dependency-groups-ignored"
+            ),
+            pytest.param(
+                '[project]\nname = "x"\n[project.optional-dependencies]\ndocs = ["pytest"]\nplot = ["plot-dep"]\n',
+                {"plot-dep"},
+                id="dev-named-extra-dropped-other-extra-kept",
+            ),
+            pytest.param(
+                '[project]\nname = "x"\ndependencies = ["not-installed"]\n', None, id="uninstalled-root-unknown"
+            ),
+            pytest.param(
+                '[project]\nname = "x"\ndependencies = ["not-installed ; sys_platform == \'nope\'"]\n',
+                set(),
+                id="uninstalled-marker-root-skipped",
+            ),
+            pytest.param(
+                '[project]\nname = "x"\ndynamic = ["dependencies"]\n', None, id="dynamic-dependencies-unknown"
+            ),
+        ],
+    )
+    def test_closure(self, tmp_path: Path, pyproject: str, expected: set[str] | None) -> None:
+        """Closure follows runtime requirements only, and refuses to guess when the set is incomplete.
+
+        An incomplete closure would silently drop vulnerable shipped packages, so unknown scope returns ``None`` and the
+        audit falls back to scanning everything.
+        """
+        path = tmp_path / "pyproject.toml"
+        path.write_text(pyproject)
+        assert runtime_closure(path) == expected
+
+    def test_missing_file_is_unknown(self, tmp_path: Path) -> None:
+        """No pyproject.toml means the shipped set is unknowable."""
+        assert runtime_closure(tmp_path / "pyproject.toml") is None
+
+
+class TestShippedSummary:
+    """Vulnerable packages outside the shipped set are reported as not shipped, never as findings."""
+
+    def test_dev_only_vulns_excluded(self) -> None:
+        """A vulnerable docs tool is listed under ``not shipped`` and stays out of the shipped counts."""
+        payload = {"dependencies": [{"name": "app", "vulns": [{}]}, {"name": "mkdocs", "vulns": [{}, {}]}]}
+        assert summarize_shipped(payload, {"app"}, {"app"}) == (
+            "1 deps, 1 vulns | new: 1 [app] | pre-existing: 0 [] | not shipped: 2 [mkdocs]"
+        )
+
+    def test_unknown_scope_scans_everything(self) -> None:
+        """Without a shipped set every vulnerable package is counted and the line says the scope is unknown."""
+        payload = {"dependencies": [{"name": "a", "vulns": [{}]}]}
+        assert summarize_shipped(payload, None, set()).endswith("| scope: unknown")

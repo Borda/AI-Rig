@@ -402,3 +402,35 @@ def test_no_tags_falls_back_to_initial_commit(
     assert rc == 0
     out = capsys.readouterr().out
     assert initial_sha in out
+
+
+# ---------------------------------------------------------------------------
+# _introduced_dependencies — which dependencies the release range touched
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("diff", "expected"),
+    [
+        pytest.param(
+            '+++ b/pyproject.toml\n+    "Foo_Bar>=1",\n+    "baz[x]==2",', {"foo-bar", "baz"}, id="pyproject-added"
+        ),
+        pytest.param('+++ b/pyproject.toml\n-    "gone>=1",', set(), id="pyproject-removed-ignored"),
+        pytest.param("+++ b/requirements.txt\n+requests>=2\n+rich", {"requests", "rich"}, id="requirements-plain"),
+        pytest.param('+++ b/uv.lock\n name = "pkg"\n-version = "1"\n+version = "2"', {"pkg"}, id="lock-version-bump"),
+        pytest.param('+++ b/uv.lock\n+name = "newdep"\n+version = "1"', {"newdep"}, id="lock-new-package"),
+        pytest.param(
+            '+++ b/uv.lock\n name = "pkg"\n version = "1"\n+    { name = "x" },',
+            set(),
+            id="lock-dependency-edit-not-bump",
+        ),
+        pytest.param("", set(), id="empty-diff"),
+    ],
+)
+def test_introduced_dependencies(diff: str, expected: set[str]) -> None:
+    """Added or bumped dependencies are reported; removals and unrelated lock edits are not.
+
+    The release audit treats a vulnerable package in this set as a red flag and any other as a warning, so a missed
+    addition would silently downgrade a regression and a false hit would block a clean release.
+    """
+    assert rac._introduced_dependencies(diff) == expected
