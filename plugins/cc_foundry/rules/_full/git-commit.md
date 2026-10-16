@@ -143,6 +143,8 @@ Rule: after reading all per-file diffs (or all subagent `.md` summaries), ask "d
 
 **Verification step — required before finalizing every commit body, no exceptions**: for each bullet or clause, pick one distinctive token from it (identifier, section heading, filename, error string, config key), confirm it appears in actual `git diff HEAD` output for that file — not in a subagent summary, not in session memory of an earlier tool result. A claim with no matching `+`/`-` line gets rewritten to match what the diff actually shows, or dropped. If subagent summarization was used instead of a full inline read, re-run `git diff HEAD -- <file>` for that specific file before including the change in any bullet — the subagent's prose summary isn't itself sufficient evidence for final wording.
 
+**Plain-word names — no internal labels**: the subject and body name behaviour in plain words (e.g. "when a review item is sent to Codex"), never a skill's internal phase, step or branch label (a step number, mode letter or branch code) — the reader has never seen it. Grep the draft for such labels before committing.
+
 ## Co-authors
 
 Separate co-author block from bullet list with `---`:

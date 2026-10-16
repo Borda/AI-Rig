@@ -806,7 +806,7 @@
     },
     "23eefbf744adbe1d035200bf130dbb080b24625ecf0f4325d5bb5f213a2fbdd3": {
       "kind": "block",
-      "src": "rules/_full/git-commit.md:208"
+      "src": "rules/_full/git-commit.md:210"
     },
     "23f491b88ce2b7922e34eebc665dcfec4b4151e1a00dd0f07463b820f9702943": {
       "kind": "command",
@@ -1458,7 +1458,7 @@
     },
     "44676a7f021bec8dda0a7b5e654a871a85e0396417b02be5bfe8b952b2c1f148": {
       "kind": "block",
-      "src": "rules/python-testing.md:165"
+      "src": "rules/python-testing.md:173"
     },
     "44858de05ee80ecc75f3cae3ed459882e40d969923efa999ba695ac35b51423f": {
       "kind": "command",
@@ -5257,6 +5257,6 @@
       "src": "rules/claude-config.md:41"
     }
   },
-  "plugin": "cc_foundry@0.67.4",
+  "plugin": "cc_foundry@0.67.5",
   "schema": 1
 }

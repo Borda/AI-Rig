@@ -24,6 +24,8 @@ Never patch symptom. Symptoms = evidence — treat as signal, not problem.
 
 Before marking fix complete: "Could this symptom have a second independent root cause not addressed by this fix?" If yes → diagnose and fix that cause too before closing.
 
+**Baseline claims name their tree.** A verdict that a failure is pre-existing on `HEAD`, the target branch or another worktree needs a run executed in that tree: give explicit paths in the same command (`git -C <wt>`, `pytest -c <wt>/pyproject.toml --rootdir <wt> <wt>/tests/...`), never a separate `cd` into that tree — the working directory persists between calls inside the project (`claude-config.md` §Directory Navigation Commands), but a `cd` to another tree can be reset to the project root — and confirm the run's reported rootdir names that tree before trusting the result.
+
 ### Post-fix challenger invocation
 
 **Dispatch rule**: post-fix re-invoke is fresh orchestrator-initiated dispatch — not a nested call from within an active challenger run. Challenger's SKIP rule ("already inside active challenger context") still applies when executing inside challenger review; orchestrator waits for challenger to finish, then dispatches a new instance for post-fix verification.

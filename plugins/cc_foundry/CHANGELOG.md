@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.67.5
+
+- Rules now require that a baseline claim ("pre-existing on HEAD") names its tree and runs with explicit paths; a new check is classified as behaviour (pytest) or bookkeeping (pre-commit hook); mutation checks run on a copy outside the repository; an option that widens a grant is read before it is marked recommended; commit messages name behaviour in plain words, never a skill's internal step label; reviewer briefs that run adversarial shell cases require case files written with a file-editing tool and fake `gh`/`git` binaries.
+- `write-guard.js` no longer asks before writing a protected file that git already tracks (`CLAUDE.md`, `AGENTS.md`, `CHANGELOG.md`, `.github/**`, `pyproject.toml` and the rest): every such write is diffable and revertible, and the hook's ask could not be remembered, so each edit prompted again. Untracked, new and gitignored protected files, such as `.claude/settings.local.json`, still ask, and `.claude/settings*.json` and `.pre-commit-config.yaml` always ask because they take effect before any diff review.
+- The global self-improvement loop folds a correction into the project-owned rule, skill or agent file that governs it instead of a lessons file; `.notes/lessons.md` stays a legacy input of `/foundry:distill`.
+
 ## 0.67.4
 
 - Select fixed context-composition fixture sessions explicitly so rendering tests remain valid after the checkout ages beyond the default 24-hour usage window.

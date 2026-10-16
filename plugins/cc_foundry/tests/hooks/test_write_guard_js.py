@@ -16,15 +16,22 @@ permission config). Its contract:
   first, so a Windows host's backslashes cannot silently disable the guard.
 * **Fail open** — a malformed payload, an unguarded tool, or a missing path
   produces empty stdout and exit 0, never a block.
+* **Version-controlled files pass through** — a protected file git already
+  tracks is diffable and revertible, so it is not gated; untracked, new and
+  gitignored protected files still ask.
 
 Every case drives the hook over stdin, which is the path the harness itself uses,
 rather than calling ``decide()`` in process — the JSON envelope shape is part of
-the contract and an in-process call would not exercise it.
+the contract and an in-process call would not exercise it. Each run uses a
+temporary directory as its session cwd, with git discovery capped above it, so
+this repository's own tracked ``CLAUDE.md`` or ``CHANGELOG.md`` cannot turn an
+expected ask into a passthrough.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -36,21 +43,25 @@ import pytest
 HOOK = Path(__file__).resolve().parent.parent.parent / "hooks" / "write-guard.js"
 
 NODE_UNAVAILABLE = shutil.which("node") is None
+GIT_UNAVAILABLE = shutil.which("git") is None
 
 
 @pytest.fixture(name="run_guard")
-def _run_guard() -> Callable[..., dict]:
+def _run_guard(tmp_path: Path) -> Callable[..., dict]:
     """Return a callable that feeds one payload to the hook and parses its stdout."""
+    env = {**os.environ, "GIT_CEILING_DIRECTORIES": str(tmp_path.parent)}
 
-    def _run(path: str, *, tool_name: str = "Edit", key: str = "file_path") -> dict:
+    def _run(path: str, *, tool_name: str = "Edit", key: str = "file_path", cwd: Path = tmp_path) -> dict:
         """Run the hook with one write-shaped payload and parse its result."""
-        payload = json.dumps({"tool_name": tool_name, "tool_input": {key: path}})
+        payload = json.dumps({"tool_name": tool_name, "tool_input": {key: path}, "cwd": str(cwd)})
         proc = subprocess.run(
             ["node", str(HOOK)],
             input=payload,
             capture_output=True,
             encoding="utf-8",
             timeout=10,
+            cwd=cwd,
+            env=env,
         )
         assert proc.returncode == 0, f"hook exited {proc.returncode}: {proc.stderr}"
         out = (proc.stdout or "").strip()
@@ -216,6 +227,75 @@ class TestPassthrough:
         )
         assert proc.returncode == 0
         assert (proc.stdout or "").strip() == ""
+
+
+# ── Version-controlled protected files ────────────────────────────────────────
+
+
+@pytest.fixture(name="git_repo")
+def _git_repo(tmp_path: Path) -> Path:
+    """Build a repository tracking ``CLAUDE.md`` and a CI workflow, with an untracked ``CHANGELOG.md``.
+
+    It also has a gitignored ``.claude/settings.local.json`` and tracked ``.claude/settings.json`` and ``.pre-commit-
+    config.yaml``, the protected files that take effect before anyone reviews a diff.
+    """
+    git = ["git", "-C", str(tmp_path)]
+    subprocess.run([*git, "init", "-q"], check=True, timeout=30)
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".claude").mkdir()
+    tracked = ("CLAUDE.md", ".github/workflows/ci.yml", ".claude/settings.json", ".pre-commit-config.yaml")
+    for rel in (*tracked, "CHANGELOG.md", ".claude/settings.local.json"):
+        (tmp_path / rel).write_text("x\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text(".claude/settings.local.json\n", encoding="utf-8")
+    subprocess.run([*git, "add", *tracked, ".gitignore"], check=True, timeout=30)
+    return tmp_path
+
+
+@_skip_node_unavailable
+@pytest.mark.skipif(GIT_UNAVAILABLE, reason="requires git to build a repository")
+class TestVersionControlled:
+    """A protected file git tracks passes through; one git cannot revert still asks."""
+
+    @pytest.mark.parametrize("path", ["CLAUDE.md", ".github/workflows/ci.yml"])
+    def test_tracked_file_passes_through(self, run_guard: Callable[..., dict], git_repo: Path, path: str) -> None:
+        """A tracked protected file is not gated.
+
+        Every write to it lands in ``git diff`` and can be reverted, which is the review the confirmation stood in for.
+        Asking anyway produced a per-edit prompt the user could never dismiss, since a hook ``ask`` is not remembered.
+        """
+        assert run_guard(path, cwd=git_repo) == {}
+
+    def test_tracked_file_by_absolute_path_passes_through(self, run_guard: Callable[..., dict], git_repo: Path) -> None:
+        """An absolute path to a tracked file resolves against the repository that owns it."""
+        assert run_guard(str(git_repo / "CLAUDE.md"), cwd=git_repo) == {}
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            pytest.param("CHANGELOG.md", id="untracked-existing"),
+            pytest.param("AGENTS.md", id="new-file"),
+            pytest.param(".claude/settings.local.json", id="gitignored"),
+        ],
+    )
+    def test_untracked_file_still_asks(self, run_guard: Callable[..., dict], git_repo: Path, path: str) -> None:
+        """A protected file git does not track still asks, even inside a repository.
+
+        Nothing records or reverts a write to an untracked, new or gitignored file, so the confirmation is the only
+        review it gets. ``settings.local.json`` is the case that matters most: it is gitignored by convention.
+        """
+        assert _asks(run_guard(path, cwd=git_repo))
+
+    @pytest.mark.parametrize("path", [".claude/settings.json", ".pre-commit-config.yaml"])
+    def test_tracked_activating_config_still_asks(
+        self, run_guard: Callable[..., dict], git_repo: Path, path: str
+    ) -> None:
+        """Permission config and the commit gate ask even when tracked.
+
+        A new allow rule or hook in ``.claude/settings.json`` takes effect when settings load, and a changed ``.pre-
+        commit-config.yaml`` runs on the next commit, both before anyone reads ``git diff``. Revertibility is no review
+        for them, so tracking does not exempt them.
+        """
+        assert _asks(run_guard(path, cwd=git_repo))
 
 
 # ── The decision itself ───────────────────────────────────────────────────────

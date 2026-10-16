@@ -63,6 +63,7 @@ Generic marker discipline: `foundry:rules/python-testing.md` §Test Selection �
 - `installed_plugin` does not imply `packaging`. A `live` test also carries `integration` and retains explicit opt-in guards; selection never authorizes network or paid execution. Capability probes remain separate.
 - Register selectors in repository **and shipped test** configuration.
 - From the repository root, use `.venv/bin/python -m pytest -m installed_plugin` or `.venv/bin/python -m pytest -m "packaging and not live"`; omit paths for project-wide discovery. On Windows use `.venv\Scripts\python.exe`.
+- Behaviour vs bookkeeping checks: `foundry:rules/python-testing.md` §Behaviour vs Bookkeeping Checks; this repository's bookkeeping hook example is `check-shared-drift`.
 
 ## Shipped Generic Policy — Pointers
 

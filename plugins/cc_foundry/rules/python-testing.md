@@ -1,5 +1,5 @@
 ---
-description: pytest test design standards — structure, fixtures, parametrization, markers and selection, cross-OS tests, mocking
+description: pytest test design standards — structure, fixtures, parametrization, markers and selection, behaviour-vs-bookkeeping classification, mutation checks, cross-OS tests, mocking
 paths:
   - tests/**/*.py
   - '**/test_*.py'
@@ -63,6 +63,14 @@ Markers exist so a suite can be sliced by what a test *requires*, not by what it
 - Wide runs go parallel (`-n <workers>`); keep focused single-file runs serial, where worker startup costs more than it saves.
 - Drop `-n` when the failure itself is what you are reading: xdist interleaves worker output, hides `-x` ordering, and breaks `--pdb`. Reproduce a failure serially before diagnosing it.
 - A test that passes serially and fails only under `-n` is a real defect, not an xdist artifact — usually shared machine-global state (a `${TMPDIR}` sentinel without its `-${CSID}` suffix, per `claude-config.md` §TMPDIR Sentinel Scoping; a fixed port; a file written outside `tmp_path`). Fix the isolation; never pin that suite serial to hide it.
+
+## Behaviour vs Bookkeeping Checks
+
+Classify a check before writing it. A failure that means broken behaviour (guard verdict, parser reading, CLI exit code, anything a user or hook depends on) is a pytest test. A failure that only means drifted bookkeeping (README counts, export lists, byte-identical copies, manifest hashes regenerated from source) belongs in a pre-commit hook: kept in pytest it blocks fix rounds with no behaviour at risk and dilutes what coverage measures.
+
+## Mutation Checks
+
+A mutation check (break the code, prove the test fails) runs on a copy: copy the module into a private temp dir outside the repository and point the test's import there. Never rewrite the tracked file, even with restore in `finally` — an interrupted run leaves the repository mutated.
 
 ## Cross-OS Tests
 

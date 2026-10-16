@@ -28,7 +28,7 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "12ec1d260581576e95396069321af4a016a19b493668bc79357085dcd31156d8"
+      "sha256": "48808c09724cf6686ba6cfa4927fcd38878d09ebe411eb42f3074b4da460567d"
     },
     {
       "mode": "0644",
@@ -38,7 +38,7 @@
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "cfbc1223a5b52c3139795b5a6958b04e2f086461bc2e5076046e81caac67f189"
+      "sha256": "7120fd533a49d06e7c810d9f03526b1ff51da3a4cb372830759ee725018347c9"
     },
     {
       "mode": "0644",
@@ -53,7 +53,7 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "f4d46f692ea76ea1afa83238434d58aa8fa77d67638f629cb9925ff229d0db67"
+      "sha256": "b67f3b5b0b2447e7e76584be9a7b3020522486c2e9a2087d7b3699c6730db2d4"
     },
     {
       "mode": "0644",
@@ -348,7 +348,7 @@
     {
       "mode": "0644",
       "path": "shared/adversarial-loop.md",
-      "sha256": "c9bb3087f9873edd5286429c18bc305440a898ddfdc9e133dc2428cefc62e657"
+      "sha256": "18d1d25fcf57438ebe26407cc26a6bd3d5424a5cd182b6522651295ad9da691e"
     },
     {
       "mode": "0755",
@@ -398,7 +398,7 @@
     {
       "mode": "0644",
       "path": "shared/commit-response-template.md",
-      "sha256": "d749339549cf68c80bcf0a1faea5108eae3117e2bc28b7aa6615ac684628d491"
+      "sha256": "6e7ec453a4f03dd07060ca5b4968d36eaf6a3b014206bf366db356701cf1edf3"
     },
     {
       "mode": "0755",
@@ -453,7 +453,7 @@
     {
       "mode": "0644",
       "path": "shared/global-baseline-details.md",
-      "sha256": "214df26b92feaff1bfe5513bef6efe7ed37c505228a7f1311117d9703559ab18"
+      "sha256": "6c676686cf4cc220d9e65d8b24eef1c37dd6ff5909f95a7c4c055ec2783fb606"
     },
     {
       "mode": "0644",
@@ -1673,5 +1673,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.35.8"
+  "version": "0.35.9"
 }

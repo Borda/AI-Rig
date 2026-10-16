@@ -250,6 +250,12 @@ Per-plugin version in `.claude-plugin/plugin.json`, space `0.X.Y`:
 
 Full pre-bump checklist (test-only guard, on-disk-vs-HEAD double-check, calculation steps, worked example, multi-manifest note): `AUTHORING.md` §Versioning.
 
+## Permission Gates — Diff Against HEAD
+
+- A feature that adds a permission gate, approval question or stop first diffs its gate list against `HEAD` behaviour. An operation that ran without a stop at `HEAD` keeps running without one unless the user asked for the new stop.
+- Default to relaxed; tighten only with a concrete, user-accepted justification. Push stays always-ask and force push forbidden; no other git class gains an always-ask stop.
+- Codex Rig counterpart: same rule, `plugins/AGENTS.md` §Permission Gates.
+
 ## Edit Quality Gate
 
 Before any edit, delete, or addition to plugin files — self-challenge:
@@ -259,3 +265,4 @@ Before any edit, delete, or addition to plugin files — self-challenge:
 - **Complete and clean?** No gaps/TODOs, no dead instructions, no orphaned cross-refs, no leftover stubs
 - **Verified?** Every claim backed by code/disk evidence — no hypothesis or assumption stated as fact
 - **bin/ scripts wired?** Created/edited `bin/` script? Consumer `.md` references basename before commit (inline invocation or `<!-- file: ... consumers: ... -->` header in owning plugin). Run `check_orphaned_bin.py` — must exit 0.
+- **Digest-pinned?** Before a mass edit of shipped files (comments, formatting, lint), search the repo for the sha256 of each target's `HEAD` bytes (`git show HEAD:<path> | shasum -a 256`), not its git blob OID, excluding regenerated manifests; leave pinned files untouched. Example: `plugins/codex-rig/skills/code-review/review_context.py`, pinned by `review_execution_validation.py` for historical-run admission.

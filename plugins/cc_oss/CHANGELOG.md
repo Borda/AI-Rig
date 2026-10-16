@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.50.1
+
+- Sync `write-guard.js`: a protected file git already tracks no longer asks before a write, since the write is diffable and revertible; untracked, new and gitignored protected files still ask, and `.claude/settings*.json` and `.pre-commit-config.yaml` always ask.
+- Sync the adversarial-loop rule: reviewer briefs that run adversarial shell cases require case files written with a file-editing tool and fake `gh`/`git` binaries.
+
 ## 0.50.0
 
 - Keep review coverage and confidence gaps as factual limitations; require a specific user decision for additional review and omit declined requests from findings and final actions.

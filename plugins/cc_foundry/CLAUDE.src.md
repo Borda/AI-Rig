@@ -21,7 +21,7 @@
 
 ### 3. Self-Improvement Loop
 
-- After ANY correction: update `.notes/lessons.md` with preventative rule
+- After ANY correction: fold the preventative rule into the project-owned rule, skill or agent file that governs it (never a plugin-installed copy); `.notes/lessons.md` is legacy input only
 - Rules must prevent same mistake; iterate until mistake rate drops
 
 ### 4. Verification Before Done

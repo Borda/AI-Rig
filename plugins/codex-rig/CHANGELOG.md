@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.35.9
+
+- The global baseline now requires that baseline claims name their tree and run with explicit paths, new checks are classified as behaviour (pytest) or bookkeeping (pre-commit hook), mutation checks run on a copy outside the repository, and an option that widens a grant is read before it is marked recommended; parent agents send changed scope to a fresh narrowly briefed child and check it against disk state, not the handover text.
+- Commit messages name behaviour in plain words, never a skill's internal step label; reviewer briefs that run adversarial shell cases require case files written with a file-editing tool and fake `gh`/`git` binaries.
+
 ## 0.35.8
 
 - Accept the actual local branch alias selected by a successful `gh pr checkout` for fork remediation, while verifying the original remote head ref, fork identity and checkout receipt; preserve exact-name checks for same-repository direct fallback and reject later branch drift.

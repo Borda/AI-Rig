@@ -106,6 +106,12 @@ Root `AGENTS.md` and the shipped Codex Rig global template (`plugins/codex-rig/a
 - After calculating the bump, update every shipped runtime manifest, including `.codex-plugin/plugin.json` when present, so it shares the bumped version with `.claude-plugin/plugin.json`.
 - Update CHANGELOG or release metadata only when a change affects shipped product or plugin behavior and the plugin convention requires it.
 
+## Permission Gates
+
+- A feature that adds a permission gate, approval question or stop first diffs its gate list against `HEAD` behaviour; an operation that ran without a stop at `HEAD` keeps running without one unless the user asked for the new stop.
+- Default to relaxed; tighten only with a concrete, user-accepted justification. Push stays always-ask and force push forbidden; no other git class gains an always-ask stop.
+- `plugins/CLAUDE.md` §Permission Gates — Diff Against HEAD holds the Claude counterpart.
+
 ## Verification
 
 - Before editing policy, inspect the document-level `policy-sibling-sync` contract and any section-specific `policy-sibling` marker.
@@ -113,5 +119,6 @@ Root `AGENTS.md` and the shipped Codex Rig global template (`plugins/codex-rig/a
 - Before completion, verify the intended README and cross-references.
 - Run `plugins/cc_foundry/bin/propagate_shared.py` with no flag when shared files are involved — check mode is the default.
 - Run `check_orphaned_bin.py` when `bin/` files are involved.
+- Before a mass edit of shipped files, search the repo for the sha256 of each target's `HEAD` bytes (`git show HEAD:<path> | shasum -a 256`), not its git blob OID, excluding regenerated manifests; leave digest-pinned files untouched (`plugins/CLAUDE.md` §Edit Quality Gate).
 - Run the relevant tests or lint checks.
 - Run `git diff --check` on every owned file and confirm added prose paragraphs are not hard-wrapped.

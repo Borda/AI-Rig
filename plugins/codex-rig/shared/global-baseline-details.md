@@ -112,6 +112,9 @@ Applies when the project supports more than one OS — declared by a CI OS matri
   - Reuse repeated collection-time `pytest.mark.skipif(...)` conditions as named decorators; preserve predicates and reasons. This does not authorize new skips or weaken the capability-probe policy in §Multi-OS Executables.
   - Register selectors in project and any shipped test configuration; validate with `--strict-markers`. Classify tests by their behavioral contract or execution requirements, never duration; use CI duration reports to investigate underperforming tests. Full CI remains unfiltered.
 - Parallel runs (pytest-xdist): drop `-n` when the failure itself is what you are reading — xdist interleaves worker output, hides `-x` ordering, and breaks `--pdb`; reproduce a failure serially before diagnosing it. A test that passes serially and fails only under `-n` is a real defect, not an xdist artifact — usually shared machine-global state (a temp-dir sentinel without a session-unique suffix, a fixed port, a written file outside `tmp_path`). Fix the isolation; never pin that suite serial to hide it.
+- Baseline claims name their tree: a verdict that a failure is pre-existing on `HEAD`, the target branch or another worktree needs a run in that tree with explicit paths in the same command (`git -C <wt>`, `pytest -c <wt>/pyproject.toml --rootdir <wt>`), never a separate directory change the shell may reset; confirm the run's rootdir names that tree before trusting the verdict.
+- Classify a check before writing it: failure = broken behaviour (guard verdict, parser reading, CLI exit code) → pytest; failure = drifted bookkeeping only (README counts, export lists, byte-identical copies, manifest hashes regenerated from source) → a pre-commit hook, so it neither blocks fix rounds nor dilutes coverage.
+- Mutation checks run on a copy in a private temp directory outside the repository, with the test import pointed there; never rewrite the tracked file, even with restore in `finally`.
 - Keep behavior-defining data + actions visible. Reuse meaningful local values arrange through assert; extract fixtures/helpers only when hiding irrelevant construction or genuinely shared infra, never scenario intent.
 - Fixtures return ready-to-use concrete state or cohesive tuple of related state. Don't return callable factory unless fixture-managed lifecycle requires it; use ordinary helper function for configurable construction. Keep fixture deps minimal, unpack only values test needs, avoid aliases/forwarding helpers adding no meaning.
 - Test public behavior. Mock only true external boundaries outside test's control, not system-under-test internals.
@@ -135,6 +138,7 @@ Applies when the project supports more than one OS — declared by a CI OS matri
 - Runnable plugin code blocks are preapproved recipes within the invoked workflow scope; required preparation and checks inherit that authorization. Forbidden-operation examples and unevaluated placeholders are not grants. Use existing grants or the configured native automatic approval reviewer for the complete populated command; no blanket shell, interpreter, or arbitrary gate-runner allowance.
 - For other intentionally networked CLI, inspect the complete owning command's current network and filesystem grants, including nested subprocesses, dependency caches and hook environments. Existing grants or applicable preapproval use default execution without another request; network intent alone does not require escalation.
 - Only a verified missing capability requires `sandbox_permissions="require_escalated"` with narrow justification from the first attempt; never enable persistent workspace network access, request broad interpreter prefix, or assume nested executable's approval covers its parent. Do not propose a timestamp-specific whole-command prefix for `run_gates.py`.
+- Before marking an option that widens a permission, sandbox, network or approval grant as recommended, read what the grant actually admits (profile definition, installer refusals, enforcement docs) and name its side effects in that option's description; a recommendation on an unread widening is an ungrounded premise.
 - This includes `kaggle`, Codex Git marketplace add/upgrade + owning sync wrapper, paid `codex exec`, and any networked CLI outside the audited GitHub-read boundary; web/browser/MCP/connector tools use their own permission path.
 - Marketplace/plugin listing and `codex plugin add` from existing snapshot stay sandboxed.
 
@@ -220,9 +224,10 @@ Parent agent responsibilities:
 
 - Scope task, owned files, acceptance criteria before delegation
 - Integrate subagent outputs into one coherent change
-- Inspect delegation lead handover ledger, relevant diffs, verification evidence before accepting work
+- Inspect delegation lead handover ledger, relevant diffs, verification evidence before accepting work; for changed scope check disk state, not the handover text
 - Reject scope widening, unsupported completion claims, final acceptance transferred to support role
 - Final judgment on conflicts, overlaps, release readiness
+- Send new or changed scope to a fresh, narrowly briefed child, not into a running or finished one
 
 ## Collaboration team patterns
 
