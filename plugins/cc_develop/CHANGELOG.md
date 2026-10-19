@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.41.0
+
+- `/develop:plan` step tables gain a `Verification` column for simple and staged plans (fix plans already had one), and each saved `Suggested approach` step ends with `— verify: <check>`, so `/develop:feature` and `/develop:fix` receive it.
+- `/develop:feature`, `/develop:fix` and `/develop:refactor` with `--plan` (or an inline-generated plan) record the plan file's hash through the new `bin/plan_hash.py` and re-check it first in the Final Report; a change leads the report with `! BLOCKED — plan changed during build`. Detection only: `.plans/` is gitignored, so edits leave no diff, and nothing is reverted.
+- Sync the file-handoff protocol: a tool or permission denial that blocked part of a task returns `done_with_concerns`, never `done`.
+
 ## 0.40.6
 
 - `/develop:review` and `/develop:fix` follow foundry's non-blocking compaction boundary gate through the shared compaction contract: an `advise` decision continues with the next phase and shows a short one-line `/compact` hint at the next natural pause; only `FOUNDRY_COMPACT_GATE=stop` holds the run until `continue`.

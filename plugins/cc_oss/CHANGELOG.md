@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.50.4
+
+- Sync the file-handoff protocol: a tool or permission denial that blocked part of a task returns `done_with_concerns`, never `done`.
+- `/oss:analyse` runs inline instead of as a forked background agent. The `context: fork` frontmatter made the harness hide the run as `@oss-analyse`: its phase tasks never reached the caller's `TaskList` and its progress was not shown.
+
 ## 0.50.3
 
 - `/oss:resolve`, `/oss:review` and the shared compaction contract follow foundry's non-blocking boundary gate: an `advise` decision starts the next phase (the resolve fan included) at once and shows a short one-line `/compact` hint at the next natural pause; only `FOUNDRY_COMPACT_GATE=stop` holds the run until `continue`.

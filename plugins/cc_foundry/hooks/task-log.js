@@ -346,7 +346,7 @@ process.stdin.on("end", () => {
       if (tool_name === "Task" || tool_name === "Agent") {
         const agentType = tool_input?.subagent_type || "unknown";
         const desc = tool_input?.description || "";
-        const prompt = (tool_input?.prompt || "").slice(0, 200);
+        const prompt = maskSecrets(tool_input?.prompt || "").slice(0, 200);
         appendLog(logFile, globalLogsDir, {
           ts,
           project: projectSlug,
@@ -395,7 +395,7 @@ process.stdin.on("end", () => {
         }
       } else if (tool_name === "Skill") {
         const skill = tool_input?.skill || "unknown";
-        const args = tool_input?.args || "";
+        const args = maskSecrets(tool_input?.args || "");
         appendLog(logFile, globalLogsDir, { ts, project: projectSlug, event: "invoked", tool: "Skill", skill, args });
         // Track bridge-backed Codex skills for statusline display (tool_use_id is the stable key).
         if (skill && skill.startsWith("bridge:") && data.tool_use_id) {
@@ -617,7 +617,7 @@ process.stdin.on("end", () => {
         } catch (_) {}
       } catch (_) {}
       // Capture last assistant message (up to 500 chars) for post-mortem debugging
-      const lastMsg = (data.last_assistant_message || "").slice(0, 500) || undefined;
+      const lastMsg = maskSecrets(data.last_assistant_message || "").slice(0, 500) || undefined;
       appendLog(logFile, globalLogsDir, {
         ts,
         project: projectSlug,
@@ -1031,10 +1031,66 @@ function readAgentInfo(root, agentType) {
   return { model: "inherit", color: null }; // built-in types (general-purpose) or missing file
 }
 
+// Log hygiene — never applied to path/desc/skill/type values (sessionEditedFiles and timing_analyzer.py parse them):
+// stripControl removes C0/C1 controls, zero-width and directional characters; maskSecrets hides env assignments,
+// credential-named assignments/flags/JSON fields, URL credentials, Bearer/Basic values and well-known token
+// prefixes. No generic long-string redaction — it would wipe paths.
+const CONTROL_RE =
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]+/g;
+const TOKEN_RE =
+  /\b(?:gh[pousr]_|github_pat_|glpat-|npm_|pypi-|AIza|sk_live_|sk-|xox[a-z]-|AKIA|eyJ)[A-Za-z0-9_-]{8,}/g;
+// Leading `NAME=value`: value is any run of quoted strings, escapes, `$(...)` or plain characters; an unclosed
+// quote swallows the rest of the string.
+const ENV_ASSIGN_RE =
+  /^(\s*)([A-Za-z_][A-Za-z0-9_]*)=(?:"(?:[^"\\]|\\.)*"|'[^']*'|\$\([^)]*\)|\\.|[^\s"'\\])*(?:["'][\s\S]*)?(?=\s|$)/;
+const CRED_NAME = "[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|PASS|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY)[A-Za-z0-9_]*";
+const CRED_ASSIGN_RE = new RegExp(`(?<![A-Za-z0-9_])(${CRED_NAME})=(?:"[^"]*"|'[^']*'|[^\\s"']+)`, "gi");
+const CRED_FLAG_RE = /(--(?:token|password|passwd|secret|api-?key|auth-?token)(?:=|\s+))(?:"[^"]*"|'[^']*'|\S+)/gi;
+const CRED_JSON_RE =
+  /("[A-Za-z0-9_-]*(?:token|secret|password|passwd|api_?key|access_?key)[A-Za-z0-9_-]*"\s*:\s*)"[^"]*"/gi;
+const URL_CRED_RE = /(:\/\/[^/\s:@]+):[^@\s/]+@/g;
+const AUTH_VALUE_RE = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/g;
+// Longer input is cut first: the log keeps 200-500 characters, and a bounded scan keeps the masker linear.
+const MASK_INPUT_MAX = 5000;
+
+function stripControl(s) {
+  return String(s ?? "").replace(CONTROL_RE, " ");
+}
+
+function maskSecrets(s) {
+  let rest = stripControl(s).slice(0, MASK_INPUT_MAX);
+  let masked = "";
+  for (let m = ENV_ASSIGN_RE.exec(rest); m && m[0]; m = ENV_ASSIGN_RE.exec(rest)) {
+    masked += m[1] + m[2] + "=[masked]";
+    rest = rest.slice(m[0].length);
+  }
+  return (masked + rest)
+    .replace(CRED_ASSIGN_RE, "$1=[masked]")
+    .replace(CRED_FLAG_RE, "$1[masked]")
+    .replace(CRED_JSON_RE, '$1"[masked]"')
+    .replace(URL_CRED_RE, "$1:[masked]@")
+    .replace(AUTH_VALUE_RE, "$1 [masked]")
+    .replace(TOKEN_RE, "[redacted]");
+}
+
+// Tighten a pre-existing log dir/file once per process: mkdir/append modes apply only on creation, so installs that
+// predate them would otherwise keep world-readable command history. Skips symlinks, foreign owners and Windows.
+const tightened = new Set();
+function tightenMode(p, mode) {
+  if (tightened.has(p) || process.platform === "win32" || typeof process.getuid !== "function") return;
+  tightened.add(p);
+  try {
+    const st = fs.lstatSync(p);
+    if (!st.isSymbolicLink() && st.uid === process.getuid() && st.mode & 0o077) fs.chmodSync(p, mode);
+  } catch (_) {}
+}
+
 function appendLog(logFile, dir, entry) {
   try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(logFile, JSON.stringify(entry) + "\n");
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    tightenMode(dir, 0o700);
+    fs.appendFileSync(logFile, JSON.stringify(entry) + "\n", { mode: 0o600 });
+    tightenMode(logFile, 0o600);
   } catch (_) {}
 }
 
@@ -1057,7 +1113,7 @@ function summarizeArgs(toolName, toolInput) {
       case "NotebookEdit":
         return "file_path=" + (toolInput.notebook_path || "?");
       case "Bash":
-        return "command=" + (toolInput.command || "").slice(0, 200);
+        return "command=" + maskSecrets(toolInput.command || "").slice(0, 200);
       case "Grep":
         return "pattern=" + (toolInput.pattern || "") + " path=" + (toolInput.path || ".");
       case "Glob":
@@ -1066,9 +1122,9 @@ function summarizeArgs(toolName, toolInput) {
       case "Task":
         return "type=" + (toolInput.subagent_type || "?") + " desc=" + (toolInput.description || "");
       case "Skill":
-        return "skill=" + (toolInput.skill || "") + " args=" + (toolInput.args || "");
+        return "skill=" + (toolInput.skill || "") + " args=" + maskSecrets(toolInput.args || "");
       default:
-        return JSON.stringify(toolInput).slice(0, 200);
+        return maskSecrets(JSON.stringify(toolInput)).slice(0, 200);
     }
   } catch (_) {
     return null;

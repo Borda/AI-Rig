@@ -81,7 +81,7 @@ MULTI_LANG=false
 
 If `MULTI_LANG=true`: invoke `AskUserQuestion` — "Monorepo detected (Python + non-Python markers coexist). This skill targets Python/pytest. Is the feature you're building Python-only?" · (a) **Yes — Python only** — proceed · (b) **No — involves non-Python code too** — abort; use a language-native toolchain for the non-Python portion. On (b): stop.
 
-**Optional `--plan <path>`**: `$ARGUMENTS` contains `--plan <path>` (at any position) → read plan file first. Extract `Affected files`, `Risks`, `Suggested approach` — use to populate Step 1 analysis instead of cold codebase exploration. Skip agent feasibility re-check (already done in `/develop:plan`). Store plan path as `PLAN_FILE`.
+**Optional `--plan <path>`**: `$ARGUMENTS` contains `--plan <path>` (at any position) → read plan file first. Extract `Affected files`, `Risks`, `Suggested approach` — use to populate Step 1 analysis instead of cold codebase exploration. Skip agent feasibility re-check (already done in `/develop:plan`). Store plan path as `PLAN_FILE`. The extraction block also records the plan's hash (`.plans/` is gitignored, so edits leave no diff); Final Report re-checks it.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -716,6 +716,12 @@ eval "$TEST_CMD"
 **Branch Safety Guard — no test suite**: no test suite found (pytest collects 0 tests or `$TEST_CMD` not set) → log `⚠ No test suite detected — Branch Safety Guard weakened`, require explicit user confirmation before proceeding past guard.
 
 ## Final Report
+
+**Plan drift check** — run first; any output means lead the report with that `! BLOCKED` line and let the user decide (detection only, never auto-revert):
+
+```bash
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/plan_hash.py" check  # timeout: 5000
+```
 
 ```bash
 # loads: report-templates.md

@@ -70,7 +70,7 @@ Each record names the plugin and hook that wrote it, the session and tool-call i
 
 Four things this log deliberately does not do:
 
-- **It never records command text.** Only a digest of the normalized command, and for a provenance allow the manifest `src` it matched. Note the limit honestly: `task-log.js` already writes the first 200 characters of every Bash command into `timings.jsonl` under the same `tool_use_id`, so anyone holding `~/.claude/logs/` can recover command text regardless. The guarantee is about this file.
+- **It never records command text.** Only a digest of the normalized command, and for a provenance allow the manifest `src` it matched. Note the limit honestly: `task-log.js` already writes the first 200 characters of every Bash command into `timings.jsonl` under the same `tool_use_id`, so anyone holding `~/.claude/logs/` can recover command text regardless (credentials in it are masked first, and the directory is tightened to `0700`). The guarantee is about this file.
 - **It is not tamper-evident.** `record_hash` detects a record that changed after it was written. The same user owns the log, the hooks and the checker, so nothing here establishes that a record was not forged.
 - **It never infers authority from execution.** That a tool ran proves it was not blocked, not that a human approved it — a sibling plugin's allow, a `settings.json` rule or a permission mode all execute without a prompt.
 - **It never coordinates.** With four plugins installed, each writes its own rows and nothing locks, claims or dedupes. Four observations of one completion are corroboration; the reader reconciles them.

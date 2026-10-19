@@ -85,8 +85,8 @@ Main context receives only the envelope JSON.
 
 | Value | When to use |
 | -- | -- |
-| `"done"` | Completed, full confidence |
-| `"done_with_concerns"` | Completed but agent has doubts — low confidence, incomplete coverage, or unverifiable claims; orchestrator surface this, not silently accept |
+| `"done"` | Completed, full confidence; no tool or permission denial blocked any part of the task |
+| `"done_with_concerns"` | Completed but agent has doubts — low confidence, incomplete coverage, unverifiable claims, or a tool/permission denial blocked part of the task (`summary` names the denied tool; never `"done"`; the denied call or a bypass of it is never re-run, restructuring to an already-allowed form is fine; `"error"` when nothing completed); orchestrator surface this, not silently accept |
 | `"needs_context"` | No quality output; re-run with specific context named in `summary` unblocks agent |
 | `"timed_out"` | Orchestrator-assigned: per-agent deadline passed, or the agent's completion/idle notification arrived without its deliverable |
 | `"error"` | Unrecoverable failure |

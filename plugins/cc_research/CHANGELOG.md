@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.28.6
+
+- Sync the file-handoff protocol: a tool or permission denial that blocked part of a task returns `done_with_concerns`, never `done`.
+
 ## 0.28.5
 
 - Shared compaction contract synced with foundry's non-blocking boundary gate: an `advise` decision continues with the next phase and shows a short one-line `/compact` hint at the next natural pause; only `FOUNDRY_COMPACT_GATE=stop` holds the run.

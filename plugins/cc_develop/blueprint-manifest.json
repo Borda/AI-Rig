@@ -212,6 +212,10 @@
       "kind": "command",
       "src": "skills/review/SKILL.md:392"
     },
+    "0ea8c7bb839d2be58a9bbd3af8c5a81b0408939beaf43b24760a63f8c3baad58": {
+      "kind": "block",
+      "src": "skills/feature/SKILL.md:722"
+    },
     "0edbb1d60b2640a823d0db690ab18f0de8a77de0a031139754c2872c34c94756": {
       "kind": "command",
       "src": "skills/_shared/preflight-helpers.md:13"
@@ -1776,6 +1780,10 @@
       "kind": "command",
       "src": "skills/_shared/foundry--quality-stack.md:99"
     },
+    "7f5ae0563e6dac2a6081e89e89389ba1b20dde45f70db2c3bf89416ea9a87314": {
+      "kind": "block",
+      "src": "skills/_shared/preflight-helpers.md:13"
+    },
     "7f6e8850b5d66fce11531b93fbd0f49a5f087ccbcd4ac49d301d1b92a8accd0f": {
       "kind": "command",
       "src": "skills/debug/SKILL.md:257"
@@ -1790,7 +1798,7 @@
     },
     "805611bb3b2286a323a3ff019a5802811679fe6273c72d1dbaf2167d1df18f58": {
       "kind": "block",
-      "src": "skills/feature/SKILL.md:720"
+      "src": "skills/feature/SKILL.md:726"
     },
     "806c198410457b2713f969a5470686af8921a85e227bc554f154c03691153762": {
       "kind": "block",
@@ -1910,7 +1918,7 @@
     },
     "8891da9c6553cfed5927e5d210f8340b06f62bb4de8cb05e4856d522af6980a1": {
       "kind": "command",
-      "src": "skills/feature/SKILL.md:720"
+      "src": "skills/feature/SKILL.md:726"
     },
     "88f33c8effc8a0a04465de594c8711be2efb05040d5846c471da05bc3c62bd02": {
       "kind": "command",
@@ -2068,10 +2076,6 @@
       "kind": "command",
       "src": "skills/feature/SKILL.md:74"
     },
-    "95b16bcc63ea4a23089820b700989d5d9628d8cebdc3e4276b04a31de0bde10a": {
-      "kind": "block",
-      "src": "skills/_shared/preflight-helpers.md:13"
-    },
     "9647f605a90c8a3b421be5a112c7df9394c7475e9915b937b5d24242ed2e4f42": {
       "kind": "command",
       "src": "skills/plan/SKILL.md:121"
@@ -2102,7 +2106,7 @@
     },
     "979ee3391cddeff52cdaa405f5ee0edfb54e38ca7f7c40783858e9b55bb8b32a": {
       "kind": "command",
-      "src": "skills/feature/SKILL.md:720"
+      "src": "skills/feature/SKILL.md:726"
     },
     "97d72db8e41ed55b8fbd4f546c34a22d38eaf9b557b56d43127e7c29769928b4": {
       "kind": "command",
@@ -2587,6 +2591,10 @@
     "c00f8481ab50efbd3e1eca59acf009565f39115b024d06b21aed3e1af6462fed": {
       "kind": "command",
       "src": "skills/feature/SKILL.md:74"
+    },
+    "c01805000ed55c14fe00d8c89858279d6699ad6d9128846670f7e3e35f87ab1d": {
+      "kind": "command",
+      "src": "skills/_shared/preflight-helpers.md:13"
     },
     "c0225a8e0b76c36b6a6b0b4388874bf9dd1e8115e7ceae7de09cc146a6bb6a0d": {
       "kind": "command",
@@ -3509,6 +3517,6 @@
       "src": "skills/debug/SKILL.md:369"
     }
   },
-  "plugin": "cc_develop@0.40.6",
+  "plugin": "cc_develop@0.41.0",
   "schema": 1
 }

@@ -730,6 +730,87 @@ class TestCompactionLogs:
         assert "matcher" not in hooks["PostCompact"][0]
 
 
+class TestLogMasking:
+    """task-log.js masks credentials in free-text log fields and leaves parsed fields intact."""
+
+    @staticmethod
+    def _timing_args(home: Path, sid: str, tool: str, tool_input: dict) -> str:
+        """Run PreToolUse then PostToolUse for one call and return the logged ``args`` summary."""
+        base = {"session_id": sid, "tool_name": tool, "tool_input": tool_input, "tool_use_id": f"tu-{tool}"}
+        for event in ("PreToolUse", "PostToolUse"):
+            result = subprocess.run(
+                ["node", str(Path(__file__).resolve().parents[2] / "hooks" / "task-log.js")],
+                input=json.dumps({**base, "hook_event_name": event}),
+                capture_output=True,
+                text=True,
+                env={**os.environ, "HOME": str(home), "USERPROFILE": str(home)},
+                cwd=home,
+                check=False,
+            )
+            assert result.returncode == 0, result.stderr
+        rows = [
+            json.loads(line) for line in (home / ".claude" / "logs" / "timings.jsonl").read_text("utf-8").splitlines()
+        ]
+        return next(r["args"] for r in rows if r["tool"] == tool)
+
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            pytest.param("TOKEN=secret", "command=TOKEN=[masked]", id="assignment-at-end"),
+            pytest.param('GH_TOKEN="a\\" b" run', "command=GH_TOKEN=[masked] run", id="escaped-quote"),
+            pytest.param("X=$(cat secret) run", "command=X=[masked] run", id="command-substitution"),
+            pytest.param(
+                "export AWS_SECRET_ACCESS_KEY=abc", "command=export AWS_SECRET_ACCESS_KEY=[masked]", id="export"
+            ),
+            pytest.param("cd x && API_KEY=zzz curl", "command=cd x && API_KEY=[masked] curl", id="after-and"),
+            pytest.param(
+                'curl -H "Authorization: Bearer abc123def456"',
+                'command=curl -H "Authorization: Bearer [masked]"',
+                id="bearer",
+            ),
+            pytest.param(
+                "git clone https://u:pw@example.com/r",
+                "command=git clone https://u:[masked]@example.com/r",
+                id="url-credentials",
+            ),
+            pytest.param("run --token abc123 now", "command=run --token [masked] now", id="token-flag"),
+            pytest.param("echo glpat-abcdefghijklmnop", "command=echo [redacted]", id="token-prefix"),
+            pytest.param(
+                "git -C /a/very/long/path/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa log",
+                "command=git -C /a/very/long/path/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa log",
+                id="long-path-kept",
+            ),
+        ],
+    )
+    def test_bash_command_masked(self, sid: str, tmp_home: Path, command: str, expected: str) -> None:
+        """Credentials in a Bash command never reach timings.jsonl; plain paths and words survive."""
+        assert self._timing_args(tmp_home, sid, "Bash", {"command": command}) == expected
+
+    def test_edit_path_with_secret_lookalikes_is_untouched(self, sid: str, tmp_home: Path) -> None:
+        """A path containing ``=`` or ``sk-`` stays byte-identical: PreCompact and the profiler parse it."""
+        path = "/x/GH_TOKEN=abc def/sk-abcdefghijkl.py"
+        assert self._timing_args(tmp_home, sid, "Edit", {"file_path": path}) == f"file_path={path}"
+
+    def test_skill_args_and_default_branch_masked(self, sid: str, tmp_home: Path) -> None:
+        """Skill arguments and the generic JSON summary mask credentials after the parsed ``skill=`` prefix."""
+        skill = self._timing_args(tmp_home, sid, "Skill", {"skill": "x:y", "args": "--token abc123 go"})
+        assert skill == "skill=x:y args=--token [masked] go"
+        other = self._timing_args(tmp_home, sid, "WebFetch", {"url": "https://h/?access_token=abc"})
+        assert "abc" not in other
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+    def test_existing_logs_dir_and_files_tightened(self, sid: str, tmp_home: Path) -> None:
+        """A pre-existing 0755 logs dir and 0644 log file are tightened to 0700 / 0600."""
+        logs = tmp_home / ".claude" / "logs"
+        logs.chmod(0o755)
+        log = logs / "timings.jsonl"
+        log.write_text("", encoding="utf-8")
+        log.chmod(0o644)
+        self._timing_args(tmp_home, sid, "Bash", {"command": "echo hi"})
+        assert logs.stat().st_mode & 0o777 == 0o700
+        assert log.stat().st_mode & 0o777 == 0o600
+
+
 class TestPreCompactContract:
     """task-log.js: PreCompact writes session-context.md and preserves the skill contract verbatim.
 

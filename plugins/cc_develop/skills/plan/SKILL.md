@@ -232,9 +232,9 @@ echo "$PLAN_FILE" > "$PLAN_NS/plan-file"
 
 ### Suggested approach
 
-1. [step 1]
-2. [step 2]
-3. [step 3]
+1. [step 1] — verify: [command or observable check proving it done]
+2. [step 2] — verify: [check]
+3. [step 3] — verify: [check]
 ...
 ```
 
@@ -361,7 +361,7 @@ Affected files : [file count] files across [module count] modules
 Key risks      : [key risk or none]
 Agent review   : ✓ agents ready ([correction count] corrections incorporated)  |  ⚠ see below
 
-[Steps table — columns `# | Step` for simple plans, `# | Stage | What changes | Stop condition` for staged or large plans, `# | Action | Target | Verification` for fixes]
+[Steps table — columns `# | Step | Verification` for simple plans, `# | Stage | What changes | Stop condition | Verification` for staged or large plans, `# | Action | Target | Verification` for fixes; Verification = the command or observable check that proves the step done]
 
 Advisory notes from agents (omit table if none):
 

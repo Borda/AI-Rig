@@ -200,7 +200,7 @@ Agent review   : ✓ agents ready (N corrections incorporated)
 -> /develop:feature|fix|refactor "<goal>" when ready
 ```
 
-**Passing plan to downstream skills**: every code-changing skill accepts `--plan <path>`. Skill reads classification, affected files, risks, suggested approach from plan — skips cold codebase exploration, inherits validated feasibility verdicts.
+**Passing plan to downstream skills**: every code-changing skill accepts `--plan <path>`. Skill reads classification, affected files, risks, suggested approach from plan — skips cold codebase exploration, inherits validated feasibility verdicts. The plan's hash is recorded when it is read (`.plans/` is gitignored, so edits leave no diff); `feature`, `fix` and `refactor` re-check it before the Final Report and lead with `! BLOCKED — plan changed during build` when it differs. Detection only, nothing is reverted. Simple and staged plans carry a `Verification` column and `— verify:` on each suggested step.
 
 ```text
 /develop:plan "add streaming response support"
@@ -832,6 +832,7 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 | `heal_git_artifacts.py`      | Reclaim stale skill locks and orphaned git worktrees.                                      |
 | `issue_fetch.py`             | Validate an issue argument and fetch it through `gh`.                                      |
 | `parse-skill-flags.py`       | Parse boolean and value skill flags into shell assignments.                                |
+| `plan_hash.py`               | Record a `--plan` file's hash and flag edits made during the build.                        |
 | `parse_target_qname.py`      | Split a `module::function` suspect out of a skill's arguments.                             |
 | `pytest_gate.py`             | Run an allow-listed pytest command with full output.                                       |
 | `resolve_review_target.py`   | Resolve a review target and its changed Python files.                                      |
@@ -844,7 +845,7 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 
 #### Auto-allow audit log
 
-`allow-dispatch.js` and `audit-close.js` append one JSON line each per Bash call to `~/.claude/logs/audit/`: one file per session (`s-<key>.jsonl`, the key being a hash of the session id) plus a shared `_no-session.jsonl` for calls that arrive without one. A record names the deciding plugin and hook, the session and tool-call ids, the working directory, the effective decision with its lane and provenance, and both decision modules' own verdicts. Command text is never written — only a digest, and for a provenance allow the manifest `src` it matched. Note the limit honestly: `task-log.js` already writes the first 200 characters of every Bash command into `timings.jsonl` under the same `tool_use_id`, so the guarantee is about this file rather than about the log directory.
+`allow-dispatch.js` and `audit-close.js` append one JSON line each per Bash call to `~/.claude/logs/audit/`: one file per session (`s-<key>.jsonl`, the key being a hash of the session id) plus a shared `_no-session.jsonl` for calls that arrive without one. A record names the deciding plugin and hook, the session and tool-call ids, the working directory, the effective decision with its lane and provenance, and both decision modules' own verdicts. Command text is never written — only a digest, and for a provenance allow the manifest `src` it matched. Note the limit honestly: `task-log.js` already writes the first 200 characters of every Bash command into `timings.jsonl` under the same `tool_use_id`, so the guarantee is about this file rather than about the log directory. That text is masked first (env assignments, credential-named values and flags, URL credentials, Bearer values, well-known token prefixes), and `task-log.js` tightens the log directory to `0700` and log files to `0600`.
 
 With several plugins installed each writes its own rows and nothing coordinates them, so one completed call yields one row per plugin at each end. That is corroboration, not duplication.
 

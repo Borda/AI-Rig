@@ -17,7 +17,7 @@
    - (b) **Stop** — review/edit plan at `<path>` before continuing; re-invoke with `--plan <path>` when ready
    - (c) **Abort** — cancel
 5. On (b) or (c): stop
-6. On (a): set `PLAN_FILE=<path>`, persist it (`echo "$PLAN_FILE" > "${TMPDIR:-/tmp}/dev-plan-file-${CSID}"`) so compaction-contract boundary reads in feature/fix/refactor resolve it across Bash calls; continue to next step
+6. On (a): set `PLAN_FILE=<path>`, persist it (`echo "$PLAN_FILE" > "${TMPDIR:-/tmp}/dev-plan-file-${CSID}"`) so compaction-contract boundary reads in feature/fix/refactor resolve it across Bash calls, then record its hash (`python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/plan_hash.py" record "$PLAN_FILE"  # timeout: 5000`) for the Final Report drift check; continue to next step
 
 ### Skill contexts (substitute when calling this protocol)
 

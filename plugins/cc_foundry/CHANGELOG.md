@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.68.1
+
+- `task-log.js` masks credentials before writing to `~/.claude/logs`: `NAME=value` env assignments (leading, after `export`/`env`/`&&`), credential-named assignments, `--token`/`--password` flags, JSON credential fields, URL credentials, `Bearer`/`Basic` values and well-known token prefixes (`ghp_`, `github_pat_`, `glpat-`, `npm_`, `sk-`, `xox*-`, `AKIA`, `eyJ` and others), in Bash commands, agent prompts, last assistant messages, Skill arguments and the generic tool summary. Control, zero-width and directional characters are stripped. Paths and `desc=`, `skill=`, `type=` values stay intact because `sessionEditedFiles` and `timing_analyzer.py` parse them.
+- `task-log.js` creates the log directory `0700` and log files `0600`, and tightens a pre-existing one (owned by the user, not a symlink) the same way.
+- File-handoff protocol: a tool or permission denial that blocked part of a task returns `done_with_concerns` with the denied tool named in `summary`, never `done`; the denied call or a bypass of it is not re-run (restructuring to an already-allowed form is fine), and `error` is used when nothing completed.
+
 ## 0.68.0
 
 - The compaction boundary gate no longer holds a skill run. When compacting would pay off, `compact_gate.py` now prints `advise`: the skill starts its next phase right away and shows the `/compact` hint at the next point where its turn ends anyway (after a spawn, or in the next question). The old hold-and-wait behaviour is opt-in through `FOUNDRY_COMPACT_GATE=stop`, which prints `stop`. A timed wait is not offered because a Claude Code turn cannot resume on a timer.

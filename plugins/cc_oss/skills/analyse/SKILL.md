@@ -6,7 +6,6 @@ description: |
   SKIP: user already pasted full thread text inline; oss:resolve already active on same PR; user wants code review (use oss:review); user phrasing is "review PR" meaning code quality assessment, not thread triage (route to oss:review).
 argument-hint: <N|vitality [<owner>/<repo>|github-url]|ecosystem|path/to/report.md> [--reply] [--quick] [--keep "<items>"]
 allowed-tools: Read, Bash, Write, Edit, Agent, AskUserQuestion, TaskList, TaskCreate, TaskUpdate
-context: fork
 model: sonnet
 effort: high
 ---
@@ -431,9 +430,8 @@ Scenarios:
 - **Out-of-scope early-exit — hard stop, zero partial review**: when input clearly outside skill's domain (e.g. CI pipeline diagnosis, code review of unrelated source/script content pasted alongside the actual target), print scope note + redirect (e.g. "use oss:cicd-steward (requires `oss` plugin)") and stop immediately — zero bugs, zero code-quality observations, zero line-level findings on the out-of-scope portion, even when it arrives embedded inside otherwise in-scope material (e.g. a script pasted alongside a draft report or rubric-scoring JSON).
   - Flag then stop; flag then analyze = precision cost with no recall benefit. Producing any partial review before the redirect (even framed as "quick notes") is itself the violation — the redirect must be the entire response for that content, not a preamble to it.
   - **Does not apply to content that IS the thread's own subject** — a PR diff (review mode), or an issue's reproduction script that `modes/thread.md`'s Reproduction Check (R1-R4) is built to execute and score — that content stays in scope and gets analyzed normally; the guard targets unrelated material riding along with in-scope input, not the input itself.
-- **Forked context**: skill runs with `context: fork` — no access to current conversation history. All required context must be in skill argument or prompt. `Agent` IS available in forked context (non-deferred, declared in `allowed-tools`) — do NOT skip Steps 5–6 adversarial review assuming Agent unavailable; available, those steps mandatory.
+- **Inline context**: skill runs in the caller's session, never `context: fork` — a fork runs as a hidden background agent, so its phase tasks are invisible to the caller's `TaskList` and its progress is not shown. `Agent` is declared in `allowed-tools` — do NOT skip Steps 5–6 adversarial review assuming Agent unavailable; those steps are mandatory.
 - **`--reply` drafts only** — shepherd produces draft file; does NOT auto-post to GitHub. User posts manually. Write access to repo not required for `--reply`; required only if user subsequently posts draft via `gh issue comment` or `gh pr comment`.
-- **Follow-up context gap**: skill runs with `context: fork` — follow-up chains (`/develop:fix` (requires `develop` plugin), `/oss:review`) receive no analysis context from this run. Pass report path explicitly or re-summarize key findings in follow-up invocation.
 - Follow-up chains:
   - Issue with confirmed bug → `/develop:fix` to diagnose, reproduce with test, apply targeted fix (requires `develop` plugin)
   - Issue is feature request → `/develop:feature` for TDD-first implementation (requires `develop` plugin)

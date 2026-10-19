@@ -21,6 +21,7 @@ if [ -n "$PLAN_FILE" ] && [ ! -f "$PLAN_FILE" ]; then
 fi
 # persist so later cross-Bash-call reads (compaction-contract boundaries in feature/fix/refactor) resolve it — shell var is lost between Bash() calls
 echo "$PLAN_FILE" > "${TMPDIR:-/tmp}/dev-plan-file-${CSID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/plan_hash.py" record "$PLAN_FILE"  # timeout: 5000 — .plans/ is gitignored; hash lets Final Report detect mid-build edits (empty path clears a stale hash)
 ```
 
 ## Team Spawn Template
