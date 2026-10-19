@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.35.11
+
+- Include a compact remediation table even for one item, showing each finding, selection, outcome and concrete resolution explanation. Presentation 10 preserves historical rendering and existing source/evidence bindings.
+- Skip the commit-grouping question when remediation scope resolves to one actionable item, including a single selection from many or selecting all when only one item exists. Keep one commit group, explicit preferences and existing authorization requirements; collapse equivalent grouping choices in any final consent offer.
+- Accept creator-promoted PR remediation lifecycle roots while retaining flat-run compatibility and rejecting malformed or foreign run identities.
+- Render new handoffs with numbered owner/action entries, separate confidence bullets, exact duplicate limitation coalescing, and clickable evidence/artifact links across workflows. Preserve historical output bytes and supported version-8 candidate admission.
+- Recover cosmetic presentation problems automatically from retained evidence; distinguish reader defects from substantive provenance, verification and authority failures before pausing remediation.
+
 ## 0.35.10
 
 - Honor explicit review coverage waivers as recorded scope changes through a separate frozen fallback plan; preserve source identity, evidence integrity, failed checks and every validation/completion gate. Optional repair refusal alone never revokes required independence.

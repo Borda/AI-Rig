@@ -162,7 +162,9 @@ def _parallel_metadata() -> dict[str, object]:
     }
 
 
-def _write_completed_production_lifecycle(metadata: dict[str, object], out_dir: Path) -> Path:
+def _write_completed_production_lifecycle(
+    metadata: dict[str, object], out_dir: Path, evidence_root: str = ".reports/codex/code-remediate/fixture"
+) -> Path:
     """Write one truthful schema-v2 completed lifecycle projection for approved buckets."""
     _write_workplan(metadata, out_dir)
     workplan = metadata["resolution_workplan"]
@@ -218,7 +220,6 @@ def _write_completed_production_lifecycle(metadata: dict[str, object], out_dir: 
     workplan_path.write_text(
         workplan_path.read_text(encoding="utf-8").replace(old_digest, plan_sha256), encoding="utf-8"
     )
-    evidence_root = ".reports/codex/code-remediate/fixture"
     nodes: list[dict[str, object]] = []
     for position, bucket in enumerate(buckets):
         assert isinstance(bucket, dict)
@@ -716,6 +717,42 @@ def test_completed_parallel_remediation_accepts_matching_production_lifecycle(tm
     _write_completed_production_lifecycle(metadata, tmp_path)
 
     VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "evidence_root",
+    [
+        ".reports/codex/code-remediate/pr-0/run-001",
+        ".reports/codex/code-remediate/pr-01/run-001",
+        ".reports/codex/code-remediate/pr-41/run-000",
+        ".reports/codex/code-remediate/pr-41/run-1",
+        ".reports/codex/code-remediate/other/run-001",
+        ".reports/codex/code-remediate/pr-41/run-001/extra",
+        ".reports/codex/code-remediate/pr-41/../run-001",
+        ".reports/codex/code-remediate/pr-41//run-001",
+        "/.reports/codex/code-remediate/pr-41/run-001",
+        "C:/.reports/codex/code-remediate/pr-41/run-001",
+        ".reports\\codex\\code-remediate\\pr-41\\run-001",
+    ],
+)
+def test_completed_parallel_remediation_rejects_invalid_promoted_root(tmp_path: Path, evidence_root: str) -> None:
+    """Reject malformed identities and unsafe paths even when their receipt digest matches."""
+    metadata = _parallel_metadata()
+    _write_completed_production_lifecycle(metadata, tmp_path, evidence_root)
+
+    with pytest.raises(SystemExit, match=r"^code-remediate-production-lifecycle-evidence-root-invalid$"):
+        VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
+
+
+def test_completed_parallel_remediation_rejects_foreign_promoted_root(tmp_path: Path) -> None:
+    """Prevent another canonical run's identity from certifying the current run."""
+    out_dir = tmp_path / ".reports/codex/code-remediate/pr-41/run-001"
+    out_dir.mkdir(parents=True)
+    metadata = _parallel_metadata()
+    _write_completed_production_lifecycle(metadata, out_dir, ".reports/codex/code-remediate/pr-42/run-001")
+
+    with pytest.raises(SystemExit, match=r"^code-remediate-production-lifecycle-evidence-root-invalid$"):
+        VALIDATOR._validate_code_remediate_workplan(metadata, out_dir)
 
 
 def test_completed_parallel_remediation_rejects_missing_production_lifecycle(tmp_path: Path) -> None:

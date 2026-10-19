@@ -484,13 +484,13 @@ def _validate_code_remediate_final_handoff(
         raise SystemExit("code-remediate-final-handoff-table-invalid")
     expected_items = resolution_table["items"]
     presentation = metadata.get("resolution_scope", {}).get("presentation_version")
-    if candidate and presentation == 5 and handoff.get("presentation_version") != 8:
+    if candidate and presentation == 5 and handoff.get("presentation_version") not in {8, 9, 10}:
         raise SystemExit("remediation-current-handoff-presentation-v8-required")
-    if candidate and presentation in {4, 5} and handoff.get("presentation_version") not in {6, 8}:
+    if candidate and presentation in {4, 5} and handoff.get("presentation_version") not in {6, 8, 9, 10}:
         raise SystemExit("remediation-current-handoff-presentation-v6-required")
     if presentation in {2, 3, 4, 5} and tables[0].get("layout") != (
         "concise"
-        if handoff.get("presentation_version") == 8
+        if handoff.get("presentation_version") in {8, 9, 10}
         else {2: "grouped", 3: "concise", 4: "concise", 5: "concise"}[presentation]
     ):
         raise SystemExit("code-remediate-final-handoff-grouped-layout-required")
@@ -531,10 +531,10 @@ def _validate_code_remediate_final_handoff(
         )
         if item.get("selectable"):
             selectable_index += 1
-        if handoff.get("presentation_version") in {5, 6, 8}:
+        if handoff.get("presentation_version") in {5, 6, 8, 9, 10}:
             selected = metadata.get("resolution_scope", {}).get("selected_indexes", [])
             expected_rows[-1]["selected"] = bool(item.get("selectable")) and selectable_index in selected
-            if handoff.get("presentation_version") in {6, 8}:
+            if handoff.get("presentation_version") in {6, 8, 9, 10}:
                 expected_rows[-1]["selected"] = (
                     "Closed" if not item.get("selectable") else "Yes" if selectable_index in selected else "No"
                 )
@@ -626,9 +626,9 @@ def _validate_code_review_final_handoff(
     if handoff.get("branch") != expected_branch:
         raise SystemExit("code-review-final-handoff-branch-mismatch")
     if result.get("schema_version") == 3 and expected_branch == "assessed":
-        if fresh_candidate and handoff.get("presentation_version") != 8:
+        if fresh_candidate and handoff.get("presentation_version") not in {8, 9, 10}:
             raise SystemExit("review-current-handoff-presentation-v8-required")
-        if handoff.get("presentation_version") not in {3, 7, 8}:
+        if handoff.get("presentation_version") not in {3, 7, 8, 9, 10}:
             raise SystemExit("review-current-handoff-presentation-invalid")
     if expected_branch == "assessed":
         decision = metadata.get("review_decision")
@@ -970,7 +970,7 @@ def _validate_final_handoff(
         _validate_code_review_final_handoff(
             result, handoff, candidate=current_contract, out_dir=out_dir, fresh_candidate=candidate
         )
-    if candidate and handoff.get("presentation_version") != 8:
+    if candidate and handoff.get("presentation_version") not in {8, 9, 10}:
         raise SystemExit("current-handoff-presentation-v8-required")
 
 
@@ -1948,13 +1948,22 @@ def _validate_code_remediate_production_lifecycle(
     expected_paths = sorted({path for bucket in buckets for path in bucket["owned_paths"]})
     evidence_root = lifecycle.get("evidence_root")
     evidence_parts = PurePosixPath(evidence_root).parts if isinstance(evidence_root, str) else ()
+    # PR promotion adds one component; admit its bounded identity without admitting arbitrary nesting or another run.
+    promoted_root = (
+        len(evidence_parts) == 5
+        and re.fullmatch(r"pr-[1-9][0-9]*", evidence_parts[3]) is not None
+        and re.fullmatch(r"run-[0-9]{3,}", evidence_parts[4]) is not None
+        and int(evidence_parts[4][4:]) > 0
+        and evidence_root == PurePosixPath(*evidence_parts).as_posix()
+        and out_dir.resolve().parts[-5:] == evidence_parts
+    )
     if (
         not isinstance(evidence_root, str)
         or not evidence_root
         or "\\" in evidence_root
         or evidence_root.startswith("/")
         or evidence_parts[:3] != (".reports", "codex", "code-remediate")
-        or len(evidence_parts) != 4
+        or (len(evidence_parts) != 4 and not promoted_root)
         or any(part == ".." for part in evidence_parts)
         or ":" in evidence_root
     ):
@@ -3562,9 +3571,9 @@ def _validate_chunked_coordinator(
     ):
         raise SystemExit("adversarial-loop-chunk-coordinator-clean-result-invalid")
     handoff = _load_json(out_dir / "final-handoff.json")
-    if candidate and handoff.get("presentation_version") not in {3, 8}:
+    if candidate and handoff.get("presentation_version") not in {3, 8, 9, 10}:
         raise SystemExit("adversarial-loop-child-scores-presentation-required")
-    if handoff.get("presentation_version") in {3, 8} and handoff.get("child_runs") != checked["runs"]:
+    if handoff.get("presentation_version") in {3, 8, 9, 10} and handoff.get("child_runs") != checked["runs"]:
         raise SystemExit("adversarial-loop-child-scores-mismatch")
     rows = [row["cells"] for table in handoff["tables"] for row in table["rows"]]
     if any(row.get("admission") == "advisory" for table in handoff["tables"] for row in table["rows"]):

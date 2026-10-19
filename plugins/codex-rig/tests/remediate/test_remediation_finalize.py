@@ -144,7 +144,7 @@ def test_handoff_does_not_fall_back_from_invalid_recovered_checkout(
 
 @pytest.mark.parametrize(
     ("selection_version", "handoff_version"),
-    [pytest.param(4, 8, id="historical-selection-new-handoff"), pytest.param(5, 8, id="current")],
+    [pytest.param(4, 10, id="historical-selection-new-handoff"), pytest.param(5, 10, id="current")],
 )
 def test_current_handoff_marks_selection_independently_of_outcome(
     valid_run: tuple[Path, dict[str, object]], selection_version: int, handoff_version: int
@@ -177,9 +177,9 @@ def test_current_handoff_marks_selection_independently_of_outcome(
         ("CHOSEN", "Yes"),
     ]
     rendered = HELPER.final_handoff.render_handoff(handoff)
-    assert "| ID | Severity | Finding | Selected | Outcome |" in rendered
+    assert "| ID | Severity | Finding | Selected | Outcome | How resolved |" in rendered
     for identity, selected in [("CLOSED", "Closed"), ("OMITTED", "No"), ("CHOSEN", "Yes")]:
-        assert f"| {identity} | {selected} | Implemented |" in rendered
+        assert f"| {identity} | {selected} | Implemented | Added the guard. |" in rendered
     assert "| Resolution |" not in rendered
     assert "[Action items](" in rendered
     VALIDATOR._validate_code_remediate_final_handoff({"metadata": metadata}, handoff, candidate=True)
@@ -355,7 +355,7 @@ def test_finalize_turns_judgement_drafts_into_a_passing_promoted_result(
     VALIDATOR.validate("code-remediate", run, run / "result.json")
     if selection_version == 5:
         handoff = json.loads((run / "final-handoff.json").read_text(encoding="utf-8"))
-        assert handoff["presentation_version"] == 8
+        assert handoff["presentation_version"] == 10
         assert ": src/package/parser.py" in (run / "resolution-scope.md").read_text(encoding="utf-8")
         handoff["presentation_version"] = 6
         promoted = json.loads((run / "result.json").read_text(encoding="utf-8"))
@@ -528,7 +528,7 @@ def test_review_finalize_derives_shared_fields_and_runs_both_validators(
         "validate",
     ]
     assert finished.returncode == 0, finished.stderr.decode()
-    assert json.loads((run / "final-handoff.json").read_text())["presentation_version"] == 8
+    assert json.loads((run / "final-handoff.json").read_text())["presentation_version"] == 10
     assert (run / "review-notes.md").read_bytes() == full_report
     assert b"- Report: " in finished.stdout
     assert b"| Report |" not in finished.stdout

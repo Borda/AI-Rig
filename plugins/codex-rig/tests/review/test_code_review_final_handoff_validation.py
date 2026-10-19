@@ -597,7 +597,15 @@ def test_review_handoff_rejects_a_new_candidate_missing_the_canonical_marker() -
         ),
     ],
 )
-@pytest.mark.parametrize("presentation_version", [2, 3])
+@pytest.mark.parametrize(
+    "presentation_version",
+    [
+        pytest.param(2, id="legacy-v2"),
+        pytest.param(3, id="legacy-v3"),
+        pytest.param(8, id="retained-v8"),
+        pytest.param(9, id="current-v9"),
+    ],
+)
 def test_unavailable_versioned_handoff_binds_collection_diagnostics_to_safe_artifacts(
     tmp_path: Path, invalid_action: str, checkout_state: dict[str, object], presentation_version: int
 ) -> None:
@@ -666,6 +674,12 @@ def test_unavailable_versioned_handoff_binds_collection_diagnostics_to_safe_arti
     (tmp_path / "final-handoff.json").write_text(json.dumps(handoff), encoding="utf-8")
 
     review_validator._validate_unavailable_final_handoff(tmp_path, metadata)
+
+    omitted_artifact = handoff["artifacts"].pop()
+    (tmp_path / "final-handoff.json").write_text(json.dumps(handoff), encoding="utf-8")
+    with pytest.raises(SystemExit, match="unavailable-review-final-handoff-artifact-binding-mismatch"):
+        review_validator._validate_unavailable_final_handoff(tmp_path, metadata)
+    handoff["artifacts"].append(omitted_artifact)
 
     handoff["remaining"][0]["next_action"] = (
         "Code-review may refetch the `local-pr-checkout` pull ref after a maintainer confirms the protected-worktree "

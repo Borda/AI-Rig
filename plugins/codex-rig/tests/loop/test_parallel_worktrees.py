@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import functools
 import hashlib
 import importlib.util
@@ -10,6 +11,7 @@ import operator
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from types import ModuleType
@@ -1293,13 +1295,54 @@ def test_code_remediate_apply_rejects_tampered_integration_before_source_apply(
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
+@pytest.mark.parametrize("promoted", [False, True])
 def test_code_remediate_cli_drives_the_supported_parent_lifecycle(
-    tmp_path: Path, repository_templates: RepositoryTemplates, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, repository_templates: RepositoryTemplates, capsys: pytest.CaptureFixture[str], promoted: bool
 ) -> None:
     """Keep the skill-callable CLI equivalent to the validated function lifecycle."""
     lifecycle = _load_lifecycle()
     plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
-    state_path = repository / ".reports" / "codex" / "code-remediate" / "fixture" / "production-lifecycle.json"
+    if promoted:
+        created = subprocess.run(
+            [
+                sys.executable,
+                str(PLUGIN_ROOT / "shared" / "create_run.py"),
+                "--skill",
+                "code-remediate",
+                "--root",
+                str(repository / ".reports" / "codex"),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        initial_run = Path(created.stdout.strip())
+        shutil.copytree(plan_path.parent, initial_run, dirs_exist_ok=True)
+        plan_path = initial_run / plan_path.name
+        approval_path = initial_run / approval_path.name
+        pr_directory = plan_path.parent / "pr"
+        pr_directory.mkdir()
+        (pr_directory / "pr.json").write_text(json.dumps({"number": 41}), encoding="utf-8")
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(PLUGIN_ROOT / "shared" / "create_run.py"),
+                "--skill",
+                "code-remediate",
+                "--root",
+                str(repository / ".reports" / "codex"),
+                "--promote-pr-run",
+                str(plan_path.parent),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        run = Path(completed.stdout.strip())
+        assert run.relative_to(repository).as_posix() == ".reports/codex/code-remediate/pr-41/run-001"
+        plan_path = run / plan_path.name
+        approval_path = run / approval_path.name
+    state_path = plan_path.parent / "production-lifecycle.json"
 
     assert (
         lifecycle.main(
@@ -2460,3 +2503,81 @@ def test_head_and_tree_of_an_unborn_branch_keep_the_single_query_error(tmp_path:
 
     with pytest.raises(lifecycle.PilotError, match=r"^git-command-failed:rev-parse$"):
         lifecycle._git_head_and_tree(tmp_path)
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+@pytest.mark.parametrize("route", ["generated", "remediation"])
+@pytest.mark.parametrize("first_path", ["bucket-a.txt", "owned path é.txt"])
+def test_owned_paths_batch_tracking_checks_and_recheck_index_drift(
+    tmp_path: Path,
+    repository_templates: RepositoryTemplates,
+    monkeypatch: pytest.MonkeyPatch,
+    route: str,
+    first_path: str,
+) -> None:
+    """Batch real tracked-path reads without accepting a later untracked owned file."""
+    lifecycle = _load_lifecycle()
+    if route == "generated":
+        plan_path, _, repository = _approved_plan(tmp_path, repository_templates)
+        plan = json.loads(plan_path.read_text())
+        buckets = plan["stages"][0]["nodes"]
+        validate = functools.partial(lifecycle._validated_nodes, plan["stages"][0], repository)
+        owner = "FIXTURE-WRITE-B"
+    else:
+        plan_path, _, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
+        plan = json.loads(plan_path.read_text())
+        buckets = plan["work_buckets"]
+        validate = functools.partial(
+            lifecycle._code_remediate_nodes, plan, repository, plan_path.parent.relative_to(repository).as_posix()
+        )
+        owner = "WRITE-B"
+    if first_path != "bucket-a.txt":
+        _git(repository, "mv", "bucket-a.txt", first_path)
+        buckets[0]["owned_paths"] = [first_path]
+    calls = _record_lifecycle_git(lifecycle, monkeypatch)
+
+    assert len(validate()) == 2
+    assert calls == [("ls-files", "--error-unmatch", "--", first_path, "bucket-b.txt")]
+
+    _git(repository, "rm", "--cached", "bucket-b.txt")
+    with pytest.raises(lifecycle.PilotError, match=rf"^owned-path-not-tracked:{owner}$"):
+        validate()
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+@pytest.mark.parametrize("platform_error", ["posix-argv-limit", "windows-argv-limit", "permission-denied"])
+def test_tracked_path_batch_spawn_failure_preserves_per_path_behavior(
+    tmp_path: Path, repository_templates: RepositoryTemplates, monkeypatch: pytest.MonkeyPatch, platform_error: str
+) -> None:
+    """Oversized batches fall back to real Git while unrelated OS errors still propagate."""
+    lifecycle = _load_lifecycle()
+    plan_path, _, repository = _approved_plan(tmp_path, repository_templates)
+    stage = json.loads(plan_path.read_text())["stages"][0]
+    real_git = lifecycle._git
+    calls = []
+    error = OSError(errno.E2BIG if platform_error == "posix-argv-limit" else errno.EACCES, "probe")
+    if platform_error == "windows-argv-limit":
+        error.winerror = 206
+
+    def batch_limit(target: Path, *arguments: str) -> str:
+        """Simulate only batch launch failure; individual checks execute Git."""
+        calls.append(arguments)
+        if len(arguments) > 4:
+            raise error
+        return real_git(target, *arguments)
+
+    monkeypatch.setattr(lifecycle, "_git", batch_limit)
+    if platform_error == "permission-denied":
+        with pytest.raises(OSError, match="probe") as raised:
+            lifecycle._validated_nodes(stage, repository)
+        assert raised.value is error
+        assert len(calls) == 1
+    else:
+        assert len(lifecycle._validated_nodes(stage, repository)) == 2
+        assert calls == [
+            ("ls-files", "--error-unmatch", "--", "bucket-a.txt", "bucket-b.txt"),
+            ("ls-files", "--error-unmatch", "--", "bucket-a.txt"),
+            ("ls-files", "--error-unmatch", "--", "bucket-b.txt"),
+        ]

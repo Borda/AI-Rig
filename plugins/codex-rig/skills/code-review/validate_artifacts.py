@@ -1253,7 +1253,7 @@ def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any])
     if not handoff_path.is_file():
         return
     handoff = _load_json(handoff_path)
-    if handoff.get("presentation_version") not in {2, 3, 8}:
+    if handoff.get("presentation_version") not in {2, 3, 8, 9, 10}:
         return
     failure = metadata["collection_failure"]
     code = failure["code"]

@@ -13,10 +13,9 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 
 ## Usage
 
-New handoffs set ``presentation_version=8`` to keep paths outside terminal tables; historical versions retain their
-exact presentation before
-``render``. Earlier presentation versions remain available
-for validating historical artifacts. Run ``render`` after gates and handoff creation, then run ``check``
+New handoffs set ``presentation_version=10`` for remediation resolution explanations, readable actions, confidence
+bullets, linked artifacts and paths outside terminal tables. Historical versions retain their exact presentation.
+Run ``render`` after gates and handoff creation, then run ``check``
 directly or through the shared artifact validator
 before promoting ``result.candidate.json``. Before remediation selection, run ``selection --input selection.json
 --out-scope resolution-scope.md`` to validate source ownership and render the scope; add ``--check`` for a read-only
@@ -127,7 +126,7 @@ HANDOFF_FIELDS = {
     "caller_contract",
 }
 #: Current presentation layout revision for rendered handoffs, written into new handoff documents.
-PRESENTATION_VERSION = 8
+PRESENTATION_VERSION = 10
 #: One-sentence plain-English summary shown for each code-review recommendation.
 REVIEW_PLAIN_SUMMARIES = {
     "accept-as-is": "This review found no blocking change requests.",
@@ -607,7 +606,7 @@ def validate_handoff(payload: object) -> dict[str, Any]:
     """Validate and return one canonical final-handoff payload."""
     handoff = _require_object(payload, "handoff")
     presentation_version = handoff.get("presentation_version")
-    if presentation_version == 8:
+    if type(presentation_version) is int and presentation_version in {8, 9, 10}:
         # Only terminal layout changes; use the existing branch's complete factual contract.
         previous = 7 if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed" else 3
         if handoff.get("skill") == "code-remediate":
@@ -690,13 +689,18 @@ def _render_table(
     *,
     suppress_heading: bool = False,
     show_selection: bool = False,
+    show_resolution: bool = False,
     report_root: Path | None = None,
     review_report: Path | None = None,
 ) -> list[str]:
     """Render one validated table and its symbol details deterministically."""
     if table.get("layout") in {"grouped", "concise"}:
         return _render_grouped_table(
-            table, suppress_heading=suppress_heading, show_selection=show_selection, role_only=review_report is not None
+            table,
+            suppress_heading=suppress_heading,
+            show_selection=show_selection,
+            show_resolution=show_resolution,
+            role_only=review_report is not None,
         )
     if table.get("layout") == "challenge-history":
         if report_root is None:
@@ -792,7 +796,12 @@ def _render_challenge_history(table: dict[str, Any], report_root: Path, *, suppr
 
 
 def _render_grouped_table(
-    table: dict[str, Any], *, suppress_heading: bool = False, show_selection: bool = False, role_only: bool = False
+    table: dict[str, Any],
+    *,
+    suppress_heading: bool = False,
+    show_selection: bool = False,
+    show_resolution: bool = False,
+    role_only: bool = False,
 ) -> list[str]:
     """Render bound rows, retaining historical bytes and separating concise facts from evidence."""
     remediation = tuple(table["columns"]) == STANDARD_COLUMNS["code-remediate"]
@@ -800,6 +809,8 @@ def _render_grouped_table(
     columns = ["ID", "Severity", "Finding", "Outcome"] if remediation else ["ID", "Finding", "Status"]
     if concise:
         columns.insert(-1, "Selected" if show_selection else "Resolution" if remediation else "Resolution proposal")
+    if concise and remediation and show_resolution:
+        columns.append("How resolved")
     attributed = not remediation and any("authors" in row for row in table["rows"])
     if attributed:
         columns.insert(1, "Author")
@@ -830,6 +841,9 @@ def _render_grouped_table(
             if type(selection) is bool:
                 selection = "Yes" if selection else "No"
             overview.insert(-1, selection if show_selection else resolution)
+            if remediation and show_resolution:
+                # Reuse the bound reason; selection must not hide how this item was handled.
+                overview.append(resolution)
         if attributed:
             overview.insert(
                 1,
@@ -1269,12 +1283,17 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
     if handoff["branch"] == "caller-contract":
         return handoff["caller_contract"]["output"]
 
-    if handoff.get("presentation_version") == 8:
+    if handoff.get("presentation_version") in {8, 9, 10}:
         previous = 7 if handoff["skill"] == "code-review" and handoff["branch"] == "assessed" else 3
         if handoff["skill"] == "code-remediate":
             previous = 6
         return _externalize_table_paths(
-            _render_v2_handoff({**handoff, "presentation_version": previous}, report_root=report_root)
+            _render_v2_handoff(
+                {**handoff, "presentation_version": previous},
+                report_root=report_root,
+                readable=handoff["presentation_version"] in {9, 10},
+                show_resolution=handoff["presentation_version"] == 10,
+            )
         )
 
     if handoff.get("presentation_version") in {2, 3, 4, 5, 6, 7}:
@@ -1326,7 +1345,9 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _render_v2_handoff(handoff: dict[str, Any], *, report_root: Path | None = None) -> str:
+def _render_v2_handoff(
+    handoff: dict[str, Any], *, report_root: Path | None = None, readable: bool = False, show_resolution: bool = False
+) -> str:
     """Render a plain-English-first report while retaining the validated machine fields."""
     outcome = handoff["outcome"]
     if handoff["skill"] == "code-review" and handoff["branch"] == "assessed":
@@ -1367,6 +1388,7 @@ def _render_v2_handoff(handoff: dict[str, Any], *, report_root: Path | None = No
                         table,
                         suppress_heading=table["heading"] == "Results",
                         show_selection=handoff["presentation_version"] in {5, 6},
+                        show_resolution=show_resolution,
                         report_root=report_root,
                         review_report=review_report,
                     ),
@@ -1383,7 +1405,18 @@ def _render_v2_handoff(handoff: dict[str, Any], *, report_root: Path | None = No
     visible_checks = [entry for entry in handoff["verification"] if entry["status"] != "not-applicable"]
     lines.extend(("", "**Verification**", ""))
     if visible_checks:
-        lines.extend(f"- {entry['check']}: {entry['status']} — {entry['evidence']}" for entry in visible_checks)
+        for entry in visible_checks:
+            evidence = entry["evidence"]
+            if readable and report_root is not None:
+                # Link complete existing destinations only; ordinary verification prose stays untouched.
+                destination = report_root / evidence
+                try:
+                    existing_file = "\n" not in evidence and destination.is_file()
+                except (OSError, ValueError):
+                    existing_file = False
+                if existing_file:
+                    evidence = f"[{evidence}](<{destination.resolve().as_posix()}>)"
+            lines.append(f"- {entry['check']}: {entry['status']} — {evidence}")
     else:
         lines.append("- Checks were not run; no executable verification applies to this branch.")
     if disposition := handoff.get("commit_disposition"):
@@ -1394,32 +1427,52 @@ def _render_v2_handoff(handoff: dict[str, Any], *, report_root: Path | None = No
     remaining_by_id = {item["row_id"]: item for item in handoff["remaining"]}
     if remaining_by_id:
         lines.extend(("", "**Next steps**", ""))
-        lines.extend(
-            f"- {row_id} — {item['item']} — owner: {item['owner']} — next: {item['next_action']}"
-            if handoff["presentation_version"] in {3, 4, 5, 6, 7}
-            else f"- {item['item']} — owner: {item['owner']} — next: {item['next_action']}"
-            for row_id, item in remaining_by_id.items()
-        )
+        if readable:
+            for number, item in enumerate(remaining_by_id.values(), start=1):
+                if number > 1:
+                    lines.append("")
+                indent = " " * (len(str(number)) + 2)
+                owner, status, action = (
+                    item[field].replace("\n", f"\n{indent}") for field in ("owner", "item", "next_action")
+                )
+                lines.extend(
+                    (f"{number}. **Owner: {owner}**", "", f"{indent}Status: {status}", "", f"{indent}Action: {action}")
+                )
+        else:
+            lines.extend(
+                f"- {row_id} — {item['item']} — owner: {item['owner']} — next: {item['next_action']}"
+                if handoff["presentation_version"] in {3, 4, 5, 6, 7}
+                else f"- {item['item']} — owner: {item['owner']} — next: {item['next_action']}"
+                for row_id, item in remaining_by_id.items()
+            )
 
     confidence = handoff["confidence"]
     lines.extend(("", "**Confidence**", "", f"{confidence['score']:.2f} ({confidence['band']})."))
-    compact_review = handoff["presentation_version"] == 7
+    compact_review = readable or handoff["presentation_version"] == 7
     if compact_review and (confidence["limits"] or confidence["gaps"]):
         lines.append("")
     if confidence["limits"]:
         if compact_review:
-            lines.extend(f"- Limit: {limit}" for limit in confidence["limits"])
+            limits = confidence["limits"]
+            if readable:
+                # Exact matching joins repeated labels without hiding distinct limitations or gap closure details.
+                gap_labels = {gap["gap"] for gap in confidence["gaps"]}
+                limits = [limit for limit in dict.fromkeys(limits) if limit not in gap_labels]
+            lines.extend("- Limit: " + (limit.replace("\n", "\n  ") if readable else limit) for limit in limits)
         else:
             lines.append("Limits: " + "; ".join(confidence["limits"]))
     for gap in confidence["gaps"]:
         detail = gap.get("evidence") or gap.get("rationale")
+        if readable:
+            detail = " — ".join(dict.fromkeys(gap[key] for key in ("rationale", "evidence") if gap.get(key)))
         prefix = "- " if compact_review else ""
-        lines.append(f"{prefix}Gap [{gap['status']}]: {gap['gap']} — {detail}")
+        gap_text = f"Gap [{gap['status']}]: {gap['gap']} — {detail}"
+        lines.append(prefix + (gap_text.replace("\n", "\n  ") if readable else gap_text))
 
     lines.extend(("", "**Artifact**", ""))
     lines.extend(
         f"- [{artifact['label']}](<{artifact['path']}>)"
-        if handoff["presentation_version"] in {5, 6}
+        if readable or handoff["presentation_version"] in {5, 6}
         else f"{artifact['label']}: {artifact['path']}"
         for artifact in handoff["artifacts"]
     )

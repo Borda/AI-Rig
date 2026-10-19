@@ -69,6 +69,8 @@ def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Pa
     The outer deadline includes package copying and child cleanup; sharing the child's deadline lets the Windows pytest-
     timeout thread terminate the worker before subprocess.run can reap and report a timed-out selection. One Windows
     subprocess-timeout retry mitigates unconfirmed runner timing sensitivity; assertion failures are final.
+
+    Flushed phase timings retain completed work and active cases in the timeout failure, including teardown stalls.
     """
     installed_root = _copied_package_root(tmp_path)
     for path in (installed_root / "Makefile", installed_root / ".github", installed_root / ".git"):
@@ -78,16 +80,57 @@ def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Pa
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
-    result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-n", "2", "--strict-markers", "-m", PACKAGE_SAFE_TEST_MARKER],
-        cwd=installed_root,
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS,
-    )
+    env["CODEX_RIG_PACKAGE_TIMINGS"] = "1"
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-u",
+                "-m",
+                "pytest",
+                "-q",
+                "-n",
+                "2",
+                "--strict-markers",
+                "--durations=20",
+                "-m",
+                PACKAGE_SAFE_TEST_MARKER,
+            ],
+            cwd=installed_root,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        # TimeoutExpired retains bytes even with text=True; keep its type so the Windows retry still applies.
+        for stream, output in (("stdout", error.stdout), ("stderr", error.stderr)):
+            if output:
+                text = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else output
+                print(f"Installed-package child {stream} before timeout:\n{text}", flush=True)
+        raise
 
     assert result.returncode == 0, result.stdout + result.stderr
     for path in (installed_root / "Makefile", installed_root / ".github", installed_root / ".git"):
         assert not path.exists(), f"test execution created checkout context: {path.name}"
+
+
+def test_installed_package_timeout_prints_partial_streams_and_preserves_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Display partial child diagnostics without changing the Windows retry's exception type."""
+    error = subprocess.TimeoutExpired([sys.executable, "-m", "pytest"], 180, b"completed case\n\xff", b"child stderr\n")
+
+    def timeout(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Supply a timeout only for this diagnostic transport check."""
+        raise error
+
+    monkeypatch.setattr(subprocess, "run", timeout)
+    with pytest.raises(subprocess.TimeoutExpired) as raised:
+        test_installed_package_runs_the_explicit_package_safe_selection(tmp_path)
+
+    assert raised.value is error
+    output = capsys.readouterr().out
+    assert "completed case\n\ufffd" in output
+    assert "child stderr" in output

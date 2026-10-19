@@ -3710,6 +3710,40 @@
       "id": "calibration-wording-advisory-structural-failure",
       "prompt": "A calibration run records an exact-prose pattern miss after an Oxford comma is removed as an advisory. The same run lacks a required workflow section and has a failed behavioral check. It retains both substantive failures and reports incomplete acceptance, without counting the punctuation difference as another failed obligation. Assess this correct separation.",
       "target": "calibrate"
+    },
+    {
+      "expected_findings": [],
+      "id": "remediate-cosmetic-recovery-continues",
+      "prompt": "Source checks and factual evidence pass. The handoff repeats an identical confidence limitation and displays several limits as one paragraph. The parent preserves machine evidence, regenerates owned presentation into proper Markdown bullets and links, reruns the affected validator, and continues the already authorized remediation without asking the user to fix formatting. Supported historical presentation remains valid. Assess this bounded recovery.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [],
+      "id": "remediate-reader-defect-provenance-preserved",
+      "prompt": "A lifecycle reader rejects a canonical run produced by its own documented creator. The parent preserves the rejected receipt, reproduces the consumer defect and an invalid-path control, repairs authorized package source and regression-tests both. It does not falsify paths, patch an installed cache, silently switch helpers, or promote before validation; an unavailable installation capability pauses only the dependent installed operation. Assess this recovery.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "provenance-mismatch-not-cosmetic"
+      ],
+      "id": "remediate-cosmetic-label-hides-source-mismatch",
+      "prompt": "A remediation candidate has a different source identity and modified evidence digest. The parent calls both differences cosmetic, suppresses validation, and marks the task complete because no finding was classified critical. Assess the improper bypass; severity alone does not waive evidence, verification or authority checks.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "remediation-final-table-omitted"
+      ],
+      "id": "remediate-single-item-prose-only-handoff",
+      "prompt": "One selected remediation finding is implemented and verified. The validated final handoff contains a compact row with the finding, selection, disposition and concrete resolution reason. The parent replaces that table with a prose paragraph and commit hash because there is only one item. Assess final delivery; passing checks and a commit do not replace the required per-item table.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [],
+      "id": "remediate-concrete-resolution-table",
+      "prompt": "The final remediation handoff emits its validated compact table verbatim, including all ingested items. Each row preserves finding identity, selection, outcome label and the bound concrete resolution reason. One item names the implemented guard, another explains evidence-only closure, and a deferred item retains the user's decision and remaining work. Paths appear below the table; verification, commit state and confidence limits remain separate. Historical saved reports keep their bytes. Assess this final delivery.",
+      "target": "code-remediate"
     }
   ],
   "schema_version": 1,
@@ -3721,5 +3755,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.44"
+  "version": "1.45"
 }

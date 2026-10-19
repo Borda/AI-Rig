@@ -39,6 +39,7 @@ installed-package tests. This module is not a scheduler, general worktree manage
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import logging
@@ -385,6 +386,28 @@ def _planned_nodes(stage: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(nodes, key=lambda item: item["node_id"])
 
 
+def _require_tracked_paths(repository: Path, nodes: list[dict[str, Any]]) -> None:
+    """Check owned paths in one fresh Git query, retaining per-node failure attribution."""
+    paths = list(dict.fromkeys(path for node in nodes for path in node["owned_paths"]))
+    try:
+        _git(repository, "ls-files", "--error-unmatch", "--", *paths)
+    except PilotError:
+        pass
+    except OSError as error:
+        if error.errno != errno.E2BIG and getattr(error, "winerror", None) != 206:
+            raise
+    else:
+        return
+    # Failed or oversized batches use the original checks to identify the owning node without caching index state.
+    LOGGER.debug("Checking tracked paths individually after an unavailable batch query")
+    for node in nodes:
+        for path in node["owned_paths"]:
+            try:
+                _git(repository, "ls-files", "--error-unmatch", "--", path)
+            except PilotError as error:
+                raise PilotError(f"owned-path-not-tracked:{node['node_id']}") from error
+
+
 def _validated_nodes(stage: dict[str, Any], repository: Path) -> list[dict[str, Any]]:
     """Require every frozen bucket to remain tracked regular repository content."""
     nodes = _planned_nodes(stage)
@@ -393,10 +416,7 @@ def _validated_nodes(stage: dict[str, Any], repository: Path) -> list[dict[str, 
             target = repository.joinpath(*PurePosixPath(path).parts)
             if target.is_symlink():
                 raise PilotError(f"owned-path-symlink-forbidden:{node['node_id']}")
-            try:
-                _git(repository, "ls-files", "--error-unmatch", "--", path)
-            except PilotError as error:
-                raise PilotError(f"owned-path-not-tracked:{node['node_id']}") from error
+    _require_tracked_paths(repository, nodes)
     return nodes
 
 
@@ -1232,10 +1252,6 @@ def _code_remediate_nodes(plan: dict[str, Any], repository: Path, evidence_root:
             target = repository.joinpath(*PurePosixPath(path).parts)
             if target.is_symlink() or not target.is_file():
                 raise PilotError(f"owned-path-not-regular:{node_id}")
-            try:
-                _git(repository, "ls-files", "--error-unmatch", "--", path)
-            except PilotError as error:
-                raise PilotError(f"owned-path-not-tracked:{node_id}") from error
             seen_paths[canonical] = path
             bucket_paths.add(canonical)
             paths.append(path)
@@ -1283,6 +1299,7 @@ def _code_remediate_nodes(plan: dict[str, Any], repository: Path, evidence_root:
         )
     if [node["node_id"] for node in nodes] != sorted(node["node_id"] for node in nodes):
         raise PilotError("plan-node-order-invalid")
+    _require_tracked_paths(repository, nodes)
     return nodes
 
 

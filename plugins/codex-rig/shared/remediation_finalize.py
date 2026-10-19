@@ -935,7 +935,7 @@ def derive_handoff(
         {"check": check.get("id"), "status": check.get("status"), "evidence": check.get("stdout")} for check in checks
     ]
     handoff["confidence"] = _confidence_block(metadata, score)
-    handoff["presentation_version"] = 8
+    handoff["presentation_version"] = 10
     if handoff.get("skill") != "code-remediate":
         handoff["artifacts"] = _result_artifact(handoff.get("artifacts") or [], artifact_path)
         if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed":
@@ -1021,7 +1021,7 @@ def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[st
         raise DeriveError("review-action-notes-identity-mismatch")
     if any(len(cells) not in {4, 5} or authored_status.get(cells[0]) != cells[-1] for cells in parsed[2:]):
         raise DeriveError("review-action-notes-status-mismatch")
-    if handoff.get("presentation_version") in {7, 8}:
+    if handoff.get("presentation_version") in {7, 8, 9, 10}:
         detail_sections = list(re.finditer(r"(?ms)^## Finding Details[^\S\r\n]*\r?\n.*?(?=^## |\Z)", notes))
         if len(detail_sections) > 1:
             raise DeriveError("review-report-details-ambiguous")
@@ -1035,9 +1035,9 @@ def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[st
         rows,
         by_id,
         metadata.get("reviewer_assessments") is not None,
-        role_only=handoff.get("presentation_version") in {7, 8},
+        role_only=handoff.get("presentation_version") in {7, 8, 9, 10},
     )
-    if handoff.get("presentation_version") in {7, 8}:
+    if handoff.get("presentation_version") in {7, 8, 9, 10}:
         # Keep authored prose byte-exact while owning one deterministic, complete detail section.
         notes = notes_path.read_bytes().decode("utf-8")
         details = final_handoff.render_review_report_details(handoff) + "\n"

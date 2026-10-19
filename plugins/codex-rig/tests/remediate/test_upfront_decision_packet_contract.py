@@ -124,3 +124,33 @@ def test_scope_precedes_commit_grouping_and_has_no_workplan_question() -> None:
         in packet
     )
     assert "ask only the still-missing commit preference afterward" in packet
+
+
+def test_single_selected_actionable_item_skips_grouping_without_granting_consent() -> None:
+    """Prevent redundant grouping for one selected item without silently authorizing its commit."""
+    packet = _span("### Upfront Decision Packet", "### 06:")
+    row = next(
+        line
+        for line in CODE_REMEDIATE_SKILL.read_text(encoding="utf-8").splitlines()
+        if "| Commit preference |" in line
+    )
+
+    assert "more than one selected actionable item" in row
+    assert "Count selected actionable items after scope resolution" in packet
+    assert "one item selected from many" in packet
+    assert "`all` resolving to one item" in packet
+    assert "Custom or explicit `remediation_scope` resolving to one item" in packet
+    assert "exactly one, omit the commit-grouping question" in packet
+    assert "single-item default, not a user answer or commit authorization" in packet
+    assert "Preserve explicit commit preferences, including `leave unstaged` and `decide after verification`" in packet
+    assert "only when the resolved selection has more than one actionable item" in packet
+
+
+def test_single_item_commit_offer_collapses_equivalent_modes() -> None:
+    """Keep the final consent offer from restoring the redundant three-way grouping menu."""
+    commit = _span("### 12: Offer An Opt-In Commit After Verified Remediation", "## Fail-fast Rules")
+
+    assert "For exactly one selected actionable item, never reopen the grouping question" in commit
+    assert "offer only `all at once` and `leave unstaged`" in commit
+    assert "The single-item default supplies no authorization or explicit local snapshot exception" in commit
+    assert "The four-mode menu below applies only to multiple selected actionable items" in commit

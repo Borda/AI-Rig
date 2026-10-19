@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import subprocess
 import sys
@@ -15,9 +16,10 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 REVIEW = _load_validator()
 
 
-@pytest.fixture
-def identity_receipts(tmp_path: Path) -> tuple[dict, dict, dict, dict]:
-    """Feed the real selector's output to collector-shaped routing and checkout receipts."""
+@pytest.fixture(scope="module")
+def identity_receipts_template(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict, dict, dict]:
+    """Build real selector receipts once per worker; individual cases receive deep copies."""
+    tmp_path = tmp_path_factory.mktemp("identity-receipts")
     url = "https://github.com/Example/Widgets/pull/7"
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     subprocess.run(
@@ -70,6 +72,23 @@ def identity_receipts(tmp_path: Path) -> tuple[dict, dict, dict, dict]:
         "diff_command": f"git diff --binary {routing['base_oid']}...{routing['head_oid']} --",
     }
     return routing, remote, target, checkout
+
+
+@pytest.fixture
+def identity_receipts(identity_receipts_template: tuple[dict, dict, dict, dict]) -> tuple[dict, dict, dict, dict]:
+    """Isolate nested receipt mutations while retaining the real selector's baseline."""
+    return copy.deepcopy(identity_receipts_template)
+
+
+@pytest.mark.installed_plugin
+def test_identity_receipts_isolate_nested_mutations(
+    identity_receipts: tuple, identity_receipts_template: tuple
+) -> None:
+    """One parameter case cannot change the shared selector identity used by later cases."""
+    identity_receipts[1]["expected"]["repository"] = "different/project"
+    identity_receipts[0]["base_repo"] = "Different/Project"
+    assert identity_receipts_template[1]["expected"]["repository"] == "example/widgets"
+    assert identity_receipts_template[0]["base_repo"] == "Example/Widgets"
 
 
 @pytest.mark.installed_plugin

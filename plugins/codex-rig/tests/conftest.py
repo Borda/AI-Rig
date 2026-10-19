@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -46,6 +47,21 @@ def pytest_configure(config: pytest.Config) -> None:
         "packaging: validates plugin build and distribution contracts",
     ):
         config.addinivalue_line("markers", marker)
+
+
+def pytest_runtest_logstart(nodeid: str, location: tuple[str, int | None, str]) -> None:
+    """Expose active installed-package cases even when a child times out before reporting."""
+    if os.environ.get("CODEX_RIG_PACKAGE_TIMINGS") == "1":
+        print(f"\n[installed-package] start {nodeid}", flush=True)
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    """Flush completed phase timings so call completion cannot conceal a teardown stall."""
+    if os.environ.get("CODEX_RIG_PACKAGE_TIMINGS") == "1":
+        print(
+            f"\n[installed-package] {report.when} {report.outcome} {report.nodeid} duration={report.duration:.3f}s",
+            flush=True,
+        )
 
 
 @pytest.fixture(name="posix_bash", scope="session")

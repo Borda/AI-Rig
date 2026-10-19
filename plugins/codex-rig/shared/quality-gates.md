@@ -130,4 +130,4 @@ Codex behavior changes must also update registrations, docs, calibration in same
 
 A passing assessed `audit` result additionally requires an executed passing `review` gate. The generic runner still permits all `not-applicable` diagnostics; skill applicability checks decide whether those records can certify workflow completion.
 
-New terminal handoffs use presentation version 8. Keep full evidence in machine records; display file paths outside every table as `- Item: file-path` lists. Presentation normalization is automatic; factual bindings, source coverage and authority checks retain their existing meaning.
+New terminal handoffs use presentation version 10. Keep full evidence in machine records; display file paths outside every table as `- Item: file-path` lists. Presentation normalization is automatic; factual bindings, source coverage and authority checks retain their existing meaning.

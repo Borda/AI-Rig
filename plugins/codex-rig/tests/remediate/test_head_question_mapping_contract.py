@@ -113,11 +113,17 @@ def test_commit_preference_reuses_a_grant_and_preserves_explicit_hold() -> None:
     assert "a packet `leave unstaged` answer makes the disposition `declined`" in commit
 
 
-def test_finalize_never_answers_decisions_and_escalates_repeated_failures() -> None:
-    """Keep one-call finalization from answering user decisions or silently stopping on a repeated failure."""
+def test_finalize_recovers_cosmetics_without_bypassing_validation_or_decisions() -> None:
+    """Classify repeated diagnostics and repair presentation while preserving evidence and authority gates."""
     skill = _text(SKILL)
 
     assert "`finalize` never answers a user question or runtime approval" in skill
     assert "`--promote` renames only a validated candidate" in skill
-    assert "If the same error code remains after its repair, stop repairing that code and follow" in skill
-    assert "never end silently or emit an unvalidated handoff" in skill
+    assert "If the same error code remains after its repair, diagnose its cause" in skill
+    assert (
+        "repair owned derived output automatically and continue authorized remediation without a new user decision"
+        in skill
+    )
+    assert "concrete unresolved structural, factual, verification or authority boundary" in skill
+    assert "preserve the candidate until validation passes" in skill
+    assert "Never repeat an unchanged failing command, bypass validation, or end silently" in skill
