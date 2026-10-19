@@ -934,9 +934,9 @@ _RS="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/resolve_shared_path.py}"
 [ -f "$_RS" ] && _GD=$(python "$_RS" foundry bin 2>/dev/null) && [ -f "$_GD/compact_gate.py" ] && python "$_GD/compact_gate.py" || echo "compact-gate: continue (foundry gate unavailable)"
 ```
 
-Follow the Boundary step printed above before any fan spawn; report is the run-dir’s `pr-intelligence.md`, with the preserved selection and task maps. A compact decision defers the fan until `continue`.
+Follow the Boundary step printed above before any fan spawn; report is the run-dir’s `pr-intelligence.md`, with the preserved selection and task maps. Only an opt-in `stop` decision defers the fan until `continue`; an `advise` decision carries its hint into the fan response's final text.
 
-3. **Fan response** — a continue decision enters the fan: the Step 7a spawn and the Phase 1 early-wave spawns plus Structural prep, all in this one response, each batch armed in its own `agent-watch-*.tsv` (§Agent wait discipline). After spawning and arming its watches, end the turn.
+3. **Fan response** — a `continue` or `advise` decision enters the fan: the Step 7a spawn and the Phase 1 early-wave spawns plus Structural prep, all in this one response, each batch armed in its own `agent-watch-*.tsv` (§Agent wait discipline). After spawning and arming its watches, end the turn.
 
 No conflicted files → no 7a; `--no-challenge` or an empty early set → no early wave.
 

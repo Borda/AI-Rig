@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.50.3
+
+- `/oss:resolve`, `/oss:review` and the shared compaction contract follow foundry's non-blocking boundary gate: an `advise` decision starts the next phase (the resolve fan included) at once and shows a short one-line `/compact` hint at the next natural pause; only `FOUNDRY_COMPACT_GATE=stop` holds the run until `continue`.
+
 ## 0.50.2
 
 - `/oss:release audit` splits dependency CVEs by release scope. `run_audit_checks.py` diffs the range's dependency manifests and lock files and passes the touched package names to `parse_audit_json.py --introduced`, which reports `new` and `pre-existing` vulnerable packages. A CVE new in the range is a critical finding (red flag, verdict `BLOCKED`); a pre-existing one stays a `medium` warning and never blocks alone.

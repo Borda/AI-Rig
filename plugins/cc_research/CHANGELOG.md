@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.28.5
+
+- Shared compaction contract synced with foundry's non-blocking boundary gate: an `advise` decision continues with the next phase and shows a short one-line `/compact` hint at the next natural pause; only `FOUNDRY_COMPACT_GATE=stop` holds the run.
+
 ## 0.28.4
 
 - Sync `write-guard.js`: a protected file git already tracks no longer asks before a write, since the write is diffable and revertible; untracked, new and gitignored protected files still ask, and `.claude/settings*.json` and `.pre-commit-config.yaml` always ask.

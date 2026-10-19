@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.68.0
+
+- The compaction boundary gate no longer holds a skill run. When compacting would pay off, `compact_gate.py` now prints `advise`: the skill starts its next phase right away and shows the `/compact` hint at the next point where its turn ends anyway (after a spawn, or in the next question). The old hold-and-wait behaviour is opt-in through `FOUNDRY_COMPACT_GATE=stop`, which prints `stop`. A timed wait is not offered because a Claude Code turn cannot resume on a timer.
+- The `/compact` hint is one fixed short line, `/compact keep: skill contract .temp/state/skill-contract.md`, in its own code block. The old line copied the contract's `next:` text and ran to about 1,400 characters; a terminal copy wrapped it, and Claude Code turned the paste into a pasted-text block that never ran as a command. The PreCompact and SessionStart hooks already carry the full contract, so the gate no longer echoes it after the decision line.
+
 ## 0.67.5
 
 - Rules now require that a baseline claim ("pre-existing on HEAD") names its tree and runs with explicit paths; a new check is classified as behaviour (pytest) or bookkeeping (pre-commit hook); mutation checks run on a copy outside the repository; an option that widens a grant is read before it is marked recommended; commit messages name behaviour in plain words, never a skill's internal step label; reviewer briefs that run adversarial shell cases require case files written with a file-editing tool and fake `gh`/`git` binaries.

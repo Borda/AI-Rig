@@ -38,14 +38,19 @@ _RS="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/resolve_shared_path.py}"
 [ -f "$_RS" ] && _GD=$(python "$_RS" foundry bin 2>/dev/null) && [ -f "$_GD/compact_gate.py" ] && python "$_GD/compact_gate.py" || echo "compact-gate: continue (foundry gate unavailable)"
 ```
 
-3. `compact-gate: continue ...` → proceed silently. `compact-gate: compact ...` → fill this template from the phase, run-dir, preserve, next, calls_ahead and drop fields of the contract the gate prints below its decision (task IDs from the preserved task map; `none` when absent). Emit it as the reply's final text, with the payload on its own line and no tool call after it (Bash stdout is not reliably shown), then end the turn before starting the next phase:
+3. Act on the decision. The gate never holds the run unless the user opted in:
+   - `compact-gate: continue ...` → proceed silently.
+   - `compact-gate: advise ...` → start the next phase in this same response. Carry the hint below to the next point where the turn ends anyway: after a spawn, or appended to the next `AskUserQuestion`'s question text. Never end a turn only for the hint; drop it when the skill completes first.
+   - `compact-gate: stop ...` (user set `FOUNDRY_COMPACT_GATE=stop`) → emit the hint as the reply's final text, no tool call after it (Bash stdout is not reliably shown), then end the turn before starting the next phase.
+
+Hint: fill `<phase>` and `<N>` (the boundary's `calls_ahead`); put the `/compact` line alone in its own fenced code block, verbatim. It stays one short fixed line: a long line wraps on terminal copy, and Claude Code turns a multi-line paste into a pasted-text block that never runs as a command. The hooks already carry the full contract, so `keep:` never repeats its fields.
 
 ```text
-Boundary "<phase>" done, report at <path>. Next ~<N> calls.
-/compact keep: run-dir <dir>, next: <next>, task ids <ids>; drop: <drop> (in <report>)
+Boundary "<phase>" done. Next ~<N> calls; compacting now cuts their context cost.
+/compact keep: skill contract .temp/state/skill-contract.md
 ```
 
-Explain once per skill run, before the template: paste the payload to compact, then send `continue`; a user-typed `/compact` gives the model no turn of its own, and text after `/compact` reaches the summarizer as its instructions. For a verified restored contract, the user's next message after any user-typed `/compact` (`continue`, or an answer to the pending question) confirms the skill is still active; after auto-compaction, check on disk that the run-dir and preserved report exist, and ask the user only if that check fails. An unverified restored contract remains advisory and needs user confirmation before resuming. On resume, re-read the preserved report, re-load protocol files named in `next:` and resume `next:` without repeating the completed phase or gate.
+Explain once per skill run, with the first hint: send the `/compact` line as typed input, then send `continue` unless an agent notification resumes the run first; a user-typed `/compact` gives the model no turn of its own, and text after `/compact` reaches the summarizer as its instructions. For a verified restored contract, the user's next message after any user-typed `/compact` (`continue`, or an answer to the pending question) confirms the skill is still active; after auto-compaction, check on disk that the run-dir and preserved report exist, and ask the user only if that check fails. An unverified restored contract remains advisory and needs user confirmation before resuming. On resume, re-read the preserved report, re-load protocol files named in `next:` and resume `next:` without repeating the completed phase or gate.
 
 ## Acceptance criteria
 

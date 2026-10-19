@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import os
 import shutil
@@ -72,6 +71,8 @@ def gate_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, P
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sample-session")
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ATTENDED", "1")
+    # A host opt-in would turn every paying boundary into stop; tests own the switch explicitly.
+    monkeypatch.delenv(gate.STOP_ENV, raising=False)
     gate.CONTRACT_PATH.parent.mkdir(parents=True)
     _write_contract(b"- gate-metadata:\n    - calls_ahead: 60\n    - drop: scratch notes\n")
     transcript = home / ".claude" / "projects" / "sample-project" / "sample-session.jsonl"
@@ -90,50 +91,41 @@ def _run_gate(home: Path, capsys: pytest.CaptureFixture[str]) -> tuple[dict[str,
     return json.loads(rows[-1]), captured.out.splitlines()[0]
 
 
-def test_compact_echo_survives_legacy_console_encoding(
-    gate_state: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A non-ASCII contract echoes as UTF-8 even when stdout starts as a cp1252 pipe.
-
-    Native Windows pipes default to a legacy code page; a raised UnicodeEncodeError would exit 1 and let the calling
-    block's fallback print a second, contradictory continue decision.
-    """
-    raw = "- next: review → report\n- gate-metadata:\n    - calls_ahead: 60\n".encode()
-    _write_contract(raw)
-    buffer = io.BytesIO()
-    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(buffer, encoding="cp1252"))
-    assert gate.main([]) == 0
-    sys.stdout.flush()
-    assert buffer.getvalue().decode("utf-8").endswith(raw.decode())
-
-
 @pytest.mark.parametrize(
-    ("calls_ahead", "decision", "echo"),
+    ("calls_ahead", "stop_env", "decision"),
     [
-        pytest.param(1, "continue", False, id="continue-prints-decision-only"),
-        pytest.param(60, "compact", True, id="compact-appends-contract"),
+        pytest.param(1, "stop", "continue", id="not-paying-ignores-opt-in"),
+        pytest.param(60, None, "advise", id="paying-default-advises"),
+        pytest.param(60, "1", "advise", id="unknown-value-advises"),
+        pytest.param(60, "stop", "stop", id="paying-opt-in-stops"),
+        pytest.param(60, " Stop ", "stop", id="opt-in-tolerates-case-and-space"),
     ],
 )
-def test_compact_decision_prints_contract(
-    gate_state: tuple[Path, Path], capsys: pytest.CaptureFixture[str], calls_ahead: int, decision: str, echo: bool
+def test_decision_is_one_line_and_stop_is_opt_in(
+    gate_state: tuple[Path, Path],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    calls_ahead: int,
+    stop_env: str | None,
+    decision: str,
 ) -> None:
-    """A compact decision prints the verified contract after its decision line; continue prints one line.
+    """A paying boundary advises unless FOUNDRY_COMPACT_GATE=stop opts into holding the run; output is one line.
 
-    The caller fills its paste-ready /compact line from the contract fields, so they must arrive in the same tool result
-    as the decision instead of costing a recall or an extra read.
+    Holding the run by default left skills idle at every boundary past ~250K context, and the echoed contract fed a
+    paste line too long to survive a terminal copy. Only the explicit opt-in may stop, and nothing follows the line.
     """
-    _home, _ = gate_state
-    raw = f"- next: resume step\n- gate-metadata:\n    - calls_ahead: {calls_ahead}\n".encode()
-    _write_contract(raw)
-    assert gate.main([]) == 0
-    first, _, rest = capsys.readouterr().out.partition("\n")
-    assert first.startswith(f"compact-gate: {decision} ")
-    assert rest == (raw.decode() if echo else "")
+    home, _ = gate_state
+    _write_contract(f"- next: resume step\n- gate-metadata:\n    - calls_ahead: {calls_ahead}\n".encode())
+    if stop_env is not None:
+        monkeypatch.setenv(gate.STOP_ENV, stop_env)
+    row, line = _run_gate(home, capsys)
+    assert row["decision"] == decision
+    assert line.startswith(f"compact-gate: {decision} ")
 
 
 @pytest.mark.parametrize(
     ("calls_ahead", "decision"),
-    [pytest.param(44, "continue", id="below-break-even"), pytest.param(45, "compact", id="above-break-even")],
+    [pytest.param(44, "continue", id="below-break-even"), pytest.param(45, "advise", id="above-break-even")],
 )
 def test_worked_threshold(
     gate_state: tuple[Path, Path], capsys: pytest.CaptureFixture[str], calls_ahead: int, decision: str
@@ -174,7 +166,7 @@ def test_every_priced_model(gate_state: tuple[Path, Path], capsys: pytest.Captur
     )
     assert row["model"] == model
     assert row["K"] == expected
-    assert row["decision"] == ("compact" if 130_000 * 60 > expected else "continue")
+    assert row["decision"] == ("advise" if 130_000 * 60 > expected else "continue")
 
 
 @pytest.mark.parametrize(
@@ -322,7 +314,7 @@ def test_unwritable_log_keeps_decision(
     captured = capsys.readouterr()
     assert captured.err == ""
     assert captured.out.splitlines()[0] == (
-        "compact-gate: compact ctx=250000 floor=120000 calls_ahead=60 K=5750000.0 saving=7800000"
+        "compact-gate: advise ctx=250000 floor=120000 calls_ahead=60 K=5750000.0 saving=7800000"
     )
 
 
@@ -347,7 +339,7 @@ def test_only_exact_metadata_shapes(gate_state: tuple[Path, Path], capsys: pytes
         b"- calls_ahead: 60\n- interactive: false extra\n- gate-metadata:\n    - calls_ahead: 60\n    - drop: \n"
     )
     row, _ = _run_gate(home, capsys)
-    assert row["decision"] == "compact"
+    assert row["decision"] == "advise"
     assert row["calls_ahead"] == 60
 
 
@@ -380,7 +372,7 @@ def test_windows_style_home(
     monkeypatch.setattr(PureWindowsPath, "open", windows_open, raising=False)
     row, _ = _run_gate(home, capsys)
     assert row["ctx"] == 250_000
-    assert row["decision"] == "compact"
+    assert row["decision"] == "advise"
 
 
 @pytest.mark.integration
@@ -415,12 +407,11 @@ def test_fixed_bash_block(gate_state: tuple[Path, Path], tmp_path: Path, present
     assert result.returncode == 0
     assert result.stderr == ""
     expected = (
-        "compact-gate: compact ctx=250000 floor=120000 calls_ahead=60 K=5750000.0 saving=7800000"
+        "compact-gate: advise ctx=250000 floor=120000 calls_ahead=60 K=5750000.0 saving=7800000"
         if present
         else "compact-gate: continue (foundry gate unavailable)"
     )
-    assert result.stdout.splitlines()[0] == expected
-    assert result.stdout.endswith("    - drop: scratch notes\n") == present
+    assert result.stdout == expected + "\n"
 
 
 @pytest.mark.parametrize("owner", [None, "malformed", "foreign", "mismatch"])
@@ -502,7 +493,7 @@ def test_only_final_metadata_block(
     if calls is None:
         assert line == "compact-gate: continue (no calls_ahead)"
     else:
-        assert row["decision"] == "compact"
+        assert row["decision"] == "advise"
 
 
 @pytest.mark.parametrize(
@@ -645,5 +636,5 @@ def test_binary_open_preserves_raw_contract_bytes(
 
     monkeypatch.setattr(gate.os, "open", binary_open)
     row, _ = _run_gate(home, capsys)
-    assert row["decision"] == "compact"
+    assert row["decision"] == "advise"
     assert observed == [gate.CONTRACT_PATH, gate.CONTRACT_PATH.with_suffix(".owner")]

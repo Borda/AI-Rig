@@ -5257,6 +5257,6 @@
       "src": "rules/claude-config.md:41"
     }
   },
-  "plugin": "cc_foundry@0.67.5",
+  "plugin": "cc_foundry@0.68.0",
   "schema": 1
 }

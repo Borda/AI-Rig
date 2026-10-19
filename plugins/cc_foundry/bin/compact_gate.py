@@ -5,16 +5,21 @@ Read the CWD-relative ``.temp/state/skill-contract.md`` metadata and the main Cl
 ``CLAUDE_CODE_SESSION_ID`` under ``~/.claude/projects/*/``. Reuse ``cost_analyzer`` prices, usage deduplication, prompt
 counts, and cache-write splits; subagent transcript files are deliberately excluded from the session estimate.
 
-Compact only when ``(ctx_now - floor) * calls_ahead > K``, where K includes a cache rewrite, the current context read,
-and the summarizer's prompt and output, all expressed in cache-read-token units. Missing evidence or a noninteractive
-boundary produces a continue decision. With no cache writes recorded, use the analyzer's legacy 5-minute write rate.
+Compaction pays off only when ``(ctx_now - floor) * calls_ahead > K``, where K includes a cache rewrite, the current
+context read, and the summarizer's prompt and output, all expressed in cache-read-token units. Missing evidence or a
+noninteractive boundary produces a continue decision. With no cache writes recorded, use the analyzer's legacy 5-minute
+write rate.
+
+When compaction pays off, the decision is ``advise`` by default: the skill keeps working and only mentions ``/compact``
+at its next natural pause. The run is never held at a boundary unless the user opted in with the environment variable
+``FOUNDRY_COMPACT_GATE=stop``, which turns that decision into ``stop``. A held run idles until the user acts, and a
+Claude Code turn cannot resume on a timer, so the stop cannot be a timed wait and stays opt-in.
 
 Usage:
     python "${CLAUDE_PLUGIN_ROOT}/bin/compact_gate.py"
 
-Print one ``compact-gate:`` decision line; a compact decision also prints the verified contract text after it, so
-the caller can fill its ready-to-paste ``/compact`` line without another read. Best-effort append a gate event to
-``~/.claude/logs/compactions.jsonl``. Exit 0 after either decision; arguments print usage to stderr and exit 2.
+Print exactly one ``compact-gate:`` decision line (``continue``, ``advise`` or ``stop``). Best-effort append a gate
+event to ``~/.claude/logs/compactions.jsonl``. Exit 0 after any decision; arguments print usage to stderr and exit 2.
 Unexpected parsing/runtime failures remain visible as crashes rather than guessed decisions.
 """
 
@@ -47,6 +52,8 @@ METADATA_SENTINEL = "- gate-metadata:"
 METADATA_LINE = re.compile(r"    - (?:(calls_ahead): ([0-9]{1,6})|(drop): (.*)|(interactive): (false))")
 # Fixed argument-free invocation keeps a skill's calling shell block deterministic.
 USAGE = "usage: compact_gate.py (no arguments)"
+# Opt-in switch for holding the run at a paying boundary; any other value keeps the non-blocking advise default.
+STOP_ENV = "FOUNDRY_COMPACT_GATE"
 
 
 def _read_regular(path: Path, limit: int) -> bytes | None:
@@ -150,7 +157,7 @@ def _transcript_decision(row: dict[str, Any], home: Path) -> str:
     )
     saving = (row["ctx"] - DEFAULT_FLOOR_TOKENS) * row["calls_ahead"]
     if saving > row["K"]:
-        row["decision"] = "compact"
+        row["decision"] = "stop" if os.environ.get(STOP_ENV, "").strip().lower() == "stop" else "advise"
         return "saving exceeds rebuild cost"
     return "saving does not exceed rebuild cost"
 
@@ -196,9 +203,6 @@ def main(argv: list[str] | None = None) -> int:
     if args:
         print(USAGE, file=sys.stderr)
         return 2
-    if hasattr(sys.stdout, "reconfigure"):
-        # The echoed contract carries non-ASCII text; a cp1252 pipe on native Windows would otherwise raise.
-        sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
     home = Path.home()
     row: dict[str, Any] = {
         "event": "gate",
@@ -222,10 +226,8 @@ def main(argv: list[str] | None = None) -> int:
             f"ctx={row['ctx']} floor={DEFAULT_FLOOR_TOKENS} calls_ahead={row['calls_ahead']} "
             f"K={row['K']} saving={saving}"
         )
+    # One line only: the skill's paste line is fixed text, so the contract body is no longer echoed into context.
     print(f"compact-gate: {row['decision']} {evidence}")
-    if row["decision"] == "compact" and raw is not None:
-        # A compact decision implies verified UTF-8 bytes; they carry the fields of the paste-ready line.
-        sys.stdout.write(raw.decode("utf-8"))
     return 0
 
 

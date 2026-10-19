@@ -934,7 +934,7 @@ These Python helpers are installed workflow support and maintainer surfaces, not
 | `find-polluter.py`             | Binary-search a test suite for test-isolation contamination.                               |
 | `agent_watch.py`               | Report each spawned agent's deliverable and deadline in one call — no polling.             |
 | `append_ledger.py`             | Append staged `.rec` records (or `--from` files) to a growing ledger without rewriting it. |
-| `compact_gate.py`              | Decide whether boundary compaction saves read-token cost from live session usage.          |
+| `compact_gate.py`              | Decide if boundary compaction pays: `continue`, non-blocking `advise`, or opt-in `stop`.   |
 | `get_plugin_install_path.py`   | Resolve the active plugin path from Claude's registry.                                     |
 | `heal_git_artifacts.py`        | Reclaim stale skill locks and orphaned git worktrees.                                      |
 | `jq_write.py`                  | Apply an atomic `jq` JSON edit through temp-file replacement.                              |
