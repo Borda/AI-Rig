@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.35.12
+
+- Resolve active GitHub read grants or owning-helper runtime approval before initial PR-state and identity reads. Complete available permission recovery before stopping review or remediation; distinguish generic reader errors from actual host denial and failures after approval.
+- Preserve safe failure metadata at the GitHub reader CLI and identify organization policies forbidding classic personal access tokens. Keep policy refusals terminal without exposing raw diagnostics or falling back to public access.
+
 ## 0.35.11
 
 - Include a compact remediation table even for one item, showing each finding, selection, outcome and concrete resolution explanation. Presentation 10 preserves historical rendering and existing source/evidence bindings.

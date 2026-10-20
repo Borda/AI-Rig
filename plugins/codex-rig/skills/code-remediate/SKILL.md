@@ -45,6 +45,8 @@ When runtime permissions show network access enabled and the helper's required p
 
 Before creating a run, normalize only the target and apply [PR State Preflight](../../shared/native-skill-contract.md#pr-state-preflight) for PR scope, including resumed PR work, bare PRs, `+review` and explicit PR report-backed requests. Use the retained canonical PR URL on resume. Stop immediately for a currently closed or merged PR before prior-report lookup or validation, a missing-review question, collector access, run creation or any other dependent workflow. Preserve existing artifacts and local work. The metadata reader owns entry permissions and classified failures; local report-only intake remains network-free.
 
+Resolve the metadata reader's profile-or-approval route before the first read, and finish permitted reader permission recovery before reporting entry blocked. A generic reader permission error alone does not establish a host denial; use GitHub Read Execution to distinguish missing capability from an actual denied request or a failure after approval, then continue this same remediation after a successful state check.
+
 ### 01: Create Run Directory
 
 After entry admits an OPEN PR, or for local report-only scope, run `create_run.py --skill code-remediate` per `../../shared/helper-cli-contract.md`; resume reuses its existing run.

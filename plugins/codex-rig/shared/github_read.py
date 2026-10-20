@@ -29,9 +29,10 @@ credentials or transport fallback policy itself.
 
 ## Outputs
 
-Write requested response bytes on success or emit only a classified, credential-opaque failure with command label and
-exit metadata. The CLI writes the successful bytes exactly to ``--out`` and reports failure codes on stderr without
-including tokens or command output that could expose credentials.
+Write requested response bytes on success or emit a classified, credential-opaque failure with command label and exit
+metadata. The CLI writes successful bytes exactly to ``--out``. On failure it emits the stable code followed by
+available safe JSON diagnostics, including a reason for organization policies forbidding classic personal access tokens;
+it never includes tokens or raw command output. A policy refusal remains terminal and cannot activate public fallback.
 
 ## Failure
 
@@ -43,6 +44,7 @@ public URL fails closed. Read-command failures are surfaced as ``GitHubReadError
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import ssl
@@ -202,6 +204,9 @@ def _diagnostic_message_text(stderr: bytes) -> str:
 def github_failure_class(stderr: bytes) -> str:
     """Classify a GitHub CLI failure without persisting its output."""
     text = _diagnostic_message_text(stderr)
+    # An explicit policy refusal outranks words in the organization name, such as "tls".
+    if "forbids access via a personal access token (classic)" in text:
+        return "github-permission"
     if "graphql:" in text and "could not resolve to a " in text:
         return "github-not-found"
     if any(
@@ -269,6 +274,8 @@ def github_failure_reason(stderr: bytes, failure_class: str) -> str:
     if failure_class == "github-auth":
         return "auth"
     if failure_class == "github-permission":
+        if "forbids access via a personal access token (classic)" in _diagnostic_message_text(stderr):
+            return "classic-token-forbidden"
         return "permission"
     if failure_class == "github-not-found":
         return "not-found"
@@ -499,6 +506,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     except GitHubReadError as error:
         print(error, file=sys.stderr)
+        if error.diagnostics:
+            print(json.dumps(error.diagnostics, sort_keys=True), file=sys.stderr)
         return 2
     arguments.out.parent.mkdir(parents=True, exist_ok=True)
     arguments.out.write_bytes(payload)

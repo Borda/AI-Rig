@@ -307,6 +307,33 @@ def test_permission_recovery_precedes_terminal_review_reporting() -> None:
     assert "without requiring profile installation" in instructions
 
 
+@pytest.mark.installed_plugin
+def test_pr_state_preflight_resolves_reader_permission_before_failure_exit() -> None:
+    """Keep initial metadata reads on the profile-or-approval route before stopping entry."""
+    contract = SHARED_CONTRACT.read_text(encoding="utf-8")
+    preflight = contract.split("## PR State Preflight\n", 1)[1].split("\n## ", 1)[0]
+    execution = contract.split("## GitHub Read Execution\n", 1)[1].split("\n## ", 1)[0]
+
+    assert preflight.index("Resolve the reader's permissions before executing it") < preflight.index(
+        "Read minimal current metadata"
+    )
+    assert "before reporting the state check as blocked" in preflight
+    assert "`github-permission:github-read` is not evidence of a host approval denial" in execution
+    assert "the suffix is a command label, not a permission-profile identity" in execution
+    assert "already-approved helper still fails" in execution
+    assert "do not request equivalent access again" in execution
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.parametrize("skill_name", ["code-review", "code-remediate"])
+def test_pr_workflows_keep_entry_permission_recovery_explicit(skill_name: str) -> None:
+    """Prevent a PR entry stop from bypassing the shared reader approval procedure."""
+    skill = (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "Resolve the metadata reader's profile-or-approval route before the first read" in skill
+    assert "before reporting entry blocked" in skill
+
+
 def test_missing_kaggle_cli_remains_user_owned_setup() -> None:
     """Never turn a missing optional CLI into a workflow-owned installation."""
     kaggle_skill = (PLUGIN_ROOT / "skills" / "kaggle" / "SKILL.md").read_text(encoding="utf-8")

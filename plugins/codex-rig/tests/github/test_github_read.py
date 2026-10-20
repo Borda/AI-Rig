@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -719,14 +720,22 @@ def test_run_gh_read_preserves_safe_local_checkout_failure(
     assert raw_stderr.decode() not in retained
 
 
-def test_read_with_fallback_preserves_gh_permission_failure() -> None:
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        b"resource not accessible",
+        b"GraphQL: `example-org` forbids access via a personal access token (classic). (repository)",
+        b"GraphQL: `tls-team` forbids access via a personal access token (classic). (repository)",
+    ],
+)
+def test_read_with_fallback_preserves_gh_permission_failure(stderr: bytes) -> None:
     """Do not bypass an authenticated GitHub permission decision with public HTTPS."""
     module = _load_reader()
     calls: list[object] = []
 
     def _denied(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         """Return an authenticated permission failure that must not be retried publicly."""
-        return subprocess.CompletedProcess(command, 1, stdout=b"", stderr=b"resource not accessible")
+        return subprocess.CompletedProcess(command, 1, stdout=b"", stderr=stderr)
 
     def _open_url(*args: Any, **kwargs: Any) -> None:
         """Fail if a permission failure activates public fallback."""
@@ -744,3 +753,77 @@ def test_read_with_fallback_preserves_gh_permission_failure() -> None:
         )
 
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("stderr", "failure_class", "failure_reason"),
+    [
+        pytest.param(b"could not resolve host api.github.com", "github-network", "dns", id="dns"),
+        pytest.param(b"HTTP 403: Resource not accessible", "github-permission", "permission", id="api-refusal"),
+        pytest.param(
+            b"GraphQL: `example-org` forbids access via a personal access token (classic). "
+            b"Please use a GitHub App, OAuth App, or a personal access token with fine-grained permissions. (repository)",
+            "github-permission",
+            "classic-token-forbidden",
+            id="classic-token-policy",
+        ),
+    ],
+)
+def test_cli_preserves_safe_failure_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    stderr: bytes,
+    failure_class: str,
+    failure_reason: str,
+) -> None:
+    """Expose the classified cause at the CLI without leaking output or writing a success file."""
+    module = _load_reader()
+    destination = tmp_path / "response.json"
+    secret = b"private-diagnostic-token-do-not-retain"
+    argv = ["gh", "pr", "view", "https://github.com/example/project/pull/17", "--json", "url,state"]
+    calls: list[list[str]] = []
+
+    def runner(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Supply a failed external CLI response containing private text on both streams."""
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 1, stdout=secret, stderr=stderr + b"\n" + secret)
+
+    monkeypatch.setattr(module.subprocess, "run", runner)
+    assert module.main(["--out", str(destination), "--", *argv]) == 2
+    captured = capsys.readouterr()
+    lines = captured.err.splitlines()
+    assert lines[0] == f"{failure_class}:github-read"
+    assert len(lines) == 2
+    assert json.loads(lines[1]) == {
+        "exit_code": 1,
+        "failure_class": failure_class,
+        "failure_reason": failure_reason,
+        "label": "github-read",
+    }
+    assert captured.out == ""
+    assert secret.decode() not in captured.err
+    assert stderr.decode() not in captured.err
+    assert not destination.exists()
+    assert calls == [argv]
+
+
+def test_cli_preserves_successful_response_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Keep successful metadata byte-exact and separate from failure diagnostics."""
+    module = _load_reader()
+    destination = tmp_path / "nested" / "response.json"
+    payload = b'{"url":"https://github.com/example/project/pull/17","state":"OPEN"}\n'
+    argv = ["gh", "pr", "view", "https://github.com/example/project/pull/17", "--json", "url,state"]
+
+    def runner(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Return an external response whose exact bytes are the public CLI contract."""
+        assert command == argv
+        return subprocess.CompletedProcess(command, 0, stdout=payload, stderr=b"")
+
+    monkeypatch.setattr(module.subprocess, "run", runner)
+    assert module.main(["--out", str(destination), "--", *argv]) == 0
+    assert destination.read_bytes() == payload
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""
