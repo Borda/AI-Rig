@@ -12,8 +12,8 @@
 //   This hook grants NOTHING. It forces a confirmation on writes to that
 //   protected set; everything else is silent passthrough, so the session's own
 //   permission mode still governs the ordinary case. Pair it with `acceptEdits`
-//   to remove routine friction while untracked CI definitions, lockfiles and
-//   agent instructions, and all permission config, still stop you.
+//   to remove routine friction while untracked agent instructions, permission
+//   config, the pre-commit gate and package metadata still stop you.
 //
 // SECURITY MODEL — deliberately the inverse of blueprint-allow.js
 //   blueprint-allow.js can safely emit "allow" because it has PROVENANCE: the
@@ -25,13 +25,16 @@
 //
 // WHAT IS PROTECTED, AND WHY THESE
 //   Only files that are (a) named identically across essentially every repo,
-//   and (b) costly when written without review: CI definitions, agent
-//   instructions (the file that tells the next agent what to do), release
-//   metadata, dependency lockfiles, and Claude's own permission config.
-//   Source and tests are deliberately NOT protected — that is the routine work.
+//   and (b) costly when written without review: agent instructions (the file
+//   that tells the next agent what to do), Claude's own permission config, the
+//   pre-commit gate and package metadata.
+//   Source, tests, CI helper scripts, changelogs and lockfiles are deliberately
+//   NOT protected — that is the routine work, and a new file under `.github/`
+//   or a fresh CHANGELOG.md is untracked by nature, so asking on it only
+//   harassed edits to work the user had just requested.
 //
 // VERSION-CONTROLLED FILES PASS THROUGH
-//   A protected file already tracked by git (present in the index) is not
+//   A protected file already tracked by git (present in the index) is never
 //   gated: every write to it shows up in `git diff` and is revertible, which is
 //   the review the confirmation was standing in for. Asking on each tracked
 //   write only produced a per-edit prompt the user could never dismiss, since a
@@ -40,17 +43,32 @@
 //   else records or reverts a write to them. Any failure of the git probe (no
 //   git, not a repository, timeout) counts as untracked, so the guard keeps
 //   asking rather than silently opening.
-//   Exception: entries marked `always` (`.claude/settings*.json`,
-//   `.pre-commit-config.yaml`) ask even when tracked. A new allow rule or hook
-//   takes effect when settings load, and a changed commit gate runs on the next
-//   commit — both before anyone reads the diff, so revertibility is no review.
+//
+// FILES THIS SESSION CREATED PASS THROUGH AFTER THE FIRST ASK
+//   A protected file that does not exist yet asks once and is recorded in a
+//   per-session ledger (`write-guard-created-<session id>` in the temp dir).
+//   Once the file exists and is in that ledger, later writes in the same
+//   session pass: re-asking on every edit of a file the user just approved
+//   creating only repeated the same answer. The ledger entry alone is not
+//   enough — a denied creation leaves the file absent, so the retry still asks.
+//   A protected file that already existed untracked was not made by this
+//   session and keeps asking on every write.
+//
+//   Why dropping the tracked-file confirmation is safe for the two entries the
+//   hook once held back (`.claude/settings*.json`, `.pre-commit-config.yaml`):
+//   revertibility alone is not the argument. Claude Code itself prompts on
+//   writes to `.claude/` and `.pre-commit-config.yaml` in the default and
+//   acceptEdits modes (permission-modes docs, protected paths), whatever this
+//   hook does. Do not re-add an `always` flag on the grounds that git can undo
+//   the write — it can, and that was never the reason.
 //
 // UNVERIFIED PREMISE — carried deliberately
 //   "ask" is a documented permissionDecision value, but whether it overrides an
 //   already-auto-approving permission mode (acceptEdits / an allow rule) is not
 //   stated in the docs section, which truncates there. If it does NOT override,
 //   this hook degrades to a silent no-op — it never false-blocks. Settle it live:
-//   in a default-permission session with acceptEdits on, edit CHANGELOG.md and
+//   in a default-permission session with acceptEdits on, create a new untracked
+//   `docs/AGENTS.md` (not a natively protected path, and not tracked by git) and
 //   look for a prompt carrying this hook's permissionDecisionReason. No prompt
 //   means "ask" does not override, and the decision has to become "deny".
 //
@@ -60,6 +78,8 @@
 
 "use strict";
 
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
@@ -78,13 +98,10 @@ const GUARDED_TOOLS = new Set(["Edit", "Write", "NotebookEdit"]);
 // for a genuinely distinct `docs/claude.md`; one extra confirmation is the
 // cheaper side of that trade.
 const PROTECTED = [
-  { re: /(^|\/)\.github\//i, why: "CI/workflow definition" },
   { re: /(^|\/)CLAUDE\.md$/i, why: "agent instructions" },
   { re: /(^|\/)AGENTS\.md$/i, why: "agent instructions" },
-  { re: /(^|\/)\.claude\/settings(\.local)?\.json$/i, why: "Claude permission config", always: true },
-  { re: /(^|\/)\.pre-commit-config\.yaml$/i, why: "lint/format gate", always: true },
-  { re: /(^|\/)CHANGELOG\.md$/i, why: "release metadata" },
-  { re: /(^|\/)(uv|poetry|package-lock|yarn|Cargo|pnpm-lock)\.(lock|json|yaml)$/i, why: "dependency lockfile" },
+  { re: /(^|\/)\.claude\/settings(\.local)?\.json$/i, why: "Claude permission config" },
+  { re: /(^|\/)\.pre-commit-config\.yaml$/i, why: "lint/format gate" },
   { re: /(^|\/)pyproject\.toml$/i, why: "package/release metadata" },
 ];
 
@@ -102,14 +119,13 @@ function toPosix(p) {
  * Classify a path against the protected set.
  *
  * @param {string} filePath Raw path from tool_input.
- * @returns {{why: string, always: boolean}|null} Match reason and whether it asks even when tracked, or null when
- *   unprotected.
+ * @returns {{why: string}|null} Match reason, or null when unprotected.
  */
 function classify(filePath) {
   if (!filePath) return null;
   const posix = toPosix(filePath);
   for (const entry of PROTECTED) {
-    if (entry.re.test(posix)) return { why: entry.why, always: Boolean(entry.always) };
+    if (entry.re.test(posix)) return { why: entry.why };
   }
   return null;
 }
@@ -137,6 +153,73 @@ function isTracked(filePath, cwd) {
 }
 
 /**
+ * Locate the per-session ledger of protected files this session first asked to create.
+ *
+ * The session id comes from the hook payload so two concurrent sessions never share a ledger; the name ends in
+ * `-<id>` per the repository sentinel convention.
+ *
+ * @param {object} data Parsed hook payload.
+ * @returns {string} Ledger file path.
+ */
+function ledgerPath(data) {
+  const raw = data.session_id || process.env.CSID || process.env.CLAUDE_CODE_SESSION_ID || "shared";
+  const sid = String(raw).replace(/[^A-Za-z0-9_-]/g, "_");
+  return path.join(process.env.TMPDIR || os.tmpdir(), `write-guard-created-${sid}`);
+}
+
+/**
+ * Check whether a path exists, a dangling symlink included.
+ *
+ * `lstat` rather than `stat`: a dangling symlink to a protected file elsewhere must read as existing, or a write
+ * through it would count as a creation.
+ *
+ * @param {string} abs Absolute path.
+ * @returns {boolean} True when anything occupies the path.
+ */
+function occupied(abs) {
+  try {
+    fs.lstatSync(abs);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Check whether this session earlier asked to create the file, which now exists.
+ *
+ * Both halves are needed: a ledger entry alone would let a denied creation retry without a prompt, and existence
+ * alone says nothing about who made the file. Any read failure counts as not created, so the guard keeps asking.
+ *
+ * @param {string} abs Absolute path of the target.
+ * @param {object} data Parsed hook payload.
+ * @returns {boolean} True when the file is a product of this session.
+ */
+function createdThisSession(abs, data) {
+  if (!occupied(abs)) return false;
+  try {
+    const key = JSON.stringify(abs);
+    return fs.readFileSync(ledgerPath(data), "utf8").split("\n").includes(key);
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Record that this session asked to create a not-yet-existing protected file; a failed write only loses the record.
+ *
+ * @param {string} abs Absolute path of the target.
+ * @param {object} data Parsed hook payload.
+ */
+function recordCreation(abs, data) {
+  try {
+    fs.appendFileSync(ledgerPath(data), `${JSON.stringify(abs)}\n`);
+  } catch (_) {
+    // unwritable temp dir → later edits ask again; never block the session
+  }
+}
+
+/**
  * Build the hook decision for one tool call, or null for passthrough.
  *
  * `notebook_path` is read alongside `file_path` because NotebookEdit names its
@@ -151,7 +234,10 @@ function decide(data) {
   const target = input.file_path || input.notebook_path;
   const hit = classify(target);
   if (!hit) return null;
-  if (!hit.always && isTracked(target, data.cwd)) return null;
+  if (isTracked(target, data.cwd)) return null;
+  const abs = path.resolve(data.cwd || process.cwd(), target);
+  if (createdThisSession(abs, data)) return null;
+  if (!occupied(abs)) recordCreation(abs, data);
   return {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
@@ -161,7 +247,7 @@ function decide(data) {
   };
 }
 
-module.exports = { classify, decide, isTracked, toPosix, PROTECTED, GUARDED_TOOLS };
+module.exports = { classify, decide, isTracked, createdThisSession, toPosix, PROTECTED, GUARDED_TOOLS };
 
 if (require.main === module) {
   let raw = "";

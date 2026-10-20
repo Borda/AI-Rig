@@ -7689,6 +7689,6 @@
       "src": "skills/resolve/SKILL.md:153"
     }
   },
-  "plugin": "cc_oss@0.50.4",
+  "plugin": "cc_oss@0.50.5",
   "schema": 1
 }

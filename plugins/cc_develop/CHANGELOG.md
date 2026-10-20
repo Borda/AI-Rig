@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.41.1
+
+- Sync `write-guard.js`: a tracked file never asks, and an untracked or gitignored file asks only for `CLAUDE.md`, `AGENTS.md`, `.claude/settings*.json`, `.pre-commit-config.yaml` and `pyproject.toml`. `.github/**`, `CHANGELOG.md` and lockfiles are no longer protected, so editing a newly created file there no longer prompts on every edit. A protected file that does not exist yet asks once on creation; later writes to it in the same session pass.
+
 ## 0.41.0
 
 - `/develop:plan` step tables gain a `Verification` column for simple and staged plans (fix plans already had one), and each saved `Suggested approach` step ends with `— verify: <check>`, so `/develop:feature` and `/develop:fix` receive it.

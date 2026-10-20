@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.68.2
+
+- `write-guard.js` stops asking on every edit to a new file. A tracked file never asks now, `.claude/settings*.json` and `.pre-commit-config.yaml` included, and an untracked or gitignored file asks only for `CLAUDE.md`, `AGENTS.md`, `.claude/settings.json`, `.claude/settings.local.json`, `.pre-commit-config.yaml` and `pyproject.toml`. `.github/**` (scripts such as `.github/scripts/action_runner.py` as well as workflows), `CHANGELOG.md` and dependency lockfiles left the protected set: a new file there is untracked by nature, so each edit of work the user had just requested prompted again and protected nothing. A protected file that does not exist yet asks once on creation and is recorded per session; later writes to it in that session pass, while a file that already existed untracked keeps asking.
+
 ## 0.68.1
 
 - `task-log.js` masks credentials before writing to `~/.claude/logs`: `NAME=value` env assignments (leading, after `export`/`env`/`&&`), credential-named assignments, `--token`/`--password` flags, JSON credential fields, URL credentials, `Bearer`/`Basic` values and well-known token prefixes (`ghp_`, `github_pat_`, `glpat-`, `npm_`, `sk-`, `xox*-`, `AKIA`, `eyJ` and others), in Bash commands, agent prompts, last assistant messages, Skill arguments and the generic tool summary. Control, zero-width and directional characters are stripped. Paths and `desc=`, `skill=`, `type=` values stay intact because `sessionEditedFiles` and `timing_analyzer.py` parse them.
