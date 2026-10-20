@@ -1,6 +1,31 @@
 {
   "cases": [
     {
+      "expected_findings": [
+        "profile-incomplete-model-attribution",
+        "profile-unbound-promoted-evidence"
+      ],
+      "id": "profile-attribution-and-promotion",
+      "prompt": "A native session first accumulates tokens with no observed model, then names one model. A profile prices the whole cumulative total using that later model. Its result validator checks only that the retained report file exists, so malformed or replaced measurements can still accompany a promoted table claiming the old token count. Assess the attribution and ordinary promotion path.",
+      "target": "profile"
+    },
+    {
+      "expected_findings": [
+        "profile-cumulative-double-count",
+        "profile-overlap-exclusive",
+        "profile-unverified-cost"
+      ],
+      "id": "profile-fabricated-attribution",
+      "prompt": "A session profile sums every cumulative token sample across turns, subtracts overlapping tool durations from wall time to label the remainder reasoning, and bills a mixed-model session at one remembered rate. It labels absent agent logs as zero spend. Assess the telemetry claims.",
+      "target": "profile"
+    },
+    {
+      "expected_findings": [],
+      "id": "profile-native-partial-evidence",
+      "prompt": "Use native /status for a quick token question. For a requested retained profile, read only selected native JSONL, keep latest cumulative thread counters and inclusive completed-tool time, retain prefix hashes, exclude raw prompts/results, and mark missing agents and costs unavailable without rates. Label supplied-rate estimates hypothetical, not subscription billing. Assess.",
+      "target": "profile"
+    },
+    {
       "expected_findings": [],
       "id": "code-remediate-explicit-failed-gate-snapshot",
       "prompt": "The user explicitly requests a local snapshot despite failed checks, a timeout and a known regression. The agent verifies authorization, owned edits/new files/deletions and destination; commits under normal runtime/hook controls; proves zero owned residue; preserves failed checks and unresolved findings. It reports incomplete remediation, without claiming review or publication. Assess.",

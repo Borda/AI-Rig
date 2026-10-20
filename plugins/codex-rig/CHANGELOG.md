@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.37.0
+
+- Add a native-telemetry profile report for selected Codex sessions and agents, preserving cumulative token semantics, inclusive tool timing, private-content exclusion and optional supplied-rate estimates. Native `/status`, `/usage` and OTel remain the collection surfaces; unavailable attribution stays explicit.
+
 ## 0.36.0
 
 - Add opt-in numeric campaign checkpoints with exact source/configuration resume checks, raw tracked-byte and executable-mode identity independent of Git normalization, durable iteration history, pending-attempt recovery, and total-budget enforcement.

@@ -34,6 +34,7 @@ EXPECTED_SKILLS = (
     "kaggle",
     "manage",
     "optimize",
+    "profile",
     "release",
     "research",
     "sync",
@@ -444,9 +445,9 @@ def test_release_profile_declares_only_packaged_lifecycle_features() -> None:
     """Keep role boundaries aligned with the independently shipped native question provider."""
     manifest = _load_json(PLUGIN_ROOT / "package-manifest.json")
     plugin = _load_json(PLUGIN_ROOT / ".codex-plugin" / "plugin.json")
-    assert plugin["description"].startswith("Fourteen evidence-first Codex workflows")
+    assert plugin["description"].startswith("Fifteen evidence-first Codex workflows")
     assert plugin["interface"]["capabilities"] == [
-        "14 workflow skills and 1 legacy-shim lifecycle manager",
+        "15 workflow skills and 1 legacy-shim lifecycle manager",
         "15 specialist role cards",
         "Staged execution manifest validation",
         "Gated portable read-only auto execution",

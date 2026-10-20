@@ -66,6 +66,7 @@ EXPECTED_SKILLS = {
     "kaggle",
     "manage",
     "optimize",
+    "profile",
     "release",
     "research",
     "sync",

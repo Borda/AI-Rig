@@ -771,6 +771,24 @@
       "shared frame",
       "helper-cli-contract.md"
     ],
+    "profile": [
+      "## Input Schema",
+      "## Workflow",
+      "## Fail-Fast Rules",
+      "## Quality Gates",
+      "## Calibration Hooks",
+      "## Output Contract",
+      "helper-cli-contract.md",
+      "quality-gates.md",
+      "result-template.json",
+      "profile.json",
+      "profile-report.md",
+      "thread_token_usage|cumulative counters",
+      "inclusive",
+      "supplied rate|supplied-rate|supplied rate evidence",
+      "Final chat follows",
+      "Next steps"
+    ],
     "release": [
       "## Input Schema",
       "SemVer",

@@ -34,7 +34,7 @@ handoff.
 
 ## Used by
 
-All thirteen artifact-producing Codex Rig workflow skills use this helper as their post-gate presentation checkpoint;
+All artifact-producing Codex Rig workflow skills use this helper as their post-gate presentation checkpoint;
 the shared artifact validator verifies its evidence for schema-v2 workflow results. The agent-shim manager is
 deliberately outside the artifact lifecycle.
 """
@@ -87,6 +87,7 @@ STANDARD_COLUMNS = {
     "kaggle": ("Artifact", "Mode", "Verification", "Runtime limit"),
     "manage": ("Surface", "Outcome", "Verification", "Remaining limit"),
     "optimize": ("Iteration", "Baseline", "After", "Delta", "Guard", "Decision"),
+    "profile": ("Session / agent", "Observed tokens", "Inclusive tool time", "Cost estimate", "Coverage limit"),
     "release": ("Change", "SemVer impact", "Status / blocker", "Evidence"),
     "research": ("Recommendation", "Evidence", "Decision", "Caveat / next check"),
     "sync": ("Surface", "Outcome", "Verification", "Remaining limit"),

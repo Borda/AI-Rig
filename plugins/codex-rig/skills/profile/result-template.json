@@ -1,0 +1,50 @@
+{
+  "artifact_path": ".reports/codex/profile/<timestamp>/result.json",
+  "checks_failed": [],
+  "checks_run": [
+    "lint",
+    "format",
+    "types",
+    "tests",
+    "review"
+  ],
+  "confidence": 0.0,
+  "findings": {
+    "critical": 0,
+    "high": 0,
+    "low": 0,
+    "medium": 0
+  },
+  "metadata": {
+    "confidence_gap_closures": [],
+    "confidence_gaps": [],
+    "confidence_recovery": {
+      "evidence": [
+        "selected native telemetry prefix bindings"
+      ],
+      "final_confidence": 0.0,
+      "initial_confidence": 0.0,
+      "recovery_actions": [
+        "verify capture prefix and counter semantics"
+      ],
+      "remaining_limits": [
+        "explicit unobserved session or agent coverage"
+      ],
+      "status": "shared-confidence-band-status"
+    },
+    "final_handoff": {
+      "branch": "standard",
+      "handoff_path": ".reports/codex/profile/<timestamp>/final-handoff.json",
+      "handoff_sha256": "sha256",
+      "rendered_path": ".reports/codex/profile/<timestamp>/final.md",
+      "rendered_sha256": "sha256",
+      "schema_version": 1,
+      "validation_path": ".reports/codex/profile/<timestamp>/final-handoff.validation.json"
+    },
+    "profile": {
+      "profile_sha256": "sha256 of retained profile.json",
+      "schema_version": 1
+    }
+  },
+  "status": "pass|fail"
+}

@@ -122,7 +122,7 @@ def test_native_form_is_declared_and_precedes_unverified_async() -> None:
 @pytest.mark.installed_plugin
 def test_every_codex_skill_loads_local_question_guidance() -> None:
     """Prevent a generated question from bypassing the independently shipped policy."""
-    assert len(SKILLS) == 15
+    assert len(SKILLS) == 16
     reference = PLUGIN_ROOT / QUESTION_REFERENCE.split("#")[0]
     assert reference.is_file()
     guide = reference.read_text(encoding="utf-8")

@@ -261,6 +261,12 @@ SKILL_REQUIREMENTS: dict[str, dict[str, object]] = {
     },
     "calibrate": {"files": {}},
     "research": {"files": {}},
+    "profile": {
+        "files": {
+            "profile.json": [],
+            "profile-report.md": ["Scope", "Observed usage", "Inclusive timing", "Cost basis", "Coverage and limits"],
+        },
+    },
     "code-review": {"files": {}},
     "sync": {"files": {}},
     "implement": {
@@ -3972,6 +3978,48 @@ def _is_chunked_coordinator(skill: str, result: dict[str, Any]) -> bool:
     )
 
 
+def _validate_profile_evidence(out_dir: Path, result_path: Path) -> None:
+    """Bind retained sanitized telemetry and published session rows without reopening private source logs."""
+    profile = out_dir / "profile.json"
+    if not profile.exists():
+        raise SystemExit(f"missing-artifact:{profile}")
+    if profile.is_symlink() or not profile.is_file():
+        raise SystemExit("profile-evidence-file-invalid")
+    result = _load_json(result_path)
+    # Profile has no legacy results: schema-1 compatibility must not bypass its final handoff binding.
+    if type(result.get("schema_version")) is not int or result["schema_version"] != RESULT_SCHEMA_VERSION:
+        raise SystemExit("profile-result-schema-version")
+    binding = result.get("metadata", {}).get("profile")
+    if (
+        not isinstance(binding, dict)
+        or type(binding.get("schema_version")) is not int
+        or binding["schema_version"] != 1
+    ):
+        raise SystemExit("profile-evidence-binding-required")
+    expected = binding.get("profile_sha256")
+    if expected != hashlib.sha256(profile.read_bytes()).hexdigest():
+        raise SystemExit("profile-evidence-digest-mismatch")
+    helper = SHARED_DIRECTORY.parent / "skills" / "profile" / "profile.py"
+    completed = subprocess.run(  # noqa: S603 - fixed packaged reader, argv only; never executes report-supplied commands
+        [sys.executable, str(helper), "--check-report", str(profile)], capture_output=True, text=True, check=False
+    )
+    if completed.returncode:
+        raise SystemExit(f"profile-evidence-invalid:{completed.stderr.strip()}")
+    if expected != hashlib.sha256(profile.read_bytes()).hexdigest():
+        raise SystemExit("profile-evidence-digest-mismatch")
+    checked = json.loads(completed.stdout)
+    if not checked["observed"] and result["status"] == "pass":
+        raise SystemExit("profile-measurement-unavailable")
+    handoff = _load_json(out_dir / "final-handoff.json")
+    try:
+        actual = [row["cells"] for table in handoff["tables"] for row in table["rows"]]
+    except (KeyError, TypeError):
+        raise SystemExit("profile-final-results-mismatch") from None
+    # Exact caller output has no tables; the shared handoff validator enforces that branch's presentation.
+    if handoff.get("branch") != "caller-contract" and actual != checked["rows"]:
+        raise SystemExit("profile-final-results-mismatch")
+
+
 def _validate_optimize_lifecycle(out_dir: Path, result_path: Path) -> None:
     """Reject incomplete managed optimization evidence at ordinary result admission."""
     metadata = _load_json(result_path).get("metadata", {})
@@ -4468,6 +4516,10 @@ def _validation_steps(skill: str, out_dir: Path, result_path: Path) -> list[_Val
             _ValidationStep(
                 "audit-evidence", lambda: _validate_audit_evidence(state["result"], state["gates"], out_dir), gated
             )
+        )
+    if skill == "profile":
+        steps.append(
+            _ValidationStep("profile-evidence", lambda: _validate_profile_evidence(out_dir, result_path), loaded)
         )
     if skill == "optimize":
         steps.append(

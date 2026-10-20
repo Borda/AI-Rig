@@ -1,6 +1,12 @@
 {
   "tasks": [
     {
+      "goal": "Explain native session telemetry without duplicating collection or guessing missing attribution",
+      "id": "profile-001",
+      "skill": "profile",
+      "success": "observed cumulative usage, inclusive timing, native overlap, rate basis, privacy and coverage limits are explicit"
+    },
+    {
       "goal": "Close an adversarial review loop with independent current-diff coverage",
       "id": "adversarial-loop-001",
       "skill": "challenge-resolve",

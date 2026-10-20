@@ -70,6 +70,7 @@ SKILLS = (
     "manage",
     "assess",
     "optimize",
+    "profile",
     "research",
     "kaggle",
 )
