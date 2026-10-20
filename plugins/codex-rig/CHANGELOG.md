@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.36.0
+
+- Add opt-in numeric campaign checkpoints with exact source/configuration resume checks, raw tracked-byte and executable-mode identity independent of Git normalization, durable iteration history, pending-attempt recovery, and total-budget enforcement.
+- Add isolated component-ablation orchestration with dirty best-source reconstruction from retained index/worktree patches and exact raw tracked/scoped bytes, modes and deletions, preserving Git checkout conversion and staged membership; remeasure the reference, bind output receipts, and rank contributions with guards.
+- Add descriptive campaign retrospectives without source mutation or unsupported statistical significance claims; preserve historical pass/fail optimization workflows.
+- Validate managed lifecycle evidence during ordinary optimize artifact admission and reject missing metadata, stale checkpoints, corrupt progression, inconsistent measurement receipts, and Results cells that contradict bound measurements. Reject Git index flags that hide tracked edits, and support canonical aliases of evidence roots while rejecting internal evidence links.
+
 ## 0.35.12
 
 - Resolve active GitHub read grants or owning-helper runtime approval before initial PR-state and identity reads. Complete available permission recovery before stopping review or remediation; distinguish generic reader errors from actual host denial and failures after approval.

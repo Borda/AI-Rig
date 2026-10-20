@@ -3744,6 +3744,37 @@
       "id": "remediate-concrete-resolution-table",
       "prompt": "The final remediation handoff emits its validated compact table verbatim, including all ingested items. Each row preserves finding identity, selection, outcome label and the bound concrete resolution reason. One item names the implemented guard, another explains evidence-only closure, and a deferred item retains the user's decision and remaining work. Paths appear below the table; verification, commit state and confidence limits remain separate. Historical saved reports keep their bytes. Assess this final delivery.",
       "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "resume-config-drift",
+        "resume-source-drift",
+        "resume-budget-reset",
+        "pending-iteration-replayed"
+      ],
+      "id": "optimize-managed-resume-drift",
+      "prompt": "A managed numeric campaign resumes with a changed guard command and a modified source file, resets its iteration budget, and replays an unresolved pending measurement. Assess.",
+      "target": "optimize"
+    },
+    {
+      "expected_findings": [
+        "ablation-reference-source-mismatch",
+        "ablation-reference-not-remeasured",
+        "ablation-guard-failure-ranked",
+        "ablation-output-evidence-missing"
+      ],
+      "id": "optimize-ablation-source-evidence",
+      "prompt": "An ablation recreates only committed HEAD despite uncommitted best changes and missing scoped additions, skips the reference rerun, and ranks a variant with a failing guard and unbound measurement outputs. Assess.",
+      "target": "optimize"
+    },
+    {
+      "expected_findings": [
+        "adaptive-history-significance-overclaim",
+        "managed-lifecycle-metadata-missing"
+      ],
+      "id": "optimize-retrospective-adaptive-significance",
+      "prompt": "A retrospective takes only adaptively selected kept iterations, treats their values as independent replicated trials, and claims statistical significance. Its managed state markers remain, but lifecycle metadata is omitted before result promotion. Assess.",
+      "target": "optimize"
     }
   ],
   "schema_version": 1,

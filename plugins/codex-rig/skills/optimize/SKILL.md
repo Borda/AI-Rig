@@ -1,6 +1,6 @@
 ---
 name: optimize
-description: Optimize a measurable metric with bounded iterations, guardrails, and regression gates.
+description: Optimize a measurable metric with bounded iterations, resumable numeric campaigns, isolated ablations, and descriptive retrospectives.
 ---
 
 > Before asking, read [User Questions](../../shared/codex-user-questions.md). Waits, plan updates, and test runs follow [Agent Waits](../../shared/native-skill-contract.md#agent-waits), [Plan Updates](../../shared/native-skill-contract.md#plan-updates), and [Sandboxed Test Runs](../../shared/native-skill-contract.md#sandboxed-test-runs).
@@ -16,7 +16,10 @@ Metric-driven optimization with explicit guards, rollback criteria, experiment l
 ```json
 {
   "goal": "required measurable improvement objective",
-  "mode": "single|campaign",
+  "mode": "single|campaign|resume|ablation|retrospective",
+  "checkpoint": "optional boolean for a resumable numeric campaign; default false",
+  "source_run": "required existing managed run directory for resume, ablation, or retrospective",
+  "variants": "ablation only: bounded named component-removal patches and their rationale",
   "metric_cmd": "required command that emits or validates the target metric",
   "metric_direction": "higher|lower",
   "guard_cmd": "required command that must continue to pass",
@@ -28,6 +31,17 @@ Metric-driven optimization with explicit guards, rollback criteria, experiment l
   "done_when": "metric improves without guard regression"
 }
 ```
+
+For `resume`, recover goal, commands, scope, direction and total budget from `source_run`; supplied replacements must match the frozen configuration. `ablation` and `retrospective` derive measurement configuration from that source rather than requiring duplicate inputs. Existing `single` and non-checkpointed `campaign` accept numeric or pass/fail metrics unchanged. The checkpoint helper and new numerical analyses require finite numeric values; explain unsupported historical/pass/fail input instead of inventing a metric or migrating a log silently.
+
+## Mode Dispatch
+
+- `single` or `campaign` without `checkpoint`: follow the existing workflow below.
+- `campaign` with `checkpoint`, or `resume`: read [Managed campaigns](campaign.md). It wraps steps 02–07 with durable checkpoints, then returns to steps 08–09. Resume keeps the original run directory; never initialize or truncate it again.
+- `ablation`: read [Component ablations](ablation.md), create a separate result run in step 01, then complete steps 08–09 with the mode's retained evidence.
+- `retrospective`: read [Experiment retrospective](retrospective.md), create a separate result run in step 01, then complete steps 08–09. No source mutation or measurement execution is required.
+
+The local [campaign.py](campaign.py) helper performs deterministic state/receipt checks and summaries, not metric execution or automatic source restoration. Invoke it through `PLUGIN_ROOT/bin/python` (native Windows: `PLUGIN_ROOT/bin/python.cmd`) and inspect `--help`. The agent owns actual command execution, measurement provenance, safe rollback, and worktree orchestration. A digest check establishes consistency, not authenticity of execution.
 
 ## Workflow
 
@@ -126,17 +140,24 @@ Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gates.py --help`. Tests r
 
 Follow `../../shared/helper-cli-contract.md` and authoritative help. Write `OPTIMIZE_METADATA`, validate as `optimize`, promote only validated candidate.
 
+For managed campaigns/resume, retrospective, and ablation, add `metadata.optimize_lifecycle` with `schema_version=1`, matching `mode`, and `bindings` mapping every required retained filename to its exact SHA-256. Campaign/resume/retrospective bind `campaign.json` and `experiments.jsonl`; ablation binds `ablation-input.json`, whose measurement receipts bind their outputs. Shared artifact validation calls `campaign.py admit` before promotion and rejects missing metadata when managed-state markers exist, corrupted history, pending iterations, stale active source, or mismatched receipts. Marker-free historical artifacts retain their existing reader. Final completed campaigns can validate after exhausting their total iteration budget; only scheduling another iteration is prohibited.
+
+Managed structured Results cells must match the bound attempts or measurements, using the exact row conventions in the selected mode document. Admission rejects missing, extra or contradictory rows; narrative summaries do not replace this reconciliation.
+
 ## Fail-Fast Rules
 
-1. Missing metric or guard command => fail.
-2. Baseline cannot be captured => fail.
-3. Scope is unbounded => fail.
-4. Guard regression after change => fail unless reverted.
-5. Metric/guard script changed without explicit scope and measurement-integrity note => fail.
-6. Campaign iteration rejected without rollback evidence or unresolved-risk note => fail.
-7. Claimed improvement below `min_delta` without explicit inconclusive status => fail.
-8. Result artifact validator failure => fail.
-9. Result artifact missing => fail.
+01. Missing metric or guard command => fail.
+02. Baseline cannot be captured => fail.
+03. Scope is unbounded => fail.
+04. Guard regression after change => fail unless reverted.
+05. Metric/guard script changed without explicit scope and measurement-integrity note => fail.
+06. Campaign iteration rejected without rollback evidence or unresolved-risk note => fail.
+07. Claimed improvement below `min_delta` without explicit inconclusive status => fail.
+08. Result artifact validator failure => fail.
+09. Result artifact missing => fail.
+10. Managed resume with changed configuration/source, invalid progression, unresolved pending iteration or exhausted scheduling budget => stop that scheduling attempt; preserve evidence, never replay or reset.
+11. Ablation reference differs from the frozen best source, measurement source changes, guard fails, or evidence is missing => no contribution claim for that measurement.
+12. Adaptive iteration history alone never supports a statistical significance claim.
 
 ## Quality Gates
 
@@ -156,6 +177,7 @@ On metric/guard-policy change, update calibration:
 
 - behavioral cases: baseline missing, guard regression, noisy metric overclaim, campaign rollback evidence, below-threshold improvement, artifact validator bypass
 - benchmark patterns: `optimize`
+- managed lifecycle cases: dirty snapshot reconstruction, omitted lifecycle metadata, stale resume source/configuration, append-before-marker-removal recovery, exhausted-budget completion, ablation source/receipt drift, retrospective overclaim.
 
 ## Output Contract
 

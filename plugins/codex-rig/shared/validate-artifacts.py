@@ -3972,6 +3972,48 @@ def _is_chunked_coordinator(skill: str, result: dict[str, Any]) -> bool:
     )
 
 
+def _validate_optimize_lifecycle(out_dir: Path, result_path: Path) -> None:
+    """Reject incomplete managed optimization evidence at ordinary result admission."""
+    metadata = _load_json(result_path).get("metadata", {})
+    markers = any((out_dir / name).exists() for name in ("campaign.json", "pending.json", "ablation-input.json"))
+    if not markers and "optimize_lifecycle" not in metadata:
+        return
+    helper = SHARED_DIRECTORY.parent / "skills" / "optimize" / "campaign.py"
+    completed = subprocess.run(  # noqa: S603 - fixed packaged validator, no shell or user command execution
+        [sys.executable, str(helper), "admit", "--run-dir", str(out_dir), "--input", str(result_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode:
+        raise SystemExit(f"optimize-lifecycle-invalid:{completed.stderr.strip()}")
+    summary = json.loads(completed.stdout)
+    binding = metadata.get("final_handoff")
+    if not isinstance(binding, dict):
+        raise SystemExit("optimize-final-results-required")
+    handoff_path = _resolve_final_handoff_path(out_dir, binding.get("handoff_path"), "handoff_path")
+    handoff = _load_json(handoff_path)
+    tables = [table for table in handoff.get("tables", []) if table.get("heading") == "Results"]
+    columns = ["Iteration", "Baseline", "After", "Delta", "Guard", "Decision"]
+    if len(tables) != 1 or tables[0].get("columns") != columns:
+        raise SystemExit("optimize-final-results-mismatch")
+    rows = []
+    try:
+        for row in tables[0]["rows"]:
+            cells = row["cells"]
+            if len(cells) != len(columns):
+                raise ValueError("result-row-width")
+            numbers = [float(cell) for cell in cells[1:4]]
+            if not all(math.isfinite(value) for value in numbers):
+                raise ValueError("nonfinite-result-row")
+            rows.append([cells[0], *numbers, cells[4], cells[5]])
+    except (KeyError, TypeError, ValueError) as error:
+        raise SystemExit("optimize-final-results-mismatch") from error
+    # Complete ordered rows or the explicit campaign summary are the only layouts.
+    if rows not in summary["result_rows"]:
+        raise SystemExit("optimize-final-results-mismatch")
+
+
 def _validate_required_artifacts(skill: str, out_dir: Path, result: dict[str, Any]) -> None:
     """Check every report section and JSONL artifact the selected skill's contract requires."""
     requirement = SKILL_REQUIREMENTS.get(skill)
@@ -4426,6 +4468,10 @@ def _validation_steps(skill: str, out_dir: Path, result_path: Path) -> list[_Val
             _ValidationStep(
                 "audit-evidence", lambda: _validate_audit_evidence(state["result"], state["gates"], out_dir), gated
             )
+        )
+    if skill == "optimize":
+        steps.append(
+            _ValidationStep("optimize-lifecycle", lambda: _validate_optimize_lifecycle(out_dir, result_path), loaded)
         )
     steps.extend(
         (

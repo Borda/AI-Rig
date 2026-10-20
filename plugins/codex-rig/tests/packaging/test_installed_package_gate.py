@@ -63,8 +63,8 @@ def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Pa
     scoring. The complete worktree module carries the marker because the shipped lifecycle contract requires it. A
     separate source-checkout suite retains the valid sync, CI-harness, and Git metadata contracts.
 
-    Two child workers run the complete selection concurrently, bounding nested parallelism while reducing the Windows
-    subprocess-heavy selection's runtime.
+    Two child workers run the complete selection concurrently. Work stealing keeps a worker that finishes the short
+    contracts available for queued subprocess-heavy lifecycle cases instead of leaving a serial tail on Windows.
 
     The outer deadline includes package copying and child cleanup; sharing the child's deadline lets the Windows pytest-
     timeout thread terminate the worker before subprocess.run can reap and report a timed-out selection. One Windows
@@ -91,6 +91,8 @@ def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Pa
                 "-q",
                 "-n",
                 "2",
+                "--dist",
+                "worksteal",
                 "--strict-markers",
                 "--durations=20",
                 "-m",
@@ -124,6 +126,11 @@ def test_installed_package_timeout_prints_partial_streams_and_preserves_exceptio
 
     def timeout(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
         """Supply a timeout only for this diagnostic transport check."""
+        command = args[0]
+        assert isinstance(command, list)
+        assert command[command.index("-n") + 1] == "2"
+        assert command[command.index("--dist") + 1] == "worksteal"
+        assert kwargs["timeout"] == INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS
         raise error
 
     monkeypatch.setattr(subprocess, "run", timeout)

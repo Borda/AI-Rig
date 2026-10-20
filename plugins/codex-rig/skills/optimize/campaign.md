@@ -1,0 +1,32 @@
+# Managed campaigns
+
+Use for a numeric `campaign` with `checkpoint=true`, or for `resume`. Existing non-checkpointed runs are not resumable through this helper; retain their historical reports and start a new measured campaign if requested. One parent owns the campaign at a time; do not run checkpoint commands concurrently.
+
+## Initialize once
+
+1. Perform the main skill's scope, baseline metric/guard and hypothesis checks. Keep all existing measurement-integrity, specialist and rollback rules. Write `config.json` in the result run with goal, exact `metric_cmd`, `guard_cmd`, `metric_direction`, explicit relative `scope_files`, total `max_iterations`, and optional nonnegative `min_delta`. Scope entries name regular files or planned additions/deletions, not directories or symlinks.
+2. Keep artifacts outside scoped source and outside tracked files. Freeze the baseline metric and retain the actual metric/guard command outputs and exit codes. Do not initialize if either command failed or the metric is not finite numeric. Checkpoints bind actual tracked working-tree bytes and executable modes independently of Git's normalized diff, and retain leaf symlink targets without following them. Submodules, nonregular tracked source and symlink ancestors are unsupported and must produce a diagnostic rather than an incomplete source identity.
+3. Run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/skills/optimize/campaign.py init --run-dir <run> --root <checkout-root> --config <run>/config.json --baseline <measured-value>`. Native Windows uses the `.cmd` launcher. The helper creates `campaign.json` schema 1 and an empty `experiments.jsonl`; do not separately initialize that ledger or overwrite these files.
+
+## Execute one attempt
+
+1. Run `campaign.py begin --run-dir <run> --hypothesis <mechanism>` through the same launcher before editing. This verifies the previous checkpoint and remaining total budget, and exclusively creates `pending.json`.
+2. Apply the main skill's one-hypothesis change and scoped before-patch rules. Keep the current Git HEAD, index and out-of-scope tracked changes unchanged during the attempt. Checkpoints reject `assume-unchanged` and `skip-worktree` index entries because Git can hide their working-tree edits; do not silently clear those flags. Use worktree files for experimentation; if a local commit is desired, complete the campaign first under the normal commit-authorization contract.
+3. Re-run the exact frozen metric and guard, retaining outputs and exit codes per iteration. A failed metric command or nonfinite output is not a numeric result: preserve pending work and diagnose it; never substitute a value merely to close the iteration. Keep only a strict improvement meeting `min_delta` with a passing guard.
+4. For any non-kept decision, restore only the proved task-owned iteration diff and scoped additions/deletions, preserving unrelated content; verify the exact prior source. Restore retained bytes and executable modes rather than rewriting equivalent text: host newline translation can change the checkpoint identity. If restoration cannot be proved, leave pending evidence and report the recovery need. Never reset or force-clean.
+5. Run `campaign.py finish --run-dir <run> --metric <measured-value> --guard <pass|fail> --decision <kept|reverted|inconclusive|failed>`. The helper validates the transition, appends and flushes one complete record, then removes pending state. Its schema-owned append is the only writer of `experiments.jsonl`; do not append records manually.
+6. Continue only under the original bounded campaign rules: the main skill still stops at the first kept result unless the user requested continued exploration. Across resume, the total iteration budget never resets.
+
+## Resume and interrupted writes
+
+Recover the original run, objective, source, outputs and closing-gate state. Run `campaign.py resume --run-dir <source_run>`; optionally supply `--config <proposed-config>` to check equivalent configuration. Reuse the frozen configuration instead of accepting replacement commands or a fresh budget. Changed source/configuration requires diagnosis or an explicitly scoped new campaign, never silently rewriting old state.
+
+An unrecorded pending attempt stops resume even if its code was restored. Inspect the recorded hypothesis and actual outputs, complete or safely revert the same attempt, then use `finish` with its observed result. Never rerun an interrupted measurement without first establishing whether it already completed. If append completed but pending removal was interrupted, `resume` verifies the final source and matching marker, removes only that redundant marker, and returns the next iteration without appending or executing again. A partial JSONL line remains corrupt evidence; do not truncate it automatically.
+
+`resume` refuses to schedule after budget exhaustion. `campaign.py validate --run-dir <run>` still validates a completed final state regardless of remaining budget, so finish normal gates and promotion rather than attempting another iteration. Restoring changed live source or completing an unresolved iteration is a parent-owned operation, not permission inferred from a matching path.
+
+## Completion
+
+Write the existing `hypothesis.md` and `comparison.md` (baseline, after, delta, guard, confidence and uncertainty). Retain iteration metric/guard output logs alongside the managed ledger. Bind `campaign.json` and `experiments.jsonl` in `metadata.optimize_lifecycle`, using mode `campaign` or `resume`. Return to the main skill's gates and final handoff; each material attempt retains the existing result columns. Interrupted or failed acceptance remains explicit rather than certified by checkpoint creation.
+
+The structured Results table must contain every retained attempt, with `Iteration` equal to its integer ordinal and `Baseline`, `After`, `Delta`, `Guard`, `Decision` equal to that record's `metric_before`, `metric_after`, `delta`, `guard`, `decision`. Alternatively, use exactly one summary row with `Iteration=campaign`, the original baseline, final best metric and raw best-minus-baseline delta. Its guard is `pass` if every recorded guard passed, otherwise `fail`; its decision is `kept` if any attempt was kept, otherwise the last recorded decision or `inconclusive` for no attempts. An empty campaign summary has guard `pass`. Admission reconciles these numeric and decision cells against bound history before promotion.
