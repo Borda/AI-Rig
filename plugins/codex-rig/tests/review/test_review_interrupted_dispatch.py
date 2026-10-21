@@ -197,9 +197,44 @@ def _prepare_interrupted(run: Path, home: Path) -> subprocess.CompletedProcess[s
 @pytest.mark.integration
 @pytest.mark.parametrize("opaque", [False, True])
 @pytest.mark.parametrize("aggregate_only", [False, True])
-def test_interrupted_prefix_prepares_real_replacement(tmp_path: Path, opaque: bool, aggregate_only: bool) -> None:
+@pytest.mark.parametrize("opening_commentary", [False, True])
+def test_interrupted_prefix_prepares_real_replacement(
+    tmp_path: Path, opaque: bool, aggregate_only: bool, opening_commentary: bool
+) -> None:
     """A parent interrupt must not force all routed roles into parent substitutes."""
     run, home, children, complete = _interrupted_case(tmp_path, opaque=opaque, aggregate_only=aggregate_only)
+    if opening_commentary:
+        child = children["challenger"]
+        rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
+        first_read = next(i for i, row in enumerate(rows) if row["payload"].get("type") == "custom_tool_call")
+        started = next(row for row in rows if row["payload"].get("type") == "task_started")["timestamp"]
+        rows[first_read:first_read] = [
+            {
+                "type": "event_msg",
+                "timestamp": started,
+                "payload": {
+                    "type": "item_completed",
+                    "item": {
+                        "type": "AgentMessage",
+                        "id": "opening-status",
+                        "phase": "commentary",
+                        "content": [{"type": "Text", "text": "Opening the supplied context before reviewing it."}],
+                    },
+                },
+            },
+            {
+                "type": "response_item",
+                "timestamp": started,
+                "payload": {
+                    "type": "message",
+                    "id": "opening-status",
+                    "role": "assistant",
+                    "phase": "commentary",
+                    "content": [{"type": "output_text", "text": "Opening the supplied context before reviewing it."}],
+                },
+            },
+        ]
+        preparation._write_jsonl(child, rows)
     original = {p: p.read_bytes() for p in [*children.values(), run / "inspection-plan.json", run / "dispatch.json"]}
     prepared = _prepare_interrupted(run, home)
     assert prepared.returncode == 0, prepared.stderr
@@ -281,6 +316,54 @@ def test_interrupted_prefix_prepares_real_replacement(tmp_path: Path, opaque: bo
                     tmp_path,
                     require_role_card_receipts=True,
                 )
+
+
+@pytest.mark.integration
+def test_interrupted_commentary_requires_pre_read_phase_and_timing(tmp_path: Path, subtests: pytest.Subtests) -> None:
+    """Only authenticated opening commentary may precede an interrupted reader prefix."""
+    run, home, children, _ = _interrupted_case(tmp_path, opaque=True)
+    child_path = children["challenger"]
+    original = child_path.read_bytes()
+    for shape in ("message", "item", "event", "agent_message"):
+        for boundary in ("opening", "final", "missing-phase", "after-read", "late-timestamp", "before-task"):
+            with subtests.test(shape=shape, boundary=boundary):
+                rows = [json.loads(line) for line in original.decode().splitlines()]
+                first = next(i for i, row in enumerate(rows) if row["payload"].get("type") == "custom_tool_call")
+                start = next(row for row in rows if row["payload"].get("type") == "task_started")
+                message = {
+                    "type": "message",
+                    "role": "assistant",
+                    "phase": "commentary",
+                    "content": [{"type": "output_text", "text": "Opening the supplied review context."}],
+                }
+                if boundary == "final":
+                    message["phase"] = "final_answer"
+                elif boundary == "missing-phase":
+                    message.pop("phase")
+                row = {"type": "response_item", "timestamp": start["timestamp"], "payload": message}
+                if shape == "item":
+                    message["type"] = "AgentMessage"
+                    row.update(type="event_msg", payload={"type": "item_completed", "item": message})
+                elif shape in {"event", "agent_message"}:
+                    message["type"] = "agent_message"
+                    if shape == "event":
+                        row["type"] = "event_msg"
+                if boundary == "late-timestamp":
+                    row["timestamp"] = rows[first]["timestamp"]
+                elif boundary == "before-task":
+                    row["timestamp"] = datetime.fromtimestamp(
+                        start["payload"]["started_at"] - 1, timezone.utc
+                    ).isoformat()
+                rows.insert(first + 2 if boundary == "after-read" else first, row)
+                preparation._write_jsonl(child_path, rows)
+                prepared = _prepare_interrupted(run, home)
+                if boundary == "opening":
+                    assert prepared.returncode == 0, prepared.stderr
+                    (run / "repair-dispatch.challenger.json").unlink()
+                else:
+                    assert prepared.returncode != 0
+                    assert "review-interrupted-turn-invalid:challenger" in prepared.stderr
+                    assert not (run / "repair-dispatch.challenger.json").exists()
 
 
 def _complete_replacement(run: Path, home: Path, complete: list[dict], arguments: dict) -> list[dict]:

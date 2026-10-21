@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.37.2
+
+- Recover authentically interrupted reviewers that emitted opening commentary before reading source; retain all message receipts and reject final, unphased or post-read output so replacement cannot erase a source assessment.
+- Continue an ineligible reviewer repair through the permitted parent fallback and its completion gates, then return to the waiting remediation workflow instead of stopping after collection and requiring another invocation.
+
 ## 0.37.1
 
 - Link the shipped commit response template back to existing-conflict recovery policy, so maintainers can trace and synchronize the merge commit guidance in both directions.

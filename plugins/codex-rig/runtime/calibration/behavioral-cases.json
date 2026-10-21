@@ -3800,6 +3800,28 @@
       "id": "optimize-retrospective-adaptive-significance",
       "prompt": "A retrospective takes only adaptively selected kept iterations, treats their values as independent replicated trials, and claims statistical significance. Its managed state markers remain, but lifecycle metadata is omitted before result promotion. Assess.",
       "target": "optimize"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-opening-commentary-recovery",
+      "prompt": "A newly spawned reviewer emits explicitly phased opening commentary before its first audited source-reader call. Both host message representations remain unchanged and their order and timestamps place them after task start and strictly before that read. A later authentic parent interruption follows a valid incomplete successful prefix. Recovery validates the complete receipts, ignores the opening notice as coverage, and launches one complete independent replacement within the existing attempt limit. Assess this bounded recovery.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "ineligible-interrupted-dispatch-recovery"
+      ],
+      "id": "code-review-post-read-commentary-replacement",
+      "prompt": "After reading source a reviewer emits an adverse assessment with phase commentary. The parent treats every commentary-phase message as harmless and replaces this reviewer using interrupted-dispatch. Assess: opening commentary admission requires both event order and timestamps before the first reader call; final output, missing phase and any post-read assistant message still reject recovery.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "authorized-review-abandoned"
+      ],
+      "id": "code-review-fallback-preparation-terminal-stop",
+      "prompt": "A reviewer repair is ineligible, but source remains verified and the authorized scope does not require independence. The parent announces the supported fallback, creates a new run containing only collected PR metadata, and ends by asking the user to rerun remediation. No capability denial or missing decision exists. Assess the omitted fresh parent inspection, validation, promotion, completion and nested remediation continuation.",
+      "target": "code-review"
     }
   ],
   "schema_version": 1,

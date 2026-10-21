@@ -910,7 +910,8 @@ def _validate_context_read(
         and not (
             interrupted_prefix
             and row.get("type") == "event_msg"
-            and row.get("payload", {}).get("type") == "turn_aborted"
+            # The interruption receipt already validates aborts and pre-read commentary before this check.
+            and row.get("payload", {}).get("type") in {"turn_aborted", "agent_message"}
         )
         and not (
             row.get("type") == "event_msg"
@@ -2378,25 +2379,6 @@ def _interrupted_dispatch_receipt(
         or contexts[0].get("effort") != attempt.get("effort")
         or attempt.get("effort") != card["model_reasoning_effort"]
         or _event_payloads(child_rows, "task_complete")
-        or any(
-            (row.get("type") == "event_msg" and row.get("payload", {}).get("type") == "agent_message")
-            or row.get("payload", {}).get("item", {}).get("type") == "AgentMessage"
-            or (
-                row.get("type") == "response_item"
-                and row.get("payload", {}).get("type") == "message"
-                and row["payload"].get("role") == "assistant"
-            )
-            or (
-                row.get("type") == "response_item"
-                and row.get("payload", {}).get("type") == "agent_message"
-                and any(
-                    item.get("type") == "output_text"
-                    for item in row["payload"].get("content", [])
-                    if isinstance(item, dict)
-                )
-            )
-            for row in child_rows
-        )
     ):
         raise SystemExit(f"review-interrupted-turn-invalid:{role}")
     abort = aborts[0]
@@ -2412,6 +2394,45 @@ def _interrupted_dispatch_receipt(
         or not ended <= _parent_timestamp(abort).timestamp() < ended + (1 if type(ended) is int else 0.001)
     ):
         raise SystemExit(f"review-interrupted-timing-invalid:{role}")
+    first_read_index, first_read = next(
+        (
+            (index, row)
+            for index, row in enumerate(child_rows)
+            if row.get("type") == "response_item"
+            and row.get("payload", {}).get("type") in {"custom_tool_call", "function_call"}
+        ),
+        (len(child_rows), None),
+    )
+    # Fresh children have no reviewed source before the audited reader. Opening commentary supplies no
+    # assessment; after the first read even commentary can contain findings and must prevent replacement.
+    for index, row in enumerate(child_rows):
+        payload = row.get("payload", {})
+        message = payload.get("item", {})
+        if message.get("type") != "AgentMessage":
+            is_message = (row.get("type") == "event_msg" and payload.get("type") == "agent_message") or (
+                row.get("type") == "response_item"
+                and (
+                    (payload.get("type") == "message" and payload.get("role") == "assistant")
+                    or (
+                        payload.get("type") == "agent_message"
+                        and any(
+                            item.get("type") == "output_text"
+                            for item in payload.get("content", [])
+                            if isinstance(item, dict)
+                        )
+                    )
+                )
+            )
+            if not is_message:
+                continue
+            message = payload
+        if (
+            message.get("phase") != "commentary"
+            or first_read is None
+            or index >= first_read_index
+            or not started <= _parent_timestamp(row).timestamp() < _parent_timestamp(first_read).timestamp()
+        ):
+            raise SystemExit(f"review-interrupted-turn-invalid:{role}")
     interrupts = []
     for row in parent_rows:
         payload = row.get("payload", {})
