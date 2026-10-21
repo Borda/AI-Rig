@@ -300,11 +300,12 @@ gh release list --limit 100
 4. Review diff before description (avoids anchoring)
 5. Use PR review checklist; don't be pedantic on nits for minor fixes. Narrowly scoped tasks (e.g., "review this checklist", "identify CHANGELOG gaps"): restrict primary findings to stated scope, surface adjacent concerns as brief `### Also note` block (`[suggestion]`, non-blocking).
    - Release plan reviews: only concrete governance violations (wrong SemVer, missing step, missing entry) in primary findings — don't promote version-bump implications, migration guidance, sequencing commentary, or artifact consistency observations unless explicitly requested.
+   - Absent from input ≠ absent from plan — partial input only (task calls it a summary, excerpt or partial plan, or plan visibly truncated): a `release-checklist.md` step the input never mentions (pre-tag CI/docs gate, post-release steps) or a field the summary may omit (release date, docstring directive) goes to `### Also note`, never primary findings — unless the input positively contradicts it. Complete plan → missing step or missing release date stays a primary finding at its `<calibration>` tier (missing release date → medium). Tooling preference (pyDeprecate vs hand-rolled `warnings.warn`) → `### Also note` either way.
    - Before finalizing: re-scan the drafted primary findings list for any adjacent-but-not-requested observation (lifecycle commentary, sequencing commentary, migration guidance), move it to `### Also note` if found — this is a required last pass, not a one-time filter applied while drafting.
 6. For breaking changes: check deprecation cycle respected — breaking change detected → apply breaking-change gate from `<semver-decisions>` (emit `⚠ BREAKING CHANGE DETECTED` block; caller decides how to act, shepherd cannot gate the release itself)
 7. Before merging: if PR branch processed by `/oss:resolve`, do NOT squash — each action-item commit independently revertable with per-commit attribution. (Commit format owned by `/oss:resolve` — don't assume fixed format string if resolve updated.) Unprocessed PRs with messy history: squash acceptable, confirm with contributor before rewriting commits.
 8. After merging: check if issue can close, draft milestone-update note in the report for the user to apply manually (public-github.md: GitHub writes need the user's `gh-write` approval, never done here)
-9. Apply Internal Quality Loop, end with `## Confidence` block — see quality-gates rules. Domain calibration, severity mapping: see `<calibration>` in `<notes>` below.
+9. Apply Internal Quality Loop, end with `## Confidence` block — see quality-gates rules. Domain calibration, severity mapping: see `<calibration>` in `<notes>` below. Limits the task itself imposes (inline-only input, "use only this material", no repo/pyproject/CONTRIBUTING supplied, no network) on self-contained input → record as `(-0.00)` gap, never a deduction; deduct only for real ambiguity or contradiction inside the supplied material.
 
 </workflow>
 
@@ -334,10 +335,12 @@ Loading: `shepherd-voice.md` always; the other four per task type (`<initializat
 - **medium** — best-practice violation or process gap to address but doesn't directly break callers (missing CHANGELOG entry, checklist inaccuracy, missing release date, inconsistent version references across files)
 - **low** — nit, style, or suggestion improving quality, no user impact
 
-Borderline → prefer lower tier. Self-check before finalizing:
+Borderline → prefer lower tier and name the trigger that would raise it. Self-check before finalizing:
 
 - "Does this break caller's code at runtime?" No → not critical.
 - "Does this require version bump or API redesign before release?" No → at most medium.
+- New feature shipped in a patch (non-breaking under-bump) → medium process error, separate finding; never fold it into a high breaking-change bump finding, even when both affect the same version number.
+- Missing warning or docs note on a non-breaking default/behaviour detail → medium, not high; high only when callers' runtime behaviour changes with no deprecation cycle.
 
 Apply tier definitions mechanically. Don't escalate medium/high to `[blocking]`, reserve for critical and high only.
 

@@ -85,7 +85,7 @@ Writes `<root>/.cache/codemap/<project>.json`, or `$CODEMAP_INDEX_DIR/<project>.
 
 ## Step 2: Report
 
-After scan, read index and report compact summary:
+After scan, read index and report compact summary. Step 2 exits non-zero → report its error and stop; never run Step 3 or print `Index ready`.
 
 ```bash
 # timeout: 15000
@@ -109,11 +109,14 @@ _IDX="${CODEMAP_INDEX_DIR:-${_SCAN_ROOT}/.cache/codemap}"
 if [ -f "${_IDX}/${PROJ_NAME}.json" ]; then
     # scan-stats.py reads SCAN_ARGS env (e.g. --root src/mypackage) for project root
     SCAN_ARGS="$SCAN_ARGS_RAW" python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/scan-stats.py"
+    # rc before noop block — exit 2 (CODEMAP_INDEX_DIR outside allowed roots) previously reported as success
+    _STATS_RC=$?
     # --incremental noop check — sentinel set by Step 1 on fallback to full scan
     if [ -f "${TMPDIR:-/tmp}/codemap-incremental-noop-${PROJ_SLUG}-${CSID}" ]; then
         echo "[codemap] Note: --incremental had no prior index — full scan ran instead"
         rm -f "${TMPDIR:-/tmp}/codemap-incremental-noop-${PROJ_SLUG}-${CSID}"
     fi
+    [ "$_STATS_RC" -eq 0 ] || { printf "! scan-stats.py failed (exit %d) — index written by Step 1, stats not reported\n" "$_STATS_RC"; exit 1; }
 else
     echo "[codemap] Skipping stats — no index found (Step 1 may have failed)"
 fi

@@ -27,7 +27,7 @@
   IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${CSID}" 2>/dev/null || OLD_NAME=""
   # definition file from Step 2's find-symbol match
   IFS= read -r SYM_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-sym-path-${CSID}" 2>/dev/null || SYM_PATH=""
-  [ -n "$SYM_PATH" ] || { echo "! BLOCKED — sym-path sentinel missing; re-run Step 2"; exit 1; }
+  [ -n "$SYM_PATH" ] || { echo "! BLOCKED — sym-path sentinel missing; no source written yet → stop and re-invoke rename-refs; after a write → finish remaining Step 6 checks, then Step 7: ⚠ Rename incomplete"; exit 1; }
   IFS= read -r CLS_RANGE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-cls-range-${CSID}" 2>/dev/null || CLS_RANGE=""
   set -- $CLS_RANGE; CLS_START="${1:-}"; CLS_END="${2:-}"
   if [ -n "$CLS_START" ]; then
@@ -42,7 +42,7 @@
   _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
   IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${CSID}" 2>/dev/null || OLD_NAME=""
   IFS= read -r SYM_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-sym-path-${CSID}" 2>/dev/null || SYM_PATH=""
-  [ -n "$SYM_PATH" ] || { echo "! BLOCKED — sym-path sentinel missing; re-run Step 2"; exit 1; }
+  [ -n "$SYM_PATH" ] || { echo "! BLOCKED — sym-path sentinel missing; no source written yet → stop and re-invoke rename-refs; after a write → finish remaining Step 6 checks, then Step 7: ⚠ Rename incomplete"; exit 1; }
   IFS= read -r CLS_RANGE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-cls-range-${CSID}" 2>/dev/null || CLS_RANGE=""
   set -- $CLS_RANGE; CLS_START="${1:-}"; CLS_END="${2:-}"
   if [ -n "$CLS_START" ]; then

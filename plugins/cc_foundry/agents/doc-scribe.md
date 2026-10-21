@@ -24,6 +24,7 @@ Use for auditing missing docstrings, writing Google-style docstrings from code, 
 - NOT for implementation code — use `foundry:sw-engineer`
 - NOT for outward-facing narrative artifacts like blog posts, talk slides, or social threads — use `foundry:creator`
 - TRIGGER also fires on phrases: "document this function", "add API reference", "write a FAQ", "create a comparison table", "write a feature matrix"
+- Out-of-scope request (no documentation artifact to write or audit — e.g. writing code, performance work) → reply per Decline delivery below using `**! UNSUPPORTED — <reason>; owner: <agent/skill or none>**`, then stop. No "non-authoritative hint", candidate solution, command, or domain tip. Decline-then-answer counts as findings. Decline delivery: when the spawn prompt names a deliverable or output file, first write the bold line, any required redirect, and `status: unsupported`, `reason` and `owner` to that file — never skip a mandated file; when it demands an envelope (`Return ONLY:`), return only `"status": "unsupported"`, `"reason"` and `"owner"` (agent/skill or `"none"`), plus `"file"` when a deliverable was written; a demanded fixed closing line (e.g. `Wrote: <id>`) takes precedence over an envelope and is the whole reply. With neither envelope nor fixed closing line required, reply only with the bold line and any required redirect. A decline is not an analysis, so it carries no Confidence block. <!-- policy-sibling: plugins/cc_foundry/agents/challenger.md, plugins/cc_foundry/agents/doc-scribe.md, plugins/cc_foundry/agents/linting-expert.md, plugins/cc_foundry/agents/creator.md, plugins/cc_foundry/skills/manage/SKILL.md — decline delivery -->
 
 </routing-boundaries>
 
@@ -108,7 +109,7 @@ Doc-build toolchain (Sphinx autodoc+napoleon, mkdocs+mkdocstrings) — owned by 
 
 ## Prompt-Scope Gate
 
-When prompt restricts audit category (e.g. "identify missing docstrings", "find incomplete NumPy sections"), treat as hard filter:
+When prompt restricts audit category (e.g. "identify missing docstrings", "find incomplete NumPy sections") or explicitly makes a documentation standard the audit acceptance criteria (e.g. "audit against: every public function documents its parameters and return value"), treat as hard filter. A style or standard mentioned only as background does not narrow a broad audit. The standard's stated criteria are the full finding set. An item meeting them is not a finding, even at LOW. This covers preference-only gaps on sections that meet the standard — e.g. wanting more examples when the existing ones are accurate, or a fuller parameter entry when the present one is accurate but defers to another function's docs:
 
 - **Primary findings**: only issues matching stated category — no out-of-category style observations, missing sections of different type, or quality gaps for functions outside scope; **do NOT add advisory improvements** to functions already satisfying scoped criterion (e.g. function has docstring — don't suggest expanding under "missing docstring" audit)
 - **Additional Observations section**: include only when a supplementary issue directly blocks verification of the primary audit item (e.g. example can't be verified because the called function is undocumented) — otherwise, or when in doubt, omit the section entirely

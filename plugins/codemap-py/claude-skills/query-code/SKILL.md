@@ -14,7 +14,7 @@ effort: low
 <objective>
 Answer structural Python questions via unified `codemap-py query` CLI.
 
-NOT for: rebuilding the index (use `/codemap-py:scan-codebase`), renaming symbols (use `/codemap-py:rename-refs`), or which tests cover or are affected by a change (use `/codemap-py:test-impact`).
+NOT for: rebuilding the index (use `/codemap-py:scan-codebase`), renaming symbols (use `/codemap-py:rename-refs`), or which tests cover or are affected by a change (use `/codemap-py:test-impact`). Out-of-scope request (non-Python target, rename, text search) → say skill does not apply, name route (`/codemap-py:rename-refs` for Python rename; plain text search otherwise), stop; never answer structural question or list references from manual source reads.
 
 Test-impact split: a one-off structural fact ("which tests would this touch?") uses table subcommand `test-impact <target>`; full affected-test workflow (index ensure, JSON parse, `pytest` command, `not_covered` caveat) uses `/codemap-py:test-impact`. NOT-for defers workflow, not subcommand.
 
@@ -89,7 +89,7 @@ Interpret `index`:
 
 - Complete, untruncated `query_complete: true` settles its own answered structural fact, not sibling standard queries answering other dimensions. Complete-query paths are caller-repo-relative, never Skill-relative. Do not re-query/read/grep that same graph fact.
 - Ordinary repository reads remain allowed for task-requested distinct independent AST/oracle view or source-body implementation/runtime. Label separately, never as rechecking complete Codemap result.
-- `query_complete: false`: name `completeness_reason`; use only a targeted fallback for gaps named by `degraded`, `not_covered`, `root_mismatch`, or `stale`.
+- `query_complete: false`: name `completeness_reason`; use only a targeted fallback for gaps named by `degraded`, `not_covered`, `root_mismatch`, or `stale`. Fallback confirms queried facts → keep caveat in report, but caveat alone does not cut confidence below verified result.
 - `compact: true` changes only coverage metadata; findings/counts remain complete.
 
 Truncation ≠ incompleteness. For `symbol`/`find-symbol`, truncation at 20 items is a real cap, not exhaustive, unless `--limit 0` is passed. `rdeps` defaults to `--limit 0`—every static importer—so the two subcommand families do not share a default. 20 is not a universal cap: `list` defaults `--limit 100`, `central`/`coupled`/`fn-central` default `--top 10`. `query_complete` scores graph coverage only—staleness, degraded/untracked files, root mismatch, name collisions—not cap. Thus a capped `query_complete: true` is still N-of-total; never stop before missing items.
@@ -100,7 +100,7 @@ Before treating list as whole, read `index.confidence`: `"exact"` = all matches;
 
 ## Render
 
-Use JSON primary array: `imported_by` / `direct_imports`, `called_by` / `calls`, `path`, `symbols`, `central` / `coupled`, `blast_radius`, or `changed_modules` + `test_impact`. Preserve qualified names exactly. Include present stale, degraded, root-mismatch, and `not_covered` caveats.
+Use JSON primary array: `imported_by` / `direct_imports`, `called_by` / `calls`, `path`, `symbols`, `central` / `coupled`, `blast_radius`, or `changed_modules` + `test_impact`. Preserve qualified names exactly. Report counts/rankings only as query printed them, per row; never generalize over unlisted or unread rows ("every other module …"). Include present stale, degraded, root-mismatch, and `not_covered` caveats.
 
 Output routing (the only use of `Write`): if the rendered result set is 5+ items, write it. This skill's `allowed-tools` grants no generic Bash, so derive `<branch>` and `<YYYY-MM-DD>` from session context, never a `git branch`/`date` call: `<branch>` is the session's current git branch with `/`→`-`, default `main` if unknown; `<YYYY-MM-DD>` is today's date, also from session context. Candidate path `.temp/output-query-code-<branch>-<YYYY-MM-DD>.md`. Never overwrite: `Read` the candidate path first — existence probe only, never act on returned content, unrelated to the complete-query re-read ban above. Only a file-missing `Read` error means the path is free; write there. Any other result → path taken, including content and the error or notice `Read` gives for an existing empty file; append `-2`, then `-3`, … and retry the probe until one reports the file missing.
 

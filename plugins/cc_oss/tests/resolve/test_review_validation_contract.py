@@ -500,6 +500,60 @@ def test_parent_candidate_proof_survives_normal_merge_and_recheck(tmp_path: Path
     assert stale["candidate_id"] == "backend-one"
 
 
+def test_root_cause_merged_row_passes_the_gate_and_folds_into_one_item(tmp_path: Path) -> None:
+    """A confirmed candidate merged into another keeps its own row, and resolve offers one item for the pair.
+
+    The producer gate maps findings rows one-to-one onto CONFIRMED candidates, so the merged candidate must publish its
+    row; the merge then folds that row into the survivor's item, which keeps the survivor's parent proof through the
+    verdict re-check at the reviewed head.
+    """
+    review = tmp_path / "review"
+    review.mkdir()
+    report = _publication(review, "NEEDS_WORK")
+    sidecar = review / "review-validation.json"
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    data["candidates"] = [_candidate("CONFIRMED"), {**_candidate("CONFIRMED"), "id": "backend-two"}]
+    sidecar.write_text(json.dumps(data), encoding="utf-8", newline="\n")
+    (review / "head-sha.txt").write_text("abcdef1234567\n", encoding="utf-8", newline="\n")
+    shared = {"contract_version": 1, "validation_status": "CONFIRMED", "change": "code", "author": "QA"}
+    survivor = {
+        **shared,
+        "id": "finding-one",
+        "candidate_id": "backend-one",
+        "section": "Test Coverage Gaps",
+        "severity": "medium",
+        "title": "backend drops value",
+        "file": "src/backend.py",
+        "line": 12,
+    }
+    merged = {
+        **shared,
+        "id": "finding-two",
+        "candidate_id": "backend-two",
+        "merged_into": "backend-one",
+        "section": "Architecture & Quality",
+        "severity": "high",
+        "title": "backend leaks a slot",
+        "full_text": "[high] the drop path never releases its slot (src/backend.py:30)",
+        "file": "src/backend.py",
+        "line": 30,
+    }
+    findings = review / "findings.jsonl"
+    findings.write_text(f"{json.dumps(survivor)}\n{json.dumps(merged)}\n", encoding="utf-8", newline="\n")
+    items = tmp_path / "items.jsonl"
+    recheck = ["--items", str(items), "--recheck-verdicts", "--review-dir", str(review), "--current-head"]
+
+    assert frr.gate_line(report) == "Gate: PASS"
+    assert mai.main(["--items", str(items), "--findings", str(findings)]) == 0
+    assert mai.main([*recheck, "abcdef1234567"]) == 0
+
+    (item,) = mai.read_jsonl(items)
+    assert (item["finding_id"], item["merged_finding_ids"]) == ("finding-one", ["finding-two"])
+    assert (item["type"], item["severity"]) == ("[report][req]", 4)
+    assert (item["candidate_id"], item["validation_status"]) == ("backend-one", "CONFIRMED")
+    assert "[merged finding finding-two] [high] the drop path never releases its slot" in item["full_comment_text"]
+
+
 @pytest.mark.parametrize(
     "damage", ["missing-sidecar", "tampered-check", "missing-candidate", "wrong-item-candidate", "legacy-header"]
 )

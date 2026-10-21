@@ -46,10 +46,10 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficie
 
 ### [blocking] Critical (must fix before merge)
 
-- [critical findings]
+- Only `[critical]`, `[high]` per checklist.md, or any `[blocking]`-tagged finding per SKILL.md §Block-tier catalogue
 - Every finding carries one severity label: `[cosmetic]`, `[low]`, `[medium]`, `[high]`, or `[critical]`.
 
-> Include bugs, security issues, and data corruption risks.
+> This section sets placement only; `checklist.md` and the parent's validation set severity. Every finding below `[high]` without a `[blocking]` tag belongs in its dimension section, not here; a `[blocking]`-tagged finding lands here at its own severity.
 
 ### Issue Root Cause Alignment
 
@@ -65,7 +65,7 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficie
 ### Architecture & Quality
 
 - [sw-engineer findings]
-- [blocking] issues marked explicitly
+- `[blocking]`-tagged findings go to `### [blocking] Critical`, not here
 - [nit] suggestions marked explicitly
 
 > Cover architecture and quality findings.

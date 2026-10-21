@@ -30,7 +30,7 @@ Spawned agent **must**:
 }
 ```
 
-Add task-specific keys (e.g. `"papers":5` for research, `"verdict":"approve"` for review), keep envelope ≤250 bytes. `summary` = one-line description of what found/done — always required.
+Add task-specific keys (e.g. `"papers":5` for research, `"verdict":"approve"` for review), keep envelope ≤250 bytes. `summary` = one-line description of what found/done — required except for an `"unsupported"` decline. A decline envelope carries only `status`, `reason` and `owner`, plus `file` when a deliverable file was written; it is exempt from all other required fields below. A mandated deliverable file must still be written before returning the decline envelope.
 
 ## RUN_DIR convention
 
@@ -74,7 +74,7 @@ Main context receives only the envelope JSON.
 
 | Field | Required | Description |
 | -- | -- | -- |
-| `status` | yes | `"done"`, `"done_with_concerns"`, `"needs_context"`, `"timed_out"`, `"error"` |
+| `status` | yes | `"done"`, `"done_with_concerns"`, `"needs_context"`, `"unsupported"`, `"timed_out"`, `"error"` |
 | `findings` | yes | total finding count (0 if none) |
 | `severity` | yes | `{"critical":N,"high":N,"medium":N,"low":N}` |
 | `file` | yes | absolute path to written findings file |
@@ -88,6 +88,7 @@ Main context receives only the envelope JSON.
 | `"done"` | Completed, full confidence; no tool or permission denial blocked any part of the task |
 | `"done_with_concerns"` | Completed but agent has doubts — low confidence, incomplete coverage, unverifiable claims, or a tool/permission denial blocked part of the task (`summary` names the denied tool; never `"done"`; the denied call or a bypass of it is never re-run, restructuring to an already-allowed form is fine; `"error"` when nothing completed); orchestrator surface this, not silently accept |
 | `"needs_context"` | No quality output; re-run with specific context named in `summary` unblocks agent |
+| `"unsupported"` | Agent declined because the request is outside its scope; carries `reason` and `owner` (agent/skill or `"none"`) |
 | `"timed_out"` | Orchestrator-assigned: per-agent deadline passed, or the agent's completion/idle notification arrived without its deliverable |
 | `"error"` | Unrecoverable failure |
 
@@ -96,6 +97,7 @@ Orchestrator handling by status:
 - `"done"` → accept normally
 - `"done_with_concerns"` → include agent `summary` as flagged concern in consolidated report; not clean completion
 - `"needs_context"` → consider re-spawn with missing context named in `summary`; if not feasible, record as partial-result gap
+- `"unsupported"` → surface `reason` + `owner` as a routing miss; never count it as findings; never mark it ⏱ `timed_out`
 - `"timed_out"` / `"error"` → surface with ⏱ in report at once — never wait for the agent further, never poll it (`ScheduleWakeup`, `ListAgents`, `Monitor`); a ⏱ never answers, skips or defaults a user question
 
 ## Reference implementation

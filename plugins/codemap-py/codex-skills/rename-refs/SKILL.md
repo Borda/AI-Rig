@@ -29,7 +29,11 @@ Codex has no `bin/` PATH entry or plugin-root variable. Resolve installed root o
 
 ## Workflow
 
+> Stop routing follows source edit state, including a deletion or `git mv`. Before the first source write, any stop ends this invocation; re-invoke only after correcting the reported prerequisite. Never finish a stopped rename by hand with grep, direct edits or a file move, in any language. A placeholder-substitution self-check only retries its block after substituting the named value. If a stop fires after a source write, stop further rename edits, finish the Step 6 checks that can still run, then report `⚠ Rename incomplete` in Step 7 with the changed files and remaining work; never restart an earlier edit step. A failed incremental re-scan is advisory: continue available verification and repeat the warning in Step 7; unavailable verification still makes the rename incomplete.
+
 ### 1. Parse and check freshness
+
+Check for `.py`/`.pyi` files from the repository root (current directory outside Git), excluding `.git`, `.venv`, `venv` and `node_modules`. If none exist, report `! UNSUPPORTED — rename-refs is Python-only; stop, do not rename by hand` and end the invocation before index queries.
 
 Accept only the listed flags; reject other `--` tokens, symbol-only flags under `module`, and the incompatible pair. Then run:
 
@@ -100,7 +104,7 @@ Before apply confirmation, resolve every known caller before any source edit: fo
 4. Search full dotted path in `pyproject.toml`/`setup.cfg`, editing package/install requirements only; never bare basename.
 5. Rename Sphinx `:mod:` full paths; basename fallback needs matching module context.
 
-### 6. Re-scan and summary
+### 6. Re-scan and verify
 
 ```bash
 PLUGIN_ROOT/bin/codemap-py index --incremental
@@ -116,4 +120,8 @@ For `symbol`, `find-symbol` sees definitions only, never references. Count every
 
 Classify each hit: an unedited reference to the renamed symbol (import from its module or a re-exporting package, base, call, `isinstance` target, callback value, comment or docstring naming it) or a same-name symbol of another origin.
 
-Verify the renamed provider and every known caller with the project's relevant import/call checks; unresolved known callers, any unedited reference, or failing checks mean incomplete migration, never success: report `Rename incomplete` with each unedited reference as `file:line`. If re-scan fails, report it; results are advisory, not authoritative. Expect old name absent except deprecated alias. A success line always states the residual whole-word count, each residual being a same-name symbol of another origin, and never reads as an unqualified `Renamed`. List residual hits as advisory (dynamic/string/template/out-of-scope refs). Report renamed pair, files, calls, doc refs, alias path/line when used; always flag `getattr` literal search, external consumers without alias, skipped callers, and residual hits when applicable.
+Verify the renamed provider and every known caller with the project's relevant import/call checks. Unresolved known callers, any unedited reference, a post-write stop, or failing/unavailable verification means incomplete migration. If re-scan fails, continue available checks; index results are advisory, not authoritative. Expect old name absent except deprecated alias.
+
+### 7. Summary
+
+For an incomplete migration, report `⚠ Rename incomplete` with the changed files, verified/known caller counts, each unedited reference as `file:line`, failed or unavailable checks, and next actions. Repeat any re-scan warning. Otherwise, a success line always states the residual whole-word count, each residual being a same-name symbol of another origin, and never reads as an unqualified `Renamed`. List residual hits as advisory (dynamic/string/template/out-of-scope refs). Report renamed pair, files, calls, doc refs, alias path/line when used; always flag `getattr` literal search, external consumers without alias, skipped callers, and residual hits when applicable.

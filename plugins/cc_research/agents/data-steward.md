@@ -125,14 +125,14 @@ Track for every artifact: **Source** (origin), **Transforms** (processing pipeli
 
 <antipatterns-to-flag>
 
-- **Pre-split normalization severity matrix**: `scaler.fit_transform(full_dataset)` before split — severity `high` for simple train/test (bounded leakage); `critical` in cross-validation (every fold's test rows contaminate scaler, no valid CV estimate). Wrap ALL stateful transformers (`PCA`, `PolynomialFeatures`, etc.) in `sklearn.pipeline.Pipeline` before `cross_val_score`.
+- **Pre-split normalization severity matrix**: `scaler.fit_transform(full_dataset)` — or any statistic computed on pooled data before split (manual centering `X - X.mean()`, per-feature std, a global image mean/std, per-group target statistics) — severity `high` for simple train/test (bounded leakage); `critical` in cross-validation (every fold's test rows contaminate scaler, no valid CV estimate). Matrix binds regardless of other `critical` findings in same report — never escalate simple hold-out case to `critical`. Wrap ALL stateful transformers (`PCA`, `PolynomialFeatures`, etc.) in `sklearn.pipeline.Pipeline` before `cross_val_score`.
 - **Overall accuracy on imbalanced data**: reporting `accuracy_score` alone on severely imbalanced dataset (e.g., 19:1 ratio) — model always predicting majority class scores 95%, clinically useless; always report per-class precision, recall, F1, AUROC.
 - **Single-label proxy stratification for multi-label data**: `stratify=first_label` with `train_test_split` on multi-label dataset — only first label's distribution preserved; use `iterstrat.ml_stratifiers.MultilabelStratifiedShuffleSplit` or `skmultilearn.model_selection.iterative_train_test_split`.
 - **Stratify-missing severity demotion**: when `train_test_split` missing `stratify=y` but (a) no class distribution data and (b) primary findings include `critical` or `high` severity issues, demote to `[Info]` severity in the Findings list — always recorded, never omitted. Also add prose note in `Class Balance` row: "unknown distribution — add `stratify=y` as best practice".
 - **Missing provenance for externally acquired data**: storing downloaded dataset without recording origin URL, acquisition timestamp, license, expected record count — makes dataset non-reproducible; always create `dataset_card.yaml` at acquisition time.
 - **Web-scraping without validation handoff**: accepting HTML-parsed or scraped data without running completeness verification checklist (count, schema, boundaries, dedup); run four checks before passing data downstream.
 - **shuffle=True on val/test DataLoaders**: non-reproducible evaluation metrics across epochs — severity `medium` (not `critical`; critical reserved for issues corrupting training data or model weights). Fix: set `shuffle=False` on val and test DataLoaders.
-- **Engineering-hygiene severity tier**: DataLoader seeding (`worker_init_fn`), HTTP error handling, and similar engineering best practices are not data-integrity findings — report at `[Info]` severity in `### Findings`, always recorded regardless of what other findings exist in the same run; never omitted because higher-severity findings are present.
+- **Engineering-hygiene severity tier**: DataLoader seeding (`worker_init_fn`), augmentation RNG seeding (unseeded augmentation pipeline, `random`, `np.random`), HTTP error handling/retry, snapshot consistency (reproducibility only — records missed or duplicated are `[High]` silent data loss), memory/OOM risk, dtype coercion, input-file hygiene checks, and every similar engineering best practice are not data-integrity findings — report at `[Info]` severity in `### Findings`, never `[Medium]` or above for this class; always recorded regardless of what other findings exist in the same run; never omitted because higher-severity findings are present.
 
 </antipatterns-to-flag>
 
@@ -194,8 +194,9 @@ Imbalance ratio: [majority:minority] | Recommended strategy: [none / weighted sa
 num_workers: [N] | pin_memory: [T/F] | worker_init_fn: [seeded / unseeded]
 
 ### Findings
-[Critical] <issues that corrupt model training — fix before running>
-[Warning]  <issues degrading reproducibility or metric reliability>
+[Critical] <invalidates evaluation or corrupts training data/labels/weights — fix before running>
+[High]     <silent data loss or bounded leakage — e.g. records skipped by an incomplete multi-request fetch (recoverable by re-fetch), pre-split stats on simple hold-out>
+[Medium]   <degrades reproducibility, provenance, or metric reliability — e.g. origin metadata lost in a transform, `shuffle=True` on val/test; engineering hygiene belongs at [Info]>
 [Info]     <low-severity observations — always listed when present; never omitted because higher-severity findings exist (see antipatterns-to-flag: Stratify-missing severity demotion, Engineering-hygiene severity tier)>
 ```
 
@@ -209,7 +210,7 @@ num_workers: [N] | pin_memory: [T/F] | worker_init_fn: [seeded / unseeded]
 
 1. Prompt text starts with the literal token `acquisition` or `pipeline-audit` → that mode (explicit override, zero ambiguity).
 2. Otherwise, examine actual intent: caller asks the agent to OBTAIN/COLLECT data it does not yet have from an external source (e.g. "download the dataset from this URL", "acquire images from this API") → `acquisition`. Caller asks the agent to AUDIT/REVIEW/CHECK/VALIDATE an existing local pipeline or codebase — even when that description mentions fetching/downloading as something the EXISTING code does (e.g. "audit the pipeline that fetches images from S3, then splits") → `pipeline-audit`. Audit/review intent outranks any acquisition keyword appearing as description of code under review.
-3. Ambiguous or no clear signal → default `pipeline-audit` (safe default — a leakage audit run on an acquisition request wastes effort; the reverse silently skips contamination checks).
+3. Ambiguous or no clear signal → default `pipeline-audit` (safe default — a leakage audit run on an acquisition request wastes effort; the reverse silently skips contamination checks). Default applies only when input carries data content (dataset, split, feature pipeline, DataLoader, acquisition source). No such content at all (e.g. a presentation-only change or deployment setting without data handling) → out of domain: reply 1–2 lines — out of scope + suggested specialist (e.g. `foundry:sw-engineer`, requires `foundry` plugin) — plus the required `## Confidence` block; no `### Findings`, no report template, no best-effort review of foreign domain, no `Mode:` line.
 
 If an actual unrecognised literal token appears at prompt-start (case 1 near-miss, e.g. `foo-mode ...`), print:
 
@@ -217,7 +218,7 @@ If an actual unrecognised literal token appears at prompt-start (case 1 near-mis
 ! Unknown mode: '<token>'. Supported: acquisition, pipeline-audit. Defaulting to pipeline-audit.
 ```
 
-For the no-clear-signal case (case 3 — ordinary free-form prompt, no token at all), print instead (no `!` prefix — reserved for critical alert blocks per `rules/quality-gates.md` §Reporting Findings):
+For case 3 with data content (ordinary free-form prompt, no token at all — the out-of-domain branch prints no Mode line), print instead (no `!` prefix — reserved for critical alert blocks per `rules/quality-gates.md` §Reporting Findings):
 
 ```text
 Mode: pipeline-audit (inferred — no acquisition intent detected)
@@ -272,7 +273,7 @@ python "${CLAUDE_PLUGIN_ROOT}/bin/load-agent-reference.py" data-steward ml-pipel
    Grep: pattern="augment_images\(|\.augment\(|iaa\."                     glob="**/*.py"   # pre-split augmentation risk
    ```
 
-   Six calls surface top-6 ML data bugs generic review misses. **Scope discipline**: report only issues matching known leakage pattern or checklist item. General code-style observations, docstring notes, runtime-only unknowns not mapping to checklist item go in Gaps — not Findings. Prevents precision dilution on simple problems.
+   Six calls surface top-6 ML data bugs generic review misses. **Scope discipline**: report only issues matching known leakage pattern or checklist item. General code-style observations, docstring notes, runtime-only unknowns not mapping to checklist item go in Gaps — not Findings. Consequence or compound of existing finding (e.g. "defects 1 and 2 compound", "val distribution distorted — consequence of F1") → fold into parent finding's description, never own row. Data-quality observation with no checklist match (label noise, hard-coded class constants, unauditable split return) → `[Info]` max — fold and downgrade, never suppress. Prevents precision dilution on simple problems.
 
 2. **Evaluate each hit** —
 

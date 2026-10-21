@@ -16,7 +16,7 @@ OSS Claude Code configuration for Python/ML projects: 10 specialist agents, 11 s
 
 The audit summary, configuration-health, investigation, and session report templates use short descriptive fields; writing requirements sit in separate notes and are omitted from completed reports. Other audit modes and calibrate/brainstorm/distill templates keep their earlier placeholder style.
 
-Workflow audits and adversarial reviews trace producer guarantees through downstream consumers and the next ordinary user action. They challenge identity, ownership, destination, lifetime, and resume assumptions with concrete counterexamples and report untested handoffs. The shared review/fix loop inventories first-pass coverage, checks each fix against its invariant and a sibling route, and distinguishes carried defects from later discoveries.
+Workflow audits and adversarial reviews trace producer guarantees through downstream consumers and the next ordinary user action. They challenge identity, ownership, destination, lifetime, and resume assumptions with concrete counterexamples and report untested handoffs. The shared review/fix loop inventories first-pass coverage, checks each fix against its invariant and a sibling route, and distinguishes carried defects from later discoveries. Out-of-scope declines preserve mandated deliverable files and caller reply formats; `unsupported` envelopes surface a routing miss with `reason` and `owner`, never findings or a timeout.
 
 Each round challenges and collects findings, reports the cumulative old/new table, resolves feasible authorized findings, escalates unfixable `security`/`critical`/`high` findings, then repeats until clean or plateau/non-convergence, subject to authority, evidence, recurrence and stricter caller budgets. The table is `Iteration | Critical | High | Medium | Low | Nits | Weighted score`; open and fixed-pending-verification signatures split into old and new, while verified-fixed and rejected findings stay excluded. Security and critical combine only for display; score weights remain `20/10/6/4/2/1`. Empty rounds print no progress table. A 1,500-output-token reviewer target is hard only when the runtime supports it; findings are never dropped to meet it.
 
@@ -154,7 +154,7 @@ The first useful workflow is:
 /foundry:audit setup
 ```
 
-It produces a structured report of system config checks (hooks, `settings.json`, plugin integration, and symlinks). Treat any critical findings as blockers and resolve the report's suggested next action.
+It produces a structured report of system config checks (hooks, `settings.json`, `permissions-guide.md`, `MEMORY.md`, configuration README files, plugin integration, and symlinks). Treat any critical findings as blockers and resolve the report's suggested next action.
 
 Follow with:
 
@@ -271,7 +271,7 @@ ______________________________________________________________________
 
 ### `/foundry:calibrate`
 
-Benchmarks agents and skills against synthetic problems with defined ground truth. Primary signal = calibration bias — gap between self-reported confidence and actual recall. Well-calibrated agent reports 0.9 when finds ~90% of issues.
+Benchmarks agents and skills against synthetic problems with defined ground truth. Primary signal = calibration bias — gap between self-reported confidence and actual recall. Well-calibrated agent reports 0.9 when finds ~90% of issues. With `--ab-test`, each target also runs against a `general-purpose` baseline and gets one verdict, first match wins: `significant`, `marginal`, `baseline-ahead`, `inconclusive` (both arms at ceiling), or `no-lift`. A mixed-sign result (one metric up, the other down) can still be `significant` or `marginal`; the report then describes the negative delta as a trade-off.
 
 ```text
 /foundry:calibrate all --fast              # quick benchmark across all modes (3 problems each)
@@ -544,7 +544,7 @@ All ten agents available by full plugin-prefixed name. In spawn directives and `
 
 **Model**: `opus`
 
-**Not for**: docstrings (`foundry:doc-scribe`), ruff/mypy config (`foundry:linting-expert`), system design (`foundry:solution-architect`), test quality analysis (`foundry:qa-specialist`), perf profiling (`foundry:perf-optimizer`), ML paper implementations (`research:scientist`), `.claude/` config edits (`foundry:curator`), CI/CD pipeline config — GitHub Actions, pre-commit hooks, CI YAML (`oss:cicd-steward` — requires `oss` plugin).
+**Not for**: docstrings (`foundry:doc-scribe`), ruff/mypy config (`foundry:linting-expert`), system design (`foundry:solution-architect`), test quality analysis (`foundry:qa-specialist`), perf profiling (`foundry:perf-optimizer`), ML paper implementations (`research:scientist`), `.claude/` config edits (`foundry:curator`), CI/CD pipeline config — GitHub Actions, pre-commit hooks, CI YAML (`oss:cicd-steward` — requires `oss` plugin), read-only third-party release impact questions without a fix request (general-purpose). Bug-finding reviews remain in scope; compatibility review of the project's own public API belongs to `foundry:solution-architect`.
 
 **Auto-invokes when:** user asks to implement, build, write, modify, fix code across 3+ files; phrases: "implement", "build", "write the code for", "add feature", "fix this bug".
 
@@ -564,7 +564,7 @@ ______________________________________________________________________
 
 **Auto-invokes when (MAYBE):** architecture questions involving 3+ components; "how should I structure this", "ADR for", "migration plan for". Not for simple design questions.
 
-Produces documentation — ADRs, interface contracts, migration plans, component diagrams — not production code. Hands off to `foundry:sw-engineer` for execution. Spec with multiple unresolved decision branches: resolves one at a time via `AskUserQuestion` with recommended answer each, not one bulk ask.
+Produces documentation — ADRs, interface contracts, migration plans, component diagrams — not production code. Hands off to `foundry:sw-engineer` for execution. Spec with multiple unresolved decision branches: resolves one at a time via `AskUserQuestion` with recommended answer each, not one bulk ask. Review-only asks return findings without standalone design artifacts; alignment waits only for an ambiguous design question, and irreversible-decision flags fold into matching findings.
 
 ______________________________________________________________________
 
@@ -580,7 +580,7 @@ ______________________________________________________________________
 
 **Auto-invokes when:** user asks to write tests, assess coverage, define test strategy; "write tests for", "add unit tests", "test coverage for".
 
-Writes deterministic, parametrized, behavior-focused tests. Progression: happy path → edge cases → error cases → boundary values → adversarial inputs. Applies public-API coverage checklist before done.
+Writes deterministic, parametrized, behavior-focused tests. Progression: happy path → edge cases → error cases → boundary values → adversarial inputs. Applies public-API coverage checklist before done; edge-case coverage findings require documented or code-explicit contracts, while unspecified behavior goes under `Contract questions:`.
 
 ______________________________________________________________________
 
@@ -628,7 +628,7 @@ ______________________________________________________________________
 
 **Auto-invokes when:** user asks for documentation; "write docs for", "add docstrings to", "update the README", "document this function".
 
-Always downstream — documents finalized code, never shapes design. After `foundry:doc-scribe` produces content, follow with `foundry:linting-expert` to sanitize code examples.
+Audit category restrictions and documentation standards explicitly set as acceptance criteria filter findings; background style mentions do not narrow a broad audit. Always downstream — documents finalized code, never shapes design. After `foundry:doc-scribe` produces content, follow with `foundry:linting-expert` to sanitize code examples.
 
 ______________________________________________________________________
 
@@ -640,7 +640,7 @@ ______________________________________________________________________
 
 **Model**: `sonnet`
 
-**Not for**: code analysis or implementation (`foundry:sw-engineer`), ML paper analysis (`research:scientist`), README/docstring writing (`foundry:doc-scribe`), dependency upgrade lifecycle decisions (`oss:shepherd`), perf profiling or benchmarking recommendations (`foundry:perf-optimizer`).
+**Not for**: local code analysis — local code reading with a fix request or implementation (`foundry:sw-engineer`), read-only impact questions (general-purpose); ML paper analysis (`research:scientist`), README/docstring writing (`foundry:doc-scribe`), dependency upgrade lifecycle decisions (`oss:shepherd`), perf profiling or benchmarking recommendations (`foundry:perf-optimizer`).
 
 **Auto-invokes when:** user asks about library docs, external API, URL content; "what does X docs say", "look up", "find the docs for", "latest version of"; user pastes URL + asks question about it.
 
@@ -696,7 +696,7 @@ ______________________________________________________________________
 
 **Auto-invokes when:** outline file `.plans/content/<slug>-outline.md` approved; user asks for blog post, Marp slide deck, social thread, talk abstract, lightning talk outline. Skip when: outline file not found (run `/foundry:create` first); code documentation (`foundry:doc-scribe`); release notes (`oss:shepherd`).
 
-Always downstream of `/foundry:create` — reads approved outline, generates full artifact. Two-phase system: `/foundry:create` (interactive intake → outline) then `foundry:creator` (autonomous generation → artifact).
+Always downstream of `/foundry:create` — reads approved outline, generates full artifact. Two-phase system: `/foundry:create` (interactive intake → outline) then `foundry:creator` (autonomous generation → artifact). Outline format constraints override house defaults during generation and review; `critical` covers unusable or harmful output and outline violations that mislead readers.
 
 ______________________________________________________________________
 

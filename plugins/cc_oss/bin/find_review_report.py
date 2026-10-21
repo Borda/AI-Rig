@@ -493,6 +493,10 @@ def finding_row_problem(finding: object, n: int) -> str | None:
     type_problem = _row_type_problem(finding, n)
     if type_problem:
         return f"{type_problem} — the review must write it as one JSON object of text fields"
+    if finding.get("merged_into") is not None and not isinstance(finding["merged_into"], str):
+        # The survivor lookup keys on this value; a list or number would raise mid-merge instead of refusing it.
+        kind = type(finding["merged_into"]).__name__
+        return f"finding {n} field merged_into is {kind}, not text — it must name the surviving row's candidate_id"
     missing = [name for name in FINDING_FIELDS if not (finding.get(name) or "").strip()]
     if missing:
         return f"finding {n} missing {', '.join(missing)} — run mint_finding_ids.py and complete the record"

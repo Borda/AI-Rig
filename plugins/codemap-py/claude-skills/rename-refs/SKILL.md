@@ -72,12 +72,14 @@ Non-zero exit → print the helper's stderr unchanged; stop. It rejects: missing
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
+# Python-only: zero .py/.pyi → stop before index checks; scan-codebase would only write an empty index. node_modules pruned — ships node-gyp .py
+find "$(git rev-parse --show-toplevel 2>/dev/null || echo .)" \( -name .git -o -name .venv -o -name venv -o -name node_modules \) -prune -o \( -name '*.py' -o -name '*.pyi' \) -print -quit | grep -q . || { echo "! UNSUPPORTED — no .py/.pyi files: /codemap-py:rename-refs is Python-only. Stop: do not rename by hand."; exit 1; }
 python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/resolve_index_env.py" \
     --output-prefix "codemap-${_CM_PROJ}" 2>/dev/null  # timeout: 5000
 IFS= read -r PROJ < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-proj-${CSID}" 2>/dev/null || PROJ=""
 IFS= read -r INDEX < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-index-${CSID}" 2>/dev/null || INDEX=""
 [ -n "$PROJ" ] || { printf "! resolve_index_env.py failed — check Python availability and CLAUDE_PLUGIN_ROOT\n"; exit 1; }
-[ -n "$INDEX" ] || { echo "! index not found — run /codemap-py:scan-codebase first"; exit 1; }
+[ -n "$INDEX" ] && [ -f "$INDEX" ] || { echo "! index not found${INDEX:+ at $INDEX} — run /codemap-py:scan-codebase first"; exit 1; }
 _SMOKE_FILE="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-smoke-json-${CSID}"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/check_index_smoke.py" --index-path "$INDEX" > "$_SMOKE_FILE"  # timeout: 10000
 # python not jq — jq absent on stock Windows/CI; ok!=true (missing/corrupt index → {"ok":false,"stale":false}) or stale absent/null → unknown, never fresh
@@ -87,6 +89,10 @@ IFS= read -r STALE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-STALE-${CSID}" 
 printf 'STALE=%s\n' "$STALE"
 ```
 
+- Block exits 1 (`! UNSUPPORTED`, `! index not found`, `! resolve_index_env.py failed`) → stop the skill. Every `!` line routes by edit state, never by step number; in no case finish the rename by hand (grep, `Edit`, `git mv`), in any language:
+  - Before the first source edit (`Edit` or `git mv`) — Steps 0–3, incl. Step 3's `--remove-if-no-callers` stops, Step 4 before its first write, Step 5's pre-`git mv` checks — every `!` stop ends the run. Never read a stop as a gate to answer.
+  - `! BLOCKED — substitute …` (Step 2, Step 4c) is a placeholder self-check, not a stop: substitute the named value and re-run that block.
+  - After the first source edit, a `!` line never ends the run before the summary. Any Step 4 `!` after a file was written (e.g. `! BLOCKED — sym-path sentinel missing`, `! gen_deprecation_wrapper failed`) and any Step 6 `!` (e.g. `! BLOCKED — OLD_NAME sentinel missing`) → finish the Step 6 checks that still run, then go to Step 7 and print `⚠ Rename incomplete`, naming the files already edited. The re-scan `! codemap-py index --incremental failed` warning is advisory: continue Step 6 verification, then Step 7, and repeat the warning in Step 7's summary.
 - `STALE=true` → `AskUserQuestion`: (a) Proceed anyway (callers may be incomplete); (b) Abort (first re-run /codemap-py:scan-codebase). Abort → print "Run `/codemap-py:scan-codebase` then re-invoke"; stop.
 - `STALE=unknown` (JSON parse failed, `ok` not true, or `stale` absent/null) → print `⚠ Could not determine index freshness — proceeding but callers may be incomplete` and repeat it in Step 7's summary (a mid-run print can arrive as an empty progress update); continue cautiously, never treat fresh.
 
@@ -165,7 +171,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r SYM_MODULE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-sym-module-${CSID}" 2>/dev/null || SYM_MODULE=""
 IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${CSID}" 2>/dev/null || OLD_NAME=""
-[ -n "$SYM_MODULE" ] && [ -n "$OLD_NAME" ] || { echo "! BLOCKED — sym-module or OLD_NAME sentinel missing; re-run Step 2"; exit 1; }
+[ -n "$SYM_MODULE" ] && [ -n "$OLD_NAME" ] || { echo "! BLOCKED — sym-module or OLD_NAME sentinel missing; stop, then re-invoke rename-refs"; exit 1; }
 _T="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}"
 # rdeps of the module + every ancestor package: a re-export lives in an ancestor __init__.py, its users import the package
 _ITEMS='{"cmd":"list","args":["--limit","0"]}'; _M="$SYM_MODULE"
@@ -256,7 +262,7 @@ Before apply confirmation, resolve every known caller before any source edit: fo
   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
   _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
   IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${CSID}" 2>/dev/null || OLD_NAME=""
-  [ -n "$OLD_NAME" ] || { echo "! BLOCKED — OLD_NAME sentinel missing; re-run from Step 0"; exit 1; }
+  [ -n "$OLD_NAME" ] || { echo "! BLOCKED — OLD_NAME sentinel missing; stop, then re-invoke rename-refs"; exit 1; }
   grep -rnw --include='*.py' --include='*.pyi' --exclude-dir=.git --exclude-dir=.venv --exclude-dir=node_modules -- "$OLD_NAME" . | head -50
   ```
 - `REMOVE_IF_ZERO=true` AND `RDEP_COUNT == 0` AND `EXHAUSTIVE=true` AND `RDEP_HINT` empty AND no non-call hit AND `DRY_RUN=false` → `AskUserQuestion`: (a) Delete `$OLD_REF` — confirmed no callers; (b) Abort — keep file. Abort: stop. Delete: find-symbol line range, then `Read` block bounds. Verify `start_line` contains expected bare `OLD_NAME` or qualified `OLD_REF`; mismatch → print `! Symbol name mismatch at line <start_line>: expected <OLD_NAME>, index may be stale — run /codemap-py:scan-codebase first`; abort without delete. Only then `Edit`: remove definition from `def`/`class` through final body, including immediately preceding `@decorator` lines. Skip Steps 4a–4d. Print `ℹ Symbol had no callers — removed $OLD_REF without rename`; go Step 6.
@@ -369,7 +375,7 @@ IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${C
 IFS= read -r SYM_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-sym-path-${CSID}" 2>/dev/null || SYM_PATH=""
 IFS= read -r SYM_TYPE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-sym-type-${CSID}" 2>/dev/null || SYM_TYPE=""
 IFS= read -r DEPRECATE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-DEPRECATE-${CSID}" 2>/dev/null || DEPRECATE="false"
-[ -n "$OLD_NAME" ] || { echo "! BLOCKED — OLD_NAME sentinel missing; re-run from Step 0"; exit 1; }
+[ -n "$OLD_NAME" ] || { echo "! BLOCKED — OLD_NAME sentinel missing; source already edited — finish remaining Step 6 checks, then Step 7: ⚠ Rename incomplete"; exit 1; }
 _T="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}"
 _ALIAS=""; [ "$DEPRECATE" = "true" ] && _ALIAS="$SYM_PATH"
 if [ "$SYM_TYPE" = "method" ]; then
@@ -390,7 +396,7 @@ Before claiming completion, verify the renamed provider and every known caller w
 Print:
 
 ```
-[if any known consumer remains unresolved, any Step 6 residual is an unedited reference, or verification failed/unavailable]
+[if any known consumer remains unresolved, any Step 6 residual is an unedited reference, a post-edit `!` stop fired, or verification failed/unavailable]
 ⚠ Rename incomplete — M of N callers verified; R unedited reference(s) to <OLD_NAME>:
     <file>:<line>
   <remaining consumers, failed checks and next actions>

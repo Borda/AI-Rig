@@ -370,7 +370,7 @@ Extreme recall: X.XX (extreme problems excluded from mean_recall and verdict —
 ### A/B Comparison — specialized vs. general-purpose (AB mode only)
 | Metric            | Specialized | General | Delta  | Verdict   |
 |-------------------|-------------|---------|--------|-----------|
-| Mean Recall       | X.XX        | X.XX    | ±X.XX  | significant ✓ / marginal ~ / none ⚠ |
+| Mean Recall       | X.XX        | X.XX    | ±X.XX  | significant ✓ / marginal ~ / baseline-ahead ⚠ / inconclusive ? / no-lift ⚠ |
 | Mean F1           | X.XX        | X.XX    | ±X.XX  |           |
 | Severity accuracy | X.XX        | X.XX    | ±X.XX  | better ✓ / similar ~ / worse ⚠ |
 | Format score      | X.XX        | X.XX    | ±X.XX  | better ✓ / similar ~ / worse ⚠ |
@@ -378,7 +378,7 @@ Extreme recall: X.XX (extreme problems excluded from mean_recall and verdict —
 | Scope FP          | N           | N       | —      | pass/fail |
 
 *ΔRecall: specialist recall − general recall. SevAcc: severity match rate (±1 tier). Fmt: actionability score. Token ratio: specialist chars / general chars (below 1.0 = more focused). Scope FP: findings on out-of-scope input (0 = correct discipline).*
-Verdict: `significant` (delta_recall or delta_f1 > 0.10) / `marginal` (0.05–0.10) / `none` (<0.05)
+Verdict, first match wins: `significant` (delta_recall or delta_f1 > 0.10) / `marginal` (either ≥ 0.05) / `baseline-ahead` (either ≤ −0.05 — general agent beat specialist) / `inconclusive` (both arms mean recall ≥ 0.95 — ceiling, problems cannot separate arms) / `no-lift` (otherwise — measured below ceiling, no difference). For mixed-sign results, a positive delta ≥ 0.05 takes precedence: report `significant` or `marginal` as matched, and explicitly describe the negative metric delta as a trade-off; the verdict does not imply both metrics improved.
 
 ### Systematic Gaps (missed in ≥2 problems)
 ...
@@ -391,7 +391,7 @@ Write single-line JSONL result to `.reports/calibrate/<TIMESTAMP>/<TARGET>/resul
 
 `{"ts":"<TIMESTAMP>","target":"<TARGET>","mode":"<MODE>","mean_recall":0.N,"extreme_recall":0.N_or_null,"mean_confidence":0.N,"calibration_bias":0.N,"mean_f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"problems":<N>,"scope_fp":N,"verdict":"...","gaps":["..."],"source_mode":"dual|claude-only","scoring":"dual|single","scorer_agreement":0.N_or_null,"recall_trivial":0.N_or_null,"recall_low":0.N_or_null,"recall_medium":0.N_or_null,"recall_high":0.N_or_null,"recall_extreme":0.N_or_null,"recall_claude_problems":0.N_or_null,"recall_codex_problems":0.N_or_null,"generator_recall_delta":0.N_or_null,"severity_disputed_count":N,"codex_generation_failed":false}`
 
-**If AB_MODE is true**, append these fields to same JSON line: `"delta_recall":0.N,"delta_f1":0.N,"delta_severity_accuracy":0.N,"delta_format_score":0.N,"token_ratio":0.N,"scope_fp_general":N,"ab_verdict":"significant|marginal|none"`
+**If AB_MODE is true**, append these fields to same JSON line: `"delta_recall":0.N,"delta_f1":0.N,"delta_severity_accuracy":0.N,"delta_format_score":0.N,"token_ratio":0.N,"scope_fp_general":N,"ab_verdict":"significant|marginal|baseline-ahead|inconclusive|no-lift"`
 
 ### Phase 5 — Propose instruction edits
 
@@ -442,4 +442,4 @@ Return **only** this compact JSON (no prose before or after):
 
 `{"target":"<TARGET>","mean_recall":0.N,"extreme_recall":0.N_or_null,"mean_confidence":0.N,"calibration_bias":0.N,"mean_f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"scope_fp":N,"verdict":"calibrated|borderline|overconfident|underconfident","gaps":["..."],"proposed_changes":N,"source_mode":"dual|claude-only","scoring":"dual|single","scorer_agreement":0.N_or_null,"generator_recall_delta":0.N_or_null}`
 
-If AB_MODE is true, also include: `"delta_recall":0.N,"delta_f1":0.N,"delta_severity_accuracy":0.N,"delta_format_score":0.N,"token_ratio":0.N,"scope_fp_general":N,"ab_verdict":"significant|marginal|none"`
+If AB_MODE is true, also include: `"delta_recall":0.N,"delta_f1":0.N,"delta_severity_accuracy":0.N,"delta_format_score":0.N,"token_ratio":0.N,"scope_fp_general":N,"ab_verdict":"significant|marginal|baseline-ahead|inconclusive|no-lift"`

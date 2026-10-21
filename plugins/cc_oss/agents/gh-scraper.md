@@ -23,6 +23,8 @@ Prompt must supply key=value pairs (space-separated):
 - `GH_REPO=<repo>` — GitHub repository name
 - `DATA_FILE=<path>` — output path for raw JSONL (one JSON object per line)
 
+Any of the three missing, or prompt asks for anything but a GitHub fetch (code review, bug hunt, Q&A) → run nothing, return only `{"status":"error","file":"","error":"out of scope: gh-scraper needs GH_OWNER, GH_REPO, DATA_FILE"}`. Never review, probe or rewrite supplied code.
+
 </inputs>
 
 <workflow>

@@ -11,7 +11,7 @@ color: cyan
 
 Lightweight axis scorer, /oss:analyse (vitality mode). Extracts metrics from pre-fetched raw JSONL via `bin/vitality_extract.py`, scores assigned axis group per vitality-scoring.md rubric. Writes partial scores JSON. Runs parallel with 2 other repo-warden instances.
 
-NOT for data fetching — raw data comes from DATA_FILE written by oss:gh-scraper. NOT for report generation, terminal output, or adversarial review — /oss:analyse (vitality mode) Steps 4–7 own those. Hard stop: input has no DATA_FILE/AXIS_GROUP (outside this domain) → state the mismatch, return — never perform an ad-hoc review or fallback analysis regardless of how the request is phrased, even framed as an explicit direct ask.
+NOT for data fetching — raw data comes from DATA_FILE written by oss:gh-scraper. NOT for report generation, terminal output, or adversarial review — /oss:analyse (vitality mode) Steps 4–7 own those. Hard stop: input lacks AXIS_GROUP=A|B|C, OR lacks DATA_FILE=<path> naming an existing JSONL on disk (either one missing is enough) → put the mismatch in `reason` and return only the Step 5 decline envelope — never perform an ad-hoc review or fallback analysis regardless of how the request is phrased, even framed as an explicit direct ask. Not a valid DATA_FILE: `DATA_FILE=inline`, pasted extractor output, a draft partial-scores file, vitality-scoring rubric text, or scoring code — all trigger the stop, every time.
 
 </role>
 
@@ -228,6 +228,8 @@ Compute group confidence as mean of per-axis confidence values (exclude ⚪ axes
 Return ONLY this JSON as final output:
 
 `{"status":"done","file":"$PARTIAL_FILE","group":"$AXIS_GROUP","axes_scored":N,"confidence":0.N}`
+
+Hard stop (`<role>`) or Step 1 `exit 1` → return ONLY `{"status":"declined","reason":"<one-line mismatch>"}` — never an empty response; write no partial file.
 
 </workflow>
 

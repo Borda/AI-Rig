@@ -1,115 +1,70 @@
 # Changelog
 
+## 0.29.1
+
+- `/research:verify` rates a changed training budget or schedule duration as a HIGH protocol mismatch and judges setting differences by their effect rather than numeric ratio; MATCH rows leave Severity blank.
+- `research:data-steward` reports engineering hygiene at Info while silent record loss or duplication stays High, and an out-of-domain reply keeps its required Confidence block; `research:data-steward`, `research:scientist` and `/research:verify` examples now use neutral generic wording.
+- `/research:fortify` rejects unrelated positional input before source-run lookup, and ablation variant ids are ASCII slugs so worktree selection and revert lookup agree.
+- `/research:retro` renames the `timeout-as-revert` anomaly to `unreliable-timeout`, reports an automatically adjusted threshold without suggesting a re-run, and rates every dead window MEDIUM; `/research:judge` shows unverified checks in the terminal summary as well as the report.
+- `/research:run` accepts a dry-run or walkthrough of a campaign and requires a text goal to name a measurable target; `/research:sweep` stops terminally on a non-optimization goal; `/research:plan` routes hard goal constraints to `guard_cmd`.
+- The shared file-handoff protocol adds an `unsupported` decline status that orchestrators surface as a routing miss instead of a timeout.
+
 ## 0.29.0
 
 - Narrow broad `find`, `node`, `claude`, and `sed` allows while retaining scoped read-only rules and broad `eval`/`python` for existing recipes; ad-hoc commands outside shipped blocks now prompt unless a narrower rule covers them. Setup removes the old broad entries from `settings.json`, including an identical entry added by hand.
-
 - Shared keep-state and codemap helpers reject unsafe sentinel slugs or session IDs before changing state, while codemap keeps its documented `shared` session fallback.
-
 - `/research:setup` validates the merged `settings.json` with `python -m json.tool` instead of `jq`, so setup no longer stops (or restores the backup over a good merge) on machines without `jq`, such as native Windows.
-
 - The Docker sandbox binds the project with `--mount` instead of `-v`, so a project path containing `:` or `,` mounts the right directory; it runs as the invoking uid:gid on POSIX, so files written to `.experiments` are no longer root-owned on Linux, and verify mode creates `.experiments` when missing. Upgrading on Linux: if earlier root-run sandboxes left `.experiments` root-owned, verify mode prints a warning naming the fix, `sudo chown -R "$(id -u):$(id -g)" .experiments`.
-
 - Sentinel-writing scripts (`check_output_within_root.py`, `codemap-flag.py`, `resolve_shared.py --persist`, `find_judge_verdict.py`, `fortify_next_variant.py`, `parse_kaggle_args.py`) exit 2 on a sentinel slug or session id outside `[A-Za-z0-9._-]` or containing `..`, so a crafted value can no longer write outside the temp directory; `resolve_shared.py --persist` also replaces a symlink planted at its sentinel path instead of writing through it.
-
 - `parse-skill-flags.py` no longer drops a `--keep` value whose quotes the shell consumed when the host substituted `$ARGUMENTS` (`--keep "a b"` used to arrive as `--keep a b` and persist an empty keep list); it now also accepts `--keep 'a b'` and `--keep="a b"`, strips a dangling `--keep` from `CLEAN_ARGS`, and warns on stderr when the value was unquoted or empty, so a lost compaction keep list is visible instead of silent.
-
 - Every research skill that spawns agents now arms a per-agent deadline file and runs the new `bin/agent_watch.py` once per wake-up (`_shared/agent-resolution.md` §Agent waits); `/research:verify` loads that doc too. A stalled agent is reported ⏱ `timed_out` at the next wake-up instead of relying on a prose 15-minute deadline.
-
 - `/research:run --team --hypothesis <path>` now feeds the user's hypothesis queue into team Phase B queue assembly beside the axis hypotheses; before, team mode never read that file, so the supplied queue was silently ignored.
-
 - Research sentinel writers (`check_output_within_root.py`, `codemap-flag.py`, `find_judge_verdict.py`, `fortify_next_variant.py`, `parse_kaggle_args.py`) create each `${TMPDIR}` sentinel fresh with mode 0600 through the new `bin/_sentinel_io.py`, so a symlink another local user planted at the predictable name is replaced instead of written through.
-
 - `/research:topic` team consolidator prompt now tells the agent not to call TaskCreate/TaskUpdate, matching the teammate prompts.
-
 - `/research:judge` and `/research:topic` parse flags and `--keep` with `parse-skill-flags.py --keep-state` instead of `extract-keep-flag.py` plus `eval`: one process fewer per skill start, `--inlined` still protects sweep's contract when judge runs inside sweep. `/research:plan`, `/research:retro`, `/research:verify` and `/research:fortify` read parsed flags back from per-session sentinels instead of running `eval` on script output; fortify's parse uses its own `fortify-args` prefix, so the validated `--venue` sentinel is never overwritten. `parse-skill-flags.py` gains `--keep-state`, `--out-file` and `--inlined` (synced from oss), which also clears the `retro` documented-`--keep` flag-drift finding.
-
 - `/research:plan` prints `→ profiling <file> under cProfile (≤600 s) — runs the script` before profiling a file, so it is visible that the user's script is about to execute; without the foundry plugin, plan now runs the architecture and solo perf reviews as `general-purpose` per its loaded `agent-resolution.md` instead of skipping them, so the advisory block is no longer empty on a research-only install.
-
 - `resolve_shared_path.py` without a registry or cache hit uses a cwd-relative `plugins/<dir>/...` tree only inside that plugin's own source repository (its `.claude-plugin/plugin.json` names it); elsewhere it exits 1 with a `!` message, so a repository under analysis can no longer supply the codemap-py contract or the foundry compaction gate path.
-
 - `resolve_shared.py` and `load-agent-reference.py` without an installed research plugin read the cwd-relative `plugins/cc_research` tree only when the working directory is the research source repository (its `plugins/cc_research/.claude-plugin/plugin.json` names `research`). Elsewhere `resolve_shared.py` exits 1 with a `!` message, flags or not, and `load-agent-reference.py` skips that tree for the installed cache and blocks when there is none, so a repository under analysis can no longer supply research protocol docs or agent reference fragments.
-
 - `heal_git_artifacts.py worktrees` keeps unregistered directories unless `--include-orphans` is passed, re-checks one right before deleting it, reports symlinked children as skipped and rejects a `*` managed prefix. The `fortify` post-loop sweep now passes `--managed-prefix 'variant-' --include-orphans`, so it still removes leftover variant dirs and nothing else under its variant root.
-
 - `/research:kaggle` Step 1 lists the competition files and leaderboard and downloads the sample submission in one command, one turn fewer. A download failure now surfaces together with the listing result.
-
 - `fortify` measures every variant `--runs N` times (default 3, range 1–10, so cost scales with N) and classifies each ablation against `max(noise floor, 2σ of the difference)` using the new `bin/fortify_metric_stats.py`. An effect inside that threshold is `BORDERLINE` instead of `MARGINAL`, a removal that improves the metric by up to 5% is `NEUTRAL`, and the full variant must reproduce the source run's best metric within 2% (widened to 2σ) or fortify aborts as `diverged`. `SANITY_DIVERGENCE_PCT` and `NOISE_FLOOR_PCT` override the tolerances.
-
 - `fortify` runs the full variant first, anchors worktree paths and verifies the worktree before reverting, orders reverts topologically, propagates metric and guard exit codes, rejects unsafe variant names, retries a stale worktree once, and is `BLOCKED` on a text-goal run with no program file.
-
 - `judge` runs 16 checks: new C13 flags a `scope_files` overlap with the metric or guard scripts, new C9b validates `metric_repeats` and `min_delta_pct` and adds a low advisory (never a Required Change) when a `perf` or `ml` program measures one sample per iteration, `{field}` tokens in `## Config` are flagged high and their commands skipped instead of substituted, a Colab-compute run skips the dry run with a medium finding, and a methodology review that timed out no longer forces `NEEDS-REVISION` when the review completed.
-
 - `run` Phase 3 enforces iteration scope with the new `bin/check_iteration_scope.py`: an iteration that edits files outside `scope_files` or the metric/guard scripts is restored and recorded as `scope-violation`, and an agent self-commit is folded back so exactly one commit is measured. New statuses `commit-failed`, `scope-violation`, `sandbox-failed` and `codex-no-op`.
-
 - `run --hypothesis <path>` consumes a JSONL queue with no oracle spawn: one entry is popped per iteration, progress is checkpointed, and normal ideation resumes when the queue is exhausted.
-
 - `run --resume` takes only runs with status `running`, restores the saved flags, sandbox, Colab and clarification settings, re-runs `--keep` and codemap parsing, reuses the existing hypothesis file, and skips tried hypotheses by id. A branch that no longer contains `best_commit` is refused; team runs dispatch to the team mode.
-
 - `run` reworks a failed guard by amending the one iteration commit, persists `sandbox_network` and the verify timeout, applies escalation proposals as their own iterations, shows the Colab code-identity check before the baseline, and states the real docker quotas (`--cpus 2 --memory 2g --pids-limit 512`).
-
 - `verify` fences the paper text with the new `bin/fence_untrusted.py` and tells the scientist to treat it as data only; a paper with no checkable claims reports `NO VERIFIABLE CLAIMS` with a null fidelity.
-
 - `retro --compare` applies the same truncation rule to the second run and stops with `Cannot compare runs with different metrics` on a metric mismatch between runs that record `config.metric_cmd` (runs started before `run` persisted its `config` only warn); `--keep` is no longer parsed.
-
 - `topic` runs team mode as background spawns with file handoff, keeps the `--keep`-stripped topic for search and headings, and offers `/research:topic plan` as the follow-up.
-
 - `kaggle` checks file-listing exit codes, warns at 200 listed rows, extracts downloads with `python -m zipfile`, and keeps the `--offline-setup` choice across resume.
-
 - `setup` probes `jq` before touching `settings.json`, leaves it unchanged when the permissions merge fails, restores the backup only when the written file no longer parses, and checks only the bare `python` command.
-
 - `find_run_id.py --match-program` compares real paths; five new test files cover `detect-complexity`, `gate-on-sentinel`, `load-agent-reference`, `require-vars` and `resolve-anti-overwrite-path`.
-
 - New `bin/compaction_boundary.py`: the `topic`, `kaggle`, `judge`, `fortify`, `run` and `sweep` compaction boundaries now make one call that prints the contract's Boundary step and the foundry compaction-gate decision, and continue with a plain notice when foundry is not installed instead of failing.
-
 - `resolve_shared_path.py` rejects an absolute (`/etc`) or empty-segment (`skills//_shared`) subdirectory and a plugin name with a trailing newline, which could resolve to a path outside the plugin install. It also reads its own plugin name from `plugin.json`: in the installed cache the directory name is the version number, so the own-plugin lookup never matched there.
-
 - `extract-keep-flag.py` no longer clears a compaction contract that another session owns or that an inlined `--keep` already wrote (for example a running sweep), so a parallel session's resume state survives. It also validates the slug and session ID and writes its sentinels atomically.
-
 - `extract-keep-flag.py` refuses a keep sentinel another user already owns (exit 1 with an error naming the file) and creates a missing `--out-file` state directory with mode 0700; `codemap_resolve.py` leaves another user's codemap currency sentinel untouched instead of replacing it. Sentinel names are unchanged.
-
 - `verify_blueprint_audit.py verify` reports an audit-log line nested deeper than Python's recursion limit as a damaged line, like invalid JSON, instead of crashing the whole check.
-
 - The report-delivery hook recognises a `/research:topic` follow-up question that offers `/research:topic plan` as that workflow's own gate, so its report path, title and header-table checks apply instead of being skipped.
-
 - `bin/resolve_shared.py` gains `--persist` and `--emit`: the eight Agent Resolution blocks resolve the shared directory in one call that verifies each named document and exits 1 with `! Plugin path resolution failed` or `! <doc> not found`, where the old empty-value guard could never fire.
-
 - New `bin/revert_iteration_commit.py` replaces the two inline revert-guard blocks in `run` Phase 5 and Phase 7, and new `bin/codex_state.py` (`read`, `bump --outcome noop|productive`) replaces the Codex counter forks; a malformed counter file now warns on stderr instead of reading as 0 silently.
-
 - `run` and `plan` resolve their own skill directory from `${CLAUDE_PLUGIN_ROOT}` without the cache glob, and `judge`, `verify`, `retro`, `fortify` and `run` build report paths with `resolve-anti-overwrite-path.py` in a fenced block instead of an improvised loop.
-
 - Nine `--keep` contract writers across six skills (`kaggle`, `fortify`, `topic`, `sweep`, `judge` and `run`) pass `--keep-sentinel <name>`, and `/research:setup` merges allow and deny rules through `merge_settings_permissions.py` in one call that reports `dropped` for the obsolete rule.
-
 - `retro` prints `retro_result` and `effect_r` (the effect-size step was invisible), and its three setup blocks are one, which also fixes an empty `RUN_ID_ARG`; `judge` persists `SKIP_VALIDATION` so it no longer reads false in a fresh shell; `verify` prints `CODEMAP_RAW`; `run` prints `CHANGE_LINES` and the sandbox network and verify-timeout values.
-
 - `fortify` setup runs in four blocks instead of eight and still stops on an invalid venue; `sweep` loads only the plan sections it runs.
-
 - `data-steward` probes foundry once in the acquisition sidecar load and echoes the result; `fortify`, `judge`, `kaggle` and `retro` drop tools they never use.
-
 - `run` writes the parsed program into `state.json` `config` (metric and guard commands, `metric.direction`, scope, compute, strategy, iteration ceiling) instead of an empty `{}`, so `/research:fortify` finds the campaign's metric and guard without `METRIC_CMD`/`GUARD_CMD` overrides and `/research:retro` tests a lower-is-better metric in the right direction. A text goal records its auto-detected commands and prints the inferred direction; `retro` warns when an older run records no direction instead of silently assuming `higher`.
-
 - `run` accepts `metric_repeats` (1–10, default 1) and `min_delta_pct` (default 0.1) in `## Config`: above 1, the baseline and every iteration measure the metric that many times, each run under its own verify timeout, and a change is kept only when its mean gain beats `max(min_delta_pct, 2σ of the difference)` — the noise model `fortify` uses. New `bin/run_metric_stats.py` tracks the runs and makes the keep decision; metric cost scales with `metric_repeats`, and the default keeps the single-sample behaviour. `plan` writes both keys into new programs.
-
 - `run`'s revert guard stops with `! BLOCKED` instead of silently skipping when `HEAD` is another iteration's experiment commit, so a mistyped iteration number in the Phase 4 subject no longer keeps a change the loop decided to revert.
-
 - `run` and `fortify` stop with `! MISSING — jq not on PATH` before reading `state.json`, instead of misreporting a missing `jq` as an unreadable `state.json` or a `.config` without metric commands.
-
 - `verify` prints the plugin's untrusted-content protocol (`skills/_shared/untrusted-content.md`: fresh-token fence, neutralised end markers, data never instruction) with its other startup docs, so the lead applies the rule its scientist prompt already states.
-
 - `data-steward` loads its web-explorer handoff protocol with one `resolve_shared.py --emit` call; the old two-step form read an unset variable and failed with `cat: /file-handoff-protocol.md`.
-
 - `sweep`'s mid-loop contract refresh also aborts on an unsubstituted `<MAX_REFINE>`, which could otherwise land verbatim in the compaction contract.
-
 - `plan --team` no longer appends a `## Team Mode Notes` section it had no data to fill, and no longer prints the whole run team-mode file; it still says `--team` applies at run time and warns when the team mode is missing.
-
 - `run --colab` no longer claims the ideation agent can prototype through Colab MCP — no ideation agent has that tool; Phase 5 measures through it.
-
 - Helper hardening: `fix_jupytext_blank_md.py` skips a file outside the working directory, `retro_analyze.py` streams its JSONL and rejects one over 64 MiB, `compute_effect_size.py` rejects stdin over 1 MiB, `read_state_field.py` refuses a state file over 16 MiB, `verify_patient_split.py` reads only the identifier column, `fortify_next_variant.py` streams its ledgers, and `load-agent-reference.py` picks the newest non-orphaned cached version instead of walking the whole plugin cache.
-
 - `resolve_shared_path.py` no longer executes a `plugins/<dir>/bin/get_plugin_install_path.py` found in the working directory; it runs the helper shipped beside itself and ignores a registry `installPath` outside `~/.claude/plugins/cache/borda-ai-rig`.
-
 - `blueprint-manifest.json` is regenerated with the allowlist gate: 685 of the 707 entries the previous gate admitted stay auto-allowed, including the `fortify` `bash -c "$METRIC_CMD"` and `"$GUARD_CMD"` blocks, the `kaggle competitions list` check and the setup blocks that `cp`. Three blocks are left out and prompt: the `kaggle` block that runs `kaggle competitions download`, which writes data files, and the two `judge` blocks whose command word is the `${metric_cmd}`/`${guard_cmd}` placeholder the model fills in.
-
 - The bundled `blueprint-allow.js` refuses a manifest hit that hides a destructive command behind a `case` arm label or inside a function definition (`case x in a) rm -rf /;; esac`, `f() { rm -rf x; }`), which it let through before.
 
 ## 0.28.7

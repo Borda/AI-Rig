@@ -60,7 +60,7 @@ NOT for: structural queries (use `/codemap-py:query-code`); standalone index reb
 
 ## Step 1: Resolve mode
 
-Parse `$ARGUMENTS` case-insensitively: empty or starts `audit` → audit; `plan` → plan; `apply` → apply; `sync` → sync; `demo` → demo. Otherwise print `! Unknown mode '<first token>'. Modes: audit, plan, apply, sync, demo — re-invoke with one of them.` and stop. Never AskUserQuestion here: five modes exceed the four-option cap.
+First, if the request is a structural query (callers, callees, imports, symbol lookup) or a standalone index rebuild, print one line naming the owning skill (`/codemap-py:query-code` or `/codemap-py:scan-codebase`) and stop — never answer, investigate, or run the query here; `demo`'s own smoke query is the only structural query this skill runs. Otherwise parse `$ARGUMENTS` case-insensitively: empty or starts `audit` → audit; `plan` → plan; `apply` → apply; `sync` → sync; `demo` → demo. Otherwise print `! Unknown mode '<first token>'. Modes: audit, plan, apply, sync, demo — re-invoke with one of them.` and stop. Never AskUserQuestion here: five modes exceed the four-option cap.
 
 ## Step 2: Run the mode
 

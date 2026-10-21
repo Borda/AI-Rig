@@ -1,6 +1,6 @@
 <!-- file: review-checklist.md — consumers: review/SKILL.md (REVIEW_CHECKLIST binding: Agent 1 brief, Step 5 consolidator) -->
 
-<!-- policy-sibling: plugins/cc_oss/skills/review/checklist.md — local-diff fork: PR/issue-linkage HIGH patterns intentionally absent; sync the shared patterns and rules both ways -->
+<!-- policy-sibling: plugins/cc_oss/skills/review/checklist.md — local-diff fork: PR/issue-linkage HIGH patterns intentionally absent; the oss blocking bucket's `[blocking]`-tag admission and its `[blocking]` clause after the test-gap ceiling intentionally absent (develop has no Block-tier catalogue); Annotation-completeness taxonomy reference oss-only; sync the shared patterns and rules both ways -->
 
 # Review Checklist
 
@@ -14,6 +14,10 @@
 
 - Missing input validation on external HTTP input (not MEDIUM)
 - Non-atomic registry/store update: in-memory index + filesystem op without temp-then-rename pattern. Look for: `save_index()` + `shutil.copytree()`, `delete from dict` + `os.remove()`, or any two-phase commit without temp-then-rename
+
+## MEDIUM Patterns (default anchor)
+
+- Documented-contract or docstring-promise violation (wrong returned value, ignored parameter, ordering or state not maintained as documented) with no CRITICAL/HIGH pattern above → MEDIUM. Raise to HIGH only with cited evidence of wider impact: `imported_by` tier moderate/high (≥5 importers), an unhandled exception on the main path, or a HIGH pattern match. Importer count unknown → stays MEDIUM.
 
 ## Consolidation Rules
 

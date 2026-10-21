@@ -182,7 +182,7 @@
     },
     "09d37a26da5606e79d10d83126aa839004a306d96e9d9c30d432e2bfd099176a": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:157"
+      "src": "agents/perf-optimizer.md:158"
     },
     "0a1689e43dd1d6aa8ac06746022fbf14d0c6b07872ce5d3c0ad3bfb061dfcd2f": {
       "kind": "command",
@@ -386,7 +386,7 @@
     },
     "13103ceb712530d8967febe68e7d8d9262d3391291bcc941a789f01c4cee56ad": {
       "kind": "command",
-      "src": "agents/qa-specialist.md:228"
+      "src": "agents/qa-specialist.md:230"
     },
     "134307374bf27035b0173f82b26f81695bdf6fb96aad454572cbfc7834643e81": {
       "kind": "command",
@@ -510,7 +510,7 @@
     },
     "19bc020c92fa38a785891a3713f3c899f051cbf5ae8d8a105d685785412ae72e": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:157"
+      "src": "agents/perf-optimizer.md:158"
     },
     "1a27239ed52bd461ca57ba3ee1bc6043d616c7902580fbc2961e655799034f3a": {
       "kind": "command",
@@ -710,7 +710,7 @@
     },
     "2271aded2bb2ba68100df83bd157627ff0553ab7d5fabe59f905064ed620043b": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:208"
+      "src": "agents/perf-optimizer.md:209"
     },
     "2367679338e67a825c3ab40e7664af13f66fc73f3c28f8577ce5bb68ddaeb0b0": {
       "kind": "block",
@@ -790,7 +790,7 @@
     },
     "269a0546cdf6bc486ea64345ca51a67cdcb6366660be20077fb6ea42e53281af": {
       "kind": "command",
-      "src": "agents/doc-scribe.md:175"
+      "src": "agents/doc-scribe.md:176"
     },
     "26a6404215df9324dec17bd7dd5325e0abdee01e79ac3cd3ae68767a0c0b501f": {
       "kind": "command",
@@ -938,7 +938,7 @@
     },
     "2d832f9807ec4e9b4d842dc0228c6e414f9015660edd84de76acdde4c00af995": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:208"
+      "src": "agents/perf-optimizer.md:209"
     },
     "2dad851fc1764b22cd29a2d1478e274d3038a201363bcacb0847cf784295ab8a": {
       "kind": "command",
@@ -1194,7 +1194,7 @@
     },
     "3aa21961a53973c3e6aa3589e5b493267169903fefee2aa79c01935149992fb6": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:208"
+      "src": "agents/perf-optimizer.md:209"
     },
     "3b2fe39feecef5df990f1b41e42f87faf6f9839d05d6fded821ff765c33bb9b1": {
       "kind": "command",
@@ -1378,7 +1378,7 @@
     },
     "44aa9d64636826d09bee7abd82aa36c5a31fac8a6ead7bdb29dae70de7e92638": {
       "kind": "block",
-      "src": "agents/qa-specialist.md:228"
+      "src": "agents/qa-specialist.md:230"
     },
     "44b3298ab6eedac7ccb6a6ad3d9304625be4a5b638439a74d2df559634f1e8d9": {
       "kind": "command",
@@ -1442,7 +1442,7 @@
     },
     "47b80afe1c1754793f824fdb2495ff67995715dea3f9326afa65ba237c469e51": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:208"
+      "src": "agents/perf-optimizer.md:209"
     },
     "47d6d1b4893990410eca10257aec6ae08ec3d735608b09a88822b5080c4d4e99": {
       "kind": "command",
@@ -1478,7 +1478,7 @@
     },
     "49631ba77d21180b1924169dc6551203cf0e0f578598f09b5f3ec7d9e7240085": {
       "kind": "command",
-      "src": "agents/challenger.md:49"
+      "src": "agents/challenger.md:50"
     },
     "497ac3b82fc19bd52c76ec6d4669d0fecae2882ba41882276680520c830ced8e": {
       "kind": "command",
@@ -1634,7 +1634,7 @@
     },
     "51259a4350a3b8de1cac5eb9d11b0a4049f11911a8e7b99e3907f1af891e1e5e": {
       "kind": "command",
-      "src": "agents/doc-scribe.md:175"
+      "src": "agents/doc-scribe.md:176"
     },
     "514bddb2ba2121c5f26a92c0da2ea5b5d92a45a138e17d3184f256a7b048f711": {
       "kind": "command",
@@ -1650,7 +1650,7 @@
     },
     "5211d36cd44c3301a536c4145b9449df6a381a8646219c9986a4add8f8ab8da8": {
       "kind": "block",
-      "src": "skills/manage/SKILL.md:121"
+      "src": "skills/manage/SKILL.md:123"
     },
     "521deb9876c10c6e9db98f45a40373489881277c0c231dd041cf7aa78248bef7": {
       "kind": "block",
@@ -1678,7 +1678,7 @@
     },
     "53894800fa77973f1b53a19a857d141b78a2f4c498fe05a6aa7c7c9a3e154637": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:287"
+      "src": "agents/perf-optimizer.md:288"
     },
     "53c12eb946042ae3b9ba989052cf85e8cb2a0f8502c61b3f8429f78013cfc459": {
       "kind": "command",
@@ -1770,7 +1770,7 @@
     },
     "5727d7041fdb22e1114fb8222344122b12739a8a3f7271d634f31eb0b5c2c4aa": {
       "kind": "block",
-      "src": "skills/manage/SKILL.md:213"
+      "src": "skills/manage/SKILL.md:215"
     },
     "574f40521f7e300d177b2c8c486a44877f74c4d1e0977b30d9bb70617edf2e88": {
       "kind": "command",
@@ -1874,7 +1874,7 @@
     },
     "5bcd5cfd935936423005fdbd898adc4760946238f8bf9e75358b5e8eb2109cba": {
       "kind": "command",
-      "src": "agents/challenger.md:49"
+      "src": "agents/challenger.md:50"
     },
     "5bd050b60d2efd480f5049949b03052792999da680bd3dbf6cb22da267ed8d09": {
       "kind": "command",
@@ -1926,7 +1926,7 @@
     },
     "5d7d66994c994df12c36ea9b25f3fe740d1d4b7a4fb5c3961bc62cac846f72eb": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:208"
+      "src": "agents/perf-optimizer.md:209"
     },
     "5dae4e520f7205da9e4ba2984a81255803ece29a78dd90b99d1d35862a7036aa": {
       "kind": "command",
@@ -1946,7 +1946,7 @@
     },
     "5e49366e9d76a5594ecf8e482ee45d0b0f4aab9e48c1d6b1d6e60ef12d01e120": {
       "kind": "command",
-      "src": "skills/manage/SKILL.md:213"
+      "src": "skills/manage/SKILL.md:215"
     },
     "5e5f3e5876fe219801e284921ffb72bc23c8e8f8770ca1ff1186265e27d8716e": {
       "kind": "command",
@@ -1998,7 +1998,7 @@
     },
     "60184aeecd804fc9ae7386603185d76bd85d2b3f3d13f3b8a6aad697520c6002": {
       "kind": "block",
-      "src": "skills/manage/SKILL.md:323"
+      "src": "skills/manage/SKILL.md:325"
     },
     "602300068137f157bcb57780a76583b21f6adebde8d73840a0169518e73531e4": {
       "kind": "command",
@@ -2018,7 +2018,7 @@
     },
     "612628213086e511304038240c27d0a8933defa5739ed197d4060baddaae3a3f": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:287"
+      "src": "agents/perf-optimizer.md:288"
     },
     "614f40365846d52111749b54ea1a929a43381d0d708634a87180633eb567cc8f": {
       "kind": "command",
@@ -2106,7 +2106,7 @@
     },
     "650f08f17a687f27ba0eec7f44ba9ff66605551245505a2a7ae64eeb22244c8f": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:208"
+      "src": "agents/perf-optimizer.md:209"
     },
     "65219f2364d658fcff1947dbdcab1c8dae4b8f0fe2c4f2dccdb0b4ac182c2970": {
       "kind": "command",
@@ -2130,7 +2130,7 @@
     },
     "656cc0d967cdb06d058518eecc593de27a69376c612fe50bec89f451e339eaf7": {
       "kind": "command",
-      "src": "agents/solution-architect.md:73"
+      "src": "agents/solution-architect.md:89"
     },
     "65fca591ad7ea6e75c7aa204e4c5c53ecaa22fba5556f29e3e3d78b6ab38d45e": {
       "kind": "command",
@@ -2242,7 +2242,7 @@
     },
     "6b57829fd6d3570c4615c076db073ce96031adeaa7c8232ff53bc1603a64812d": {
       "kind": "command",
-      "src": "agents/qa-specialist.md:228"
+      "src": "agents/qa-specialist.md:230"
     },
     "6b9a44da68079e7b5c97fb704171187fce400ac00a99a18c6a38d6cce66aaa80": {
       "kind": "command",
@@ -2254,7 +2254,7 @@
     },
     "6bdfd3eb64b80ab5418e71ca1584c56d6e89cb3a9e4e4bc40b8b6e26a704eda5": {
       "kind": "command",
-      "src": "agents/doc-scribe.md:175"
+      "src": "agents/doc-scribe.md:176"
     },
     "6c6a12a5d45c5ed3f3ad40da6049fa9747d3fecb8468bbc3f8573eb3003caefc": {
       "kind": "command",
@@ -2266,7 +2266,7 @@
     },
     "6c8a9e9b6503a0b46f29c058c29e9f9941ffd5585b5d1a31404afd2df8e908ff": {
       "kind": "command",
-      "src": "agents/challenger.md:49"
+      "src": "agents/challenger.md:50"
     },
     "6cad7abb2ee8f2098cff89a2749d4a0d60f702886f554f32df9c76294d949ec5": {
       "kind": "command",
@@ -2350,7 +2350,7 @@
     },
     "70672116db916a22ba878501c1952d470c4de46617929a13b9ae84f4d30c4aa8": {
       "kind": "command",
-      "src": "agents/doc-scribe.md:175"
+      "src": "agents/doc-scribe.md:176"
     },
     "708a35b8d8ff2948cab4e822229bfc914f29cbf810396600411c3f15f8960769": {
       "kind": "command",
@@ -2414,7 +2414,7 @@
     },
     "742c96ade916e4b89570edb6ddc75d6ca8471872d556d101f159a1898960959c": {
       "kind": "block",
-      "src": "agents/doc-scribe.md:175"
+      "src": "agents/doc-scribe.md:176"
     },
     "749c4a3bae0f39deba37565f962d6323864651ec69ae59e15a0f60317feb4c42": {
       "kind": "command",
@@ -2542,7 +2542,7 @@
     },
     "7a58d40414be9a383ac4df28e11833a101bed6ef7e4c972b2a35c9b06db19d04": {
       "kind": "command",
-      "src": "agents/challenger.md:49"
+      "src": "agents/challenger.md:50"
     },
     "7a79289cd7a337cb2dc70ec33612cbc16cc8e7090eb4b49f5909c2568559ae1a": {
       "kind": "command",
@@ -2566,7 +2566,7 @@
     },
     "7d22e7f7e68588164e8276bf268c4bb57b7b1b503bf13ce567c4abcbde5f7667": {
       "kind": "command",
-      "src": "skills/manage/SKILL.md:213"
+      "src": "skills/manage/SKILL.md:215"
     },
     "7d3562c81b6442e1134e5923f47d347d17b4b2d818eed156d613118a90ec7d7b": {
       "kind": "command",
@@ -2646,11 +2646,11 @@
     },
     "801e7c24ca5f9635b777b918ae459e41376ee5af4896a4739a2eee9a6a110fa5": {
       "kind": "command",
-      "src": "agents/challenger.md:49"
+      "src": "agents/challenger.md:50"
     },
     "80607e75ea589e4c5edff5bde231e71db9c40a2fbb9046748ff78c2165b52ca5": {
       "kind": "block",
-      "src": "agents/solution-architect.md:73"
+      "src": "agents/solution-architect.md:89"
     },
     "811fccc2118c3b956ff086815784bcdd407fd9ccb9dd7b5f3bba0c19e90953ce": {
       "kind": "command",
@@ -2742,7 +2742,7 @@
     },
     "85672d85075019d08a24ba7c91950d43be204e6fb3c414d8b6b2bc9db67618b4": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:157"
+      "src": "agents/perf-optimizer.md:158"
     },
     "857163b6ba680201f96dfdee82af950e19d397e0c3064a670baa8501769f953a": {
       "kind": "command",
@@ -2778,7 +2778,7 @@
     },
     "864dfb26ed734681c91726b730acd266b7533c73b7ffd38d5b27bf70d5b3e57d": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:208"
+      "src": "agents/perf-optimizer.md:209"
     },
     "86c936951249f8f7e5e8ce034a5bff08280292b368c350907482ca200fda5cb6": {
       "kind": "block",
@@ -2822,11 +2822,11 @@
     },
     "88f33c8effc8a0a04465de594c8711be2efb05040d5846c471da05bc3c62bd02": {
       "kind": "command",
-      "src": "agents/challenger.md:49"
+      "src": "agents/challenger.md:50"
     },
     "891a30fed6be0aef224586d6756a5706d96669e42820d345855fe246b8f3a07e": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:208"
+      "src": "agents/perf-optimizer.md:209"
     },
     "8933937d04ef65f826c732d50a85c8700aecfe61dd507e9dd0373007dfe0ee7d": {
       "kind": "command",
@@ -2866,7 +2866,7 @@
     },
     "8bb089214aa77887e678cc4af79f1a696c74e65fcc08ee53e2ed7ed445d79c6e": {
       "kind": "command",
-      "src": "skills/manage/SKILL.md:323"
+      "src": "skills/manage/SKILL.md:325"
     },
     "8bfbb5a706463672dbb345d21577c8f1e729a64e6f94f5365120deca0d6ec570": {
       "kind": "command",
@@ -3002,7 +3002,7 @@
     },
     "911707a38fb8e52d46580146935f8fa38936290b2e804471927670d816d815b6": {
       "kind": "block",
-      "src": "skills/manage/SKILL.md:265"
+      "src": "skills/manage/SKILL.md:267"
     },
     "911e7a2b2f2c81d06464d5df0051007e82a01ad1167c6219d14f172e515a489d": {
       "kind": "command",
@@ -3026,7 +3026,7 @@
     },
     "91f2e0c524f48622d84ed02383f277a465a0d5977b3755b071be5694813748c0": {
       "kind": "command",
-      "src": "agents/challenger.md:49"
+      "src": "agents/challenger.md:50"
     },
     "928a503bc36618b17d482abe913ceff6ca5c33d7170d276e3e7da6f580f7cbaa": {
       "kind": "command",
@@ -3118,7 +3118,7 @@
     },
     "9627e5dfa67cec3f5234f642c148395eee4e6dc8acf29a03dc85337455c6452c": {
       "kind": "block",
-      "src": "skills/manage/SKILL.md:144"
+      "src": "skills/manage/SKILL.md:146"
     },
     "9641b8fa25919c191ed1660a72a7a9024f76b1bef117c95f10ced22991cb2658": {
       "kind": "command",
@@ -3134,15 +3134,15 @@
     },
     "96e3bcb7ea0a491c5bb43b0f195ec938d2f89f942a1ae900c95c86a648df5526": {
       "kind": "command",
-      "src": "skills/manage/SKILL.md:265"
+      "src": "skills/manage/SKILL.md:267"
     },
     "96ed9493fb007518c931afc247305a4eb0db4df0841540ec627416ab2b03dfe9": {
       "kind": "command",
-      "src": "agents/qa-specialist.md:228"
+      "src": "agents/qa-specialist.md:230"
     },
     "96f8ee8c712329c00a56b777ca5326068e9c1587734edba4b36ac64a511f7a17": {
       "kind": "block",
-      "src": "agents/perf-optimizer.md:157"
+      "src": "agents/perf-optimizer.md:158"
     },
     "97692aaa0ad5ce1f25e8de7496bad6f1fd0f208aaa711d034ac753b0e40b4e29": {
       "kind": "command",
@@ -3198,7 +3198,7 @@
     },
     "9afeaaff716e66a7e3a329fe8516942047e1c7ecaea1190a2d2f870411078d2f": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:278"
+      "src": "agents/perf-optimizer.md:279"
     },
     "9b084bb0deb8103832e60e8d3eb602d02cec95b8eb8acd5c6b9c1277b31d4a24": {
       "kind": "command",
@@ -3302,7 +3302,7 @@
     },
     "9f2309ac69758608a238968a0008692605fcd628f4fd3b511b414c7a5239175c": {
       "kind": "block",
-      "src": "skills/manage/SKILL.md:254"
+      "src": "skills/manage/SKILL.md:256"
     },
     "9f2689a76922b5df7a420c2b5d5b3d26dbbf83f0a2dff4390980a0715281711f": {
       "kind": "command",
@@ -3318,7 +3318,7 @@
     },
     "9f84440dd49ecdea65442477258dcd986e92e906da6e0e367584f87da9f1d742": {
       "kind": "command",
-      "src": "agents/challenger.md:49"
+      "src": "agents/challenger.md:50"
     },
     "9f9204916928c71ef9d189fa0d6391bcf007be6edce6e6b7d39cad9c298ddc8a": {
       "kind": "command",
@@ -3402,7 +3402,7 @@
     },
     "a39304a185a01463134397e2d0ee39febe7f5a91c97f61be94b50a220fe4ff22": {
       "kind": "command",
-      "src": "agents/challenger.md:49"
+      "src": "agents/challenger.md:50"
     },
     "a3a6fdd7f4bf322d97b1cb370131085139df12f055d06923c28a1ebd74b7280c": {
       "kind": "block",
@@ -3438,7 +3438,7 @@
     },
     "a50a1635b35f3030081a34996df9f8d3cd2a8c478a22d98439691bddcef67bc7": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:278"
+      "src": "agents/perf-optimizer.md:279"
     },
     "a5344e5c95d8385d00432082a06979b85299891856cc5e6c87f928272f18d0cf": {
       "kind": "command",
@@ -3554,7 +3554,7 @@
     },
     "aa9dc0dfcbd2a0a68b051c7e0b935af28c3e6e59c02022d41c8561d798d9f85f": {
       "kind": "command",
-      "src": "agents/qa-specialist.md:228"
+      "src": "agents/qa-specialist.md:230"
     },
     "aabba766bd4bfe18ec11174f4dd5b3d8f94101f82dc49ca9278aebd3aa4de7d0": {
       "kind": "block",
@@ -3566,7 +3566,7 @@
     },
     "aaf366e46c37ddb043d7b5fa85da8c5010f1b96d0405e0112f289d7d91669b5e": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:287"
+      "src": "agents/perf-optimizer.md:288"
     },
     "ab2cc70e25415a8e21910cb9c7165b0ccd948ab6b894e1888a361bbe7b2751ee": {
       "kind": "block",
@@ -3746,7 +3746,7 @@
     },
     "b4bdc848109722a383d0a972c6eb859f2abd29565b8c4cc7199e7c9eb708f1b7": {
       "kind": "command",
-      "src": "agents/challenger.md:49"
+      "src": "agents/challenger.md:50"
     },
     "b4dc88ba548691e2dde7b0a821681f6a0e00bdb59509ef861eab9180fb5934ae": {
       "kind": "command",
@@ -3794,7 +3794,7 @@
     },
     "b80df2ba032901f2719415625cefa4a4a224fa3cdaeff4f8c5663f3bfaec4fe6": {
       "kind": "command",
-      "src": "agents/challenger.md:49"
+      "src": "agents/challenger.md:50"
     },
     "b83fdabf60c2b0294eeb64248d6d1031091a3e2c3e210e91d92682ca9bf24001": {
       "kind": "command",
@@ -3822,7 +3822,7 @@
     },
     "b9e0a523fe20c63133816b07d8635b060f0f5b54f560a7931a06785c90b5c3a4": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:208"
+      "src": "agents/perf-optimizer.md:209"
     },
     "b9f758a493774715d8a5f9a9f547dad093356a3f8c53f656fee2d314be8fa627": {
       "kind": "command",
@@ -3982,7 +3982,7 @@
     },
     "c233e2742086d3d11e6b42f9abf915dc4e2ac7d82677ca0bd798415b67270f87": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:157"
+      "src": "agents/perf-optimizer.md:158"
     },
     "c268ee81adac7c423c53ab336a5acac7872bdeaf4a93e04bba2a4c30047f3bbd": {
       "kind": "command",
@@ -4030,7 +4030,7 @@
     },
     "c4a46399ac562e460a73ecb28a64596fee7a2d2004d22913da2b3aa1a98e77a4": {
       "kind": "command",
-      "src": "agents/qa-specialist.md:228"
+      "src": "agents/qa-specialist.md:230"
     },
     "c4cb1fec5781f53898c94e8d4c1e6172423b2cdfdd3ec0803297b338b4419ae5": {
       "kind": "command",
@@ -4066,7 +4066,7 @@
     },
     "c6bc9cff23b38b1b5999551223345b08a6d3edf3d8b2283b175160e820b0b761": {
       "kind": "block",
-      "src": "agents/perf-optimizer.md:278"
+      "src": "agents/perf-optimizer.md:279"
     },
     "c6e9f362c5806f742d81d8dde38450ae24f1ee7022c53abedb277112270a0aa4": {
       "kind": "command",
@@ -4086,7 +4086,7 @@
     },
     "c8348245e12d3ee3fcb3093e6e50bcca531dbc53e36a38691fca0220d786c545": {
       "kind": "command",
-      "src": "agents/solution-architect.md:73"
+      "src": "agents/solution-architect.md:89"
     },
     "c83ae5491d36c879a26c17fc6ec7cf64eecbcad9fb4b7d24b728b9fb1de022bf": {
       "kind": "command",
@@ -4094,7 +4094,7 @@
     },
     "c848d7c38c2f9eef77f67b4227799d51fb3c4d25923043fb31d64086b26cdcb0": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:278"
+      "src": "agents/perf-optimizer.md:279"
     },
     "c8c61900b9976045deb62ae167e40068006ff44f59086aebc3dad41bf885b349": {
       "kind": "command",
@@ -4190,7 +4190,7 @@
     },
     "cdb2df94089c310da601c28f5117b5d092fd3737d9bd21caf13a1c53c65d0338": {
       "kind": "command",
-      "src": "agents/challenger.md:49"
+      "src": "agents/challenger.md:50"
     },
     "cdcd5b10d8e22093a75ced08eb03d90ba144381b570003d2c64972f031246c97": {
       "kind": "command",
@@ -4274,7 +4274,7 @@
     },
     "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:208"
+      "src": "agents/perf-optimizer.md:209"
     },
     "d10e967702925f1fb09df434a3aad1a912513b848266eb4293f37b2b89eb40d4": {
       "kind": "command",
@@ -4370,7 +4370,7 @@
     },
     "d527493285b7670c34ba7116d8a9cac83519a14b76a4a68a48e3d929bb8771d4": {
       "kind": "command",
-      "src": "agents/challenger.md:49"
+      "src": "agents/challenger.md:50"
     },
     "d539833b495b05bb9eb074cebb614019f14702b87cd0d2c9dafa6a3a3e7b5fd1": {
       "kind": "block",
@@ -4382,7 +4382,7 @@
     },
     "d62e2d4e2d6443f7dfd7f4fe5701a4f541d27f633e0299043667a88e3e15d0fd": {
       "kind": "block",
-      "src": "agents/challenger.md:49"
+      "src": "agents/challenger.md:50"
     },
     "d63b08963f7239aabf35916dc984c4dcaa72b7843bf7aca1e455de35e6827392": {
       "kind": "command",
@@ -4430,7 +4430,7 @@
     },
     "d918abbabbec591cfce498b9bd2cadd369beae982b0c4212b364a2b2dd8cc619": {
       "kind": "command",
-      "src": "skills/manage/SKILL.md:323"
+      "src": "skills/manage/SKILL.md:325"
     },
     "d9196074dc49ddf8955be67fbbd8b192fb8b103036d8875433af9ea3e058497a": {
       "kind": "command",
@@ -4450,7 +4450,7 @@
     },
     "da51f347349e006c7f39303b887f31d2850c66c962311365d16ac58e4abdc546": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:208"
+      "src": "agents/perf-optimizer.md:209"
     },
     "da530cd09700b5eb9c515ebe4df179061986b5545f21efbdcaeded2408d36602": {
       "kind": "block",
@@ -4466,7 +4466,7 @@
     },
     "daec253d592990c8582d0f5589708ede61cbec85aa5c21309deed9a456af0f25": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:208"
+      "src": "agents/perf-optimizer.md:209"
     },
     "db0c7aa18faef6dfa5f966d0a8a84a875d6254a52ce19f6c122f811f4c382863": {
       "kind": "block",
@@ -4546,7 +4546,7 @@
     },
     "df41b671fa40a7931766ed670c6d358e168c74500646366aa3490749055bfd74": {
       "kind": "command",
-      "src": "skills/manage/SKILL.md:265"
+      "src": "skills/manage/SKILL.md:267"
     },
     "dfe9fbe2a68be007d90832af33003f00992933f3a66e79b3a5b252df48542954": {
       "kind": "command",
@@ -4674,7 +4674,7 @@
     },
     "e686532a77a8207967c0739b59e56335a4ca43995f4a754bfca200ace1984de5": {
       "kind": "command",
-      "src": "agents/perf-optimizer.md:278"
+      "src": "agents/perf-optimizer.md:279"
     },
     "e68705fb5bd4f0811c76215dc3632351dfdf25bba121605ef3188fbd56d21dec": {
       "kind": "command",
@@ -4746,7 +4746,7 @@
     },
     "ea7da12cd943fe13e8ee5a2ad0628ccf1acc80bf65437ad97bcaa4a869d4b2a5": {
       "kind": "command",
-      "src": "agents/challenger.md:49"
+      "src": "agents/challenger.md:50"
     },
     "ea83d355bfa301749af4ed783516f07c2c3131bdcfb35e52cdc56f4551fd6a55": {
       "kind": "command",
@@ -4918,7 +4918,7 @@
     },
     "f340919cfdf6b43451e9f2f7aee51950a99a8e8505b11b95c375041ed6f44600": {
       "kind": "command",
-      "src": "skills/manage/SKILL.md:323"
+      "src": "skills/manage/SKILL.md:325"
     },
     "f34afeb6ef161c3d72d62bfe51d298421d4d99ef958011f57a289d463a2abfb7": {
       "kind": "block",
@@ -5146,7 +5146,7 @@
     },
     "fe6b2b9d37d9847ec16aa6516ec00cc5976660690c16f155a30147409c5eb6f1": {
       "kind": "command",
-      "src": "agents/solution-architect.md:73"
+      "src": "agents/solution-architect.md:89"
     },
     "fe76eb1f9494e43d71cee0c5cb605ef5ce5a72c65ef5259dd3d8f5f02f0c63bb": {
       "kind": "block",
@@ -5185,6 +5185,6 @@
       "src": "skills/audit/templates/checks-skills-gaps.md:49"
     }
   },
-  "plugin": "cc_foundry@0.69.0",
+  "plugin": "cc_foundry@0.69.1",
   "schema": 1
 }

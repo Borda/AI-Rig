@@ -180,7 +180,7 @@ Write the combined results (parsed JSON plus computed `r`) to `$RUN_DIR/stats-re
 
 Apply advisory threshold automatically only when `--threshold` not explicitly provided by user.
 
-**Timeout detection**: when scanning reverted iterations, check `status` field. If `status == "timeout"`: classify as `timeout-as-revert` (see Notes). Else: flag any reverted iteration where `delta` is in correct improvement direction (metric moved toward goal) as "possible timeout — verify commit [sha]"; don't count delta as valid.
+**Timeout detection**: when scanning reverted iterations, check `status` field. If `status == "timeout"`: classify as `unreliable-timeout` (see Notes). Else: flag any reverted iteration where `delta` is in correct improvement direction (metric moved toward goal) as "possible timeout — verify commit [sha]"; don't count delta as valid.
 
 Scan `experiments.jsonl` sequentially, skipping iteration 0 (baseline). For each window of 3+ consecutive iterations where `abs(delta) < threshold`:
 
@@ -328,9 +328,11 @@ Path:          → .reports/research/retro-<branch>-<date>.md
 
 ### Dead Iterations
 
-| Start | End | Count | Type | Notes |
-| --- | --- | --- | --- | --- |
-| ... | ... | ... | dead-plateau / dead-churn | ... |
+| Start | End | Count | Type | Severity | Notes | Action |
+| --- | --- | --- | --- | --- | --- | --- |
+| ... | ... | ... | dead-plateau / dead-churn | MEDIUM | ... | <dead-plateau: raise keep noise floor or retire strategy · dead-churn: stop repeating approach, switch agent/files> |
+
+(Every dead window is MEDIUM regardless of `dead_pct`; the `dead_pct > 30%` escalation applies to the Independence caveat only, not to window severity.)
 
 Total dead: <N> of <total> (<pct>% of compute)
 
@@ -344,6 +346,14 @@ Total dead: <N> of <total> (<pct>% of compute)
 
 (If none: "No suspicious jumps detected")
 (If insufficient data: "Insufficient data for jump detection (N=<N>)")
+
+### Anomalies
+
+| Pattern | Iteration(s) | Severity | Evidence | Action |
+| --- | --- | --- | --- | --- |
+| kept-regression / reverted-improvement / unreliable-timeout / config-repetition / truncated-log / threshold-advisory | ... | HIGH/MEDIUM/LOW | <agent, files, status, delta, commit> | <one concrete next action> |
+
+(One row per detected instance. Pattern name, severity and default action come from `<notes>` Named anomaly patterns. If none: "No named anomalies detected".)
 
 ### Strategy Effectiveness
 
@@ -373,7 +383,7 @@ Next hypotheses queue: <RUN_DIR>/hypotheses.jsonl
 **Finding confidence** (dead windows, suspicious jumps, classification errors, pattern detection): [high|moderate|low] — independent of statistical test availability
 **Statistical test** (Wilcoxon p-value): [available: p=X | unavailable: scipy not installed — descriptive stats only]
 **Gaps**:
-- (-0.NN) [degraded rating above, only when moderate/low or test unavailable — named with its cause]
+- (-0.NN) [degraded Finding confidence above, only when moderate/low — named with its cause; statistical-test unavailability, unrun scripts or absent scipy list as (-0.00) unless a specific finding depends on them]
 - (-0.NN) [other specific limitations]
 ```
 
@@ -389,6 +399,7 @@ Significance:  p=<value> (<significant|not significant> at alpha=<alpha>; kept-o
 Effect size:   r=<value> (<small|medium|large>)  [or: n/a]
 Dead iters:    <N>/<total> (<pct>%)  [or: none]
 Suspicious:    <N> jumps (<severity> — investigate: <sha1>, <sha2>)  [or: none]
+Anomalies:     <N> (<n> HIGH — <pattern>@iter <i>, …)  [or: none]
 Hypotheses:    <N> next steps generated
 -> saved to .reports/research/retro-<branch>-<date>.md
 ---
@@ -410,10 +421,12 @@ If `scientist_status == "timed_out"` or `<RUN_DIR>/hypotheses.jsonl` does not ex
 - Dead iteration threshold (`--threshold`) should match metric's noise floor — default 0.001 for normalized metrics; adjust for raw values (e.g. `--threshold 0.1` for loss in hundreds)
 - Statistical tests assume metric values are independent samples — if iterations highly correlated (e.g. cumulative optimization), note limitation in report
 - **Requires `scipy` in active Python environment** (`pip install scipy`) — `retro_analyze.py` runs Wilcoxon signed-rank test via `scipy.stats`. Without scipy, test skipped and `retro_analyze.py` returns `{"significant": false, "p_value": null, "reason": "scipy not installed"}`; report includes descriptive stats only (mean/median/min/max/std). Install: `pip install scipy` or `uv add scipy`.
-- **Named anomaly patterns** (use consistently across reports):
-  - `kept-regression`: kept iteration where metric moved in wrong direction (positive delta for higher-is-better, negative delta for lower-is-better)
-  - `reverted-improvement`: reverted iteration where metric moved in correct direction — reverted for non-metric reasons (performance, OOM, instability); flag as "improvement-when-reverted — consider revisiting with adjusted constraints"
-  - `timeout-as-revert`: reverted iteration with `status: "timeout"` — metric value unreliable; never count delta as valid improvement
-  - `config-repetition`: same agent + same file(s) attempted 3+ times without crossing threshold — flag as "repeated-failure pattern"
+- **Named anomaly patterns** (use consistently across reports; each instance is one row in the T6 Anomalies table with the severity and default action below):
+  - `kept-regression` (HIGH): kept iteration where metric moved in wrong direction (negative delta for higher-is-better, positive delta for lower-is-better). Action: investigate why the keep gate passed; re-test reverting `<sha>` on top of the current best
+  - `reverted-improvement` (MEDIUM): reverted iteration where metric moved in correct direction — reverted for non-metric reasons (performance, OOM, instability); flag as "improvement-when-reverted — consider revisiting with adjusted constraints". Action: check revert cause in diary/logs; revisit with adjusted constraints
+  - `unreliable-timeout` (MEDIUM): reverted iteration with `status: "timeout"` — metric value unreliable; never count delta as valid improvement. Action: count as wasted; re-run with a raised timeout before trusting the delta
+  - `config-repetition` (MEDIUM): same agent + same file(s) attempted 3+ times without crossing threshold — flag as "repeated-failure pattern". Action: retire that agent + file combination from the hypothesis queue
+  - Run-integrity rows in the same table: `truncated-log` (HIGH) — T1 dropped a truncated last JSONL line; Action: recover or re-measure the dropped iteration before trusting `best_metric`. `threshold-advisory` (LOW) — T3 scale check fired; Action: if the default was automatically adjusted, report the applied threshold with no re-run; if the user supplied `--threshold`, retain it and suggest a re-run with the advisory value.
+- **Findings vs observations**: a finding is a row in Dead Iterations, Suspicious Metric Jumps, or Anomalies. Any other remark (state/ledger iteration-count mismatch, keep-gate commentary, diminishing-returns notes) goes in one `Observations:` line under the Anomalies table, with no severity. Never add an ad-hoc findings table.
 
 </notes>

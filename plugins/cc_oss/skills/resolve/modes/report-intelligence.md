@@ -77,7 +77,7 @@ IMPL_DIR=$(mktemp -d)
 printf '%s\n' "$IMPL_DIR" > "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}"  # timeout: 3000
 ```
 
-Pick the findings file, mint ids for a parsed legacy report, then build `$IMPL_DIR/action-items.jsonl` deterministically. `merge_action_items.py` assigns ids 1.. in findings order, maps severity to `[report][req]`/`[report][suggest]` per the taxonomy's **Severity → Resolve Type** table, and carries `finding_id`, `source_file` and `verify_file` through for Step 8, plus `verify_verdict: CONFIRMED` only for findings from the review's own `findings.jsonl` that name a verifier file. Re-running it skips findings already present:
+Pick the findings file, mint ids for a parsed legacy report, then build `$IMPL_DIR/action-items.jsonl` deterministically. `merge_action_items.py` assigns ids 1.. in surviving findings order, maps severity to `[report][req]`/`[report][suggest]` per the taxonomy's **Severity → Resolve Type** table (`### [blocking] Critical` → `[req]` at any severity), and carries `finding_id`, `source_file` and `verify_file` through for Step 8, plus `verify_verdict: CONFIRMED` only for findings from the review's own `findings.jsonl` that name a verifier file. A `merged_into` row folds into its single new survivor's item, adding no item of its own: the item lists `merged_finding_ids`, appends each merged row's text, takes the group's highest severity and becomes `[req]` when any member alone would be. Re-running it skips findings already present by `finding_id` or `merged_finding_ids`:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -92,9 +92,10 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items
 ```
 
 - Zero findings leave an empty `action-items.jsonl`.
+- A `merged_into` naming no single new survivor (missing, ambiguous, chained, self-referencing or already placed) keeps the row as its own item. Relay each `⚠` stderr line to the user. Summary JSON reports the `folded` count and `fold_orphans` list of `{finding_id, merged_into}` records; `findings = already_merged + deduped_exact + deduped_semantic + appended + folded`.
 - Render the table below from those records with the same IDs. Stop before Step 3d if the merge exits non-zero.
 - A compaction or Step 8 may reload only `action-items.jsonl`.
-- Stored items stay one per finding, so each keeps its `finding_id` and evidence paths, and the displayed table keeps one row per item id at every pending count — LOW items are never clustered into composite rows (taxonomy **LOW Grouping Rule**); past 18 pending, SKILL.md Step 3d's compressed table still lists every row, while Q1 lists pending ids or the over-budget form.
+- Stored items stay one per finding the report prints, plus any orphan kept as its own item; root-cause-merged rows stay on the survivor through `merged_finding_ids`. Each item keeps its `finding_id` and evidence paths, and the displayed table keeps one row per item id at every pending count — LOW items are never clustered into composite rows (taxonomy **LOW Grouping Rule**); past 18 pending, SKILL.md Step 3d's compressed table still lists every row, while Q1 lists pending ids or the over-budget form.
 
 Render ACTION_ITEMS as a markdown table (severity descending), below the Sources block in the saved table and the pre-picker reply:
 

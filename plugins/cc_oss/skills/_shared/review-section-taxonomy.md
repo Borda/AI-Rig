@@ -29,18 +29,21 @@ All severities:
 
 | Severity | Section | resolve `type` |
 | -- | -- | -- |
-| CRITICAL or `[blocking]` | any | `[req]` |
+| any severity | `### [blocking] Critical` | `[req]` |
+| CRITICAL | any | `[req]` |
 | HIGH | any | `[req]` |
 | MEDIUM | Architecture, Performance, API Design (code-related) | `[req]` |
 | MEDIUM | Test Coverage, Documentation, Static Analysis, Codex Co-Review | `[suggest]` |
-| LOW | any | `[suggest]` — one item and one row per finding, never dropped (see below) |
-| COSMETIC (`[cosmetic]` label) | any | `[suggest]` — severity 1; same LOW Grouping Rule |
+| LOW | all other sections | `[suggest]` — one item and one row per finding the report prints, never dropped (see below) |
+| COSMETIC (`[cosmetic]` label) | all other sections | `[suggest]` — severity 1; same LOW Grouping Rule |
+
+Root-cause-merged `merged_into` rows keep their own validated severity and section, but add no item: the survivor's item records `merged_finding_ids`, appends each merged row's text, takes the group's highest severity and becomes `[req]` if any member alone would be. A pending GitHub item at the survivor's or any merged row's location matches the survivor; its existing `type` stays unchanged. A `merged_into` naming no single new survivor keeps the row as its own item and emits a `⚠` stderr line the orchestrator relays to the user. Merge summary JSON reports `folded` (count) and `fold_orphans` (list of `{finding_id, merged_into}` records).
 
 ## LOW Grouping Rule
 
 Never omit LOW items **present in the report** — this rule binds the resolve parser, not what the review consolidator chooses to write. Report-side pruning governed by review/checklist.md §Consolidation Rules.
 
-- Every LOW finding stays its own `[suggest]` item in `action-items.jsonl`, with its own stable `finding_id`, and its own row in resolve's selection table at every pending count.
+- Every LOW finding the report prints stays its own item in `action-items.jsonl`, with its own stable `finding_id`, and its own row in resolve's selection table at every pending count; its type is `[req]` in `### [blocking] Critical`, otherwise `[suggest]`. A root-cause-merged row not printed as a separate finding folds into the survivor's item as described above; an orphan still keeps its own item and row.
 - Never cluster LOW items into composite display rows. Resolve's selection gate (`hooks/enforce-resolve-table.js`) requires every pending and resolved/addressed id as its own table cell, so a composite row hides its member ids and the picker call is denied.
 - Past 18 pending items (AskUserQuestion checkbox ceiling: 2 calls × 3 item questions × 3 items — the 4th slot of every call is the mandatory bulk page, never items), resolve drops per-item checkboxes for its compressed table, which still lists every item as its own row.
 

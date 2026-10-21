@@ -217,10 +217,12 @@ For each finding, produce:
 - paper_reference: exact quote or equation from paper
 - code_reference: file:line in codebase
 - match_status: MATCH | MISMATCH | PARTIAL | UNVERIFIABLE
-  - PARTIAL: use when claim debatable — code implements valid variant but not exact paper formulation; include both interpretations in `detail`
-- severity: HIGH (would change results) | MEDIUM (affects reproducibility) | LOW (cosmetic)
+  - PARTIAL: use when claim debatable — code implements valid variant but not exact paper formulation; include both interpretations in `detail`. Never for code-style observations (magic literal, inline constant, missing config plumbing) — not a fidelity finding, no row
+- severity: HIGH (code computes a different quantity than the paper's equation or protocol: missing/extra/sign-flipped term or a constant factor the equation fixes, wrong reduction, wrong model/split/preprocessing at eval, changed training budget or schedule duration, broken schedule mechanics such as stepping a schedule at a different granularity than the paper specifies) | MEDIUM (same computation and training budget, a paper-specified setting differs: coefficient, default, threshold, decay, temperature, loss-weight convention, citation attribution; judge the effect on the equation/protocol rather than the numeric ratio alone) | LOW (cosmetic: naming, labels, reported fields only; computation unaffected)
 - detail: one-sentence explanation
 - fix: concrete one-line fix (e.g., "change `reduction='mean'` to `reduction='sum'`" or "set `bias=False`") — required for all MISMATCH and PARTIAL findings; omit only for MATCH and UNVERIFIABLE
+
+Derived claims: a claim whose mismatch follows wholly from other flagged claims (e.g. a claim that a returned value equals a stated objective when that objective's terms are already flagged) is not its own MISMATCH and gets no own fix — fold it into the source rows' `detail` (cite their claim_ids) and leave it out of every count.
 
 Also compute fidelity score: (MATCH + 0.5*PARTIAL) / total_verified_claims, where total_verified_claims = MATCH + PARTIAL + MISMATCH — UNVERIFIABLE claims are excluded from the denominator and listed separately in the audit. total_verified_claims = 0 → fidelity null, claims_verified 0, and state "no verifiable claims" in the audit.
 
@@ -309,7 +311,7 @@ Proceed directly to V5/V6 — V5 writes full report to `$OUT` (failed claims inc
 
 ### Step V5: Write verification report
 
-`$OUT` pre-computed in V1 — available here. Write to `$OUT` via Write tool (`BRANCH` and `DATE` computed in V1):
+`$OUT` pre-computed in V1 — available here. Write to `$OUT` via Write tool (`BRANCH` and `DATE` computed in V1). Verification Table: full row (paper quote, detail) only for MISMATCH, PARTIAL, UNVERIFIABLE; MATCH rows keep `#`, Claim, Dim, Code Reference, Status, with Paper Reference, Severity and Detail as `-` — the full quotes stay in `audit-raw.md`:
 
 ```markdown
 ---

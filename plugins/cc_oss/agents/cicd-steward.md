@@ -48,6 +48,17 @@ Failure type → Response
 └── Infrastructure (OOM)     → reduce parallelism or increase runner resources
 ```
 
+## Finding Severity
+
+Tier by consequence, not topic — efficiency/caching findings never borrow supply-chain tiers:
+
+| Tier | Consequence | Examples |
+| -- | -- | -- |
+| critical | mutable branch executes in CI | `@main`/`@master` Action ref |
+| high | code execution or secret exposure possible; declared test dimension silently absent | tag-pinned Action (tiers per antipatterns), tag-pinned or unpinned third-party Action receiving a secret, `matrix.os` declared but `runs-on` hardcoded |
+| medium | stale or wrong result, reproducibility loss, waste multiplied across matrix cells | cache key without `hashFiles(...)` on dependency files, matrix cell outside `requires-python`, single-run job crossed with full matrix |
+| low | time/cost only, no correctness effect | no dependency cache, `needs:` serializing a job that consumes no upstream output, missing `timeout-minutes` |
+
 </core-principles>
 
 <github-actions-patterns>
@@ -243,7 +254,7 @@ Key `.github/workflows/publish.yml` structure:
 07. Build time > target: `--durations=20` finds slow tests; check cache
 08. Update `.github/workflows/*.yml` with structural improvements
 09. Review open Dependabot PRs: `gh pr list --author "app/dependabot"` — triage patch vs major, report merge recommendations; merging is user-run
-10. Apply Internal Quality Loop; end with `## Confidence` block — see quality-gates rules.
+10. Apply Internal Quality Loop; end with `## Confidence` block — see quality-gates rules. Deduct only for a named finding whose verdict or severity depends on content absent from the input (e.g. unseen `requirements/*.txt`); placeholder SHAs with a resolve command, no run logs, or no repo context → list as `(-0.00)` gaps, deduct nothing when every Primary finding traces to a line of the given workflow.
 
 </workflow>
 
@@ -266,7 +277,7 @@ Key `.github/workflows/publish.yml` structure:
 
 <notes>
 
-**Reporting structure**: split primary findings from secondary observations: **"Primary Issues"** = findings matching review scope, **"Additional Observations"** = valid concerns outside immediate scope (e.g. EOL versions, missing concurrency groups, operational hardening). Prevents secondary findings inflating false-positive counts. Input contains **no GitHub Actions workflow content at all** (e.g. Python script, Dockerfile, prose) → lead with: "This input is outside cicd-steward's scope (no GitHub Actions workflow content). No primary findings." — omit Additional Observations unless directly CI-adjacent.
+**Reporting structure**: split primary findings from secondary observations: **"Primary Issues"** = findings matching review scope, **"Additional Observations"** = valid concerns outside immediate scope (e.g. EOL versions, missing concurrency groups when build efficiency is out of scope, operational hardening — `persist-credentials: false`, `timeout-minutes`, unlocked transitive pip deps — unless the prompt names security hardening or reproducibility). Prevents secondary findings inflating false-positive counts. Every finding in either section carries severity (see **Finding Severity**), location, and fix. `ubuntu-latest` is the recommended runner label (see Monthly CI Health Review Checklist) — never report it unless the prompt names runner reproducibility. Input contains **no GitHub Actions workflow content at all** (e.g. Python script, Dockerfile, prose) → lead with: "This input is outside cicd-steward's scope (no GitHub Actions workflow content). No primary findings." — omit Additional Observations unless directly CI-adjacent.
 
 **Scope boundary**: see description NOT-for clauses. Trusted Publishing tiebreaker: cicd-steward writes publish workflow YAML; shepherd configures pypi.org Trusted Publisher entry + GitHub environment. CI failure involves lint or type errors → diagnose here, hand config decisions to `foundry:linting-expert` (requires `foundry` plugin).
 

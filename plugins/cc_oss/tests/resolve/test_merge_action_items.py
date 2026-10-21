@@ -71,6 +71,24 @@ def _gh(item_id: int, **overrides: object) -> dict:
     return record
 
 
+def _survivor(**overrides: object) -> dict:
+    """Return the surviving row of a root-cause merge: the one finding the report prints for the group."""
+    return _finding(**{"candidate_id": "cand-survivor", **overrides})
+
+
+def _merged(**overrides: object) -> dict:
+    """Return a confirmed row the consolidator merged into ``_survivor``; the report does not print it on its own."""
+    record = {
+        "candidate_id": "cand-merged",
+        "merged_into": "cand-survivor",
+        "title": "Pool capacity leaks",
+        "full_text": "[high] `release()` never returns the slot (src/pool.py:40)",
+        "file": "src/pool.py",
+        "line": 40,
+    }
+    return _finding(**{**record, **overrides})
+
+
 @pytest.mark.parametrize(
     ("section", "slug"),
     [
@@ -82,6 +100,28 @@ def _gh(item_id: int, **overrides: object) -> dict:
 def test_section_slug_drops_decoration(section: str, slug: str) -> None:
     """Heading marks, confidence prefix, blocking tag and qualifiers never change the slug."""
     assert mfi.section_slug(section) == slug
+
+
+@pytest.mark.parametrize(
+    ("severity", "section", "expected"),
+    [
+        pytest.param("low", "### [blocking] Critical (must fix before merge)", "[report][req]", id="blocking-low"),
+        pytest.param(
+            "medium", "### [blocking] Critical (must fix before merge)", "[report][req]", id="blocking-medium"
+        ),
+        pytest.param("high", "### Test Coverage", "[report][req]", id="high-any-section"),
+        pytest.param("medium", "### Performance Concerns", "[report][req]", id="code-medium"),
+        pytest.param("medium", "### Test Coverage", "[report][suggest]", id="non-code-medium"),
+        pytest.param("low", "### Test Coverage", "[report][suggest]", id="plain-low"),
+    ],
+)
+def test_resolve_type_follows_taxonomy_table(severity: str, section: str, expected: str) -> None:
+    """Each finding maps to the resolve type the taxonomy's Severity → Resolve Type table assigns.
+
+    The review places a `[blocking]`-tagged finding in the blocking bucket at its own severity, so a low-severity test
+    gap tagged Block-tier must still reach resolve as required work, not an optional suggestion.
+    """
+    assert mai.resolve_type({"severity": severity, "section": section}) == expected
 
 
 def test_mint_is_stable_under_line_drift_and_path_spelling() -> None:
@@ -262,6 +302,12 @@ def test_bad_item_ids_block(
         ),
         pytest.param(7, None, "finding 1 is not a JSON object", id="row-not-object"),
         pytest.param(
+            dict(_finding(), id="architecture-quality-1", merged_into=["cand-survivor"]),
+            None,
+            "finding 1 field merged_into is list, not text",
+            id="list-merged-into",
+        ),
+        pytest.param(
             dict(_finding(), id="architecture-quality-1"),
             {"finding_id": ["architecture-quality-1"], "item_id": 1},
             "link 1 is not a {finding_id: text, item_id: number} object",
@@ -417,10 +463,21 @@ def test_withdrawn_duplicate_link_frees_its_item(tmp_path: Path) -> None:
     assert mfi.read_jsonl(path)[0]["finding_id"] == other
 
 
-def test_rerun_merge_changes_nothing(tmp_path: Path) -> None:
-    """A retried merge block (e.g. after compaction) must not duplicate items or annotations."""
+@pytest.mark.parametrize(
+    "rows",
+    [
+        pytest.param([_finding(), _finding(title="Other", line=40)], id="plain-rows"),
+        pytest.param([_survivor(), _merged()], id="root-cause-merged-rows"),
+    ],
+)
+def test_rerun_merge_changes_nothing(tmp_path: Path, rows: list[dict]) -> None:
+    """A retried merge block (e.g. after compaction) must not duplicate items or annotations.
+
+    A folded row leaves no ``finding_id`` of its own on any item, so a re-run must recognise it through the survivor
+    item's ``merged_finding_ids`` instead of appending it as a new item.
+    """
     items = _write_jsonl(tmp_path / "action-items.jsonl", [_gh(1)])
-    findings = _findings_file(tmp_path, [_finding(), _finding(title="Other", line=40)])
+    findings = _findings_file(tmp_path, rows)
     assert mai.main(["--items", str(items), "--findings", str(findings)]) == 0
     first = items.read_text(encoding="utf-8")
     assert mai.main(["--items", str(items), "--findings", str(findings)]) == 0
@@ -703,3 +760,253 @@ def test_report_file_flag_combinations_are_refused(tmp_path: Path, extra: list[s
         mai.main(argv)
 
     assert raised.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("items", "appended"),
+    [
+        pytest.param([], 1, id="survivor-becomes-report-item"),
+        pytest.param([_gh(1)], 0, id="survivor-annotates-github-item"),
+    ],
+)
+def test_merged_row_folds_into_the_survivor_item(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], items: list[dict], appended: int
+) -> None:
+    """A ``merged_into`` row adds no action item of its own; the survivor's item records its id and its symptom.
+
+    The review prints one finding for a root-cause merge and keeps each merged candidate's confirmed row only so no
+    candidate is discarded. One item per row would dispatch the same fix twice and disagree with the report the user
+    reads, whether the survivor becomes a ``[report]`` item or enriches the GitHub item on its line.
+    """
+    path = _write_jsonl(tmp_path / "action-items.jsonl", items)
+    findings = _findings_file(tmp_path, [_survivor(), _merged()])
+    survivor_id, merged_id = (row["id"] for row in mfi.read_jsonl(findings))
+
+    assert mai.main(["--items", str(path), "--findings", str(findings)]) == 0
+
+    (row,) = mfi.read_jsonl(path)
+    summary = json.loads(capsys.readouterr().out)
+    assert (row["finding_id"], row["merged_finding_ids"]) == (survivor_id, [merged_id])
+    assert f"[merged finding {merged_id}] {_merged()['full_text']}" in row["full_comment_text"]
+    assert (summary["folded"], summary["appended"], summary["fold_orphans"]) == (1, appended, [])
+
+
+@pytest.mark.parametrize(
+    ("survivor", "merged", "item_type", "severity"),
+    [
+        pytest.param(
+            {"severity": "medium", "section": "### Test Coverage Gaps"},
+            {"severity": "high"},
+            "[report][req]",
+            4,
+            id="merged-high-outranks-medium-survivor",
+        ),
+        pytest.param(
+            {"severity": "medium", "section": "### Test Coverage Gaps"},
+            {"severity": "medium", "section": "### Architecture & Quality"},
+            "[report][req]",
+            3,
+            id="merged-medium-in-code-section-keeps-req",
+        ),
+        pytest.param({"severity": "critical"}, {"severity": "low"}, "[report][req]", 5, id="survivor-already-highest"),
+        pytest.param(
+            {"severity": "low", "section": "### Test Coverage Gaps"},
+            {"severity": "cosmetic", "section": "### Cosmetic / Style"},
+            "[report][suggest]",
+            2,
+            id="minor-group-stays-suggest",
+        ),
+    ],
+)
+def test_folded_item_takes_the_most_severe_routing_of_its_group(
+    tmp_path: Path, survivor: dict, merged: dict, item_type: str, severity: int
+) -> None:
+    """The survivor's item routes at the highest severity across the survivor and every row merged into it.
+
+    The consolidator may keep a medium as the printed survivor while a merged symptom is high; routing by the survivor
+    alone would offer a confirmed high as an optional ``[suggest]``, and the fix could be skipped.
+    """
+    path = tmp_path / "action-items.jsonl"
+    findings = _findings_file(tmp_path, [_survivor(**survivor), _merged(**merged)])
+
+    assert mai.main(["--items", str(path), "--findings", str(findings)]) == 0
+
+    (row,) = mfi.read_jsonl(path)
+    assert (row["type"], row["severity"]) == (item_type, severity)
+
+
+def test_folded_github_item_takes_the_merged_severity_but_keeps_its_type(tmp_path: Path) -> None:
+    """A GitHub item that absorbs a survivor rises to the merged rows' severity; its GitHub type never changes.
+
+    The merge never retypes a GitHub item, but its severity orders the resolve table and dispatch, so a merged critical
+    symptom must lift it.
+    """
+    path = _write_jsonl(tmp_path / "action-items.jsonl", [_gh(1, severity=3)])
+    findings = _findings_file(
+        tmp_path, [_survivor(severity="medium", section="### Test Coverage Gaps"), _merged(severity="critical")]
+    )
+
+    assert mai.main(["--items", str(path), "--findings", str(findings)]) == 0
+
+    (row,) = mfi.read_jsonl(path)
+    assert (row["id"], row["type"], row["severity"]) == (1, "[gh][req]", 5)
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        pytest.param([_survivor(), _merged(merged_into="cand-absent")], id="survivor-missing"),
+        pytest.param([_merged(merged_into="cand-merged")], id="row-names-itself"),
+        pytest.param([_survivor(), _survivor(title="Twin", line=50), _merged()], id="two-rows-hold-the-survivor-id"),
+        pytest.param([_survivor(merged_into="cand-merged"), _merged()], id="target-is-itself-merged"),
+    ],
+)
+def test_unresolvable_merged_into_keeps_the_row_as_its_own_item(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], rows: list[dict]
+) -> None:
+    """A ``merged_into`` naming no single surviving row keeps the confirmed finding as its own item and warns.
+
+    Dropping the row would lose a confirmed finding; folding it into a guessed or ambiguous survivor would attach its
+    evidence to the wrong item. The warning names the row so the orchestrator can tell the user.
+    """
+    path = tmp_path / "action-items.jsonl"
+    findings = _findings_file(tmp_path, rows)
+    merged_id = mfi.read_jsonl(findings)[-1]["id"]
+
+    assert mai.main(["--items", str(path), "--findings", str(findings)]) == 0
+
+    out_rows = mfi.read_jsonl(path)
+    captured = capsys.readouterr()
+    assert [row["finding_id"] for row in out_rows] == [row["id"] for row in mfi.read_jsonl(findings)]
+    assert not [row for row in out_rows if "merged_finding_ids" in row]
+    assert f"⚠ finding {merged_id}: merged_into " in captured.err
+    assert merged_id in {orphan["finding_id"] for orphan in json.loads(captured.out)["fold_orphans"]}
+
+
+def test_merged_row_whose_survivor_an_earlier_merge_took_stays_its_own_item(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A merged row new to a re-run whose survivor an earlier merge already placed is appended, with a warning.
+
+    Folding it into the existing item would rewrite a row an earlier run already handed to the resolve table, and
+    dropping it would lose a confirmed finding, so it becomes its own item.
+    """
+    path = tmp_path / "action-items.jsonl"
+    assert mai.main(["--items", str(path), "--findings", str(_findings_file(tmp_path, [_survivor()]))]) == 0
+    findings = _findings_file(tmp_path, [_survivor(), _merged()])
+    survivor_id, merged_id = (row["id"] for row in mfi.read_jsonl(findings))
+    capsys.readouterr()
+
+    assert mai.main(["--items", str(path), "--findings", str(findings)]) == 0
+
+    assert [row["finding_id"] for row in mfi.read_jsonl(path)] == [survivor_id, merged_id]
+    assert f"⚠ finding {merged_id}: merged_into " in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        pytest.param({}, id="no-key"),
+        pytest.param({"merged_into": None}, id="null"),
+        pytest.param({"merged_into": ""}, id="empty"),
+    ],
+)
+def test_rows_without_merged_into_each_become_an_item(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], extra: dict
+) -> None:
+    """Rows whose ``merged_into`` is absent, null or empty keep one item each, exactly as before folding existed."""
+    path = tmp_path / "action-items.jsonl"
+    rows = [_finding(candidate_id="cand-a", **extra), _finding(candidate_id="cand-b", title="Other", line=3, **extra)]
+    findings = _findings_file(tmp_path, rows)
+
+    assert mai.main(["--items", str(path), "--findings", str(findings)]) == 0
+
+    out_rows = mfi.read_jsonl(path)
+    captured = capsys.readouterr()
+    assert [row["id"] for row in out_rows] == [1, 2]
+    assert not [row for row in out_rows if "merged_finding_ids" in row]
+    assert (json.loads(captured.out)["folded"], captured.err) == (0, "")
+
+
+def test_candidates_never_offer_a_folded_row(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """An exact folded location needs no semantic link; it reaches resolve through its survivor's exact match."""
+    path = _write_jsonl(tmp_path / "action-items.jsonl", [_gh(1, file="src/pool.py", line=40)])
+    findings = _findings_file(tmp_path, [_survivor(), _merged()])
+
+    assert mai.main(["--items", str(path), "--findings", str(findings), "--candidates"]) == 0
+
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_github_item_at_folded_location_dedupes_to_survivor(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A folded symptom's exact location claims one GitHub item for the survivor and retains both findings."""
+    path = _write_jsonl(tmp_path / "action-items.jsonl", [_gh(1, file="src/pool.py", line="40")])
+    findings = _findings_file(tmp_path, [_survivor(), _merged()])
+    survivor_id, merged_id = (row["id"] for row in mfi.read_jsonl(findings))
+
+    assert mai.main(["--items", str(path), "--findings", str(findings)]) == 0
+
+    (item,) = mfi.read_jsonl(path)
+    summary = json.loads(capsys.readouterr().out)
+    assert (item["id"], item["finding_id"], item["merged_finding_ids"]) == (1, survivor_id, [merged_id])
+    assert item["candidate_id"] == "cand-survivor"
+    assert f"[merged finding {merged_id}]" in item["full_comment_text"]
+    assert "thin" not in item
+    assert (summary["deduped_exact"], summary["appended"], summary["folded"]) == (1, 0, 1)
+
+
+def test_candidates_offer_survivor_on_folded_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A nearby GitHub comment on a folded symptom's file can be linked to the survivor."""
+    path = _write_jsonl(tmp_path / "action-items.jsonl", [_gh(1, file="src/pool.py", line=99)])
+    findings = _findings_file(tmp_path, [_survivor(), _merged()])
+    survivor_id = mfi.read_jsonl(findings)[0]["id"]
+    before = path.read_bytes()
+
+    assert mai.main(["--items", str(path), "--findings", str(findings), "--candidates"]) == 0
+
+    (pair,) = json.loads(capsys.readouterr().out)
+    assert (pair["finding_id"], pair["item_id"], pair["finding_line"]) == (survivor_id, 1, 40)
+    assert path.read_bytes() == before
+
+
+def test_candidates_keep_new_folded_row_when_survivor_already_placed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Candidate generation uses the merge's fresh-row pool, where an already placed survivor cannot absorb a row."""
+    findings = _findings_file(tmp_path, [_survivor(), _merged()])
+    survivor_id, merged_id = (row["id"] for row in mfi.read_jsonl(findings))
+    path = _write_jsonl(
+        tmp_path / "action-items.jsonl",
+        [_gh(1, finding_id=survivor_id), _gh(2, file="src/pool.py", line=99)],
+    )
+
+    assert mai.main(["--items", str(path), "--findings", str(findings), "--candidates"]) == 0
+
+    (pair,) = json.loads(capsys.readouterr().out)
+    assert (pair["finding_id"], pair["item_id"]) == (merged_id, 2)
+    links = _write_jsonl(tmp_path / "links.jsonl", [{"finding_id": merged_id, "item_id": 2}])
+    assert mai.main(["--items", str(path), "--findings", str(findings), "--links", str(links)]) == 0
+    assert [item["finding_id"] for item in mfi.read_jsonl(path)] == [survivor_id, merged_id]
+    assert json.loads(capsys.readouterr().out)["deduped_semantic"] == 1
+
+
+def test_link_naming_a_folded_row_is_ignored(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A link that names a merged row is counted as ignored and never makes that row a second item's finding.
+
+    Accepting it would annotate the GitHub item with the merged row while the survivor's item also carries it, so one
+    fix would again be dispatched twice.
+    """
+    path = _write_jsonl(
+        tmp_path / "action-items.jsonl", [_gh(1, file="src/pool.py", line=99, full_comment_text="x" * 99)]
+    )
+    findings = _findings_file(tmp_path, [_survivor(), _merged()])
+    merged_id = mfi.read_jsonl(findings)[1]["id"]
+    links = _write_jsonl(tmp_path / "links.jsonl", [{"finding_id": merged_id, "item_id": 1}])
+
+    assert mai.main(["--items", str(path), "--findings", str(findings), "--links", str(links)]) == 0
+
+    github_row, survivor_row = mfi.read_jsonl(path)
+    summary = json.loads(capsys.readouterr().out)
+    assert "finding_id" not in github_row
+    assert survivor_row["merged_finding_ids"] == [merged_id]
+    assert (summary["links_ignored"], summary["folded"]) == (1, 1)

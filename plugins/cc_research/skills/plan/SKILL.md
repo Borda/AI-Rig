@@ -156,6 +156,8 @@ metric_repeats:  [default 1; ≥3 when metric_cmd is timing or stochastic — ru
 min_delta_pct:   [default 0.1 — smallest kept gain, % of best metric]
 ```
 
+**Goal constraints → guard, not metric**: any hard constraint in the goal ("without increasing X by more than N%", "while preserving Y") goes in `guard_cmd` — guard exits non-zero when constraint violated. `metric_cmd` measures primary objective only; never encode a constraint as a metric sentinel value (e.g. `-1.0`) — hides violation from guard, conflates "constraint broken" with "metric regressed".
+
 Dry-run both commands before presenting (add `# timeout: 60000` to timed bash calls — user commands may run minutes; ML pipeline data-loading steps may exceed 60s — increase timeout or use guard_cmd dry-run only when metric dry-run slow). Failure → add the full error and proposed corrections to the saved config artifact, then print that content once as the last reply text before `AskUserQuestion`. Its question text carries the short error/correction summary and `→ <resolved config path>` under the limits above — (a) **I fixed the command — re-run dry-run** · (b) **Proceed anyway (I know this command is correct)** · (c) **Abort**. Never proceed to P-P3 without user confirmation after failure.
 
 ### Step P-P2b: Agent validation (pre-write)

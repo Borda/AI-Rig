@@ -163,6 +163,46 @@ def test_commit_lookup_is_scoped_to_this_run(tmp_path: Path, monkeypatch: pytest
     assert calls[0][-1] == "base123..HEAD"
 
 
+def test_records_include_each_folded_finding_without_changing_survivor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A selected item's folded findings inherit its outcome and retain their own claims and symptom locations."""
+    monkeypatch.setattr(ar, "commit_for", lambda item_id, cwd, base_sha="": "abc1234")
+    impl, review = _setup_run(tmp_path)
+    item = {"id": 1, "finding_id": "survivor", "location": "report"}
+    items_path = impl / "action-items.jsonl"
+    items_path.write_text(json.dumps(item) + "\n", encoding="utf-8")
+    (impl / "selected-items.txt").write_text("1\n", encoding="utf-8")
+    findings = [
+        {"id": "survivor", "title": "Missing cleanup", "section": "Architecture", "file": "src/app.py", "line": 12},
+        {"id": "folded-a", "title": "Capacity leak", "section": "Performance", "file": "src/pool.py", "line": 40},
+        {"id": "folded-b", "title": "Wrong count", "section": "Tests", "file": "tests/test_pool.py", "line": 21},
+    ]
+    findings_path = review / "findings.jsonl"
+    findings_path.write_text("".join(json.dumps(row) + "\n" for row in findings), encoding="utf-8")
+    (original,) = ar.build_records(impl, "impl-run", tmp_path, findings=findings_path)
+    item["merged_finding_ids"] = ["folded-a", "folded-b"]
+    items_path.write_text(json.dumps(item) + "\n", encoding="utf-8")
+
+    records = ar.build_records(impl, "impl-run", tmp_path, findings=findings_path)
+
+    assert len(records) == 3
+    assert json.dumps(records[0], separators=(",", ":")) == json.dumps(original, separators=(",", ":"))
+    assert (original["verdict"], original["sha"], original["why"]) == ("fixed", "abc1234", "s")
+    for record, finding in zip(records[1:], findings[1:], strict=True):
+        assert record == {
+            **original,
+            "finding_id": finding["id"],
+            **{key: finding[key] for key in ("title", "section", "file", "line")},
+            "folded_into": "survivor",
+        }
+    assert ar.main(["--impl-dir", str(impl), "--review-dir", str(review)]) == 0
+    ledger = (review / "resolution.jsonl").read_bytes()
+    assert [json.loads(line) for line in ledger.splitlines()] == records
+    assert ar.main(["--impl-dir", str(impl), "--review-dir", str(review)]) == 0
+    assert (review / "resolution.jsonl").read_bytes() == ledger
+
+
 def test_no_records_leaves_no_empty_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A run with no review-sourced items creates no resolution.jsonl beside the review."""
     monkeypatch.setattr(ar, "commit_for", _no_commits)

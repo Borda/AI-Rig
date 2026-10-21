@@ -13,6 +13,23 @@ import find_review_report as frr
 import pytest
 
 
+def test_finding_row_problem_refuses_list_merged_into() -> None:
+    """The producer's shared row gate refuses a merged target the consumer cannot use as a lookup key."""
+    finding = {
+        "id": "architecture-quality-1",
+        "section": "### Architecture & Quality",
+        "severity": "high",
+        "title": "Capacity leak",
+        "change": "code",
+        "author": "reviewer",
+        "merged_into": ["cand-survivor"],
+    }
+
+    assert frr.finding_row_problem(finding, 1) == (
+        "finding 1 field merged_into is list, not text — it must name the surviving row's candidate_id"
+    )
+
+
 class _FakeCompleted:
     """Minimal stand-in for ``subprocess.CompletedProcess``."""
 

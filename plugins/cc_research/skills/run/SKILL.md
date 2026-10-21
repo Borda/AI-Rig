@@ -13,6 +13,8 @@ Sustained metric-improvement loop — reads `program.md`, iterates specialist id
 
 NOT for: methodology validation before run (use `/research:judge`); hypothesis generation (use `research:scientist` agent); one-off feature work (use `/develop:feature`); no `program.md` yet / starting from a bare goal (use `/research:sweep`).
 
+Accept a metric-improvement campaign on a `program.md` or text goal, including a dry-run/walkthrough of that campaign (trace only; execute nothing). A text goal must name a measurable improvement target, using the same optimization-goal test as `/research:plan` P-P1; R1's text-goal fallback does not make an unrelated request a campaign. Any other request → print `! UNSUPPORTED — /research:run cannot do this request`, name the redirect, stop. Never perform the out-of-scope task after the redirect — no "direct answer" section, no partial findings.
+
 </objective>
 
 <constants>
@@ -855,5 +857,7 @@ cat "$CLAUDE_SKILL_DIR/modes/colab-setup.md"  # timeout: 5000
 - **Unbounded cross-skill chain**: `run` → `/research:retro` → `/research:run --hypothesis` / `/research:fortify` → re-run `/research:run` has no campaign-level iteration cap (unlike `sweep`'s `MAX_REFINE = 3` or `run`'s own `MAX_ITERATIONS`). Human-gated each hop — cannot spin autonomously. No counter by design — would need `retro` to write `.experiments/state/`, breaking its read-only invariant.
 - **Explicit flags = hard requirements**: all flags (`--colab`, `--compute=docker`, `--codex`, `--researcher`, `--architect`) must be available at R2. If unavailable, stop — never silently degrade.
 - R7 Codex delegation needs no other plugin — `codex-delegation.md` ships in this plugin's own `skills/_shared/` and resolves via `bin/resolve_shared.py`. R7 is silently skipped only if that file is missing (broken install).
+- **Dry-run / walkthrough requests** (trace steps, execute nothing): report only what the step contract decides. That means R1 parse results and printed warnings, R2 blocking checks with their stop messages, R3 resolved agent and reason, `state.json` fields, and the Phase 7 row matched by any outcome the request supplies. Trace only the steps the request names; never simulate phases or iterations it excludes. Advice outside the contract (measurement tuning, cost caps, environment drift, leftover state) → at most one trailing `Suggestions:` line, never in the findings list.
+- **Confidence on traced outcomes** (walkthrough/report contexts only): parse, routing, precondition and Phase 7 outcomes follow deterministically from the step text. Deduct only for inputs the request leaves unknown, such as unrun command output or unread file contents. Exact warning wording that the skill does not fix is `(-0.00)`, not a gap.
 
 </notes>

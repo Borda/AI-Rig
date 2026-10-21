@@ -210,13 +210,15 @@ Finding: measurement validity — metric_cmd measures a proxy, not the stated me
 Required changes: (1) add `target:` under ## Metric  (2) replace metric_cmd
 ```
 
-`--skip-validation` is for cross-machine planning. It leaves metric and guard executability unverified and therefore prevents an `APPROVED` verdict. Reports are written to `.reports/research/judge-<branch>-<date>.md`.
+`--skip-validation` is for cross-machine planning. It leaves metric and guard executability unverified and therefore prevents an `APPROVED` verdict. Checks that could not be verified appear separately from severity counts on an `Unverified checks:` line in both the report and terminal summary. Reports are written to `.reports/research/judge-<branch>-<date>.md`.
 
 ### `/research:run`
 
 #### Bounded metric-improvement loop, flags, and state
 
 Runs the core loop. Each iteration builds bounded context, proposes one scoped change, verifies that files changed, commits before measuring, runs the metric and guard, keeps a guarded improvement, or reverts the change. A campaign defaults to 20 iterations and is capped at 50. Five consecutive discards trigger strategy escalation and then stop rather than looping blindly.
+
+A text goal must specify a measurable improvement target. A dry-run or walkthrough of a campaign is also supported: it traces the requested steps without executing commands or iterations. Unrelated requests stop with a redirect.
 
 ```text
 /research:run program.md
@@ -298,6 +300,8 @@ The five dimensions are formula (`F`), hyperparameter (`H`), evaluation (`E`), n
 
 Reports are written to `.reports/research/verify-<branch>-<date>.md`, with the detailed scientist audit retained under `.experiments/verify-<timestamp>/`.
 
+Changed training budgets or schedule durations are HIGH protocol mismatches; a setting difference that preserves computation and training budget is MEDIUM. Numeric ratio alone does not set severity. MATCH rows leave Paper Reference, Severity and Detail as `-`.
+
 Illustrative finding shape:
 
 ```text
@@ -320,6 +324,8 @@ Runs one-component-at-a-time ablations after a completed run and an `APPROVED` j
 ```
 
 Supported options are `--venue CVPR|NeurIPS|ICML|workshop`, `--max-ablations <N>`, `--runs <N>`, `--skip-run`, and `--keep "<items>"`. `--skip-run` identifies candidates without executing ablations. `--runs <N>` (default 3, range 1–10) measures every variant N times in its worktree, so metric-command cost scales with N; `--runs 1` has no sigma and classifies against the noise floor alone. `--compute` and `--colab` are not implemented for fortify; metric and guard commands run locally in each worktree.
+
+Unrelated positional input is rejected before source-run lookup. Variant identifiers use ASCII lowercase letters, digits and hyphens so worktree selection and revert lookup agree; descriptive component labels may retain Unicode.
 
 | Class         | Metric loss after component removal |
 | ------------- | ----------------------------------- |
@@ -351,6 +357,8 @@ Reads a completed run's JSONL and diary without changing code or experiment stat
 ```
 
 The report covers direction-aware significance, dead plateaus and churn, suspicious jumps above two standard deviations, strategy effectiveness, failure patterns, diminishing returns, and three to five next hypotheses compatible with `/research:run --hypothesis`. `--compare` requires matching program and metric and stops with `Cannot compare runs with different metrics` otherwise (a run started before `state.json` recorded its `config` has no metric command to compare, so retro only warns, and assumes `higher` when it has no recorded direction); both runs use the same truncation rule, and significance is computed over kept iterations only. Reports are written to `.reports/research/retro-<branch>-<date>.md`.
+
+A scale advisory automatically adjusts the default dead-iteration threshold and reports the applied value. An explicit `--threshold` stays unchanged; the advisory instead suggests a re-run with its proposed value. Timed-out measurements are classified as `unreliable-timeout` and excluded from valid improvement evidence.
 
 Illustrative report shape:
 
@@ -550,6 +558,8 @@ Optional integrations are capability-gated:
 `research:scientist` is for a named paper, publication-backed method, falsifiable hypothesis, or experiment design. It separates paper claims from evidence, checks baselines and variance, identifies one central idea, audits attribution and contribution claims, plans one-variable-at-a-time experiments, estimates compute, and interprets results as confirmed, refuted, or partially supported. It should report mean ± standard deviation over at least three seeds when stochastic results are being compared and should flag cherry-picked results, missing confidence intervals, test-set reuse, and leakage concerns.
 
 `research:data-steward` is for acquisition, provenance, DVC or version tracking, split integrity, leakage detection, schema validation, and DataLoader configuration. Its checklist includes pagination count/schema/boundary/dedup verification; mutually exclusive or group-aware splits; train-only fitting for stateful transforms; train-only augmentation and oversampling; temporal window direction; NaN/Inf, shape, dtype, and range checks; and `shuffle=False` for validation/test loaders. It delegates unknown URL discovery or scraping to `foundry:web-explorer` and validates the returned data itself.
+
+Engineering hygiene is reported at Info severity; silent record loss or duplication is High even when snapshot consistency is involved. An unrelated request receives one or two scope/redirect lines plus the required Confidence block.
 
 Useful data-steward search patterns include `fit_transform(` for pre-split normalization, `Random*` transforms for validation contamination, `train_test_split(` without group awareness, `patient_id` or `subject_id` split gaps, `random_split(` shared-transform risks, and augmentation calls before the split. These are investigation prompts, not automatic findings; the agent must confirm the surrounding data flow.
 

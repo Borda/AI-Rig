@@ -19,4 +19,4 @@ Flag rules:
 - Caught=Yes + Action=`pass` or bare `except` → **MEDIUM** (swallowed error)
 - Cap at 15 rows. New/changed paths only, not entire codebase.
 
-Read the review checklist (Read tool → the path in the `REVIEW_CHECKLIST=` binding of your prompt; no binding → skip) — apply CRITICAL/HIGH patterns as severity anchors. Respect suppressions list.
+Read the review checklist (Read tool → the path in the `REVIEW_CHECKLIST=` binding of your prompt; no binding → skip) — apply CRITICAL/HIGH/MEDIUM patterns as severity anchors. Respect suppressions list.

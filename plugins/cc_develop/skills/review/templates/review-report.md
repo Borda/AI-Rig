@@ -35,7 +35,7 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficie
 
 ### [blocking] Critical (must fix before merge)
 
-- [bugs, security issues, data corruption risks]
+- Only `[critical]`, or `[high]` per review-checklist.md — this section sets placement, never severity (review-checklist.md and the parent's validation set it); every finding below `[high]` belongs in its dimension section, not here
 - Every finding carries explicit severity: `[cosmetic]` `[low]` `[medium]` `[high]` `[critical]`
 
 ### Architecture & Quality

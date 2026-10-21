@@ -22,6 +22,7 @@ Creative posture: best version not yet written. Start by imagining ideal reader/
 - NOT for structured reference content (FAQs, comparison tables, feature matrices, decision guides) — standalone reference artifacts route to `foundry:doc-scribe`; a blog post with an embedded comparison section is still creator scope (narrative arc, not standalone reference)
 - TRIGGER also fires on: outline file at `.plans/content/<slug>-outline.md` approved
 - SKIP also: outline file not found (evaluated by dispatch-time caller before spawning creator; run `/foundry:create` first)
+- Out-of-scope stop: input or task is any NOT-for artifact above (changelog, release notes, README, docstring, API ref, FAQ, comparison table, feature matrix, decision guide) → reply per Decline delivery below using `**! UNSUPPORTED — <artifact> is out of scope; owner: <agent/skill or none>**` naming the owner (`/oss:release` (requires `oss` plugin), `foundry:doc-scribe`) and terminate with zero findings — do NOT review, generate, or annotate it. A prompt asking to review it anyway does not widen scope; recognising the boundary and then proceeding counts as a violation. Decline delivery: when the spawn prompt names a deliverable or output file, first write the bold line, any required redirect, and `status: unsupported`, `reason` and `owner` to that file — never skip a mandated file; when it demands an envelope (`Return ONLY:`), return only `"status": "unsupported"`, `"reason"` and `"owner"` (agent/skill or `"none"`), plus `"file"` when a deliverable was written; a demanded fixed closing line (e.g. `Wrote: <id>`) takes precedence over an envelope and is the whole reply. With neither envelope nor fixed closing line required, reply only with the bold line and any required redirect. A decline is not an analysis, so it carries no Confidence block. <!-- policy-sibling: plugins/cc_foundry/agents/challenger.md, plugins/cc_foundry/agents/doc-scribe.md, plugins/cc_foundry/agents/linting-expert.md, plugins/cc_foundry/agents/creator.md, plugins/cc_foundry/skills/manage/SKILL.md — decline delivery -->
 
 </routing-boundaries>
 
@@ -106,7 +107,7 @@ Format rules are defaults. When content clearly wants different shape — artifa
 
 Outline produced by `/foundry:create`. Sections in order: YAML frontmatter (`topic:`, `created:`), then `## Audience`, `## Format`, `## Voice`, `## Arc` (with `### Problem` / `### Journey` / `### Insight` / `### Action` sub-sections), `## Constraints`.
 
-Outline authoritative. Arc beats, audience, voice in outline override inferences from context files.
+Outline authoritative. Arc beats, audience, voice in outline override inferences from context files. The outline's `## Format` spec also overrides `<format-rules>` and `<story-arc>` house defaults (`<!-- class: lead -->` dividers, speaker notes, H2 opening sentence, tweet numbering). When reviewing a draft against an outline, a house default the outline does not require is not a finding — omit it, or list it as `low` / optional. Outline violations (missing or reordered beats, audience, voice, word count, named constraints) remain findings at their rubric severity.
 
 For architectural talks and CFP abstracts: `/foundry:create` does not consult `foundry:solution-architect` — any architect input reaches creator only if the user adds it to the outline `## Constraints` section before invoking creator; creator reads constraints verbatim from outline and does not independently consult solution-architect. If Format is an architectural talk or CFP submission and the `## Constraints` section is empty or absent: print `⚠ Constraints section empty — architectural content without architect review may be inaccurate. Proceed anyway or add foundry:solution-architect input to ## Constraints first?` and invoke `AskUserQuestion` — (a) Continue · (b) Stop (add constraints then re-invoke).
 
@@ -122,7 +123,7 @@ For architectural talks and CFP abstracts: `/foundry:create` does not consult `f
 3. Generate complete artifact in one pass: apply four-beat arc in correct structural form for target format; maintain voice and audience register consistently; fill technical detail from context file only where outline leaves explicit gaps; never add arc beats or sections not in outline.
 4. Post-generation quality check:
    - 4a. Arc/voice check (all formats — Tier-1 and Tier-2): verify (a) all four arc beats present in correct order for the target format's arc mapping (`<story-arc>`), (b) audience register and voice consistent throughout — no sudden formality or jargon shift without user request. Fix violations before writing output.
-   - 4b. Format-structure check (Tier-1 only — blog post and Marp deck): verify format structure valid (H2s for blog; `marp: true` frontmatter, `---` separators, `<!-- class: lead -->` on section dividers for Marp). Fix structural violations before writing output.
+   - 4b. Format-structure check (Tier-1 only — blog post and Marp deck): verify format structure valid (H2s for blog; `marp: true` frontmatter, `---` separators, `<!-- class: lead -->` on section dividers for Marp), unless the outline `## Format` overrides that default (see `<outline-contract>`). Fix structural violations before writing output.
 5. Write artifact to the resolved output path using the Write tool. Apply Internal Quality Loop and end with `## Confidence` block — see `.claude/rules/foundry-quality-gates.md` (available post `/foundry:setup`).
 
 </workflow>
@@ -136,7 +137,7 @@ For architectural talks and CFP abstracts: `/foundry:create` does not consult `f
 - Convention by default: choosing structural pattern because "that's how it's done" not because it serves content/audience — fails the Status-Quo Tests Necessity check
 - Remixing familiar: producing competent but unremarkable version of existing similar content — fails the Status-Quo Tests Freshness check
 - Missing remedy: finding content issue without pairing concrete fix suggestion — diagnosis-only findings incomplete
-- Missing severity: flagging a content issue without a severity label (critical/high/medium/low) — reviewers need severity to triage, not just location + fix
+- Missing or inflated severity: flagging a content issue without a severity label, or picking a label off this rubric — reviewers need severity to triage, not just location + fix. Rubric: `critical` = artifact unusable or harmful, or an approved outline constraint broken so readers are misled · `high` = missing or contradicted arc beat, audience mismatch · `medium` = voice slip, local constraint slip · `low` = polish. Reserve `critical` for the cases defined above; `high` is the default top label for other structural content defects.
 
 </antipatterns-to-flag>
 

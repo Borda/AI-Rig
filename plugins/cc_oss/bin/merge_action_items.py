@@ -18,9 +18,18 @@ written first (ids ``1..G``). This script folds the review's ``findings.jsonl`` 
   verifier's ``verify_verdict`` only when the value is exactly ``CONFIRMED``, names a ``verify_file``, and came from
   the review's own ``findings.jsonl``. Findings that resolve parsed itself from an older report (a findings file in the
   same directory as the item list) never carry a verdict.
+- A root-cause-merged row (``merged_into`` naming the ``candidate_id`` of the row the report prints for the group) adds
+  no item of its own. It is folded into the item its survivor becomes, whether that is a new ``[report]`` item or an
+  annotated GitHub item: the item lists the folded ids in ``merged_finding_ids``, appends each folded row's text to
+  its comment, and takes the most severe routing of the group (a ``[report]`` item becomes ``[req]`` when any member
+  would be). Folded rows are never offered as ``--candidates`` and links naming them are ignored. A ``merged_into``
+  that names no single new row without ``merged_into`` of its own (missing, ambiguous, chained, self-referencing, or a
+  survivor an earlier merge already placed) keeps the row as its own item and prints a ``⚠`` warning on stderr, so a
+  confirmed finding is never dropped.
 - A pending GitHub item that matched nothing and has only a short comment is marked ``thin: true`` so the challenge
   phase reassesses it from scratch. Open questions are never thin.
-- Findings whose id already appears in the item list are skipped, so re-running the merge changes nothing.
+- Findings whose id already appears in the item list, as an item's ``finding_id`` or among its ``merged_finding_ids``,
+  are skipped, so re-running the merge changes nothing.
 
 When no GitHub row needs an annotation the file is only appended to; otherwise it is replaced in one atomic rename.
 Ids already in the file never change, so table numbers, task ids and commit tags stay aligned.
@@ -67,10 +76,10 @@ Exit codes:
     0 — merged, candidates printed, or verdicts re-checked
     1 — unreadable input, no findings file for ``--report-file`` (message on stdout) or failed id minting, a finding
         missing a required field or carrying an unknown severity, two findings sharing an id, a row or link that is
-        not an object of the expected field types (text fields, a numeric line), a link naming an unknown id, a
-        duplicate item id, version-one findings whose publication is neither valid nor (with ``--accept-degraded``)
-        free of critical gaps, or (with ``--recheck-verdicts``) a validated publication holding findings rows the
-        merge could not use
+        not an object of the expected field types (text fields, a numeric line, a text ``merged_into``), a link naming
+        an unknown id, a duplicate item id, version-one findings whose publication is neither valid nor (with
+        ``--accept-degraded``) free of critical gaps, or (with ``--recheck-verdicts``) a validated publication holding
+        findings rows the merge could not use
 """
 
 from __future__ import annotations
@@ -112,6 +121,8 @@ from mint_finding_ids import normalize_path, read_jsonl, section_slug  # noqa: E
 SEVERITY_SCORE: Final = dict(zip(FINDING_SEVERITIES, (5, 4, 3, 2, 1), strict=True))
 #: Sections whose MEDIUM findings are ``[req]`` (code-related) per review-section-taxonomy.md "Severity → Resolve Type".
 REQ_MEDIUM_SECTIONS: Final = frozenset({"critical", "architecture-quality", "performance-concerns", "api-design"})
+#: Slug of the report's ``### [blocking] Critical`` bucket, whose findings are ``[req]`` at any severity.
+BLOCKING_SECTION: Final = "critical"
 #: Item-type markers that denote an unresolved review comment still needing action.
 PENDING_TYPE_MARKERS: Final = ("[req]", "[suggest]", "[question]")
 #: Item ``status`` values that keep an item open; a missing status counts as open.
@@ -122,6 +133,10 @@ CONFIRMED: Final = "CONFIRMED"
 THIN_TEXT_CHARS: Final = 80
 #: Default maximum length in characters of a finding's short summary.
 SUMMARY_CHARS: Final = 60
+#: Finding field naming the ``candidate_id`` of the surviving row a root-cause-merged row was folded into.
+MERGED_INTO: Final = "merged_into"
+#: Item field listing the ids of the root-cause-merged findings folded into the item's own finding.
+MERGED_IDS: Final = "merged_finding_ids"
 
 
 def resolve_type(finding: dict) -> str:
@@ -131,11 +146,16 @@ def resolve_type(finding: dict) -> str:
     '[report][req]'
     >>> resolve_type({"severity": "medium", "section": "### Codex Co-Review"})
     '[report][suggest]'
+    >>> resolve_type({"severity": "low", "section": "### [blocking] Critical (must fix before merge)"})
+    '[report][req]'
     """
     severity = finding["severity"]
-    if severity in ("critical", "high"):
+    slug = section_slug(finding["section"])
+    # The blocking bucket also holds `[blocking]`-tagged findings at their own severity (a Block-tier test gap stays
+    # `[low]`); the taxonomy makes every one of them required work, so the section decides before the severity does.
+    if severity in ("critical", "high") or slug == BLOCKING_SECTION:
         return "[report][req]"
-    if severity == "medium" and section_slug(finding["section"]) in REQ_MEDIUM_SECTIONS:
+    if severity == "medium" and slug in REQ_MEDIUM_SECTIONS:
         return "[report][req]"
     return "[report][suggest]"
 
@@ -186,8 +206,10 @@ def _by_severity(findings: list[dict]) -> list[dict]:
     return sorted(findings, key=lambda f: -SEVERITY_SCORE.get(f["severity"], 0))
 
 
-def exact_matches(items: list[dict], findings: list[dict]) -> dict[str, int]:
-    """Map finding id → item id for pairs at the same file and line; each free pending item takes one finding."""
+def exact_matches(
+    items: list[dict], findings: list[dict], groups: dict[str, list[dict]] | None = None
+) -> dict[str, int]:
+    """Map survivor ids to free pending items, trying each survivor's location before its folded locations."""
     index: dict[tuple[str, str], int] = {}
     for item in items:
         key = _location(item)
@@ -195,28 +217,38 @@ def exact_matches(items: list[dict], findings: list[dict]) -> dict[str, int]:
             index[key] = int(item["id"])
     matches: dict[str, int] = {}
     for finding in _by_severity(findings):
-        item_id = index.pop(_location(finding), None)
-        if item_id is not None:
-            matches[finding["id"]] = item_id
+        for row in [finding, *(groups or {}).get(finding["id"], [])]:
+            item_id = index.pop(_location(row), None)
+            if item_id is not None:
+                matches[finding["id"]] = item_id
+                break
     return matches
 
 
-def candidates(items: list[dict], findings: list[dict], exact: dict[str, int]) -> list[dict]:
-    """List same-file pairs that did not match exactly, for the orchestrator's semantic judgment."""
+def candidates(
+    items: list[dict], findings: list[dict], exact: dict[str, int], groups: dict[str, list[dict]] | None = None
+) -> list[dict]:
+    """List unmatched same-file pairs under survivor ids, including the folded rows' locations."""
     taken = set(exact.values())
     out = []
     for finding in findings:
         if finding["id"] in exact:
             continue
-        path = normalize_path(str(finding.get("file") or ""))
+        # Keep one pair per item even when several symptoms share a file; prefer the survivor's location there.
+        locations = {
+            normalize_path(str(row.get("file") or "")): row
+            for row in reversed([finding, *(groups or {}).get(finding["id"], [])])
+        }
         for item in items:
             free = _is_pending(item) and not item.get("finding_id") and int(item["id"]) not in taken
-            if path and free and normalize_path(str(item.get("file") or "")) == path:
+            path = normalize_path(str(item.get("file") or ""))
+            if path and free and path in locations:
+                row = locations[path]
                 out.append(
                     {
                         "finding_id": finding["id"],
-                        "finding_title": finding["title"],
-                        "finding_line": finding.get("line"),
+                        "finding_title": row["title"],
+                        "finding_line": row.get("line"),
                         "item_id": item["id"],
                         "item_summary": item.get("summary", ""),
                         "item_line": item.get("line"),
@@ -225,8 +257,18 @@ def candidates(items: list[dict], findings: list[dict], exact: dict[str, int]) -
     return out
 
 
-def accepted_links(links: list[dict], by_id: dict[int, dict], known: set[str], exact: dict[str, int]) -> dict[str, int]:
-    """Keep each semantic link whose finding and item are both still free; the rest fall back to appending."""
+def accepted_links(
+    links: list[dict],
+    by_id: dict[int, dict],
+    known: set[str],
+    exact: dict[str, int],
+    folded: frozenset[str] | set[str] = frozenset(),
+) -> dict[str, int]:
+    """Keep each semantic link whose finding and item are both still free; the rest fall back to appending.
+
+    A link naming a ``folded`` finding is checked like any other but never accepted: that finding reaches resolve only
+    through its survivor's item.
+    """
     accepted: dict[str, int] = {}
     taken = set(exact.values())
     seen_findings: set[str] = set()
@@ -234,6 +276,8 @@ def accepted_links(links: list[dict], by_id: dict[int, dict], known: set[str], e
         finding_id, item_id = link["finding_id"], int(link["item_id"])
         if finding_id not in known or item_id not in by_id:
             raise ValueError(f"link names an unknown finding or item: {link}")
+        if finding_id in folded:
+            continue
         repeated = finding_id in seen_findings
         seen_findings.add(finding_id)
         item = by_id[item_id]
@@ -271,6 +315,92 @@ def annotate(item: dict, finding: dict) -> None:
         if finding.get(key):
             item[key] = finding[key]
     item.pop("thin", None)
+
+
+def _at_group_severity(finding: dict, merged: list[dict]) -> dict:
+    """Return the survivor itself, or a copy carrying the highest severity among it and the rows merged into it."""
+    if not merged:
+        return finding
+    top = max([finding, *merged], key=lambda row: SEVERITY_SCORE[row["severity"]])
+    return {**finding, "severity": top["severity"]}
+
+
+def _survivor_index(findings: list[dict]) -> dict[str, dict | None]:
+    """Map each candidate id a row without ``merged_into`` holds to that row, or to ``None`` when two rows hold it.
+
+    A candidate id two rows hold names no single survivor, so neither may absorb the rows merged into it.
+    """
+    survivors: dict[str, dict | None] = {}
+    for finding in findings:
+        candidate = finding.get("candidate_id")
+        if isinstance(candidate, str) and candidate and not finding.get(MERGED_INTO):
+            survivors[candidate] = None if candidate in survivors else finding
+    return survivors
+
+
+def fold_groups(findings: list[dict]) -> tuple[list[dict], dict[str, list[dict]], list[dict]]:
+    """Separate root-cause-merged rows from the rows that become action items.
+
+    A row whose ``merged_into`` names the ``candidate_id`` of exactly one row in ``findings`` that has no
+    ``merged_into`` of its own is folded into that survivor. Every other merged row (no such row, two rows holding the
+    id, a target that is itself merged, or the row naming itself) stays in the pool as its own item and is listed as an
+    orphan, so a confirmed finding is never dropped. A survivor enters the pool as a copy at its group's highest
+    severity, so it claims a GitHub item and scores as its worst symptom would.
+
+    Args:
+        findings: Validated finding rows an earlier merge has not placed yet.
+
+    Returns:
+        ``(pool, groups, orphans)``: the rows to match and append, in their original order; the folded rows per
+        surviving finding id; and one ``{finding_id, merged_into}`` record per row whose survivor was not resolved.
+
+    Examples:
+        >>> rows = [
+        ...     {"id": "s", "candidate_id": "c1", "severity": "low"},
+        ...     {"id": "m", "candidate_id": "c2", "merged_into": "c1", "severity": "high"},
+        ...     {"id": "o", "candidate_id": "c3", "merged_into": "c9", "severity": "medium"},
+        ... ]
+        >>> pool, groups, orphans = fold_groups(rows)
+        >>> [(row["id"], row["severity"]) for row in pool]
+        [('s', 'high'), ('o', 'medium')]
+        >>> {survivor: [row["id"] for row in merged] for survivor, merged in groups.items()}, orphans
+        ({'s': ['m']}, [{'finding_id': 'o', 'merged_into': 'c9'}])
+    """
+    survivors = _survivor_index(findings)
+    groups: dict[str, list[dict]] = {}
+    orphans: list[dict] = []
+    for finding in findings:
+        target = finding.get(MERGED_INTO)
+        if not target:
+            continue
+        survivor = survivors.get(target)
+        if survivor is None:
+            orphans.append({"finding_id": finding["id"], MERGED_INTO: target})
+        else:
+            groups.setdefault(survivor["id"], []).append(finding)
+    folded = {row["id"] for rows in groups.values() for row in rows}
+    pool = [_at_group_severity(row, groups.get(row["id"], [])) for row in findings if row["id"] not in folded]
+    return pool, groups, orphans
+
+
+def record_folded(item: dict, merged: list[dict]) -> None:
+    """Note on an item the root-cause-merged findings its own finding absorbed, so its fixer sees every symptom.
+
+    The item's severity already reflects the group, because its finding was scored at the group's highest severity. A
+    ``[report][suggest]`` item still becomes ``[req]`` when a merged row alone would have been one: a medium symptom in
+    a code-related section folded into a survivor from a section whose mediums are only suggestions.
+    """
+    if not merged:
+        return
+    item[MERGED_IDS] = [row["id"] for row in merged]
+    for row in merged:
+        detail = str(row.get("full_text") or row["title"])
+        item["full_comment_text"] = (
+            f"{item.get('full_comment_text', '')}\n\n[merged finding {row['id']}] {detail}".strip()
+        )
+    if item.get("type") == "[report][suggest]" and any(resolve_type(row) == "[report][req]" for row in merged):
+        item["type"] = "[report][req]"
+        item["severity"] = max(int(item["severity"]), 3)
 
 
 def as_report_item(finding: dict, item_id: int, *, keep_verdict: bool) -> dict:
@@ -398,38 +528,64 @@ def _write(path: Path, items: list[dict], appended: list[dict], rewrite: bool) -
         raise
 
 
+def _merged_before(items: list[dict]) -> set[str]:
+    """Return every finding id an earlier merge placed, as an item's own finding or as one folded into it."""
+    placed: set[str] = set()
+    for item in items:
+        if item.get("finding_id"):
+            placed.add(str(item["finding_id"]))
+        placed.update(str(finding_id) for finding_id in item.get(MERGED_IDS) or ())
+    return placed
+
+
 def merge(
     items: list[dict], findings: list[dict], links: list[dict], *, keep_verdicts: bool = True
 ) -> tuple[list[dict], dict]:
     """Annotate matched GitHub items in place and return ``(appended report items, summary counts)``."""
     by_id = {int(item["id"]): item for item in items}
-    merged_before = {str(item["finding_id"]) for item in items if item.get("finding_id")}
+    merged_before = _merged_before(items)
     known = {finding["id"] for finding in findings}
-    fresh = [finding for finding in findings if finding["id"] not in merged_before]
-    by_finding = {finding["id"]: finding for finding in fresh}
-    exact = exact_matches(items, fresh)
+    pool, groups, orphans = fold_groups([finding for finding in findings if finding["id"] not in merged_before])
+    folded = {row["id"] for rows in groups.values() for row in rows}
+    by_finding = {finding["id"]: finding for finding in pool}
+    exact = exact_matches(items, pool, groups)
     links = [link for link in links if link["finding_id"] not in merged_before]
-    semantic = accepted_links(links, by_id, known, exact)
+    semantic = accepted_links(links, by_id, known, exact, folded)
     for finding_id, item_id in [*exact.items(), *semantic.items()]:
         annotate(by_id[item_id], by_finding[finding_id])
+        record_folded(by_id[item_id], groups.get(finding_id, []))
     next_id = max(by_id, default=0) + 1
     appended = []
-    for finding in fresh:
+    for finding in pool:
         if finding["id"] not in exact and finding["id"] not in semantic:
-            appended.append(as_report_item(finding, next_id, keep_verdict=keep_verdicts))
+            item = as_report_item(finding, next_id, keep_verdict=keep_verdicts)
+            record_folded(item, groups.get(finding["id"], []))
+            appended.append(item)
             next_id += 1
     thin = mark_thin(items)
     summary = {
         "findings": len(findings),
-        "already_merged": len(findings) - len(fresh),
+        "already_merged": len(findings) - len(pool) - len(folded),
         "deduped_exact": len(exact),
         "deduped_semantic": len(semantic),
         "links_ignored": len({link["finding_id"] for link in links}) - len(semantic),
         "appended": len(appended),
+        "folded": len(folded),
+        "fold_orphans": orphans,
         "thin": thin,
         "rewrite": bool(exact or semantic or thin),
     }
     return appended, summary
+
+
+def _warn_fold_orphans(orphans: list[dict]) -> None:
+    """Print one warning per root-cause-merged row kept as its own item because its survivor was not resolved."""
+    for orphan in orphans:
+        print(
+            f"⚠ finding {orphan['finding_id']}: {MERGED_INTO} {orphan[MERGED_INTO]!r} names no single new surviving "
+            "row — kept as its own action item",
+            file=sys.stderr,
+        )
 
 
 def _git_head(cwd: Path) -> str:
@@ -686,7 +842,9 @@ def main(argv: list[str] | None = None) -> int:
             finding["parent_validation_file"] = validation_file.resolve().as_posix()
             finding["parent_validation_sha256"] = digest
     if args.candidates:
-        print(json.dumps(candidates(items, findings, exact_matches(items, findings)), ensure_ascii=False))
+        merged_before = _merged_before(items)
+        pool, groups, _ = fold_groups([finding for finding in findings if finding["id"] not in merged_before])
+        print(json.dumps(candidates(items, pool, exact_matches(items, pool, groups), groups), ensure_ascii=False))
         return 0
     # A findings file beside the item list was parsed by resolve itself from an older report; no verifier backs it.
     keep_verdicts = findings_path.resolve().parent != items_path.resolve().parent
@@ -697,6 +855,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     items_path.parent.mkdir(parents=True, exist_ok=True)
     _write(items_path, items, appended, summary["rewrite"])
+    _warn_fold_orphans(summary["fold_orphans"])
     print(json.dumps(summary))
     return 0
 

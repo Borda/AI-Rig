@@ -97,10 +97,15 @@ cat "$_RESEARCH_SHARED/unsupported-flag-protocol.md"
 
 **Input resolution** (priority order):
 
-1. Explicit `<run-id>` argument → read `$STATE_DIR_BASE/<run-id>/state.json`
-2. Explicit `<program.md>` argument → scan `$STATE_DIR_BASE/*/state.json` for matching `program_file`, pick latest with `status: completed` or `status: goal-achieved`
-3. No argument → scan `$STATE_DIR_BASE/`, pick latest with `status: completed` or `status: goal-achieved`
-4. None found → stop:
+1. Before source-run lookup, any positional input that is not a run-id or a `program.md` path → out of scope. Print only this line, then stop:
+   ```text
+   fortify: out of scope — expects a completed /research:run campaign (run-id or program.md). Route: /research:run → /research:judge → /research:fortify
+   ```
+   Never review, correct, summarise or comment on the out-of-scope input's content. Return zero findings and no edits or incidental review.
+2. Explicit `<run-id>` argument → read `$STATE_DIR_BASE/<run-id>/state.json`
+3. Explicit `<program.md>` argument → scan `$STATE_DIR_BASE/*/state.json` for matching `program_file`, pick latest with `status: completed` or `status: goal-achieved`
+4. No argument → scan `$STATE_DIR_BASE/`, pick latest with `status: completed` or `status: goal-achieved`
+5. None found → stop:
    ```text
    fortify: No completed run found. Run /research:run first.
    ```
@@ -261,7 +266,7 @@ Jump to F8 (skip-run variant).
 
 ## Step F3: Generate ablation variants
 
-For each component from F2, one ablation variant: `no-<component-name>` (slugified — lowercase, spaces to hyphens). Plus one `full` variant (sanity check — should reproduce `best_metric`), always **line 1**: 4a-init refuses any other first line, and no ablation runs until `full` completed within tolerance.
+For each component from F2, one ablation variant: `no-<component-name>` (ASCII slug — lowercase letters, digits and hyphens only; translate any non-ASCII component label before writing `variant_name`). Keep the descriptive label in `component_removed`. ASCII identifiers keep jq's ASCII case conversion and the worktree helper's Python Unicode case conversion identical. Plus one `full` variant (sanity check — should reproduce `best_metric`), always **line 1**: 4a-init refuses any other first line, and no ablation runs until `full` completed within tolerance.
 
 Write variant configs to `$FORTIFY_DIR/variants.jsonl` via Write tool — one JSON line per variant:
 
@@ -367,7 +372,8 @@ IFS= read -r FORTIFY_DIR < "${TMPDIR:-/tmp}/fortify-dir-${CSID}" 2>/dev/null || 
 IFS= read -r VARIANT_NAME < "${TMPDIR:-/tmp}/fortify-variant-name-${CSID}" 2>/dev/null || VARIANT_NAME=""  # reload (Check 41)
 # full has nothing to revert; empty the sorted sentinel so a stray Bash call 2 cannot replay the previous variant's SHAs
 case "$VARIANT_NAME" in variant-full) : > "${TMPDIR:-/tmp}/fortify-revert-sorted-${CSID}"; echo "full variant — no revert; skip Bash call 2, run 4d"; exit 0;; esac
-REVERT_COMMITS_RAW=$(jq -r --arg vn "$VARIANT_NAME" 'select(.variant_name==$vn) | .revert_commits[]' "$FORTIFY_DIR/variants.jsonl" 2>/dev/null | tr '\n' ' ')  # timeout: 5000
+# mirror normalise_variant_name (spaces→hyphens, lowercase, strip `variant-`); non-string name never matches
+REVERT_COMMITS_RAW=$(jq -r --arg vn "$VARIANT_NAME" 'def n: if type=="string" then gsub(" ";"-")|ascii_downcase|ltrimstr("variant-") else null end; ($vn|n) as $k | select($k != "" and (.variant_name|n)==$k) | .revert_commits[]' "$FORTIFY_DIR/variants.jsonl" 2>/dev/null | tr '\n' ' ')  # timeout: 5000
 # no shell loop — emit skip token so 4d/4e are genuinely bypassed
 [ -z "$REVERT_COMMITS_RAW" ] && { echo "⚠ No revert_commits for $VARIANT_NAME — skipping"; echo '{"variant":"'$VARIANT_NAME'","status":"revert-missing"}' >> "$FORTIFY_DIR/results.jsonl"; echo "FORTIFY_SKIP_VARIANT=1"; exit 0; }
 # topo-order newest-first, independent of input order; one unresolvable SHA fails the whole call → empty → skip
@@ -795,5 +801,6 @@ See the domain table entry for `/research:fortify` for the full ground-truth che
 - **Fortify run directories** don't write `result.jsonl` — exempt from 30-day TTL cleanup (per `.claude/rules/foundry-artifact-lifecycle.md`, installed via `/foundry:setup` — requires `foundry` plugin: no `result.jsonl` = cleanup skipped); remove manually when done (`rm -rf .experiments/fortify-*/`) <!-- policy-sibling: plugins/cc_research/skills/judge/SKILL.md, plugins/cc_research/skills/plan/SKILL.md, plugins/cc_research/skills/retro/SKILL.md, plugins/cc_research/skills/verify/SKILL.md — TTL-exemption note (no result.jsonl → skip 30-day cleanup) restated in each; keep in sync (plugins/CLAUDE.md §Policy Duplication Marker). -->
 - **Compute mode**: local execution only. `--compute` and `--colab` passthrough not implemented — contributions welcome. Until then, fortify runs `metric_cmd`/`guard_cmd` directly in each worktree on local machine.
 - **Revert conflicts expected** — when commits interleave (component A's commit touches same lines as B's), revert may conflict. Recorded as `revert-conflict`, not treated as error.
+- **One finding per root defect** — applies to every finding list fortify emits: F5 sign anomalies and coupling warnings, F7 Skipped Variants, dry-run reviews of an ablation plan or ranking. A consequence of a defect already reported (an affected report field or header, a downstream ranking or class shift, a variant made unreliable by it) is still recorded, inside the root finding's entry, never as its own row. A variant already marked `[COUPLED]` gets no further separate "not a clean ablation" finding — the coupling warning covers it. A limit on what could be checked ("unable to verify X") goes in Confidence **Gaps**, not the findings list.
 
 </notes>

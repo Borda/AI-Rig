@@ -1,3 +1,5 @@
+<!-- policy-sibling: plugins/cc_develop/skills/review/templates/review-checklist.md — local-diff fork: PR/issue-linkage HIGH patterns intentionally oss-only; `[blocking]`-tag admission to the blocking bucket (templates/review-report.md) and the `[blocking]` clause after the test-gap ceiling (templates/agent-prompts.md) intentionally oss-only, tied to the Block-tier catalogue; Annotation-completeness taxonomy reference oss-only; sync the shared patterns and rules both ways -->
+
 # Review Checklist
 
 ## CRITICAL Patterns (must block merge)
@@ -12,6 +14,10 @@
 - Non-atomic registry/store update: in-memory index + filesystem op without temp-then-rename pattern. Look for: `save_index()` + `shutil.copytree()`, `delete from dict` + `os.remove()`, or any two-phase commit without temp-then-rename
 - PR linked to issue but code changes don't address identified root cause — root cause misalignment
 - PR description diverges from linked issue's stated problem — scope divergence (solving different thing than reported)
+
+## MEDIUM Patterns (default anchor)
+
+- Documented-contract or docstring-promise violation (wrong returned value, ignored parameter, ordering or state not maintained as documented) with no CRITICAL/HIGH pattern above → MEDIUM. Raise to HIGH only with cited evidence of wider impact: `imported_by` tier moderate/high (≥5 importers), an unhandled exception on the main path, or a HIGH pattern match. Importer count unknown → stays MEDIUM.
 
 ## Consolidation Rules
 

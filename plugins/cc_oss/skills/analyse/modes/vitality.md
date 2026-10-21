@@ -58,7 +58,7 @@ Spawn all 3 `oss:repo-warden` agents simultaneously in single response:
 >
 > `Agent(subagent_type="oss:repo-warden", name="repo-warden-C", description="Score axes 3, 9", prompt="AXIS_GROUP=C PARTIAL_FILE=$PARTIAL_C GH_OWNER=$GH_OWNER GH_REPO=$GH_REPO DATA_FILE=$DATA_FILE")`
 
-**Health monitoring** — SKILL.md §Health monitoring: in this spawn response write `<WATCH_DIR>/agent-watch-score.tsv` with one row per agent (`repo-warden-A<TAB>$PARTIAL_A<TAB>1800`, same for B and C, paths expanded). Never poll — no periodic `find`, no `ScheduleWakeup`, `ListAgents` or `Monitor` loop; run the SKILL.md watch block at each completion notification. `timed_out`, or a notification without its partial file → read the tail of any partial output; surface with ⏱ now.
+**Health monitoring** — SKILL.md §Health monitoring: in this spawn response write `<WATCH_DIR>/agent-watch-score.tsv` with one row per agent (`repo-warden-A<TAB>$PARTIAL_A<TAB>1800`, same for B and C, paths expanded). Never poll — no periodic `find`, no `ScheduleWakeup`, `ListAgents` or `Monitor` loop. At each completion notification, parse the returned envelope before checking for a partial file or running the SKILL.md watch block. `status: "declined"` → surface `declined` and its `reason`, including a Step 1 missing-sentinel failure; no partial file is expected, so do not label it `timed_out`. Stop before Step 3 assembly and report the affected group and input to repair. Otherwise run the watch block: `timed_out`, or a notification without its partial file → read the tail of any partial output; surface with ⏱ now.
 
 Collect all 3 agents' results on their notifications. Verify all 3 partial files exist: `$PARTIAL_A`, `$PARTIAL_B`, `$PARTIAL_C`.
 

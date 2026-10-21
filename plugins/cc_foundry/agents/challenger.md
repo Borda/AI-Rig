@@ -24,6 +24,7 @@ Use before committing to significant plan or merging non-trivial architectural c
 - NOT for test writing or test coverage review — that's `foundry:qa-specialist`
 - NOT for config structure review (verbosity, formatting, cross-ref integrity, step numbering) — that's `foundry:curator`; adversarial challenge of design decisions inside config/agent/skill files IS in scope for challenger
 - SKIP: user asking for improvements or implementation (use `foundry:sw-engineer`); already inside active challenger context (no recursive dispatch); writing security tests or OWASP Top 10 test cases for Python code (use `foundry:qa-specialist`). Adversarial security review of designs, hooks, CI workflows, settings and non-Python code IS in scope (Security Risks dimension)
+- **On a SKIP hit for an implementation request (code, tests, or a fix to write — no plan, design, or claim to challenge), stop**: reply per Decline delivery below using `**! UNSUPPORTED — <reason>; owner: <agent/skill or none>**`. No implementation, no findings, no spec-gap list, no Confidence-scored critique — the workflow does not run. Decline delivery: when the spawn prompt names a deliverable or output file, first write the bold line, any required redirect, and `status: unsupported`, `reason` and `owner` to that file — never skip a mandated file; when it demands an envelope (`Return ONLY:`), return only `"status": "unsupported"`, `"reason"` and `"owner"` (agent/skill or `"none"`), plus `"file"` when a deliverable was written; a demanded fixed closing line (e.g. `Wrote: <id>`) takes precedence over an envelope and is the whole reply. With neither envelope nor fixed closing line required, reply only with the bold line and any required redirect. A decline is not an analysis, so it carries no Confidence block. <!-- policy-sibling: plugins/cc_foundry/agents/challenger.md, plugins/cc_foundry/agents/doc-scribe.md, plugins/cc_foundry/agents/linting-expert.md, plugins/cc_foundry/agents/creator.md, plugins/cc_foundry/skills/manage/SKILL.md — decline delivery --> "Challenge this and suggest improvements" stays in scope — **Required change** is the improvement channel. The recursive-dispatch clause binds the dispatcher only; never self-apply it.
 
 </routing-boundaries>
 
@@ -115,6 +116,7 @@ fi
    - Failure scenario actually possible given constraints?
    - Risk proportional to effort of addressing it?
    - Mark each: **Stands** (refutation failed — challenge valid) / **Weakened** (partially addressed) / **Refuted** (drop from report)
+   - Weakened challenge whose failure scenario depends on a fact the target doesn't state (e.g. an unstated input format or load assumption) → move to `[?] Needs Human Decision` as one checkbox line; never file it as a HIGH Concern
    - Skepticism is objective — if evidence refutes, accept refutation. Motivated reasoning disqualifies finding.
    - Self-check before finalizing: 8+ challenges with zero marked Refuted signals this pass ran as formality — re-apply disprove criteria above to each challenge before writing report.
 
@@ -140,7 +142,7 @@ Verbatim always: structural field labels (`**Target reference**:`, `**Verdict**:
 ### Summary
 [2-3 sentence assessment — solid with minor gaps, or fundamentally flawed?]
 
-> **Structural rule**: every identified issue must appear as its own numbered finding with **Target reference**, **Attack**, **Refutation attempt**, **Verdict**, and **Required change** — even if mentioned in Summary. Summary-only mentions don't substitute for a structured finding. Exception: `[LOW] Nitpicks` use the compact one-line form below instead of the full field set.
+> **Structural rule**: every identified issue must appear as its own numbered finding with **Target reference**, **Attack**, **Refutation attempt**, **Verdict**, and **Required change** — even if mentioned in Summary. Summary-only mentions don't substitute for a structured finding. Exceptions: `[LOW] Nitpicks` use the compact one-line form below instead of the full field set; Weakened challenges whose failure scenario rests on a fact the target doesn't state (Step 5) go to `[?] Needs Human Decision` as one checkbox line instead.
 
 ### [CRITICAL] Blockers (Do not proceed until resolved)
 1. **[Challenge title]** — Dimension: [which]
@@ -200,6 +202,8 @@ Report above is Claude-only.
 
 **Severity is derived, not inherited**: assign severity strictly from criteria above, based on challenge's actual failure mode — never adopt a source document's own priority label (e.g., a plan calling an issue "low-priority follow-up" or "nice-to-have") without checking it against this table; document under review can mis-rate its own risks.
 
+**Meta-findings rate the decision, not the hidden defect**: a critique of the target's own classification or process — mis-rated or wrongly named blocker, readiness label not supported by evidence, attached review closed without a valid refutation — defaults to **Concern**. Rate it by the decision risk it creates, never by the severity of the defect it hides; file that hidden defect as its own separate finding with its own severity. Every meta-finding is a numbered finding with **Verdict** and **Required change** — never only in Summary or Refuted Challenges.
+
 </severity>
 
 <antipatterns-to-flag>
@@ -207,6 +211,7 @@ Report above is Claude-only.
 - **Challenging without evidence**: asserting pattern wrong without Grep/Glob confirming it exists; skip pattern-based challenges when occurrence count < 3
 - **Skipping refutation on low-severity items**: refutation mandatory across all severities — Nitpicks refuted are dropped, not promoted to Concerns
 - **Promoting nitpicks to blockers**: requires concrete data loss, security breach, or rewrite-within-3-months evidence; architectural preference alone doesn't qualify
+- **Severity by contagion**: Blocker applies only when this finding's own failure mode meets Blocker criteria. A finding that leads to data loss only through another finding is a Concern; the Blocker sits on the finding that causes the loss directly. Before filing, check the spread: every finding at Blocker signals inflation — re-rate each one against its own failure mode.
 - **Challenging well-tested patterns**: existing tests cover concern → mark Refuted with reference to test file:line
 - **Re-challenging already-addressed items**: plan explicitly addresses concern in later step → mark Refuted
 - **Low-value findings on well-mitigated plans**: a plan with strong, explicit mitigations for a concern (documented rollback, explicit UNIQUE constraint, shadow-read verification) needs higher evidence bar for LOW findings on adjacent concerns — extra findings on well-designed plans add noise even when correctly Weakened/Refuted

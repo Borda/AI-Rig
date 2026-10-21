@@ -44,7 +44,7 @@ Walk the text once per category below; enumerate every hit internally before edi
 **Syntax — flag and restructure:**
 
 - Negative parallelism: "not just X, but Y" / "not X, but Y" / "not only X but also Y" / "X rather than Y" used as a crutch
-- Rule-of-three triads used for false comprehensiveness ("fast, reliable, and scalable")
+- Rule-of-three triads used for false comprehensiveness — members vague or abstract ("fast, reliable, and scalable"). Three concrete, distinct facts are not a triad tell. A list already flagged under another pattern (e.g. inline-header list) is not re-flagged as a triad.
 - "-ing" superficial-analysis tails: "highlighting...", "underscoring...", "contributing to..." tacked onto a claim with no source
 - Vague attribution / weasel words: "industry reports", "observers", "experts argue", "some critics" with no named source
 - Formulaic "Despite its [positives], X faces challenges..." conclusion pattern
@@ -61,7 +61,7 @@ Walk the text once per category below; enumerate every hit internally before edi
 
 ## 3. Apply fixes
 
-- `check` mode: stop here — report findings (category, location, quote, suggested fix), no edit.
+- `check` mode: stop here — report findings (category, severity, location, quote, suggested fix), no edit. Severity follows the step 2 checklist group: Syntax hit = **high**, Vocabulary hit = **medium**, Formatting hit = **low**. Order findings high → low so the reader gets a cut order.
 - Edit mode: apply minimal edit per flagged instance using `Edit`. Preserve every fact, number, citation — only phrasing/formatting changes. Re-read result once to confirm no fact dropped in rewrite.
 
 ## 4. Report

@@ -146,10 +146,37 @@ def _verdict(entry: dict[str, str], implemented: bool, sha: str) -> tuple[str, s
     return verdict, why
 
 
+def _finding_records(item: dict, by_finding: dict[str, dict], outcome: dict) -> list[dict]:
+    """Attach each survivor or folded finding's claim and location to the item's common resolution outcome.
+
+    Examples:
+        >>> item = {"finding_id": "root", "merged_finding_ids": ["symptom"], "summary": "Missing cleanup"}
+        >>> findings = {"symptom": {"title": "Capacity leak", "file": "worker.py", "line": 12}}
+        >>> records = _finding_records(item, findings, {"verdict": "fixed"})
+        >>> [(row["finding_id"], row["file"], row.get("folded_into"), row["verdict"]) for row in records]
+        [('root', '', None, 'fixed'), ('symptom', 'worker.py', 'root', 'fixed')]
+    """
+    records = []
+    for finding_id in [item["finding_id"], *(item.get("merged_finding_ids") or [])]:
+        finding = by_finding.get(str(finding_id), {})
+        record = {
+            "finding_id": finding_id,
+            "title": finding.get("title") or item.get("summary", ""),
+            "section": finding.get("section", ""),
+            "file": finding.get("file") or item.get("file", ""),
+            "line": finding.get("line") or item.get("line", ""),
+            **outcome,
+        }
+        if finding_id != item["finding_id"]:
+            record["folded_into"] = item["finding_id"]
+        records.append(record)
+    return records
+
+
 def build_records(
     impl_dir: Path, run: str, cwd: Path, *, findings: Path | None = None, base_sha: str = ""
 ) -> list[dict]:
-    """Build one resolution record per selected item that came from a review finding."""
+    """Build resolution records for each selected review item and every finding folded into it."""
     items = {int(record["id"]): record for record in _read_jsonl(impl_dir / "action-items.jsonl")}
     by_finding = {str(f.get("id")): f for f in _read_jsonl(findings)} if findings else {}
     selected_path = impl_dir / "selected-items.txt"
@@ -174,23 +201,21 @@ def build_records(
         verdict, why = _verdict(entry, item_id in implemented, sha)
         if item_id in skipped:
             verdict, why = "skipped", skipped[item_id]
-        finding = by_finding.get(str(item["finding_id"]), {})
-        records.append(
-            {
-                "finding_id": item["finding_id"],
-                "title": finding.get("title") or item.get("summary", ""),
-                "section": finding.get("section", ""),
-                "file": finding.get("file") or item.get("file", ""),
-                "line": finding.get("line") or item.get("line", ""),
-                "item_id": item_id,
-                "shared_with_github": item.get("location") != "report",
-                "verdict": verdict,
-                "sha": sha,
-                "why": why,
-                "follow_up": entry.get("detail", "") if verdict == "unverified" else "",
-                "closure_evidence": entry.get("detail", "") if verdict == "already-fixed" else "",
-                "run": run,
-            }
+        records.extend(
+            _finding_records(
+                item,
+                by_finding,
+                {
+                    "item_id": item_id,
+                    "shared_with_github": item.get("location") != "report",
+                    "verdict": verdict,
+                    "sha": sha,
+                    "why": why,
+                    "follow_up": entry.get("detail", "") if verdict == "unverified" else "",
+                    "closure_evidence": entry.get("detail", "") if verdict == "already-fixed" else "",
+                    "run": run,
+                },
+            )
         )
     return records
 

@@ -85,7 +85,7 @@ Flag rules:
 - Caught=Yes + Action=`pass` or bare `except` → **MEDIUM** (swallowed error)
 - Cap 15 rows. New/changed paths only.
 
-Load `<REVIEW_SKILL_DIR>/checklist.md` via `cat` (not the Read tool — version-pinned cache path) — apply CRITICAL/HIGH patterns as severity anchors. Respect suppressions.
+Load `<REVIEW_SKILL_DIR>/checklist.md` via `cat` (not the Read tool — version-pinned cache path) — apply CRITICAL/HIGH/MEDIUM patterns as severity anchors. Respect suppressions.
 
 `ISSUE_NUMS` non-empty: read `$RUN_DIR/issue-*.md`. Evaluate whether changes address root cause, not just symptom. PR addresses symptom only → `[blocking] HIGH — root cause misalignment`. PR description diverges from issue problem → `HIGH — PR/issue scope divergence`.
 
@@ -95,7 +95,7 @@ Load `<REVIEW_SKILL_DIR>/checklist.md` via `cat` (not the Read tool — version-
 
 Also check explicitly: concurrent access to shared state; methods called in wrong order; resource cleanup on exception; boundary conditions for division/empty collections/zero-count inputs; type-coercion boundary inputs (`int()`, `float()`, `datetime` parsers — empty strings, None, very large values, float-string for int parser).
 
-**Consolidation rule**: One finding per test gap with concise scenario list. Format: "Missing tests for `parse_numeric()`: empty string, None, very large integers, float-string for int parser." ≤5 items.
+**Consolidation rule**: One finding per test gap with concise scenario list. Format: "Missing tests for `parse_numeric()`: empty string, None, very large integers, float-string for int parser." ≤5 items. **Severity**: a test gap never inherits the severity of a bug in the untested code — that bug is its own finding at its own severity. Default `[low]`; `[medium]` only when a changed public entry point has zero tests exercising it; never above `[medium]`, except the linked-issue reproduction gap below. The ceiling caps severity only; a Block-tier `[blocking]` tag still applies.
 
 `ISSUE_NUMS` non-empty: read `$RUN_DIR/issue-*.md`. Check tests cover linked issue reproduction scenario. Issue has minimal repro/trace not covered by tests → `HIGH — issue reproduction not tested`.
 

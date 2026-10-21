@@ -1,63 +1,41 @@
 # Changelog
 
+## 0.42.1
+
+- `/codemap-py:rename-refs` routes every stop by edit state on both hosts: a stop before the first source write ends the run, a stop after a write finishes the remaining verification and reports `⚠ Rename incomplete` with the changed files, and a stopped rename is never finished by hand.
+- `/codemap-py:rename-refs` checks for Python sources from the repository root and skips `venv` as well as `.venv`, so running from a subdirectory no longer misreports a Python project as Python-free.
+- `/codemap-py:scan-codebase` reports a failed Step 2 or a non-zero `scan-stats.py` exit instead of printing `Index ready`; `/codemap-py:integration` and `/codemap-py:query-code` redirect out-of-scope requests to the owning skill instead of answering them.
+
 ## 0.42.0
 
 - `find_module_refs.py` joins walked hit paths with forward slashes (`./pkg/x.py`) on native Windows too, matching the grep output `/codemap-py:rename-refs` parses (Windows previously printed `.\pkg\x.py`); a scope given as a file or absolute path is still printed exactly as given.
-
 - `anonymize.py` reads and writes logs as UTF-8 and prints its summary as UTF-8, so on native Windows `/codemap-py:debrief-coding --anonymize` no longer crashes on the `→` summary line and silently falls back to the raw, un-anonymized dataset.
-
 - Narrow broad `find`, `node`, `claude`, and `sed` allows while retaining scoped read-only rules and broad `eval`/`python` for existing recipes; ad-hoc commands outside shipped blocks now prompt unless a narrower rule covers them. The documented manual permission merge removes the old broad entries from `settings.json`, including an identical entry added by hand.
-
 - Remove the unused `bin/parse_deprecate_args.py` helper and its tests: no skill invoked it after `rename-refs` began parsing `--deprecate` itself, so the shipped `bin/` no longer carries a script nothing calls.
-
 - `/codemap-py:test-impact` runs the Step 0 index re-verify and the argument parse in one command, one turn fewer per run. Exit 1 now reports a missing index.
-
 - Fix `rename-refs` symbol renames that missed callers reached through `module::Class.method`: callers are now resolved by exact qualified name and a zero or ambiguous match stops before any edit.
-
 - Fix `rename-refs` module renames: the import root comes from the whole relative path, so `src/` layouts and nested modules rename correctly and a path that does not match the indexed file stops. Importers are searched across whole files, including indented imports and attribute uses.
-
 - Parse `rename-refs` arguments once with `parse_rename_args.py` and reject unknown flags, flags missing a value, leftover tokens, non-dotted references and symbol-only flags on `module` before any edit; add `--no-deprecate`, which no longer trips the `--deprecate` conflict check.
-
 - Stop `rename-refs` on a `fn-rdeps`, `rdeps` or `find-symbol` error, and have the `--remove-if-no-callers` delete gate refuse any non-definition reference found by a whole-word search, in both the Claude and Codex skills.
-
 - Parse `test-impact` arguments with `parse_test_impact_args.py`: `--no-mocks` is an exact token in any position, the first non-flag token is the target, and a missing target asks for one. A target that does not resolve prints candidates without rebuild advice; the report is rendered from `summarize_test_impact.py`; index builds run with `--timeout 360`.
-
 - Compute `debrief-coding` statistics with `debrief_stats.py`, which streams every telemetry shard from the log root the hooks wrote, filters before anonymizing, reports per-version cohorts, writes anonymized exports to a run-scoped directory and never overwrites an earlier report.
-
 - Validate `scan-codebase` arguments in `setup_scan_env.py` (exit 5 for an unknown flag or `--root` without a value; exit 4 when a state file cannot be written), accept a quoted `--root "a --b"`, stop instead of running a default scan when argument parsing fails, and derive the index path from the scan root.
-
 - Stop `integration` on an unrecognized mode with the supported-mode list instead of opening a menu, and read exit codes per mode.
-
 - Bump the shared context contract to v5: pre-flight gates on `codemap-py query` and `codemap-py index`.
-
 - Harden helpers: default plugin root and index-smoke anchoring use the script's own root, session sentinels are owner-checked before truncation, an existing anonymization salt must be an owner-only regular file of 32 hex bytes, `resolve_proj_index.py` exits 1 on an unresolvable `CODEMAP_INDEX_DIR`, and `gen_deprecation_wrapper.py` rejects dunder names.
-
 - Move `rename-refs` Step 4 (symbol) and Step 5 (module) into `modes/symbol.md` and `modes/module.md`, loaded only for the chosen mode. Replace the `$(python …)` captures and hand-built `grep -rn` calls in them with `cm_json.py` (session-sentinel JSON reads, no command substitution) and `find_module_refs.py` (seven reference kinds, every input regex-escaped so dots stay literal).
-
 - Derive the `.temp` report path for `rename-refs --dry-run` and `test-impact` with `anti_overwrite_path.py`, which computes the branch slug and local date in Python and picks the first free `-N` name, counting a directory of that name as taken.
-
 - Document `rename-refs --deprecate` values in single quotes (`--deprecate='@deprecated_class(...)'`): the documented double-quoted form ended the skill's argument wrapper and always failed. The skill now stops with a quoting hint when its arguments contain a double quote, backtick or `$`.
-
 - Codex `rename-refs` accepts `--no-deprecate` and rejects symbol-only flags under `module`, matching the Claude skill.
-
 - Cap each `debrief_stats.py` helper run at 50 seconds: a hung `anonymize.py` or `join_avoidance.py` now exits `3` with the scratch copy removed instead of being cut off by the 120-second Bash limit.
-
 - `integration` can now read the saved plan artifact it applies or syncs (`Read` added to its tool grant); `scan-codebase` merges its two setup blocks into one and trims comments without dropping any guard.
-
 - `rename-refs` module renames now find indented imports (inside functions, `try` or `if TYPE_CHECKING:` blocks) and attribute uses such as `pkg.old.func()` after `import pkg` through `find_module_refs.py` (new `attribute` kind), so those references are no longer left pointing at the old module.
-
 - `rename-refs` no longer runs inline `python -c` one-liners: index freshness, exact-name and chosen-candidate narrowing and the class range come from new `cm_json.py` subcommands (`stale`, `narrow`, `class-range`); an out-of-range candidate index now stops the run instead of silently keeping the first match.
-
 - `rename-refs` prints the `index.hint` advisory (hook-registered callers outside the static AST) in its blast report instead of dropping it; method `--deprecate` wrappers are placed inside the class at the method's indentation with the import hoisted, and the descriptor and overload greps read the definition path from Step 2 instead of a `<path>` placeholder.
-
 - Refuse a `TMPDIR` that other users could write into without the sticky bit, or reach through another user's symlink, and stop re-reading a rejected `TMPDIR` in the fallback; the test-impact helpers now write sentinels through the same symlink-safe writer and refuse a path-shaped `--output-prefix`.
-
 - `rename-refs` symbol renames now also edit non-call references — imports, base classes, `isinstance` targets, callback values, `__all__` strings and ancestor `__init__.py` re-exports — in every file importing the symbol's module or an ancestor package, found with one `rdeps` batch and the new `find_module_refs.py --kind name --files-from-json`. Subclasses and re-export users of a renamed class no longer keep the old name and fail with `ImportError`, in both the Claude and Codex skills.
-
 - `rename-refs` verification now counts every whole-word reference to the old symbol name left in the project's `*.py`/`*.pyi` files (a method: only the files that call, define or import it; the `--deprecate` alias stub is skipped with `--alias-in`). Any unedited reference reports `Rename incomplete` with its `file:line`, and the success line always states the residual count instead of an unqualified `Renamed`.
-
 - `test-impact` keeps `--no-mocks` when it has to ask for a missing target: the answer is parsed together with the original flags instead of alone. Its completeness caveat now reads the summary keys `query_complete` and `completeness_reason` it actually prints.
-
 - `integration` runs one fixed block per mode whose unsubstituted plan path or SHA-256 aborts it, instead of a template with bracketed placeholders; `query-code` states when an out-of-project `--index` is accepted and that it never sets `SCAN_NO_AUTOBUILD` itself.
 
 ## 0.41.5

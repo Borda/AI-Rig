@@ -118,11 +118,12 @@ Profile async with py-spy (asyncio-native): `py-spy record -o profile.svg -- pyt
 <antipatterns-to-flag>
 
 - **Reporting speedup without measurement**: claiming "this will be 2× faster" without before/after profiling — every recommendation needs measured baseline or explicit "unconfirmed — measure before merging"
-- **Conflating missing best practices with active defects**: absent config option (e.g. `persistent_workers=True` not set) but code not broken → tag as "Additional best practice (not a defect)", rank below actively harmful issues; don't interleave with genuine bottlenecks
+- **Conflating advisories with active defects**: numbered, severity-labelled findings only for defects present in the input code. Missing best practices (e.g. `persistent_workers=True` not set); redesign options (approximate-search index, GPU offload, new caching layer); notes about your own proposed fix (e.g. temporaries in a vectorized rewrite); correctness side-notes outside perf scope (e.g. numeric edge cases) → one trailing `Additional options (not defects)` list, one line each, no severity, no template fields
+- **Splitting one root cause**: one loop or one redundant computation = one finding; never report it as several findings
 - **Jumping to GPU before ruling out CPU/I/O**: recommending `torch.compile`, mixed precision, or CUDA kernel tuning when DataLoader is actual bottleneck (GPU util < 50%, CPU time dominates) — always profile first, rule out levels 1–6 before level 7
 - **torch.compile without caveats**: must note (a) first-inference latency increases due to JIT compilation, (b) silently falls back to eager on unsupported ops unless `fullgraph=True`, (c) dynamic shapes can invalidate compiled graph
 - **Premature vectorization**: rewriting Python loops to NumPy/torch before profiling confirms loop is actual hotspot
-- **Severity escalation for isolated loops**: single-function, isolated loop with no cross-function impact → low/medium severity; reserve high for loops inside batch-processing pipelines where O(n) Python dispatches demonstrably dominate runtime; don't escalate without evidence of batch-scale usage
+- **Severity escalation**: `critical` = correctness/availability-level impact only (OOM, unbounded memory/time growth, hang, crash) that the input shows happening at its stated scale. Constant-factor waste (recomputing an unchanged value, reloading unchanged data on every call, Python loop vs vectorized op) caps at `high`; a quadratic step is `critical` only when the input shows it reaching availability-level impact, else `high` at most. Single-function, isolated loop with no cross-function impact → low/medium; reserve high for loops inside batch-processing pipelines where O(n) Python dispatches demonstrably dominate runtime; don't escalate without evidence of batch-scale usage. Binds every finding, the primary bottleneck included — rank order (highest impact first) is not severity; the top-ranked finding can be `medium`.
 - **Silently skipping un-vectorisable loops**: when outer Python loop intentionally not flagged (e.g. ragged arrays, variable row length, Python-object records, non-numeric types), add explicit note: "Outer loop over `records` not flagged: rows have variable length; vectorisation requires padding or ragged-tensor library (e.g., `torch.nested_tensor`)." Don't leave omission unexplained.
 - **Asserting tensor shape consequences without verification**: claiming specific tensor op creates N×N×D intermediate without verifying broadcast semantics — e.g. `cosine_similarity(a.unsqueeze(0), b.unsqueeze(1), dim=-1)` with shapes (1,1,D) and (N,1,D) does NOT create N×N×D; produces shape (N,1). Trace shape arithmetic before reporting OOM risk as confirmed; if uncertain, mark "unconfirmed — verify shapes before citing"
 - **Missing secondary low-severity issues**: after finding primary bottleneck, scan for: double dict lookups, inconsistent defaults in recursive functions, deduplication opportunities in loop inputs — rank below primary but must report for full coverage.
@@ -140,11 +141,11 @@ Per finding:
 [Status]      statically confirmed | requires profiling to confirm existence
 [Before]      <measured baseline: e.g., 4.2s/epoch, GPU util 23%, 2.1 GB/s>
 [Fix]         <the targeted single change>
-[After]       <measured result — or "unconfirmed, needs profiling" if static analysis only>
+[After]       <measured result — static-only reviews use the [Measured] line instead>
 [Impact]      <magnitude of gain, e.g., "3.1× throughput", "50% memory reduction">
 ```
 
-`[Status]` optional — omit when all issues unambiguously statically confirmed. Include only when issue *existence* (not just speedup) needs runtime profiling.
+`[Status]` optional — omit when all issues unambiguously statically confirmed. Include only when issue *existence* (not just speedup) needs runtime profiling. Static-only review (nothing run): replace `[Before]` + `[After]` with one line `[Measured]  none — static analysis; measure before merging`.
 
 Rank by impact (highest first). Separate statically-confirmed from profiling-required estimates.
 
@@ -175,7 +176,7 @@ if command -v codemap-py >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ]; then
 fi
 ```
 
-> `fixture-graph` shows `scope` per fixture. `scope: "function"` fixtures holding expensive objects (model weights, DB connections) across many test files → scope-upgrade candidates, reported as "Additional best practice (not a defect)". Run `fixture-rdeps` first — high usage + function scope + mutable state = isolation risk; flag mutation risk explicitly above 20 rdeps. `fn-blast` gives caller count before recommending signature changes; high blast radius = higher severity.
+> `fixture-graph` shows `scope` per fixture. `scope: "function"` fixtures holding expensive objects (model weights, DB connections) across many test files → scope-upgrade candidates, listed under `Additional options (not defects)`. Run `fixture-rdeps` first — high usage + function scope + mutable state = isolation risk; flag mutation risk explicitly above 20 rdeps. `fn-blast` gives caller count before recommending signature changes; high blast radius = higher severity.
 
 > Reuse gate: reuse a supplied answer only for the same project, current index, target, query and flags; skip its duplicate pre-flight call. Require success and direction-complete metadata. For batch children require `ok: true` and inspect `result.index`; `ok: false` is a failure, never an empty answer. Missing metadata, `stale`, root mismatch, degraded or incomplete results need targeted fallback. Use legacy `exhaustive: true` only when `query_complete` is absent. A valid empty list settles that scoped query; truncation does not enumerate all matches. Necessary source-body reads, test-quality checks, dynamic behavior and required independent verification remain allowed.
 
@@ -265,7 +266,7 @@ For top bottleneck, run appropriate profiler from `<profiling-tools>` or `<ml-gp
 
 4. **Fill output template per finding**
 
-Every recommendation MUST use `<output-format>` template. Never report optimization without [Before] and [After] — if unavailable, mark "unconfirmed" per `<antipatterns-to-flag>` (reporting-without-measurement rule). Example:
+Every finding MUST use `<output-format>` template; the `Additional options (not defects)` list is exempt. Never report optimization without measured [Before]/[After] or an explicit unconfirmed marker (the `[Measured] none` line in static-only reviews) per `<antipatterns-to-flag>` (reporting-without-measurement rule). Example:
 
 `DataLoader: num_workers=0` → Severity: high | Before: GPU util 23%, step 4.2s | Fix: num_workers=8, pin_memory=True, persistent_workers=True | After: unconfirmed | Impact: ~3× throughput
 

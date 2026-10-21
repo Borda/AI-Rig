@@ -143,7 +143,7 @@ echo "$_OUT" > "${TMPDIR:-/tmp}/research-plan-out-arg-${CSID}"  # empty = P-P2b 
 
 **Gates overridden in sweep** — the inlined plan steps ask these questions; sweep is non-interactive and S1 owns the single overwrite decision:
 
-- **P-P1 scope guard**: goal not an optimization goal → stop with `! sweep: goal does not look like an optimization goal (expects "Reduce X" / "Increase Y"). Rephrase and re-run.` — no question.
+- **P-P1 scope guard**: goal not an optimization goal → stop with `! sweep: goal does not look like an optimization goal (expects "Reduce X" / "Increase Y"). Rephrase and re-run.` — no question. Stop is terminal: print that line plus at most one redirect line naming the better-fit skill or agent, then end the reply — never answer, review, or list findings for the off-domain request inline, not even labelled "for reference" or "not sweep output".
 - **P-P2b overwrite and advisor questions**: treat `OUTPUT_EXISTS` as false. An advisor `ok: false` → print `sweep: advisor note → <headline>` with the suggestions path and continue to P-P3; the S3 judge gate checks the written program.
 
 > Include P-P2b analysis in S2 synthesis — P-P2b findings are scoped hypotheses needing consolidation into program.md written by P-P3; skipping P-P2b drops hypothesis context from generated program.

@@ -399,12 +399,13 @@ Use the report already resolved by **Report source resolution** (Step 1) — `IF
 
 **Merge, never rewrite by hand.** GitHub comments are often terse; the review's local finding for the same code carries the detail and the evidence paths. `merge_action_items.py` folds the review findings into Step 3b's `action-items.jsonl` deterministically:
 
-- **Same `file:line` as a pending GitHub item** → same target. The GitHub item keeps its id and inherits `finding_id`, the full finding text (appended under the comment), `source_file` and `verify_file`. Author becomes `@login + <owner-agent>`, Summary gains `(also flagged by /review — <owner-agent>)`. It never inherits `verify_verdict`: the verifier confirmed the review's claim, not the GitHub comment's, so Step 8 Phase 1 still tests the item in full, reading the reviewer's evidence first.
+- **Same `file:line` as a pending GitHub item** → same target, including the survivor's location or any root-cause-merged row's location; match the GitHub item to the survivor. The GitHub item keeps its id and inherits `finding_id`, the full finding text (appended under the comment), `source_file` and `verify_file`. Author becomes `@login + <owner-agent>`, Summary gains `(also flagged by /review — <owner-agent>)`. It never inherits `verify_verdict`: the verifier confirmed the review's claim, not the GitHub comment's, so Step 8 Phase 1 still tests the item in full, reading the reviewer's evidence first.
 - **Same target at another line** (semantic match — your judgment, listed by `--candidates`) → same annotation and evidence paths.
-- **One finding per item.** A second finding on the same line, or a link to an item that is closed or already holds a finding, is not folded; that finding is appended as its own item. The summary counts ignored links as `links_ignored`.
+- **One finding per item.** A separate finding on the same line, or a link to an item that is closed or already holds a finding, is not folded; that finding is appended as its own item. The summary counts ignored links as `links_ignored`.
+- **Root-cause merge** → a `merged_into` row naming a single new survivor's `candidate_id` adds no item of its own. The survivor's item lists `merged_finding_ids`, appends each merged row's text, takes the group's highest severity, and, for a `[report]` item, becomes `[req]` when any member alone would be. A target that is missing, ambiguous, chained, self-referencing or already placed by an earlier merge keeps the row as its own item. Relay each resulting `⚠` stderr line to the user; the summary JSON reports the `folded` count and the `fold_orphans` list of `{finding_id, merged_into}` records.
 - **No match** → appended as a `[report]` item with the next free id (`G+1`, `G+2`, …). GitHub ids `1..G` never change, so no renumbering, and table IDs, Step 3d `SELECTED_ITEMS`, Step 3e task IDs and Step 8 lookups always name the same item.
 - **Unmatched pending GitHub item with a short comment** (not a `[question]`) → marked `thin: true`; Step 8 Phase 1 reassesses it from scratch.
-- Re-running the merge is safe: findings already present by `finding_id` are skipped.
+- Re-running the merge is safe: findings already present by `finding_id` or `merged_finding_ids` are skipped.
 - When any GitHub row is annotated, the script replaces the file in one atomic rename instead of appending; ids and rows are never retyped.
 
 Step 1 — choose the findings file and list same-file pairs that did not match exactly:
@@ -434,7 +435,7 @@ IFS= read -r INTAKE_DEGRADED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --findings "$FINDINGS" --links "$IMPL_DIR/report-links.jsonl" ${ACCEPT_DEGRADED:+"$ACCEPT_DEGRADED"}  # timeout: 5000
 ```
 
-- The printed summary's `deduped_exact + deduped_semantic` is the `<M>` and `appended` is the `<K>` of the merge summary line below.
+- The printed summary's `deduped_exact + deduped_semantic` is the `<M>` and `appended` is the `<K>` of the merge summary line below. These count survivor and standalone items, not folded rows: `findings = already_merged + <M> + <K> + folded`. `fold_orphans` rows remain included in `<M>` or `<K>`, never in `folded`.
 - A non-zero exit stops the run before the merged table or Step 3d; never let Step 8 consume a half-merged file.
 - Keep a zero-item file empty. Render the merged table from `action-items.jsonl` itself, so displayed IDs are stored IDs.
 

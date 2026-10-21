@@ -55,6 +55,22 @@ Load design_artifacts from `${CLAUDE_PLUGIN_ROOT}/skills/_shared/design-artifact
 1. **Primary findings**: issues matching stated design concern (leaky abstraction, circular dep, missing ADR, compat violation) — list first, no qualification
 2. **Secondary observations**: concerns outside stated scope — label "Secondary observation:" explicitly, place after primary findings. Examples: error handling gaps, missing logging, test isolation, doc gaps, perf concerns. Real issues but not primary architectural question.
 3. **Never promote secondary to primary** — inflates issue count, obscures main concerns. Orthogonal issues go in "Secondary observations" section.
+4. **One finding per root cause** — merge when one fix resolves both, or when B is a consequence of A (e.g. "no deprecation path", "version number understates change", "release mislabelled minor" are corollaries of one compat break). Merged finding lists each affected location/change as a sub-bullet, keeping per-location evidence. Keep findings separate when each needs its own independent fix (e.g. a removed parameter and a changed return type in the same release).
+5. **Excerpt artifacts are not findings** — input shown as an excerpt (partial files, snippets, selected modules): names undefined only because their defining module is not shown (routers, loaders, helper calls, imports from unshown files) are assumed to exist. Note once as "unshown in excerpt" when it limits analysis; never file as a defect.
+
+## Severity Rubric
+
+Tag by consequence, not by how wrong the design looks:
+
+| Tier | Consequence | Typical architectural cases |
+| -- | -- | -- |
+| `[CRITICAL]` | Data loss or corruption, security exposure, irreversible production damage | Destructive migration dropping data before readers move; trust boundary bypassed |
+| `[HIGH]` | Runtime breakage or broken public contract | Import cycle blocking startup; public API break without deprecation; core layer bypassing a declared port |
+| `[MEDIUM]` | Governance, process or maintainability gap with no runtime failure yet | Missing or contradicted ADR; leaky abstraction with no declared contract; undocumented boundary |
+| `[LOW]` | Naming, style, local clarity | Inconsistent naming; minor doc gap |
+
+- Startup-blocking cycles and compat breaks are `[HIGH]`, never `[CRITICAL]` — reserve CRITICAL for data/security/irreversible harm.
+- Process and governance gaps (missing ADR, absent decision record) never rise above `[MEDIUM]` on their own.
 
 ## Coupling Analysis
 
@@ -174,7 +190,7 @@ For `research:scientist` hypothesis architectural-feasibility assessment (invoke
 
     **Multiple open decision branches** (not one crisp question but a tree — e.g. storage choice AND migration strategy AND rollback plan all unresolved): resolve one at a time via `AskUserQuestion`, not a single bulk ask. Each question states recommended answer; explore codebase first when branch answerable from code instead of asking. Stop once tree resolves — scoped to genuinely branching decisions, not every spec. The global "batch, don't sequence — max 4 questions per call" rule governs independent questions; this sequential-ask mandate stays permitted here specifically because each later question's option set depends on the answer to an earlier one — a genuine dependency, not an independent batch.
 
-03. **Alignment check ⏸** (wait for user confirmation before Step 4) —
+03. **Alignment check ⏸** (for review-only asks, wait only when the design question is ambiguous; for other asks, wait for user confirmation before Step 4) —
 
     > **Pipeline-subagent guard**: skip this pause when spawned as a pipeline subagent — proceed directly to Step 4 if input prompt contains `[pipeline]` tag or `AUTO_PROCEED=true` marker. No interactive user present in pipeline mode; waiting would block indefinitely. (Caller adds `[pipeline]` or `AUTO_PROCEED=true` to suppress interactive gates.)
     >
@@ -225,6 +241,8 @@ For `research:scientist` hypothesis architectural-feasibility assessment (invoke
     Every finding inside artifact carries its own inline severity tag (`[CRITICAL]`/`[HIGH]`/`[MEDIUM]`/`[LOW]`) and a fix/recommendation phrase — not just artifact-level summary; apply same bracketed-severity + recommendation pattern already used in `<antipatterns-to-flag>` to every finding, consistently, regardless of difficulty.
 
     Write artifact to file using Write tool (e.g., `docs/adr/ADR-NNN.md` for ADRs, or path requested by user). Use Edit to revise existing artifacts.
+
+    **Review-only ask** (caller asks to review or critique a given design/diff, no artifact requested): the severity-tagged findings list is the output — no ADR, migration plan or diagram unless asked. Steps 7–9 then add no standalone sections: fold each implementation constraint, SemVer or deprecation note, or irreversible-decision flag into the fix line of the matching finding; omit when no finding needs it.
 
 07. **Cross-reference sw-engineer** — Note implementation constraints sw-engineer needs:
 

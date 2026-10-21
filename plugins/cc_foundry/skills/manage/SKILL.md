@@ -73,9 +73,9 @@ Manage lifecycle of agents, skills, rules, hooks in `.claude/`. Handles creation
 
 - AVAILABLE_COLORS: red, blue, green, yellow, purple, orange, pink, cyan
 
-- AGENT_WATCH_DIR: `.temp/manage` · deadlines: `web-explorer` 300 s · `sw-engineer` 900 s
+- AGENT_WATCH_DIR: `.temp/manage` · deadlines: `web-explorer` 300 s · `sw-engineer` 900 s · `curator` 900 s
 
-Each Step 4 spawn follows `_shared/agent-spawn-protocol.md` §Deadlines. Spawns here are sequential, one agent in flight at a time, so every spawn response **overwrites** `.temp/manage/agent-watch-manage.tsv` with that one agent's row (`<name>\t<deliverable or ->\t<deadline>`) via the Write tool — never a waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`), probe, or sleep. On its completion notification run the check block once, before reading its output:
+Every spawn in this skill (Step 4 mode files, Step 5 cross-ref curator, Step 9 targeted curator, challenger gate) follows `_shared/agent-spawn-protocol.md` §Deadlines. Spawns here are sequential, one agent in flight at a time, so every spawn response **overwrites** `.temp/manage/agent-watch-manage.tsv` with that one agent's row (`<name>\t<deliverable or ->\t<deadline>`) via the Write tool — never a waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`), probe, or sleep. On its completion notification run the check block once, before reading its output:
 
 ```bash
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir ".temp/manage"  # timeout: 5000
@@ -106,6 +106,8 @@ echo "${TMPDIR:-/tmp}/manage-skip-audit-${CSID}" > "${TMPDIR:-/tmp}/manage-skip-
 ```
 
 **Unsupported flag check** — after all supported flags extracted (`--skip-audit`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--skip-audit`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+
+**Out-of-scope guard** — fires before validation when either holds: (a) first command word(s) in `$ARGUMENTS` are not `create`, `update`, `delete`, `add perm`, or `remove perm` (shape errors on recognized command words go to validation, not here); (b) request targets application source, a bug, or a feature outside agents/skills/rules/hooks/permissions. Deliver per Decline delivery below: `**! UNSUPPORTED — /foundry:manage manages agents, skills, rules, hooks, permissions only**` plus one redirect line (`/develop:fix` or `/develop:feature` (requires `develop` plugin)), then stop. Block + redirect = entire decline content: no diagnosis, root cause, patch, code snippet, test, or Step 2 onward. Decline delivery: when the spawn prompt names a deliverable or output file, first write the bold line, any required redirect, and `status: unsupported`, `reason` and `owner` to that file — never skip a mandated file; when it demands an envelope (`Return ONLY:`), return only `"status": "unsupported"`, `"reason"` and `"owner"` (agent/skill or `"none"`), plus `"file"` when a deliverable was written; a demanded fixed closing line (e.g. `Wrote: <id>`) takes precedence over an envelope and is the whole reply. With neither envelope nor fixed closing line required, reply only with the bold line and any required redirect. A decline is not an analysis, so it carries no Confidence block. <!-- policy-sibling: plugins/cc_foundry/agents/challenger.md, plugins/cc_foundry/agents/doc-scribe.md, plugins/cc_foundry/agents/linting-expert.md, plugins/cc_foundry/agents/creator.md, plugins/cc_foundry/skills/manage/SKILL.md — decline delivery -->
 
 **Validation rules:**
 
@@ -342,6 +344,8 @@ Then, **only when routing surface changed**, also print `/foundry:calibrate rout
 Skip calibration entirely for: trivial edits, renames, deletes, rule operations, perm operations.
 
 ## Step 10: Summary report
+
+Report outcome fields below only — no Step 1…Step 10 execution trace; skipped steps and gates show only as the `n/a` values in their fields.
 
 - **Operation**: what was done (create/update/delete + type + name, or add/remove perm + rule)
 - **Files Changed**: table of file paths and actions (created/renamed/deleted/cross-ref updated/appended/removed)

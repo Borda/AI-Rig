@@ -208,7 +208,7 @@ Never claim a pattern exists without confirming via Grep/Glob first — applies 
 
 ## Two-Section Report Structure
 
-All findings reports use exactly two sections:
+All findings reports use exactly two sections, then `## Confidence` — no extra Scope/Verdict/Suggested-tests sections; one-line verdict may open Coverage Gaps; test shape lives in each finding's fix:
 
 - **## Coverage Gaps** — primary findings only (untested code paths, undocumented exception paths, missing boundary values, non-deterministic tests); each item maps to specific untested code path or concrete runtime risk; prefix each finding with severity: `[critical]`, `[high]`, `[medium]`, or `[low]`
   - `[critical]` — data loss / security / correctness bug guaranteed
@@ -218,6 +218,8 @@ All findings reports use exactly two sections:
 - **## Style/Quality Observations** — secondary only (no parametrize, no match=, no fixture, compression opportunities; assertion-quality critiques); also houses domain-tagged redirect observations (`[perf-optimizer domain]`, `[sw-engineer domain]` — see Domain-boundary rule in `<code-review-assertions>` above); must appear in clearly demarcated separate section; items here do NOT count as coverage gaps, must NOT interleave with primary findings
 
 If uncertain whether finding is primary or secondary, ask: "Would this allow real bug to go undetected?" — yes → primary; no → secondary.
+
+Primary needs contract anchor: untested `Raises:`/guard branch, guard bypass of code-explicit check, documented or code-explicit bound, documented return shape, nondeterministic test, unasserted core invariant, public symbol with zero coverage. Behaviour neither documented nor explicit in code (accepted input kinds, non-numeric types, input mutation, return-type checks) → Style/Quality Observations under `Contract questions:` sub-list — never dropped, never in Coverage Gaps. Order Coverage Gaps by severity, highest first.
 
 </reporting-format>
 
@@ -277,7 +279,7 @@ fi
 08. Run tests and verify they actually FAIL when code is broken
 09. Check for missing assertions (test with no assertions = useless)
 10. **Multi-level validation gate** — apply L1 (name/scenario) → L2 (contract, never from implementation) → L3 (coverage, no undeclared case, no duplicate framing) from §Multi-level Test Validation to every test written or reviewed; class name carries unit when grouped
-11. **Coverage checklist gate**: before declaring done, re-enumerate public API inventory from step 01 and confirm each symbol has: (a) documented happy path covered, (b) ≥1 edge-case variant, (c) every `Raises:` path covered; flag any gap as primary finding
+11. **Coverage checklist gate**: before declaring done, re-enumerate public API inventory from step 01 and confirm each symbol has: (a) documented happy path covered, (b) ≥1 edge-case variant for each documented or code-explicit contract, (c) every `Raises:` path covered; flag gaps in these contracts as primary findings; undocumented, non-code-explicit variants go to `Contract questions:`
 12. Run full test suite after all fixes applied: `uv run pytest --tb=short -q` (or `pytest --tb=short -q` if uv unavailable) to ensure all tests pass; never create standalone `tmp_test.py` to verify behavior
     - **Failure branch**: any failure revealed here → diff against the pre-fix baseline to classify: pre-existing (report as `[medium]`/`[low]` coverage gap per severity table, do not loop) vs newly introduced by this task's own edits (loop back to step 08, max 3 iterations total)
     - Never baseline via `git stash` or any other workaround that hides the failing state — classify from the actual last-known-good commit/branch
@@ -288,6 +290,7 @@ fi
     - Score against completeness of public-API surface coverage, not idealized standard requiring runtime execution
     - Thresholds: 0.95+ = all public API symbols covered + all `Raises:` paths verified + no ambiguous documented behaviour; below 0.90 = named gap could plausibly reverse a finding
     - List only gaps that could change a finding — omit theoretical gaps (e.g. "mutation testing not run") unless specific reason to expect they'd surface issues
+    - Static review of supplied code: no deduction for unexecuted tests or unsupplied surrounding suite unless a named Coverage Gaps finding depends on it (e.g. conftest seed could neutralise flakiness finding); `Contract questions:` items carry no deduction; limits that change no finding carry no deduction — no score floor, report the real score
 
 </workflow>
 

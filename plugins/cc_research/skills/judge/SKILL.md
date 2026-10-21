@@ -95,7 +95,7 @@ Extract `<program_title>` from `# Program: <title>` line for reports (fallback `
 
 ## Step J2: Completeness audit
 
-Check C1–C13 plus C2b, C6b and C9b (16 items total). Produce findings list with severity. Each finding has: `id`, `check`, `status` (pass/fail/warn), `severity`, `detail`.
+Check C1–C13 plus C2b, C6b and C9b (16 items total). Produce findings list with severity. Each finding has: `id`, `check`, `status` (pass/fail/warn), `severity`, `detail`. **Unverified-check rule**: a `warn` emitted only because a check could not be verified (C6 with filesystem unavailable and no non-existence signal word) is not a finding — keep it out of the findings list, the Completeness Audit table, the severity counts and Required Changes; record it in both J6 `Unverified checks:` fields (full report and terminal summary) instead.
 
 | ID | Check | Severity if failing | Description |
 | -- | -- | -- | -- |
@@ -386,6 +386,8 @@ Path:          → .reports/research/judge-<branch>-<date>.md
 | ID | Check | Status | Severity | Detail |
 |----|-------|--------|----------|--------|
 
+Unverified checks: <id> — <reason> | none
+
 ### Methodology Review
 **Rating**: sound | needs-refinement | fundamentally-flawed | timed-out
 Read full review: <RUN_DIR>/methodology.md
@@ -445,7 +447,7 @@ Judge — <program_title>
 Verdict:      APPROVED | NEEDS-REVISION | BLOCKED
 Methodology:  sound | needs-refinement | fundamentally-flawed
 Scientific:   sound | needs-refinement | fundamentally-flawed | timed-out  (advisory)
-Findings:     <N> critical · <N> high · <N> medium · <N> low
+Findings:     <N> critical · <N> high · <N> medium · <N> low | Unverified checks: <id> — <reason> | none
 Protocol gaps: <N>
 Validation:   metric=<value> guard=pass|fail  (or "skipped — --skip-validation")
 Codex:        reviewed | skipped
@@ -469,6 +471,6 @@ rm -f .temp/state/skill-contract.md  # clear contract — judge verdict complete
 - Verdict deterministic (finding counts + methodology_rating); not inferred from prose
 - Re-run judge after editing `program.md` to confirm fixes
 - Judge run dirs don't write `result.jsonl` — exempt from automated 30-day TTL cleanup (per `.claude/rules/foundry-artifact-lifecycle.md` TTL policy, installed via `/foundry:setup` — requires `foundry` plugin; no `result.jsonl` = cleanup skipped); remove manually (`rm -rf .experiments/judge-*/`) <!-- policy-sibling: plugins/cc_research/skills/fortify/SKILL.md, plugins/cc_research/skills/plan/SKILL.md, plugins/cc_research/skills/retro/SKILL.md, plugins/cc_research/skills/verify/SKILL.md — TTL-exemption note (no result.jsonl → skip 30-day cleanup) restated in each; keep in sync (plugins/CLAUDE.md §Policy Duplication Marker). -->
-- **Calibration scope**: J1–J2 sub-steps only — synthetic result file with known verdict (APPROVED/NEEDS-REVISION/BLOCKED) and injected finding counts; score whether judge correctly identifies verdict and extracts counts. Full J3 validation execution loop excluded — needs live git state and executable metric commands. See `/foundry:calibrate` skills mode domain table for path resolution.
+- **Calibration scope**: J1 schema gate + J2 completeness audit (provisional J6 verdict) — synthetic `program.md` with N injected plan-quality issues; score recall of each injected issue at its J2 severity. J3–J5 excluded — need agent spawns, live git state and executable metric commands. See `/foundry:calibrate` (requires `foundry` plugin) skills mode domain table for path resolution.
 
 </notes>

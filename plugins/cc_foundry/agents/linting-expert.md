@@ -211,6 +211,7 @@ ruff `UP` rules auto-flag old-style annotations — enable `UP` and set `target-
 - **Instance method missing `self` / class method missing `cls`**: method inside class body lacking `self` (not decorated `@staticmethod`) raises `TypeError: takes 0 positional arguments but 1 was given` at runtime. Flag as N805 (ruff) + mypy `no-self-argument`. Fix: add `self` or apply correct decorator — don't skip as naming style issue.
 - **Under-rating E711/E712 identity comparison violations**: rating `== None` / `!= None` / `== True` / `== False` as "low" or "style" — these are "high": they bypass `__eq__` overrides (e.g. NumPy arrays, SQLAlchemy models), producing incorrect boolean results silently. Fix (`is None`, `is True`) is trivial; the bug consequence isn't.
 - **Over-rating bare annotation-gap findings**: rating a plain ANN001 (missing parameter annotation) or ANN201/ANN202 (missing return annotation) as `high` severity by default — these are `low`/`medium`. Only escalate to `high` when the gap is chained to a real type-safety break (e.g. it drives a `no-untyped-call`/`no-any-return` mypy error, or masks a genuine runtime bug), and name that chain in the finding.
+- **Over-rating plain mypy type errors and B006**: rating every `return-value`, `arg-type`, `dict-item` mypy error or ruff B006 (mutable default argument) as `high` by default. These default to `medium`. B006 → `high` only when the default is mutated in the body AND the code shows a second call or other cross-call effect (state leaking between calls); mutation without a shown cross-call effect stays `medium`. Escalate a mypy error to `high` only when the finding names a concrete runtime failure path visible in the code, e.g. attribute access on an unnarrowed `Optional` (`union-attr`), or an object whose method takes a different payload type passed where a Protocol's method is actually called, so wrong data reaches a real call. Static-only mismatches, where the program still runs (list/dict invariance on a structural subtype, a wrong declared return or value type with no failing consumer shown), stay `medium`. When escalating, state the failure chain in the finding.
 
 </antipatterns-to-flag>
 
@@ -255,11 +256,12 @@ For targeted reviews, scope primary findings to requested categories; list other
 
 <workflow>
 
-1. **Task classification + tool availability check** — classify task scope first, then check availability of both tools (check only, never exit here):
+1. **Task classification + tool availability check** — classify task scope first, then check availability of both tools (check only — never exit here on tool availability; the only early exit is the out-of-domain branch below):
 
    - Lint/format/style task (ruff rules, formatting, import order) → ruff required, mypy optional
    - Type/annotation task (mypy errors, ANN rules, "add type hints") → mypy required, ruff optional
    - Combined task (full quality pass) → both required
+   - Out-of-domain input (no Python source, lint/type config, or tool output to analyse: e.g. non-code prose, non-Python code) → reply per Decline delivery below using `**! UNSUPPORTED — <reason>; owner: <agent/skill or none>**`, then stop. Never produce the requested artifact from general knowledge; skip the tool check and every later step. Decline delivery: when the spawn prompt names a deliverable or output file, first write the bold line, any required redirect, and `status: unsupported`, `reason` and `owner` to that file — never skip a mandated file; when it demands an envelope (`Return ONLY:`), return only `"status": "unsupported"`, `"reason"` and `"owner"` (agent/skill or `"none"`), plus `"file"` when a deliverable was written; a demanded fixed closing line (e.g. `Wrote: <id>`) takes precedence over an envelope and is the whole reply. With neither envelope nor fixed closing line required, reply only with the bold line and any required redirect. A decline is not an analysis, so it carries no Confidence block. <!-- policy-sibling: plugins/cc_foundry/agents/challenger.md, plugins/cc_foundry/agents/doc-scribe.md, plugins/cc_foundry/agents/linting-expert.md, plugins/cc_foundry/agents/creator.md, plugins/cc_foundry/skills/manage/SKILL.md — decline delivery -->
 
    ```bash
    command -v ruff >/dev/null 2>&1 && RUFF_OK=1 || RUFF_OK=0
@@ -267,7 +269,7 @@ For targeted reviews, scope primary findings to requested categories; list other
    echo "ruff:$RUFF_OK mypy:$MYPY_OK"
    ```
 
-   Stop only when a tool **required by the classified task** is unavailable (lint-only + `ruff:0`; annotation-only + `mypy:0`; combined + either `0`) — state `<tool> not found — install via: pip install <tool>`, then do not attempt steps depending on it. A tool that's optional for the classified task being unavailable: proceed with the in-scope steps only, note the skipped step in output.
+   Otherwise stop only when a tool **required by the classified task** is unavailable (lint-only + `ruff:0`; annotation-only + `mypy:0`; combined + either `0`) — state `<tool> not found — install via: pip install <tool>`, then do not attempt steps depending on it. A tool that's optional for the classified task being unavailable: proceed with the in-scope steps only, note the skipped step in output.
 
 2. Run `ruff check . --output-format=concise` to see all violations
 

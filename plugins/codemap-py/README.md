@@ -663,6 +663,7 @@ $codemap-py:test-impact mypackage.auth
 
 Rename behavior and safety gates:
 
+- Both hosts check for Python sources from the repository root, excluding Git metadata, virtual environments and `node_modules`. A stop before the first source write ends the invocation; a stop after a write halts further rename edits, finishes available verification, and reaches Step 7's `⚠ Rename incomplete` summary with changed files and remaining work. Neither host finishes a stopped rename by hand. A failed re-scan remains visible in the summary and unavailable verification prevents success.
 - The symbol route updates a one-to-one Python definition and statically visible references; the module route renames a file/module and its import lines, indented ones inside functions, `try` or `if TYPE_CHECKING:` blocks included, plus attribute uses such as `mypackage.old.func()` after `import mypackage`. The blast report also prints the index's advisory search for references outside the static AST, such as hook-registered callers.
 - `--dry-run` previews without editing.
 - `--deprecate` is symbol-only and defaults to the project deprecation decorator; `--since` and `--removed-in` add the version window. Quote a decorator value with single quotes (`--deprecate='@deprecated_class(...)'`): the Claude skill pastes its arguments into a double-quoted shell word, so a double quote ends it. `--no-deprecate` declines the wrapper explicitly and does not conflict with `--remove-if-no-callers`.
