@@ -509,6 +509,7 @@ def prepare(
             routing_bytes,
             briefs_bytes,
         )
+    files[out / "reviewed-commit.txt"] = (str(snapshot["revision"]) + "\n").encode("ascii")
     files[out / "inspection-plan.json"] = _json_bytes(plan)
     if hashlib.sha256(routing_bytes).hexdigest() != validator._sha256(out / "review-routing.json"):
         raise ValueError("review-prepared-routing-changed")

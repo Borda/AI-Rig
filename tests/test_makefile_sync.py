@@ -58,6 +58,70 @@ GNU_MAKE = _gnu_make()
 JQ = shutil.which("jq")
 
 
+@pytest.fixture(autouse=True)
+def available_rtk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give ordinary sync cases the required executable without depending on a host installation."""
+    bin_dir = tmp_path / "rtk-bin"
+    bin_dir.mkdir()
+    rtk = bin_dir / "rtk"
+    rtk.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    rtk.chmod(0o755)
+    monkeypatch.setenv("PATH", os.pathsep.join((str(bin_dir), os.environ.get("PATH", ""))))
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
+@pytest.mark.parametrize("target", ["sync-all", "sync-claude", "sync-codex", "default"])
+@pytest.mark.parametrize("keep_going", [False, True])
+@pytest.mark.parametrize("rtk_available", [False, True])
+def test_sync_requires_rtk_before_any_mutation(
+    tmp_path: Path, target: str, keep_going: bool, rtk_available: bool
+) -> None:
+    """Every sync entrypoint stops before mutation without RTK, including GNU make's keep-going mode."""
+    bin_dir = tmp_path / "isolated-bin"
+    bin_dir.mkdir()
+    # GNU make may execute simple recipes directly instead of using shell builtins.
+    for command in ("printf", "echo"):
+        executable = bin_dir / command
+        executable.write_text(f'#!/bin/bash\n{command} "$@"\n', encoding="utf-8")
+        executable.chmod(0o755)
+    if rtk_available:
+        rtk = bin_dir / "rtk"
+        rtk.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        rtk.chmod(0o755)
+    stages = (
+        "migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace update-ext-plugins "
+        "register-marketplace install-claude-plugins verify-claude-plugins prune-claude-cache "
+        "warn-stale-claude-sessions install-codex-plugins sync-codex-home-policy sync-codex-bridge-consent"
+    )
+    # Retain real recursive sync recipes; replace only stages that could touch native installation state.
+    (tmp_path / "Makefile").write_text(
+        MAKEFILE.read_text(encoding="utf-8") + f"\n{stages}:\n\t@echo stage >> stages.log\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            GNU_MAKE,
+            *(["-k"] if keep_going else []),
+            *([] if target == "default" else [target]),
+            "MARKETPLACE=fixture",
+            f"PROJECT_DIR={tmp_path.as_posix()}",
+            "MARKETPLACE_REMOTE=unused",
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(bin_dir), "MAKEFLAGS": "", "MAKEFILES": ""},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert (result.returncode == 0) == rtk_available, result.stdout + result.stderr
+    assert (tmp_path / "stages.log").exists() == rtk_available
+    if not rtk_available:
+        assert "RTK is required for sync" in result.stderr
+        assert "sync complete" not in result.stdout
+
+
 def _run_make(
     target: str, *, env: dict[str, str], extra_vars: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:

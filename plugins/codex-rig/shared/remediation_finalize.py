@@ -936,13 +936,55 @@ def derive_handoff(
         {"check": check.get("id"), "status": check.get("status"), "evidence": check.get("stdout")} for check in checks
     ]
     handoff["confidence"] = _confidence_block(metadata, score)
-    handoff["presentation_version"] = 10
+    handoff["presentation_version"] = 11
     if handoff.get("skill") != "code-remediate":
         handoff["artifacts"] = _result_artifact(handoff.get("artifacts") or [], artifact_path)
         if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed":
+            commit = final_handoff.review_commit_sha(run, metadata.get("scope"))
+            metadata["reviewed_commit_sha"] = commit
+            value = f"{commit} (working-tree base)" if metadata["scope"] in {"working-tree", "path"} else commit
             for table in handoff.get("tables", []):
+                if table.get("heading") in {"PR Snapshot", "Review Snapshot"}:
+                    rows = table["rows"]
+                    existing = [row for row in rows if row["cells"][0] == "Commit"]
+                    if len(existing) > 1:
+                        raise DeriveError("review-commit-row-duplicate")
+                    if existing:
+                        existing[0]["cells"][1] = value
+                    else:
+                        source_id = "reviewed-commit"
+                        if any(record["id"] == source_id for record in handoff["source_records"]):
+                            raise DeriveError("review-commit-source-id-conflict")
+                        receipt = (
+                            "reviewed-commit.txt"
+                            if (run / "reviewed-commit.txt").is_file()
+                            else "batch-inventory.json"
+                            if (run / "batch-inventory.json").is_file()
+                            else ("pr-routing.json" if (run / "pr-routing.json").is_file() else "local-checkout.json")
+                            if metadata["scope"] == "pr"
+                            else "local-source/source-snapshot.json"
+                        )
+                        rows.insert(
+                            len(rows) - 1,
+                            {"id": "reviewed-commit", "cells": ["Commit", value], "source_ids": [source_id]},
+                        )
+                        handoff["source_records"].append({"id": source_id, "evidence": receipt})
+                        handoff["source_coverage"]["source_records_total"] += 1
+                        handoff["source_coverage"]["represented_source_records_total"] += 1
                 if table.get("heading") == "Review Findings and Merge Blocks":
                     table.update(layout="concise", overview_only=True)
+            report = run / "review-notes.md"
+            if report.is_symlink() or not report.is_file():
+                raise DeriveError("review-commit-report-invalid")
+            try:
+                notes = report.read_text(encoding="utf-8")
+                source = f"## Reviewed Source\n\nReviewed commit: {value}"
+                if "## Reviewed Source" not in notes:
+                    report.write_text(notes + "\n\n" + source + "\n", encoding="utf-8", newline="\n")
+                elif source not in notes:
+                    raise DeriveError("review-commit-report-mismatch")
+            except (OSError, UnicodeError) as error:
+                raise DeriveError("review-commit-report-unavailable") from error
             _derive_review_actions(run, metadata, handoff)
         return handoff
     handoff["artifacts"] = _artifacts(run, handoff.get("artifacts") or [], artifact_path)
@@ -1022,7 +1064,7 @@ def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[st
         raise DeriveError("review-action-notes-identity-mismatch")
     if any(len(cells) not in {4, 5} or authored_status.get(cells[0]) != cells[-1] for cells in parsed[2:]):
         raise DeriveError("review-action-notes-status-mismatch")
-    if handoff.get("presentation_version") in {7, 8, 9, 10}:
+    if handoff.get("presentation_version") in {7, 8, 9, 10, 11}:
         detail_sections = list(re.finditer(r"(?ms)^## Finding Details[^\S\r\n]*\r?\n.*?(?=^## |\Z)", notes))
         if len(detail_sections) > 1:
             raise DeriveError("review-report-details-ambiguous")
@@ -1036,9 +1078,9 @@ def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[st
         rows,
         by_id,
         metadata.get("reviewer_assessments") is not None,
-        role_only=handoff.get("presentation_version") in {7, 8, 9, 10},
+        role_only=handoff.get("presentation_version") in {7, 8, 9, 10, 11},
     )
-    if handoff.get("presentation_version") in {7, 8, 9, 10}:
+    if handoff.get("presentation_version") in {7, 8, 9, 10, 11}:
         # Keep authored prose byte-exact while owning one deterministic, complete detail section.
         notes = notes_path.read_bytes().decode("utf-8")
         details = final_handoff.render_review_report_details(handoff) + "\n"

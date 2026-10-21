@@ -1,5 +1,7 @@
 # 🛠️ develop — Claude Code Plugin
 
+Code review reports include the full reviewed commit SHA and distinguish source judgment from verification readiness; local dirty reviews identify the base commit.
+
 [Changelog](CHANGELOG.md) records version-by-version changes, including the plugin's earlier directory history.
 
 Review loops fix feasible authorized findings, investigate repeated signatures, and continue whenever the weighted score decreases; structural labels alone do not stop remediation. Completion prompts ask only for a missing decision or authorization, regardless of report length, and already-authorized next steps continue. Concrete gates for fresh scope, paid execution, sensitive or destructive actions, and remote changes remain in force.

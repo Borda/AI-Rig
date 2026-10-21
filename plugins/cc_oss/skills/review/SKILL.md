@@ -58,7 +58,7 @@ AGENT_DEADLINE_S=1800  # per spawned agent, from its spawn; covers the former 90
 - Key boundary: end of Step 2 — parallel review-agent fan-out outputs collected, before Step 5 consolidation.
 - Second boundary: end of Step 5 — consolidated report written, before Step 8 --reply.
 - Third boundary: immediately before the Step 7a follow-up gate — longest idle window; refresh makes a mid-wait `/compact` lossless.
-- Preserve at boundary 1: RUN_DIR, REPORT_DIR, PR# (CLEAN_ARGS), per-agent finding file paths.
+- Preserve at boundary 1: RUN_DIR, REPORT_DIR, PR# (CLEAN_ARGS), per-agent finding file paths, frozen reviewed full commit SHA (or explicit unavailable reason), and exact fill-gaps head identity when applicable.
 - Preserve at boundary 2: final report path, PR#, reply-mode flag.
 - Preserve at boundary 3: final report path, PR#.
 
@@ -627,6 +627,7 @@ echo "REPORT_DIR=$REPORT_DIR"
 Orchestrator writes `$REPORT_DIR/review-report.md` itself (Write tool, expanded to the printed path; same `---` header format as `templates/review-report.md`) with:
 
 - `Review contract: 1`, `Rating scale: source-5-v1`, and `Readiness: complete` for the established premise judgment; disclose any unassessed source scope
+- `Commit SHA: <PR_HEAD_SHA>` using the full frozen `pr-meta.json` `headRefOid` retained by Stage 1 and `head-sha.txt`; never abbreviate or use the invoking checkout's HEAD. Missing full provenance is explicitly unavailable, never guessed. This field is required on initial and late terminal publications.
 - `Gate: REVIEW_V1_REJECT_<GROUND> @<PR_HEAD_SHA>` (the `@<sha>` suffix is load-bearing — `/oss:resolve` parses it to refuse restarting on an unchanged, rejected PR; never omit it, regardless of which of the 8 grounds fired)
 - `Outcome: REJECT` and the new five-stage legend; write review-validation.json with source_outcome=REJECT/source_rating=5 and evidenced parent assessment, plus empty findings.jsonl if no actionable source defects were assessed
 - `Summary:` stating the specific evidence (factual contradiction, challenger rationale, label/issue/revert citation, doc line quoted)
@@ -897,6 +898,8 @@ echo "IMPACT=$IMPACT_LINE"
 echo "BRANCH=$BRANCH DATE=$DATE"
 ```
 
+Resolve `REVIEWED_COMMIT_SHA` from the frozen Step 0 `pr-meta.json` `headRefOid` (or its full `head-sha.txt` sidecar), never the invoking checkout's HEAD or a fresh network query. Pass the full value as a literal binding below and show it in the report header for every PASS/BLOCK review. Missing full provenance renders `unavailable (reviewed commit not captured)`. For fill-gaps, use the selected run's exact plan `head_sha` instead: a full SHA remains unchanged; a legacy abbreviated value renders `unavailable (legacy abbreviated reviewed identity: <head_sha>)`. Never expand that abbreviation using the current PR head, and never alter carried sidecar revisions. Retain this binding through compaction and publication retries.
+
 **IMPORTANT**: expand `$RUN_DIR`, `$REPORT_DIR`, `$REVIEW_SKILL_DIR`, `$BRANCH`, `$DATE`, `$CI_RED`, `$CI_FAILING_CHECKS`, and `$CI_COUNTS` to literal values before inserting into spawn prompt. Un-expanded variables create wrong paths. `## Source Files` footnote `Glob(... path="<EXPANDED_RUN_DIR>")` path must also expand to literal `$RUN_DIR` value.
 
 **Late terminal conflict:** Before consolidation, if parent validation establishes source REJECT, return to Stage 1's existing confirmed-ground block and terminal publisher. Reuse already applicable evidence and any required conduct/license confirmation; never spawn duplicate checks. Retain the original reviewed SHA, exact ground/reason and provenance, all completed assessments/candidates and open concerns; do not replace full-review evidence with an empty premise-only record. Publish `REVIEW_V1_REJECT_<GROUND> @<PR_HEAD_SHA>` and source REJECT together, then follow Stage 1's Step 5b/Step 7 route. No matching evidenced terminal ground → NEEDS_WORK for fixable defects, or incomplete/blocked for unfinished validation. A reject-gate run bypasses consolidation — `GATE` here is always `PASS` or `BLOCK`.
@@ -932,6 +935,7 @@ REPORT_DIR=<resolved report directory>
 REVIEW_SKILL_DIR=<resolved installed review skill directory>
 _OSS_SHARED=<resolved own-plugin shared directory>
 DATE=<resolved date>
+REVIEWED_COMMIT_SHA=<full frozen reviewed SHA or explicit unavailable reason>
 CHANGED_FILES=<resolved changed-file list>
 SCOPE=<resolved scope label>
 IMPACT=<resolved IMPACT line>

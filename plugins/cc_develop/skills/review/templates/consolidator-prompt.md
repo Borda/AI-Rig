@@ -22,6 +22,7 @@ The parent supplies these resolved literal input bindings in the compact Agent p
 
 - $REPORT_DIR_LITERAL — report directory path (resolved in Step 2)
 - $DATE — from `date +%Y-%m-%d` output
+- $REVIEWED_COMMIT_SHA / $REVIEWED_COMMIT_KIND — frozen Step 1 full Git HEAD or unavailable reason, and working-tree base/source description; never query HEAD again or abbreviate the SHA
 - $REVIEW_CHECKLIST — resolved checklist path or empty string
 - $REVIEW_TEMPLATE — resolved review-report.md template path (Step 5); consolidator reads it itself — never embed the template body in this prompt (double-bills its tokens)
 
@@ -74,6 +75,7 @@ The file MUST begin with the template's `---`-delimited YAML metadata block: ope
 | `develop-review:` | Target: file / dir / working-tree diff. |
 | `Title:` | `develop-review — <target>`; required by the report-delivery hook. |
 | `Date:` | `<DATE>` |
+| `Commit SHA:` | Literal `<REVIEWED_COMMIT_SHA>` plus `<REVIEWED_COMMIT_KIND>`. A path/diff review identifies the working-tree base, including dirty changes; never describe it as clean committed source. An unavailable identity remains explicit. |
 | `Change Type:` | Classify change INTENT from the diff; never file-count heuristics or commit-message prefix. Fix and feat can touch the same files. |
 | `Scope:` | Comma-separated key changed py files; cap ~5. |
 | `Focus:` | Scope-label em-dash one-line description of what the change does, from the diff, not commit message. |
@@ -98,6 +100,8 @@ The file MUST begin with the template's `---`-delimited YAML metadata block: ope
 - Exhaust allowed static checks. A child inspection-only restriction does not prove the parent lacks an authorized runtime check; record the actual authorization/capability boundary. Feasible undone parent work means incomplete.
 
 ## Publication validation
+
+Preserve a supported source judgment when unavailable tooling, runtime evidence or independent verification blocks readiness. Such limits do not alone force source_outcome/source_rating to null; null requires source evidence insufficient to judge. Record missing independence as an open validation obligation, never a confirmed finding. Keep missing reviewer coverage, feasible undone checks, actual failed gates and required checks visible; complete feasible authorized work before delivery, and never claim unconditional approval or merge readiness while blocked/incomplete. The develop review remains read-only and runs no tests.
 
 1. Follow the loaded candidate-validation protocol. Do not infer confirmation from confidence or severity. A claim you add or materially strengthen beyond the parent's `cross-validation.md` is not published as confirmed: record it in `review-validation.json` as a candidate with null disposition and one `open_concerns` entry (owner: parent, next_check: validate the claim), keep it out of `findings.jsonl`, and list its candidate IDs in the envelope's `new_claims` array (empty when none) so the parent validates them before delivery.
 2. Write `<REPORT_DIR_LITERAL>/review-validation.json`: contract_version=1, rating_scale=source-5-v1, aggregate source_outcome/source_rating/readiness/readiness_reason, returned/missing assessments, all candidates, and durable open_concerns. Aggregate readiness=complete only when every assessment is complete and open_concerns is empty. A missing required role (presence=missing) has readiness=incomplete; it, like any null candidate, makes the aggregate incomplete, overriding blocked, also under a null aggregate outcome. Header fields mirror the envelope.

@@ -4,7 +4,7 @@
 
 - Start with a plain-English explanation of the stopped operation and its effect, then state `PR Review Availability: unavailable` and `Reason:` with the classified failure before verification, confidence, or next-step detail; also state `Source findings: not assessed` and `Merge decision: not made`. New handoffs use the shared presentation-version-3 renderer and its artifact-bound diagnostic contract; historical version-2 output remains readable.
 - Use plain diagnostic prose with exactly process diagnostic, recovery action, and evidence path.
-- Do not emit a Markdown table: neither `PR Evidence Collection Recovery` nor `Review Findings and Merge Blocks` applies before source assessment.
+- Emit the presentation-11 display-only status table; neither `PR Evidence Collection Recovery` nor `Review Findings and Merge Blocks` applies before source assessment. Do not invent assessed findings or a merge recommendation.
 - Do not emit `needs-more-work`, `minor-changes`, `reject`, `not-aligned`, or any other merge recommendation.
 - Retain current-attempt metadata, checkout state, or partial diff artifacts for diagnosis, but label them unassessed and never turn them into findings.
 - Name classified failure and `<run-directory>/pr-error.txt`, then stop. For a review-worktree creation or source-state failure, explain the exact isolated checkout obstruction and link `<run-directory>/worktree-preflight.json` or `<run-directory>/checkout-state.json` when available; invoking-worktree edits are not checkout overlap. Do not insert protected path lists into the bound summary. Follow the final-handoff redaction contract; never summarize this as generic collector failure.

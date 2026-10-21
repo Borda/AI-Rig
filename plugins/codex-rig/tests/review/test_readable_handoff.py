@@ -29,6 +29,55 @@ def _standard_payload(skill: str, version: int = 10) -> dict:
     return payload
 
 
+@pytest.mark.parametrize("branch", ["unavailable", "closed"])
+def test_current_terminal_handoff_keeps_a_status_table_without_source_judgment(branch: str) -> None:
+    """Keep terminal outcomes scannable without inventing assessed findings or approval."""
+    payload = _handoff_payload()
+    payload.update(skill="code-review", branch=branch, presentation_version=11, tables=[], source_records=[])
+    payload["source_coverage"] = {
+        "source_records_total": 0,
+        "represented_source_records_total": 0,
+        "omitted_source_records_total": 0,
+    }
+    payload["remaining"] = []
+    payload["next_steps"] = []
+    payload["outcome"] = {"title": "Review stopped", "summary": "The review ended before source assessment."}
+    if branch == "unavailable":
+        for check in payload["verification"]:
+            check.update(status="not-applicable", evidence="Source collection did not complete.")
+    original = copy.deepcopy(payload)
+
+    rendered = _load_finalizer().render_handoff(payload)
+
+    assert "| Field | Value |" in rendered
+    assert f"| Status | {branch} |" in rendered
+    assert "| Source findings | Not assessed |" in rendered
+    assert "| Merge decision | Not made |" in rendered
+    assert ("| Detailed review | Skipped |" in rendered) == (branch == "closed")
+    assert "**Verification**" in rendered
+    assert "**Confidence**" in rendered
+    assert payload == original
+
+
+@pytest.mark.parametrize("skill", ["implement", "investigate"])
+def test_current_single_result_handoff_retains_its_standard_table(skill: str) -> None:
+    """A single clean decision still needs the workflow's normal reading anchor."""
+    payload = _standard_payload(skill, version=11)
+    payload["remaining"] = []
+    payload["next_steps"] = []
+    payload["tables"][0]["rows"][0]["cells"] = ["Parser", "Passed", "Checks passed", "None"]
+
+    rendered = _load_finalizer().render_handoff(payload)
+
+    columns = (
+        "| Surface | Outcome | Verification | Remaining limit |"
+        if skill == "implement"
+        else "| Hypothesis | Evidence | Disposition | Next action |"
+    )
+    assert columns in rendered
+    assert "| Parser | Passed | Checks passed | None |" in rendered
+
+
 @pytest.mark.parametrize("skill", ["implement", "investigate"])
 def test_current_standard_handoff_has_readable_actions_and_confidence(skill: str) -> None:
     """Keep status, ownership, action and closure evidence in distinct Markdown blocks."""

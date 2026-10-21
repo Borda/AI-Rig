@@ -7,6 +7,7 @@
 #   make sync-all APPROVE_CLAUDE_CONSENT=0  # leave standing consent unchanged
 #   make sync-claude         # Claude scope only
 #   make sync-codex          # Codex scope only
+#   make preflight-sync     # check RTK availability without changing installations
 #   make sync-codex APPROVE_CLAUDE_CONSENT=1  # explicitly record standing Claude transfer consent
 #   make clear-all           # teardown both scopes
 #   make clear-claude        # teardown Claude scope only
@@ -17,6 +18,7 @@
 # explicit trailing `\` plus explicit `;` after every statement — rather than relying on the
 # `.ONESHELL:` directive, which GNU Make 3.81 does not implement (confirmed empirically: state
 # set on one un-continued recipe line does not survive to the next).
+# Sync also requires RTK on PATH; install it before syncing: https://github.com/rtk-ai/rtk
 #
 # EXTERNAL_PLUGIN_TIMEOUT_SECONDS (env var, default 120) bounds every external
 # marketplace/plugin command. There is no CLI-flag equivalent — set it in the environment:
@@ -89,13 +91,13 @@ endef
         update-ext-plugins register-marketplace install-claude-plugins prune-claude-cache \
         verify-claude-plugins warn-stale-claude-sessions \
         install-codex-plugins sync-codex-home-policy sync-codex-bridge-consent \
-        banner-claude banner-codex \
+        banner-claude banner-codex preflight-sync \
         prune-benchmarks prune-benchmarks-apply
 
 ## Meta targets ---------------------------------------------------------------
 
 # Codex sync uses an explicit success chain, including under make -k; Claude stages
-# retain ordered prerequisites. sync-all deliberately runs both
+# run only after preflight succeeds, with their existing order retained. sync-all deliberately runs both
 # phases regardless of either's outcome and aggregates the failure at the end,
 # instead of a codex-phase failure silently discarding an earlier claude-phase
 # failure count (which is what sync.sh's bare `set -e` does today).
@@ -111,7 +113,13 @@ banner-claude:
 banner-codex:
 	@$(call section,Codex sync - plugins + session policy)
 
-sync-all:
+preflight-sync:
+	@command -v rtk >/dev/null 2>&1 || { \
+		echo "RTK is required for sync. Install RTK and put rtk on PATH: https://github.com/rtk-ai/rtk" >&2; \
+		exit 1; \
+	}
+
+sync-all: preflight-sync
 	@$(call workflow,Full sync - Claude + Codex scopes); \
 	status=0; \
 	$(MAKE) sync-claude || status=1; \
@@ -123,10 +131,11 @@ sync-all:
 	fi; \
 	exit $$status
 
-sync-claude: banner-claude migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace update-ext-plugins register-marketplace install-claude-plugins verify-claude-plugins prune-claude-cache warn-stale-claude-sessions
-	@echo "✓ Claude sync complete"
+sync-claude: preflight-sync
+	@$(MAKE) banner-claude migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace update-ext-plugins register-marketplace install-claude-plugins verify-claude-plugins prune-claude-cache warn-stale-claude-sessions && \
+	echo "✓ Claude sync complete"
 
-sync-codex: banner-codex
+sync-codex: preflight-sync banner-codex
 	@$(MAKE) install-codex-plugins && \
 	$(MAKE) sync-codex-home-policy && \
 	$(MAKE) sync-codex-bridge-consent && \

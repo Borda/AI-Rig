@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.37.3
+
+- Keep table anchors across every skill and workflow, including clean results and blocked handoffs; render compact terminal review status tables while preserving historical report bytes and exact caller output.
+
+- Preserve supported source judgments through reviewer/check recovery and qualify clean source approval when verification is blocked; retain actual failed gates and unresolved source concerns.
+
+- Include the full reviewed commit SHA in every new assessed Git review snapshot and report, label dirty-review base commits, and reject missing or conflicting source identity during promotion.
+
+- Attempt feasible authorized recovery before deferring confidence gaps: recover eligible reviewer receipts and run pinned autofixing checks on disposable review copies; retain authentic independence evidence, remote CI uncertainty and existing retry limits.
+
 ## 0.37.2
 
 - Recover authentically interrupted reviewers that emitted opening commentary before reading source; retain all message receipts and reject final, unphased or post-read output so replacement cannot erase a source assessment.

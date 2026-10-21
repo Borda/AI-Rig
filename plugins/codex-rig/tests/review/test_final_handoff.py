@@ -566,10 +566,13 @@ def test_assessed_code_review_handoff_requires_a_canonical_outcome() -> None:
         finalizer.validate_handoff(payload)
 
 
-def test_caller_contract_renders_exact_requested_bytes() -> None:
+@pytest.mark.parametrize("version", [None, 10, 11])
+def test_caller_contract_renders_exact_requested_bytes(version: int | None) -> None:
     """Keep an explicit strict output contract free of added workflow prose."""
     finalizer = _load_finalizer()
     payload = _handoff_payload()
+    if version is not None:
+        payload["presentation_version"] = version
     payload["branch"] = "caller-contract"
     payload["tables"] = []
     payload["source_records"] = []

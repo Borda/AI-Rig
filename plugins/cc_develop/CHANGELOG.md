@@ -2,8 +2,12 @@
 
 ## 0.42.1
 
+- Keep supported review source judgments separate from blocked verification and include the reviewed full commit SHA in report headers; retain explicit unavailable identity for unversioned or historical abbreviated sources.
+
 - `/develop:review` test gaps default to `[low]` and reach `[medium]` only for a changed (or, for file and directory targets, reviewed) public entry point with no tests; the checklist anchors documented-contract violations at MEDIUM, and the blocking section sets placement, never severity.
+
 - The `/develop:review` consolidator keeps each root-cause-merged row with its own validated severity and section, so `/oss:resolve` (requires `oss` plugin) can fold it into the survivor's item with the group's strongest routing.
+
 - The shared file-handoff protocol adds an `unsupported` decline status that orchestrators surface as a routing miss instead of a timeout.
 
 ## 0.42.0

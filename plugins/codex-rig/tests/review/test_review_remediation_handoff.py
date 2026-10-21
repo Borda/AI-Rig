@@ -38,7 +38,8 @@ def test_coverage_waiver_completes_separate_fallback_without_synthetic_actions(t
     handoff["tables"] = handoff["tables"][:1]
     handoff["tables"][0]["summary"] = metadata["review_decision"]["summary"]
     handoff["source_records"] = [record for record in handoff["source_records"] if record["id"] != "gate:types"]
-    handoff["source_coverage"].update(source_records_total=5, represented_source_records_total=5)
+    total = len(handoff["source_records"])
+    handoff["source_coverage"].update(source_records_total=total, represented_source_records_total=total)
     notes = fallback / "review-notes.md"
     notes.write_text(
         notes.read_text(encoding="utf-8").split("## Review Findings and Merge Blocks")[0]
@@ -558,6 +559,10 @@ def _finalize_native_review(
         assert admitted.returncode == 0, admitted.stderr
         assert admitted.stdout == str(result_path) + "\n"
         assert {path: path.read_bytes() for path in after_finalization} == after_finalization
+    source = json.loads((run / "local-source/source-snapshot.json").read_bytes())
+    before[run / "review-notes.md"] += (
+        f"\n\n## Reviewed Source\n\nReviewed commit: {source['revision']} (working-tree base)\n".encode()
+    )
     assert {path: path.read_bytes() for path in before} == before
 
 

@@ -13,8 +13,9 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 
 ## Usage
 
-New handoffs set ``presentation_version=10`` for remediation resolution explanations, readable actions, confidence
-bullets, linked artifacts and paths outside terminal tables. Historical versions retain their exact presentation.
+New handoffs set ``presentation_version=11`` for remediation resolution explanations, readable actions, confidence
+bullets, linked artifacts, terminal status tables and paths outside terminal tables.
+Historical versions retain their exact presentation.
 Run ``render`` after gates and handoff creation, then run ``check``
 directly or through the shared artifact validator
 before promoting ``result.candidate.json``. Before remediation selection, run ``selection --input selection.json
@@ -127,7 +128,7 @@ HANDOFF_FIELDS = {
     "caller_contract",
 }
 #: Current presentation layout revision for rendered handoffs, written into new handoff documents.
-PRESENTATION_VERSION = 10
+PRESENTATION_VERSION = 11
 #: One-sentence plain-English summary shown for each code-review recommendation.
 REVIEW_PLAIN_SUMMARIES = {
     "accept-as-is": "This review found no blocking change requests.",
@@ -142,6 +143,38 @@ REVIEW_PLAIN_SUMMARIES = {
 
 class HandoffError(ValueError):
     """Report one fail-closed handoff contract violation."""
+
+
+def review_commit_sha(run: Path, scope: str) -> str:
+    """Resolve the full reviewed commit from retained producer receipts, never the invoking checkout."""
+    if scope not in {"pr", "commit", "working-tree", "path"}:
+        raise HandoffError("review-commit-scope-invalid")
+    sources = [("reviewed-commit.txt", ()), ("batch-inventory.json", ("source_snapshot", "revision"))]
+    if scope == "pr":
+        sources.extend([("pr-routing.json", ("head_oid",)), ("local-checkout.json", ("expected_head",))])
+    elif scope in {"working-tree", "path"}:
+        sources.append(("local-source/source-snapshot.json", ("revision",)))
+    commits: set[str] = set()
+    for name, keys in sources:
+        path = run / name
+        if path.is_symlink() or (path.parent != run and path.parent.is_symlink()):
+            raise HandoffError("review-commit-source-invalid")
+        if not path.exists():
+            continue
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+            if keys:
+                value = json.loads(value)
+                for key in keys:
+                    value = value[key]
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise HandoffError("review-commit-source-invalid") from error
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value) is None:
+            raise HandoffError("review-commit-sha-invalid")
+        commits.add(value)
+    if len(commits) != 1:
+        raise HandoffError("review-commit-missing" if not commits else "review-commit-conflict")
+    return commits.pop()
 
 
 def _require_object(value: object, label: str) -> dict[str, Any]:
@@ -607,7 +640,7 @@ def validate_handoff(payload: object) -> dict[str, Any]:
     """Validate and return one canonical final-handoff payload."""
     handoff = _require_object(payload, "handoff")
     presentation_version = handoff.get("presentation_version")
-    if type(presentation_version) is int and presentation_version in {8, 9, 10}:
+    if type(presentation_version) is int and presentation_version in {8, 9, 10, 11}:
         # Only terminal layout changes; use the existing branch's complete factual contract.
         previous = 7 if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed" else 3
         if handoff.get("skill") == "code-remediate":
@@ -1284,7 +1317,7 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
     if handoff["branch"] == "caller-contract":
         return handoff["caller_contract"]["output"]
 
-    if handoff.get("presentation_version") in {8, 9, 10}:
+    if handoff.get("presentation_version") in {8, 9, 10, 11}:
         previous = 7 if handoff["skill"] == "code-review" and handoff["branch"] == "assessed" else 3
         if handoff["skill"] == "code-remediate":
             previous = 6
@@ -1292,8 +1325,9 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
             _render_v2_handoff(
                 {**handoff, "presentation_version": previous},
                 report_root=report_root,
-                readable=handoff["presentation_version"] in {9, 10},
-                show_resolution=handoff["presentation_version"] == 10,
+                readable=handoff["presentation_version"] in {9, 10, 11},
+                show_resolution=handoff["presentation_version"] in {10, 11},
+                status_table=handoff["presentation_version"] == 11,
             )
         )
 
@@ -1347,7 +1381,12 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
 
 
 def _render_v2_handoff(
-    handoff: dict[str, Any], *, report_root: Path | None = None, readable: bool = False, show_resolution: bool = False
+    handoff: dict[str, Any],
+    *,
+    report_root: Path | None = None,
+    readable: bool = False,
+    show_resolution: bool = False,
+    status_table: bool = False,
 ) -> str:
     """Render a plain-English-first report while retaining the validated machine fields."""
     outcome = handoff["outcome"]
@@ -1395,6 +1434,14 @@ def _render_v2_handoff(
                     ),
                 )
             )
+    elif status_table:
+        # Terminal branches have no assessed records; derive a display-only anchor from their actual disposition.
+        lines.extend(("", "**Results**", "", "| Field | Value |", "| -- | -- |"))
+        lines.append(f"| Status | {handoff['branch']} |")
+        if handoff["skill"] == "code-review":
+            lines.extend(("| Source findings | Not assessed |", "| Merge decision | Not made |"))
+            if handoff["branch"] == "closed":
+                lines.append("| Detailed review | Skipped |")
     if runs := handoff.get("child_runs"):
         lines.extend(("", "Validated child and interaction scores:"))
         lines.extend(

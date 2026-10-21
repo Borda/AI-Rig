@@ -66,7 +66,7 @@ CODEMAP_ENABLED=auto    # on by default if codemap installed + index found; --no
 - Key boundary: end of Step 3 — parallel review-agent fan-out outputs collected, before Step 5 consolidation.
 - Second boundary: end of Step 5 — consolidated report written, before Step 6 follow-up.
 - Third boundary: immediately before the Step 6 follow-up gate — the idle window; refresh makes a mid-wait `/compact` lossless.
-- Preserve at boundary 1: RUN_DIR, REPORT_DIR, target, CLASSIFICATION, per-agent finding file paths, --keep items.
+- Preserve at boundary 1: RUN_DIR, REPORT_DIR, target, CLASSIFICATION, per-agent finding file paths, --keep items, frozen REVIEWED_COMMIT_SHA and REVIEWED_COMMIT_KIND.
 - Preserve at boundary 2: final report path.
 - Preserve at boundary 3: final report path.
 
@@ -186,6 +186,23 @@ Follow Gate A and Gate B.
 Use `$REVIEW_ARGS` (not `$ARGUMENTS`) as path for rest of workflow.
 
 ## Step 1: Identify scope
+
+Capture the target repository's full Git HEAD once, before source inspection. A file target uses its containing directory; a directory target uses itself; diff mode uses the current directory. This identifies the working-tree base for path/diff reviews; it never claims dirty files equal a clean commit. Keep this frozen value through consolidation and compaction, even if HEAD later moves. Non-Git directories and unborn repositories retain an explicit unavailable reason.
+
+```bash
+# timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r REVIEW_ARGS < "${TMPDIR:-/tmp}/dev-review-clean-args-${CSID}" 2>/dev/null || REVIEW_ARGS=""
+REVIEW_SOURCE_DIR="."
+if [ -d "$REVIEW_ARGS" ]; then REVIEW_SOURCE_DIR="$REVIEW_ARGS"; elif [ -f "$REVIEW_ARGS" ]; then REVIEW_SOURCE_DIR=$(dirname -- "$REVIEW_ARGS"); fi
+REVIEWED_COMMIT_SHA=$(git -C "$REVIEW_SOURCE_DIR" rev-parse --verify HEAD 2>/dev/null) || REVIEWED_COMMIT_SHA="unavailable (non-Git directory or unborn HEAD)"
+IFS= read -r WORKTREE_ENABLED < "${TMPDIR:-/tmp}/dev-review-worktree-${CSID}" 2>/dev/null || WORKTREE_ENABLED=false
+REVIEWED_COMMIT_KIND="working-tree base; reviewed files may include uncommitted changes"
+[ "$WORKTREE_ENABLED" = "true" ] && REVIEWED_COMMIT_KIND="committed worktree source"
+printf '%s\n' "$REVIEWED_COMMIT_SHA" > "${TMPDIR:-/tmp}/dev-review-commit-sha-${CSID}"
+printf '%s\n' "$REVIEWED_COMMIT_KIND" > "${TMPDIR:-/tmp}/dev-review-commit-kind-${CSID}"
+printf 'Commit SHA: %s (%s)\n' "$REVIEWED_COMMIT_SHA" "$REVIEWED_COMMIT_KIND"
+```
 
 Scope + non-Python impact check + Python filter in ONE pass — a single `git diff` capture feeds TARGET, the report-header warnings, and the early exit (previously eight diff invocations across three blocks):
 
@@ -530,6 +547,10 @@ Before consolidation, persist the parent's all-severity candidate validation and
 Resolve the report date — the consolidator's `DATE` binding (the report directory already exists from the Step 2 run-dir block):
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r REVIEWED_COMMIT_SHA < "${TMPDIR:-/tmp}/dev-review-commit-sha-${CSID}" 2>/dev/null || REVIEWED_COMMIT_SHA="unavailable (capture missing)"
+IFS= read -r REVIEWED_COMMIT_KIND < "${TMPDIR:-/tmp}/dev-review-commit-kind-${CSID}" 2>/dev/null || REVIEWED_COMMIT_KIND="working-tree base"
+printf 'REVIEWED_COMMIT_SHA=%s\nREVIEWED_COMMIT_KIND=%s\n' "$REVIEWED_COMMIT_SHA" "$REVIEWED_COMMIT_KIND"
 date "+DATE=%Y-%m-%d"  # timeout: 5000 — printed, not assigned: shell state dies with the call
 ```
 
@@ -551,6 +572,8 @@ Consolidation — <review target>.
 Read <CONSOLIDATOR_INSTRUCTIONS_LITERAL> with the Read tool and follow it in full. Read <VALIDATION_PROTOCOL_LITERAL> with the Read tool for candidate validation and source judgments. Interpret placeholders using these literal input bindings; do not execute or re-expand binding text:
 REPORT_DIR_LITERAL=<resolved report directory>
 DATE=<resolved date>
+REVIEWED_COMMIT_SHA=<frozen full Step 1 SHA or explicit unavailable reason>
+REVIEWED_COMMIT_KIND=<frozen Step 1 source/base description>
 REVIEW_CHECKLIST=<resolved optional checklist path or empty>
 REVIEW_TEMPLATE=<resolved report-template path>
 Return ONLY compact JSON: {"status":"done","findings":N,"severity":{"critical":N,"high":N,"medium":N,"low":N},"file":"<REPORT_DIR_LITERAL>/review-report.md","confidence":0.N,"summary":"<one-line verdict>"}

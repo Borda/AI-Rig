@@ -24,6 +24,8 @@ def _assessed_local(tmp_path: Path) -> Path:
     result_path = run / "result.json"
     result = json.loads(result_path.read_text(encoding="utf-8"))
     result["metadata"]["scope"] = "working-tree"
+    commit = result["metadata"]["reviewed_commit_sha"]
+    (run / "reviewed-commit.txt").write_text(commit + "\n", encoding="utf-8", newline="\n")
     handoff_path = run / "final-handoff.json"
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
     snapshot = handoff["tables"][0]
@@ -32,6 +34,7 @@ def _assessed_local(tmp_path: Path) -> Path:
     snapshot["rows"][1]["cells"] = ["Revision", f"diff sha256:{result['metadata']['review_input_sha256']}"]
     snapshot["rows"][2]["cells"] = ["CI", "unavailable"]
     snapshot["rows"][3]["cells"] = ["Type", "docs"]
+    snapshot["rows"][-2]["cells"] = ["Commit", commit + " (working-tree base)"]
     handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
     validation = _module(PLUGIN_ROOT / "shared/final_handoff.py").render_files(
         handoff_path, run / "final.md", run / "final-handoff.validation.json"
@@ -886,6 +889,11 @@ def test_explicit_local_report_requires_complete_validation(assessed_local: Path
     handoff_path = assessed_local.parent / "final-handoff.json"
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
     handoff["tables"][0]["rows"][0]["cells"] = ["Scope", scope]
+    commit = result["metadata"]["reviewed_commit_sha"]
+    handoff["tables"][0]["rows"][-2]["cells"] = [
+        "Commit",
+        commit if scope == "commit" else commit + " (working-tree base)",
+    ]
     handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
     validation = _module(PLUGIN_ROOT / "shared/final_handoff.py").render_files(
         handoff_path, assessed_local.parent / "final.md", assessed_local.parent / "final-handoff.validation.json"

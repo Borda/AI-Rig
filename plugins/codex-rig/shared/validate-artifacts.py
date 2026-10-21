@@ -63,7 +63,7 @@ if str(SHARED_DIRECTORY) not in sys.path:
 from adversarial_loop import SCHEMA_VERSION as LOOP_LEDGER_SCHEMA_VERSION  # noqa: E402
 from adversarial_loop import load_ledger  # noqa: E402
 from collect_pr import _github_remote_identity, _head_repository, dirty_path_record_is_consistent  # noqa: E402
-from final_handoff import challenge_report_path  # noqa: E402
+from final_handoff import HandoffError, challenge_report_path, review_commit_sha  # noqa: E402
 from release_evidence import release_sections, validate_release_evidence  # noqa: E402
 
 #: Fields every result.json must contain regardless of skill.
@@ -491,13 +491,13 @@ def _validate_code_remediate_final_handoff(
         raise SystemExit("code-remediate-final-handoff-table-invalid")
     expected_items = resolution_table["items"]
     presentation = metadata.get("resolution_scope", {}).get("presentation_version")
-    if candidate and presentation == 5 and handoff.get("presentation_version") not in {8, 9, 10}:
+    if candidate and presentation == 5 and handoff.get("presentation_version") not in {8, 9, 10, 11}:
         raise SystemExit("remediation-current-handoff-presentation-v8-required")
-    if candidate and presentation in {4, 5} and handoff.get("presentation_version") not in {6, 8, 9, 10}:
+    if candidate and presentation in {4, 5} and handoff.get("presentation_version") not in {6, 8, 9, 10, 11}:
         raise SystemExit("remediation-current-handoff-presentation-v6-required")
     if presentation in {2, 3, 4, 5} and tables[0].get("layout") != (
         "concise"
-        if handoff.get("presentation_version") in {8, 9, 10}
+        if handoff.get("presentation_version") in {8, 9, 10, 11}
         else {2: "grouped", 3: "concise", 4: "concise", 5: "concise"}[presentation]
     ):
         raise SystemExit("code-remediate-final-handoff-grouped-layout-required")
@@ -538,10 +538,10 @@ def _validate_code_remediate_final_handoff(
         )
         if item.get("selectable"):
             selectable_index += 1
-        if handoff.get("presentation_version") in {5, 6, 8, 9, 10}:
+        if handoff.get("presentation_version") in {5, 6, 8, 9, 10, 11}:
             selected = metadata.get("resolution_scope", {}).get("selected_indexes", [])
             expected_rows[-1]["selected"] = bool(item.get("selectable")) and selectable_index in selected
-            if handoff.get("presentation_version") in {6, 8, 9, 10}:
+            if handoff.get("presentation_version") in {6, 8, 9, 10, 11}:
                 expected_rows[-1]["selected"] = (
                     "Closed" if not item.get("selectable") else "Yes" if selectable_index in selected else "No"
                 )
@@ -633,9 +633,9 @@ def _validate_code_review_final_handoff(
     if handoff.get("branch") != expected_branch:
         raise SystemExit("code-review-final-handoff-branch-mismatch")
     if result.get("schema_version") == 3 and expected_branch == "assessed":
-        if fresh_candidate and handoff.get("presentation_version") not in {8, 9, 10}:
+        if fresh_candidate and handoff.get("presentation_version") not in {8, 9, 10, 11}:
             raise SystemExit("review-current-handoff-presentation-v8-required")
-        if handoff.get("presentation_version") not in {3, 7, 8, 9, 10}:
+        if handoff.get("presentation_version") not in {3, 7, 8, 9, 10, 11}:
             raise SystemExit("review-current-handoff-presentation-invalid")
     if expected_branch == "assessed":
         decision = metadata.get("review_decision")
@@ -712,6 +712,9 @@ def _validate_code_review_final_handoff(
         snapshot = tables_by_heading[snapshot_heading]
         rows = snapshot.get("rows")
         expected_fields = snapshot_fields[snapshot_heading]
+        reviewed_commit = metadata.get("reviewed_commit_sha")
+        if reviewed_commit is not None:
+            expected_fields = (*expected_fields[:-1], "Commit", expected_fields[-1])
         if (
             not isinstance(rows, list)
             or tuple(
@@ -723,6 +726,24 @@ def _validate_code_review_final_handoff(
             != expected_fields
         ):
             raise SystemExit(f"code-review-final-handoff-{label}-fields-mismatch")
+        if fresh_candidate and reviewed_commit is None:
+            raise SystemExit("review-commit-missing")
+        if reviewed_commit is not None:
+            if out_dir is None:
+                raise SystemExit("review-commit-source-missing")
+            try:
+                retained_commit = review_commit_sha(out_dir, metadata.get("scope"))
+            except HandoffError as error:
+                raise SystemExit(str(error)) from error
+            if reviewed_commit != retained_commit:
+                raise SystemExit("review-commit-metadata-mismatch")
+            expected_commit = (
+                f"{retained_commit} (working-tree base)"
+                if metadata.get("scope") in {"working-tree", "path"}
+                else retained_commit
+            )
+            if rows[-2]["cells"][1] != expected_commit:
+                raise SystemExit("review-commit-row-mismatch")
         decision = metadata.get("review_decision")
         recommendation = decision.get("recommendation") if isinstance(decision, dict) else None
         suggestions = {
@@ -977,7 +998,7 @@ def _validate_final_handoff(
         _validate_code_review_final_handoff(
             result, handoff, candidate=current_contract, out_dir=out_dir, fresh_candidate=candidate
         )
-    if candidate and handoff.get("presentation_version") not in {8, 9, 10}:
+    if candidate and handoff.get("presentation_version") not in {8, 9, 10, 11}:
         raise SystemExit("current-handoff-presentation-v8-required")
 
 
@@ -3578,9 +3599,9 @@ def _validate_chunked_coordinator(
     ):
         raise SystemExit("adversarial-loop-chunk-coordinator-clean-result-invalid")
     handoff = _load_json(out_dir / "final-handoff.json")
-    if candidate and handoff.get("presentation_version") not in {3, 8, 9, 10}:
+    if candidate and handoff.get("presentation_version") not in {3, 8, 9, 10, 11}:
         raise SystemExit("adversarial-loop-child-scores-presentation-required")
-    if handoff.get("presentation_version") in {3, 8, 9, 10} and handoff.get("child_runs") != checked["runs"]:
+    if handoff.get("presentation_version") in {3, 8, 9, 10, 11} and handoff.get("child_runs") != checked["runs"]:
         raise SystemExit("adversarial-loop-child-scores-mismatch")
     rows = [row["cells"] for table in handoff["tables"] for row in table["rows"]]
     if any(row.get("admission") == "advisory" for table in handoff["tables"] for row in table["rows"]):

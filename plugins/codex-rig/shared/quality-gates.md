@@ -6,6 +6,8 @@ Apply [Acceptance and recovery](native-skill-contract.md#acceptance-and-recovery
 
 ## Review limitations and additional review
 
+Before classifying a material gap as unresolved or deferred, apply [Agent-owned confidence recovery](#agent-owned-confidence-recovery). A limitation describes the evidence left after feasible authorized recovery; it is not a substitute for performing that recovery.
+
 Deliver the full review supported by the evidence actually obtained. Missing independent coverage, unavailable reviewer tools, unproven context isolation, incomplete provenance, unexecuted checks and confidence limitations describe the review's limits; they are not source defects, severity findings, operational-blocker rows or automatic remediation tasks. Preserve actual failed checks and qualify readiness and conclusions honestly; never fabricate passing evidence or unconditional approval. A concrete source defect supported by evidence remains a finding even when coverage is limited.
 
 If an additional review beyond the already authorized scope would resolve a material uncertainty, ask once for a decision before dispatch. State the exact question or gap, bounded scope, expected evidence/output and stopping condition, and offer to finish with the stated limitation. Existing explicit authorization for that same pass remains valid. A declined or dismissed optional review is skipped: do not re-ask, dispatch an alternative reviewer, or carry the request into final findings, blockers, recommendations, next steps or remediation selection. Retain only the factual limitation describing what was not verified. An unanswered optional question never authorizes dispatch; finish the available review with its limitation. An explicitly pending required decision keeps only its dependent work paused.
@@ -47,6 +49,18 @@ Optional but recommended:
 - `follow_up`: list of prioritized next actions
 - `metadata`: required with confidence for machine-readable gaps/closures; otherwise skill-specific evidence not hidden in prose notes
 
+## Agent-owned confidence recovery
+
+The agent owns recovery of material evidence gaps within the requested scope. Before final handoff, identify the next evidence-producing action for each gap and execute it when feasible and authorized. Merely recording a deduction, naming a maintainer, or meeting a confidence threshold does not complete an available check. Seek the strongest supported result, then recompute confidence from the evidence actually obtained.
+
+- Missing reviewer provenance: inspect authentic dispatch, context delivery, child terminal output and join receipts; complete outstanding authorized passes and collect existing receipts through the owning workflow. Apply its supported bounded recovery when eligible. Never invent a join, rewrite rejected history, count parent inspection as independent coverage, or start additional review beyond scope without authorization.
+- Unexecuted project checks: inspect the declared command, existing environment and actual permissions, then run the applicable pinned checks. A hook's ability to edit files alone is not a reason to defer: for read-only work, use the owning workflow's disposable-copy procedure and retain original-source identity, command, exit status and before/after diff. A pass after autofix verifies changed scratch bytes, not the original source. Actual dependency, execution and permission boundaries remain controlling.
+- Unavailable CI detail: inspect retained status and diagnostics, use permitted evidence retrieval and run relevant local checks when feasible. A failed result-page read does not excuse skipping local verification. Keep local results separate from remote status; local success never changes or proves a remote required-check result.
+- Recovery stays within existing retry, recurrence, budget and stop rules. Diagnose before retrying; a different route needs evidence that it avoids the observed cause and remains authorized. Do not rotate reviewers, repeat unchanged failures, expand scope, or bypass admission merely to improve confidence.
+- Defer only when evidence establishes an actual missing capability, prerequisite, decision, explicit scope exclusion or exhausted permitted recovery. Record attempts and results, the concrete remaining blocker, the responsible owner and the exact resume condition in existing recovery/closure fields. Continue unaffected authorized work; ask the user only for a genuinely missing decision. Residual uncertainty that has no feasible in-scope check remains an honest limitation.
+
+This is an execution obligation, not a new artifact schema or permission grant. Preserve failed evidence and all existing completion gates. Narrow unsupported claims without dropping requested acceptance criteria; never inflate scores, waive required independence, or mark an unperformed check passing to reach a confidence band.
+
 ## Confidence Deduction Accounting
 
 For every reported confidence gap or limitation, put its contribution first, before the description: `(-0.NN) Description` using an ASCII minus and two decimals. Unique deductions must sum to exactly `1.00 - score` at the displayed precision; choose the displayed score and deductions consistently. Keep existing confidence bands and evidence requirements.
@@ -82,14 +96,14 @@ Example: confidence `0.96`; `(-0.02)` unavailable target-host execution, `(-0.02
 Every final chat is compact, outcome-coupled handoff in this order:
 
 1. `Outcome`: name the topic or question being answered and state decision or completed result first, including gate status when it changes whether work is complete. The opening must stand alone; avoid unanchored “both,” “that,” or “yes” without repeating the conversation.
-2. `Results`: show every decision unit needed to understand outcome. Use skill's required table when multiple findings, changes, checks, iterations, recommendations, or artifacts need distinct dispositions; do not collapse skipped, rejected, deferred, or unresolved rows.
+2. `Results`: show every decision unit needed to understand outcome. Use the skill's required table for every outcome, including a single result, zero findings, all checks passing, partial completion and blocked work; do not collapse skipped, rejected, deferred, or unresolved rows.
 3. `Verification`: name checks run and their exact results, including skips, failures, and unavailable checks.
 4. `Remaining`: list every unresolved, deferred, skipped, externally owned, or environment-blocked obligation with its owner and next action. Write `None` only when evidence closes all obligations.
 5. `Recommendations / next steps`: give prioritized owner/action entries that move unresolved work or accepted recommendation forward. Reference result rows instead of repeating them; write `None` when no follow-up is justified.
 6. `Confidence`: report score, material limits, and any unresolved confidence gap under shared confidence-band policy and [Confidence Deduction Accounting](#confidence-deduction-accounting).
 7. `Artifact`: link the canonical result artifact and any essential supporting report. An artifact is supplemental, never a substitute for the outcome, result rows, verification, remaining-work disclosure, or next steps.
 
-Keep headings and tables proportional to result. A single decision may use one short result row or compact field list; branch-heavy results use separate bullets or tables instead of one long paragraph. Preserve skill-specific terminal-close or unavailable-output exceptions when their contracts prohibit normal tables or recommendations.
+Keep headings and tables proportional to result. A single decision still uses one short result row; branch-heavy results use separate bullets or tables instead of one long paragraph. Tables and stable labels are human reading anchors across all skills and workflows, not optional decoration. Keep ordered actions in numbered steps and parallel facts in bullets. Terminal-close and unavailable outcomes use a compact status table without inventing assessed findings or recommendations. Exact caller output and immediate yields for accepted pending questions retain their existing contracts.
 
 Skill contracts retain local outcomes, exact results, domain content, and terminal exceptions; other fields inherit.
 
@@ -130,4 +144,4 @@ Codex behavior changes must also update registrations, docs, calibration in same
 
 A passing assessed `audit` result additionally requires an executed passing `review` gate. The generic runner still permits all `not-applicable` diagnostics; skill applicability checks decide whether those records can certify workflow completion.
 
-New terminal handoffs use presentation version 10. Keep full evidence in machine records; display file paths outside every table as `- Item: file-path` lists. Presentation normalization is automatic; factual bindings, source coverage and authority checks retain their existing meaning.
+New terminal handoffs use presentation version 11. Keep full evidence in machine records; display file paths outside every table as `- Item: file-path` lists. Presentation normalization is automatic; factual bindings, source coverage and authority checks retain their existing meaning.

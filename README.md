@@ -2,7 +2,9 @@
 
 ![Borda's AI-Rig banner](docs/assets/images/banner.webp)
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE) [![Claude Code](https://img.shields.io/badge/Claude_Code-plugins-orange)](https://code.claude.com/docs/en/discover-plugins) [![Codex](https://img.shields.io/badge/Codex-plugins-green)](https://developers.openai.com/codex/cli/reference) [![codecov](https://codecov.io/gh/Borda/AI-Rig/graph/badge.svg?token=NTJKY4o4es)](https://codecov.io/gh/Borda/AI-Rig)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE) [![Claude Code](https://img.shields.io/badge/Claude_Code-plugins-D97757)](https://code.claude.com/docs/en/discover-plugins) [![Codex](https://img.shields.io/badge/Codex-plugins-10A37F)](https://developers.openai.com/codex/cli/reference) [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](pyproject.toml) ![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey)
+
+[![CI manifests](https://github.com/Borda/AI-Rig/actions/workflows/ci-manifests.yml/badge.svg?event=push)](https://github.com/Borda/AI-Rig/actions/workflows/ci-manifests.yml) [![CI executables](https://github.com/Borda/AI-Rig/actions/workflows/ci-tests.yml/badge.svg?event=push)](https://github.com/Borda/AI-Rig/actions/workflows/ci-tests.yml) [![CI harness](https://github.com/Borda/AI-Rig/actions/workflows/ci-harness.yml/badge.svg)](https://github.com/Borda/AI-Rig/actions/workflows/ci-harness.yml) [![codecov](https://codecov.io/gh/Borda/AI-Rig/graph/badge.svg?token=NTJKY4o4es)](https://codecov.io/gh/Borda/AI-Rig) [![pre-commit.ci status](https://results.pre-commit.ci/badge/github/Borda/AI-Rig/main.svg)](https://results.pre-commit.ci/latest/github/Borda/AI-Rig/main)
 
 Practical agent workflows for Python, ML, and open-source maintenance. AI-Rig turns recurring work—scoping a change, reproducing a bug, reviewing a pull request, running an experiment, or checking release readiness—into explicit workflows with specialist ownership, evidence gates, and reviewable artifacts.
 
@@ -356,6 +358,8 @@ Artifacts are reviewable evidence, not authority. Read the commands, source, tes
 ## 🏗️ Repository checkout and synchronization
 
 Direct marketplace installation is the normal public path. A source checkout adds maintainer tooling and the broader, deliberate `Makefile` restore flow:
+
+Checkout synchronization requires [RTK](https://github.com/rtk-ai/rtk) installed and available on `PATH`. Run `make preflight-sync` to check availability without changing installations; every sync entrypoint performs this check before installation changes. The Foundry RTK hook remains optional for ordinary plugin use.
 
 ```bash
 make sync-all         # Claude + Codex scopes, plus standing Claude consent when operator proof exists (default target)

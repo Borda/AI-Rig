@@ -2,6 +2,7 @@
 Title:       oss-review — [PR #N title]
 PR:          #[N]
 Date:        [YYYY-MM-DD]
+Commit SHA:  [full frozen reviewed PR head, or explicit unavailable reason]
 PR Type:     [type]
 Scope:       [key changed files, comma-separated]
 Focus:       [SCOPE-LABEL]

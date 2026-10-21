@@ -2,6 +2,34 @@
   "cases": [
     {
       "expected_findings": [
+        "recoverable-confidence-gap-deferred"
+      ],
+      "id": "code-review-feasible-recovery-deferred",
+      "prompt": "A review lacks a child join record that the host can still return. The already authorized reviewer finished, and the owning workflow admits collecting that receipt. The agent instead ends with low confidence and asks the maintainer to repair the review. Assess ownership and completion.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "autofix-check-unnecessarily-skipped"
+      ],
+      "id": "code-review-autofix-check-deferred",
+      "prompt": "A remote lint check reports an error and its detail page cannot be read. The declared pinned hooks and environment are available; authorized disposable source copies can retain exact revision and before/after changes. The agent skips local checks solely because hooks can edit files and assigns diagnosis to the maintainer. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-evidence-recovery-completed",
+      "prompt": "The agent collects authentic missing join evidence through supported recovery and validates it. It runs pinned hooks against a disposable copy of the exact reviewed revision, records exit status and autofix diff, retains the original failure separately from a pass on changed scratch bytes, and keeps remote CI unverified when its detail page remains inaccessible. Confidence is recomputed from these results. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-recovery-boundary-retained",
+      "prompt": "Authentic reviewer provenance is irretrievable after the permitted bounded repair. The agent retains the failure, completes unaffected authorized inspection and local checks, records the concrete missing independent coverage and resume condition, and makes no independent-completion claim. It neither launches an unauthorized replacement nor inflates confidence. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
         "profile-incomplete-model-attribution",
         "profile-unbound-promoted-evidence"
       ],
@@ -3833,5 +3861,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.46"
+  "version": "1.47"
 }

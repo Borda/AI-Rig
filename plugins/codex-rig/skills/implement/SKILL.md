@@ -269,6 +269,6 @@ Update calibration when implementation routing or output expectations change:
 
 Before writing result candidate, follow `../../shared/final-handoff-contract.md`: render and bind `final-handoff.json`, `final.md`, and `final-handoff.validation.json`; after both validators and promotion pass, emit `final.md` verbatim.
 
-Use `../../shared/quality-gates.md`. Final chat follows its ordered frame. `Outcome` is `pass`, `fail`, `partial`, or `blocked` and states whether `done_when` was met. When multiple surfaces changed, `Results` uses exactly `Surface | Outcome | Verification | Remaining limit`. Apply shared `Verification`, `Remaining`, `Next steps`, and supplemental `Artifact` rules. `Confidence` also includes band, recovery actions, material gaps/degradation reasons, and closure status from `metadata.confidence_gaps` and `metadata.confidence_gap_closures`.
+Use `../../shared/quality-gates.md`. Final chat follows its ordered frame. `Outcome` is `pass`, `fail`, `partial`, or `blocked` and states whether `done_when` was met. `Results` always uses exactly `Surface | Outcome | Verification | Remaining limit`, including a single changed surface or a blocked outcome. Apply shared `Verification`, `Remaining`, `Next steps`, and supplemental `Artifact` rules. `Confidence` also includes band, recovery actions, material gaps/degradation reasons, and closure status from `metadata.confidence_gaps` and `metadata.confidence_gap_closures`.
 
 Minimum artifact payload template: `result-template.json`.

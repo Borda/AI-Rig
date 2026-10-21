@@ -35,7 +35,7 @@ def test_terminal_pr_collection_failure_is_review_unavailable_not_merge_decision
     """Keep a failed evidence collection separate from a PR review outcome.
 
     A T0 failure means no source review occurred. The user therefore needs a plain operational diagnostic, not a
-    ``needs-more-work`` recommendation or any table that could be mistaken for PR findings.
+    ``needs-more-work`` recommendation or a findings table. The display-only status table remains available.
     """
     skill = read_with_references(CODE_REVIEW_SKILL, "collection-failure.md")
     assert "references/collection-failure.md" in CODE_REVIEW_SKILL.read_text(encoding="utf-8")
@@ -46,7 +46,8 @@ def test_terminal_pr_collection_failure_is_review_unavailable_not_merge_decision
     assert "`pr review availability: unavailable`" in normalized
     assert "`merge decision: not made`" in normalized
     assert "plain diagnostic prose" in normalized
-    assert "do not emit a markdown table" in normalized
+    assert "emit the presentation-11 display-only status table" in normalized
+    assert "do not invent assessed findings or a merge recommendation" in normalized
     assert "## PR Evidence Collection Recovery" not in terminal_gate
     assert "| Operational area |" not in terminal_gate
     assert "Do not emit `needs-more-work`" in terminal_gate

@@ -561,14 +561,16 @@ def test_rendered_non_pr_handoff_cannot_add_forged_pr_snapshot(tmp_path: Path, c
         ("Revision", f"diff sha256:{'0' * 64}"),
         ("CI", "unavailable"),
         ("Type", "docs"),
+        ("Commit", result["metadata"]["reviewed_commit_sha"] + " (working-tree base)"),
         ("Suggestion", "approve"),
     ]
     assert digest != "0" * 64
-    for index, (row, value) in enumerate(zip(review_snapshot["rows"], values), start=1):
+    for index, (row, value) in enumerate(zip(review_snapshot["rows"], values, strict=True), start=1):
         row.update(id=f"R{index}", cells=list(value), source_ids=[f"review:{value[0]}"])
     handoff["tables"].append(review_snapshot)
     handoff["source_records"].extend({"id": f"review:{field}", "evidence": "diff.patch"} for field, _ in values)
-    handoff["source_coverage"].update(source_records_total=10, represented_source_records_total=10)
+    total = len(handoff["source_records"])
+    handoff["source_coverage"].update(source_records_total=total, represented_source_records_total=total)
     handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
     with pytest.raises(ValueError, match="review-snapshot-required"):
         _load_finalizer().render_files(handoff_path, run / "final.md", run / "final-handoff.validation.json")
@@ -1849,7 +1851,8 @@ def test_compact_review_links_full_report_and_retains_machine_details(
         }
     )
     payload["source_records"].append({"id": "finding:boundary-check", "evidence": "review-notes.md"})
-    payload["source_coverage"].update(source_records_total=6, represented_source_records_total=6)
+    total = len(payload["source_records"])
+    payload["source_coverage"].update(source_records_total=total, represented_source_records_total=total)
     report = run / "review-notes.md"
     original_open = Path.open
 

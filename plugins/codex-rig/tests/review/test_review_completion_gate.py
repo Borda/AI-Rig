@@ -172,6 +172,7 @@ def _assessed_pr(tmp_path: Path) -> Path:
             "specialist_passes": [],
             "review_run_id": "test-review",
             "review_input_sha256": input_hash,
+            "reviewed_commit_sha": head,
             "fanout_substituted": False,
             "independence_required": False,
             "independence_satisfied": False,
@@ -192,6 +193,7 @@ def _assessed_pr(tmp_path: Path) -> Path:
         ("Author", "@contributor"),
         ("CI", "passing"),
         ("Type", "docs"),
+        ("Commit", head),
         ("Suggestion", "approve"),
     ]
     handoff = {
@@ -216,8 +218,8 @@ def _assessed_pr(tmp_path: Path) -> Path:
         ],
         "source_records": [{"id": f"pr:{field}", "evidence": f"pr.json#{field}"} for field, _ in snapshot],
         "source_coverage": {
-            "source_records_total": 5,
-            "represented_source_records_total": 5,
+            "source_records_total": len(snapshot),
+            "represented_source_records_total": len(snapshot),
             "omitted_source_records_total": 0,
         },
         "verification": [
@@ -922,7 +924,8 @@ def test_failed_quality_gate_requires_nonapproval_handoff(assessed_pr: Path, rec
             }
         )
         handoff["source_records"].append({"id": "gate:tests", "evidence": "gates.json"})
-        handoff["source_coverage"].update(source_records_total=6, represented_source_records_total=6)
+        total = len(handoff["source_records"])
+        handoff["source_coverage"].update(source_records_total=total, represented_source_records_total=total)
         notes = assessed_pr / "review-notes.md"
         notes.write_text(
             notes.read_text(encoding="utf-8") + "\n\n## Review Findings and Merge Blocks\n\n"
@@ -1187,7 +1190,8 @@ def _finalize_parent_fallback(run: Path, *, independent_required: bool = False) 
         }
     )
     handoff["source_records"].append({"id": "gate:types", "evidence": "gates.json"})
-    handoff["source_coverage"].update(source_records_total=6, represented_source_records_total=6)
+    total = len(handoff["source_records"])
+    handoff["source_coverage"].update(source_records_total=total, represented_source_records_total=total)
     drafts = run / "fallback-drafts"
     drafts.mkdir()
     (drafts / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8", newline="\n")

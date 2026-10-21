@@ -977,8 +977,16 @@ def _validate_review_decision(metadata: dict[str, Any], result: dict[str, Any]) 
     ):
         if not (
             new_ratings
-            and recommendation == "minor-changes"
-            and metadata["review_validation"]["verification_readiness"] != "complete"
+            and (
+                (
+                    recommendation == "minor-changes"
+                    and metadata["review_validation"]["verification_readiness"] != "complete"
+                )
+                or (
+                    recommendation == "accept-as-is"
+                    and metadata["review_validation"]["verification_readiness"] == "blocked"
+                )
+            )
         ):
             raise SystemExit("review-approval-with-failed-gates")
 
@@ -1253,7 +1261,7 @@ def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any])
     if not handoff_path.is_file():
         return
     handoff = _load_json(handoff_path)
-    if handoff.get("presentation_version") not in {2, 3, 8, 9, 10}:
+    if handoff.get("presentation_version") not in {2, 3, 8, 9, 10, 11}:
         return
     failure = metadata["collection_failure"]
     code = failure["code"]

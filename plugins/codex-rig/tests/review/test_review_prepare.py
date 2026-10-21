@@ -2211,6 +2211,8 @@ def test_prepare_freezes_complete_wave_and_keeps_source_out_of_dispatch(tmp_path
     assert result.returncode == 0, result.stderr
     plan = json.loads((run / "inspection-plan.json").read_text(encoding="utf-8"))
     dispatch = json.loads((run / "dispatch.json").read_text(encoding="utf-8"))
+    source = json.loads((run / "local-source/source-snapshot.json").read_text(encoding="utf-8"))
+    assert (run / "reviewed-commit.txt").read_text(encoding="utf-8").strip() == source["revision"]
     assert dispatch["routing_sha256"] == hashlib.sha256((run / "review-routing.json").read_bytes()).hexdigest()
     assert dispatch["briefs_sha256"] == hashlib.sha256((run / "review-briefs.json").read_bytes()).hexdigest()
     assert [entry["role_id"] for entry in plan["contexts"]] == ["challenger", "qa-specialist"]
@@ -2336,6 +2338,9 @@ def test_prepare_accepts_only_matching_committed_detached_source(tmp_path: Path,
         return
     assert result.returncode == 0, result.stderr
     context = (run / "specialists/challenger-context.md").read_text(encoding="utf-8")
+    assert (run / "reviewed-commit.txt").read_text(encoding="utf-8").strip() == head
+    original = json.loads((run / "local-source/source-snapshot.json").read_text(encoding="utf-8"))
+    assert original["revision"] != head
     assert "value = 3\n" in context
     assert "+value = 3" in context
 

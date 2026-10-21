@@ -2,6 +2,7 @@
 develop-review:  [review target]
 Title:        develop-review — [review target]
 Date:         [YYYY-MM-DD]
+Commit SHA:   [full frozen SHA with working-tree base/source label, or explicit unavailable reason]
 Change Type:  [fix | feat | refactor | perf | docs | ci | chore | test | mixed]
 Scope:        [key changed files]
 Focus:        [scope label — change summary]

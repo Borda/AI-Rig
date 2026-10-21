@@ -28,6 +28,8 @@
 
 ## Fill-gaps carry-over
 
+Commit provenance follows the selected run's exact `head_sha`. A full SHA is shown unchanged. A legacy abbreviated identity is never expanded from the current PR head or invoking checkout: write `Commit SHA: unavailable (legacy abbreviated reviewed identity: <head_sha>)` and preserve the exact carry identity in the sidecars.
+
 Only with a `FILL_GAPS_PLAN=<path>` binding. Read that JSON with the Read tool: `prior_report`, `prior_validation`, `prior_findings`, `head_sha`, re-run `roles`, re-validated `candidates`, `publish_rows` (carried CONFIRMED candidates whose findings row the prior run lost), and `carried` (assessment roles, candidate ids, open-concern candidate ids, finding ids kept from the prior run). This run's `$RUN_DIR` holds files only for the re-run roles; `cross-validation.md` holds only re-validated and new candidates.
 
 - `review-validation.json`: copy every carried assessment, candidate and open concern from `prior_validation` **verbatim** — same keys, same values, never re-judged or re-worded. Add one assessment per re-run role from this run's files (no output → `presence: missing`), and the parent's records for re-validated and new candidates. Recompute aggregate `source_outcome`, `source_rating`, `readiness` and `readiness_reason` over the merged set per the protocol. A carried open candidate lacking its open concern gains one — additions are allowed, alterations are not.
@@ -76,6 +78,7 @@ The parent supplies resolved literal input bindings in its compact Agent prompt.
 | `Title:` | `oss-review — [PR #N title]` |
 | `PR:` | `#<PR_NUMBER>`; omit entirely when `<PR_NUMBER>` is empty (direct-path mode has no PR). |
 | `Date:` | `<DATE>` |
+| `Commit SHA:` | Literal `<REVIEWED_COMMIT_SHA>`: full frozen `pr-meta.json` `headRefOid` for an ordinary review, or the selected fill-gaps run's full `head_sha`. Never abbreviate or use the invoking checkout's HEAD. Missing identity and legacy abbreviated identity remain explicitly unavailable. |
 | `PR Type:` | Classify diff INTENT, never title/file-count: `fix` / `feat` / `refactor` / `perf` / `docs` / `ci` / `chore` / `test` / `mixed`. |
 | `Scope:` | Key changed files from `<CHANGED_FILES>`; skip test files if >3 source; cap ~5. |
 | `Focus:` | `<SCOPE>` — one-line description from diff + PR body. |
@@ -125,6 +128,8 @@ The parent supplies resolved literal input bindings in its compact Agent prompt.
 **Return ONLY** the one-line publication summary: `verdict=<APPROVE|MINOR_EDITS|NEEDS_WORK|INSUFFICIENT_BUT_PROMISING|null> | findings=N | critical=N | high=N | file=<REPORT_DIR>/review-report.md`. A late terminal conflict instead returns the step 5 routing signal without publication.
 
 ## Publication validation
+
+Preserve a supported source judgment when unavailable tooling, runtime evidence or independent verification blocks readiness. Such limits do not alone force source_outcome/source_rating to null; null requires source evidence insufficient to judge. Record missing independence as an open validation obligation, never a confirmed finding. Keep missing reviewer coverage, feasible undone checks, actual failed gates and required checks visible; complete feasible authorized work before delivery, and never claim unconditional approval or merge readiness while blocked/incomplete.
 
 1. Follow the loaded candidate-validation protocol and the parent's evidence in `$RUN_DIR/cross-validation.md`; never infer confirmation from confidence or severity. New or materially strengthened claims require parent validation before publication.
 2. Write `<REPORT_DIR>/review-validation.json`: contract_version=1, rating_scale=source-5-v1, aggregate source_outcome/source_rating/readiness/readiness_reason, returned/missing assessments (evidence and limits as string arrays), all candidates, durable open_concerns (one per UNVERIFIED/null candidate only; any such candidate forbids readiness=complete). Aggregate readiness=complete only when every assessment is complete and open_concerns is empty. A missing required role (presence=missing) has readiness=incomplete; it, like any null candidate, makes the aggregate incomplete, overriding blocked, also under a null aggregate outcome. Every findings row carries id, section, severity, title, change and author; the publication gate refuses a row without them. Header fields mirror this envelope.

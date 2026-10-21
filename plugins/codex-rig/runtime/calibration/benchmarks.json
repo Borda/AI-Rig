@@ -548,6 +548,12 @@
       "helper-cli-contract.md"
     ],
     "code-review": [
+      "unvalidated-process table",
+      "including zero findings and all checks passing",
+      "reviewed_commit_sha",
+      "reviewed-commit.txt",
+      "working-tree base",
+      "qualified source judgment",
       "review_validation",
       "source_rating_version",
       "feasible_checks_complete",

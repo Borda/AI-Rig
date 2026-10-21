@@ -607,6 +607,24 @@ def test_qualified_minor_source_judgment_does_not_clear_blocked_verification() -
     assert result["status"] == "fail"
 
 
+@pytest.mark.parametrize("readiness", ["blocked", "incomplete"])
+def test_source_approval_keeps_unavailable_verification_separate(readiness: str) -> None:
+    """Publish a completed source judgment without approving incomplete inspection or failed verification."""
+    metadata = _new_metadata()
+    metadata["review_decision"]["recommendation"] = "accept-as-is"
+    metadata["review_validation"].update(source_verdict="accept-as-is", verification_readiness=readiness, candidates=[])
+    metadata["review_findings"] = []
+    result = _result()
+    result.update(status="fail", checks_failed=["types"])
+    if readiness == "incomplete":
+        with pytest.raises(SystemExit, match="review-approval-with-failed-gates"):
+            _load_validator()._validate_review_decision(metadata, result)
+    else:
+        _load_validator()._validate_review_decision(metadata, result)
+        assert result["status"] == "fail"
+        assert result["checks_failed"] == ["types"]
+
+
 def test_unverified_concern_survives_bound_final_handoff(tmp_path: Path) -> None:
     """A backend uncertainty remains visible with exact ownership and closure, outside defect actions."""
     run = _assessed_pr.__wrapped__(tmp_path)
